@@ -882,6 +882,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ADD R8,R8,R2 << 0x1");
         emit("LD.UH R8,R8[0x0]");
         emit("SUB R8,0x6e");
+        // Black keys couple less charge, and the weight is cubed — leaving
+        // this out gave a black key roughly half the pull of a white one at
+        // equal physical pressure.
+        emit("MOV R12,0x60b0");
+        emit("LD.UH R12,R12[R2 << 0x1]");
+        emit("MUL R12,R8,R12");
+        emit("SUB R12,-0x80");
+        emit("LSR R12,0x8");
+        emit("ADD R8,R12");
         emit("CP.W R10,R11");
         emit("BR{eq} 0x80019cd0");
         emit("SUB R8,R8,R5 << 0x0");
@@ -1896,15 +1905,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R8,0x6e");
         emit("CP.W R8,0x0");
         emit("BR{le} 0x8001aa6c");
-        emit("MOV R11,0xa54a");
-        emit("ORH R11,0xa54");
-        emit("LSR R11,R11,R9");
-        emit("BFEXTU R11,R11,0x0,0x1");
-        emit("CP.W R11,0x0");
-        emit("BR{eq} 0x8001aa5c");
-        emit(String.format("MOV R11,0x%x", number("black_key_scale_32", 43, 32, 96)));
-        emit("MUL R8,R8,R11");
-        emit("LSR R8,0x5");
+        // Q8 excess from the table, rounded — branchless, and the same
+        // numbers the portamento weighting uses.
+        emit("MOV R11,0x60b0");
+        emit("LD.UH R11,R11[R9 << 0x1]");
+        emit("MUL R11,R8,R11");
+        emit("SUB R11,-0x80");
+        emit("LSR R11,0x8");
+        emit("ADD R8,R11");
         padTo(0x8001aa5cL);
         if (number("multi_key_max", 0, 0, 1) == 1) {
             emit("CP.W R8,R0");
@@ -1924,12 +1932,25 @@ public class AssemblePressureFix extends GhidraScript {
         if (number("multi_key_max", 0, 0, 1) == 1) {
             emit("MOV R12,R0");
         } else {
+            // Round the mean rather than truncating: with two keys a lost
+            // half-count is a persistent bias of several DAC counts.
+            emit("LSR R11,R1,0x1");
+            emit("ADD R0,R11");
             emit("DIVU R0,R0,R1");
             emit("MOV R12,R0");
         }
         padTo(0x8001aa80L);
         emit("LDM SP++,R0,R1,R7,PC");
-        finish("multi_key_pressure", 0x8001aa88L);
+        finish("multi_key_pressure", 0x8001aa90L);
+
+        // Per-key black-key correction, as a Q8 excess over unity: 0 for a
+        // white key, round(scale*256)-256 for a black one.  Copied into RAM at
+        // power-up so every consumer can reach it with a short immediate, and
+        // so the pressure aggregate and the portamento weighting apply exactly
+        // the same numbers.
+        begin(0x8001a540L);
+        emitTable("black_key_excess");
+        finish("black_key_excess_table", 0x8001a580L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
@@ -2044,7 +2065,22 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("MOV R11,0x%x", number("output_smoothing_shift", 2, 1, 6)));
         emit("MOV R9,0x6084");
         emit("ST.H R9[0x0],R11");
-        padTo(0x8001a4bcL);
+        // The proximity estimate is read by the pressure filter, which can run
+        // before the estimator's first pass — an uninitialised cell would show
+        // up as one scan of spurious spike or suppression after reset.
+        emit("MOV R9,0x602c");
+        emit("ST.H R9[0x0],R8");
+        emit("LDDPC R11,0x8001a538");
+        emit("MOV R9,0x60b0");
+        emit("MOV R12,0x20");
+        padTo(0x8001a4c8L);
+        emit("LD.UH R8,R11[0x0]");
+        emit("ST.H R9[0x0],R8");
+        emit("SUB R11,-0x2");
+        emit("SUB R9,-0x2");
+        emit("SUB R12,0x1");
+        emit("BR{ne} 0x8001a4c8");
+        padTo(0x8001a4dcL);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases every latched key.
             emit("LD.UB R8,R10[0x340]");
@@ -2052,20 +2088,20 @@ public class AssemblePressureFix extends GhidraScript {
             emit("LD.UB R9,R11[0x0]");
             emit("ST.B R11[0x0],R8");
             emit("CP.W R9,0x1");
-            emit("BR{ne} 0x8001a4f0");
+            emit("BR{ne} 0x8001a510");
             emit("CP.W R8,0x1");
-            emit("BR{eq} 0x8001a4f0");
+            emit("BR{eq} 0x8001a510");
             emit("MOV R9,0x0");
             emit("ST.B R10[0x21a],R9");
             emit("MOV R9,0x1f");
-            padTo(0x8001a4e0L);
+            padTo(0x8001a500L);
             emit("ADD R12,R10,R9 << 0x0");
             emit("MOV R8,0x0");
             emit("ST.B R12[0x21b],R8");
             emit("SUB R9,0x1");
-            emit("BR{ge} 0x8001a4e0");
+            emit("BR{ge} 0x8001a500");
         }
-        padTo(0x8001a4f0L);
+        padTo(0x8001a510L);
         if (feature("pressure_common_mode")) {
             // Proximity estimate, in its own cave: the nearest untouched key
             // on each side of the active key samples the hovering hand's

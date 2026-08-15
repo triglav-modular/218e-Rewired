@@ -111,11 +111,12 @@ span. Averaging dithered samples genuinely recovers sub-count information, so
 this is real precision, not invention.
 
 How much arrives depends on the smoothing depth, because the filter can only
-produce averages of the form `(sum << bits) / taps`: at the default 8 taps
-the window reaches about 2400 output codes linear and 1800 with the full
-curve, against roughly 300 before; at 16 taps or more the whole 1/16 grid is
-reachable, about 4000 and 3000. Substantially more than a 12-bit DAC fed one
-step per raw count, but not a filled 12-bit range.
+produce averages of the form `(sum << bits) / taps`: at the default 8 taps the window reaches about 2400 output codes linear
+(11.2 effective bits) and 1800 with the full curve (10.8 bits), against
+roughly 300 before. At 16 taps or more the whole 1/16 grid is reachable,
+about 4000 and 3000. Substantially more than a 12-bit DAC fed one step per
+raw count, but an 8-tap average cannot supply 4096 independent steady
+states — the DAC is not the limit, the sensor averaging is.
 
 The transfer function is unchanged — the same mapping, sampled finely rather
 than once per raw count. It is not bit-identical at integer inputs, because
@@ -148,10 +149,19 @@ the last key touched, so adding a second key hands the CV to it: hold one key
 hard, touch another lightly, and the output follows the light touch — to zero
 if it sits below the floor, with the first finger still down.
 `multi_key_pressure` (`0x8001AA10`, called from the prep cave) combines every
-**physically** held key instead — touch state 2, so latched keys with no
-finger on them cannot drag the result down — black-key scaling each one as it
-is gathered. `"mean"` averages them, `"max"` takes the hardest-pressed key,
+**physically** held key instead — rounding the mean rather than truncating it,
+since a lost half-count is a persistent several-count bias — — touch state 2, so latched keys with no
+finger on them cannot drag the result down — black-key correcting each one as it is
+gathered, from the shared table below. `"mean"` averages them, `"max"` takes the hardest-pressed key,
 `"factory"` restores the original behaviour.
+
+**Black-key correction.** Black keys have smaller pads and couple less
+charge, so the same press reads 0.72–0.81x of a white key. The correction is
+a per-key Q8 excess in a 32-entry table (`0x8001A540`, copied into RAM at
+`0x60B0` during the power-up init), applied with rounding and without a
+branch. Both the pressure aggregate and the **portamento weighting** use it:
+the blend cubes its weights, so an uncorrected black key carried only ~0.44 of
+a white key's pull at equal physical pressure, against ~0.76 corrected.
 
 **Proximity rejection** (`[pressure].common_mode`). A hovering hand lifts
 every key it is near — the played key included — so two-handed playing could

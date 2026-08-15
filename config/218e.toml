@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "ab6d8bd0e59b8966dd8104769b53bc8b0744e2085637ce0958131e2c328b0462"
+golden_sha256  = "06aafa7cbefd784b7ffa0ce690d9515e459123cde855cbb50851ff9dacafa89c"
 
 
 # ---------------------------------------------------------------------------
@@ -102,9 +102,11 @@ common_mode = true
 proximity_reference = 300
 
 # Black keys have smaller pads, so the same press couples less charge — the
-# measured black/white ratio runs 0.72x (light) to 0.81x (full).  Their raw
-# reading is multiplied by this before everything else, putting both key
-# colours in one calibration window.  1.0 disables it.
+# measured black/white ratio runs 0.72x (light) to 0.81x (full).  This
+# multiplies their reading, putting both key colours in one calibration
+# window.  It is applied per key with rounding, and used by the portamento
+# weighting as well, which matters because that weight is cubed.  1.0
+# disables it.
 black_key_scale = 1.2
 
 # Smooth the pressure CV at the 1 kHz DAC flush instead of letting it step

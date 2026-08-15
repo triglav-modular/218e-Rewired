@@ -682,6 +682,16 @@ def main() -> None:
     if len(tuning["slots"]) != 3:
         raise SystemExit("[tuning].slots must list exactly three scales")
 
+    # Per-key black-key correction as a Q8 excess: 0 for white keys, and
+    # round(scale*256)-256 for black ones.  A table makes the correction
+    # branchless at every use site and lets the same numbers serve the
+    # pressure aggregate and the portamento weighting.
+    black_mask = 0x0A54A54A
+    excess = round(cfg["pressure"].get("black_key_scale", 1.0) * 256) - 256
+    if not 0 <= excess <= 0x400:
+        raise SystemExit("[pressure].black_key_scale must be between 1.0 and 5.0")
+    tables["black_key_excess"] = [excess if (black_mask >> k) & 1 else 0 for k in range(32)]
+
     (BUILD / "tables.txt").write_text(
         "\n".join(f"{name} ({len(v)}):\n  " + ", ".join(map(str, v)) for name, v in sorted(tables.items()))
         + "\n"
