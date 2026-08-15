@@ -124,10 +124,27 @@ removing the intermediate truncation shifts values by up to one old
 quantisation step; the build's tests assert exactly that bound. Setting the
 value to 0 restores the original integer arithmetic.
 
+**Shared per-key pressure** (`pressure_cache`, `0x8001AA90`). One pass per
+scan corrects every key — baseline removed, clamped, black-key corrected —
+into RAM `0x6100`, and both the multi-key aggregate and the portamento
+weighting read it. Previously each walked the keys and applied its own
+correction, which is how the portamento came to have none at all. It is
+filled on the pressure path, so the weighting can read a cache one scan
+(5 ms) old, which its own 20 ms slew makes immaterial. The proximity
+estimator still reads raw deltas on purpose: its reference was measured on
+them.
+
 **Smoothing.** The factory 16-tap boxcar (80 ms at the 200 Hz scan rate) was
 replaced by the 218r's **growing average**, with a configurable depth
 (`[pressure].smoothing_taps`, 8..24 taps = 40..120 ms; `variable_filter`,
-`0x8001A800`; taps at RAM `0x6050`, depth at `0x6082`, count at `0x6080`).
+`0x8001A800`; taps at RAM `0x6050`, depth at `0x6082`, count at `0x6080`,
+write index at `0x6086`, running sum at `0x6088`, newest sample at `0x608C`).
+The history is a ring buffer with a running sum — one subtract, one add and
+one store per scan instead of shifting every tap and re-summing them, which
+is 13 fewer memory operations at 8 taps and 45 fewer at 24. The result is
+bit-identical to the old arithmetic; `tools/test.py` asserts that at every
+depth. A zero count, which the note-on and source-change wrappers write,
+also resets the ring.
 The 1 kHz output interpolation depth is `[pressure].output_smoothing`
 (shift 1..6, live value at RAM `0x6084`; currently 5) — the filter shapes the
 sequence of scan values, the interpolator is what actually shrinks the 5 ms

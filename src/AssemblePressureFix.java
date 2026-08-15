@@ -583,7 +583,11 @@ public class AssemblePressureFix extends GhidraScript {
         // runs in fixed point, so these are a diagnostic approximation of it,
         // not the values it computes.
         emit("LDDPC R12,0x8001992c");
-        emit("LD.UH R8,R12[0x0]");
+        // With the ring buffer the newest sample is not tap[0]; the filter
+        // publishes it separately.  The mean below is order-independent, so
+        // summing the first `count` taps stays correct either way.
+        emit("MOV R8,0x608c");
+        emit("LD.UH R8,R8[0x0]");
         emit("ST.H R7[-0x4],R8");        // instantaneous raw
         emit("LD.UH R11,R12[0x30]");     // growing-average sample count
         emit("MOV R9,0x0");
@@ -878,19 +882,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x854");
         emit("ADD R8,R8,R2 << 0x1");
         emit("LD.UH R10,R8[0x0]");
-        emit("MOV R8,0x3686");
-        emit("ADD R8,R8,R2 << 0x1");
-        emit("LD.UH R8,R8[0x0]");
-        emit("SUB R8,0x6e");
-        // Black keys couple less charge, and the weight is cubed — leaving
-        // this out gave a black key roughly half the pull of a white one at
-        // equal physical pressure.
-        emit("MOV R12,0x60b0");
-        emit("LD.UH R12,R12[R2 << 0x1]");
-        emit("MUL R12,R8,R12");
-        emit("SUB R12,-0x80");
-        emit("LSR R12,0x8");
-        emit("ADD R8,R12");
+        // Corrected pressure from the shared cache: baseline already removed,
+        // clamped, and black-key corrected — which matters here because the
+        // weight is cubed.
+        emit("MOV R8,0x6100");
+        emit("LD.UH R8,R8[R2 << 0x1]");
         emit("CP.W R10,R11");
         emit("BR{eq} 0x80019cd0");
         emit("SUB R8,R8,R5 << 0x0");
@@ -1616,6 +1612,12 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001a790L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
+        // Correct every key once per scan into the shared cache, then let the
+        // consumers read it.  This runs on the pressure path, which happens
+        // once per scan, so the portamento weighting may read a cache one scan
+        // (5 ms) old — immaterial against its own 20 ms slew, and worth it to
+        // stop two loops applying the same correction differently.
+        emit("MCALL PC[0x8001a7fc]");
         if (feature("multi_key_pressure")) {
             // Combine every physically held key, black-key scaling each one on
             // the way (see multi_key_pressure).
@@ -1658,7 +1660,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         word(0x8001aa10L); // multi-key pressure combiner
         word(0x80013350L); // signed-int-to-float helper (same as the epilogue)
-        finish("pressure_prep", 0x8001a7fcL);
+        word(0x8001aa90L); // per-key corrected-pressure cache fill
+        finish("pressure_prep", 0x8001a800L);
 
         // Variable-depth growing average.  Depth N (8..24 taps = 40..120 ms
         // at the 5 ms scan) lives at RAM 0x6082, set by edit knob 2; taps at
@@ -1669,6 +1672,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,R12");
+        // Depth (RAM 0x6082), clamped against power-up garbage.
         emit("MOV R9,0x6082");
         emit("LD.UH R11,R9[0x0]");
         emit("CP.W R11,0x8");
@@ -1679,47 +1683,57 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{le} 0x8001a81e");
         emit("MOV R11,0x18");
         padTo(0x8001a81eL);
+        // Ring buffer with a running sum: one subtract, one add and one store
+        // per scan instead of shifting the whole history and re-summing it.
+        // A zero count — set by the note-on and source-change wrappers — also
+        // resets the ring, so a new touch starts clean.
         emit("MOV R9,0x6080");
         emit("LD.UH R10,R9[0x0]");
-        emit("SUB R10,-0x1");
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001a834");
+        emit("MOV R12,0x6086");
+        emit("ST.H R12[0x0],R10");
+        emit("MOV R12,0x6088");
+        emit("ST.W R12[0x0],R10");
+        padTo(0x8001a834L);
+        emit("MOV R12,0x6086");
+        emit("LD.UH R12,R12[0x0]");
+        emit("MOV R9,0x6088");
+        emit("LD.W R9,R9[0x0]");
         emit("CP.W R10,R11");
-        emit("BR{le} 0x8001a830");
-        emit("MOV R10,R11");
-        padTo(0x8001a830L);
-        emit("ST.H R9[0x0],R10");
-        emit("MOV R9,0x6050");
-        emit("MOV R12,R11");
-        emit("SUB R12,0x1");
-        emit("LSL R12,0x1");
-        emit("ADD R12,R9");
-        padTo(0x8001a840L);
-        emit("CP.W R12,R9");
-        emit("BR{le} 0x8001a852");
-        emit("LD.UH LR,R12[-0x2]");
-        emit("ST.H R12[0x0],LR");
-        emit("SUB R12,0x2");
-        emit("RJMP 0x8001a840");
-        padTo(0x8001a852L);
-        emit("ST.H R9[0x0],R8");
-        emit("MOV R12,R9");
-        emit("MOV R11,R10");
-        emit("MOV R8,0x0");
-        padTo(0x8001a85cL);
-        emit("LD.UH LR,R12[0x0]");
-        emit("ADD R8,LR");
-        emit("SUB R12,-0x2");
-        emit("SUB R11,0x1");
-        emit("BR{ne} 0x8001a85c");
-        // Keep `resolution_bits` fractional bits of the mean.  Averaging N
-        // dithered samples carries genuine sub-count information; discarding
-        // it here is what limited a 12-bit DAC to one step per raw count.
+        emit("BR{lt} 0x8001a854");
+        // Full: drop the oldest sample, which is the one at the write index.
+        emit("MOV LR,0x6050");
+        emit("LD.UH LR,LR[R12 << 0x1]");
+        emit("SUB R9,R9,LR << 0x0");
+        emit("RJMP 0x8001a858");
+        padTo(0x8001a854L);
+        emit("SUB R10,-0x1");
+        padTo(0x8001a858L);
+        emit("MOV LR,0x6050");
+        emit("ST.H LR[R12 << 0x1],R8");
+        emit("ADD R9,R8");
+        emit("SUB R12,-0x1");
+        emit("CP.W R12,R11");
+        emit("BR{lt} 0x8001a86c");
+        emit("MOV R12,0x0");
+        padTo(0x8001a86cL);
+        emit("MOV LR,0x6086");
+        emit("ST.H LR[0x0],R12");
+        emit("MOV LR,0x6088");
+        emit("ST.W LR[0x0],R9");
+        emit("MOV LR,0x6080");
+        emit("ST.H LR[0x0],R10");
+        emit("MOV LR,0x608c");
+        emit("ST.H LR[0x0],R8");
+        // Keep `resolution_bits` fractional bits of the mean.
         if (number("resolution_bits", 4, 0, 4) > 0) {
-            emit(String.format("LSL R8,0x%x", number("resolution_bits", 4, 0, 4)));
+            emit(String.format("LSL R9,0x%x", number("resolution_bits", 4, 0, 4)));
         }
-        emit("DIVU R8,R8,R10");
+        emit("DIVU R8,R9,R10");
         emit("MOV R12,R8");
         emit("LDM SP++,R7,PC");
-        finish("variable_filter", 0x8001a878L);
+        finish("variable_filter", 0x8001a890L);
 
         // (Edit knob 2 smoothing control removed for now: the wrapper ran and
         // stored, but its ADC mirror read never followed the physical knob in
@@ -1899,20 +1913,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x2");
         emit("BR{ne} 0x8001aa6c");
-        emit("MOV R8,0x3686");
-        emit("ADD R8,R8,R9 << 0x1");
-        emit("LD.UH R8,R8[0x0]");
-        emit("SUB R8,0x6e");
+        emit("MOV R8,0x6100");
+        emit("LD.UH R8,R8[R9 << 0x1]");
         emit("CP.W R8,0x0");
         emit("BR{le} 0x8001aa6c");
-        // Q8 excess from the table, rounded — branchless, and the same
-        // numbers the portamento weighting uses.
-        emit("MOV R11,0x60b0");
-        emit("LD.UH R11,R11[R9 << 0x1]");
-        emit("MUL R11,R8,R11");
-        emit("SUB R11,-0x80");
-        emit("LSR R11,0x8");
-        emit("ADD R8,R11");
         padTo(0x8001aa5cL);
         if (number("multi_key_max", 0, 0, 1) == 1) {
             emit("CP.W R8,R0");
@@ -1942,6 +1946,38 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001aa80L);
         emit("LDM SP++,R0,R1,R7,PC");
         finish("multi_key_pressure", 0x8001aa90L);
+
+        // Shared per-key corrected pressure.  One pass computes what every
+        // consumer needs — baseline removed, clamped at zero, black-key
+        // corrected — into RAM 0x6100, so the pressure aggregate and the
+        // portamento weighting read the same calibrated number instead of
+        // each deriving it.  The proximity estimator deliberately keeps
+        // reading raw deltas: its reference level was measured on them.
+        begin(0x8001aa90L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,0x1c");
+        padTo(0x8001aa9cL);
+        emit("MOV R8,0x3686");
+        emit("ADD R8,R8,R9 << 0x1");
+        emit("LD.UH R8,R8[0x0]");
+        emit("SUB R8,0x6e");
+        emit("CP.W R8,0x0");
+        emit("BR{gt} 0x8001aab0");
+        emit("MOV R8,0x0");
+        padTo(0x8001aab0L);
+        emit("MOV R11,0x60b0");
+        emit("LD.UH R11,R11[R9 << 0x1]");
+        emit("MUL R11,R8,R11");
+        emit("SUB R11,-0x80");
+        emit("LSR R11,0x8");
+        emit("ADD R8,R11");
+        emit("MOV R11,0x6100");
+        emit("ST.H R11[R9 << 0x1],R8");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001aa9c");
+        emit("LDM SP++,R7,PC");
+        finish("pressure_cache", 0x8001aad8L);
 
         // Per-key black-key correction, as a Q8 excess over unity: 0 for a
         // white key, round(scale*256)-256 for a black one.  Copied into RAM at

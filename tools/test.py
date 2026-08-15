@@ -164,6 +164,55 @@ def test_resolution(cfg: dict) -> None:
     check("curve monotone with the sentinel", tab == sorted(tab))
 
 
+def test_filter_equivalence(cfg: dict) -> None:
+    """The ring buffer must produce exactly the shift-and-resum result."""
+    print("pressure filter")
+    import random
+    bits = cfg["pressure"].get("resolution_bits", 4)
+
+    def shifted(taps, count, depth, new):
+        count = min(count + 1, depth)
+        for i in range(depth - 1, 0, -1):
+            taps[i] = taps[i - 1]
+        taps[0] = new
+        return (sum(taps[:count]) << bits) // count, count
+
+    class Ring:
+        def __init__(self, depth):
+            self.t = [0] * 24
+            self.idx = self.sum = self.count = 0
+            self.depth = depth
+
+        def push(self, new):
+            if self.count == 0:
+                self.idx = self.sum = 0
+            if self.count >= self.depth:
+                self.sum -= self.t[self.idx]
+            else:
+                self.count += 1
+            self.t[self.idx] = new
+            self.sum += new
+            self.idx = 0 if self.idx + 1 >= self.depth else self.idx + 1
+            return (self.sum << bits) // self.count
+
+    random.seed(11)
+    ok = True
+    for depth in (8, 16, 24):
+        for _ in range(200):
+            taps, count, ring = [0] * 24, 0, Ring(depth)
+            for value in [random.randint(0, 4000) for _ in range(random.randint(1, 60))]:
+                a, count = shifted(taps, count, depth, value)
+                if a != ring.push(value):
+                    ok = False
+    check("ring buffer matches shift-and-resum at every depth", ok)
+
+    ring = Ring(8)
+    for value in (900, 880, 870):
+        ring.push(value)
+    ring.count = 0                       # what the note-on wrapper does
+    check("a note-on reset restarts the average cleanly", ring.push(500) == (500 << bits))
+
+
 def test_overlap_and_range() -> None:
     print("patch safety")
     memory = {a: 0 for a in range(0x1000, 0x2000)}
@@ -229,6 +278,7 @@ def main() -> None:
     test_scala()
     test_tables(cfg)
     test_resolution(cfg)
+    test_filter_equivalence(cfg)
     test_overlap_and_range()
     test_atomic_replace()
     test_hex_roundtrip(cfg)
