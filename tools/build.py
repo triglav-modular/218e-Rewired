@@ -61,7 +61,7 @@ FEATURE_MAP = {
     "knobs.knob3":            (["arp_octave_hook"], []),
     "knobs.knob4":            (["vibrato_engine"], ["knob4_vibrato"]),
     "arp.switch":             (
-        ["noteoff_pool_1", "noteoff_pool_2", "latch_offset_stamp"],
+        ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle"],
         ["arp_latch"],
     ),
     "midi.poly_default":      ([], ["poly_midi_default_off"]),
