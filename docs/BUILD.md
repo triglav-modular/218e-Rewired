@@ -120,6 +120,37 @@ at 4 ms they all run 1.25x faster and the scan's CPU cost rises by the same
 factor. The scan is ADC-completion driven, so there is also a hardware floor
 that no amount of static analysis can predict.
 
+**Can a too-short period lock you out of flashing?** In principle yes, so it
+is worth understanding exactly how before you try one.
+
+Entering DFU over USB needs the *running* firmware to receive the updater's
+SysEx and reboot into the bootloader. There is no button or jumper that forces
+DFU on a valid application: with `ISP_FORCE=0` the bootloader starts the
+application on every power-up. So an application that runs but never answers
+the SysEx cannot be updated over USB, and recovery means JTAG.
+
+What limits the damage:
+
+- **Overrun degrades, it does not hang.** The scheduler's event queue is a
+  32-entry ring (`0x800103BC`); when it is full an enqueue rolls its head back
+  and returns failure, so the event is dropped. A scan that cannot keep up
+  simply gets scheduled less often, settling at whatever rate the CPU sustains
+  — no hang, no corruption.
+- **Once in DFU you cannot fall out of it.** Any accepted ISP command sets
+  `ISP_FORCE=1`, and only `dfu-programmer start` clears it — which the updater
+  issues solely after read-back validation passes. An interrupted or failed
+  flash therefore powers back up into DFU, still updatable.
+
+The residual risk is the middle case: an application busy enough that the
+SysEx is dropped rather than answered. Retrying the updater helps, since
+dropping is a matter of queue space rather than a permanent state.
+
+**So measure the headroom before shortening the period, not after.** The safe
+way is a diagnostic build at the stock 5 ms that times the scan handler with
+the CPU cycle counter (`MFSR Rd,COUNT`) and reports it through the telemetry.
+If a scan takes 1.5 ms there is room for 4 ms; if it takes 3.8 ms there is
+not. Guessing here is what a JTAG session is made of.
+
 **Measure whether the instrument keeps up** rather than assuming it: the
 pressure telemetry readout emits one frame per key per scan, so its cadence is
 a direct read of the achieved rate. At 5 ms a full 32-key cycle takes 160 ms.
