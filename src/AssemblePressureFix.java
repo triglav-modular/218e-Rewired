@@ -1415,6 +1415,78 @@ public class AssemblePressureFix extends GhidraScript {
         // (state+0x2ad6 = RAM 0x6036) instead of the DAC slot directly.
         fixedPatch("pressure_target_redirect", 0x80002db2L, 4, "ST.H R9[0x2ad6],R8");
 
+        // Proximity estimator.  For the active key, walk outward on each
+        // side past touched keys (and past the immediate neighbours, which
+        // carry spill from the pressing finger itself) to the first untouched
+        // key; take the larger of the two sides.  Whatever that key reads
+        // above `proximity_reference` is field from a hovering hand, and is
+        // published at RAM 0x602c for the pressure filter to subtract.
+        begin(0x8001a6a0L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R10,0x8001a748");
+        emit("LD.UB R12,R10[0x256]");
+        emit("MOV R11,0x0");
+        emit("CP.W R12,0x1c");
+        emit("BR{hi} 0x8001a71c");
+        emit("MOV R9,R12");
+        emit("SUB R9,-0x2");
+        padTo(0x8001a6b8L);
+        emit("CP.W R9,0x1c");
+        emit("BR{gt} 0x8001a6e8");
+        emit("MOV R8,0x3490");
+        emit("ADD R8,R8,R9 << 0x0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001a6d4");
+        emit("SUB R9,-0x1");
+        emit("RJMP 0x8001a6b8");
+        padTo(0x8001a6d4L);
+        emit("MOV R8,0x3686");
+        emit("ADD R8,R8,R9 << 0x1");
+        emit("LD.UH R8,R8[0x0]");
+        emit("CP.W R8,R11");
+        emit("BR{ls} 0x8001a6e8");
+        emit("MOV R11,R8");
+        padTo(0x8001a6e8L);
+        emit("MOV R9,R12");
+        emit("SUB R9,0x2");
+        padTo(0x8001a6ecL);
+        emit("CP.W R9,0x0");
+        emit("BR{lt} 0x8001a71c");
+        emit("MOV R8,0x3490");
+        emit("ADD R8,R8,R9 << 0x0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001a708");
+        emit("SUB R9,0x1");
+        emit("RJMP 0x8001a6ec");
+        padTo(0x8001a708L);
+        emit("MOV R8,0x3686");
+        emit("ADD R8,R8,R9 << 0x1");
+        emit("LD.UH R8,R8[0x0]");
+        emit("CP.W R8,R11");
+        emit("BR{ls} 0x8001a71c");
+        emit("MOV R11,R8");
+        padTo(0x8001a71cL);
+        emit(String.format("MOV R8,0x%x", number("proximity_reference", 0x12c, 0x6e, 0x7d0)));
+        emit("SUB R11,R11,R8 << 0x0");
+        emit("CP.W R11,0x0");
+        emit("BR{ge} 0x8001a730");
+        emit("MOV R11,0x0");
+        padTo(0x8001a730L);
+        emit("MOV R8,0x640");
+        emit("CP.W R11,R8");
+        emit("BR{le} 0x8001a73c");
+        emit("MOV R11,R8");
+        padTo(0x8001a73cL);
+        emit("MOV R9,0x602c");
+        emit("ST.H R9[0x0],R11");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a748L);
+        word(0x00003560L); // global state base
+        finish("proximity_estimator", 0x8001a74cL);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -1541,47 +1613,18 @@ public class AssemblePressureFix extends GhidraScript {
         }
         padTo(0x8001a4d8L);
         if (feature("pressure_common_mode")) {
-            // Common-mode (two-hand proximity) estimate: the smallest sensor
-            // delta among keys that are not being touched, baseline removed
-            // and clamped, published to RAM 0x602c for the pressure filter.
-            emit("MOV R9,0x1c");
-            emit("MOV R11,0x7fff");
-            padTo(0x8001a4e0L);
-            emit("MOV R8,0x3490");
-            emit("ADD R8,R8,R9 << 0x0");
-            emit("LD.UB R8,R8[0x0]");
-            emit("CP.W R8,0x2");
-            emit("BR{eq} 0x8001a500");
-            emit("MOV R8,0x3686");
-            emit("ADD R8,R8,R9 << 0x1");
-            emit("LD.UH R8,R8[0x0]");
-            emit("CP.W R8,R11");
-            emit("BR{ge} 0x8001a500");
-            emit("MOV R11,R8");
-            padTo(0x8001a500L);
-            emit("SUB R9,0x1");
-            emit("BR{ge} 0x8001a4e0");
-            emit("MOV R8,0x7fff");
-            emit("CP.W R11,R8");
-            emit("BR{ne} 0x8001a510");
-            emit("MOV R11,0x6e");
-            padTo(0x8001a510L);
-            emit("SUB R11,0x6e");
-            emit("CP.W R11,0x0");
-            emit("BR{ge} 0x8001a51c");
-            emit("MOV R11,0x0");
-            padTo(0x8001a51cL);
-            emit("CP.W R11,0x320");
-            emit("BR{le} 0x8001a528");
-            emit("MOV R11,0x320");
-            padTo(0x8001a528L);
-            emit("MOV R9,0x602c");
-            emit("ST.H R9[0x0],R11");
+            // Proximity estimate, in its own cave: the nearest untouched key
+            // on each side of the active key samples the hovering hand's
+            // field roughly where the active key feels it.  The old global
+            // minimum saw ~9% of the real inflation, because a hand is local
+            // and the far keys it never lifts dominated the minimum.
+            emit("MCALL PC[0x8001a538]");
         }
         emit("LDM SP++,R7,PC");
         padTo(0x8001a534L);
         word(0x00003560L); // global state base
-        finish("scan_housekeeping", 0x8001a538L);
+        word(0x8001a6a0L); // proximity estimator
+        finish("scan_housekeeping", 0x8001a53cL);
 
         // Note-off pointer pools -> latch-gated wrapper.
         begin(0x80005b18L);

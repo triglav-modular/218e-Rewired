@@ -95,18 +95,34 @@ averages only the samples collected so far, so there is no ramp-up on attack;
 the sample count at RAM `0x3226` is cleared by the note-on and source-change
 wrappers.
 
-**Common-mode subtraction** (`[pressure].common_mode`). Two hands near the
-keyboard lift *every* sensor, so a hard press could read ~1900 counts against a
-calibrated maximum of 829 and pin the output. Each scan,
-`scan_housekeeping` (`0x8001A480`) takes the **smallest delta among keys that
-are not being touched** — those see only the common-mode lift — removes the
-110-count baseline, clamps it to 0–800, and publishes it at RAM `0x602C`. The
-pressure filter subtracts it before averaging. If every key is touched the
-estimate is zero, so nothing is ever subtracted without evidence.
+**Proximity rejection** (`[pressure].common_mode`). A hovering hand lifts
+every key it is near — the played key included — so two-handed playing could
+inflate a firm press from ~830 to ~1900 raw counts and pin the CV at maximum.
 
-> The edit-mode telemetry readout reports the **uncorrected** raw value, so
-> during two-handed playing the numbers still look high while the CV behaves.
-> Judge by the CV, not the readout.
+The estimator is spatial, because the interference is: `proximity_estimator`
+(`0x8001A6A0`, called each scan from `scan_housekeeping`) walks outward from
+the active key on both sides, past held keys and past the immediate
+neighbours (which carry spill from the pressing finger itself), to the first
+untouched key on each side. Those keys sit in roughly the same field the
+active key feels. The larger of the two readings, minus
+`proximity_reference`, clamped to 0–1600, is published at RAM `0x602C` and
+subtracted from the raw pressure before the filter.
+
+The reference (default 300 raw counts against an idle baseline of ~110)
+matters: the playing hand always lifts its own neighbourhood a little, and
+that lift was present when the calibration levels were measured — subtracting
+it too would make normal playing read light. Raise the reference if solo
+playing feels lighter than before; lower it toward 110 for stronger rejection.
+
+An earlier version used the *minimum over all untouched keys*. Audit of live
+captures showed it delivering ~9% of the needed correction — a hand is local,
+so the far keys it never lifts dominated a global minimum. If every key is
+held there is no reference key and the estimate is zero: no correction is
+ever applied without evidence.
+
+> The telemetry's raw field shows the value *after* this subtraction (it is
+> tap 0 of the filter), so the correction is directly visible in captures:
+> uncorrected is `A−B − 110`, and the difference from `raw` is the estimate.
 
 **Output ceiling.** Full pressure is 4095 DAC counts ≈ 10 V at the jack. The
 208p wants ~13.5 V for a fully open gate. The DAC (LTC2620 format) has no gain

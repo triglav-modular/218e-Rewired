@@ -43,6 +43,7 @@ public class RecoverPressurePatch extends GhidraScript {
         recover(0x8001a350L, "vibrato_engine");
         recover(0x8001a480L, "scan_housekeeping");
         recover(0x8001a600L, "dac_interpolator");
+        recover(0x8001a6a0L, "proximity_estimator");
         analyzeChanges(currentProgram);
     }
 }

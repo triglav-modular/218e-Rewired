@@ -62,7 +62,7 @@ FEATURE_MAP = {
     "knobs.knob4":            (["vibrato_engine"], ["knob4_vibrato"]),
     "arp.switch":             (["noteoff_pool_1", "noteoff_pool_2"], ["arp_latch"]),
     "midi.poly_default":      ([], ["poly_midi_default_off"]),
-    "pressure.common_mode":   ([], ["pressure_common_mode"]),
+    "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook"], []),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
@@ -564,6 +564,7 @@ def main() -> None:
         "pressure_floor_default": calib["floor"],
         "pressure_ceiling_default": calib["ceiling"],
         "scan_period_ms": cfg["timing"]["scan_period_ms"],
+        "proximity_reference": cfg["pressure"].get("proximity_reference", 300),
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:
