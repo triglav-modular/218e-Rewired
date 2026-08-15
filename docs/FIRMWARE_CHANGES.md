@@ -98,6 +98,21 @@ immediate. Because pressure, pitch, the glide engine, the vibrato phase and the
 pressure attack ramp all advance once per scan, the period is a master clock
 and every one of those timings scales with it.
 
+**Resolution** (`[pressure].resolution_bits`, 4). The chain runs in fixed
+point: the growing average keeps four fractional bits instead of truncating
+to whole raw counts, the normalisation carries them, the curve lookup
+interpolates between adjacent table entries (a sentinel repeat of the last
+entry keeps `table[i+1]` in range), and the expansion divides by the scaled
+span. Averaging dithered samples genuinely recovers sub-count information, so
+this is real precision, not invention: the window resolves about 4000 output
+values instead of ~300, filling the 12-bit DAC.
+
+The transfer function is unchanged — the same mapping, sampled finely rather
+than once per raw count. It is not bit-identical at integer inputs, because
+removing the intermediate truncation shifts values by up to one old
+quantisation step; the build's tests assert exactly that bound. Setting the
+value to 0 restores the original integer arithmetic.
+
 **Smoothing.** The factory 16-tap boxcar (80 ms at the 200 Hz scan rate) was
 replaced by the 218r's **growing average**, with a configurable depth
 (`[pressure].smoothing_taps`, 8..24 taps = 40..120 ms; `variable_filter`,

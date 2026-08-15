@@ -640,6 +640,7 @@ def main() -> None:
         "black_key_scale_32": round(cfg["pressure"].get("black_key_scale", 1.35) * 32),
         "smoothing_taps": cfg["pressure"].get("smoothing_taps", 8),
         "curve_default_level": cfg["pressure"]["curve"].get("default_level", 31),
+        "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:

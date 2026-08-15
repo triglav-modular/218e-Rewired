@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "bdc25f624c34e281a60e65170505910fb3642fbdc5c69c54d31b5e24027f4265"
+golden_sha256  = "69fd7406f2f216e8ca8b8d85ed986b4d065d7e0bede0e02e85da661eb9cdbef0"
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +100,16 @@ black_key_scale = 1.2
 # This is the alternative to shortening the scan period, which the profiler
 # showed has no headroom for it.
 output_smoothing = 5
+
+# Fractional bits carried through the pressure chain (0..4).  Averaging N
+# dithered samples recovers sub-count information that the old integer chain
+# threw away, which limited the 12-bit DAC to one step per raw count — about
+# 300 levels across the calibration window.  Carrying the fraction through
+# the normalisation, an interpolated curve lookup and the expansion fills the
+# steps in between.  The transfer function is identical either way: this is
+# the same mapping sampled finely, so the feel does not change.  0 restores
+# the original integer arithmetic exactly.
+resolution_bits = 4
 
 # Depth of the growing-average filter, in taps (8..24 = 40..120 ms at the
 # 5 ms scan).  Deep settings smooth wobble during holds but lag the attack —

@@ -114,6 +114,50 @@ def test_tables(cfg: dict) -> None:
         check("fade rejoins the curve", faded[fade:] == plain[fade:])
 
 
+def test_resolution(cfg: dict) -> None:
+    """The fixed-point chain must be the same mapping, finely sampled."""
+    print("pressure resolution")
+    curve = cfg["pressure"]["curve"]
+    calib = cfg["pressure"]["calibration"]
+    bits = cfg["pressure"].get("resolution_bits", 4)
+    span = curve["span"]
+    tab = B.pressure_curve(span, curve["onset_db"], curve.get("onset_fade", 0))
+    tab = tab + [tab[-1]]                       # the firmware's sentinel entry
+    floor, ceil = calib["floor"], calib["ceiling"]
+
+    def old(avg, lvl):
+        n = 0 if avg <= floor else span if avg >= ceil else (avg-floor)*span//(ceil-floor)
+        if lvl:
+            k = (lvl << 3) + (lvl >> 2)
+            n -= ((n - tab[n]) * k + 128) >> 8
+        return (4095 * n + span//2) // span
+
+    def new(a16, lvl):
+        f, c = floor << bits, ceil << bits
+        n = 0 if a16 <= f else span << bits if a16 >= c else (a16-f)*span//(ceil-floor)
+        if lvl:
+            i, fr = n >> bits, n & ((1 << bits) - 1)
+            cv = (tab[i] << bits) + (tab[i+1] - tab[i]) * fr
+            k = (lvl << 3) + (lvl >> 2)
+            n -= ((n - cv) * k + 128) >> 8
+        return (4095 * n + (span << bits)//2) // (span << bits)
+
+    ok = True
+    for lvl in (0, 15, 31):
+        for avg in range(floor, ceil):
+            step = abs(old(avg+1, lvl) - old(avg, lvl))
+            if abs(new(avg*16, lvl) - old(avg, lvl)) > max(step, 1):
+                ok = False
+    check("fixed-point chain stays within one old quantisation step", ok)
+    check("endpoints preserved",
+          new(floor << bits, 31) == 0 and new(ceil << bits, 31) == old(ceil, 31))
+    for lvl in (0, 31):
+        levels = len({new(a, lvl) for a in range(floor << bits, (ceil << bits) + 1)})
+        check(f"level {lvl} resolves >2000 output values (was ~{ceil-floor})", levels > 2000,
+              f"{levels}")
+    check("curve monotone with the sentinel", tab == sorted(tab))
+
+
 def test_overlap_and_range() -> None:
     print("patch safety")
     memory = {a: 0 for a in range(0x1000, 0x2000)}
@@ -160,6 +204,7 @@ def main() -> None:
     test_pitch_table(cfg)
     test_scala()
     test_tables(cfg)
+    test_resolution(cfg)
     test_overlap_and_range()
     test_hex_roundtrip(cfg)
     if args.golden:

@@ -321,7 +321,14 @@ public class AssemblePressureFix extends GhidraScript {
         // exceed the linear ramp, so the blend must use an arithmetic shift.
         begin(0x80018d80L);
         emitTable("pressure_curve");
-        finish("half_decade_exponential_curve_table", 0x800194a4L);
+        // One sentinel repeat of the last entry: the interpolating lookup
+        // reads table[i+1], and at full scale i is the final index.  A
+        // sentinel is cheaper and safer than a bounds test in the hot path.
+        {
+            int[] curveTable = table("pressure_curve");
+            halfword(curveTable[curveTable.length - 1]);
+        }
+        finish("half_decade_exponential_curve_table", 0x800194a8L);
 
         // Ordinary knob 1 trims the full-pressure endpoint around the
         // hardcoded default: ceiling = (knob >> 2) + 712, i.e. 712..967 with
@@ -461,28 +468,57 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
         emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
         padTo(0x80019670L);
-
+        // The chain below runs in fixed point with `resolution_bits`
+        // fractional bits, so the transfer function is unchanged — it is the
+        // same mapping sampled finely instead of once per raw count.  With
+        // bits = 0 every shift disappears and this is the original integer
+        // arithmetic exactly.
+        final int BITS = number("resolution_bits", 4, 0, 4);
+        final int SPAN = 0x391 << BITS;
+        if (BITS > 0) {
+            emit(String.format("LSL R10,0x%x", BITS));
+            emit(String.format("LSL R9,0x%x", BITS));
+        }
         emit("CP.W R8,R10");
-        emit("BR{hi} 0x80019682");
+        emit("BR{hi} 0x80019686");
         emit("MOV R8,0x0");
-        emit("RJMP 0x800196a0");
-        padTo(0x80019682L);
+        emit("RJMP 0x800196ac");
+        padTo(0x80019686L);
         emit("CP.W R8,R9");
-        emit("BR{lt} 0x80019690");
-        emit("MOV R8,0x391");
-        emit("RJMP 0x800196a0");
-        padTo(0x80019690L);
+        emit("BR{lt} 0x80019698");
+        emit(String.format("MOV R8,0x%x", SPAN));
+        emit("RJMP 0x800196ac");
+        padTo(0x80019698L);
         emit("SUB R8,R10");
         emit("SUB R9,R10");
         emit("MOV R10,0x391");
         emit("MUL R8,R10,R8");
+        if (BITS > 0) {
+            emit(String.format("LSR R9,0x%x", BITS));
+        }
         emit("DIVU R8,R8,R9");
-        padTo(0x800196a0L);
+        padTo(0x800196acL);
 
         emit("CP.W R7,0x0");
-        emit("BR{eq} 0x800196cc");
+        emit("BR{eq} 0x800196f4");
         emit("LDDPC R12,0x8001972c");
-        emit("LD.UH R9,R12[R8 << 0x1]");
+        if (BITS > 0) {
+            // Interpolate the curve between adjacent table entries, so the
+            // fractional part survives the lookup.  The index is clamped
+            // below the last entry before its neighbour is read.
+            emit(String.format("LSR R11,R8,0x%x", BITS));
+            emit(String.format("BFEXTU R10,R8,0x0,0x%x", BITS));
+            emit("LSL R11,0x1");
+            emit("ADD R12,R11");
+            emit("LD.UH R9,R12[0x0]");
+            emit("LD.UH R11,R12[0x2]");
+            emit("SUB R11,R9");
+            emit("MUL R11,R11,R10");
+            emit(String.format("LSL R9,0x%x", BITS));
+            emit("ADD R9,R11");
+        } else {
+            emit("LD.UH R9,R12[R8 << 0x1]");
+        }
         emit("SUB R9,R8,R9 << 0x0");
         emit("MOV R10,R7");
         emit("LSR R11,R10,0x2");
@@ -492,11 +528,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R9,-0x80");
         emit("ASR R9,0x8");
         emit("SUB R8,R9");
-        padTo(0x800196ccL);
+        padTo(0x800196f4L);
         emit("MOV R9,0xfff");
         emit("MUL R8,R9,R8");
-        emit("SUB R8,-0x1c8");
-        emit("MOV R9,0x391");
+        emit(String.format("SUB R8,-0x%x", SPAN / 2));
+        emit(String.format("MOV R9,0x%x", SPAN));
         emit("DIVU R8,R8,R9");
         emit("MOV R12,R8");
         emit("MCALL PC[0x80019730]");
@@ -1650,10 +1686,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R12,-0x2");
         emit("SUB R11,0x1");
         emit("BR{ne} 0x8001a85c");
+        // Keep `resolution_bits` fractional bits of the mean.  Averaging N
+        // dithered samples carries genuine sub-count information; discarding
+        // it here is what limited a 12-bit DAC to one step per raw count.
+        if (number("resolution_bits", 4, 0, 4) > 0) {
+            emit(String.format("LSL R8,0x%x", number("resolution_bits", 4, 0, 4)));
+        }
         emit("DIVU R8,R8,R10");
         emit("MOV R12,R8");
         emit("LDM SP++,R7,PC");
-        finish("variable_filter", 0x8001a870L);
+        finish("variable_filter", 0x8001a878L);
 
         // (Edit knob 2 smoothing control removed for now: the wrapper ran and
         // stored, but its ADC mirror read never followed the physical knob in
