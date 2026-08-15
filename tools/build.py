@@ -31,6 +31,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tomllib
@@ -542,9 +543,17 @@ def apply_patches(memory: dict[int, int], patches) -> tuple[int, int]:
 
 
 def replace_atomically(path: Path, text: str) -> None:
-    """Write via a sibling temporary file so the replacement cannot tear."""
+    """Write via a sibling temporary file so the replacement cannot tear.
+
+    The replacement carries the temporary file's permissions, so the original
+    mode has to be copied across first — otherwise this silently strips the
+    execute bit from the updater and Finder refuses to launch it.
+    """
+    mode = path.stat().st_mode if path.exists() else None
     temporary = path.with_name(path.name + ".new")
     temporary.write_text(text)
+    if mode is not None:
+        os.chmod(temporary, stat.S_IMODE(mode))
     os.replace(temporary, path)
 
 

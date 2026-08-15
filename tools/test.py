@@ -176,6 +176,24 @@ def test_overlap_and_range() -> None:
     check("non-overlapping patches apply", (changed, added) == (1, 0), f"{changed},{added}")
 
 
+def test_atomic_replace() -> None:
+    """The atomic replace must preserve the file mode: the updater is executable."""
+    print("file replacement")
+    import os
+    import stat as stat_module
+    path = REPO / "build" / "_test_mode.sh"
+    path.write_text("#!/bin/sh\n")
+    os.chmod(path, 0o755)
+    B.replace_atomically(path, "#!/bin/sh\n# rewritten\n")
+    mode = stat_module.S_IMODE(path.stat().st_mode)
+    check("replacement keeps the executable bit", mode == 0o755, oct(mode))
+    check("replacement writes the new content", "rewritten" in path.read_text())
+    updater = REPO / "ProgramLEM218_PressureFix.command"
+    if updater.exists():
+        mode = stat_module.S_IMODE(updater.stat().st_mode)
+        check("the shipped updater is executable", bool(mode & 0o111), oct(mode))
+
+
 def test_hex_roundtrip(cfg: dict) -> None:
     print("hex handling")
     factory = REPO / cfg["firmware"]["factory_hex"]
@@ -212,6 +230,7 @@ def main() -> None:
     test_tables(cfg)
     test_resolution(cfg)
     test_overlap_and_range()
+    test_atomic_replace()
     test_hex_roundtrip(cfg)
     if args.golden:
         test_golden(cfg)
