@@ -65,6 +65,7 @@ FEATURE_MAP = {
     "pressure.common_mode":   ([], ["pressure_common_mode"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook"], []),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
+    "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
 }
 
 # The value that means "new behaviour" for each setting; anything else (i.e.
@@ -79,6 +80,7 @@ ENABLED_WHEN = {
     "pressure.common_mode": True,
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
+    "diagnostics.scan_profiler": True,
 }
 
 

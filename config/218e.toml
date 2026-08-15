@@ -159,6 +159,17 @@ dac_gain   = 4.09
 
 
 # ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+[diagnostics]
+# Time every event handler with the CPU cycle counter and report the result
+# through the pressure telemetry, to find out how much of each scan period is
+# already used before shortening it.  Off for normal builds: it repurposes two
+# telemetry fields and adds a little overhead to every dispatch.
+scan_profiler = false
+
+
+# ---------------------------------------------------------------------------
 # Timing
 # ---------------------------------------------------------------------------
 [timing]

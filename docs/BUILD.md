@@ -145,11 +145,28 @@ The residual risk is the middle case: an application busy enough that the
 SysEx is dropped rather than answered. Retrying the updater helps, since
 dropping is a matter of queue space rather than a permanent state.
 
-**So measure the headroom before shortening the period, not after.** The safe
-way is a diagnostic build at the stock 5 ms that times the scan handler with
-the CPU cycle counter (`MFSR Rd,COUNT`) and reports it through the telemetry.
-If a scan takes 1.5 ms there is room for 4 ms; if it takes 3.8 ms there is
-not. Guessing here is what a JTAG session is made of.
+**So measure the headroom before shortening the period, not after.** That is
+what `[diagnostics].scan_profiler` is for. Set it true, rebuild and flash at
+the stock 5 ms — a build that changes no timing and so cannot lock you out —
+then read the numbers with a key held in edit mode:
+
+```bash
+# config/218e.toml:  [diagnostics] scan_profiler = true
+python3 tools/build.py
+./ReadLEM218_Pressure.command      # scan_component_a/b carry the profiler
+```
+
+`scan_component_a` is the worst single dispatch in cycles/32 (multiply by 32,
+divide by 60e6 for seconds) and `scan_component_b` is the main-loop CPU load
+in tenths of a percent. A worst dispatch of 1.5 ms and 30 % load means 4 ms
+has room; 3.8 ms and 80 % means it does not. See
+[PressureReadout_Protocol.md](../PressureReadout_Protocol.md).
+
+It works by wrapping the main loop's event dispatcher (`0x80004C64`, reached
+through the pool at `0x80007DC0`) with reads of the AVR32 cycle counter, which
+free-runs at the CPU clock and which nothing else in the firmware writes. Turn
+it back off for playing: it repurposes the two telemetry fields and adds a
+little overhead to every dispatch.
 
 **Measure whether the instrument keeps up** rather than assuming it: the
 pressure telemetry readout emits one frame per key per scan, so its cadence is

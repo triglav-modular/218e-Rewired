@@ -610,15 +610,27 @@ public class AssemblePressureFix extends GhidraScript {
         // subtraction; telemetry measures that possibility without changing
         // the pressure path.
         emit("LDDPC R12,0x80019930");
-        emit("LD.UB R10,R12[0x256]");     // active key index, 0..28
-        emit("LDDPC R11,0x80019938");     // key-to-scan-channel map
-        emit("LD.UB R10,R11[R10 << 0x0]");
-        emit("LSL R10,0x1");
-        emit("ADD R12,R12,R10 << 0x0");
-        emit("LD.UH R8,R12[0x86]");
-        emit("ST.H R7[-0x10],R8");       // scan component A
-        emit("LD.UH R8,R12[0xd6]");
-        emit("ST.H R7[-0x12],R8");       // scan component B
+        if (feature("scan_profiler")) {
+            // Diagnostic build: the two scan-component fields carry the
+            // profiler's numbers instead.  CC 114/115 is the worst single
+            // dispatch in cycles/32, CC 116/117 the CPU load in tenths of a
+            // percent.
+            emit("MOV R10,0x6032");
+            emit("LD.UH R8,R10[0x0]");
+            emit("ST.H R7[-0x10],R8");
+            emit("LD.UH R8,R10[0x2]");
+            emit("ST.H R7[-0x12],R8");
+        } else {
+            emit("LD.UB R10,R12[0x256]");     // active key index, 0..28
+            emit("LDDPC R11,0x80019938");     // key-to-scan-channel map
+            emit("LD.UB R10,R11[R10 << 0x0]");
+            emit("LSL R10,0x1");
+            emit("ADD R12,R12,R10 << 0x0");
+            emit("LD.UH R8,R12[0x86]");
+            emit("ST.H R7[-0x10],R8");       // scan component A
+            emit("LD.UH R8,R12[0xd6]");
+            emit("ST.H R7[-0x12],R8");       // scan component B
+        }
 
         // USB-MIDI channel 16, undefined CC range 102..118.  CC 118 is the
         // frame terminator, letting the receiver discard partial frames.
@@ -1230,6 +1242,83 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001a350L); // vibrato engine
         word(0x8001a480L); // latch watch + poly-MIDI boot force + common-mode
         finish("latch_v2", 0x8001a34cL);
+
+        // Scan profiler (diagnostic).  Wraps the main loop's event dispatcher
+        // so every event handler is timed with the CPU cycle counter, which
+        // free-runs at the CPU clock and which nothing else in the firmware
+        // writes.  Answers one question: how much of each scan period is
+        // already spoken for, and therefore whether a shorter period fits.
+        //
+        //   RAM 0x6032  worst single dispatch in the last window, cycles/32
+        //   RAM 0x6034  CPU load over the last window, tenths of a percent
+        //   RAM 0x6038  window start / 0x603c busy accumulator / 0x6040 max
+        //
+        // The accumulators need no initialisation: whatever the SRAM powers
+        // up holding produces one bogus window, after which the rollover
+        // resets everything.
+        begin(0x8001a540L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MFSR R8,COUNT");
+        emit("ST.W --SP,R8");
+        emit("MCALL PC[0x8001a5e0]");
+        emit("MFSR R9,COUNT");
+        emit("LD.W R8,SP++");
+        emit("SUB R9,R9,R8 << 0x0");   // cycles this dispatch took
+        emit("MOV R10,0x6038");
+        emit("LD.W R11,R10[0x4]");
+        emit("ADD R11,R9");
+        emit("ST.W R10[0x4],R11");     // busy += delta
+        emit("LD.W R11,R10[0x8]");
+        emit("CP.W R9,R11");
+        emit("BR{ls} 0x8001a570");
+        emit("ST.W R10[0x8],R9");      // max = delta
+        padTo(0x8001a570L);
+        emit("MFSR R8,COUNT");
+        emit("LD.W R11,R10[0x0]");
+        emit("SUB R8,R8,R11 << 0x0");  // elapsed since the window opened
+        emit("LDDPC R11,0x8001a5e4");
+        emit("CP.W R8,R11");
+        emit("BR{ls} 0x8001a5dc");     // window still open
+        emit("MOV R9,0x3e8");
+        emit("DIVU R8,R8,R9");         // R8 = elapsed/1000
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001a5c8");
+        emit("LD.W R12,R10[0x4]");
+        emit("DIVU R8,R12,R8");        // R8 = busy per mille of the window
+        emit("MOV R11,0x3e8");
+        emit("CP.W R8,R11");
+        emit("BR{ls} 0x8001a5a4");
+        emit("MOV R8,R11");
+        padTo(0x8001a5a4L);
+        emit("MOV R11,0x6034");
+        emit("ST.H R11[0x0],R8");      // load, tenths of a percent
+        emit("LD.W R12,R10[0x8]");
+        emit("LSR R12,0x5");           // cycles/32, to fit a 14-bit CC pair
+        emit("MOV R11,0x3fff");
+        emit("CP.W R12,R11");
+        emit("BR{ls} 0x8001a5bc");
+        emit("MOV R12,R11");
+        padTo(0x8001a5bcL);
+        emit("MOV R11,0x6032");
+        emit("ST.H R11[0x0],R12");     // worst dispatch
+        padTo(0x8001a5c8L);
+        emit("MOV R8,0x0");
+        emit("ST.W R10[0x4],R8");
+        emit("ST.W R10[0x8],R8");
+        emit("MFSR R8,COUNT");
+        emit("ST.W R10[0x0],R8");      // open the next window
+        padTo(0x8001a5dcL);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a5e0L);
+        word(0x80004c64L); // real event dispatcher
+        word(0x01000000L); // window length in cycles (~280 ms at 60 MHz)
+        finish("scan_profiler", 0x8001a5e8L);
+
+        // Main-loop dispatcher pointer -> profiler wrapper.
+        begin(0x80007dc0L);
+        word(0x8001a540L);
+        finish("profiler_pool", 0x80007dc4L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate

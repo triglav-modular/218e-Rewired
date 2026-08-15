@@ -16,6 +16,7 @@ The readout uses MIDI channel 16 control changes. A complete frame is:
 | 112, 113 | Saved full-pressure endpoint/ceiling |
 | 114, 115 | Active key scan component A, before factory subtraction |
 | 116, 117 | Active key scan component B, before factory subtraction |
+| | *(a `scan_profiler` build sends the profiler's two numbers in these four CCs instead — see below)* |
 | 118 | Curve level, 0–31, and end-of-frame marker |
 
 For every adjacent pair, `value = MSB * 128 + LSB`. The readout accepts a frame
@@ -53,3 +54,26 @@ reference from which a weighted subtraction can distinguish the two. The
 light/mid/max measurements are still useful for setting the floor and ceiling;
 eliminating proximity completely would require an electrical or mechanical
 change that makes proximity distinguishable at the sensor.
+
+## Scan profiler builds
+
+With `[diagnostics].scan_profiler = true` the firmware times every event
+handler with the CPU cycle counter, and the two scan-component fields carry
+the result instead of scan data:
+
+| CC | Meaning |
+|---:|---|
+| 114, 115 | Worst single dispatch in the last ~280 ms window, in **cycles/32** — multiply by 32 and divide by the 60 MHz clock for seconds |
+| 116, 117 | Main-loop CPU load over the same window, in **tenths of a percent** |
+
+So `2812` in the first pair is 2812 x 32 / 60e6 = 1.5 ms, and `300` in the
+second is 30.0 %. The readout tool needs no changes; it just labels them
+`scan_component_a` and `scan_component_b`.
+
+Read both with a key held in edit mode, since that is the only time telemetry
+is sent. Two things make the numbers conservative rather than optimistic,
+which is the right direction for deciding whether a shorter scan period fits:
+
+- telemetry is itself being sent while you measure, and that work is included;
+- the profiler times the main loop's dispatcher only, so interrupt time — USB,
+  timers, ADC — is *not* counted. Treat the load as a lower bound.
