@@ -81,6 +81,12 @@ common_mode = true
 # feels lighter than before; lower it toward 110 for stronger rejection.
 proximity_reference = 300
 
+# Black keys have smaller pads, so the same press couples less charge — the
+# measured black/white ratio runs 0.72x (light) to 0.81x (full).  Their raw
+# reading is multiplied by this before everything else, putting both key
+# colours in one calibration window.  1.0 disables it.
+black_key_scale = 1.35
+
 # Smooth the pressure CV at the 1 kHz DAC flush instead of letting it step
 # once per scan.  The value is a shift: each millisecond the output closes
 # 1/2^n of the gap to the latest scan value, so 1 is fast and 4 is gentle.

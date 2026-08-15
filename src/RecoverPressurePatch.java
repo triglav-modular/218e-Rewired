@@ -45,6 +45,7 @@ public class RecoverPressurePatch extends GhidraScript {
         recover(0x8001a600L, "dac_interpolator");
         recover(0x8001a6a0L, "proximity_estimator");
         recover(0x8001a750L, "octswitch_sync");
+        recover(0x8001a790L, "pressure_prep");
         analyzeChanges(currentProgram);
     }
 }

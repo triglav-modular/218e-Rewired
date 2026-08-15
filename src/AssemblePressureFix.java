@@ -402,25 +402,16 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x80019580L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        if (feature("pressure_ab_switch")) {
-            // Debug A/B: when the octave switch sits in the position that
-            // raises the first shadow flag, run the FACTORY pressure law —
-            // linear gain with hard saturation, no window, no curve, no
-            // proximity correction.  The 1 kHz interpolator stands in for
-            // the factory boxcar.  The switch's normal octave function is
-            // frozen at its power-on position (see octswitch_sync).
-            emit("MOV R9,0x6046");
-            emit("LD.UB R9,R9[0x0]");
-            emit("CP.W R9,0x1");
-            emit("BR{ne} 0x800195a8");
-            emit(String.format("LSL R12,0x%x", number("factory_gain_shift", 3, 1, 5)));
-            emit("MOV R9,0xfff");
-            emit("CP.W R12,R9");
-            emit("BR{ls} 0x800195a0");
-            emit("MOV R12,R9");
-            padTo(0x800195a0L);
-            emit("LDM SP++,R7,PC");
-        }
+        // Prep cave: black-key scaling, and the debug A/B factory law.
+        // Returns R9=0 to continue with our law (R12 = scaled raw), or R9=1
+        // when the factory law already produced the final value — as a
+        // FLOAT, because the caller feeds our return through the factory's
+        // float-to-int helper; returning a raw integer here reads as a
+        // denormal ~1e-42 and truncates to zero output.
+        emit("MCALL PC[0x80019734]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x800195a8");
+        emit("LDM SP++,R7,PC");
         padTo(0x800195a8L);
         emit("MOV R8,R12");
         if (feature("pressure_common_mode")) {
@@ -540,7 +531,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         word(0x80018d80L); // full-resolution curve table
         word(0x80019740L); // edit-mode USB pressure telemetry
-        finish("calibrated_pressure_curve", 0x80019734L);
+        word(0x8001a790L); // prep: black-key scale + debug A/B
+        finish("calibrated_pressure_curve", 0x80019738L);
 
         // Rate-limited calibration telemetry.  This function is called after
         // the pressure result has been calculated, so it cannot alter the
@@ -1540,6 +1532,53 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001a788L);
         word(0x00003560L); // global state base
         finish("octswitch_sync", 0x8001a78cL);
+
+        // Pressure prep.  (1) Black keys have physically smaller pads, so the
+        // same finger pressure couples less charge — measured ~0.72-0.81x of
+        // a white key.  Scale the raw value up for black keys (mask bit per
+        // key, C at the bottom) so both key colours land in one calibration
+        // window.  (2) The debug A/B factory law, when enabled: linear gain
+        // into saturation, converted through the same int-to-float helper the
+        // normal epilogue uses, since the caller expects a float back.
+        begin(0x8001a790L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R10,0x8001a7f0");
+        emit("LD.UB R8,R10[0x256]");
+        emit("CP.W R8,0x1c");
+        emit("BR{hi} 0x8001a7c0");
+        emit("MOV R9,0xa54a");
+        emit("ORH R9,0xa54");
+        emit("LSR R9,R9,R8");
+        emit("BFEXTU R9,R9,0x0,0x1");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001a7c0");
+        emit(String.format("MOV R9,0x%x", number("black_key_scale_32", 43, 32, 96)));
+        emit("MUL R12,R12,R9");
+        emit("LSR R12,0x5");
+        padTo(0x8001a7c0L);
+        if (feature("pressure_ab_switch")) {
+            emit("MOV R9,0x6046");
+            emit("LD.UB R9,R9[0x0]");
+            emit("CP.W R9,0x1");
+            emit("BR{ne} 0x8001a7e8");
+            emit(String.format("LSL R12,0x%x", number("factory_gain_shift", 3, 1, 5)));
+            emit("MOV R9,0xfff");
+            emit("CP.W R12,R9");
+            emit("BR{ls} 0x8001a7d8");
+            emit("MOV R12,R9");
+            padTo(0x8001a7d8L);
+            emit("MCALL PC[0x8001a7f4]");
+            emit("MOV R9,0x1");
+            emit("LDM SP++,R7,PC");
+        }
+        padTo(0x8001a7e8L);
+        emit("MOV R9,0x0");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a7f0L);
+        word(0x00003560L); // global state base
+        word(0x80013350L); // signed-int-to-float helper (same as the epilogue)
+        finish("pressure_prep", 0x8001a7f8L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate

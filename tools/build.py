@@ -571,6 +571,7 @@ def main() -> None:
         "scan_period_ms": cfg["timing"]["scan_period_ms"],
         "proximity_reference": cfg["pressure"].get("proximity_reference", 300),
         "factory_gain_shift": cfg["diagnostics"].get("factory_gain_shift", 3),
+        "black_key_scale_32": round(cfg["pressure"].get("black_key_scale", 1.35) * 32),
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:
