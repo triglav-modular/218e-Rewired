@@ -66,6 +66,10 @@ FEATURE_MAP = {
     "portamento.pressure_blend": (["pitch_target_blend_hook"], []),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
+    "diagnostics.pressure_ab_switch": (
+        ["octswitch_sync"] + [f"octsw_redirect_{i}" for i in range(1, 10)],
+        ["pressure_ab_switch"],
+    ),
 }
 
 # The value that means "new behaviour" for each setting; anything else (i.e.
@@ -81,6 +85,7 @@ ENABLED_WHEN = {
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
+    "diagnostics.pressure_ab_switch": True,
 }
 
 
@@ -565,6 +570,7 @@ def main() -> None:
         "pressure_ceiling_default": calib["ceiling"],
         "scan_period_ms": cfg["timing"]["scan_period_ms"],
         "proximity_reference": cfg["pressure"].get("proximity_reference", 300),
+        "factory_gain_shift": cfg["diagnostics"].get("factory_gain_shift", 3),
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:

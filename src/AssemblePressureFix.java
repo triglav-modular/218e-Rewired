@@ -402,6 +402,26 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x80019580L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
+        if (feature("pressure_ab_switch")) {
+            // Debug A/B: when the octave switch sits in the position that
+            // raises the first shadow flag, run the FACTORY pressure law —
+            // linear gain with hard saturation, no window, no curve, no
+            // proximity correction.  The 1 kHz interpolator stands in for
+            // the factory boxcar.  The switch's normal octave function is
+            // frozen at its power-on position (see octswitch_sync).
+            emit("MOV R9,0x6046");
+            emit("LD.UB R9,R9[0x0]");
+            emit("CP.W R9,0x1");
+            emit("BR{ne} 0x800195a8");
+            emit(String.format("LSL R12,0x%x", number("factory_gain_shift", 3, 1, 5)));
+            emit("MOV R9,0xfff");
+            emit("CP.W R12,R9");
+            emit("BR{ls} 0x800195a0");
+            emit("MOV R12,R9");
+            padTo(0x800195a0L);
+            emit("LDM SP++,R7,PC");
+        }
+        padTo(0x800195a8L);
         emit("MOV R8,R12");
         if (feature("pressure_common_mode")) {
             // Subtract the per-scan common-mode estimate published by
@@ -410,37 +430,37 @@ public class AssemblePressureFix extends GhidraScript {
             emit("LD.SH R9,R9[0x0]");
             emit("SUB R8,R8,R9 << 0x0");
             emit("CP.W R8,0x0");
-            emit("BR{ge} 0x8001959c");
+            emit("BR{ge} 0x800195bc");
             emit("MOV R8,0x0");
         }
-        padTo(0x8001959cL);
+        padTo(0x800195bcL);
         emit("LDDPC R10,0x80019720");
         emit("LD.UH R9,R10[0x10]");
         emit("SUB R9,-0x1");
         emit("CP.W R9,0x8");
-        emit("BR{ls} 0x800195b0");
+        emit("BR{ls} 0x800195d0");
         emit("MOV R9,0x8");
-        padTo(0x800195b0L);
+        padTo(0x800195d0L);
         emit("ST.H R10[0x10],R9");
         emit("MOV R12,R10");
         emit("SUB R12,-0xe");
         emit("MOV R11,0x7");
-        padTo(0x800195bcL);
+        padTo(0x800195dcL);
         emit("LD.UH R7,R12[-0x2]");
         emit("ST.H R12[0x0],R7");
         emit("SUB R12,0x2");
         emit("SUB R11,0x1");
-        emit("BR{ne} 0x800195bc");
+        emit("BR{ne} 0x800195dc");
         emit("ST.H R10[0x0],R8");
         emit("MOV R12,R10");
         emit("MOV R11,R9");
         emit("MOV R8,0x0");
-        padTo(0x800195d0L);
+        padTo(0x800195f0L);
         emit("LD.UH R7,R12[0x0]");
         emit("ADD R8,R7");
         emit("SUB R12,-0x2");
         emit("SUB R11,0x1");
-        emit("BR{ne} 0x800195d0");
+        emit("BR{ne} 0x800195f0");
         emit("DIVU R8,R8,R9");
         padTo(0x80019600L);
 
@@ -1256,6 +1276,9 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MCALL PC[0x8001a344]");      // vibrato engine
         }
         emit("MCALL PC[0x8001a348]");          // per-scan housekeeping
+        if (feature("pressure_ab_switch")) {
+            emit("MCALL PC[0x8001a34c]");      // octave-switch shadow sync
+        }
         emit("LDM SP++,R7,PC");
         padTo(0x8001a338L);
         word(0x00003560L); // global state base
@@ -1263,7 +1286,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019a40L); // tuning applier
         word(0x8001a350L); // vibrato engine
         word(0x8001a480L); // latch watch + poly-MIDI boot force + common-mode
-        finish("latch_v2", 0x8001a34cL);
+        word(0x8001a750L); // octave-switch shadow sync
+        finish("latch_v2", 0x8001a350L);
 
         // Scan profiler (diagnostic).  Wraps the main loop's event dispatcher
         // so every event handler is timed with the CPU cycle counter, which
@@ -1487,6 +1511,36 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         finish("proximity_estimator", 0x8001a74cL);
 
+        // Octave-switch shadow sync (debug A/B builds).  The switch reader's
+        // stores are redirected to shadow RAM (flags 0x6046/0x6047, position
+        // word 0x6048), so the live position drives only the pressure A/B.
+        // For the first ~200 scans after the power-up init the shadow is
+        // copied into the real state bytes, which applies the position the
+        // switch sits in at power-on; after that the octave function is
+        // frozen and the switch is free to flip.
+        begin(0x8001a750L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,0x604c");
+        emit("LD.UH R8,R9[0x0]");
+        emit("CP.W R8,0xc8");
+        emit("BR{ge} 0x8001a780");
+        emit("SUB R8,-0x1");
+        emit("ST.H R9[0x0],R8");
+        emit("LDDPC R10,0x8001a788");
+        emit("MOV R9,0x6046");
+        emit("LD.UB R8,R9[0x0]");
+        emit("ST.B R10[0x342],R8");
+        emit("LD.UB R8,R9[0x1]");
+        emit("ST.B R10[0x343],R8");
+        emit("LD.W R8,R9[0x2]");
+        emit("ST.W R10[0x344],R8");
+        padTo(0x8001a780L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a788L);
+        word(0x00003560L); // global state base
+        finish("octswitch_sync", 0x8001a78cL);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -1590,7 +1644,10 @@ public class AssemblePressureFix extends GhidraScript {
         // the arpeggiator lock onto that key.
         emit("MOV R9,0x6000");
         emit("ST.B R9[0x0],R8");
-        padTo(0x8001a4a4L);
+        // Octave-switch boot window counter (see octswitch_sync).
+        emit("MOV R9,0x604c");
+        emit("ST.H R9[0x0],R8");
+        padTo(0x8001a4acL);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases every latched key.
             emit("LD.UB R8,R10[0x340]");
@@ -1598,20 +1655,20 @@ public class AssemblePressureFix extends GhidraScript {
             emit("LD.UB R9,R11[0x0]");
             emit("ST.B R11[0x0],R8");
             emit("CP.W R9,0x1");
-            emit("BR{ne} 0x8001a4d8");
+            emit("BR{ne} 0x8001a4e0");
             emit("CP.W R8,0x1");
-            emit("BR{eq} 0x8001a4d8");
+            emit("BR{eq} 0x8001a4e0");
             emit("MOV R9,0x0");
             emit("ST.B R10[0x21a],R9");
             emit("MOV R9,0x1f");
-            padTo(0x8001a4c8L);
+            padTo(0x8001a4d0L);
             emit("ADD R12,R10,R9 << 0x0");
             emit("MOV R8,0x0");
             emit("ST.B R12[0x21b],R8");
             emit("SUB R9,0x1");
-            emit("BR{ge} 0x8001a4c8");
+            emit("BR{ge} 0x8001a4d0");
         }
-        padTo(0x8001a4d8L);
+        padTo(0x8001a4e0L);
         if (feature("pressure_common_mode")) {
             // Proximity estimate, in its own cave: the nearest untouched key
             // on each side of the active key samples the hovering hand's
@@ -1838,6 +1895,18 @@ public class AssemblePressureFix extends GhidraScript {
         // once per scan too, so their timings scale with it.
         fixedPatch("scan_period", 0x80007c0cL, 2,
             String.format("MOV R10,0x%x", number("scan_period_ms", 5, 1, 20)));
+
+        // Octave-switch reader: redirect the second switch's stores to shadow
+        // RAM so flipping it changes only the pressure A/B (debug builds).
+        fixedPatch("octsw_redirect_1", 0x800039ccL, 4, "ST.B R9[0x2ae7],R8");
+        fixedPatch("octsw_redirect_2", 0x800039d4L, 4, "ST.B R9[0x2ae6],R8");
+        fixedPatch("octsw_redirect_3", 0x800039dcL, 4, "ST.W R8[0x2ae8],R9");
+        fixedPatch("octsw_redirect_4", 0x800039f2L, 4, "ST.B R9[0x2ae6],R8");
+        fixedPatch("octsw_redirect_5", 0x800039faL, 4, "ST.B R9[0x2ae7],R8");
+        fixedPatch("octsw_redirect_6", 0x80003a02L, 4, "ST.W R8[0x2ae8],R9");
+        fixedPatch("octsw_redirect_7", 0x80003a0cL, 4, "ST.B R9[0x2ae6],R8");
+        fixedPatch("octsw_redirect_8", 0x80003a14L, 4, "ST.B R9[0x2ae7],R8");
+        fixedPatch("octsw_redirect_9", 0x80003a1cL, 4, "ST.W R8[0x2ae8],R9");
 
         singlePatch("pressure_gain_nop", 0x800043a4L, "NOP");
         fixedPatch("transpose_force_1", 0x80005466L, 4, "MOV R8,0x1");

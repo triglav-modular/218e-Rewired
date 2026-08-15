@@ -202,6 +202,16 @@ dac_gain   = 4.09
 # telemetry fields and adds a little overhead to every dispatch.
 scan_profiler = false
 
+# A/B the pressure processing from the panel: the octave/preset/none switch
+# stops changing the octave mode (that function is frozen at whatever position
+# the switch sits in at power-on) and instead selects the pressure law live —
+# one end position runs the FACTORY law (linear gain with hard saturation, no
+# window, no curve, no proximity correction), the other positions run ours.
+# factory_gain_shift is the factory gain as a power of two: 3 = 8x, so full
+# output at ~512 raw counts.
+pressure_ab_switch = true
+factory_gain_shift = 3
+
 
 # ---------------------------------------------------------------------------
 # Timing
