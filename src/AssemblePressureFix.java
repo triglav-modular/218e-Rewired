@@ -832,10 +832,6 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x854");
         emit("ADD R8,R8,R2 << 0x1");
         emit("LD.UH R10,R8[0x0]");
-        emit("SUB R8,R10,R11 << 0x0");
-        emit("ABS R8");
-        emit("CP.W R8,0x1e4");
-        emit("BR{ge} 0x80019d08");
         emit("MOV R8,0x3686");
         emit("ADD R8,R8,R2 << 0x1");
         emit("LD.UH R8,R8[0x0]");
@@ -1717,25 +1713,38 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019c64L); // the real blend cave entry
         finish("transpose_capture", 0x8001a8e4L);
 
-        // Post-glide blend apply: adds the pressure-weighted offset the
-        // blend cave published, then chains into the pitch remap.  Sits on
-        // the glide OUTPUT, so pressure moves pitch at scan rate no matter
-        // where the portamento knob sits.
+        // Post-glide blend apply, with smoothing.  The blend cave publishes a
+        // raw offset target each scan; this shim slews the APPLIED offset a
+        // quarter of the way there per scan (~20 ms settle, RAM 0x60e2), so
+        // sensor jitter walking the z quantisation near the threshold cannot
+        // frequency-modulate the pitch.  The +-1 nudge prevents the shift
+        // from stalling short of the target.
         begin(0x8001a8f0L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R9,0x60e0");
-        emit("LD.SH R9,R9[0x0]");
-        emit("ADD R12,R9");
+        emit("LD.SH R10,R9[0x0]");
+        emit("LD.SH R8,R9[0x2]");
+        emit("SUB R11,R10,R8 << 0x0");
+        emit("ASR R11,0x2");
+        emit("CP.W R11,0x0");
+        emit("BR{ne} 0x8001a914");
+        emit("CP.W R10,R8");
+        emit("BR{le} 0x8001a914");
+        emit("MOV R11,0x1");
+        padTo(0x8001a914L);
+        emit("ADD R8,R11");
+        emit("ST.H R9[0x2],R8");
+        emit("ADD R12,R8");
         emit("CP.W R12,0x0");
-        emit("BR{ge} 0x8001a904");
+        emit("BR{ge} 0x8001a924");
         emit("MOV R12,0x0");
-        padTo(0x8001a904L);
-        emit("MCALL PC[0x8001a90c]");
+        padTo(0x8001a924L);
+        emit("MCALL PC[0x8001a92c]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001a90cL);
+        padTo(0x8001a92cL);
         word(0x80019980L); // the real pitch remap
-        finish("blend_offset_apply", 0x8001a910L);
+        finish("blend_offset_apply", 0x8001a930L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
