@@ -541,6 +541,27 @@ def apply_patches(memory: dict[int, int], patches) -> tuple[int, int]:
     return changed, added
 
 
+def replace_atomically(path: Path, text: str) -> None:
+    """Write via a sibling temporary file so the replacement cannot tear."""
+    temporary = path.with_name(path.name + ".new")
+    temporary.write_text(text)
+    os.replace(temporary, path)
+
+
+def knob_line(cfg: dict) -> str:
+    """Describe the outside-edit-mode knobs this configuration actually builds."""
+    outside = [("knob1", "arp_order", "arp note order"),
+               ("knob2", "arp_rhythm", "arp rhythm"),
+               ("knob3", "arp_octaves", "arp random octaves"),
+               ("knob4", "vibrato", "vibrato")]
+    active = [label for key, enabled, label in outside if cfg["knobs"].get(key) == enabled]
+    if len(active) == len(outside):
+        return 'echo "Outside edit mode those knobs control the arpeggiator and vibrato."'
+    if not active:
+        return 'echo "Outside edit mode all four knobs keep their factory behaviour."'
+    return f'echo "Outside edit mode: {", ".join(active)}; the others are factory."'
+
+
 def updater_summary(cfg: dict) -> str:
     """The panel description the flasher prints, derived from this config."""
     calib, curve = cfg["pressure"]["calibration"], cfg["pressure"]["curve"]
@@ -558,7 +579,7 @@ def updater_summary(cfg: dict) -> str:
         "# --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---",
         'echo "Ordinary edit mode provides the pressure calibration:"',
         *[f'echo "{line}"' for line in knobs],
-        'echo "Outside edit mode those knobs control the arpeggiator and vibrato."',
+        knob_line(cfg),
     ]
     if cfg["arp"]["switch"] == "latch":
         lines.append('echo "Arp switch: latch / regular / off. In latch, keys toggle by"')
@@ -570,8 +591,11 @@ def updater_summary(cfg: dict) -> str:
     if calib.get("trim_mode") == "scale":
         lines.append('echo "  1. Knob 4 fully left for a linear response."')
         lines.append('echo "  2. Run ReadLEM218_Pressure.command; with no key held, turn knob 1"')
+        span = cfg["_numbers"]["trim_scale_span"]
+        unity_pct = round(128 * 1024 / span / 1023 * 100)
         lines.append(f'echo "     and type \'settings\' until floor/ceiling read near '
-                     f'{calib["floor"]}/{calib["ceiling"]} (centre = the built-in calibration)."')
+                     f'{calib["floor"]}/{calib["ceiling"]} — the built-in calibration,"')
+        lines.append(f'echo "     at about {unity_pct}% of knob travel."')
         lines.append('echo "  3. Play light/mid/max touches; knob 1 scales the whole window,"')
         lines.append('echo "     so one control follows a change in how the instrument couples."')
         lines.append('echo "  4. Turn knob 4 right to taste, then leave edit mode to save."')
@@ -712,7 +736,23 @@ def main() -> None:
         # nothing else can write an endpoint behind its back.
         blocks["knob3_pressure_floor"] = False
         blocks["knob3_pool"] = False
-    summary.append(f"  {'pressure.trim_mode':28s} {mode!r}")
+    # Scale mode multiplies both endpoints by k/256.  The pressure path treats
+    # a ceiling above 1023 as invalid, so cap the multiplier at the value that
+    # keeps the scaled ceiling inside that limit: the knob then stays
+    # proportional across its whole travel instead of pinning the ceiling and
+    # narrowing the window as it climbs.
+    k_min = 0x80
+    k_max = min(0x180, (0x3FF * 256) // calib["ceiling"])
+    if mode == "scale" and k_max <= k_min:
+        raise SystemExit(
+            f"[pressure.calibration]: ceiling {calib['ceiling']} leaves no room to "
+            "scale up (the pressure path rejects a ceiling above 1023)")
+    cfg["_numbers"]["trim_scale_span"] = max(k_max - k_min, 0x10)
+    if mode == "scale":
+        summary.append(f"  {'pressure.trim_mode':28s} {mode!r}  "
+                       f"({k_min/256:.2f}x..{k_max/256:.2f}x)")
+    else:
+        summary.append(f"  {'pressure.trim_mode':28s} {mode!r}")
 
 
     # Output smoothing is a shift, not a toggle: 0 turns it off, and the three
@@ -797,11 +837,15 @@ def main() -> None:
             raise SystemExit(f"{updater_name}: generated-summary markers missing")
         staged_updater = (updater, patched, text)
 
-    out_path.write_text(rendered)
+    # Each replacement is atomic (sibling file, then os.replace), so no reader
+    # sees a half-written file.  The pair is still written in sequence: an
+    # interruption between them can leave a new image beside an old updater,
+    # which the flasher's checksum then refuses to flash.
+    replace_atomically(out_path, rendered)
     if staged_updater is not None:
         updater, patched, text = staged_updater
         if patched != text:
-            updater.write_text(patched)
+            replace_atomically(updater, patched)
             print(f"updated {updater.name} checksum and summary")
 
     print(f"wrote {out_path.relative_to(REPO)}")

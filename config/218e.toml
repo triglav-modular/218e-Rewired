@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "69fd7406f2f216e8ca8b8d85ed986b4d065d7e0bede0e02e85da661eb9cdbef0"
+golden_sha256  = "b57d3143060c32159e8b94c4255df08908e3a43bdaea410479654b65c12f27a3"
 
 
 # ---------------------------------------------------------------------------
@@ -121,22 +121,29 @@ smoothing_taps = 8
 # Where the pressure window sits when the instrument has no stored calibration
 # — which is the state after every firmware flash.  `floor` is the raw sensor
 # count at which output begins, `ceiling` the count that gives full output.
-# Edit-mode knobs 3 and 1 trim them live (floor 452..707, ceiling 712..967);
-# these numbers are what you get before touching either knob.
+# These are what you get before touching a knob; how the edit-mode knobs trim
+# them from there depends on trim_mode below.
 #
-# The ceiling default of 814 is what knob 1 reads at position 4.  Lowering it
-# makes full pressure easier to reach, at the cost of noise: the window is
-# mapped onto the full output range, so a narrower window amplifies sensor
-# noise proportionally (260 counts -> 18x, 234 counts -> 20x).
+# The window is mapped onto the full output range, so its width sets the noise
+# gain: the 301 counts here give about 16x, and narrowing it to reach full
+# pressure sooner raises that proportionally.
 floor   = 592
 ceiling = 893
 
-# "independent" — knob 1 trims the ceiling, knob 3 the floor.
-# "scale"       — knob 1 alone multiplies BOTH by 0.5x..1.5x, centred on 1.0x,
-#                 and knob 3 returns to its factory job.  Coupling changes
-#                 scale the whole signal, so one control that keeps the
-#                 floor/ceiling ratio fixed matches the physics: 0.70x is the
-#                 feet-up calibration, 1.0x the feet-down one.
+# "independent" — knob 1 trims the ceiling, knob 3 the floor, each centred on
+#                 the value above and reaching half of trim_span either side.
+# "scale"       — knob 1 alone multiplies BOTH endpoints and knob 3 returns to
+#                 its factory job.  Coupling changes scale the whole signal, so
+#                 one control that keeps the floor/ceiling ratio fixed matches
+#                 the physics: 0.70x is the feet-up calibration, 1.0x this one.
+#
+#                 The build sizes the multiplier range so the scaled ceiling
+#                 never reaches the 1023 the pressure path rejects — otherwise
+#                 the ceiling would pin partway up the knob while the floor
+#                 kept rising, narrowing the window instead of moving it.  With
+#                 the ceiling below, that gives 0.50x..1.14x, which puts this
+#                 calibration at roughly three-quarters of knob travel rather
+#                 than at the centre.  A lower ceiling buys more upward range.
 trim_mode = "scale"
 
 # How far edit-mode knobs 3 and 1 can trim those, in raw counts.  Each knob

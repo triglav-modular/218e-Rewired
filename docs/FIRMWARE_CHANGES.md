@@ -47,8 +47,11 @@ With `trim_mode = "scale"` knob 1 instead multiplies *both* endpoints by
 0.5x..1.5x, unity at centre, and knob 3 returns to its factory job. That is the
 shape the physics asks for: coupling scales the whole signal rather than moving
 one endpoint, so holding the floor/ceiling ratio fixed keeps the response
-identical and just re-ranges it. 1.0x is the configured calibration, and about
-20% of knob travel is 0.70x — the measured feet-up calibration.
+identical and just re-ranges it. The build sizes that range so the scaled ceiling never hits the 1023 the
+pressure path rejects, which keeps the floor/ceiling ratio fixed across the
+whole travel: with the current ceiling it runs 0.50x..1.14x, putting the
+configured calibration at about three-quarters of the knob and the measured
+feet-up calibration (0.70x) at about a third.
 
 The span matters more than it looks. Capacitive sensing couples through the
 player to ground, and simply lifting your feet off the floor shrinks the whole
@@ -56,8 +59,8 @@ signal by about 30% — a firm press falls from ~830 raw counts to ~546. That is
 a different calibration, not a different pressure, so the trim range has to be
 wide enough to reach it: with the original fixed 256-count range the ceiling
 bottomed out at 712, above anything a feet-up press could produce, and no knob
-position could make it play. The defaults are what you get after a flash, which wipes
-the stored calibration; 814 is what knob 1 reads at position 4.
+position could make it play. The defaults are what you get after a flash, which wipes the stored
+calibration.
 
 The window between floor and ceiling is mapped onto the full output range, so
 it sets the noise gain: the current 301-count window (592–893) gives about

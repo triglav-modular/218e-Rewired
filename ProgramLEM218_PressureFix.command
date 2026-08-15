@@ -12,7 +12,7 @@ FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/LEM218_PressureFix_fwflash_log.txt"
-EXPECTED_SHA256="69fd7406f2f216e8ca8b8d85ed986b4d065d7e0bede0e02e85da661eb9cdbef0"
+EXPECTED_SHA256="b57d3143060c32159e8b94c4255df08908e3a43bdaea410479654b65c12f27a3"
 
 # Support launching from either the package root or its mac directory.
 if [ -d "$SCRIPT_DIR/mac/support" ]; then
@@ -150,7 +150,8 @@ echo ""
 echo "Calibrating, in ordinary edit mode:"
 echo "  1. Knob 4 fully left for a linear response."
 echo "  2. Run ReadLEM218_Pressure.command; with no key held, turn knob 1"
-echo "     and type 'settings' until floor/ceiling read near 592/893 (centre = the built-in calibration)."
+echo "     and type 'settings' until floor/ceiling read near 592/893 — the built-in calibration,"
+echo "     at about 78% of knob travel."
 echo "  3. Play light/mid/max touches; knob 1 scales the whole window,"
 echo "     so one control follows a change in how the instrument couples."
 echo "  4. Turn knob 4 right to taste, then leave edit mode to save."

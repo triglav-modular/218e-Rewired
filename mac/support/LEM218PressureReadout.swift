@@ -16,7 +16,7 @@ struct PressureFrame {
 
     var curved: Int {
         // Firmware expands the integer curved value from 0...913 to 0...4095.
-        // That mapping is injective, so this rounding recovers it exactly.
+        // That mapping is injective, so this rounding recovers it approximately.
         return (output12 * 913 + 2047) / 4095
     }
 

@@ -82,7 +82,15 @@ it universal with:
 swiftc -O -target arm64-apple-macos11  -o /tmp/ro-arm64 mac/support/LEM218PressureReadout.swift
 swiftc -O -target x86_64-apple-macos11 -o /tmp/ro-x86   mac/support/LEM218PressureReadout.swift
 lipo -create /tmp/ro-arm64 /tmp/ro-x86 -output mac/support/lem218-pressure-readout
+codesign --force --sign - mac/support/lem218-pressure-readout   # required
 ```
+
+The `codesign` step is not optional: `lipo` produces a mixed state — the
+arm64 slice keeps its linker-generated ad-hoc signature while the x86_64
+slice has none — and the result fails `codesign --verify` and Gatekeeper
+assessment. Re-signing ad-hoc (`--sign -`) makes it verify and run locally;
+distributing it to other people would need Developer ID signing and
+notarisation.
 
 ## Flashing
 

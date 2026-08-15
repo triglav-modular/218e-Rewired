@@ -354,8 +354,14 @@ public class AssemblePressureFix extends GhidraScript {
             // 30% of it — so the useful control multiplies floor and ceiling
             // together rather than moving either endpoint on its own.
             // k runs 128..383 with 256 as unity, i.e. 0.5x to ~1.5x.
+            // k = 128 + adc * span / 1024, where the build sizes `span` so the
+            // scaled ceiling can never reach the 1023 validity limit.  A fixed
+            // 0.5x..1.5x range would pin the ceiling partway up the knob while
+            // the floor kept rising, narrowing the window instead of moving it.
             emit("LD.UH R8,R10[0x30a]");
-            emit("LSR R8,0x2");
+            emit(String.format("MOV R9,0x%x", number("trim_scale_span", 0x100, 0x10, 0x100)));
+            emit("MUL R8,R8,R9");
+            emit("LSR R8,0xa");
             emit("SUB R8,-0x80");
             emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
             emit("MUL R9,R9,R8");
@@ -572,8 +578,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ANDL R8,0x1f");            // one frame per 32 calculations
         emit("BR{ne} 0x80019910");
 
-        // Capture the newest baseline-subtracted sample and exact 16-tap
-        // average used by the pressure function.
+        // Capture the newest baseline-subtracted sample and the growing
+        // average, both rounded to whole counts.  The pressure path itself
+        // runs in fixed point, so these are a diagnostic approximation of it,
+        // not the values it computes.
         emit("LDDPC R12,0x8001992c");
         emit("LD.UH R8,R12[0x0]");
         emit("ST.H R7[-0x4],R8");        // instantaneous raw
