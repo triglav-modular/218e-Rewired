@@ -1726,19 +1726,20 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019980L); // the real pitch remap
         finish("blend_offset_apply", 0x8001a930L);
 
-// Pitch-aware latch toggle.  Latched notes are pitches, keys are
-        // access points: a press computes its would-be pitch (key table plus
-        // the live transpose) and unlatches whichever latched note sounds at
-        // that pitch, from any octave position.  The same physical key in a
-        // different octave does NOT unlatch — it re-latches the key at the
-        // current octave.  The offset stamp happens only when the press
-        // proceeds, so a toggling press can never corrupt a stamp first.
+// Pitch-aware latch: latched notes are pitches held in slots.  A slot k
+        // sounds at table[k] + stamp[k], and the stamp can be any value — so a
+        // pitch is not tied to its own key's slot.  A press computes its
+        // would-be pitch P: if a latched slot sounds P, it unlatches (toggle,
+        // from any octave).  Otherwise the pitch latches into the pressed
+        // key's slot, or any free slot if that one is occupied — the same key
+        // pressed in three octaves yields three latched notes.  With no free
+        // slot the press is suppressed.
         begin(0x8001a930L);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
-        emit("LDDPC R10,0x8001a9cc");
+        emit("LDDPC R10,0x8001aa08");
         emit("CP.W R12,0x1c");
-        emit("BR{hi} 0x8001a9a4");
+        emit("BR{hi} 0x8001a9e0");
         emit("MOV R8,0x854");
         emit("ADD R8,R8,R12 << 0x1");
         emit("LD.UH R11,R8[0x0]");
@@ -1747,7 +1748,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ADD R11,R8");
         emit("LD.UB R8,R10[0x340]");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001a994");
+        emit("BR{ne} 0x8001a9c0");
         emit("MOV R0,0x0");
         padTo(0x8001a960L);
         emit("ADD R9,R10,R0 << 0x0");
@@ -1762,33 +1763,53 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.SH R8,R8[0x2]");
         emit("ADD R9,R8");
         emit("CP.W R9,R11");
-        emit("BR{eq} 0x8001a9ac");
+        emit("BR{eq} 0x8001a9e8");
         padTo(0x8001a98cL);
         emit("SUB R0,-0x1");
         emit("CP.W R0,0x1c");
         emit("BR{le} 0x8001a960");
-        padTo(0x8001a994L);
+        emit("ADD R9,R10,R12 << 0x0");
+        emit("LD.UB R8,R9[0x21b]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001a9c0");
+        emit("MOV R0,0x0");
+        padTo(0x8001a9a4L);
+        emit("ADD R9,R10,R0 << 0x0");
+        emit("LD.UB R8,R9[0x21b]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001a9bc");
+        emit("SUB R0,-0x1");
+        emit("CP.W R0,0x1c");
+        emit("BR{le} 0x8001a9a4");
+        emit("MOV R12,-0x1");
+        emit("RJMP 0x8001a9e0");
+        padTo(0x8001a9bcL);
+        emit("MOV R12,R0");
+        padTo(0x8001a9c0L);
+        emit("MOV R8,0x854");
+        emit("ADD R8,R8,R12 << 0x1");
+        emit("LD.UH R9,R8[0x0]");
+        emit("SUB R9,R11,R9 << 0x0");
         emit("MOV R8,0x60a0");
-        emit("LD.SH R9,R8[0x0]");
         emit("ADD R8,R8,R12 << 0x1");
         emit("ST.H R8[0x2],R9");
-        padTo(0x8001a9a4L);
+        padTo(0x8001a9e0L);
         emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001a9acL);
+        padTo(0x8001a9e8L);
         emit("ADD R9,R10,R0 << 0x0");
         emit("MOV R8,0x0");
         emit("ST.B R9[0x21b],R8");
         emit("LD.UB R8,R10[0x21a]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001a9c4");
+        emit("BR{eq} 0x8001aa00");
         emit("SUB R8,0x1");
         emit("ST.B R10[0x21a],R8");
-        padTo(0x8001a9c4L);
+        padTo(0x8001aa00L);
         emit("MOV R12,-0x1");
         emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001a9ccL);
+        padTo(0x8001aa08L);
         word(0x00003560L); // global state base
-        finish("latch_pitch_toggle", 0x8001a9d0L);
+        finish("latch_pitch_toggle", 0x8001aa0cL);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
