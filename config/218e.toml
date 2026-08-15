@@ -141,6 +141,11 @@ trim_span = 512
 span     = 913
 onset_db = -10.0
 
+# How much of that curve is applied when the instrument has no stored setting
+# — the state after every flash.  0 is a purely linear response, 31 the full
+# 218r curve.  Edit knob 4 still sets it live.
+default_level = 31
+
 
 # ---------------------------------------------------------------------------
 # Portamento
@@ -221,7 +226,7 @@ scan_profiler = false
 # window, no curve, no proximity correction), the other positions run ours.
 # factory_gain_shift is the factory gain as a power of two: 3 = 8x, so full
 # output at ~512 raw counts.
-pressure_ab_switch = true
+pressure_ab_switch = false
 
 # Report the live smoothing state in the telemetry's scan-component fields:
 # scan A = filter depth in taps (8..24), scan B = interpolator shift (2..5).
