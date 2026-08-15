@@ -129,19 +129,12 @@ units_per_octave = 484
 # Pitch CV calibration (the in-firmware replacement for the uTune)
 # ---------------------------------------------------------------------------
 [pitch]
-# Measured 208p tracking error per key, in cents (positive = the 208p played
-# sharp).  Column `Semitones` counts up from the bottom key; `Measured_Cents`
-# holds the reading.  Keys above the last measured row keep the last
-# correction.  Re-measure, drop in a new CSV, rebuild.
-tracking_csv = "calibration/218e-key-calibration.csv"
-
-# 0 V on the 208p is an A, while the bottom key of the 218e is a C, so the
-# correction table is indexed three semitones below the first key.
-tracking_offset_semitones = 3
-
-# Octave calibration, one entry per octave of the pitch CV, in volts — the
-# numbers that used to live in the uTune.  Index 0 is the 0 V octave.
-octave_volts = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0231, 6.232, 7.0, 8.0, 9.0, 10.0]
+# One row per semitone, holding the voltage the 208p needs at that pitch as an
+# offset from an ideal 1 V/octave ramp.  This single table absorbs both the
+# coarse octave scaling that used to live in the uTune and each key's own
+# measured tracking error.  To recalibrate, measure the keys with a tuner and
+# run:  python3 tools/build.py --fold-measurement <your-readings.csv>
+calibration_csv = "calibration/218e-pitch-calibration.csv"
 
 # Pitch DAC scaling: full-scale counts, reference volts, output-stage gain.
 # 4096 / (2.5 * 4.09) = 400.59 counts per volt at the jack.

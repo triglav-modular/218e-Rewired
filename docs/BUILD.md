@@ -81,12 +81,31 @@ out of tune, and the build rejects it. Slot 0 is the power-on default. The
 special value `"factory"` copies the instrument's original temperament
 bit-exact out of the base image.
 
-**Recalibrate the pitch CV.** Re-measure each key's error in cents, update
-`calibration/218e-key-calibration.csv` (`Semitones` counts from the bottom key,
-`Measured_Cents` is positive when the 208p plays sharp), and rebuild. Keys
-above the last measured row keep the last correction. If the octave scaling
-itself drifts, adjust `[pitch].octave_volts` — those are the numbers that used
-to live in the uTune.
+**Recalibrate the pitch CV.** All of it — the octave scaling that used to live
+in the uTune and each key's own tracking error — is one table,
+`calibration/218e-pitch-calibration.csv`: one row per semitone above the
+208p's 0 V pitch, with `Offset_Cents` giving how far the output is pushed from
+an ideal 1 V/octave ramp.
+
+Corrections are **cumulative**, because you measure an instrument that is
+already applying the current table. So don't hand-edit the offsets from a
+tuner reading — record the readings and fold them in:
+
+```bash
+# your-readings.csv:  Key,Measured_Cents   (or Semitone,Measured_Cents)
+#                     positive = the note played sharp
+python3 tools/build.py --fold-measurement your-readings.csv
+python3 tools/build.py
+```
+
+The fold converts each reading into a voltage change using the octave width
+the table itself reports at that pitch — a cent costs more voltage where the
+208p's scaling is stretched, which it is by about 21 % near the top — and
+marks those rows `measured`. Rows you don't measure are left alone.
+
+For a calibration run, point slot 2 at `tunings/12TET.scl` rather than
+`"factory"` first: the factory temperament is up to 1.65 cents off exact
+12-TET, and measuring against it folds that error into your readings.
 
 **Hand a control back to the factory.** Set any knob to `"factory"`, or
 `[arp].switch = "factory"`. The patch that activates the new behaviour is then

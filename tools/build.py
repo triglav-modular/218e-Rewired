@@ -171,47 +171,121 @@ def pressure_curve(span: int, onset_db: float) -> list[int]:
     return out
 
 
-def pitch_table(cfg: dict) -> list[int]:
-    """Per-semitone pitch-CV correction, in DAC counts.
+def read_calibration(path: Path) -> dict[int, float]:
+    """Read the pitch calibration table: semitone -> offset in cents.
 
-    The octave calibration is interpolated per semitone, then the measured
-    tracking error at each semitone is subtracted.  Index 0 is the 0 V pitch;
-    the bottom key sits `tracking_offset_semitones` above it.
+    One row per semitone above the 208p's 0 V pitch.  Offset_Cents is measured
+    against an ideal 1 V/octave ramp, positive raising the pitch; it absorbs
+    both the coarse octave scaling and each key's own tracking error, so this
+    is the only pitch calibration data there is.
     """
+    lines = [ln for ln in path.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    if not lines:
+        raise ValueError(f"{path.name}: empty calibration table")
+    delimiter = ";" if lines[0].count(";") else ","
+    offsets: dict[int, float] = {}
+    for row in csv.DictReader(lines, delimiter=delimiter):
+        raw = (row.get("Offset_Cents") or "").strip()
+        if not raw:
+            raise ValueError(f"{path.name}: semitone {row.get('Semitone')} has no Offset_Cents")
+        offsets[int(row["Semitone"])] = float(raw)
+    if not offsets:
+        raise ValueError(f"{path.name}: no rows")
+    missing = set(range(max(offsets) + 1)) - set(offsets)
+    if missing:
+        raise ValueError(
+            f"{path.name}: semitones must run 0..N with no gaps; missing {sorted(missing)[:8]}"
+        )
+    return offsets
+
+
+def counts_per_volt(cfg: dict) -> float:
     pitch = cfg["pitch"]
-    counts_per_volt = pitch["dac_counts"] / (pitch["dac_vref"] * pitch["dac_gain"])
-    anchors = [v * counts_per_volt for v in pitch["octave_volts"]]
+    return pitch["dac_counts"] / (pitch["dac_vref"] * pitch["dac_gain"])
 
-    csv_path = REPO / pitch["tracking_csv"]
-    text = csv_path.read_text()
-    delimiter = ";" if text.splitlines()[0].count(";") else ","
-    cents: dict[int, float] = {}
-    for row in csv.DictReader(text.splitlines(), delimiter=delimiter):
-        raw = (row.get("Measured_Cents") or "").strip()
-        if raw:
-            cents[int(row["Semitones"])] = float(raw)
-    if not cents:
-        raise ValueError(f"{csv_path.name}: no Measured_Cents values")
-    last = max(cents)
-    offset = pitch["tracking_offset_semitones"]
 
-    table = []
-    for index in range(pitch["table_entries"]):
-        octave = min(index // 12, len(anchors) - 2)
-        slope = (anchors[octave + 1] - anchors[octave]) / 12.0
-        base = anchors[octave] + slope * (index - 12 * octave)
-        semitone = index - offset
-        if semitone < 0:
-            error = 0.0
-        else:
-            error = cents.get(semitone, cents[last])
-        table.append(math.floor(base - error * slope / 100.0 + 0.5))
+def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
+    """Per-semitone pitch curve, in DAC counts.
 
+    counts(i) = counts_per_volt * (i/12 + offset(i)/1200): an ideal
+    1 V/octave ramp displaced by the measured calibration.
+    """
+    scale = counts_per_volt(cfg)
+    table = [
+        math.floor(scale * (i / 12.0 + offsets[i] / 1200.0) + 0.5)
+        for i in range(max(offsets) + 1)
+    ]
     if table != sorted(table):
-        raise ValueError("pitch correction table is not monotonic — check the CSV")
+        raise ValueError("pitch curve is not monotonic — check the calibration table")
     if table[0] < 0 or table[-1] > 4095:
-        raise ValueError("pitch correction table leaves the 12-bit DAC range")
+        raise ValueError("pitch curve leaves the 12-bit DAC range")
     return table
+
+
+def octave_width_volts(offsets: dict[int, float], semitone: int) -> float:
+    """Volts per octave the 208p actually needs around this semitone.
+
+    A cent of pitch costs more voltage where the oscillator's scaling is
+    stretched, so folding a tuner reading into the table has to use the local
+    width rather than a nominal 1 V.
+    """
+    top = max(offsets)
+    low = min(semitone, max(0, top - 12))
+    high = min(low + 12, top)
+    span = high - low
+    if span == 0:
+        return 1.0
+    volts = (high / 12.0 + offsets[high] / 1200.0) - (low / 12.0 + offsets[low] / 1200.0)
+    return volts * 12.0 / span
+
+
+def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
+    """Fold fresh tuner readings into the calibration table.
+
+    The measurement file needs a Semitone (or Key) column and a Measured_Cents
+    column, positive when the note played sharp.  Corrections accumulate: the
+    reading is relative to firmware that already applies the existing table.
+    """
+    offsets = read_calibration(calibration)
+    lines = [ln for ln in measurement.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    delimiter = ";" if lines[0].count(";") else ","
+    updates: dict[int, float] = {}
+    for row in csv.DictReader(lines, delimiter=delimiter):
+        raw = (row.get("Measured_Cents") or "").strip()
+        if not raw:
+            continue
+        if (row.get("Semitone") or "").strip():
+            semitone = int(row["Semitone"])
+        elif (row.get("Key") or "").strip():
+            semitone = int(row["Key"]) - 1 + 3   # key 1 is semitone 3
+        else:
+            raise SystemExit(f"{measurement.name}: rows need a Semitone or Key column")
+        if semitone not in offsets:
+            raise SystemExit(f"{measurement.name}: semitone {semitone} is outside the table")
+        updates[semitone] = float(raw)
+
+    if not updates:
+        raise SystemExit(f"{measurement.name}: no Measured_Cents values")
+
+    text = calibration.read_text().splitlines()
+    out, applied = [], 0
+    for line in text:
+        if line.lstrip().startswith("#") or line.startswith("Semitone"):
+            out.append(line)
+            continue
+        parts = line.split(";")
+        semitone = int(parts[0])
+        if semitone in updates:
+            error = updates[semitone]
+            # a sharp note needs less voltage, scaled by the local octave width
+            delta = -error * octave_width_volts(offsets, semitone)
+            parts[3] = f"{offsets[semitone] + delta:.6f}"
+            parts[4] = "measured"
+            applied += 1
+        out.append(";".join(parts))
+    calibration.write_text("\n".join(out) + "\n")
+    print(f"folded {applied} reading(s) into {calibration.relative_to(REPO)}")
+    print("  rebuild to apply them")
 
 
 # ---------------------------------------------------------------------------
@@ -410,12 +484,19 @@ def main() -> None:
     parser.add_argument("--config", default="config/218e.toml")
     parser.add_argument("--tables-only", action="store_true")
     parser.add_argument("--expect-sha")
+    parser.add_argument("--fold-measurement", metavar="CSV",
+                        help="fold tuner readings into the pitch calibration table, then exit")
     args = parser.parse_args()
 
     config_path = (REPO / args.config) if not Path(args.config).is_absolute() else Path(args.config)
     cfg = tomllib.loads(config_path.read_text())
     cfg["_config_name"] = str(config_path.relative_to(REPO)) if config_path.is_relative_to(REPO) else str(config_path)
     BUILD.mkdir(exist_ok=True)
+    calibration = REPO / cfg["pitch"]["calibration_csv"]
+
+    if args.fold_measurement:
+        fold_measurement(cfg, calibration, Path(args.fold_measurement))
+        return
 
     print(f"config: {cfg['_config_name']}")
 
@@ -436,7 +517,7 @@ def main() -> None:
         "pressure_curve": pressure_curve(
             cfg["pressure"]["curve"]["span"], cfg["pressure"]["curve"]["onset_db"]
         ),
-        "pitch_remap": pitch_table(cfg),
+        "pitch_remap": pitch_table(cfg, read_calibration(calibration)),
     }
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":

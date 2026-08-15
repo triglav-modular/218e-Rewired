@@ -1,0 +1,94 @@
+# 218e pitch-CV calibration — the voltage the 208p needs at each pitch.
+#
+# Offset_Cents is the only column the build reads: how far the output is
+# pushed from an ideal 1 V/octave ramp, in cents of that ramp.  Positive
+# raises the pitch.  Semitone 0 is the 208p's 0 V pitch, an A; the bottom
+# key of the keyboard is semitone 3 (a C), shown in the Key column.
+#
+# Source:  octave       — from the octave calibration only, below the first key
+#          measured     — a key you measured with a tuner
+#          extrapolated — beyond the last measured key, holding its correction
+#
+# To recalibrate: measure the error of each key in cents (positive = sharp)
+# and run  tools/build.py --fold-measurement <your.csv>  — it converts and
+# folds the readings into this table, which is cumulative.
+Semitone;Note;Key;Offset_Cents;Source
+0;A;;0.000000;octave
+1;A#;;0.000000;octave
+2;B;;0.000000;octave
+3;C;1;0.400000;measured
+4;C#;2;-1.100000;measured
+5;D;3;-3.000000;measured
+6;D#;4;-1.900000;measured
+7;E;5;-4.000000;measured
+8;F;6;-3.100000;measured
+9;F#;7;-1.700000;measured
+10;G;8;-3.400000;measured
+11;G#;9;-1.900000;measured
+12;A;10;-0.500000;measured
+13;A#;11;-2.300000;measured
+14;B;12;-1.100000;measured
+15;C;13;-3.200000;measured
+16;C#;14;-5.300000;measured
+17;D;15;-4.100000;measured
+18;D#;16;-2.700000;measured
+19;E;17;-5.000000;measured
+20;F;18;-3.900000;measured
+21;F#;19;-2.600000;measured
+22;G;20;-4.700000;measured
+23;G#;21;-3.300000;measured
+24;A;22;-2.400000;measured
+25;A#;23;-4.000000;measured
+26;B;24;-3.200000;measured
+27;C;25;-2.200000;measured
+28;C#;26;-3.900000;measured
+29;D;27;-3.200000;measured
+30;D#;28;-5.000000;measured
+31;E;29;-3.700000;measured
+32;F;30;-5.200000;measured
+33;F#;31;-3.900000;measured
+34;G;32;-6.000000;measured
+35;G#;;-4.800000;measured
+36;A;;-3.400000;measured
+37;A#;;-4.800000;measured
+38;B;;-3.300000;measured
+39;C;;-2.300000;measured
+40;C#;;-4.200000;measured
+41;D;;-3.000000;measured
+42;D#;;-1.900000;measured
+43;E;;-3.500000;measured
+44;F;;-2.200000;measured
+45;F#;;-1.000000;measured
+46;G;;-3.100000;measured
+47;G#;;-1.800000;measured
+48;A;;-0.102310;measured
+49;A#;;-2.907810;measured
+50;B;;-2.541700;measured
+51;C;;-1.561730;measured
+52;C#;;-4.367230;measured
+53;D;;-3.182640;measured
+54;D#;;-1.588810;measured
+55;E;;-2.552730;measured
+56;F;;2.724260;measured
+57;F#;;5.852740;measured
+58;G;;7.241950;measured
+59;G#;;13.132800;measured
+60;A;;18.895030;measured
+61;A#;;26.124460;measured
+62;B;;40.728180;measured
+63;C;;59.442160;measured
+64;C#;;78.518810;measured
+65;D;;105.695090;measured
+66;D#;;136.135400;measured
+67;E;;177.093140;measured
+68;F;;197.983140;extrapolated
+69;F#;;218.873140;extrapolated
+70;G;;239.763140;extrapolated
+71;G#;;260.653140;extrapolated
+72;A;;280.396800;extrapolated
+73;A#;;257.196800;extrapolated
+74;B;;233.996800;extrapolated
+75;C;;210.796800;extrapolated
+76;C#;;187.596800;extrapolated
+77;D;;164.396800;extrapolated
+78;D#;;141.196800;extrapolated
