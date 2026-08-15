@@ -1184,37 +1184,27 @@ public class AssemblePressureFix extends GhidraScript {
         // the rate variable (RAM 0x2eee) exactly as the factory code did.
         begin(0x8001a230L);
         word(0x8001a234L);
-        if (feature("pressure_blend")) {
-            // No fixed glide at all: with the pressure-weighted blend active,
-            // the blend IS the portamento — notes snap, and pitch between
-            // held keys moves only as their relative pressure moves.  The
-            // knob keeps a single meaning: pressure needed to bend.
-            emit("STM --SP,R7,LR");
-            emit("MOV R7,SP");
-            emit("MOV R8,0x0");
-            emit("MOV R9,0x2eee");
-            emit("ST.H R9[0x0],R8");
-            emit("LDM SP++,R7,PC");
-        } else {
-            // Blend-off builds keep classic portamento with the zero-snap:
-            // knob in its deadzone forces the fastest rate.
-            emit("STM --SP,R7,LR");
-            emit("MOV R7,SP");
-            emit("MOV R8,0x3866");
-            emit("LD.SH R8,R8[0x0]");
-            emit("CP.W R8,0x30");
-            emit("BR{ge} 0x8001a24c");
-            emit("MOV R8,0x0");
-            emit("RJMP 0x8001a254");
-            padTo(0x8001a24cL);
-            emit("LDDPC R8,0x8001a260");
-            emit("LD.SH R8,R8[R9 << 0x1]");
-            emit("CASTS.H R8");
-            padTo(0x8001a254L);
-            emit("MOV R9,0x2eee");
-            emit("ST.H R9[0x0],R8");
-            emit("LDM SP++,R7,PC");
-        }
+        // Classic portamento, with the zero-snap: knob in its deadzone means
+        // the fastest rate, otherwise the factory table applies.  This lives
+        // happily alongside the pressure blend now that the blend offset is
+        // applied AFTER the glide engine — the knob times note-to-note
+        // transitions, pressure steers between held notes at scan rate.
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x3866");
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x30");
+        emit("BR{ge} 0x8001a24c");
+        emit("MOV R8,0x0");
+        emit("RJMP 0x8001a254");
+        padTo(0x8001a24cL);
+        emit("LDDPC R8,0x8001a260");
+        emit("LD.SH R8,R8[R9 << 0x1]");
+        emit("CASTS.H R8");
+        padTo(0x8001a254L);
+        emit("MOV R9,0x2eee");
+        emit("ST.H R9[0x0],R8");
+        emit("LDM SP++,R7,PC");
         padTo(0x8001a260L);
         word(0x80015150L); // factory glide rate-curve table
         finish("glide_rate_clamp", 0x8001a264L);

@@ -113,8 +113,8 @@ smoothing_taps = 8
 # makes full pressure easier to reach, at the cost of noise: the window is
 # mapped onto the full output range, so a narrower window amplifies sensor
 # noise proportionally (260 counts -> 18x, 234 counts -> 20x).
-floor   = 540
-ceiling = 814
+floor   = 592
+ceiling = 893
 
 # "independent" — knob 1 trims the ceiling, knob 3 the floor.
 # "scale"       — knob 1 alone multiplies BOTH by 0.5x..1.5x, centred on 1.0x,
@@ -144,7 +144,7 @@ onset_db = -10.0
 # How much of that curve is applied when the instrument has no stored setting
 # — the state after every flash.  0 is a purely linear response, 31 the full
 # 218r curve.  Edit knob 4 still sets it live.
-default_level = 31
+default_level = 0
 
 # Width of the linear ramp at the very bottom of the curve, in curve counts
 # (0..913 across the floor-to-ceiling window).  The 218r onset is a step —
