@@ -1,0 +1,19 @@
+! 12TET.scl
+!
+! Twelve-tone equal temperament, the fallback tuning.
+!
+12-tone equal temperament
+ 12
+!
+ 100.000
+ 200.000
+ 300.000
+ 400.000
+ 500.000
+ 600.000
+ 700.000
+ 800.000
+ 900.000
+ 1000.000
+ 1100.000
+ 2/1

@@ -1,0 +1,55 @@
+# LEM218 PressureFix USB readout
+
+The diagnostic firmware sends telemetry only when ordinary edit mode is active
+and USB MIDI is enabled. It does not emit diagnostic messages during normal
+performance.
+
+The readout uses MIDI channel 16 control changes. A complete frame is:
+
+| CC | Meaning |
+|---:|---|
+| 102, 103 | Baseline-subtracted instantaneous raw pressure, 14-bit MSB/LSB |
+| 104, 105 | Exact growing raw average (newest 1..8 samples since touch) used by the pressure algorithm |
+| 106, 107 | Pressure normalized between the saved endpoints, 0–913 |
+| 108, 109 | Final pressure after the curve, expanded to 0–4095 |
+| 110, 111 | Saved pressure floor |
+| 112, 113 | Saved full-pressure endpoint/ceiling |
+| 114, 115 | Active key scan component A, before factory subtraction |
+| 116, 117 | Active key scan component B, before factory subtraction |
+| 118 | Curve level, 0–31, and end-of-frame marker |
+
+For every adjacent pair, `value = MSB * 128 + LSB`. The readout accepts a frame
+only when all eight pairs arrive before CC 118, so a partial USB packet sequence
+cannot be mistaken for a measurement.
+
+## Measurement procedure
+
+1. Enable Polyphonic MIDI and connect the 218e directly over USB.
+2. Start `ReadLEM218_Pressure.command`, then enter ordinary edit mode.
+3. Start with knob 4 fully left. Live redraw is intentionally suppressed so
+   terminal input remains usable. Every touch is summarized automatically when
+   it is released.
+4. For this measured instrument, first turn knob 1 until typing `settings`
+   reports a ceiling near 840. Then turn knob 3 until it reports a floor near
+   580. The floor is intentionally limited to at least 32 counts below the
+   ceiling, so this order matters. Do not touch a key while checking settings.
+5. Hold the lightest useful pressure steady for two seconds, release it, and
+   optionally type `min` followed by return while it is still held.
+6. Repeat at a musically useful middle pressure (`mid`) and the hardest intended
+   pressure (`max`).
+7. At the curve setting that exhibits the problem, hold one finger stationary,
+   move the other hand through the problematic range, type `proximity`, and
+   press return.
+8. Type `q` for a compact summary. If commands are inconvenient, simply perform
+   the touches in the documented order; the automatic `TOUCH 1`, `TOUCH 2`, …
+   summaries and generated CSV contain the same measurements.
+
+The scanner computes active pressure from `scan_component_a - scan_component_b`.
+`scan_difference_error` should remain close to zero because the pressure path
+then subtracts its fixed 110-count baseline. On the measured instrument,
+component B remained exactly 167 while component A moved with both intentional
+pressure and hand proximity. Consequently there is no independent firmware
+reference from which a weighted subtraction can distinguish the two. The
+light/mid/max measurements are still useful for setting the floor and ceiling;
+eliminating proximity completely would require an electrical or mechanical
+change that makes proximity distinguishable at the sensor.

@@ -1,0 +1,162 @@
+# Buchla 218e V3 — firmware build settings
+# =========================================
+#
+# Everything the patched firmware does that is a *choice* rather than a bug fix
+# is declared here.  Edit this file, run `python3 tools/build.py`, flash the
+# result.  Nothing else needs editing for a retune, a recalibration, or to hand
+# any knob back to its factory behaviour.
+#
+# Rule of thumb for the toggles below: "factory" means the patch that activates
+# the new behaviour is simply not applied, so the original code runs untouched.
+# The new code still sits in unused flash, it is just never reached.
+
+[firmware]
+factory_hex    = "mac/firmware/218eV3_v369_DFU.hex"
+factory_sha256 = "565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
+output_hex     = "mac/firmware/218eV3_v369_PressureFix_DFU.hex"
+
+# The macOS updater refuses to flash an image whose checksum it does not know.
+# The build rewrites that script's EXPECTED_SHA256 so the two can never drift.
+updater        = "ProgramLEM218_PressureFix.command"
+
+
+# ---------------------------------------------------------------------------
+# Panel knobs (the four preset-voltage knobs, outside edit mode)
+# ---------------------------------------------------------------------------
+[knobs]
+# knob 1 — arpeggiator note order: fully left = strict press order,
+#          fully right = fully random.            "arp_order" | "factory"
+knob1 = "arp_order"
+
+# knob 2 — arpeggiator rhythm: fully left = even pulses,
+#          fully right = randomly spaced.         "arp_rhythm" | "factory"
+knob2 = "arp_rhythm"
+
+# knob 3 — random octave displacement per arp note, increasing with the knob.
+#                                                 "arp_octaves" | "factory"
+knob3 = "arp_octaves"
+
+# knob 4 — global vibrato; one-knob law (depth and rate rise together),
+#          up to 33 cents at ~6 Hz.               "vibrato" | "factory"
+knob4 = "vibrato"
+
+
+# ---------------------------------------------------------------------------
+# Arpeggiator switch
+# ---------------------------------------------------------------------------
+[arp]
+# "latch"   — three positions become latch / regular / off.  In latch, keys are
+#             toggles: press to hold, press again to release, and leaving the
+#             position releases everything.
+# "factory" — the original ascending / random / off behaviour.
+switch = "latch"
+
+
+# ---------------------------------------------------------------------------
+# MIDI
+# ---------------------------------------------------------------------------
+[midi]
+# "off"     — polyphonic MIDI mode is forced off once per power-up, whatever
+#             was saved.  Its per-voice release logic breaks the two-key
+#             pressure handover, so it should stay off for normal playing.
+#             NOTE: DFU flashing needs it ON for the SysEx handshake — enable
+#             it in edit mode (key 29) after power-up, then flash.
+# "factory" — the saved setting is honoured at boot.
+poly_default = "off"
+
+
+# ---------------------------------------------------------------------------
+# Pressure
+# ---------------------------------------------------------------------------
+[pressure]
+# Subtract a live estimate of the common-mode (two-hand proximity) lift from
+# the raw reading, taken from the quietest untouched key each scan.  Without
+# it, playing with both hands near the keyboard inflates every reading and
+# pressure pins at maximum.
+common_mode = true
+
+[pressure.curve]
+# The 218r-style response curve: zero at the calibration floor, an immediate
+# onset step, then a smooth rise to full scale.  onset_db is the output level
+# at the very first count above the floor, relative to full scale; -10 dB
+# (≈32 %) is the 218r's own value and the reason it feels gentle.
+span     = 913
+onset_db = -10.0
+
+
+# ---------------------------------------------------------------------------
+# Portamento
+# ---------------------------------------------------------------------------
+[portamento]
+# Pressure-weighted portamento (Haken Continuum, US 7,902,450): with several
+# keys held, the sounding pitch is pulled toward the harder-pressed ones.
+# Mapped to the portamento knob; at zero it is fully disabled.
+pressure_blend = true
+
+# Force a true zero glide time at the bottom of the portamento knob (the
+# factory rate table never quite reaches zero, which left audible glide).
+zero_snap = true
+
+
+# ---------------------------------------------------------------------------
+# Tuning
+# ---------------------------------------------------------------------------
+# Three tuning tables live in the firmware.  Slot 0 is the power-on default.
+# In edit mode, key 28 toggles slot 0 <-> slot 2, key 27 toggles slot 1 <-> 2.
+# LEDs: rem-en lit = slot 0, trn lit = slot 1, both dark = slot 2.
+#
+# Each file must be a 12-note Scala scale with a 2/1 octave, because the key
+# table repeats every octave across the 32 keys.
+[tuning]
+slots = [
+    "tunings/Sabat II.scl",              # slot 0 — power-on default
+    "tunings/ADDAC Just Intonation.scl", # slot 1
+    "factory",                           # slot 2 — the instrument's original
+                                         #          temperament, copied bit-exact
+                                         #          from the factory image.
+                                         #          Use "tunings/12TET.scl" for a
+                                         #          mathematically exact 12-TET.
+]
+
+# Key-table units.  The bottom key sits at `base_units`, and every octave adds
+# `units_per_octave`.  These are the factory table's own constants — changing
+# them retunes the whole instrument, so leave them alone unless you know why.
+base_units       = 485
+units_per_octave = 484
+
+
+# ---------------------------------------------------------------------------
+# Pitch CV calibration (the in-firmware replacement for the uTune)
+# ---------------------------------------------------------------------------
+[pitch]
+# Measured 208p tracking error per key, in cents (positive = the 208p played
+# sharp).  Column `Semitones` counts up from the bottom key; `Measured_Cents`
+# holds the reading.  Keys above the last measured row keep the last
+# correction.  Re-measure, drop in a new CSV, rebuild.
+tracking_csv = "calibration/218e-key-calibration.csv"
+
+# 0 V on the 208p is an A, while the bottom key of the 218e is a C, so the
+# correction table is indexed three semitones below the first key.
+tracking_offset_semitones = 3
+
+# Octave calibration, one entry per octave of the pitch CV, in volts — the
+# numbers that used to live in the uTune.  Index 0 is the 0 V octave.
+octave_volts = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0231, 6.232, 7.0, 8.0, 9.0, 10.0]
+
+# Pitch DAC scaling: full-scale counts, reference volts, output-stage gain.
+# 4096 / (2.5 * 4.09) = 400.59 counts per volt at the jack.
+dac_counts = 4096
+dac_vref   = 2.5
+dac_gain   = 4.09
+
+# Length of the generated correction table, in semitones.
+table_entries = 79
+
+
+# ---------------------------------------------------------------------------
+# Toolchain
+# ---------------------------------------------------------------------------
+[tools]
+# Ghidra assembles every patch.  Override with the GHIDRA_HOME environment
+# variable if your install lives somewhere else.
+ghidra_home = "/Users/marton_bertok/Documents/Codex/2026-08-13/ca/work/ghidra/ghidra_12.1.2_PUBLIC"
