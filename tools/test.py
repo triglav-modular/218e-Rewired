@@ -151,10 +151,16 @@ def test_resolution(cfg: dict) -> None:
     check("fixed-point chain stays within one old quantisation step", ok)
     check("endpoints preserved",
           new(floor << bits, 31) == 0 and new(ceil << bits, 31) == old(ceil, 31))
+    # Only averages the filter can actually produce count: avg16 is
+    # (sum << bits) // taps, so an 8-tap mean reaches 1/8-count states, not
+    # the full 1/16 grid.  Measuring the grid would overstate the resolution.
+    taps = cfg["pressure"].get("smoothing_taps", 8)
+    coarse = ceil - floor
     for lvl in (0, 31):
-        levels = len({new(a, lvl) for a in range(floor << bits, (ceil << bits) + 1)})
-        check(f"level {lvl} resolves >2000 output values (was ~{ceil-floor})", levels > 2000,
-              f"{levels}")
+        reachable = len({new((total << bits) // taps, lvl)
+                         for total in range(floor * taps, ceil * taps + 1)})
+        check(f"level {lvl}: reachable codes beat the old {coarse} by 5x",
+              reachable > 5 * coarse, f"{reachable}")
     check("curve monotone with the sentinel", tab == sorted(tab))
 
 

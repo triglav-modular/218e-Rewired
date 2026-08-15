@@ -272,12 +272,22 @@ func endpointName(_ endpoint: MIDIEndpointRef) -> String {
 }
 
 let arguments = CommandLine.arguments
+var signalSources: [DispatchSourceSignal] = []
 let selfTest = arguments.contains("--self-test")
 let csvPath = arguments.dropFirst().first(where: { !$0.hasPrefix("--") })
     ?? FileManager.default.currentDirectoryPath + "/LEM218_PressureReadout.csv"
 
 do {
     let monitor = try PressureMonitor(csvPath: csvPath)
+    // Buffered rows would otherwise be lost on Ctrl-C or a terminal close,
+    // which are ordinary ways to end a capture.
+    for signalNumber in [SIGINT, SIGTERM, SIGHUP] {
+        signal(signalNumber, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+        source.setEventHandler { monitor.finishWriting(); exit(0) }
+        source.resume()
+        signalSources.append(source)
+    }
     if selfTest {
         let testValues = [(102, 120), (104, 125), (106, 400),
                           (108, 2000), (110, 20), (112, 500),
@@ -292,6 +302,7 @@ do {
         monitor.printSettings()
         monitor.capture("selftest")
         monitor.printSummary()
+        monitor.finishWriting()
         exit(0)
     }
 

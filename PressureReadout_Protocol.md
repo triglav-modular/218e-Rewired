@@ -9,7 +9,7 @@ The readout uses MIDI channel 16 control changes. A complete frame is:
 | CC | Meaning |
 |---:|---|
 | 102, 103 | Baseline-subtracted instantaneous raw pressure, 14-bit MSB/LSB |
-| 104, 105 | Exact growing raw average (newest 1..24 samples since touch, depth per edit knob 2) used by the pressure algorithm |
+| 104, 105 | Growing raw average over the samples since touch, rounded to whole counts |
 | 106, 107 | Pressure normalized between the saved endpoints, 0–913 |
 | 108, 109 | Final pressure after the curve, expanded to 0–4095 |
 | 110, 111 | Saved pressure floor |
@@ -18,6 +18,12 @@ The readout uses MIDI channel 16 control changes. A complete frame is:
 | 116, 117 | Active key scan component B, before factory subtraction |
 | | *(diagnostic builds repurpose these four CCs — see below)* |
 | 118 | Curve level, 0–31, and end-of-frame marker |
+
+> **Telemetry is a diagnostic approximation, not the algorithm.** The pressure
+> path runs in fixed point (see `[pressure].resolution_bits`), while these
+> fields are recomputed in whole counts: the average, the 0–913 normalisation
+> and the curved value are rounded, so they will not reproduce the 12-bit
+> output exactly. Judge the CV by the CV; use telemetry for levels and ranges.
 
 For every adjacent pair, `value = MSB * 128 + LSB`. The readout accepts a frame
 only when all eight pairs arrive before CC 118, so a partial USB packet sequence
@@ -30,10 +36,10 @@ cannot be mistaken for a measurement.
 3. Start with knob 4 fully left. Live redraw is intentionally suppressed so
    terminal input remains usable. Every touch is summarized automatically when
    it is released.
-4. For this measured instrument, first turn knob 1 until typing `settings`
-   reports a ceiling near 840. Then turn knob 3 until it reports a floor near
-   580. The floor is intentionally limited to at least 32 counts below the
-   ceiling, so this order matters. Do not touch a key while checking settings.
+4. Calibrate with knob 1 if `trim_mode = "scale"` (it moves floor and ceiling
+   together); with `trim_mode = "independent"`, knob 1 sets the ceiling and
+   knob 3 the floor, in that order — the floor is held at least 32 counts
+   below the ceiling. Do not touch a key while checking settings.
 5. Hold the lightest useful pressure steady for two seconds, release it, and
    optionally type `min` followed by return while it is still held.
 6. Repeat at a musically useful middle pressure (`mid`) and the hardest intended

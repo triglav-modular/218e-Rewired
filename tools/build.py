@@ -449,12 +449,14 @@ def write_properties(path: Path, cfg: dict, blocks, features, tables) -> None:
 
 
 def run_ghidra(cfg: dict, properties: Path, log: Path) -> str:
-    ghidra_home = Path(os.environ.get("GHIDRA_HOME", cfg["tools"]["ghidra_home"]))
+    configured = cfg.get("tools", {}).get("ghidra_home", "")
+    ghidra_home = Path(os.environ.get("GHIDRA_HOME") or configured)
     headless = ghidra_home / "support" / "analyzeHeadless"
-    if not headless.exists():
+    if not str(ghidra_home) or not headless.exists():
         raise SystemExit(
             f"Ghidra not found at {headless}\n"
-            "Set [tools].ghidra_home in the config or the GHIDRA_HOME env var."
+            "Set GHIDRA_HOME, or put ghidra_home under [tools] in "
+            "config/local.toml (untracked)."
         )
     project_dir = BUILD / "ghidra_project"
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -563,7 +565,22 @@ def updater_summary(cfg: dict) -> str:
         lines.append('echo "sounding pitch, so any octave position can release a note."')
     if cfg["portamento"]["pressure_blend"]:
         lines.append('echo "Portamento knob = pressure needed to bend between held notes."')
-    lines.append('echo "Run ReadLEM218_Pressure.command after flashing to view telemetry."')
+    lines.append('echo ""')
+    lines.append('echo "Calibrating, in ordinary edit mode:"')
+    if calib.get("trim_mode") == "scale":
+        lines.append('echo "  1. Knob 4 fully left for a linear response."')
+        lines.append('echo "  2. Run ReadLEM218_Pressure.command; with no key held, turn knob 1"')
+        lines.append(f'echo "     and type \'settings\' until floor/ceiling read near '
+                     f'{calib["floor"]}/{calib["ceiling"]} (centre = the built-in calibration)."')
+        lines.append('echo "  3. Play light/mid/max touches; knob 1 scales the whole window,"')
+        lines.append('echo "     so one control follows a change in how the instrument couples."')
+        lines.append('echo "  4. Turn knob 4 right to taste, then leave edit mode to save."')
+    else:
+        lines.append('echo "  1. Knob 4 fully left for a linear response."')
+        lines.append(f'echo "  2. Adjust knob 1 until \'settings\' reports a ceiling near '
+                     f'{calib["ceiling"]}."')
+        lines.append(f'echo "  3. Adjust knob 3 until it reports a floor near {calib["floor"]}."')
+        lines.append('echo "  4. Turn knob 4 right to taste, then leave edit mode to save."')
     lines.append("# --- END GENERATED SUMMARY ---")
     return "\n".join(lines)
 
@@ -579,6 +596,12 @@ def main() -> None:
 
     config_path = (REPO / args.config) if not Path(args.config).is_absolute() else Path(args.config)
     cfg = tomllib.loads(config_path.read_text())
+    # config/local.toml (untracked) overrides machine-specific settings, so the
+    # committed configuration stays portable.  Only [tools] is merged.
+    local = config_path.parent / "local.toml"
+    if local.exists():
+        for key, value in tomllib.loads(local.read_text()).get("tools", {}).items():
+            cfg.setdefault("tools", {})[key] = value
     cfg["_config_name"] = str(config_path.relative_to(REPO)) if config_path.is_relative_to(REPO) else str(config_path)
     BUILD.mkdir(exist_ok=True)
     calibration = REPO / cfg["pitch"]["calibration_csv"]
@@ -750,8 +773,10 @@ def main() -> None:
     ]
     (BUILD / "patch_manifest.txt").write_text("\n".join(manifest) + "\n")
 
-    out_path.write_text(rendered)
-
+    # Stage the updater's edits too, so a malformed updater cannot leave a new
+    # image paired with an old flasher.  Both tracked outputs are validated
+    # first, then written together.
+    staged_updater: tuple[Path, str, str] | None = None
     updater_name = cfg["firmware"].get("updater")
     if updater_name:
         updater = REPO / updater_name
@@ -770,9 +795,14 @@ def main() -> None:
         )
         if count != 1:
             raise SystemExit(f"{updater_name}: generated-summary markers missing")
+        staged_updater = (updater, patched, text)
+
+    out_path.write_text(rendered)
+    if staged_updater is not None:
+        updater, patched, text = staged_updater
         if patched != text:
             updater.write_text(patched)
-            print(f"updated {updater_name} checksum and summary")
+            print(f"updated {updater.name} checksum and summary")
 
     print(f"wrote {out_path.relative_to(REPO)}")
     print(f"  {changed} bytes changed, {added} newly programmed into erased flash")

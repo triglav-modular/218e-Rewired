@@ -281,6 +281,10 @@ scan_period_ms = 5
 # Toolchain
 # ---------------------------------------------------------------------------
 [tools]
-# Ghidra assembles every patch.  Override with the GHIDRA_HOME environment
-# variable if your install lives somewhere else.
-ghidra_home = "/Users/marton_bertok/Documents/Codex/2026-08-13/ca/work/ghidra/ghidra_12.1.2_PUBLIC"
+# Ghidra assembles every patch.  This path is machine-specific, so set it
+# with the GHIDRA_HOME environment variable or in config/local.toml, which is
+# untracked:
+#
+#     [tools]
+#     ghidra_home = "/path/to/ghidra_12.1.2_PUBLIC"
+ghidra_home = ""

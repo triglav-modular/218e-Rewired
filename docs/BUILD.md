@@ -65,6 +65,25 @@ rewritten updater behind.
 `tools/test.py --golden` also rebuilds and compares against
 `[firmware].golden_sha256`.
 
+## macOS tool compatibility
+
+| Tool | Architectures | Minimum macOS |
+|------|---------------|---------------|
+| `lem218-pressure-readout` | universal (arm64 + x86_64) | 11.0 |
+| `sendmidi` | universal | vendor build |
+| `dfu-programmer` | **x86_64 only** | vendor build |
+
+`dfu-programmer` ships as a vendor binary with no source here, so **flashing
+on Apple silicon needs Rosetta** (`softwareupdate --install-rosetta`). The
+readout tool is built from `LEM218PressureReadout.swift` in this repo; rebuild
+it universal with:
+
+```bash
+swiftc -O -target arm64-apple-macos11  -o /tmp/ro-arm64 mac/support/LEM218PressureReadout.swift
+swiftc -O -target x86_64-apple-macos11 -o /tmp/ro-x86   mac/support/LEM218PressureReadout.swift
+lipo -create /tmp/ro-arm64 /tmp/ro-x86 -output mac/support/lem218-pressure-readout
+```
+
 ## Flashing
 
 Run `ProgramLEM218_PressureFix.command`.

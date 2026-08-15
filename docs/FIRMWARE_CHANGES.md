@@ -39,9 +39,9 @@ linear) is why noise and proximity stop being obtrusive.
   would wrap the negative difference.
 
 **Calibration is hardcoded.** Floor 592 / ceiling 893 are the defaults
-(`[pressure.calibration]`), and knobs 1 and 3 became live trims that centre on
-those defaults and reach half of `trim_span` either side, so the instrument is
-right out of the box with no calibration ritual.
+(`[pressure.calibration]`), so the instrument is right out of the box with no
+calibration ritual. How the edit-mode knobs trim them depends on `trim_mode`,
+described next.
 
 With `trim_mode = "scale"` knob 1 instead multiplies *both* endpoints by
 0.5x..1.5x, unity at centre, and knob 3 returns to its factory job. That is the
@@ -60,7 +60,8 @@ position could make it play. The defaults are what you get after a flash, which 
 the stored calibration; 814 is what knob 1 reads at position 4.
 
 The window between floor and ceiling is mapped onto the full output range, so
-it sets the noise gain: the current 301-count window gives about 16x. One raw sensor count is ~44 mV at the
+it sets the noise gain: the current 301-count window (592–893) gives about
+16x. One raw sensor count is ~44 mV at the
 jack. That is why sensor noise and finger tremor are plainly visible on a
 scope — they are being amplified by design, and a narrower window trades noise
 for sensitivity.
@@ -104,8 +105,14 @@ to whole raw counts, the normalisation carries them, the curve lookup
 interpolates between adjacent table entries (a sentinel repeat of the last
 entry keeps `table[i+1]` in range), and the expansion divides by the scaled
 span. Averaging dithered samples genuinely recovers sub-count information, so
-this is real precision, not invention: the window resolves about 4000 output
-values instead of ~300, filling the 12-bit DAC.
+this is real precision, not invention.
+
+How much arrives depends on the smoothing depth, because the filter can only
+produce averages of the form `(sum << bits) / taps`: at the default 8 taps
+the window reaches about 2400 output codes linear and 1800 with the full
+curve, against roughly 300 before; at 16 taps or more the whole 1/16 grid is
+reachable, about 4000 and 3000. Substantially more than a 12-bit DAC fed one
+step per raw count, but not a filled 12-bit range.
 
 The transfer function is unchanged — the same mapping, sampled finely rather
 than once per raw count. It is not bit-identical at integer inputs, because
