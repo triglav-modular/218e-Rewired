@@ -561,7 +561,15 @@ def main() -> None:
     cfg["_numbers"] = {
         "pressure_floor_default": calib["floor"],
         "pressure_ceiling_default": calib["ceiling"],
+        "scan_period_ms": cfg["timing"]["scan_period_ms"],
     }
+    period = cfg["timing"]["scan_period_ms"]
+    if period != 5:
+        print(f"  scan period {period} ms ({1000/period:.0f} Hz) — NON-DEFAULT.")
+        print(f"    glide, vibrato and the pressure attack ramp all run "
+              f"{5/period:.2f}x faster; scan CPU load is {5/period:.2f}x.")
+        print("    Verify the instrument keeps up before trusting it "
+              "(see docs/BUILD.md).")
     if not calib["floor"] + 32 <= calib["ceiling"]:
         raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
 

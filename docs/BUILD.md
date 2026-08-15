@@ -109,6 +109,23 @@ the floor-to-ceiling window is mapped onto the whole output range. Both must
 stay in 256..1023 so the immediates keep their encoding width; the build
 rejects anything else.
 
+**Change the update rate.** `[timing].scan_period_ms` is the period of the
+task that drives the key/pressure/pitch scan — 5 ms (200 Hz) from the factory,
+and a single `MOV R10,imm` at `0x80007C0C`. The CV output is a zero-order hold,
+so this is exactly the width of the steps you see on a scope.
+
+It is the instrument's master clock, not a pressure setting. The glide engine,
+the vibrato phase and the pressure attack ramp each advance once per scan, so
+at 4 ms they all run 1.25x faster and the scan's CPU cost rises by the same
+factor. The scan is ADC-completion driven, so there is also a hardware floor
+that no amount of static analysis can predict.
+
+**Measure whether the instrument keeps up** rather than assuming it: the
+pressure telemetry readout emits one frame per key per scan, so its cadence is
+a direct read of the achieved rate. At 5 ms a full 32-key cycle takes 160 ms.
+If a 4 ms build shows ~128 ms, it is keeping up; if the cadence stays at 160 ms
+or turns erratic, the scan is overrunning its period — go back to 5 ms.
+
 **Hand a control back to the factory.** Set any knob to `"factory"`, or
 `[arp].switch = "factory"`. The patch that activates the new behaviour is then
 simply not applied, so the original code runs untouched — verified by

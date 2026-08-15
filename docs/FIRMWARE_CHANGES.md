@@ -44,10 +44,17 @@ jack. That is why sensor noise and finger tremor are plainly visible on a
 scope — they are being amplified by design, and a narrower window trades noise
 for sensitivity.
 
-**Update rate.** Pressure is computed and written to the DAC once per 200 Hz
-scan (from `0x800030A6`, via the factory slew stage at `0x80002D80`), so the
-output is a zero-order-hold staircase with 5 ms treads. Smoothing that would
-mean interpolating at the 1 kHz DAC flush rather than holding.
+**Update rate.** Pressure is computed and written to the DAC once per scan
+(from `0x800030A6`, via the factory slew stage at `0x80002D80`), so the output
+is a zero-order-hold staircase whose treads are one scan period long.
+
+The rate is set by one instruction. The main loop at `0x80007C04` registers two
+periodic tasks: `MOV R10,0x5` at `0x80007C0C` for the callback that posts
+event 2 — the scan — and `MOV R10,0x1` at `0x80007C1C` for the one that posts
+event 17, the 1 kHz DAC flush. `[timing].scan_period_ms` writes that first
+immediate. Because pressure, pitch, the glide engine, the vibrato phase and the
+pressure attack ramp all advance once per scan, the period is a master clock
+and every one of those timings scales with it.
 
 **Smoothing.** The factory 16-tap boxcar (80 ms at the 200 Hz scan rate) was
 replaced by the 218r's **growing average** over up to 8 samples (40 ms). It

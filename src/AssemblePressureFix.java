@@ -39,14 +39,14 @@ public class AssemblePressureFix extends GhidraScript {
         return on("feature." + name);
     }
 
-    private int number(String key, int fallback) {
+    private int number(String key, int fallback, int low, int high) {
         String raw = cfg.getProperty("number." + key, "").trim();
         int value = raw.isEmpty() ? fallback : Integer.parseInt(raw);
-        // Every use below is a MOV Rd,imm that has to stay four bytes wide, so
-        // the immediate must need more than eight bits.
-        if (value < 0x100 || value > 0x3ff) {
-            throw new IllegalStateException(
-                "Setting " + key + " must be 256..1023 to keep the encoding width: " + value);
+        // The bounds keep each MOV Rd,imm at the width its patch site allows.
+        if (value < low || value > high) {
+            throw new IllegalStateException(String.format(
+                "Setting %s must be %d..%d to keep the encoding width: %d",
+                key, low, high, value));
         }
         return value;
     }
@@ -218,7 +218,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R11,0x3ff");
         emit("BR{ls} 0x8001434a");
         padTo(0x80014346L);
-        emit(String.format("MOV R11,0x%x", number("pressure_ceiling_default", 0x348)));
+        emit(String.format("MOV R11,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
         padTo(0x8001434aL);
         emit("MOV R12,R11");
         emit("SUB R12,0x20");
@@ -348,7 +348,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LSR R11,R9,0x10");
         emit("CP.W R11,0x3ff");
         emit("BR{ls} 0x80019518");
-        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244)));
+        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
         padTo(0x80019518L);
         emit("MOV R12,R11");
         emit("SUB R12,-0x20");
@@ -429,8 +429,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R7,0x5");
         emit("BR{eq} 0x80019628");
         emit("MOV R7,0x0");
-        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244)));
-        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348)));
+        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
         emit("RJMP 0x80019670");
         padTo(0x80019628L);
         emit("BFEXTU R7,R11,0x0,0x5");
@@ -448,8 +448,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R11,0x1f");
         emit("BR{hi} 0x80019670");
         padTo(0x80019666L);
-        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244)));
-        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348)));
+        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
         padTo(0x80019670L);
 
         emit("CP.W R8,R10");
@@ -580,8 +580,8 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x80019820L);
         emit("MOV R11,0x0");
         emit("ST.B R7[-0xd],R11");
-        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244)));
-        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348)));
+        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
         padTo(0x80019834L);
         emit("ST.H R7[-0xa],R11");       // applied floor
         emit("ST.H R7[-0xc],R9");        // applied ceiling
@@ -1602,6 +1602,15 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8000336cL);
         word(0x80019980L);
         finish("pitch_hook_pool", 0x80003370L);
+
+        // Scan period, in milliseconds.  The main loop registers a periodic
+        // task here whose callback posts event 2 — the key/pressure/pitch
+        // scan.  This single immediate is the instrument's whole update rate:
+        // pressure and pitch reach the DAC once per scan, and the glide
+        // engine, the vibrato phase and the pressure attack ramp all advance
+        // once per scan too, so their timings scale with it.
+        fixedPatch("scan_period", 0x80007c0cL, 2,
+            String.format("MOV R10,0x%x", number("scan_period_ms", 5, 1, 20)));
 
         singlePatch("pressure_gain_nop", 0x800043a4L, "NOP");
         fixedPatch("transpose_force_1", 0x80005466L, 4, "MOV R8,0x1");

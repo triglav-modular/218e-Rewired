@@ -159,6 +159,25 @@ dac_gain   = 4.09
 
 
 # ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+[timing]
+# How often the instrument scans the keys and updates the pressure and pitch
+# CVs, in milliseconds.  5 ms (200 Hz) is the factory rate.
+#
+# Lowering it makes the CV staircase finer — the output is a zero-order hold,
+# so the treads are exactly this long — but it is the instrument's master
+# update clock, not just a pressure setting.  The glide engine, the vibrato
+# phase and the pressure attack ramp each advance once per scan, so at 4 ms
+# they all run 1.25x faster, and the scan's CPU cost rises by the same factor.
+#
+# The scan is also ADC-completion driven, so there is a hardware floor: if the
+# conversions and the scan work do not fit in the period, events pile up.
+# Nothing here can predict that — measure it, see docs/BUILD.md.
+scan_period_ms = 5
+
+
+# ---------------------------------------------------------------------------
 # Toolchain
 # ---------------------------------------------------------------------------
 [tools]
