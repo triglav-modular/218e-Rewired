@@ -97,9 +97,10 @@ black_key_scale = 1.35
 output_smoothing = 5
 
 # Depth of the growing-average filter, in taps (8..24 = 40..120 ms at the
-# 5 ms scan).  Both this and output_smoothing are set to maximum for the
-# fixed-value smoothing test.
-smoothing_taps = 24
+# 5 ms scan).  Deep settings smooth wobble during holds but lag the attack —
+# the growing average trails a rising signal.  The staircase on the CV is
+# handled by output_smoothing, not by this.
+smoothing_taps = 8
 
 [pressure.calibration]
 # Where the pressure window sits when the instrument has no stored calibration
