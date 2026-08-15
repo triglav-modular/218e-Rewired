@@ -115,7 +115,7 @@ public class AssemblePressureFix extends GhidraScript {
         for (String line : listing) {
             println(line);
         }
-        println(String.format("PATCH %08x %s", base, hex(bytes.toByteArray())));
+        println(String.format("PATCH %08x %s ; %s", base, hex(bytes.toByteArray()), name));
     }
 
     private static String hex(byte[] data) {
