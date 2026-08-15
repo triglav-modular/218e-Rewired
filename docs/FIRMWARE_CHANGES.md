@@ -32,9 +32,17 @@ linear) is why noise and proximity stop being obtrusive.
   would wrap the negative difference.
 
 **Calibration is hardcoded.** Floor 580 / ceiling 814 are the defaults
-(`[pressure.calibration]`), and knobs 1 and 3 became live trims (ceiling
-712–967, floor 452–707), so the instrument is right out of the box with no
-calibration ritual. The defaults are what you get after a flash, which wipes
+(`[pressure.calibration]`), and knobs 1 and 3 became live trims that centre on
+those defaults and reach half of `trim_span` either side, so the instrument is
+right out of the box with no calibration ritual.
+
+The span matters more than it looks. Capacitive sensing couples through the
+player to ground, and simply lifting your feet off the floor shrinks the whole
+signal by about 30% — a firm press falls from ~830 raw counts to ~546. That is
+a different calibration, not a different pressure, so the trim range has to be
+wide enough to reach it: with the original fixed 256-count range the ceiling
+bottomed out at 712, above anything a feet-up press could produce, and no knob
+position could make it play. The defaults are what you get after a flash, which wipes
 the stored calibration; 814 is what knob 1 reads at position 4.
 
 The window between floor and ceiling is mapped onto the full output range, so

@@ -209,8 +209,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x80014374");
         emit("LD.UH R8,R10[0x30e]");
-        emit("LSR R8,0x2");
-        emit("SUB R8,-0x1c4");
+        emit(String.format("LSR R8,0x%x", number("trim_shift", 2, 1, 4)));
+        emit(String.format("SUB R8,-0x%x", number("floor_knob_base", 0x1c4, 0x80, 0x7d0)));
         emit("LD.W R9,R10[0x33c]");
         emit("BFEXTU R11,R9,0x0,0x10");
         emit("CP.W R11,0x20");
@@ -218,7 +218,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R11,0x3ff");
         emit("BR{ls} 0x8001434a");
         padTo(0x80014346L);
-        emit(String.format("MOV R11,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
+        emit(String.format("MOV R11,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
         padTo(0x8001434aL);
         emit("MOV R12,R11");
         emit("SUB R12,0x20");
@@ -342,13 +342,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x80019568");
         emit("LD.UH R8,R10[0x30a]");
-        emit("LSR R8,0x2");
-        emit("SUB R8,-0x2c8");
+        emit(String.format("LSR R8,0x%x", number("trim_shift", 2, 1, 4)));
+        emit(String.format("SUB R8,-0x%x", number("ceiling_knob_base", 0x2c8, 0x80, 0x7d0)));
         emit("LD.W R9,R10[0x33c]");
         emit("LSR R11,R9,0x10");
         emit("CP.W R11,0x3ff");
         emit("BR{ls} 0x80019518");
-        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
+        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
         padTo(0x80019518L);
         emit("MOV R12,R11");
         emit("SUB R12,-0x20");
@@ -429,8 +429,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R7,0x5");
         emit("BR{eq} 0x80019628");
         emit("MOV R7,0x0");
-        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
-        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
+        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
         emit("RJMP 0x80019670");
         padTo(0x80019628L);
         emit("BFEXTU R7,R11,0x0,0x5");
@@ -448,8 +448,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R11,0x1f");
         emit("BR{hi} 0x80019670");
         padTo(0x80019666L);
-        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
-        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
+        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
         padTo(0x80019670L);
 
         emit("CP.W R8,R10");
@@ -580,8 +580,8 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x80019820L);
         emit("MOV R11,0x0");
         emit("ST.B R7[-0xd],R11");
-        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x100, 0x3ff)));
-        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x100, 0x3ff)));
+        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
         padTo(0x80019834L);
         emit("ST.H R7[-0xa],R11");       // applied floor
         emit("ST.H R7[-0xc],R9");        // applied ceiling

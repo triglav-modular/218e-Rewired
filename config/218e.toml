@@ -96,6 +96,15 @@ output_smoothing = 2
 floor   = 580
 ceiling = 814
 
+# How far edit-mode knobs 3 and 1 can trim those, in raw counts.  Each knob
+# centres on the value above and reaches half this span either side, so the
+# trim range follows the defaults instead of being fixed.
+#
+# 256 trims finely.  512 is wide enough to re-trim the instrument between very
+# different coupling conditions — playing with your feet on the floor and with
+# them up differ by about 30% of signal, which a 256-count range cannot span.
+trim_span = 512
+
 [pressure.curve]
 # The 218r-style response curve: zero at the calibration floor, an immediate
 # onset step, then a smooth rise to full scale.  onset_db is the output level

@@ -572,6 +572,20 @@ def main() -> None:
               f"{5/period:.2f}x faster; scan CPU load is {5/period:.2f}x.")
         print("    Verify the instrument keeps up before trusting it "
               "(see docs/BUILD.md).")
+    span = calib["trim_span"]
+    if span not in (128, 256, 512):
+        raise SystemExit("[pressure.calibration].trim_span must be 128, 256 or 512")
+    # The knob centres on the configured default and reaches +/- half the span,
+    # so changing a default carries its trim range along with it.
+    cfg["_numbers"]["trim_shift"] = {512: 1, 256: 2, 128: 3}[span]
+    cfg["_numbers"]["floor_knob_base"] = calib["floor"] - span // 2
+    cfg["_numbers"]["ceiling_knob_base"] = calib["ceiling"] - span // 2
+    for what in ("floor", "ceiling"):
+        base = cfg["_numbers"][f"{what}_knob_base"]
+        if base < 128:
+            raise SystemExit(
+                f"[pressure.calibration]: {what} {calib[what]} with trim_span {span} "
+                f"puts the knob base at {base}; raise the default or narrow the span")
     if not calib["floor"] + 32 <= calib["ceiling"]:
         raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
 
