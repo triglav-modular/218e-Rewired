@@ -146,6 +146,14 @@ onset_db = -10.0
 # 218r curve.  Edit knob 4 still sets it live.
 default_level = 31
 
+# Width of the linear ramp at the very bottom of the curve, in curve counts
+# (0..913 across the floor-to-ceiling window).  The 218r onset is a step —
+# ~31% of full output within one count of the floor — which is what makes
+# light touches speak instantly, but it also means a soft note cuts off
+# abruptly as it crosses the floor on release.  The fade ramps that step in
+# over this many counts instead.  0 restores the pure step.
+onset_fade = 60
+
 
 # ---------------------------------------------------------------------------
 # Portamento

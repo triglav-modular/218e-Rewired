@@ -164,11 +164,15 @@ def tuning_table(cents: list[float], base: int, per_octave: int) -> list[int]:
     ]
 
 
-def pressure_curve(span: int, onset_db: float) -> list[int]:
+def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
     """218r-style response: 0 at the floor, an onset step, then a smooth rise.
 
     v(0) = 0; v(x) = span * 10**((x/span - 1) * -onset_db/20), clamped
     monotone and to `span`.  onset_db = -10 gives the 218r's ~32 % onset.
+
+    `fade` linearises the first `fade` counts up to the curve, so the onset
+    is a short ramp instead of a cliff — releases cross the floor smoothly
+    while attacks still reach the onset level almost immediately.
     """
     out, previous = [], 0
     exponent = -onset_db / 20.0
@@ -177,6 +181,8 @@ def pressure_curve(span: int, onset_db: float) -> list[int]:
             value = 0
         else:
             value = math.floor(span * 10.0 ** ((x / span - 1.0) * exponent) + 0.5)
+        if fade and 0 < x < fade:
+            value = min(value, value * x // fade)
         value = max(previous, min(span, value))
         out.append(value)
         previous = value
@@ -545,7 +551,9 @@ def main() -> None:
     tuning = cfg["tuning"]
     tables = {
         "pressure_curve": pressure_curve(
-            cfg["pressure"]["curve"]["span"], cfg["pressure"]["curve"]["onset_db"]
+            cfg["pressure"]["curve"]["span"],
+            cfg["pressure"]["curve"]["onset_db"],
+            cfg["pressure"]["curve"].get("onset_fade", 0),
         ),
         "pitch_remap": pitch_table(cfg, read_calibration(calibration)),
     }
