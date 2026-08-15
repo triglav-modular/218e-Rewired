@@ -254,12 +254,18 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         raw = (row.get("Measured_Cents") or "").strip()
         if not raw:
             continue
+        # Three accepted ways to say which note was measured.  "Semitone" is an
+        # index into the calibration table (0 = the 208p's 0 V pitch, an A);
+        # "Semitones" and "Key" are relative to the bottom key, which is a C,
+        # three semitones higher.
         if (row.get("Semitone") or "").strip():
             semitone = int(row["Semitone"])
+        elif (row.get("Semitones") or "").strip():
+            semitone = int(row["Semitones"]) + 3
         elif (row.get("Key") or "").strip():
-            semitone = int(row["Key"]) - 1 + 3   # key 1 is semitone 3
+            semitone = int(row["Key"]) + 2
         else:
-            raise SystemExit(f"{measurement.name}: rows need a Semitone or Key column")
+            raise SystemExit(f"{measurement.name}: rows need a Semitone, Semitones or Key column")
         if semitone not in offsets:
             raise SystemExit(f"{measurement.name}: semitone {semitone} is outside the table")
         updates[semitone] = float(raw)
@@ -267,8 +273,13 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     if not updates:
         raise SystemExit(f"{measurement.name}: no Measured_Cents values")
 
+    # Rows above the highest measured note only ever held that note's
+    # correction, so they follow it rather than keeping a stale value.
+    highest = max(updates)
+    tail_delta = -updates[highest] * octave_width_volts(offsets, highest)
+
     text = calibration.read_text().splitlines()
-    out, applied = [], 0
+    out, applied, trailing = [], 0, 0
     for line in text:
         if line.lstrip().startswith("#") or line.startswith("Semitone"):
             out.append(line)
@@ -282,9 +293,14 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
             parts[3] = f"{offsets[semitone] + delta:.6f}"
             parts[4] = "measured"
             applied += 1
+        elif semitone > highest and parts[4] == "extrapolated":
+            parts[3] = f"{offsets[semitone] + tail_delta:.6f}"
+            trailing += 1
         out.append(";".join(parts))
     calibration.write_text("\n".join(out) + "\n")
     print(f"folded {applied} reading(s) into {calibration.relative_to(REPO)}")
+    if trailing:
+        print(f"  {trailing} extrapolated row(s) above semitone {highest} followed it")
     print("  rebuild to apply them")
 
 

@@ -111,11 +111,14 @@ zero_snap = true
 slots = [
     "tunings/Sabat II.scl",              # slot 0 — power-on default
     "tunings/ADDAC Just Intonation.scl", # slot 1
-    "factory",                           # slot 2 — the instrument's original
-                                         #          temperament, copied bit-exact
-                                         #          from the factory image.
-                                         #          Use "tunings/12TET.scl" for a
-                                         #          mathematically exact 12-TET.
+    "tunings/12TET.scl",                 # slot 2 — mathematically exact 12-TET,
+                                         #          and the reference the pitch
+                                         #          calibration was measured
+                                         #          against.  "factory" would
+                                         #          instead copy the instrument's
+                                         #          own temperament bit-exact,
+                                         #          which is up to 1.65 cents off
+                                         #          exact 12-TET.
 ]
 
 # Key-table units.  The bottom key sits at `base_units`, and every octave adds
@@ -141,9 +144,6 @@ calibration_csv = "calibration/218e-pitch-calibration.csv"
 dac_counts = 4096
 dac_vref   = 2.5
 dac_gain   = 4.09
-
-# Length of the generated correction table, in semitones.
-table_entries = 79
 
 
 # ---------------------------------------------------------------------------
