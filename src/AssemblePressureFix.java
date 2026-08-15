@@ -293,7 +293,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R7,PC");
         padTo(0x80018d30L);
         word(0x80005a04L); // original note-on initialization
-        word(0x00003226L); // raw-filter sample count
+        word(0x00006080L); // raw-filter sample count
         word(0x8001a020L); // press-order list append
         word(0x8001a2a8L); // latch toggle check
         finish("note_on_reset_raw_filter", 0x80018d40L);
@@ -312,7 +312,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R7,PC");
         padTo(0x80018d70L);
         word(0x8000596cL); // original active-key selector
-        word(0x00003226L); // raw-filter sample count
+        word(0x00006080L); // raw-filter sample count
         finish("source_change_reset_raw_filter", 0x80018d80L);
 
         // One entry per possible normalized raw pressure count. The shape is
@@ -425,34 +425,11 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MOV R8,0x0");
         }
         padTo(0x800195bcL);
-        emit("LDDPC R10,0x80019720");
-        emit("LD.UH R9,R10[0x10]");
-        emit("SUB R9,-0x1");
-        emit("CP.W R9,0x8");
-        emit("BR{ls} 0x800195d0");
-        emit("MOV R9,0x8");
-        padTo(0x800195d0L);
-        emit("ST.H R10[0x10],R9");
-        emit("MOV R12,R10");
-        emit("SUB R12,-0xe");
-        emit("MOV R11,0x7");
-        padTo(0x800195dcL);
-        emit("LD.UH R7,R12[-0x2]");
-        emit("ST.H R12[0x0],R7");
-        emit("SUB R12,0x2");
-        emit("SUB R11,0x1");
-        emit("BR{ne} 0x800195dc");
-        emit("ST.H R10[0x0],R8");
-        emit("MOV R12,R10");
-        emit("MOV R11,R9");
-        emit("MOV R8,0x0");
-        padTo(0x800195f0L);
-        emit("LD.UH R7,R12[0x0]");
-        emit("ADD R8,R7");
-        emit("SUB R12,-0x2");
-        emit("SUB R11,0x1");
-        emit("BR{ne} 0x800195f0");
-        emit("DIVU R8,R8,R9");
+        // Growing average, now variable-depth (8..24 taps, edit knob 2) and
+        // relocated to RAM 0x6050 — see the variable_filter cave.
+        emit("MOV R12,R8");
+        emit("MCALL PC[0x80019738]");
+        emit("MOV R8,R12");
         padTo(0x80019600L);
 
         emit("LDDPC R12,0x80019728");
@@ -532,7 +509,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80018d80L); // full-resolution curve table
         word(0x80019740L); // edit-mode USB pressure telemetry
         word(0x8001a790L); // prep: black-key scale + debug A/B
-        finish("calibrated_pressure_curve", 0x80019738L);
+        word(0x8001a800L); // variable-depth growing average
+        finish("calibrated_pressure_curve", 0x8001973cL);
 
         // Rate-limited calibration telemetry.  This function is called after
         // the pressure result has been calculated, so it cannot alter the
@@ -563,16 +541,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDDPC R12,0x8001992c");
         emit("LD.UH R8,R12[0x0]");
         emit("ST.H R7[-0x4],R8");        // instantaneous raw
-        emit("LD.UH R11,R12[0x10]");     // growing-average sample count
+        emit("LD.UH R11,R12[0x30]");     // growing-average sample count
         emit("MOV R9,0x0");
         emit("CP.W R11,0x0");
         emit("BR{ne} 0x80019790");
         emit("MOV R8,0x0");              // no samples yet: report average 0
         emit("RJMP 0x800197bc");
         padTo(0x80019790L);
-        emit("CP.W R11,0x8");
+        emit("CP.W R11,0x18");
         emit("BR{ls} 0x800197a0");
-        emit("MOV R11,0x8");
+        emit("MOV R11,0x18");
         padTo(0x800197a0L);
         emit("LD.UH R8,R12[0x0]");
         emit("ADD R9,R8");
@@ -580,10 +558,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R11,0x1");
         emit("BR{ne} 0x800197a0");
         emit("LDDPC R12,0x8001992c");
-        emit("LD.UH R11,R12[0x10]");
-        emit("CP.W R11,0x8");
+        emit("LD.UH R11,R12[0x30]");
+        emit("CP.W R11,0x18");
         emit("BR{ls} 0x800197b8");
-        emit("MOV R11,0x8");
+        emit("MOV R11,0x18");
         padTo(0x800197b8L);
         emit("DIVU R8,R9,R11");          // quotient to R8 (even destination)
         padTo(0x800197bcL);
@@ -703,7 +681,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x80019924L);
         word(0x80019940L); // send one 14-bit diagnostic value
         word(0x80008034L); // direct USB-MIDI CC sender
-        word(0x00003216L); // sixteen raw pressure-history taps
+        word(0x00006050L); // pressure-history taps (up to 24), count at +0x30
         word(0x00003560L); // global state base
         word(0x00003239L); // otherwise-unused byte in the BSS gap
         word(0x0000002cL); // factory key-to-scan-channel map
@@ -1580,6 +1558,87 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80013350L); // signed-int-to-float helper (same as the epilogue)
         finish("pressure_prep", 0x8001a7f8L);
 
+        // Variable-depth growing average.  Depth N (8..24 taps = 40..120 ms
+        // at the 5 ms scan) lives at RAM 0x6082, set by edit knob 2; taps at
+        // RAM 0x6050, sample count still at 0x6080 (zeroed by the note-on and
+        // source-change wrappers).  Averages only the samples gathered since
+        // the touch, so attacks stay instant at any depth.
+        begin(0x8001a800L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,R12");
+        emit("MOV R9,0x6082");
+        emit("LD.UH R11,R9[0x0]");
+        emit("CP.W R11,0x8");
+        emit("BR{ge} 0x8001a816");
+        emit("MOV R11,0x8");
+        padTo(0x8001a816L);
+        emit("CP.W R11,0x18");
+        emit("BR{le} 0x8001a81e");
+        emit("MOV R11,0x18");
+        padTo(0x8001a81eL);
+        emit("MOV R9,0x6080");
+        emit("LD.UH R10,R9[0x0]");
+        emit("SUB R10,-0x1");
+        emit("CP.W R10,R11");
+        emit("BR{le} 0x8001a830");
+        emit("MOV R10,R11");
+        padTo(0x8001a830L);
+        emit("ST.H R9[0x0],R10");
+        emit("MOV R9,0x6050");
+        emit("MOV R12,R11");
+        emit("SUB R12,0x1");
+        emit("LSL R12,0x1");
+        emit("ADD R12,R9");
+        padTo(0x8001a840L);
+        emit("CP.W R12,R9");
+        emit("BR{le} 0x8001a852");
+        emit("LD.UH LR,R12[-0x2]");
+        emit("ST.H R12[0x0],LR");
+        emit("SUB R12,0x2");
+        emit("RJMP 0x8001a840");
+        padTo(0x8001a852L);
+        emit("ST.H R9[0x0],R8");
+        emit("MOV R12,R9");
+        emit("MOV R11,R10");
+        emit("MOV R8,0x0");
+        padTo(0x8001a85cL);
+        emit("LD.UH LR,R12[0x0]");
+        emit("ADD R8,LR");
+        emit("SUB R12,-0x2");
+        emit("SUB R11,0x1");
+        emit("BR{ne} 0x8001a85c");
+        emit("DIVU R8,R8,R10");
+        emit("MOV R12,R8");
+        emit("LDM SP++,R7,PC");
+        finish("variable_filter", 0x8001a870L);
+
+        // Edit knob 2: smoothing depth.  Mode 0 (no pad held) maps the knob
+        // onto 8..24 taps; every other edit mode keeps the factory handler.
+        begin(0x8001a870L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R11,R12");
+        emit("LDDPC R10,0x8001a8b0");
+        emit("LD.W R8,R10[0x34]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001a89c");
+        emit("LD.UH R8,R10[0x30c]");
+        emit("SUB R8,-0x3f");
+        emit("LSR R8,0x6");
+        emit("SUB R8,-0x8");
+        emit("MOV R9,0x6082");
+        emit("ST.H R9[0x0],R8");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a89cL);
+        emit("MOV R12,R11");
+        emit("MCALL PC[0x8001a8b4]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a8b0L);
+        word(0x00003560L); // global state base
+        word(0x80004150L); // factory knob-2 handler
+        finish("knob2_smoothing", 0x8001a8b8L);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -1686,7 +1745,11 @@ public class AssemblePressureFix extends GhidraScript {
         // Octave-switch boot window counter (see octswitch_sync).
         emit("MOV R9,0x604c");
         emit("ST.H R9[0x0],R8");
-        padTo(0x8001a4acL);
+        // Default smoothing depth: 8 taps (40 ms) until knob 2 says otherwise.
+        emit("MOV R11,0x8");
+        emit("MOV R9,0x6082");
+        emit("ST.H R9[0x0],R11");
+        padTo(0x8001a4b4L);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases every latched key.
             emit("LD.UB R8,R10[0x340]");
@@ -1694,20 +1757,20 @@ public class AssemblePressureFix extends GhidraScript {
             emit("LD.UB R9,R11[0x0]");
             emit("ST.B R11[0x0],R8");
             emit("CP.W R9,0x1");
-            emit("BR{ne} 0x8001a4e0");
+            emit("BR{ne} 0x8001a4e8");
             emit("CP.W R8,0x1");
-            emit("BR{eq} 0x8001a4e0");
+            emit("BR{eq} 0x8001a4e8");
             emit("MOV R9,0x0");
             emit("ST.B R10[0x21a],R9");
             emit("MOV R9,0x1f");
-            padTo(0x8001a4d0L);
+            padTo(0x8001a4d8L);
             emit("ADD R12,R10,R9 << 0x0");
             emit("MOV R8,0x0");
             emit("ST.B R12[0x21b],R8");
             emit("SUB R9,0x1");
-            emit("BR{ge} 0x8001a4d0");
+            emit("BR{ge} 0x8001a4d8");
         }
-        padTo(0x8001a4e0L);
+        padTo(0x8001a4e8L);
         if (feature("pressure_common_mode")) {
             // Proximity estimate, in its own cave: the nearest untouched key
             // on each side of the active key samples the hovering hand's
@@ -1963,6 +2026,8 @@ public class AssemblePressureFix extends GhidraScript {
             "knob-3 pointer -> pressure-floor wrapper");
         wordPatch("knob4_pool", 0x800043d0L, 0x80014380L,
             "knob-4 pointer -> knob4_curve");
+        wordPatch("knob2_pool", 0x800043c8L, 0x8001a870L,
+            "knob-2 pointer -> smoothing-depth wrapper");
         // Remote-enable guards always see 0: state+2 now stores the tuning
         // selector, and the remote feature is permanently retired.
         begin(0x80006528L);

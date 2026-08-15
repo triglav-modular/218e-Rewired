@@ -9,7 +9,7 @@ The readout uses MIDI channel 16 control changes. A complete frame is:
 | CC | Meaning |
 |---:|---|
 | 102, 103 | Baseline-subtracted instantaneous raw pressure, 14-bit MSB/LSB |
-| 104, 105 | Exact growing raw average (newest 1..8 samples since touch) used by the pressure algorithm |
+| 104, 105 | Exact growing raw average (newest 1..24 samples since touch, depth per edit knob 2) used by the pressure algorithm |
 | 106, 107 | Pressure normalized between the saved endpoints, 0–913 |
 | 108, 109 | Final pressure after the curve, expanded to 0–4095 |
 | 110, 111 | Saved pressure floor |

@@ -90,10 +90,12 @@ pressure attack ramp all advance once per scan, the period is a master clock
 and every one of those timings scales with it.
 
 **Smoothing.** The factory 16-tap boxcar (80 ms at the 200 Hz scan rate) was
-replaced by the 218r's **growing average** over up to 8 samples (40 ms). It
-averages only the samples collected so far, so there is no ramp-up on attack;
-the sample count at RAM `0x3226` is cleared by the note-on and source-change
-wrappers.
+replaced by the 218r's **growing average**, now with a depth set by **edit
+knob 2** (mode 0): 8 taps (40 ms) fully left to 24 taps (120 ms) fully right
+(`variable_filter`, `0x8001A800`; taps at RAM `0x6050`, depth at `0x6082`,
+count at `0x6080`). It averages only the samples collected since the touch, so
+attacks stay instant at any depth; the count is cleared by the note-on and
+source-change wrappers. Other edit modes keep knob 2's factory function.
 
 **Proximity rejection** (`[pressure].common_mode`). A hovering hand lifts
 every key it is near — the played key included — so two-handed playing could
