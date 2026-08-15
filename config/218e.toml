@@ -121,6 +121,14 @@ black_key_scale = 1.2
 #
 # This is the alternative to shortening the scan period, which the profiler
 # showed has no headroom for it.
+#
+# TUNING NOTE.  The number changed meaning on 2026-08-15, and the same 5 is
+# now far less smoothing than it used to be.  The old scheme closed 1/2^5 of
+# the gap every millisecond, which needed ~73 ms to settle; this one is done
+# in 5 ms.  If the stair-stepping that this originally cured comes back, raise
+# the value — but the ceiling is 8, so a finite ramp cannot reproduce the old
+# feel.  If that tail is intentionally wanted, add an explicit exponential
+# mode; do not revert the whole firmware, because later bug fixes are separate.
 output_smoothing = 5
 
 # Fractional bits carried through the pressure chain (0..4).  Averaging N
@@ -281,8 +289,9 @@ scan_profiler = false
 pressure_ab_switch = false
 
 # Report the live smoothing state in the telemetry's scan-component fields:
-# scan A = filter depth in taps (8..24), scan B = interpolator shift (2..5).
-# Both must follow edit knob 2.
+# scan A = filter depth in taps (8..24), scan B = interpolation ticks (1..8).
+# These are currently build-time defaults; the attempted live edit-knob-2
+# control was removed because its ADC mirror did not follow the physical knob.
 telemetry_smoothing = false
 factory_gain_shift = 3
 
@@ -294,11 +303,12 @@ factory_gain_shift = 3
 # How often the instrument scans the keys and updates the pressure and pitch
 # CVs, in milliseconds.  5 ms (200 Hz) is the factory rate.
 #
-# Lowering it makes the CV staircase finer — the output is a zero-order hold,
-# so the treads are exactly this long — but it is the instrument's master
-# update clock, not just a pressure setting.  The glide engine, the vibrato
-# phase and the pressure attack ramp each advance once per scan, so at 4 ms
-# they all run 1.25x faster, and the scan's CPU cost rises by the same factor.
+# Lowering it updates the pressure target more often.  With output_smoothing=0
+# the zero-order-hold treads are exactly this long; otherwise the 1 kHz DAC
+# flush divides each target change into finite 1 ms steps.  This is still the
+# instrument's master update clock, not just a pressure setting.  The glide
+# engine, vibrato phase and pressure attack ramp each advance once per scan,
+# so at 4 ms they all run 1.25x faster, and scan CPU cost rises by the same factor.
 #
 # The scan is also ADC-completion driven, so there is a hardware floor: if the
 # conversions and the scan work do not fit in the period, events pile up.

@@ -69,30 +69,41 @@ jack. That is why sensor noise and finger tremor are plainly visible on a
 scope — they are being amplified by design, and a narrower window trades noise
 for sensitivity.
 
-**Output smoothing** (`[pressure].output_smoothing`, shift 1..6; live value
-at RAM `0x6084`, written by the power-up init — shift n means first-step
-amplitude 1/2^n of a scan tread). The scan's store into
-the pressure DAC slot is redirected to a target at RAM `0x6036`
+**Output smoothing** (`[pressure].output_smoothing`, 1..8 interpolation steps;
+live value at RAM `0x6084`, written by the first-use init — n means each new
+scan value is reached in exactly n one-millisecond ticks). The scan's store
+into the pressure DAC slot is redirected to a target at RAM `0x6036`
 (`ST.H R9[0x2ad6]` — the same instruction, a different displacement), and the
 `dac_interpolator` cave at `0x8001A600` runs on the 1 kHz DAC flush instead,
-closing 1/2^n of the remaining gap each millisecond. At the default shift a
-200-count scan step is spread into millisecond treads instead of one 5 ms
-tread. It is reached by
-repointing the dispatcher's jump-table entry for event 17 (`0x8001485C`) and
-jumps on into the factory handler when done.
+dividing the remaining gap over the remaining ticks. At the default of 5 a
+200-count scan step is spread into five ~40-count treads instead of one 5 ms
+tread. It is reached by repointing the dispatcher's jump-table entry for
+event 17 (`0x8001485C`) and jumps on into the factory handler when done.
 
-Two details it would be easy to get wrong: a plain shift stalls once the gap
-is smaller than the divisor, so the last counts creep by one; and the target
-is zeroed through a one-shot marker at RAM `0x6044`, because otherwise the
-interpolator would spend the first few milliseconds after power-up smoothing
-toward whatever the SRAM held, and click.
+Two details it would be easy to get wrong. The gap is re-divided by the ticks
+still outstanding rather than pre-computed once, which spreads the integer
+remainder instead of dropping it, and the final tick assigns the target
+outright so the output cannot stall a few counts short. The counter restarts
+only when the target actually changes, so a held-steady target is not
+re-ramped every millisecond. `DIVS` writes a quotient/remainder *pair*, so the
+decremented counter is stored before the divide — its register is the one the
+remainder lands in.
+
+Note this is a *finite* ramp, not the exponential decay used up to
+2026-08-15: the earlier scheme closed 1/2^n of the gap per tick and so took
+roughly 73 ms to settle at the same setting of 5, where this reaches the
+target in 5 ms. It removes the long pressure tail, and it is correspondingly
+much less smoothing — see the tuning note in
+[218e.toml](../config/218e.toml).
 
 This is the alternative to shortening the scan period, which measurement ruled
 out — see [BUILD.md](BUILD.md).
 
-**Update rate.** Pressure is computed and written to the DAC once per scan
-(from `0x800030A6`, via the factory slew stage at `0x80002D80`), so the output
-is a zero-order-hold staircase whose treads are one scan period long.
+**Update rate.** Pressure is computed once per scan (from `0x800030A6`, via
+the factory slew stage at `0x80002D80`). With output interpolation disabled it
+is a zero-order-hold staircase whose treads are one scan period long. In the
+normal build the scan writes a target and the 1 kHz DAC flush emits the finite
+ramp described above.
 
 The rate is set by one instruction. The main loop at `0x80007C04` registers two
 periodic tasks: `MOV R10,0x5` at `0x80007C0C` for the callback that posts
@@ -124,11 +135,13 @@ removing the intermediate truncation shifts values by up to one old
 quantisation step; the build's tests assert exactly that bound. Setting the
 value to 0 restores the original integer arithmetic.
 
-**One pass over the keys** (`pressure_cache`, `0x8001AA10`). Per scan, for
-every key: subtract the 110 baseline and the proximity estimate, clamp at
-zero, apply the key-colour coefficient, publish the result to RAM `0x6100`
-for the portamento weighting, and aggregate the physically held keys for the
-pressure CV. One walk now does what three did.
+**One pass over the keys** (`pressure_cache`, `0x8001AA10`). Per scan it first
+checks the touch state. For each physically held key it subtracts the 110
+baseline and that key's local proximity estimate, clamps at zero, applies the
+key-colour coefficient, publishes the result to RAM `0x6100` for portamento,
+and includes it in the pressure aggregate. Released and fingerless latched
+slots are explicitly published as zero, so portamento cannot consume a stale
+sample. One outer walk now does what three did.
 
 The order is deliberate. The proximity estimate is a raw-domain figure, so it
 is subtracted **before** the colour correction; scaling first and subtracting
@@ -153,15 +166,13 @@ is 13 fewer memory operations at 8 taps and 45 fewer at 24. The result is
 bit-identical to the old arithmetic; `tools/test.py` asserts that at every
 depth. A zero count, which the note-on and source-change wrappers write,
 also resets the ring.
-The 1 kHz output interpolation depth is `[pressure].output_smoothing`
-(shift 1..6, live value at RAM `0x6084`; currently 5) — the filter shapes the
-sequence of scan values, the interpolator is what actually shrinks the 5 ms
-staircase on the jack. At shift 5 it closes 1/32 of the remaining gap each
-millisecond: a ~32 ms time constant, roughly 73 ms to 90% and 145 ms to 99%,
-which removes the staircase completely at the cost of a soft edge on very
-fast attacks. The filter averages only the samples collected since the touch, so
-attacks stay instant at any depth; the count is cleared by the note-on and
-source-change wrappers.
+
+The 1 kHz output interpolation length is `[pressure].output_smoothing`
+(1..8 ticks, live value at RAM `0x6084`; currently 5). The filter shapes the
+sequence of scan values; the interpolator divides each new gap over exactly
+that many one-millisecond ticks and lands on the target at the end. The filter
+averages only samples collected since the touch, so attacks restart cleanly at
+any depth; the count is cleared by the note-on and source-change wrappers.
 
 > An edit-knob-2 live control for these was tried and removed: the wrapper
 > was dispatched and its store branch ran, but its read of ADC mirror
@@ -173,18 +184,20 @@ source-change wrappers.
 the last key touched, so adding a second key hands the CV to it: hold one key
 hard, touch another lightly, and the output follows the light touch — to zero
 if it sits below the floor, with the first finger still down.
-`multi_key_pressure` (`0x8001AA10`, called from the prep cave) combines every
-**physically** held key instead — rounding the mean rather than truncating it,
-since a lost half-count is a persistent several-count bias — — touch state 2, so latched keys with no
-finger on them cannot drag the result down — black-key correcting each one as it is
-gathered, from the shared table below. `"mean"` averages them, `"max"` takes the hardest-pressed key,
-`"factory"` restores the original behaviour.
+`pressure_cache` (`0x8001AA10`, called from the prep cave) combines every
+**physically** held key instead. It black-key-corrects each sample as it is
+gathered; touch state 2 excludes latched keys with no finger, so they cannot
+drag the result down. `"mean"` rounds rather than truncates (a lost half-count
+would be a persistent several-DAC-count bias), `"max"` takes the hardest press,
+and `"factory"` restores the original last-key behaviour.
 
 **Black-key correction.** Black keys have smaller pads and couple less
 charge, so the same press reads 0.72–0.81x of a white key. The correction is
-a per-key Q8 excess in a 32-entry table (`0x8001A540`, copied into RAM at
-`0x60B0` during the power-up init), applied with rounding and without a
-branch. Both the pressure aggregate and the **portamento weighting** use it:
+a per-key Q8 excess in a 32-entry table (`0x8001AB20`), read directly from
+flash by the cache pass and applied with rounding and without a branch. An
+earlier revision staged it into RAM at `0x60B0`; that copy is gone, because
+the region it used overlapped the latch stamps and both portamento cells. Both
+the pressure aggregate and the **portamento weighting** use it:
 the blend cubes its weights, so an uncorrected black key carried only ~0.44 of
 a white key's pull at equal physical pressure, against ~0.76 corrected.
 
@@ -193,13 +206,23 @@ every key it is near — the played key included — so two-handed playing could
 inflate a firm press from ~830 to ~1900 raw counts and pin the CV at maximum.
 
 The estimator is spatial, because the interference is: `proximity_estimator`
-(`0x8001A6A0`, called each scan from `scan_housekeeping`) walks outward from
-the active key on both sides, past held keys and past the immediate
-neighbours (which carry spill from the pressing finger itself), to the first
-untouched key on each side. Those keys sit in roughly the same field the
-active key feels. The larger of the two readings, minus
-`proximity_reference`, clamped to 0–1600, is published at RAM `0x602C` and
-subtracted from the raw pressure before the filter.
+(`0x8001A6A0`) walks outward from a held key on both sides, past held keys and
+past the immediate neighbours (which carry spill from the pressing finger
+itself), to the first untouched key on each side. Those keys sit in roughly
+the same field that key feels. The larger of the two readings, minus
+`proximity_reference` and floored at zero, is the correction.
+
+It is called **per held key**, from the cache pass, and returns its estimate
+in `R12` rather than publishing one global figure at RAM `0x602C`. That
+matters with two hands far apart: a single shared estimate gave both regions
+whichever field the last active key happened to sit in, so one hand's
+proximity was subtracted from the other hand's press. Each side probes only
+the three candidate keys at distances 2, 3 and 4, which bounds the worst case
+at six sensor probes per held key instead of an unbounded nested search.
+
+There is no upper clamp on the estimate any more (it was 1600). Over-subtraction
+cannot go negative — the cache floors each key at zero — so a strong enough
+adjacent field can null a real press rather than merely reducing it.
 
 The reference (default 300 raw counts against an idle baseline of ~110)
 matters: the playing hand always lifts its own neighbourhood a little, and
@@ -210,8 +233,8 @@ playing feels lighter than before; lower it toward 110 for stronger rejection.
 An earlier version used the *minimum over all untouched keys*. Audit of live
 captures showed it delivering ~9% of the needed correction — a hand is local,
 so the far keys it never lifts dominated a global minimum. If every key is
-held there is no reference key and the estimate is zero: no correction is
-ever applied without evidence.
+held, or neither side has an untouched reference within the three-probe local
+window, the estimate is zero: no correction is applied without nearby evidence.
 
 > The telemetry's raw field shows the value *after* this subtraction (it is
 > tap 0 of the filter), so the correction is directly visible in captures:
@@ -280,20 +303,28 @@ ported from the Micro_Easel and based on the Haken Continuum patent
 pressure-weighted average of every held key, at any interval:
 
 ```
-X = Σ(z³·Xk) / Σ(z³)      z = per-key corrected pressure
+X = Σ(z³·Xk) / Σ(z³)      z = clamp((pressure − threshold) >> 4, 0, 63)
 ```
 
+For non-anchor keys the knob-derived pressure threshold is subtracted first;
+the anchor is exempt so engagement remains continuous. The remainder is scaled
+to `0..63` before cubing.
+
 The cubic weighting means a firmly held key dominates while a lightly held one
-barely bends the pitch. It is injected as an offset *before* the glide engine,
-so single keys, handovers, arpeggiation, transpose and every tuning table
-behave exactly as before. Mapped to the portamento knob, and **fully disabled
-at zero** — which matters, because otherwise holding many keys detuned the
-instrument.
+barely bends the pitch. The weighted pitch is converted to an offset from the
+sounding anchor, then a separate shim applies the smoothed offset **after** the
+glide engine. Pressure steering is therefore immediate without turning the
+ordinary note-to-note glide into a second copy of the bend. The feature is
+mapped to the portamento knob and **fully disabled at zero**.
 
 Every held key contributes. An earlier four-contributor cap, applied while
 scanning from key 31 downward, let high-numbered slots displace stronger or
-nearer ones; the cubic weight already makes weak contributors negligible. In
-latch mode each contributor is weighted at the pitch it actually sounds
+nearer ones; the cubic weight already makes weak contributors negligible. The
+implementation uses `(z³ >> 3)`: that is the smallest safety shift that keeps
+all 29 maximum-pitch products inside the 32-bit accumulator, while preserving
+distinct light-pressure weights (`z=4/5/6` gives `8/15/27`; the old `>>6`
+collapsed them to `1/1/3`). In latch mode each contributor is weighted at the
+pitch it actually sounds
 (`table[k]` plus its latch stamp), so a note latched an octave away pulls
 toward where it sounds rather than where its key now sits.
 
@@ -321,7 +352,7 @@ block is always present — the individual behaviours are what the toggles gate.
 - **Knob 1 — note order.** Fully left, notes follow strict press order; fully
   right, fully random. A press-order list is maintained at RAM `0x6000` by
   `arp_order_selector` (`0x8001A020`), appended from the note-on wrapper. Its
-  length byte is zeroed by the power-up branch of `scan_housekeeping`: SRAM
+  length byte is zeroed by `first_use_initializer`: SRAM
   comes up arbitrary, and a junk list that happens to repeat a real key number
   makes the selector lock onto that key.
 - **Knob 2 — rhythm.** Fully left, even pulses; fully right, randomly spaced,
@@ -359,18 +390,33 @@ hook once the new pitch is in the DAC buffer. Confirmed fixed on hardware.
 ---
 
 > **Anything kept in RAM above the factory's own data needs initialising.**
-> Only the one-shot power-up branch in `scan_housekeeping` (marker `0xB007` at
-> RAM `0x602A`) does that. The press-order list was added without it, which
+> `first_use_initializer` (`0x8001AB60`) does that, guarded by a build-derived
+> marker at RAM `0x602A`. The press-order list was added without it, which
 > made latched arpeggios lock onto one key depending on what the SRAM happened
 > to power up holding.
+>
+> It is `MCALL`ed from every entry path that can be the first consumer — the
+> scan, 1 kHz DAC flush, note-on and source-change wrappers, pitch applier,
+> transpose capture and both blend paths — not just from the scan. Ordering
+> was the reason: the
+> DAC flush and the portamento blend can both run before the first scan, and
+> each was reading its cells one interrupt early. It saves and restores R8–R12
+> so callers can hold live values across the call, and writes the marker last,
+> so an initialisation interrupted midway is simply retried.
+>
+> The marker is derived from a hash of the enabled blocks, features, numbers,
+> tables and the assembler source rather than being a fixed constant, because
+> SRAM survives a DFU update: a fixed marker left by the previous build would
+> convince the new one that its differently-shaped state was already valid.
 
 ## 6. Polyphonic MIDI default
 
 Polyphonic MIDI mode has its own per-voice release logic that breaks the
 two-key pressure handover: release the second of two held keys and pitch stays
 on the released key while pressure reads a fingerless sensor. With
-`[midi].poly_default = "off"`, `scan_housekeeping` forces the mode off **once
-per power-up** (guarded by a marker at RAM `0x602A`), whatever was saved.
+`[midi].poly_default = "off"`, `first_use_initializer` forces the mode off
+**once per power-up** (guarded by a marker at RAM `0x602A`), whatever was
+saved.
 
 ---
 
@@ -382,7 +428,7 @@ per power-up** (guarded by a marker at RAM `0x602A`), whatever was saved.
 | `0x80018D00` / `0x80018D40` | note-on and source-change wrappers |
 | `0x80018D80` | pressure curve table (914 halfwords) |
 | `0x800194C0` | knob 1 ceiling handler |
-| `0x80019580` | calibrated pressure curve (+ common-mode subtraction) |
+| `0x80019580` | calibrated pressure curve and fixed-point expansion |
 | `0x80019740` / `0x80019940` | edit-mode telemetry, 14-bit USB-MIDI send |
 | `0x80019980` / `0x80019BC0` | pitch remap + per-semitone correction table |
 | `0x80019A40` | tuning applier + three tuning tables |
@@ -392,11 +438,22 @@ per power-up** (guarded by a marker at RAM `0x602A`), whatever was saved.
 | `0x8001A230` / `0x8001A268` | glide-rate clamp, deferred-pulse setter |
 | `0x8001A280` | latch note-off, latch toggle, per-scan applier chain |
 | `0x8001A350` | vibrato engine |
-| `0x8001A480` | per-scan housekeeping (poly-off, latch watch, common-mode) |
+| `0x8001A480` | per-scan housekeeping (latch-exit watch) |
+| `0x8001A600` / `0x8001A6A0` | DAC output interpolator, proximity estimator |
+| `0x8001AA10` / `0x8001AB20` | per-key pressure cache, key-colour table |
+| `0x8001AB60` | first-use initialiser (all added RAM state) |
 
-RAM scratch: `0x3226` filter count · `0x3232` pulse flag · `0x3233` previous
-switch position · `0x322A`/`0x322E` arp knob latches · `0x6000` press-order
-list · `0x602A` power-up marker · `0x602C` common-mode estimate.
+RAM scratch: `0x322A`/`0x322E` arp knob latches · `0x3232` pulse flag ·
+`0x3233` previous switch position · `0x6000` press-order
+list · `0x6024`–`0x6028` vibrato state · `0x602A` power-up marker ·
+`0x602C`/`0x602E` interpolator target snapshot and ticks remaining ·
+`0x6032`–`0x6035` profiler reports · `0x6036` interpolator target ·
+`0x6038`–`0x6043` profiler accumulators · `0x6046`–`0x604D` diagnostic octave
+shadow and boot counter · `0x6050`–`0x608D` pressure filter
+ring · `0x608E` latch mirror · `0x60A0` live transpose and `0x60A2` latch
+stamps · `0x60E0`/`0x60E2` portamento target/applied offsets · `0x6100`
+per-key corrected-pressure cache. `tools/build.py` holds the authoritative map
+for these high-RAM regions in `RAM_REGIONS` and fails the build on any overlap.
 
 ---
 

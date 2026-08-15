@@ -144,12 +144,15 @@ A lower ceiling reaches full pressure sooner but amplifies sensor noise, since
 the floor-to-ceiling window is mapped onto the whole output range. Both must
 stay in 128..2000 so the immediates keep their encoding width; the build
 rejects anything else. `trim_mode = "scale"` gives knob 1 the whole window
-(0.5x..1.5x) and returns knob 3 to the factory.
+using a build-computed range that keeps the ceiling valid (currently
+0.50x..1.14x), and returns knob 3 to the factory.
 
 **Change the update rate.** `[timing].scan_period_ms` is the period of the
 task that drives the key/pressure/pitch scan — 5 ms (200 Hz) from the factory,
-and a single `MOV R10,imm` at `0x80007C0C`. The CV output is a zero-order hold,
-so this is exactly the width of the steps you see on a scope.
+and a single `MOV R10,imm` at `0x80007C0C`. This is the target-update cadence.
+With `[pressure].output_smoothing = 0` it is also exactly the zero-order-hold
+step width; with smoothing enabled, the 1 kHz DAC flush divides each target
+change into the configured number of finite one-millisecond steps.
 
 It is the instrument's master clock, not a pressure setting. The glide engine,
 the vibrato phase and the pressure attack ramp each advance once per scan, so
@@ -237,7 +240,7 @@ Feature gating works at two levels, both driven by `build/build.properties`:
 - **`block.<name>`** — whether a whole patch is emitted. Disabling one leaves
   the factory bytes at that address.
 - **`feature.<name>`** — whether an optional section *inside* a cave is
-  assembled (the common-mode subtraction, the latch toggle test, the vibrato
+  assembled (the per-key proximity correction, the latch toggle test, the vibrato
   call in the per-scan chain).
 
 Code caves and the hooks that reach them are gated together, so a disabled

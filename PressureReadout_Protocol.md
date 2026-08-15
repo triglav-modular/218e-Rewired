@@ -55,11 +55,13 @@ The scanner computes active pressure from `scan_component_a - scan_component_b`.
 `scan_difference_error` should remain close to zero because the pressure path
 then subtracts its fixed 110-count baseline. On the measured instrument,
 component B remained exactly 167 while component A moved with both intentional
-pressure and hand proximity. Consequently there is no independent firmware
-reference from which a weighted subtraction can distinguish the two. The
-light/mid/max measurements are still useful for setting the floor and ceiling;
-eliminating proximity completely would require an electrical or mechanical
-change that makes proximity distinguishable at the sensor.
+pressure and hand proximity. The active sensor therefore has no independent
+component from which a weighted subtraction could distinguish the two. The
+playing firmware instead uses nearby untouched keys as a spatial proxy for the
+local hand field, independently for each held key; it is an estimate, not a
+separate measurement. The light/mid/max measurements are still useful for
+setting the floor and ceiling. Eliminating proximity completely would require
+an electrical or mechanical change that makes it distinguishable at the sensor.
 
 ## Diagnostic builds
 
@@ -68,7 +70,7 @@ build refuses to enable both at once. With neither set — the default — CC
 114–117 carry the real scan components described above.
 
 `telemetry_smoothing` puts the live smoothing state there instead: scan A is
-the filter depth in taps, scan B the interpolator shift.
+the filter depth in taps, scan B the finite interpolation length in 1 ms ticks.
 
 ## Scan profiler builds
 

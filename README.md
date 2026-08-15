@@ -19,8 +19,10 @@ the four preset-voltage knobs and the arpeggiator switch.
   the full curve, with a faded onset so releases do not step off a cliff.
   Calibration is hardcoded to defaults that survive a flash; edit knob 1
   scales the whole window live.
-- **Common-mode rejection** — cancels the two-hand proximity lift that
-  otherwise pinned pressure at maximum.
+- **Spatial proximity rejection** — estimates the hand field beside each held
+  key independently, so two distant hands do not share the wrong correction.
+- **Bounded pressure interpolation** — spreads each 5 ms scan update over five
+  1 ms DAC ticks and reaches the target exactly, without a long pressure tail.
 - **In-firmware tuning** — three tuning tables built from Scala files
   (Sabat II, ADDAC JI, 12-TET), switched from edit mode with LED indication.
 - **Per-key pitch calibration** — the 208p's measured tracking error corrected
