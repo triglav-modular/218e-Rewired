@@ -627,10 +627,21 @@ public class AssemblePressureFix extends GhidraScript {
             // smoothing state instead — CC 114/115 the filter depth in taps,
             // CC 116/117 the interpolator shift.  Turning edit knob 2 must
             // move both, or the knob path is broken.
+            // scan A = (mode0-branch count & 0x7f)<<7 | (call count & 0x7f);
+            // scan B = (filter depth << 8) | interpolator shift.
+            emit("MOV R10,0x6086");
+            emit("LD.UH R8,R10[0x0]");
+            emit("ANDL R8,0x7f,COH");
+            emit("LD.UH R9,R10[0x2]");
+            emit("ANDL R9,0x7f,COH");
+            emit("LSL R9,0x7");
+            emit("OR R8,R9");
+            emit("ST.H R7[-0x10],R8");
             emit("MOV R10,0x6082");
             emit("LD.UH R8,R10[0x0]");
-            emit("ST.H R7[-0x10],R8");
-            emit("LD.UH R8,R10[0x2]");
+            emit("LSL R8,0x8");
+            emit("LD.UH R9,R10[0x2]");
+            emit("OR R8,R9");
             emit("ST.H R7[-0x12],R8");
         } else if (feature("scan_profiler")) {
             // Diagnostic build: the two scan-component fields carry the
@@ -1631,16 +1642,27 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R7,PC");
         finish("variable_filter", 0x8001a870L);
 
-        // Edit knob 2: smoothing depth.  Mode 0 (no pad held) maps the knob
-        // onto 8..24 taps; every other edit mode keeps the factory handler.
+        // Edit knob 2: smoothing depth + interpolator shift.  Mode 0 maps the
+        // knob; other edit modes forward to the factory handler.  Counters at
+        // RAM 0x6086 (every call) and 0x6088 (mode-0 branch) are diagnostic:
+        // deliberately uninitialised, read via telemetry_smoothing — only
+        // their movement matters.
         begin(0x8001a870L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R11,R12");
-        emit("LDDPC R10,0x8001a8b0");
+        emit("MOV R9,0x6086");
+        emit("LD.UH R8,R9[0x0]");
+        emit("SUB R8,-0x1");
+        emit("ST.H R9[0x0],R8");
+        emit("LDDPC R10,0x8001a8c4");
         emit("LD.W R8,R10[0x34]");
         emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001a8a4");
+        emit("BR{ne} 0x8001a8b8");
+        emit("MOV R9,0x6088");
+        emit("LD.UH R8,R9[0x0]");
+        emit("SUB R8,-0x1");
+        emit("ST.H R9[0x0],R8");
         emit("LD.UH R8,R10[0x30c]");
         emit("MOV R9,R8");
         emit("LSR R9,0x8");
@@ -1653,14 +1675,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x6082");
         emit("ST.H R9[0x0],R8");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001a8a4L);
+        padTo(0x8001a8b8L);
         emit("MOV R12,R11");
-        emit("MCALL PC[0x8001a8b4]");
+        emit("MCALL PC[0x8001a8c8]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001a8b0L);
+        padTo(0x8001a8c4L);
         word(0x00003560L); // global state base
         word(0x80004150L); // factory knob-2 handler
-        finish("knob2_smoothing", 0x8001a8b8L);
+        finish("knob2_smoothing", 0x8001a8ccL);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
