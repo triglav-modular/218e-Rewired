@@ -817,7 +817,7 @@ public class AssemblePressureFix extends GhidraScript {
         // all — multi-finger common-mode sensor inflation can push deltas
         // past any threshold, so "off" must not depend on pressure at all.
         emit("CP.W R5,0x30");
-        emit("BR{lt} 0x80019d28");
+        emit("BR{lt} 0x80019d20");
         emit("MOV R8,0x3ff");
         emit("SUB R5,R8,R5 << 0x0");
         emit("MOV R0,0x0");
@@ -865,14 +865,20 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ge} 0x80019c90");
         padTo(0x80019d10L);
         emit("CP.W R0,0x0");
-        emit("BR{eq} 0x80019d28");
+        emit("BR{eq} 0x80019d20");
         emit("DIVU R0,R1,R0");
+        // Publish X - base as an OFFSET (RAM 0x60e0) instead of folding it
+        // into the glide target: the pitch shim adds it after the glide
+        // engine, so pressure steers the pitch immediately while the same
+        // knob keeps its classic note-to-note portamento.  Both paths store,
+        // so a released chord zeroes the offset within one scan.
         emit("SUB R0,R0,R11 << 0x0");
-        emit("ADD R4,R0");
-        emit("CP.W R4,0x0");
-        emit("BR{ge} 0x80019d28");
-        emit("MOV R4,0x0");
-        padTo(0x80019d28L);
+        emit("RJMP 0x80019d24");
+        padTo(0x80019d20L);
+        emit("MOV R0,0x0");
+        padTo(0x80019d24L);
+        emit("MOV R8,0x60e0");
+        emit("ST.H R8[0x0],R0");
         emit("LDDPC R8,0x80019d34");
         emit("ST.H R8[0x352],R4");
         emit("LDM SP++,R0,R1,R2,R3,R4,R5,R7,PC");
@@ -1699,6 +1705,26 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019c64L); // the real blend cave entry
         finish("transpose_capture", 0x8001a8e4L);
 
+        // Post-glide blend apply: adds the pressure-weighted offset the
+        // blend cave published, then chains into the pitch remap.  Sits on
+        // the glide OUTPUT, so pressure moves pitch at scan rate no matter
+        // where the portamento knob sits.
+        begin(0x8001a8f0L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,0x60e0");
+        emit("LD.SH R9,R9[0x0]");
+        emit("ADD R12,R9");
+        emit("CP.W R12,0x0");
+        emit("BR{ge} 0x8001a904");
+        emit("MOV R12,0x0");
+        padTo(0x8001a904L);
+        emit("MCALL PC[0x8001a90c]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a90cL);
+        word(0x80019980L); // the real pitch remap
+        finish("blend_offset_apply", 0x8001a910L);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -2049,7 +2075,11 @@ public class AssemblePressureFix extends GhidraScript {
         // Repurposed pool word: was the last-sent mirror address (0x3212),
         // now the remap entry point read by the MCALL above.
         begin(0x8000336cL);
-        word(0x80019980L);
+        if (feature("pressure_blend")) {
+            word(0x8001a8f0L); // blend-offset shim, chains to the remap
+        } else {
+            word(0x80019980L);
+        }
         finish("pitch_hook_pool", 0x80003370L);
 
         // Scan period, in milliseconds.  The main loop registers a periodic

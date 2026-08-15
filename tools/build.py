@@ -66,7 +66,7 @@ FEATURE_MAP = {
     ),
     "midi.poly_default":      ([], ["poly_midi_default_off"]),
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
-    "portamento.pressure_blend": (["pitch_target_blend_hook"], []),
+    "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
