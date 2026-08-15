@@ -898,11 +898,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Gate-off timing itself is factory (compare == 3 restored).
         begin(0x80019d38L);
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
-        if (feature("arp_latch")) {
-            word(0x80019ea0L); // octave entry via the latch transpose hold
-        } else {
-            word(0x80019da8L); // octave entry (hook at 0x22f6)
-        }
+        word(0x80019da8L); // octave entry (hook at 0x22f6)
         word(0x80019df8L); // rhythm entry (hook at 0x21fa)
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
@@ -1184,15 +1180,20 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001a234L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("CP.W R9,0x30");
-        emit("BR{ge} 0x8001a248");
+        // Test the knob itself (state+0x306), not the combined rate index —
+        // the index also carries a pressure-derived addend, which the full
+        // 218r curve makes large enough to defeat a threshold on the sum.
+        emit("MOV R8,0x3866");
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x30");
+        emit("BR{ge} 0x8001a24c");
         emit("MOV R8,0x0");
-        emit("RJMP 0x8001a250");
-        padTo(0x8001a248L);
+        emit("RJMP 0x8001a254");
+        padTo(0x8001a24cL);
         emit("LDDPC R8,0x8001a260");
         emit("LD.SH R8,R8[R9 << 0x1]");
         emit("CASTS.H R8");
-        padTo(0x8001a250L);
+        padTo(0x8001a254L);
         emit("MOV R9,0x2eee");
         emit("ST.H R9[0x0],R8");
         emit("LDM SP++,R7,PC");
@@ -1642,37 +1643,7 @@ public class AssemblePressureFix extends GhidraScript {
         // edit mode.  The smoothing depth and shift are fixed from the build
         // config until the edit-mode knob mirror question is settled.)
 
-        // Latch transpose hold.  The octave switch adds its offset to the
-        // pitch per scan, downstream of the key table, so flipping it would
-        // re-transpose every latched note.  Instead: the blend shim captures
-        // the live global offset (target minus base) at RAM 0x60a0 each
-        // scan; the note-on shim stamps it per key at 0x60a2+2k; and in
-        // latch mode this wrapper corrects each arp note by stamp minus
-        // live, so latched notes keep the offset they were latched with
-        // while new notes take the switch as it now stands.
-        begin(0x80019ea0L);
-        emit("STM --SP,R9,R10,R11,R12,LR");
-        emit("LDDPC R10,0x80019ed4");
-        emit("LD.UB R9,R10[0x340]");
-        emit("CP.W R9,0x1");
-        emit("BR{ne} 0x80019ecc");
-        emit("LD.UB R9,R7[-0x5]");
-        emit("CP.W R9,0x1c");
-        emit("BR{hi} 0x80019ecc");
-        emit("MOV R11,0x60a0");
-        emit("LD.SH R12,R11[0x0]");
-        emit("ADD R11,R11,R9 << 0x1");
-        emit("LD.SH R11,R11[0x2]");
-        emit("SUB R11,R11,R12 << 0x0");
-        emit("ADD R8,R11");
-        padTo(0x80019eccL);
-        emit("LDM SP++,R9,R10,R11,R12,LR");
-        emit("RJMP 0x80019da8");
-        padTo(0x80019ed4L);
-        word(0x00003560L); // global state base
-        finish("latch_octave_hold", 0x80019ed8L);
-
-        // Note-on offset stamp, ahead of the latch toggle check.
+// Note-on offset stamp, ahead of the latch toggle check.
         begin(0x8001a870L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -1689,7 +1660,12 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001a2a8L); // the real latch toggle check
         finish("latch_offset_stamp", 0x8001a894L);
 
-        // Per-scan transpose capture, ahead of the blend cave.
+        // Per-scan transpose capture and, in latch mode, the per-note hold:
+        // R12 arrives as base+offset; G = R12 - state[0x350] is published for
+        // the note-on stamp, and the sounding note (last arp key, 0x34d) is
+        // re-based to the offset it was stamped with.  Doing this here makes
+        // the hold exact within a single scan — no transient when the octave
+        // switch flips between arp steps.
         begin(0x8001a8a0L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -1698,11 +1674,26 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R9,R12,R9 << 0x0");
         emit("MOV R8,0x60a0");
         emit("ST.H R8[0x0],R9");
-        emit("MCALL PC[0x8001a8c0]");
+        if (feature("arp_latch")) {
+            emit("MOV R10,0x38a0");
+            emit("LD.UB R10,R10[0x0]");
+            emit("CP.W R10,0x1");
+            emit("BR{ne} 0x8001a8d8");
+            emit("MOV R10,0x38ad");
+            emit("LD.UB R10,R10[0x0]");
+            emit("CP.W R10,0x1c");
+            emit("BR{hi} 0x8001a8d8");
+            emit("ADD R8,R8,R10 << 0x1");
+            emit("LD.SH R8,R8[0x2]");
+            emit("SUB R8,R8,R9 << 0x0");
+            emit("ADD R12,R8");
+        }
+        padTo(0x8001a8d8L);
+        emit("MCALL PC[0x8001a8e0]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001a8c0L);
+        padTo(0x8001a8e0L);
         word(0x80019c64L); // the real blend cave entry
-        finish("transpose_capture", 0x8001a8c4L);
+        finish("transpose_capture", 0x8001a8e4L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate

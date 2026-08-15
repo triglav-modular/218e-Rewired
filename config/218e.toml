@@ -113,7 +113,7 @@ smoothing_taps = 8
 # makes full pressure easier to reach, at the cost of noise: the window is
 # mapped onto the full output range, so a narrower window amplifies sensor
 # noise proportionally (260 counts -> 18x, 234 counts -> 20x).
-floor   = 200
+floor   = 240
 ceiling = 814
 
 # "independent" — knob 1 trims the ceiling, knob 3 the floor.
