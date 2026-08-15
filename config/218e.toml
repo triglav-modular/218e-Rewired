@@ -59,8 +59,6 @@ switch = "latch"
 # "off"     — polyphonic MIDI mode is forced off once per power-up, whatever
 #             was saved.  Its per-voice release logic breaks the two-key
 #             pressure handover, so it should stay off for normal playing.
-#             NOTE: DFU flashing needs it ON for the SysEx handshake — enable
-#             it in edit mode (key 29) after power-up, then flash.
 # "factory" — the saved setting is honoured at boot.
 poly_default = "off"
 

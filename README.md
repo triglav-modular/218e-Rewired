@@ -45,9 +45,7 @@ each knob and the arp switch use the new or the factory behaviour — lives in
 
 ## Flash
 
-**Enable polyphonic MIDI first** (edit mode, key 29) — the DFU handshake needs
-it, and this firmware forces it off at every power-up. Then run
-`ProgramLEM218_PressureFix.command`.
+Run `ProgramLEM218_PressureFix.command`.
 
 The updater verifies the image checksum and `BOOTPROT=3` before programming and
 validates by read-back. If the keyboard does not enter DFU it aborts **before

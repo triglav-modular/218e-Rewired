@@ -1303,16 +1303,25 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("LDDPC R10,0x8001a534");
+        // One-shot power-up initialisation, guarded by a marker halfword at
+        // RAM 0x602a.  SRAM comes up with arbitrary contents, so anything the
+        // firmware relies on having a known starting value must be set here.
+        emit("MOV R9,0x602a");
+        emit("LD.UH R8,R9[0x0]");
+        emit("MOV R11,0xb007");
+        emit("CP.W R8,R11");
+        emit("BR{eq} 0x8001a4a4");
+        emit("ST.H R9[0x0],R11");
+        emit("MOV R8,0x0");
         if (feature("poly_midi_default_off")) {
-            emit("MOV R9,0x602a");
-            emit("LD.UH R8,R9[0x0]");
-            emit("MOV R11,0xb007");
-            emit("CP.W R8,R11");
-            emit("BR{eq} 0x8001a4a4");
-            emit("ST.H R9[0x0],R11");
-            emit("MOV R8,0x0");
             emit("ST.B R10[0x84],R8");
         }
+        // Empty the arpeggiator's press-order list.  Its length byte is the
+        // only thing standing between the selector and a list of garbage key
+        // numbers, and a stale entry that happens to repeat a real key makes
+        // the arpeggiator lock onto that key.
+        emit("MOV R9,0x6000");
+        emit("ST.B R9[0x0],R8");
         padTo(0x8001a4a4L);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases every latched key.

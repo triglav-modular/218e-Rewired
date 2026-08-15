@@ -58,12 +58,7 @@ Any failure stops the build without writing firmware.
 
 ## Flashing
 
-**Enable polyphonic MIDI first** — the DFU handshake is a SysEx message, and
-this firmware forces poly MIDI off at every power-up:
-
-1. Power on the 218e.
-2. Enter edit mode, press key 29 (poly MIDI on).
-3. Run `ProgramLEM218_PressureFix.command`.
+Run `ProgramLEM218_PressureFix.command`.
 
 The updater verifies the image checksum, confirms `BOOTPROT=3` (the 8 KiB
 bootloader region is protected), programs, and validates by read-back. If the

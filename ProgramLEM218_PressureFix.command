@@ -12,7 +12,7 @@ FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/LEM218_PressureFix_fwflash_log.txt"
-EXPECTED_SHA256="d5c67a93e271ddbbce0059b5f3c3fe5a4db8c4c938fda59e3490918420a55cba"
+EXPECTED_SHA256="5e0110c354d9b7987d3c78b79f7bae54dcb515bc9aea41a1af7d9c5d9bf93d0b"
 
 # Support launching from either the package root or its mac directory.
 if [ -d "$SCRIPT_DIR/mac/support" ]; then
@@ -166,7 +166,6 @@ echo "  4. Verify light/mid/max touches, then turn knob 4 right to taste."
 echo "  5. Leave edit mode to save all three parameters."
 echo
 echo "Before continuing:"
-echo "  - enable Polyphonic MIDI on the 218e; its DFU SysEx is ignored otherwise"
 echo "  - use stable instrument power; do not switch off the boat"
 echo "  - connect USB directly if possible; avoid a loose cable or unpowered hub"
 echo "  - do not unplug anything until the script reports verified success"

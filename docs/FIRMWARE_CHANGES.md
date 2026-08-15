@@ -147,7 +147,10 @@ block is always present — the individual behaviours are what the toggles gate.
 
 - **Knob 1 — note order.** Fully left, notes follow strict press order; fully
   right, fully random. A press-order list is maintained at RAM `0x6000` by
-  `arp_order_selector` (`0x8001A020`), appended from the note-on wrapper.
+  `arp_order_selector` (`0x8001A020`), appended from the note-on wrapper. Its
+  length byte is zeroed by the power-up branch of `scan_housekeeping`: SRAM
+  comes up arbitrary, and a junk list that happens to repeat a real key number
+  makes the selector lock onto that key.
 - **Knob 2 — rhythm.** Fully left, even pulses; fully right, randomly spaced,
   using the Micro_Easel's pulser spacing law.
 - **Knob 3 — random octaves.** Increasing probability of ±1 octave per note.
@@ -182,6 +185,12 @@ hook once the new pitch is in the DAC buffer. Confirmed fixed on hardware.
 
 ---
 
+> **Anything kept in RAM above the factory's own data needs initialising.**
+> Only the one-shot power-up branch in `scan_housekeeping` (marker `0xB007` at
+> RAM `0x602A`) does that. The press-order list was added without it, which
+> made latched arpeggios lock onto one key depending on what the SRAM happened
+> to power up holding.
+
 ## 6. Polyphonic MIDI default
 
 Polyphonic MIDI mode has its own per-voice release logic that breaks the
@@ -189,10 +198,6 @@ two-key pressure handover: release the second of two held keys and pitch stays
 on the released key while pressure reads a fingerless sensor. With
 `[midi].poly_default = "off"`, `scan_housekeeping` forces the mode off **once
 per power-up** (guarded by a marker at RAM `0x602A`), whatever was saved.
-
-> **Flashing needs it on.** The DFU handshake is a SysEx message, so before
-> updating firmware: power on → edit mode → key 29 → flash. The setting stays
-> on until the next power cycle.
 
 ---
 
