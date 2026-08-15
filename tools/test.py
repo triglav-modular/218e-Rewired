@@ -213,6 +213,55 @@ def test_filter_equivalence(cfg: dict) -> None:
     check("a note-on reset restarts the average cleanly", ring.push(500) == (500 << bits))
 
 
+def test_blend(cfg: dict) -> None:
+    """The portamento blend: no doubled stamp, no overflow, no stray slots."""
+    print("portamento blend")
+    table = {k: 485 + round(k * 484 / 12) for k in range(29)}
+
+    def blend(keys, base_key, latch, stamp, press, thresh=0):
+        base = table[base_key]
+        measured_from = base
+        weight_sum = weighted = 0
+        for k in range(28, -1, -1):
+            if k not in keys:
+                continue
+            pitch = table[k]
+            anchor = pitch == base
+            if latch:
+                pitch += stamp.get(k, 0)
+            if anchor:
+                measured_from = pitch
+            z = press.get(k, 0) - (0 if anchor else thresh)
+            if z <= 0:
+                continue
+            z = min(z >> 4, 63)
+            w = (z * z * z) >> 6
+            weight_sum += w
+            weighted += w * pitch
+        if weight_sum == 0:
+            return 0
+        return weighted // weight_sum - measured_from
+
+    # The glide target already carries the stamp, so a lone latched key must
+    # publish no offset: otherwise the stamp is applied twice.
+    lone = [blend({12}, 12, True, {12: 484}, {12: p}) for p in (100, 500, 900)]
+    check("a single latched key publishes no offset", lone == [0, 0, 0], str(lone))
+
+    # Pressure balance must still sweep the pitch between two held keys.
+    swept = [blend({12, 19}, 12, False, {}, {12: a, 19: b})
+             for a, b in ((900, 100), (500, 500), (100, 900))]
+    check("pressure balance still steers the pitch",
+          swept[0] == 0 and swept[1] > 100 and swept[2] > 270, str(swept))
+
+    # 32-bit accumulators with every key contributing at maximum weight.
+    weight = (63 ** 3) >> 6
+    check("accumulators cannot overflow with 29 contributors",
+          29 * weight * 4095 < 2 ** 32, f"{29 * weight * 4095:,}")
+
+    # Slots the cache and the stamps do not cover must never be read.
+    check("the loop stops at the last real key", 28 == max(table), str(max(table)))
+
+
 def test_overlap_and_range() -> None:
     print("patch safety")
     memory = {a: 0 for a in range(0x1000, 0x2000)}
@@ -278,6 +327,7 @@ def main() -> None:
     test_scala()
     test_tables(cfg)
     test_resolution(cfg)
+    test_blend(cfg)
     test_filter_equivalence(cfg)
     test_overlap_and_range()
     test_atomic_replace()

@@ -869,8 +869,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R5,R8,R5 << 0x0");
         emit("MOV R0,0x0");
         emit("MOV R1,0x0");
-        emit("MOV R3,0x0");
-        emit("MOV R2,0x1f");
+        // R3 carries the base the offset is measured from, in the same pitch
+        // domain as the contributors.  It defaults to the unstamped base and
+        // becomes the anchor's stamped pitch when the anchor is found.
+        emit("MOV R3,R11");
+        // Keys 28..0: the cache and the latch stamps cover 29 slots, and slot
+        // 31's stamp address is the blend's own target cell.
+        emit("MOV R2,0x1c");
         padTo(0x80019c90L);
         emit("ADD R8,R9,R2 << 0x0");
         emit("LD.UB R10,R8[0x21b]");
@@ -879,45 +884,54 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x854");
         emit("ADD R8,R8,R2 << 0x1");
         emit("LD.UH R10,R8[0x0]");
+        // Identify the anchor on the UNSTAMPED pitch, before any stamp moves
+        // it, and keep the answer: it decides both the threshold exemption and
+        // which contributor supplies the base.
+        emit("CP.W R10,R11");
+        emit("SR{EQ} R12");
         if (feature("arp_latch")) {
-            // In latch mode a slot sounds at table[k] plus its stamp, so it
-            // must be weighted at that pitch: otherwise a note latched an
-            // octave away pulls toward where its key sits now, not where it
-            // is sounding.
+            // In latch mode a slot sounds at table[k] plus its stamp, so it is
+            // weighted at that pitch — otherwise a note latched an octave away
+            // pulls toward where its key sits now rather than where it sounds.
             emit("MOV R8,0x608e");
             emit("LD.UB R8,R8[0x0]");
             emit("CP.W R8,0x1");
-            emit("BR{ne} 0x80019cbc");
+            emit("BR{ne} 0x80019cc0");
             emit("MOV R8,0x60a2");
             emit("LD.SH R8,R8[R2 << 0x1]");
             emit("ADD R10,R8");
         }
-        padTo(0x80019cbcL);
-        // Corrected pressure from the shared pass: baseline removed, proximity
-        // subtracted, colour corrected — which matters here because the weight
-        // is cubed.
+        padTo(0x80019cc0L);
+        // The base must sit in the same domain as the contributors: measuring
+        // a stamped contributor against an unstamped base published the stamp
+        // itself as an offset, which the glide target had already applied.
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x80019cc8");
+        emit("MOV R3,R10");
+        padTo(0x80019cc8L);
         emit("MOV R8,0x6100");
         emit("LD.UH R8,R8[R2 << 0x1]");
-        emit("CP.W R10,R11");
-        emit("BR{eq} 0x80019cd0");
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x80019cdc");
         emit("SUB R8,R8,R5 << 0x0");
-        padTo(0x80019cd0L);
+        padTo(0x80019cdcL);
         emit("CP.W R8,0x0");
         emit("BR{le} 0x80019d08");
         emit("LSR R8,0x4");
         emit("CP.W R8,0x3f");
-        emit("BR{ls} 0x80019ce8");
+        emit("BR{ls} 0x80019cf4");
         emit("MOV R8,0x3f");
-        padTo(0x80019ce8L);
+        padTo(0x80019cf4L);
         emit("MOV R12,R8");
         emit("MUL R12,R12,R8");
         emit("MUL R12,R12,R8");
+        // Scale the cubic weight so 29 contributors cannot overflow the 32-bit
+        // accumulators.  The mean is a ratio, so a constant factor cancels.
+        // The four-contributor cap that used to bound this was load-bearing.
+        emit("LSR R12,0x6");
         emit("ADD R0,R12");
         emit("MUL R12,R12,R10");
         emit("ADD R1,R12");
-        // No contributor cap: it stopped after four while scanning downward, so
-        // high-numbered slots displaced stronger or nearer ones.  The cubic
-        // weight already makes weak contributors negligible.
         padTo(0x80019d08L);
         emit("SUB R2,0x1");
         emit("BR{ge} 0x80019c90");
@@ -930,7 +944,7 @@ public class AssemblePressureFix extends GhidraScript {
         // engine, so pressure steers the pitch immediately while the same
         // knob keeps its classic note-to-note portamento.  Both paths store,
         // so a released chord zeroes the offset within one scan.
-        emit("SUB R0,R0,R11 << 0x0");
+        emit("SUB R0,R0,R3 << 0x0");
         emit("RJMP 0x80019d24");
         padTo(0x80019d20L);
         emit("MOV R0,0x0");
@@ -2074,7 +2088,10 @@ public class AssemblePressureFix extends GhidraScript {
         // firmware relies on having a known starting value must be set here.
         emit("MOV R9,0x602a");
         emit("LD.UH R8,R9[0x0]");
-        emit("MOV R11,0xb007");
+        // Marker derived from the build, not a fixed constant: SRAM survives a
+        // DFU update, so a firmware that added new initialisation would find
+        // an older build's marker already set and skip it.
+        emit(String.format("MOV R11,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
         emit("CP.W R8,R11");
         emit("BR{eq} 0x8001a4dc");
         emit("ST.H R9[0x0],R11");

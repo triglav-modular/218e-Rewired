@@ -855,6 +855,18 @@ def main() -> None:
         print(f"tables written to {BUILD / 'tables.txt'} (Ghidra skipped)")
         return
 
+    # The power-up marker is derived from everything that shapes the build, so
+    # any change to the initialised set (or to what it initialises to) produces
+    # a different marker and forces a fresh init on the next power-up — SRAM
+    # survives a DFU update, and a fixed marker would let an older build's
+    # value suppress newly added initialisation.
+    fingerprint = hashlib.sha256(
+        repr(sorted(blocks.items())).encode()
+        + repr(sorted(features.items())).encode()
+        + repr(sorted(cfg["_numbers"].items())).encode()
+    ).digest()
+    cfg["_numbers"]["init_marker"] = 0x1000 + (int.from_bytes(fingerprint[:2], "big") % 0xDFFE)
+
     properties = BUILD / "build.properties"
     write_properties(properties, cfg, blocks, features, tables)
 
