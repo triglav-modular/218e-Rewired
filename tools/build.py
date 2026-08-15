@@ -66,6 +66,7 @@ FEATURE_MAP = {
     "portamento.pressure_blend": (["pitch_target_blend_hook"], []),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
+    "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
     "diagnostics.pressure_ab_switch": (
         ["octswitch_sync"] + [f"octsw_redirect_{i}" for i in range(1, 10)],
         ["pressure_ab_switch"],
@@ -85,6 +86,7 @@ ENABLED_WHEN = {
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
+    "diagnostics.telemetry_smoothing": True,
     "diagnostics.pressure_ab_switch": True,
 }
 

@@ -622,7 +622,17 @@ public class AssemblePressureFix extends GhidraScript {
         // subtraction; telemetry measures that possibility without changing
         // the pressure path.
         emit("LDDPC R12,0x80019930");
-        if (feature("scan_profiler")) {
+        if (feature("telemetry_smoothing")) {
+            // Diagnostic: the two scan-component fields carry the live
+            // smoothing state instead — CC 114/115 the filter depth in taps,
+            // CC 116/117 the interpolator shift.  Turning edit knob 2 must
+            // move both, or the knob path is broken.
+            emit("MOV R10,0x6082");
+            emit("LD.UH R8,R10[0x0]");
+            emit("ST.H R7[-0x10],R8");
+            emit("LD.UH R8,R10[0x2]");
+            emit("ST.H R7[-0x12],R8");
+        } else if (feature("scan_profiler")) {
             // Diagnostic build: the two scan-component fields carry the
             // profiler's numbers instead.  CC 114/115 is the worst single
             // dispatch in cycles/32, CC 116/117 the CPU load in tenths of a

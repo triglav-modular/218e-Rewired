@@ -216,6 +216,11 @@ scan_profiler = false
 # factory_gain_shift is the factory gain as a power of two: 3 = 8x, so full
 # output at ~512 raw counts.
 pressure_ab_switch = true
+
+# Report the live smoothing state in the telemetry's scan-component fields:
+# scan A = filter depth in taps (8..24), scan B = interpolator shift (2..5).
+# Both must follow edit knob 2.
+telemetry_smoothing = true
 factory_gain_shift = 3
 
 
