@@ -1,19 +1,20 @@
 ! 12TET.scl
+! Created using Scale Workshop 2.0.0
 !
-! Twelve-tone equal temperament, the fallback tuning.
+! https://sevish.com/scaleworkshop/?n=12TET&l=1Bc_2Bc_3Bc_4Bc_5Bc_6Bc_7Bc_8Bc_9Bc_aBc_bBc_cBc&version=2.0.0
 !
-12-tone equal temperament
+12TET
  12
 !
- 100.000
- 200.000
- 300.000
- 400.000
- 500.000
- 600.000
- 700.000
- 800.000
- 900.000
- 1000.000
- 1100.000
+ 100.000000
+ 200.000000
+ 300.000000
+ 400.000000
+ 500.000000
+ 600.000000
+ 700.000000
+ 800.000000
+ 900.000000
+ 1000.000000
+ 1100.000000
  2/1
