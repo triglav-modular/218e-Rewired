@@ -37,6 +37,12 @@ public class RecoverPressurePatch extends GhidraScript {
         recover(0x80019d44L, "arp_random_knobs");
         recover(0x8001a020L, "arp_order_list");
         recover(0x8001a0a0L, "arp_order_selector");
+        recover(0x8001a280L, "latch_noteoff");
+        recover(0x8001a2a8L, "latch_check");
+        recover(0x8001a2e8L, "applier_chain");
+        recover(0x8001a350L, "vibrato_engine");
+        recover(0x8001a480L, "scan_housekeeping");
+        recover(0x8001a600L, "dac_interpolator");
         analyzeChanges(currentProgram);
     }
 }

@@ -1320,6 +1320,79 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001a540L);
         finish("profiler_pool", 0x80007dc4L);
 
+        // Pressure output interpolation.  The scan writes the pressure DAC
+        // once per period, so the CV is a zero-order-hold staircase with
+        // 5 ms treads.  The scan's store is redirected to a target at RAM
+        // 0x6036, and this runs on the 1 kHz DAC flush instead, closing a
+        // fraction of the remaining gap each millisecond.  The staircase
+        // becomes five smaller treads without touching the scan rate, which
+        // the profiler showed has no headroom.
+        //
+        //   RAM 0x6036  pressure target, written by the scan
+        //   RAM 0x6044  one-shot marker, so power-up garbage in the target
+        //               cannot be smoothed toward and click through the LPG
+        begin(0x8001a600L);
+        emit("MOV R10,0x6044");
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0xb0");
+        emit("BR{eq} 0x8001a624");
+        emit("MOV R8,0xb0");
+        emit("ST.B R10[0x0],R8");
+        emit("MOV R8,0x0");
+        emit("MOV R9,0x6036");
+        emit("ST.H R9[0x0],R8");        // target = 0
+        emit("LDDPC R12,0x8001a680");
+        emit("ST.H R12[0x356],R8");     // and the DAC slot with it
+        emit("RJMP 0x8001a674");
+        padTo(0x8001a624L);
+        emit("MOV R10,0x6036");
+        emit("LD.SH R11,R10[0x0]");     // target
+        emit("CP.W R11,0x0");
+        emit("BR{ge} 0x8001a634");
+        emit("MOV R11,0x0");
+        padTo(0x8001a634L);
+        emit("MOV R9,0xfff");
+        emit("CP.W R11,R9");
+        emit("BR{ls} 0x8001a640");
+        emit("MOV R11,R9");             // clamped to the 12-bit DAC range
+        padTo(0x8001a640L);
+        emit("LDDPC R12,0x8001a680");
+        emit("LD.SH R8,R12[0x356]");    // where the output is now
+        emit("SUB R9,R11,R8 << 0x0");   // gap remaining
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001a674");
+        emit("MOV R10,R9");
+        emit(String.format("ASR R10,0x%x", number("output_smoothing_shift", 2, 1, 6)));
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001a66c");
+        // A shift alone stalls short of the target once the gap is smaller
+        // than the divisor, so creep the last counts by one.
+        emit("CP.W R9,0x0");
+        emit("BR{lt} 0x8001a668");
+        emit("MOV R10,0x1");
+        emit("RJMP 0x8001a66c");
+        padTo(0x8001a668L);
+        emit("MOV R10,-0x1");
+        padTo(0x8001a66cL);
+        emit("ADD R8,R10");
+        emit("ST.H R12[0x356],R8");
+        padTo(0x8001a674L);
+        emit("LDDPC R12,0x8001a684");
+        emit("MOV PC,R12");             // on into the factory flush handler
+        padTo(0x8001a680L);
+        word(0x00003560L); // global state base
+        word(0x80004f66L); // factory event-17 case
+        finish("dac_interpolator", 0x8001a688L);
+
+        // Dispatcher jump-table entry 17 (DAC flush) -> interpolator.
+        begin(0x8001485cL);
+        word(0x8001a600L);
+        finish("dac_flush_pool", 0x80014860L);
+
+        // The scan's pressure store now lands on the interpolator's target
+        // (state+0x2ad6 = RAM 0x6036) instead of the DAC slot directly.
+        fixedPatch("pressure_target_redirect", 0x80002db2L, 4, "ST.H R9[0x2ad6],R8");
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).

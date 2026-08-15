@@ -73,6 +73,15 @@ poly_default = "off"
 # pressure pins at maximum.
 common_mode = true
 
+# Smooth the pressure CV at the 1 kHz DAC flush instead of letting it step
+# once per scan.  The value is a shift: each millisecond the output closes
+# 1/2^n of the gap to the latest scan value, so 1 is fast and 4 is gentle.
+# 0 disables it and restores the plain zero-order-hold staircase.
+#
+# This is the alternative to shortening the scan period, which the profiler
+# showed has no headroom for it.
+output_smoothing = 2
+
 [pressure.calibration]
 # Where the pressure window sits when the instrument has no stored calibration
 # — which is the state after every firmware flash.  `floor` is the raw sensor

@@ -44,6 +44,24 @@ jack. That is why sensor noise and finger tremor are plainly visible on a
 scope — they are being amplified by design, and a narrower window trades noise
 for sensitivity.
 
+**Output smoothing** (`[pressure].output_smoothing`). The scan's store into
+the pressure DAC slot is redirected to a target at RAM `0x6036`
+(`ST.H R9[0x2ad6]` — the same instruction, a different displacement), and the
+`dac_interpolator` cave at `0x8001A600` runs on the 1 kHz DAC flush instead,
+closing 1/2^n of the remaining gap each millisecond. A 200-count scan step
+becomes a 50-count first tread spread over about 5 ms. It is reached by
+repointing the dispatcher's jump-table entry for event 17 (`0x8001485C`) and
+jumps on into the factory handler when done.
+
+Two details it would be easy to get wrong: a plain shift stalls once the gap
+is smaller than the divisor, so the last counts creep by one; and the target
+is zeroed through a one-shot marker at RAM `0x6044`, because otherwise the
+interpolator would spend the first few milliseconds after power-up smoothing
+toward whatever the SRAM held, and click.
+
+This is the alternative to shortening the scan period, which measurement ruled
+out — see [BUILD.md](BUILD.md).
+
 **Update rate.** Pressure is computed and written to the DAC once per scan
 (from `0x800030A6`, via the factory slew stage at `0x80002D80`), so the output
 is a zero-order-hold staircase whose treads are one scan period long.

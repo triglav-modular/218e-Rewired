@@ -576,6 +576,17 @@ def main() -> None:
         raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
 
     blocks, features, summary = resolve_flags(cfg)
+
+    # Output smoothing is a shift, not a toggle: 0 turns it off, and the three
+    # patches that implement it stand or fall together — the scan's store is
+    # redirected to a target only the interpolator reads.
+    smoothing = cfg["pressure"]["output_smoothing"]
+    if smoothing:
+        cfg["_numbers"]["output_smoothing_shift"] = smoothing
+    for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
+        blocks[name] = bool(smoothing)
+    summary.append(f"  {'pressure.output_smoothing':28s} "
+                   f"{smoothing if smoothing else 'off'!r}")
     print("settings:")
     print("\n".join(summary))
 
