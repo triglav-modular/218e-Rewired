@@ -59,7 +59,10 @@ jack. That is why sensor noise and finger tremor are plainly visible on a
 scope — they are being amplified by design, and a narrower window trades noise
 for sensitivity.
 
-**Output smoothing** (`[pressure].output_smoothing`). The scan's store into
+**Output smoothing** (`[pressure].output_smoothing`, boot default; live value
+at RAM `0x6084`, set by edit knob 2 together with the filter depth — fully
+left shift 2, fully right shift 5, i.e. first-step amplitude 25% down to 3%
+of a scan tread). The scan's store into
 the pressure DAC slot is redirected to a target at RAM `0x6036`
 (`ST.H R9[0x2ad6]` — the same instruction, a different displacement), and the
 `dac_interpolator` cave at `0x8001A600` runs on the 1 kHz DAC flush instead,
@@ -93,7 +96,10 @@ and every one of those timings scales with it.
 replaced by the 218r's **growing average**, now with a depth set by **edit
 knob 2** (mode 0): 8 taps (40 ms) fully left to 24 taps (120 ms) fully right
 (`variable_filter`, `0x8001A800`; taps at RAM `0x6050`, depth at `0x6082`,
-count at `0x6080`). It averages only the samples collected since the touch, so
+count at `0x6080`). The same knob simultaneously deepens the 1 kHz output
+interpolation (shift 2..5 at RAM `0x6084`) — the filter shapes the sequence
+of scan values, the interpolator is what actually shrinks the 5 ms staircase
+on the jack. It averages only the samples collected since the touch, so
 attacks stay instant at any depth; the count is cleared by the note-on and
 source-change wrappers. Other edit modes keep knob 2's factory function.
 

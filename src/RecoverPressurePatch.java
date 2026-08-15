@@ -9,6 +9,14 @@ import ghidra.program.model.symbol.SourceType;
 
 public class RecoverPressurePatch extends GhidraScript {
     private void recover(long rawAddress, String name) throws Exception {
+        try {
+            recoverInner(rawAddress, name);
+        } catch (Exception e) {
+            println("SKIP " + name + " (" + e.getMessage() + ")");
+        }
+    }
+
+    private void recoverInner(long rawAddress, String name) throws Exception {
         Address address = toAddr(rawAddress);
         new DisassembleCommand(address, null, true).applyTo(currentProgram, monitor);
         if (getFunctionAt(address) == null) {

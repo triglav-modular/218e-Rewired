@@ -1357,9 +1357,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x0");
         emit("MOV R9,0x6036");
         emit("ST.H R9[0x0],R8");        // target = 0
-        emit("LDDPC R12,0x8001a680");
+        emit("LDDPC R12,0x8001a690");
         emit("ST.H R12[0x356],R8");     // and the DAC slot with it
-        emit("RJMP 0x8001a674");
+        emit("RJMP 0x8001a688");
         padTo(0x8001a624L);
         emit("MOV R10,0x6036");
         emit("LD.SH R11,R10[0x0]");     // target
@@ -1372,33 +1372,41 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ls} 0x8001a640");
         emit("MOV R11,R9");             // clamped to the 12-bit DAC range
         padTo(0x8001a640L);
-        emit("LDDPC R12,0x8001a680");
+        emit("LDDPC R12,0x8001a690");
         emit("LD.SH R8,R12[0x356]");    // where the output is now
         emit("SUB R9,R11,R8 << 0x0");   // gap remaining
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001a674");
+        emit("BR{eq} 0x8001a688");
         emit("MOV R10,R9");
-        emit(String.format("ASR R10,0x%x", number("output_smoothing_shift", 2, 1, 6)));
+        // Shift now lives at RAM 0x6084 (edit knob 2), clamped against
+        // power-up garbage; the config value is only the boot default.
+        emit("MOV R11,0x6084");
+        emit("LD.UH R11,R11[0x0]");
+        emit("CP.W R11,0x6");
+        emit("BR{le} 0x8001a660");
+        emit("MOV R11,0x6");
+        padTo(0x8001a660L);
+        emit("ASR R10,R10,R11");
         emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001a66c");
+        emit("BR{ne} 0x8001a680");
         // A shift alone stalls short of the target once the gap is smaller
         // than the divisor, so creep the last counts by one.
         emit("CP.W R9,0x0");
-        emit("BR{lt} 0x8001a668");
+        emit("BR{lt} 0x8001a678");
         emit("MOV R10,0x1");
-        emit("RJMP 0x8001a66c");
-        padTo(0x8001a668L);
+        emit("RJMP 0x8001a680");
+        padTo(0x8001a678L);
         emit("MOV R10,-0x1");
-        padTo(0x8001a66cL);
+        padTo(0x8001a680L);
         emit("ADD R8,R10");
         emit("ST.H R12[0x356],R8");
-        padTo(0x8001a674L);
-        emit("LDDPC R12,0x8001a684");
+        padTo(0x8001a688L);
+        emit("LDDPC R12,0x8001a694");
         emit("MOV PC,R12");             // on into the factory flush handler
-        padTo(0x8001a680L);
+        padTo(0x8001a690L);
         word(0x00003560L); // global state base
         word(0x80004f66L); // factory event-17 case
-        finish("dac_interpolator", 0x8001a688L);
+        finish("dac_interpolator", 0x8001a698L);
 
         // Dispatcher jump-table entry 17 (DAC flush) -> interpolator.
         begin(0x8001485cL);
@@ -1622,15 +1630,20 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDDPC R10,0x8001a8b0");
         emit("LD.W R8,R10[0x34]");
         emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001a89c");
+        emit("BR{ne} 0x8001a8a4");
         emit("LD.UH R8,R10[0x30c]");
+        emit("MOV R9,R8");
+        emit("LSR R9,0x8");
+        emit("SUB R9,-0x2");
+        emit("MOV R12,0x6084");
+        emit("ST.H R12[0x0],R9");
         emit("SUB R8,-0x3f");
         emit("LSR R8,0x6");
         emit("SUB R8,-0x8");
         emit("MOV R9,0x6082");
         emit("ST.H R9[0x0],R8");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001a89cL);
+        padTo(0x8001a8a4L);
         emit("MOV R12,R11");
         emit("MCALL PC[0x8001a8b4]");
         emit("LDM SP++,R7,PC");
@@ -1749,7 +1762,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R11,0x8");
         emit("MOV R9,0x6082");
         emit("ST.H R9[0x0],R11");
-        padTo(0x8001a4b4L);
+        emit(String.format("MOV R11,0x%x", number("output_smoothing_shift", 2, 1, 6)));
+        emit("MOV R9,0x6084");
+        emit("ST.H R9[0x0],R11");
+        padTo(0x8001a4bcL);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases every latched key.
             emit("LD.UB R8,R10[0x340]");
@@ -1757,20 +1773,20 @@ public class AssemblePressureFix extends GhidraScript {
             emit("LD.UB R9,R11[0x0]");
             emit("ST.B R11[0x0],R8");
             emit("CP.W R9,0x1");
-            emit("BR{ne} 0x8001a4e8");
+            emit("BR{ne} 0x8001a4f0");
             emit("CP.W R8,0x1");
-            emit("BR{eq} 0x8001a4e8");
+            emit("BR{eq} 0x8001a4f0");
             emit("MOV R9,0x0");
             emit("ST.B R10[0x21a],R9");
             emit("MOV R9,0x1f");
-            padTo(0x8001a4d8L);
+            padTo(0x8001a4e0L);
             emit("ADD R12,R10,R9 << 0x0");
             emit("MOV R8,0x0");
             emit("ST.B R12[0x21b],R8");
             emit("SUB R9,0x1");
-            emit("BR{ge} 0x8001a4d8");
+            emit("BR{ge} 0x8001a4e0");
         }
-        padTo(0x8001a4e8L);
+        padTo(0x8001a4f0L);
         if (feature("pressure_common_mode")) {
             // Proximity estimate, in its own cave: the nearest untouched key
             // on each side of the active key samples the hovering hand's
