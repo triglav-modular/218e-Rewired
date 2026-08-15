@@ -622,7 +622,19 @@ public class AssemblePressureFix extends GhidraScript {
         // subtraction; telemetry measures that possibility without changing
         // the pressure path.
         emit("LDDPC R12,0x80019930");
-        if (feature("telemetry_smoothing")) {
+        if (feature("scan_profiler")) {
+
+            // Diagnostic build: the two scan-component fields carry the
+            // profiler's numbers instead.  CC 114/115 is the worst single
+            // dispatch in cycles/32, CC 116/117 the CPU load in tenths of a
+            // percent.
+            emit("MOV R10,0x6032");
+            emit("LD.UH R8,R10[0x0]");
+            emit("ST.H R7[-0x10],R8");
+            emit("LD.UH R8,R10[0x2]");
+            emit("ST.H R7[-0x12],R8");
+        } else if (feature("telemetry_smoothing")) {
+
             // Diagnostic: the two scan-component fields carry the live
             // smoothing state instead — CC 114/115 the filter depth in taps,
             // CC 116/117 the interpolator shift.  Turning edit knob 2 must
@@ -630,16 +642,6 @@ public class AssemblePressureFix extends GhidraScript {
             // scan A = filter depth in taps, scan B = interpolator shift —
             // confirms the configured smoothing is what actually runs.
             emit("MOV R10,0x6082");
-            emit("LD.UH R8,R10[0x0]");
-            emit("ST.H R7[-0x10],R8");
-            emit("LD.UH R8,R10[0x2]");
-            emit("ST.H R7[-0x12],R8");
-        } else if (feature("scan_profiler")) {
-            // Diagnostic build: the two scan-component fields carry the
-            // profiler's numbers instead.  CC 114/115 is the worst single
-            // dispatch in cycles/32, CC 116/117 the CPU load in tenths of a
-            // percent.
-            emit("MOV R10,0x6032");
             emit("LD.UH R8,R10[0x0]");
             emit("ST.H R7[-0x10],R8");
             emit("LD.UH R8,R10[0x2]");

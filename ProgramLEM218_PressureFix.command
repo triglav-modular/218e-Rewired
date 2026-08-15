@@ -12,7 +12,7 @@ FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/LEM218_PressureFix_fwflash_log.txt"
-EXPECTED_SHA256="f5c00c55c8252bc4a6896cd94e3387d682f680da99bd01dd8a91ce6fbab26e4a"
+EXPECTED_SHA256="bdc25f624c34e281a60e65170505910fb3642fbdc5c69c54d31b5e24027f4265"
 
 # Support launching from either the package root or its mac directory.
 if [ -d "$SCRIPT_DIR/mac/support" ]; then
@@ -137,23 +137,17 @@ log "Using dfu-programmer: $DFUPATH"
 
 echo
 echo "This is EXPERIMENTAL firmware based on Buchla 218e V3 v36.9."
-echo "Ordinary edit mode now provides a complete saved pressure calibration:"
-echo "  knob 1 = full-pressure point (turn right for greater sensitivity)"
-echo "  knob 3 = pressure floor/deadband, now covering raw 0..1023"
-echo "  knob 4 = curve, from linear (left) to a strong threshold curve (right)"
-echo "Falling sensor readings now refresh every scan instead of every tenth"
-echo "scan, removing the original periodic peak-hold behavior."
-echo "Pressure is averaged over sixteen raw samples, normalized between the"
-echo "saved floor and full-pressure point, and then curved. The old second gain"
-echo "stage is removed, so the curve no longer depends on a guessed sensor range."
-echo "Each new touch seeds the filter immediately, avoiding a time-based ramp and"
-echo "preventing one touch from inheriting the previous touch's pressure."
-echo "While ordinary edit mode and USB MIDI are active, a rate-limited diagnostic"
-echo "stream reports the held key's two pre-subtraction scan components."
-echo "These diagnostic values do not alter the pressure output in this build."
-echo "Run ReadLEM218_Pressure.command after flashing to view and record it."
-echo "Minimum keyboard velocity is fixed at its full-range value; its ordinary"
-echo "knob-3 setting is repurposed as the pressure floor."
+# --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---
+echo "Ordinary edit mode provides the pressure calibration:"
+echo "  knob 1 = pressure calibration, scaling both endpoints (592/893 at centre)"
+echo "  knob 3 = factory behaviour"
+echo "  knob 4 = curve, linear (left) to full 218r (right), default 0"
+echo "Outside edit mode those knobs control the arpeggiator and vibrato."
+echo "Arp switch: latch / regular / off. In latch, keys toggle by"
+echo "sounding pitch, so any octave position can release a note."
+echo "Portamento knob = pressure needed to bend between held notes."
+echo "Run ReadLEM218_Pressure.command after flashing to view telemetry."
+# --- END GENERATED SUMMARY ---
 echo "Pad 3 + knob 3 still controls minimum arpeggiation velocity."
 echo "The special key-sensitivity mode of knob 1 is also preserved."
 echo

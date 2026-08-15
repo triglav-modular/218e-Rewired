@@ -19,6 +19,11 @@ output_hex     = "mac/firmware/218eV3_v369_PressureFix_DFU.hex"
 # The build rewrites that script's EXPECTED_SHA256 so the two can never drift.
 updater        = "ProgramLEM218_PressureFix.command"
 
+# The image this configuration is expected to produce.  tools/test.py --golden
+# rebuilds and compares against it, so any unintended change in the assembly,
+# the generated tables or the patch set shows up as a test failure.
+golden_sha256  = "bdc25f624c34e281a60e65170505910fb3642fbdc5c69c54d31b5e24027f4265"
+
 
 # ---------------------------------------------------------------------------
 # Panel knobs (the four preset-voltage knobs, outside edit mode)
@@ -239,7 +244,7 @@ pressure_ab_switch = false
 # Report the live smoothing state in the telemetry's scan-component fields:
 # scan A = filter depth in taps (8..24), scan B = interpolator shift (2..5).
 # Both must follow edit knob 2.
-telemetry_smoothing = true
+telemetry_smoothing = false
 factory_gain_shift = 3
 
 

@@ -27,15 +27,18 @@ linear) is why noise and proximity stop being obtrusive.
   `pressure_curve()` from `[pressure.curve]`.
 - How much of it is applied is a blend level, 0 (linear) to 31 (full curve),
   stored in the repurposed velocity-min byte `state+0x2DB` as `0xA0 | level`.
-  `[pressure.curve].default_level` (31) is what applies when nothing is
-  stored — the state after every flash — and edit knob 4 sets it live.
+  `[pressure.curve].default_level` (0, i.e. linear — the setting the
+  instrument was played in on) is what applies when nothing is stored — the state after every flash — and edit knob 4 sets it live.
 - Applied in `calibrated_pressure_curve` (`0x80019580`), which is reached
   because the pool word at `0x80003574` now points at it.
+- `[pressure.curve].onset_fade` (60 counts) linearises the bottom of the
+  curve, so a release crosses the floor smoothly instead of stepping off the
+  onset; 0 restores the pure 218r step.
 - The blend between linear and curved uses an **arithmetic** shift (`ASR`), not
   a logical one — the curve rises above the linear ramp, and a logical shift
   would wrap the negative difference.
 
-**Calibration is hardcoded.** Floor 580 / ceiling 814 are the defaults
+**Calibration is hardcoded.** Floor 592 / ceiling 893 are the defaults
 (`[pressure.calibration]`), and knobs 1 and 3 became live trims that centre on
 those defaults and reach half of `trim_span` either side, so the instrument is
 right out of the box with no calibration ritual.
@@ -57,8 +60,7 @@ position could make it play. The defaults are what you get after a flash, which 
 the stored calibration; 814 is what knob 1 reads at position 4.
 
 The window between floor and ceiling is mapped onto the full output range, so
-it sets the noise gain: 260 raw counts give 18x, and the narrower 234-count
-window of the 814 ceiling gives 20x. One raw sensor count is ~44 mV at the
+it sets the noise gain: the current 301-count window gives about 16x. One raw sensor count is ~44 mV at the
 jack. That is why sensor noise and finger tremor are plainly visible on a
 scope — they are being amplified by design, and a narrower window trades noise
 for sensitivity.
@@ -69,8 +71,9 @@ amplitude 1/2^n of a scan tread). The scan's store into
 the pressure DAC slot is redirected to a target at RAM `0x6036`
 (`ST.H R9[0x2ad6]` — the same instruction, a different displacement), and the
 `dac_interpolator` cave at `0x8001A600` runs on the 1 kHz DAC flush instead,
-closing 1/2^n of the remaining gap each millisecond. A 200-count scan step
-becomes a 50-count first tread spread over about 5 ms. It is reached by
+closing 1/2^n of the remaining gap each millisecond. At the default shift a
+200-count scan step is spread into millisecond treads instead of one 5 ms
+tread. It is reached by
 repointing the dispatcher's jump-table entry for event 17 (`0x8001485C`) and
 jumps on into the factory handler when done.
 
@@ -100,9 +103,12 @@ replaced by the 218r's **growing average**, with a configurable depth
 (`[pressure].smoothing_taps`, 8..24 taps = 40..120 ms; `variable_filter`,
 `0x8001A800`; taps at RAM `0x6050`, depth at `0x6082`, count at `0x6080`).
 The 1 kHz output interpolation depth is `[pressure].output_smoothing`
-(shift 1..6, live value at RAM `0x6084`) — the filter shapes the sequence of
-scan values, the interpolator is what actually shrinks the 5 ms staircase on
-the jack. The filter averages only the samples collected since the touch, so
+(shift 1..6, live value at RAM `0x6084`; currently 5) — the filter shapes the
+sequence of scan values, the interpolator is what actually shrinks the 5 ms
+staircase on the jack. At shift 5 it closes 1/32 of the remaining gap each
+millisecond: a ~32 ms time constant, roughly 73 ms to 90% and 145 ms to 99%,
+which removes the staircase completely at the cost of a soft edge on very
+fast attacks. The filter averages only the samples collected since the touch, so
 attacks stay instant at any depth; the count is cleared by the note-on and
 source-change wrappers.
 
@@ -184,7 +190,7 @@ selected table into RAM `0x854` within one 5 ms scan and drives the LEDs.
 |------|------------------|-----------|-----|
 | 0 | Sabat II | power-on default | rem-en lit |
 | 1 | ADDAC Just Intonation | edit key 27 toggles 1 ⇄ 2 | trn lit |
-| 2 | factory temperament | edit key 28 toggles 0 ⇄ 2 | both dark |
+| 2 | 12-TET (exact) | edit key 28 toggles 0 ⇄ 2 | both dark |
 
 The selector persists with the settings (it reuses the old remote-enable byte,
 whose "off" value maps to slot 0). Octave switches keep working in every tuning

@@ -16,7 +16,7 @@ The readout uses MIDI channel 16 control changes. A complete frame is:
 | 112, 113 | Saved full-pressure endpoint/ceiling |
 | 114, 115 | Active key scan component A, before factory subtraction |
 | 116, 117 | Active key scan component B, before factory subtraction |
-| | *(a `scan_profiler` build sends the profiler's two numbers in these four CCs instead — see below)* |
+| | *(diagnostic builds repurpose these four CCs — see below)* |
 | 118 | Curve level, 0–31, and end-of-frame marker |
 
 For every adjacent pair, `value = MSB * 128 + LSB`. The readout accepts a frame
@@ -54,6 +54,15 @@ reference from which a weighted subtraction can distinguish the two. The
 light/mid/max measurements are still useful for setting the floor and ceiling;
 eliminating proximity completely would require an electrical or mechanical
 change that makes proximity distinguishable at the sensor.
+
+## Diagnostic builds
+
+Two `[diagnostics]` settings repurpose the scan-component fields, and the
+build refuses to enable both at once. With neither set — the default — CC
+114–117 carry the real scan components described above.
+
+`telemetry_smoothing` puts the live smoothing state there instead: scan A is
+the filter depth in taps, scan B the interpolator shift.
 
 ## Scan profiler builds
 

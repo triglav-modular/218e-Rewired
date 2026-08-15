@@ -13,21 +13,27 @@ the four preset-voltage knobs and the arpeggiator switch.
 
 ## What it does
 
-- **Delicate pressure response** — the 218r's gentle 10 dB exponential curve
-  with an immediate onset step, in place of the factory curve that stayed
-  nearly silent until 85 % of travel. Calibration is hardcoded to sensible
-  defaults; knobs 1 and 3 became centred trims.
+- **Reworked pressure response** — the 218r's gentle 10 dB exponential curve
+  is available in place of the factory curve that stayed nearly silent until
+  85 % of travel, blended by edit knob 4 from linear (the current default) to
+  the full curve, with a faded onset so releases do not step off a cliff.
+  Calibration is hardcoded to defaults that survive a flash; edit knob 1
+  scales the whole window live.
 - **Common-mode rejection** — cancels the two-hand proximity lift that
   otherwise pinned pressure at maximum.
 - **In-firmware tuning** — three tuning tables built from Scala files
-  (Sabat II, ADDAC JI, factory), switched from edit mode with LED indication.
+  (Sabat II, ADDAC JI, 12-TET), switched from edit mode with LED indication.
 - **Per-key pitch calibration** — the 208p's measured tracking error corrected
   per semitone, finer than the uTune's per-octave scheme (≤1.5 cents residual).
-- **Pressure-weighted portamento** — Haken Continuum style, on the portamento
-  knob, fully off at zero.
+- **Pressure-weighted portamento** — Haken Continuum style: notes snap, and
+  pitch moves between held notes as their relative pressure moves. The
+  portamento knob sets how much pressure a second note needs to bend, and is
+  fully off at zero.
 - **Arpeggiator controls on the four knobs** — note order, rhythm randomness,
   random octaves, and global vibrato.
-- **Latch mode** on the arpeggiator switch: latch / regular / off.
+- **Latch mode** on the arpeggiator switch: latch / regular / off. Latched
+  notes are pitches, not keys — the same key in three octaves stacks three
+  notes, each releasable from any octave where its pitch still maps.
 - **Trigger timing fix** — gates no longer fire with the previous note's pitch.
 
 Full details, with addresses: [`docs/FIRMWARE_CHANGES.md`](docs/FIRMWARE_CHANGES.md).
@@ -35,7 +41,8 @@ Full details, with addresses: [`docs/FIRMWARE_CHANGES.md`](docs/FIRMWARE_CHANGES
 ## Build
 
 ```bash
-python3 tools/build.py
+python3 tools/build.py     # build the firmware
+python3 tools/test.py      # regression tests (add --golden to rebuild and compare)
 ```
 
 Needs Python 3.11+ and Ghidra 12.x (set `GHIDRA_HOME` or `[tools].ghidra_home`).

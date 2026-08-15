@@ -45,6 +45,12 @@ BUILD = REPO / "build"
 # instrument's original temperament bit-exact instead of re-deriving it.
 FACTORY_KEY_TABLE = 0x80016574
 
+# The pitch remap clamps its semitone index to 0x4D and interpolates against
+# index+1, so the calibration table must supply 79 entries.  A shorter table
+# would leave the rest of the fixed table area as assembler padding, which the
+# firmware would read as pitch values.
+PITCH_TABLE_ENTRIES = 0x4D + 2
+
 
 # ---------------------------------------------------------------------------
 # Feature map: which patches carry which behaviour.
@@ -135,6 +141,12 @@ def parse_scala(path: Path) -> list[float]:
             f"{path.name}: {count} degrees — the key table repeats every octave, "
             "so a 12-note scale is required"
         )
+    if any(b <= a for a, b in zip(cents, cents[1:])):
+        raise ValueError(
+            f"{path.name}: degrees are not strictly ascending — the key table would "
+            "descend or repeat")
+    if cents[1] <= 0.0:
+        raise ValueError(f"{path.name}: first degree must be above the tonic")
     if abs(cents[-1] - 1200.0) > 0.001:
         raise ValueError(
             f"{path.name}: last degree is {cents[-1]:.3f} cents, not a 2/1 octave — "
@@ -214,6 +226,11 @@ def read_calibration(path: Path) -> dict[int, float]:
         raise ValueError(
             f"{path.name}: semitones must run 0..N with no gaps; missing {sorted(missing)[:8]}"
         )
+    if len(offsets) < PITCH_TABLE_ENTRIES:
+        raise ValueError(
+            f"{path.name}: {len(offsets)} rows, but the firmware reads {PITCH_TABLE_ENTRIES} "
+            "(semitones 0..78); a shorter table leaves assembler padding to be read as pitch"
+        )
     return offsets
 
 
@@ -233,6 +250,9 @@ def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
         math.floor(scale * (i / 12.0 + offsets[i] / 1200.0) + 0.5)
         for i in range(max(offsets) + 1)
     ]
+    if len(table) != PITCH_TABLE_ENTRIES:
+        raise ValueError(
+            f"pitch curve has {len(table)} entries, firmware needs {PITCH_TABLE_ENTRIES}")
     if table != sorted(table):
         raise ValueError("pitch curve is not monotonic — check the calibration table")
     if table[0] < 0 or table[-1] > 4095:
@@ -326,15 +346,19 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
 # Intel HEX
 # ---------------------------------------------------------------------------
 def parse_hex(path: Path) -> tuple[dict[int, int], int]:
+    return parse_hex_text(path.read_text(), path.name)
+
+
+def parse_hex_text(text: str, name: str) -> tuple[dict[int, int], int]:
     memory: dict[int, int] = {}
     upper = 0
     start_linear = 0x80002000
-    for number, text in enumerate(path.read_text().splitlines(), 1):
-        if not text.startswith(":"):
-            raise ValueError(f"{path.name} line {number}: missing Intel HEX colon")
-        record = bytes.fromhex(text[1:])
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.startswith(":"):
+            raise ValueError(f"{name} line {number}: missing Intel HEX colon")
+        record = bytes.fromhex(line[1:])
         if sum(record) & 0xFF:
-            raise ValueError(f"{path.name} line {number}: bad checksum")
+            raise ValueError(f"{name} line {number}: bad checksum")
         length, kind = record[0], record[3]
         address = (record[1] << 8) | record[2]
         data = record[4 : 4 + length]
@@ -351,11 +375,11 @@ def parse_hex(path: Path) -> tuple[dict[int, int], int]:
         elif kind == 1:
             break
         else:
-            raise ValueError(f"{path.name} line {number}: record type {kind}")
+            raise ValueError(f"{name} line {number}: record type {kind}")
     return memory, start_linear
 
 
-def write_hex(path: Path, memory: dict[int, int], start_linear: int) -> None:
+def render_hex(memory: dict[int, int], start_linear: int) -> str:
     def record(kind: int, address: int, data: bytes = b"") -> str:
         body = bytes([len(data), (address >> 8) & 0xFF, address & 0xFF, kind]) + data
         return ":" + (body + bytes([(-sum(body)) & 0xFF])).hex().upper()
@@ -381,7 +405,7 @@ def write_hex(path: Path, memory: dict[int, int], start_linear: int) -> None:
         lines.append(record(0, start & 0xFFFF, bytes(chunk)))
     lines.append(record(5, 0, start_linear.to_bytes(4, "big")))
     lines.append(record(1, 0))
-    path.write_text("\n".join(lines) + "\n")
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -491,9 +515,9 @@ def apply_patches(memory: dict[int, int], patches) -> tuple[int, int]:
     may reach the protected DFU bootloader.
     """
     low, high = min(memory), max(memory)
-    claimed: dict[int, str] = {}
+    claimed: dict[int, tuple[int, str]] = {}
     changed = added = 0
-    for address, data, note in patches:
+    for index, (address, data, note) in enumerate(patches):
         for offset, value in enumerate(data):
             location = address + offset
             if not low <= location <= high:
@@ -501,18 +525,47 @@ def apply_patches(memory: dict[int, int], patches) -> tuple[int, int]:
                     f"patch at 0x{location:08X} lies outside the application image "
                     f"(0x{low:08X}..0x{high:08X})"
                 )
-            if location in claimed and claimed[location] != note:
+            if location in claimed and claimed[location][0] != index:
                 raise SystemExit(
                     f"patches overlap at 0x{location:08X}: "
-                    f"{claimed[location]!r} and {note!r}"
+                    f"{claimed[location][1]!r} and {note!r}"
                 )
-            claimed[location] = note
+            claimed[location] = (index, note)
             if location not in memory:
                 added += 1
             elif memory[location] != value:
                 changed += 1
             memory[location] = value
     return changed, added
+
+
+def updater_summary(cfg: dict) -> str:
+    """The panel description the flasher prints, derived from this config."""
+    calib, curve = cfg["pressure"]["calibration"], cfg["pressure"]["curve"]
+    knobs = []
+    if calib.get("trim_mode") == "scale":
+        knobs.append("  knob 1 = pressure calibration, scaling both endpoints "
+                     f"({calib['floor']}/{calib['ceiling']} at centre)")
+        knobs.append("  knob 3 = factory behaviour")
+    else:
+        knobs.append(f"  knob 1 = full-pressure point (default {calib['ceiling']})")
+        knobs.append(f"  knob 3 = pressure floor (default {calib['floor']})")
+    knobs.append(f"  knob 4 = curve, linear (left) to full 218r (right), "
+                 f"default {curve.get('default_level', 0)}")
+    lines = [
+        "# --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---",
+        'echo "Ordinary edit mode provides the pressure calibration:"',
+        *[f'echo "{line}"' for line in knobs],
+        'echo "Outside edit mode those knobs control the arpeggiator and vibrato."',
+    ]
+    if cfg["arp"]["switch"] == "latch":
+        lines.append('echo "Arp switch: latch / regular / off. In latch, keys toggle by"')
+        lines.append('echo "sounding pitch, so any octave position can release a note."')
+    if cfg["portamento"]["pressure_blend"]:
+        lines.append('echo "Portamento knob = pressure needed to bend between held notes."')
+    lines.append('echo "Run ReadLEM218_Pressure.command after flashing to view telemetry."')
+    lines.append("# --- END GENERATED SUMMARY ---")
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -615,6 +668,11 @@ def main() -> None:
         raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
 
     blocks, features, summary = resolve_flags(cfg)
+    if features.get("scan_profiler") and features.get("telemetry_smoothing"):
+        raise SystemExit(
+            "diagnostics: scan_profiler and telemetry_smoothing both claim the "
+            "scan-component telemetry fields — enable only one"
+        )
     if get(cfg, "arp.switch") == "latch" and not get(cfg, "portamento.pressure_blend"):
         raise SystemExit(
             "arp latch needs portamento.pressure_blend: the latch transpose hold "
@@ -663,12 +721,21 @@ def main() -> None:
     changed, added = apply_patches(memory, patches)
 
     out_path = REPO / cfg["firmware"]["output_hex"]
-    write_hex(out_path, memory, start_linear)
 
-    # round-trip: the file we wrote must read back exactly as intended
-    reread, reread_start = parse_hex(out_path)
+    # Nothing is written until every check has passed: render the image to a
+    # string, verify it round-trips and matches --expect-sha, and only then
+    # touch the working tree.  A failed build must never leave an unexpected
+    # image or a rewritten updater behind.
+    rendered = render_hex(memory, start_linear)
+    reread, reread_start = parse_hex_text(rendered, out_path.name)
     if reread != memory or reread_start != start_linear:
-        raise SystemExit("round-trip check failed — written hex does not read back")
+        raise SystemExit("round-trip check failed — rendered hex does not read back")
+    digest = hashlib.sha256(rendered.encode()).hexdigest()
+    if args.expect_sha and digest != args.expect_sha:
+        raise SystemExit(
+            f"output SHA mismatch — expected {args.expect_sha}, built {digest}"
+            "\n  nothing was written"
+        )
 
     # every difference from the factory image must be inside a declared patch
     covered = {a + i for a, data, _ in patches for i in range(len(data))}
@@ -682,7 +749,7 @@ def main() -> None:
     ]
     (BUILD / "patch_manifest.txt").write_text("\n".join(manifest) + "\n")
 
-    digest = hashlib.sha256(out_path.read_bytes()).hexdigest()
+    out_path.write_text(rendered)
 
     updater_name = cfg["firmware"].get("updater")
     if updater_name:
@@ -693,17 +760,24 @@ def main() -> None:
         )
         if count != 1:
             raise SystemExit(f"{updater_name}: expected exactly one EXPECTED_SHA256 line")
+        # The panel summary is generated from this configuration, so the
+        # instructions the flasher prints can never describe a build it is not
+        # actually installing.
+        patched, count = re.subn(
+            r"# --- BEGIN GENERATED SUMMARY.*?# --- END GENERATED SUMMARY ---",
+            updater_summary(cfg), patched, flags=re.S,
+        )
+        if count != 1:
+            raise SystemExit(f"{updater_name}: generated-summary markers missing")
         if patched != text:
             updater.write_text(patched)
-            print(f"updated {updater_name} checksum")
+            print(f"updated {updater_name} checksum and summary")
 
     print(f"wrote {out_path.relative_to(REPO)}")
     print(f"  {changed} bytes changed, {added} newly programmed into erased flash")
     print("  all differences from the factory image lie inside declared patches")
     print(f"  SHA-256 {digest}")
 
-    if args.expect_sha and digest != args.expect_sha:
-        raise SystemExit(f"output SHA mismatch — expected {args.expect_sha}")
     if args.expect_sha:
         print("  matches --expect-sha")
 

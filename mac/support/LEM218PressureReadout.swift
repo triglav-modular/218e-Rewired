@@ -50,13 +50,39 @@ final class PressureMonitor {
     }
 
     deinit {
+        flushCSV()
+        csvQueue.sync {}
+        try? csv.synchronize()
         try? csv.close()
     }
 
+    // Telemetry arrives on the CoreMIDI callback, where a synchronous write
+    // plus fsync can stall long enough to drop frames — which corrupts the
+    // very cadence measurements the readout exists to make.  Buffer instead,
+    // and flush from a background queue.
+    private var csvBuffer = Data()
+    private let csvQueue = DispatchQueue(label: "lem218.csv")
+
     private func writeCSV(_ text: String) {
-        if let data = text.data(using: .utf8) {
-            try? csv.write(contentsOf: data)
-            try? csv.synchronize()
+        guard let data = text.data(using: .utf8) else { return }
+        csvBuffer.append(data)
+        guard csvBuffer.count >= 8192 else { return }
+        flushCSV()
+    }
+
+    /// Flush and fsync before an explicit exit, which bypasses deinit.
+    func finishWriting() {
+        lock.lock(); flushCSV(); lock.unlock()
+        csvQueue.sync {}
+        try? csv.synchronize()
+    }
+
+    private func flushCSV() {
+        guard !csvBuffer.isEmpty else { return }
+        let pendingData = csvBuffer
+        csvBuffer.removeAll(keepingCapacity: true)
+        csvQueue.async { [csv] in
+            try? csv.write(contentsOf: pendingData)
         }
     }
 
@@ -86,8 +112,12 @@ final class PressureMonitor {
         lock.lock()
         defer { lock.unlock() }
         pending[controller] = value
-        guard controller == 118,
-              let rawInstant = value14(102),
+        guard controller == 118 else { return }
+        // The terminator ends the frame either way: on an incomplete frame the
+        // partial fields are discarded, so they can never be combined with the
+        // next frame's.
+        defer { pending.removeAll(keepingCapacity: true) }
+        guard let rawInstant = value14(102),
               let rawAverage = value14(104),
               let normalized = value14(106),
               let output12 = value14(108),
@@ -104,7 +134,6 @@ final class PressureMonitor {
             ceiling: ceiling, scanComponentA: scanComponentA,
             scanComponentB: scanComponentB,
             curveLevel: value)
-        pending.removeAll(keepingCapacity: true)
         recent.append(frame)
         if recent.count > 50 { recent.removeFirst(recent.count - 50) }
 
@@ -307,6 +336,7 @@ do {
         while let command = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             if command == "q" || command == "quit" {
                 monitor.printSummary()
+                monitor.finishWriting()
                 exit(0)
             } else if command == "settings" {
                 monitor.printSettings()

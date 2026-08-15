@@ -52,9 +52,18 @@ Everything the build produces lands in `build/` and is not tracked:
 - the written hex reads back byte-for-byte;
 - every difference from the factory image lies inside a declared patch;
 - generated pitch tables are monotonic and inside the 12-bit DAC range;
-- each Scala file has 12 degrees and a true 2/1 octave.
+- each Scala file has 12 strictly ascending degrees and a true 2/1 octave;
+- the pitch calibration covers every semitone the firmware reads (0..78), so
+  a short table cannot leave assembler padding to be read as pitch.
 
-Any failure stops the build without writing firmware.
+Any failure stops the build without writing firmware: the image is rendered
+and checked in memory — including `--expect-sha` — and only written once every
+check has passed, so a failed build never leaves an unexpected image or a
+rewritten updater behind.
+
+`tools/test.py` covers the generators and validators without needing Ghidra;
+`tools/test.py --golden` also rebuilds and compares against
+`[firmware].golden_sha256`.
 
 ## Flashing
 
@@ -98,16 +107,17 @@ the table itself reports at that pitch — a cent costs more voltage where the
 208p's scaling is stretched, which it is by about 21 % near the top — and
 marks those rows `measured`. Rows you don't measure are left alone.
 
-For a calibration run, point slot 2 at `tunings/12TET.scl` rather than
-`"factory"` first: the factory temperament is up to 1.65 cents off exact
-12-TET, and measuring against it folds that error into your readings.
+Measure against an exact scale: slot 2 is `tunings/12TET.scl` for this reason.
+The `"factory"` temperament is up to 1.65 cents off exact 12-TET, and
+measuring against it would fold that error into your readings.
 
 **Change the pressure feel.** `[pressure.calibration]` sets the floor and
 ceiling used when there is no stored calibration — the state after every flash.
 A lower ceiling reaches full pressure sooner but amplifies sensor noise, since
 the floor-to-ceiling window is mapped onto the whole output range. Both must
-stay in 256..1023 so the immediates keep their encoding width; the build
-rejects anything else.
+stay in 128..2000 so the immediates keep their encoding width; the build
+rejects anything else. `trim_mode = "scale"` gives knob 1 the whole window
+(0.5x..1.5x) and returns knob 3 to the factory.
 
 **Change the update rate.** `[timing].scan_period_ms` is the period of the
 task that drives the key/pressure/pitch scan — 5 ms (200 Hz) from the factory,
@@ -152,6 +162,8 @@ then read the numbers with a key held in edit mode:
 
 ```bash
 # config/218e.toml:  [diagnostics] scan_profiler = true
+#                    (and telemetry_smoothing = false — they share the same
+#                     telemetry fields, and the build refuses both at once)
 python3 tools/build.py
 ./ReadLEM218_Pressure.command      # scan_component_a/b carry the profiler
 ```
