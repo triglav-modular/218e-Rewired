@@ -1607,19 +1607,25 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001a790L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("LDDPC R10,0x8001a7f0");
-        emit("LD.UB R8,R10[0x256]");
-        emit("CP.W R8,0x1c");
-        emit("BR{hi} 0x8001a7c0");
-        emit("MOV R9,0xa54a");
-        emit("ORH R9,0xa54");
-        emit("LSR R9,R9,R8");
-        emit("BFEXTU R9,R9,0x0,0x1");
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001a7c0");
-        emit(String.format("MOV R9,0x%x", number("black_key_scale_32", 43, 32, 96)));
-        emit("MUL R12,R12,R9");
-        emit("LSR R12,0x5");
+        if (feature("multi_key_pressure")) {
+            // Combine every physically held key, black-key scaling each one on
+            // the way (see multi_key_pressure).
+            emit("MCALL PC[0x8001a7f4]");
+        } else {
+            emit("LDDPC R10,0x8001a7f0");
+            emit("LD.UB R8,R10[0x256]");
+            emit("CP.W R8,0x1c");
+            emit("BR{hi} 0x8001a7c0");
+            emit("MOV R9,0xa54a");
+            emit("ORH R9,0xa54");
+            emit("LSR R9,R9,R8");
+            emit("BFEXTU R9,R9,0x0,0x1");
+            emit("CP.W R9,0x0");
+            emit("BR{eq} 0x8001a7c0");
+            emit(String.format("MOV R9,0x%x", number("black_key_scale_32", 43, 32, 96)));
+            emit("MUL R12,R12,R9");
+            emit("LSR R12,0x5");
+        }
         padTo(0x8001a7c0L);
         if (feature("pressure_ab_switch")) {
             emit("MOV R9,0x6046");
@@ -1632,7 +1638,7 @@ public class AssemblePressureFix extends GhidraScript {
             emit("BR{ls} 0x8001a7d8");
             emit("MOV R12,R9");
             padTo(0x8001a7d8L);
-            emit("MCALL PC[0x8001a7f4]");
+            emit("MCALL PC[0x8001a7f8]");
             emit("MOV R9,0x1");
             emit("LDM SP++,R7,PC");
         }
@@ -1641,8 +1647,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R7,PC");
         padTo(0x8001a7f0L);
         word(0x00003560L); // global state base
+        word(0x8001aa10L); // multi-key pressure combiner
         word(0x80013350L); // signed-int-to-float helper (same as the epilogue)
-        finish("pressure_prep", 0x8001a7f8L);
+        finish("pressure_prep", 0x8001a7fcL);
 
         // Variable-depth growing average.  Depth N (8..24 taps = 40..120 ms
         // at the 5 ms scan) lives at RAM 0x6082, set by edit knob 2; taps at
@@ -1862,6 +1869,67 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001aa08L);
         word(0x00003560L); // global state base
         finish("latch_pitch_toggle", 0x8001aa0cL);
+
+        // Multi-key pressure.  The factory sources pressure from the last key
+        // touched, so adding a second key — however lightly — hands the CV to
+        // that key and a barely-touched one reads below the floor, cutting the
+        // output to zero while the first finger is still down.  Combine every
+        // PHYSICALLY held key instead (touch state 2, so latched keys with no
+        // finger on them do not drag the result down), black-key scaling each
+        // one as it is gathered.  With nothing held the factory value passes
+        // through untouched.
+        begin(0x8001aa10L);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,0x0");
+        emit("MOV R1,0x0");
+        emit("MOV R9,0x1c");
+        padTo(0x8001aa1cL);
+        emit("MOV R8,0x3490");
+        emit("ADD R8,R8,R9 << 0x0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001aa6c");
+        emit("MOV R8,0x3686");
+        emit("ADD R8,R8,R9 << 0x1");
+        emit("LD.UH R8,R8[0x0]");
+        emit("SUB R8,0x6e");
+        emit("CP.W R8,0x0");
+        emit("BR{le} 0x8001aa6c");
+        emit("MOV R11,0xa54a");
+        emit("ORH R11,0xa54");
+        emit("LSR R11,R11,R9");
+        emit("BFEXTU R11,R11,0x0,0x1");
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001aa5c");
+        emit(String.format("MOV R11,0x%x", number("black_key_scale_32", 43, 32, 96)));
+        emit("MUL R8,R8,R11");
+        emit("LSR R8,0x5");
+        padTo(0x8001aa5cL);
+        if (number("multi_key_max", 0, 0, 1) == 1) {
+            emit("CP.W R8,R0");
+            emit("BR{ls} 0x8001aa68");
+            emit("MOV R0,R8");
+            padTo(0x8001aa68L);
+        } else {
+            emit("ADD R0,R8");
+            padTo(0x8001aa68L);
+        }
+        emit("SUB R1,-0x1");
+        padTo(0x8001aa6cL);
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001aa1c");
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001aa80");
+        if (number("multi_key_max", 0, 0, 1) == 1) {
+            emit("MOV R12,R0");
+        } else {
+            emit("DIVU R0,R0,R1");
+            emit("MOV R12,R0");
+        }
+        padTo(0x8001aa80L);
+        emit("LDM SP++,R0,R1,R7,PC");
+        finish("multi_key_pressure", 0x8001aa88L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate

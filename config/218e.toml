@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "b57d3143060c32159e8b94c4255df08908e3a43bdaea410479654b65c12f27a3"
+golden_sha256  = "ab6d8bd0e59b8966dd8104769b53bc8b0744e2085637ce0958131e2c328b0462"
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +76,21 @@ poly_default = "off"
 # the raw reading, taken from the quietest untouched key each scan.  Without
 # it, playing with both hands near the keyboard inflates every reading and
 # pressure pins at maximum.
+# Where the pressure CV comes from when several keys are held at once.  The
+# factory sources it from the last key touched, so adding a second key hands
+# the CV to it — touch one lightly while holding another hard and the output
+# drops to that light touch, or to zero if it is below the floor.
+#
+# "mean"    — average of every physically held key.  A light second finger
+#             halves the output; releasing it restores the first.
+# "max"     — the hardest-pressed key wins.  Adding a light finger changes
+#             nothing, and there is no jump when it leaves.
+# "factory" — last key touched.
+#
+# Latched keys are excluded either way: with no finger on them they read at
+# baseline and would only drag the result down.
+multi_key = "mean"
+
 common_mode = true
 
 # The estimator treats whatever the nearest untouched key reads above this

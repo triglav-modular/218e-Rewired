@@ -143,6 +143,16 @@ source-change wrappers.
 > is wanted again, the mirror question must be settled first (the
 > `telemetry_smoothing` diagnostic can display the mirrors).
 
+**Multiple keys** (`[pressure].multi_key`). The factory sources pressure from
+the last key touched, so adding a second key hands the CV to it: hold one key
+hard, touch another lightly, and the output follows the light touch — to zero
+if it sits below the floor, with the first finger still down.
+`multi_key_pressure` (`0x8001AA10`, called from the prep cave) combines every
+**physically** held key instead — touch state 2, so latched keys with no
+finger on them cannot drag the result down — black-key scaling each one as it
+is gathered. `"mean"` averages them, `"max"` takes the hardest-pressed key,
+`"factory"` restores the original behaviour.
+
 **Proximity rejection** (`[pressure].common_mode`). A hovering hand lifts
 every key it is near — the played key included — so two-handed playing could
 inflate a firm press from ~830 to ~1900 raw counts and pin the CV at maximum.

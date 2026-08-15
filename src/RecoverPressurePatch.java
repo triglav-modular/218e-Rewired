@@ -58,6 +58,7 @@ public class RecoverPressurePatch extends GhidraScript {
         recover(0x8001a8a0L, "transpose_capture");
         recover(0x8001a8f0L, "blend_offset_apply");
         recover(0x8001a930L, "latch_pitch_toggle");
+        recover(0x8001aa10L, "multi_key_pressure");
         analyzeChanges(currentProgram);
     }
 }
