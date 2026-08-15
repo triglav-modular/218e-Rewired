@@ -36,6 +36,13 @@ linear) is why noise and proximity stop being obtrusive.
 those defaults and reach half of `trim_span` either side, so the instrument is
 right out of the box with no calibration ritual.
 
+With `trim_mode = "scale"` knob 1 instead multiplies *both* endpoints by
+0.5x..1.5x, unity at centre, and knob 3 returns to its factory job. That is the
+shape the physics asks for: coupling scales the whole signal rather than moving
+one endpoint, so holding the floor/ceiling ratio fixed keeps the response
+identical and just re-ranges it. 1.0x is the configured calibration, and about
+20% of knob travel is 0.70x — the measured feet-up calibration.
+
 The span matters more than it looks. Capacitive sensing couples through the
 player to ground, and simply lifting your feet off the floor shrinks the whole
 signal by about 30% — a firm press falls from ~830 raw counts to ~546. That is

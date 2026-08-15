@@ -341,14 +341,36 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x800194dcL);
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x80019568");
-        emit("LD.UH R8,R10[0x30a]");
-        emit(String.format("LSR R8,0x%x", number("trim_shift", 2, 1, 4)));
-        emit(String.format("SUB R8,-0x%x", number("ceiling_knob_base", 0x2c8, 0x80, 0x7d0)));
-        emit("LD.W R9,R10[0x33c]");
-        emit("LSR R11,R9,0x10");
-        emit("CP.W R11,0x3ff");
-        emit("BR{ls} 0x80019518");
-        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
+        if (feature("pressure_trim_scale")) {
+            // One knob for the whole calibration.  Capacitive coupling scales
+            // the entire signal — lifting your feet off the floor costs about
+            // 30% of it — so the useful control multiplies floor and ceiling
+            // together rather than moving either endpoint on its own.
+            // k runs 128..383 with 256 as unity, i.e. 0.5x to ~1.5x.
+            emit("LD.UH R8,R10[0x30a]");
+            emit("LSR R8,0x2");
+            emit("SUB R8,-0x80");
+            emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
+            emit("MUL R9,R9,R8");
+            emit("LSR R9,0x8");
+            emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
+            emit("MUL R11,R11,R8");
+            emit("LSR R11,0x8");
+            emit("MOV R8,R9");
+            emit("MOV R12,0x3ff");
+            emit("CP.W R8,R12");
+            emit("BR{ls} 0x80019518");
+            emit("MOV R8,R12");
+        } else {
+            emit("LD.UH R8,R10[0x30a]");
+            emit(String.format("LSR R8,0x%x", number("trim_shift", 2, 1, 4)));
+            emit(String.format("SUB R8,-0x%x", number("ceiling_knob_base", 0x2c8, 0x80, 0x7d0)));
+            emit("LD.W R9,R10[0x33c]");
+            emit("LSR R11,R9,0x10");
+            emit("CP.W R11,0x3ff");
+            emit("BR{ls} 0x80019518");
+            emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
+        }
         padTo(0x80019518L);
         emit("MOV R12,R11");
         emit("SUB R12,-0x20");

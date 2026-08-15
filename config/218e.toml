@@ -96,6 +96,14 @@ output_smoothing = 2
 floor   = 580
 ceiling = 814
 
+# "independent" — knob 1 trims the ceiling, knob 3 the floor.
+# "scale"       — knob 1 alone multiplies BOTH by 0.5x..1.5x, centred on 1.0x,
+#                 and knob 3 returns to its factory job.  Coupling changes
+#                 scale the whole signal, so one control that keeps the
+#                 floor/ceiling ratio fixed matches the physics: 0.70x is the
+#                 feet-up calibration, 1.0x the feet-down one.
+trim_mode = "scale"
+
 # How far edit-mode knobs 3 and 1 can trim those, in raw counts.  Each knob
 # centres on the value above and reaches half this span either side, so the
 # trim range follows the defaults instead of being fixed.

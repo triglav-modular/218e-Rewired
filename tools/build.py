@@ -591,6 +591,18 @@ def main() -> None:
 
     blocks, features, summary = resolve_flags(cfg)
 
+    mode = calib.get("trim_mode", "independent")
+    if mode not in ("independent", "scale"):
+        raise SystemExit("[pressure.calibration].trim_mode must be 'independent' or 'scale'")
+    features["pressure_trim_scale"] = mode == "scale"
+    if mode == "scale":
+        # Knob 1 owns the whole calibration; knob 3 goes back to the factory so
+        # nothing else can write an endpoint behind its back.
+        blocks["knob3_pressure_floor"] = False
+        blocks["knob3_pool"] = False
+    summary.append(f"  {'pressure.trim_mode':28s} {mode!r}")
+
+
     # Output smoothing is a shift, not a toggle: 0 turns it off, and the three
     # patches that implement it stand or fall together — the scan's store is
     # redirected to a target only the interpolator reads.
