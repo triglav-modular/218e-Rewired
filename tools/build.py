@@ -500,17 +500,17 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 RAM_REGIONS = [
     (0x6000, 0x6021, "arp press-order list"),
     (0x602A, 0x602C, "power-up marker"),
-    (0x602C, 0x602E, "proximity estimate"),
+    (0x602C, 0x602E, "interpolator target snapshot"),
+    (0x602E, 0x6030, "interpolator ticks remaining"),
     (0x6032, 0x6036, "profiler reports"),
     (0x6036, 0x6038, "interpolator target"),
     (0x6038, 0x6044, "profiler accumulators"),
-    (0x6044, 0x6046, "interpolator one-shot marker"),
     (0x6046, 0x604C, "octave-switch shadow"),
     (0x604C, 0x604E, "octave-switch boot counter"),
     (0x6050, 0x6080, "pressure history taps"),
     (0x6080, 0x6082, "filter sample count"),
     (0x6082, 0x6084, "filter depth"),
-    (0x6084, 0x6086, "interpolator shift"),
+    (0x6084, 0x6086, "interpolator step count"),
     (0x6086, 0x6088, "filter ring index"),
     (0x6088, 0x608C, "filter running sum"),
     (0x608C, 0x608E, "filter newest sample"),
@@ -838,12 +838,15 @@ def main() -> None:
         summary.append(f"  {'pressure.trim_mode':28s} {mode!r}")
 
 
-    # Output smoothing is a shift, not a toggle: 0 turns it off, and the three
-    # patches that implement it stand or fall together — the scan's store is
-    # redirected to a target only the interpolator reads.
+    # Output smoothing is a finite interpolation length in 1 kHz DAC ticks.
+    # Zero turns it off, and the three patches that implement it stand or fall
+    # together — the scan's store is redirected to a target only the
+    # interpolator reads.
     smoothing = cfg["pressure"]["output_smoothing"]
+    if isinstance(smoothing, bool) or not isinstance(smoothing, int) or not 0 <= smoothing <= 8:
+        raise SystemExit("[pressure].output_smoothing must be an integer from 0 to 8")
     if smoothing:
-        cfg["_numbers"]["output_smoothing_shift"] = smoothing
+        cfg["_numbers"]["output_interpolation_steps"] = smoothing
     for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "
@@ -864,6 +867,8 @@ def main() -> None:
         repr(sorted(blocks.items())).encode()
         + repr(sorted(features.items())).encode()
         + repr(sorted(cfg["_numbers"].items())).encode()
+        + repr(sorted(tables.items())).encode()
+        + (REPO / "src" / "AssemblePressureFix.java").read_bytes()
     ).digest()
     cfg["_numbers"]["init_marker"] = 0x1000 + (int.from_bytes(fingerprint[:2], "big") % 0xDFFE)
 

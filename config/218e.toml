@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "72cb47ed430d380b4416c7c45b29b56d8a6918a1f54776ec3ec2fdc363da2c07"
+golden_sha256  = "867f0eb9609c5c05a1160692f49598263ff9d566d71f3c7e3f05441ecd805316"
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +114,10 @@ proximity_reference = 300
 black_key_scale = 1.2
 
 # Smooth the pressure CV at the 1 kHz DAC flush instead of letting it step
-# once per scan.  The value is a shift: each millisecond the output closes
-# 1/2^n of the gap to the latest scan value, so 1 is fast and 4 is gentle.
-# 0 disables it and restores the plain zero-order-hold staircase.
+# once per scan.  The value is the number of one-millisecond interpolation
+# steps used to reach each new scan value.  Unlike exponential smoothing it
+# always reaches the target in exactly this many ticks and cannot leave a long
+# pressure tail.  0 disables it and restores the plain zero-order-hold output.
 #
 # This is the alternative to shortening the scan period, which the profiler
 # showed has no headroom for it.

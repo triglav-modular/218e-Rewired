@@ -235,7 +235,7 @@ def test_blend(cfg: dict) -> None:
             if z <= 0:
                 continue
             z = min(z >> 4, 63)
-            w = (z * z * z) >> 6
+            w = (z * z * z) >> 3
             weight_sum += w
             weighted += w * pitch
         if weight_sum == 0:
@@ -254,12 +254,80 @@ def test_blend(cfg: dict) -> None:
           swept[0] == 0 and swept[1] > 100 and swept[2] > 270, str(swept))
 
     # 32-bit accumulators with every key contributing at maximum weight.
-    weight = (63 ** 3) >> 6
+    weight = (63 ** 3) >> 3
     check("accumulators cannot overflow with 29 contributors",
           29 * weight * 4095 < 2 ** 32, f"{29 * weight * 4095:,}")
 
+    # Shifting only as far as overflow safety requires preserves the cubic
+    # ratio at light pressure.  The old >>6 quantised z=4 and z=5 to the same
+    # weight, making a genuinely stronger second touch inaudible.
+    check("light-pressure cubic weights retain useful resolution",
+          ((4 ** 3) >> 3, (5 ** 3) >> 3, (6 ** 3) >> 3) == (8, 15, 27))
+
     # Slots the cache and the stamps do not cover must never be read.
     check("the loop stops at the last real key", 28 == max(table), str(max(table)))
+
+
+def test_output_interpolation(cfg: dict) -> None:
+    """Every pressure target must be reached in a bounded number of DAC ticks."""
+    print("pressure output interpolation")
+    steps = cfg["pressure"]["output_smoothing"]
+
+    def run(current, target):
+        out = []
+        remaining = steps
+        while remaining:
+            gap = target - current
+            current += int(gap / remaining)
+            remaining -= 1
+            if remaining == 0:
+                current = target
+            out.append(current)
+        return out
+
+    for start, target in ((0, 4095), (4095, 0), (137, 3021), (3021, 137)):
+        values = run(start, target)
+        direction = 1 if target >= start else -1
+        check(f"{start}->{target} reaches target in exactly {steps} ticks",
+              len(values) == steps and values[-1] == target, str(values))
+        check(f"{start}->{target} stays monotonic",
+              all(direction * (b - a) >= 0 for a, b in zip([start] + values, values)))
+
+
+def test_local_proximity() -> None:
+    """A chord must sample the field beside each held key, not one active key."""
+    print("local proximity correction")
+    raw = [300] * 29
+    touched = {4, 24}
+    raw[6] = 900       # strong hand field near the low note
+    raw[22] = 420      # much weaker field near the high note
+
+    probe_counts = []
+
+    def estimate(key):
+        refs = []
+        used = 0
+        for direction in (1, -1):
+            k = key + 2 * direction
+            probes = 3
+            while 0 <= k < 29 and k in touched and probes > 1:
+                used += 1
+                k += direction
+                probes -= 1
+            if 0 <= k < 29:
+                used += 1
+                if k not in touched:
+                    refs.append(raw[k])
+        probe_counts.append(used)
+        return max(0, max([0] + refs) - 300)
+
+    low, high = estimate(4), estimate(24)
+    check("distant held keys receive independent field estimates",
+          low == 600 and high == 120, f"{low}, {high}")
+    touched.update(range(29))
+    check("a fully occupied region falls back to zero correction", estimate(14) == 0)
+    check("reference search is bounded to three probes per side",
+          max(probe_counts) <= 6, str(probe_counts))
 
 
 def test_overlap_and_range() -> None:
@@ -328,6 +396,8 @@ def main() -> None:
     test_tables(cfg)
     test_resolution(cfg)
     test_blend(cfg)
+    test_output_interpolation(cfg)
+    test_local_proximity()
     test_filter_equivalence(cfg)
     test_overlap_and_range()
     test_atomic_replace()
