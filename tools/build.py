@@ -60,7 +60,10 @@ FEATURE_MAP = {
     "knobs.knob2":            (["arp_rhythm_hook"], []),
     "knobs.knob3":            (["arp_octave_hook"], []),
     "knobs.knob4":            (["vibrato_engine"], ["knob4_vibrato"]),
-    "arp.switch":             (["noteoff_pool_1", "noteoff_pool_2"], ["arp_latch"]),
+    "arp.switch":             (
+        ["noteoff_pool_1", "noteoff_pool_2", "latch_octave_hold", "latch_offset_stamp"],
+        ["arp_latch"],
+    ),
     "midi.poly_default":      ([], ["poly_midi_default_off"]),
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook"], []),
@@ -588,20 +591,27 @@ def main() -> None:
     if span not in (128, 256, 512):
         raise SystemExit("[pressure.calibration].trim_span must be 128, 256 or 512")
     # The knob centres on the configured default and reaches +/- half the span,
-    # so changing a default carries its trim range along with it.
+    # so changing a default carries its trim range along with it.  The bases
+    # only exist in independent mode; scale mode multiplies the defaults.
     cfg["_numbers"]["trim_shift"] = {512: 1, 256: 2, 128: 3}[span]
-    cfg["_numbers"]["floor_knob_base"] = calib["floor"] - span // 2
-    cfg["_numbers"]["ceiling_knob_base"] = calib["ceiling"] - span // 2
-    for what in ("floor", "ceiling"):
-        base = cfg["_numbers"][f"{what}_knob_base"]
-        if base < 128:
-            raise SystemExit(
-                f"[pressure.calibration]: {what} {calib[what]} with trim_span {span} "
-                f"puts the knob base at {base}; raise the default or narrow the span")
+    cfg["_numbers"]["floor_knob_base"] = max(calib["floor"] - span // 2, 128)
+    cfg["_numbers"]["ceiling_knob_base"] = max(calib["ceiling"] - span // 2, 128)
+    if calib.get("trim_mode", "independent") == "independent":
+        for what in ("floor", "ceiling"):
+            base = calib[what] - span // 2
+            if base < 128:
+                raise SystemExit(
+                    f"[pressure.calibration]: {what} {calib[what]} with trim_span {span} "
+                    f"puts the knob base at {base}; raise the default or narrow the span")
     if not calib["floor"] + 32 <= calib["ceiling"]:
         raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
 
     blocks, features, summary = resolve_flags(cfg)
+    if get(cfg, "arp.switch") == "latch" and not get(cfg, "portamento.pressure_blend"):
+        raise SystemExit(
+            "arp latch needs portamento.pressure_blend: the latch transpose hold "
+            "captures the live octave offset through the blend hook"
+        )
 
     mode = calib.get("trim_mode", "independent")
     if mode not in ("independent", "scale"):

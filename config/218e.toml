@@ -85,7 +85,7 @@ proximity_reference = 300
 # measured black/white ratio runs 0.72x (light) to 0.81x (full).  Their raw
 # reading is multiplied by this before everything else, putting both key
 # colours in one calibration window.  1.0 disables it.
-black_key_scale = 1.35
+black_key_scale = 1.2
 
 # Smooth the pressure CV at the 1 kHz DAC flush instead of letting it step
 # once per scan.  The value is a shift: each millisecond the output closes
@@ -113,7 +113,7 @@ smoothing_taps = 8
 # makes full pressure easier to reach, at the cost of noise: the window is
 # mapped onto the full output range, so a narrower window amplifies sensor
 # noise proportionally (260 counts -> 18x, 234 counts -> 20x).
-floor   = 580
+floor   = 200
 ceiling = 814
 
 # "independent" — knob 1 trims the ceiling, knob 3 the floor.

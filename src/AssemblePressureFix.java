@@ -295,7 +295,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80005a04L); // original note-on initialization
         word(0x00006080L); // raw-filter sample count
         word(0x8001a020L); // press-order list append
-        word(0x8001a2a8L); // latch toggle check
+        word(0x8001a870L); // offset stamp, chains to the latch toggle check
         finish("note_on_reset_raw_filter", 0x80018d40L);
 
         // Release/source-selection wrapper. Preserve the selected-key return
@@ -798,7 +798,7 @@ public class AssemblePressureFix extends GhidraScript {
         // behave exactly as before when only one key is pressed.
         // Entry word first (read by the MCALL hook), code follows.
         begin(0x80019c60L);
-        word(0x80019c64L);
+        word(0x8001a8a0L); // transpose-capture shim, chains to the cave below
         emit("STM --SP,R0,R1,R2,R3,R4,R5,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R4,R12");
@@ -898,7 +898,11 @@ public class AssemblePressureFix extends GhidraScript {
         // Gate-off timing itself is factory (compare == 3 restored).
         begin(0x80019d38L);
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
-        word(0x80019da8L); // octave entry (hook at 0x22f6)
+        if (feature("arp_latch")) {
+            word(0x80019ea0L); // octave entry via the latch transpose hold
+        } else {
+            word(0x80019da8L); // octave entry (hook at 0x22f6)
+        }
         word(0x80019df8L); // rhythm entry (hook at 0x21fa)
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
@@ -1637,6 +1641,68 @@ public class AssemblePressureFix extends GhidraScript {
         // stored, but its ADC mirror read never followed the physical knob in
         // edit mode.  The smoothing depth and shift are fixed from the build
         // config until the edit-mode knob mirror question is settled.)
+
+        // Latch transpose hold.  The octave switch adds its offset to the
+        // pitch per scan, downstream of the key table, so flipping it would
+        // re-transpose every latched note.  Instead: the blend shim captures
+        // the live global offset (target minus base) at RAM 0x60a0 each
+        // scan; the note-on shim stamps it per key at 0x60a2+2k; and in
+        // latch mode this wrapper corrects each arp note by stamp minus
+        // live, so latched notes keep the offset they were latched with
+        // while new notes take the switch as it now stands.
+        begin(0x80019ea0L);
+        emit("STM --SP,R9,R10,R11,R12,LR");
+        emit("LDDPC R10,0x80019ed4");
+        emit("LD.UB R9,R10[0x340]");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x80019ecc");
+        emit("LD.UB R9,R7[-0x5]");
+        emit("CP.W R9,0x1c");
+        emit("BR{hi} 0x80019ecc");
+        emit("MOV R11,0x60a0");
+        emit("LD.SH R12,R11[0x0]");
+        emit("ADD R11,R11,R9 << 0x1");
+        emit("LD.SH R11,R11[0x2]");
+        emit("SUB R11,R11,R12 << 0x0");
+        emit("ADD R8,R11");
+        padTo(0x80019eccL);
+        emit("LDM SP++,R9,R10,R11,R12,LR");
+        emit("RJMP 0x80019da8");
+        padTo(0x80019ed4L);
+        word(0x00003560L); // global state base
+        finish("latch_octave_hold", 0x80019ed8L);
+
+        // Note-on offset stamp, ahead of the latch toggle check.
+        begin(0x8001a870L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("CP.W R12,0x1c");
+        emit("BR{hi} 0x8001a888");
+        emit("MOV R8,0x60a0");
+        emit("LD.SH R9,R8[0x0]");
+        emit("ADD R8,R8,R12 << 0x1");
+        emit("ST.H R8[0x2],R9");
+        padTo(0x8001a888L);
+        emit("MCALL PC[0x8001a890]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a890L);
+        word(0x8001a2a8L); // the real latch toggle check
+        finish("latch_offset_stamp", 0x8001a894L);
+
+        // Per-scan transpose capture, ahead of the blend cave.
+        begin(0x8001a8a0L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x38b0");
+        emit("LD.SH R9,R8[0x0]");
+        emit("SUB R9,R12,R9 << 0x0");
+        emit("MOV R8,0x60a0");
+        emit("ST.H R8[0x0],R9");
+        emit("MCALL PC[0x8001a8c0]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001a8c0L);
+        word(0x80019c64L); // the real blend cave entry
+        finish("transpose_capture", 0x8001a8c4L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate

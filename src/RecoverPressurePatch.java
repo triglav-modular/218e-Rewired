@@ -55,6 +55,9 @@ public class RecoverPressurePatch extends GhidraScript {
         recover(0x8001a750L, "octswitch_sync");
         recover(0x8001a790L, "pressure_prep");
         recover(0x8001a800L, "variable_filter");
+        recover(0x80019ea0L, "latch_octave_hold");
+        recover(0x8001a870L, "latch_offset_stamp");
+        recover(0x8001a8a0L, "transpose_capture");
         recover(0x8001a870L, "knob2_smoothing");
         analyzeChanges(currentProgram);
     }
