@@ -214,9 +214,12 @@ behave exactly as before. Mapped to the portamento knob, and **fully disabled
 at zero** — which matters, because otherwise holding many keys detuned the
 instrument.
 
-**True zero glide** (`glide_rate_clamp`). The factory rate table never quite
-reaches zero, leaving audible glide at the bottom of the knob. The clamp forces
-a genuine zero at the rate-table lookup.
+**No fixed glide** (`glide_rate_clamp`). With the blend enabled there is no
+time-based portamento at all: the rate is forced to the fastest entry, notes
+snap, and all pitch movement between held keys is pressure-driven. The
+portamento knob has a single meaning — pressure needed to bend. In blend-off
+builds the cave instead keeps classic portamento with a true zero at the
+bottom of the knob (the factory table never quite reached zero).
 
 > Do **not** try to achieve this by writing the glide record's internal state
 > (RAM `0x2F80`–`0x2FC8`) directly — an earlier attempt froze pitch entirely.
