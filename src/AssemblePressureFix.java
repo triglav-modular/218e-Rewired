@@ -627,20 +627,23 @@ public class AssemblePressureFix extends GhidraScript {
             // smoothing state instead — CC 114/115 the filter depth in taps,
             // CC 116/117 the interpolator shift.  Turning edit knob 2 must
             // move both, or the knob path is broken.
-            // scan A = (mode0-branch count & 0x7f)<<7 | (call count & 0x7f);
-            // scan B = (filter depth << 8) | interpolator shift.
-            emit("MOV R10,0x6086");
-            emit("LD.UH R8,R10[0x0]");
-            emit("ANDL R8,0x7f,COH");
-            emit("LD.UH R9,R10[0x2]");
-            emit("ANDL R9,0x7f,COH");
-            emit("LSL R9,0x7");
+            // Live ADC mirror map: scan A = (mirror 0x30a / 16) << 7 |
+            // (mirror 0x30c / 16); scan B = same for 0x30e and 0x310.
+            // Each field half runs 0..63 across a knob's travel — turn one
+            // physical knob and see which half moves.
+            emit("LDDPC R10,0x80019930");
+            emit("LD.UH R8,R10[0x30a]");
+            emit("LSR R8,0x4");
+            emit("LSL R8,0x7");
+            emit("LD.UH R9,R10[0x30c]");
+            emit("LSR R9,0x4");
             emit("OR R8,R9");
             emit("ST.H R7[-0x10],R8");
-            emit("MOV R10,0x6082");
-            emit("LD.UH R8,R10[0x0]");
-            emit("LSL R8,0x8");
-            emit("LD.UH R9,R10[0x2]");
+            emit("LD.UH R8,R10[0x30e]");
+            emit("LSR R8,0x4");
+            emit("LSL R8,0x7");
+            emit("LD.UH R9,R10[0x310]");
+            emit("LSR R9,0x4");
             emit("OR R8,R9");
             emit("ST.H R7[-0x12],R8");
         } else if (feature("scan_profiler")) {
