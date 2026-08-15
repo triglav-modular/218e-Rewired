@@ -32,7 +32,8 @@ the four preset-voltage knobs and the arpeggiator switch.
   portamento knob sets how much pressure a second note needs to bend, and is
   fully off at zero.
 - **Arpeggiator controls on the four knobs** — note order, rhythm randomness,
-  random octaves, and global vibrato.
+  random octaves, and pressure-responsive global vibrato (one-half to full
+  effective knob value).
 - **Latch mode** on the arpeggiator switch: latch / regular / off. Latched
   notes are pitches, not keys — the same key in three octaves stacks three
   notes, each releasable from any octave where its pitch still maps.

@@ -2097,9 +2097,26 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001ab60L);
         finish("initializer_pool", 0x8001ac84L);
 
+        // Scale the effective one-knob vibrato control from 50% at zero
+        // pressure to its original value at full pressure. The 0x1000
+        // rounding bias also makes pressure 4095 reproduce K exactly.
+        begin(0x8001ac84L);
+        emit("LD.UH R8,R10[0x356]");
+        emit("SUB R8,-0x1000");
+        emit("MUL R11,R11,R8");
+        emit("SUB R11,-0x1000");
+        emit("LSR R11,0xd");
+        emit("MOV PC,LR");
+        finish("pressure_vibrato_scale", 0x8001aca0L);
+
+        begin(0x8001aca0L);
+        word(0x8001ac84L);
+        finish("pressure_vibrato_pool", 0x8001aca4L);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
+        // Pressure scales the effective knob from one-half to full value.
         // Runs at 200 Hz from applier_plus. RAM: 0x3234 knob latch
         // (edit-gated — knob 4 in edit still sets the pressure curve),
         // 0x6024 LFO phase, 0x6026 smoothed depth (steps +-1/scan, ~65 ms
@@ -2122,6 +2139,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R11,0x30");
         padTo(0x8001a384L);
         emit("SUB R11,0x30");
+        emit("MCALL PC[0x8001aca0]");
         emit("MOV R8,0xe");
         emit("MUL R8,R8,R11");
         emit("LSR R8,0xa");

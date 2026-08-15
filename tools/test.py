@@ -294,6 +294,27 @@ def test_output_interpolation(cfg: dict) -> None:
               all(direction * (b - a) >= 0 for a, b in zip([start] + values, values)))
 
 
+def test_vibrato_pressure_scaling() -> None:
+    """The effective vibrato knob must span exactly 50% to 100%."""
+    print("vibrato pressure scaling")
+
+    def effective_knob(knob: int, pressure: int) -> int:
+        return (knob * (4096 + pressure) + 4096) >> 13
+
+    zero_ok = full_ok = monotonic = True
+    for knob in range(4096):
+        zero_ok &= effective_knob(knob, 0) == (knob + 1) // 2
+        full_ok &= effective_knob(knob, 4095) == knob
+        values = [effective_knob(knob, pressure)
+                  for pressure in range(0, 4096, 127)]
+        values.append(effective_knob(knob, 4095))
+        monotonic &= values == sorted(values) and values[-1] <= knob
+
+    check("zero pressure halves the effective knob with rounding", zero_ok)
+    check("maximum pressure preserves the original knob exactly", full_ok)
+    check("effective knob rises monotonically with pressure", monotonic)
+
+
 def test_local_proximity() -> None:
     """A chord must sample the field beside each held key, not one active key."""
     print("local proximity correction")
@@ -397,6 +418,7 @@ def main() -> None:
     test_resolution(cfg)
     test_blend(cfg)
     test_output_interpolation(cfg)
+    test_vibrato_pressure_scaling()
     test_local_proximity()
     test_filter_equivalence(cfg)
     test_overlap_and_range()

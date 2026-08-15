@@ -66,7 +66,10 @@ FEATURE_MAP = {
     "knobs.knob1":            (["arp_selector_pool"], []),
     "knobs.knob2":            (["arp_rhythm_hook"], []),
     "knobs.knob3":            (["arp_octave_hook"], []),
-    "knobs.knob4":            (["vibrato_engine"], ["knob4_vibrato"]),
+    "knobs.knob4":            (
+        ["vibrato_engine", "pressure_vibrato_scale", "pressure_vibrato_pool"],
+        ["knob4_vibrato"],
+    ),
     "arp.switch":             (
         ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle"],
         ["arp_latch"],

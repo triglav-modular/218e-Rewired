@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "867f0eb9609c5c05a1160692f49598263ff9d566d71f3c7e3f05441ecd805316"
+golden_sha256  = "273bf65f03279bfe6852551c2f6df5faa2512e8e1ac724bac168e577f4010daf"
 
 
 # ---------------------------------------------------------------------------
@@ -41,8 +41,10 @@ knob2 = "arp_rhythm"
 #                                                 "arp_octaves" | "factory"
 knob3 = "arp_octaves"
 
-# knob 4 — global vibrato; one-knob law (depth and rate rise together),
-#          up to 33 cents at ~6 Hz.               "vibrato" | "factory"
+# knob 4 — global vibrato; one-knob law (depth and rate rise together).
+#          Pressure scales its effective value from one-half at zero pressure
+#          to full at maximum pressure (up to 33 cents at ~6 Hz).
+#                                                 "vibrato" | "factory"
 knob4 = "vibrato"
 
 

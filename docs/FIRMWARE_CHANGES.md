@@ -360,7 +360,11 @@ block is always present — the individual behaviours are what the toggles gate.
 - **Knob 3 — random octaves.** Increasing probability of ±1 octave per note.
 - **Knob 4 — global vibrato** (`vibrato_engine`, `0x8001A350`), the
   Micro_Easel one-knob law: depth and rate rise together, up to 33 cents at
-  ~6 Hz, smoothed so it fades in rather than switching on.
+  ~6 Hz, smoothed so it fades in rather than switching on. Pressure scales
+  the effective knob linearly: zero pressure uses one-half of its value and
+  maximum pressure uses its full value, preserving the previous full-pressure
+  depth and rate. The fixed-point mapping is
+  `round(K × (4096 + pressure) / 8192)`.
 
 **Switch — latch / regular / off** (`[arp].switch = "latch"`). In the latch
 position keys are toggles: press to hold, press again to release, and leaving
@@ -442,6 +446,7 @@ saved.
 | `0x8001A600` / `0x8001A6A0` | DAC output interpolator, proximity estimator |
 | `0x8001AA10` / `0x8001AB20` | per-key pressure cache, key-colour table |
 | `0x8001AB60` | first-use initialiser (all added RAM state) |
+| `0x8001AC84` | pressure-to-vibrato scaling helper |
 
 RAM scratch: `0x322A`/`0x322E` arp knob latches · `0x3232` pulse flag ·
 `0x3233` previous switch position · `0x6000` press-order
