@@ -93,15 +93,21 @@ pressure attack ramp all advance once per scan, the period is a master clock
 and every one of those timings scales with it.
 
 **Smoothing.** The factory 16-tap boxcar (80 ms at the 200 Hz scan rate) was
-replaced by the 218r's **growing average**, now with a depth set by **edit
-knob 2** (mode 0): 8 taps (40 ms) fully left to 24 taps (120 ms) fully right
-(`variable_filter`, `0x8001A800`; taps at RAM `0x6050`, depth at `0x6082`,
-count at `0x6080`). The same knob simultaneously deepens the 1 kHz output
-interpolation (shift 2..5 at RAM `0x6084`) — the filter shapes the sequence
-of scan values, the interpolator is what actually shrinks the 5 ms staircase
-on the jack. It averages only the samples collected since the touch, so
+replaced by the 218r's **growing average**, with a configurable depth
+(`[pressure].smoothing_taps`, 8..24 taps = 40..120 ms; `variable_filter`,
+`0x8001A800`; taps at RAM `0x6050`, depth at `0x6082`, count at `0x6080`).
+The 1 kHz output interpolation depth is `[pressure].output_smoothing`
+(shift 1..6, live value at RAM `0x6084`) — the filter shapes the sequence of
+scan values, the interpolator is what actually shrinks the 5 ms staircase on
+the jack. The filter averages only the samples collected since the touch, so
 attacks stay instant at any depth; the count is cleared by the note-on and
-source-change wrappers. Other edit modes keep knob 2's factory function.
+source-change wrappers.
+
+> An edit-knob-2 live control for these was tried and removed: the wrapper
+> was dispatched and its store branch ran, but its read of ADC mirror
+> `0x30C` never followed the physical knob in edit mode. If a live control
+> is wanted again, the mirror question must be settled first (the
+> `telemetry_smoothing` diagnostic can display the mirrors).
 
 **Proximity rejection** (`[pressure].common_mode`). A hovering hand lifts
 every key it is near — the played key included — so two-handed playing could

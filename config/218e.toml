@@ -94,7 +94,12 @@ black_key_scale = 1.35
 #
 # This is the alternative to shortening the scan period, which the profiler
 # showed has no headroom for it.
-output_smoothing = 2
+output_smoothing = 5
+
+# Depth of the growing-average filter, in taps (8..24 = 40..120 ms at the
+# 5 ms scan).  Both this and output_smoothing are set to maximum for the
+# fixed-value smoothing test.
+smoothing_taps = 24
 
 [pressure.calibration]
 # Where the pressure window sits when the instrument has no stored calibration
