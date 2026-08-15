@@ -804,11 +804,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R4,R12");
         emit("LDDPC R9,0x80019d34");
         emit("LD.SH R11,R9[0x350]");
-        // Portamento knob = pressure-needed-to-bend: T = 1023 - rate index.
+        // Portamento knob = pressure-needed-to-bend: T = 1023 - knob.
         // At knob zero T exceeds any possible touch, so only the sounding
         // key contributes and the blend is exactly zero (factory behavior).
         // The anchor key is never thresholded, so engagement is smooth.
-        emit("LD.SH R5,R9[0x3a2]");
+        // Read the KNOB MIRROR (state+0x306), not the combined rate index at
+        // +0x3a2 — the index carries a pressure-derived addend, so with the
+        // full 218r curve the threshold would move with pressure and the
+        // blend would engage and disengage erratically under the fingers.
+        emit("LD.SH R5,R9[0x306]");
         // Hard gate: below the knob's deadzone the blend loop never runs at
         // all — multi-finger common-mode sensor inflation can push deltas
         // past any threshold, so "off" must not depend on pressure at all.
