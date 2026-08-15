@@ -59,10 +59,9 @@ jack. That is why sensor noise and finger tremor are plainly visible on a
 scope — they are being amplified by design, and a narrower window trades noise
 for sensitivity.
 
-**Output smoothing** (`[pressure].output_smoothing`, boot default; live value
-at RAM `0x6084`, set by edit knob 2 together with the filter depth — fully
-left shift 2, fully right shift 5, i.e. first-step amplitude 25% down to 3%
-of a scan tread). The scan's store into
+**Output smoothing** (`[pressure].output_smoothing`, shift 1..6; live value
+at RAM `0x6084`, written by the power-up init — shift n means first-step
+amplitude 1/2^n of a scan tread). The scan's store into
 the pressure DAC slot is redirected to a target at RAM `0x6036`
 (`ST.H R9[0x2ad6]` — the same instruction, a different displacement), and the
 `dac_interpolator` cave at `0x8001A600` runs on the 1 kHz DAC flush instead,
