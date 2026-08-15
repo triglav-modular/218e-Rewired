@@ -489,6 +489,63 @@ def run_ghidra(cfg: dict, properties: Path, log: Path) -> str:
 
 
 PATCH_RE = re.compile(r"^PATCH ([0-9a-f]{8}) ([0-9a-f]+)(?: ; (.*))?$")
+EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
+
+# Every RAM region our code owns, as (start, end, name).  Declaring them here
+# means the build fails on an overlap instead of the instrument misbehaving:
+# a cave writing into another's state is invisible in the patch bytes, since
+# the addresses only exist as immediates.
+RAM_REGIONS = [
+    (0x6000, 0x6021, "arp press-order list"),
+    (0x602A, 0x602C, "power-up marker"),
+    (0x602C, 0x602E, "proximity estimate"),
+    (0x6032, 0x6036, "profiler reports"),
+    (0x6036, 0x6038, "interpolator target"),
+    (0x6038, 0x6044, "profiler accumulators"),
+    (0x6044, 0x6046, "interpolator one-shot marker"),
+    (0x6046, 0x604C, "octave-switch shadow"),
+    (0x604C, 0x604E, "octave-switch boot counter"),
+    (0x6050, 0x6080, "pressure history taps"),
+    (0x6080, 0x6082, "filter sample count"),
+    (0x6082, 0x6084, "filter depth"),
+    (0x6084, 0x6086, "interpolator shift"),
+    (0x6086, 0x6088, "filter ring index"),
+    (0x6088, 0x608C, "filter running sum"),
+    (0x608C, 0x608E, "filter newest sample"),
+    (0x60A0, 0x60A2, "live transpose offset"),
+    (0x60A2, 0x60DC, "latch pitch stamps"),
+    (0x60E0, 0x60E2, "blend offset target"),
+    (0x60E2, 0x60E4, "blend applied offset"),
+    (0x6100, 0x613A, "corrected-pressure cache"),
+]
+
+
+def check_ram_regions() -> None:
+    ordered = sorted(RAM_REGIONS)
+    for (a1, b1, n1), (a2, b2, n2) in zip(ordered, ordered[1:]):
+        if a2 < b1:
+            raise SystemExit(
+                f"RAM regions overlap: {n1} [0x{a1:04X}..0x{b1-1:04X}] and "
+                f"{n2} [0x{a2:04X}..0x{b2-1:04X}]")
+
+
+def check_extents(output: str) -> None:
+    """No two blocks may claim the same flash, emitted or not."""
+    extents = []
+    for raw in output.splitlines():
+        line = re.sub(r"^INFO\s+\S+>\s*", "", raw.rstrip())
+        line = re.sub(r"\s*\(GhidraScript\)\s*$", "", line)
+        match = EXTENT_RE.match(line)
+        if match:
+            extents.append((int(match.group(1), 16), int(match.group(2), 16), match.group(3)))
+    extents.sort()
+    for (a1, b1, n1), (a2, b2, n2) in zip(extents, extents[1:]):
+        if a2 < b1:
+            raise SystemExit(
+                f"blocks overlap in flash: {n1} [0x{a1:08X}..0x{b1:08X}] and "
+                f"{n2} [0x{a2:08X}..0x{b2:08X}] — even a disabled block must "
+                "have its own address")
+    print(f"  {len(extents)} block extents, no flash collisions")
 
 
 def parse_patches(output: str) -> list[tuple[int, bytes, str]]:
@@ -737,6 +794,7 @@ def main() -> None:
     if not calib["floor"] + 32 <= calib["ceiling"]:
         raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
 
+    check_ram_regions()
     blocks, features, summary = resolve_flags(cfg)
     if features.get("scan_profiler") and features.get("telemetry_smoothing"):
         raise SystemExit(
@@ -799,6 +857,7 @@ def main() -> None:
 
     # --- assemble ---------------------------------------------------------
     output = run_ghidra(cfg, properties, BUILD / "assemble.log")
+    check_extents(output)
     patches = parse_patches(output)
     print(f"  {len(patches)} patch record(s) assembled")
 

@@ -118,6 +118,10 @@ public class AssemblePressureFix extends GhidraScript {
     }
 
     private void finish(String name, long expectedEnd) throws Exception {
+        // Report every block's extent before the enable check, so the build
+        // can detect two caves claiming the same flash even when only one of
+        // them is emitted in this configuration.
+        println(String.format("EXTENT %08x %08x %s", base, expectedEnd, name));
         padTo(expectedEnd);
         if (!block(name)) {
             println("SKIP " + name + " (disabled by build config)");
@@ -1954,8 +1958,11 @@ public class AssemblePressureFix extends GhidraScript {
         // each deriving it.  The proximity estimator deliberately keeps
         // reading raw deltas: its reference level was measured on them.
         begin(0x8001aa90L);
-        emit("STM --SP,R7,LR");
+        emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
+        // Coefficients stay in flash: immutable, so a RAM copy is both extra
+        // work every scan and one more region to collide with.
+        emit("LDDPC R0,0x8001aad8");
         emit("MOV R9,0x1c");
         padTo(0x8001aa9cL);
         emit("MOV R8,0x3686");
@@ -1966,8 +1973,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{gt} 0x8001aab0");
         emit("MOV R8,0x0");
         padTo(0x8001aab0L);
-        emit("MOV R11,0x60b0");
-        emit("LD.UH R11,R11[R9 << 0x1]");
+        emit("LD.UH R11,R0[R9 << 0x1]");
         emit("MUL R11,R8,R11");
         emit("SUB R11,-0x80");
         emit("LSR R11,0x8");
@@ -1976,17 +1982,19 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R11[R9 << 0x1],R8");
         emit("SUB R9,0x1");
         emit("BR{ge} 0x8001aa9c");
-        emit("LDM SP++,R7,PC");
-        finish("pressure_cache", 0x8001aad8L);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001aad8L);
+        word(0x8001aae0L); // black-key excess table, in flash
+        finish("pressure_cache", 0x8001aadcL);
 
         // Per-key black-key correction, as a Q8 excess over unity: 0 for a
         // white key, round(scale*256)-256 for a black one.  Copied into RAM at
         // power-up so every consumer can reach it with a short immediate, and
         // so the pressure aggregate and the portamento weighting apply exactly
         // the same numbers.
-        begin(0x8001a540L);
+        begin(0x8001aae0L);
         emitTable("black_key_excess");
-        finish("black_key_excess_table", 0x8001a580L);
+        finish("black_key_excess_table", 0x8001ab20L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
@@ -2079,7 +2087,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UH R8,R9[0x0]");
         emit("MOV R11,0xb007");
         emit("CP.W R8,R11");
-        emit("BR{eq} 0x8001a4a4");
+        emit("BR{eq} 0x8001a4dc");
         emit("ST.H R9[0x0],R11");
         emit("MOV R8,0x0");
         if (feature("poly_midi_default_off")) {
@@ -2106,16 +2114,12 @@ public class AssemblePressureFix extends GhidraScript {
         // up as one scan of spurious spike or suppression after reset.
         emit("MOV R9,0x602c");
         emit("ST.H R9[0x0],R8");
-        emit("LDDPC R11,0x8001a538");
-        emit("MOV R9,0x60b0");
-        emit("MOV R12,0x20");
-        padTo(0x8001a4c8L);
-        emit("LD.UH R8,R11[0x0]");
+        // The portamento offset cells: the apply shim reads both before the
+        // blend has necessarily written either.
+        emit("MOV R9,0x60e0");
         emit("ST.H R9[0x0],R8");
-        emit("SUB R11,-0x2");
-        emit("SUB R9,-0x2");
-        emit("SUB R12,0x1");
-        emit("BR{ne} 0x8001a4c8");
+        emit("MOV R9,0x60e2");
+        emit("ST.H R9[0x0],R8");
         padTo(0x8001a4dcL);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases every latched key.
