@@ -124,15 +124,23 @@ removing the intermediate truncation shifts values by up to one old
 quantisation step; the build's tests assert exactly that bound. Setting the
 value to 0 restores the original integer arithmetic.
 
-**Shared per-key pressure** (`pressure_cache`, `0x8001AA90`). One pass per
-scan corrects every key — baseline removed, clamped, black-key corrected —
-into RAM `0x6100`, and both the multi-key aggregate and the portamento
-weighting read it. Previously each walked the keys and applied its own
-correction, which is how the portamento came to have none at all. It is
-filled on the pressure path, so the weighting can read a cache one scan
-(5 ms) old, which its own 20 ms slew makes immaterial. The proximity
-estimator still reads raw deltas on purpose: its reference was measured on
-them.
+**One pass over the keys** (`pressure_cache`, `0x8001AA10`). Per scan, for
+every key: subtract the 110 baseline and the proximity estimate, clamp at
+zero, apply the key-colour coefficient, publish the result to RAM `0x6100`
+for the portamento weighting, and aggregate the physically held keys for the
+pressure CV. One walk now does what three did.
+
+The order is deliberate. The proximity estimate is a raw-domain figure, so it
+is subtracted **before** the colour correction; scaling first and subtracting
+an unscaled estimate afterwards left roughly (scale − 1) × estimate behind on
+black keys. The aggregate counts only keys with a finger on them (touch state
+2), so latched keys, which read at baseline, cannot drag it down.
+
+`[pressure].multi_key` selects `"max"` (the default), `"mean"` or
+`"factory"`. Max is the default because an arithmetic mean is discontinuous
+at the threshold of contact: a second key reading zero is excluded and the
+output holds, while the same key reading one count halves it — from 893 to
+447, below the floor and therefore silent.
 
 **Smoothing.** The factory 16-tap boxcar (80 ms at the 200 Hz scan rate) was
 replaced by the 218r's **growing average**, with a configurable depth
@@ -269,10 +277,10 @@ The octave *selectors* are untouched.
 **Pressure-weighted portamento** (`pressure_blend_continuum`, `0x80019C60`),
 ported from the Micro_Easel and based on the Haken Continuum patent
 (US 7,902,450 B2). With several keys held, the sounding pitch is a
-pressure-weighted average of the held keys within 12 semitones of the base:
+pressure-weighted average of every held key, at any interval:
 
 ```
-X = Σ(z³·Xk) / Σ(z³)      z = per-key pressure, up to 4 contributors
+X = Σ(z³·Xk) / Σ(z³)      z = per-key corrected pressure
 ```
 
 The cubic weighting means a firmly held key dominates while a lightly held one
@@ -281,6 +289,13 @@ so single keys, handovers, arpeggiation, transpose and every tuning table
 behave exactly as before. Mapped to the portamento knob, and **fully disabled
 at zero** — which matters, because otherwise holding many keys detuned the
 instrument.
+
+Every held key contributes. An earlier four-contributor cap, applied while
+scanning from key 31 downward, let high-numbered slots displace stronger or
+nearer ones; the cubic weight already makes weak contributors negligible. In
+latch mode each contributor is weighted at the pitch it actually sounds
+(`table[k]` plus its latch stamp), so a note latched an octave away pulls
+toward where it sounds rather than where its key now sits.
 
 **No fixed glide** (`glide_rate_clamp`). With the blend enabled there is no
 time-based portamento at all: the rate is forced to the fastest entry, notes

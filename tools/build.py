@@ -73,7 +73,7 @@ FEATURE_MAP = {
     ),
     "midi.poly_default":      ([], ["poly_midi_default_off"]),
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
-    "pressure.multi_key":     (["multi_key_pressure"], ["multi_key_pressure"]),
+    "pressure.multi_key":     ([], ["multi_key_pressure"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
@@ -94,7 +94,7 @@ ENABLED_WHEN = {
     "arp.switch": "latch",
     "midi.poly_default": "off",
     "pressure.common_mode": True,
-    "pressure.multi_key": "mean",
+    "pressure.multi_key": "max",
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
@@ -422,6 +422,8 @@ def resolve_flags(cfg: dict) -> tuple[dict[str, bool], dict[str, bool], list[str
         value = get(cfg, setting)
         expected = ENABLED_WHEN[setting]
         enabled = value == expected
+        if setting == "pressure.multi_key":
+            enabled = value in ("mean", "max")
         if not enabled and isinstance(expected, bool) is False and value != "factory":
             raise ValueError(
                 f"{setting}: {value!r} is not a known setting "
@@ -516,6 +518,7 @@ RAM_REGIONS = [
     (0x60A2, 0x60DC, "latch pitch stamps"),
     (0x60E0, 0x60E2, "blend offset target"),
     (0x60E2, 0x60E4, "blend applied offset"),
+    (0x608E, 0x608F, "latch-position mirror"),
     (0x6100, 0x613A, "corrected-pressure cache"),
 ]
 
@@ -766,7 +769,7 @@ def main() -> None:
         "smoothing_taps": cfg["pressure"].get("smoothing_taps", 8),
         "curve_default_level": cfg["pressure"]["curve"].get("default_level", 31),
         "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
-        "multi_key_max": 1 if cfg["pressure"].get("multi_key") == "max" else 0,
+        "multi_key_max": 1 if cfg["pressure"].get("multi_key", "max") == "max" else 0,
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:

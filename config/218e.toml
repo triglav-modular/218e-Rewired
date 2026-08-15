@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "582ad0fe41b45f03c44cfeec0f0149151fb27dc91055ab1e8a8b1b6dafa98305"
+golden_sha256  = "0fe36edb90c4b6624736b4a4bcf63e4d535dffe32c55df2a4705fbf92a768068"
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,12 @@ poly_default = "off"
 #
 # Latched keys are excluded either way: with no finger on them they read at
 # baseline and would only drag the result down.
-multi_key = "mean"
+# "max" is the default because an arithmetic mean has a discontinuity at the
+# threshold of contact: a second key at zero is excluded and the output holds,
+# while the same key at one count halves it — from 893 to 447, which is below
+# the floor and therefore silent.  "mean" is still available if you want two
+# fingers to share control of the level.
+multi_key = "max"
 
 common_mode = true
 
