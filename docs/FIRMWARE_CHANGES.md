@@ -31,9 +31,23 @@ linear) is why noise and proximity stop being obtrusive.
   a logical one — the curve rises above the linear ramp, and a logical shift
   would wrap the negative difference.
 
-**Calibration is hardcoded.** Floor 580 / ceiling 840 are the defaults, and
-knobs 1 and 3 became centred trims around them (ceiling 712–967, floor
-452–707), so the instrument is right out of the box with no calibration ritual.
+**Calibration is hardcoded.** Floor 580 / ceiling 814 are the defaults
+(`[pressure.calibration]`), and knobs 1 and 3 became live trims (ceiling
+712–967, floor 452–707), so the instrument is right out of the box with no
+calibration ritual. The defaults are what you get after a flash, which wipes
+the stored calibration; 814 is what knob 1 reads at position 4.
+
+The window between floor and ceiling is mapped onto the full output range, so
+it sets the noise gain: 260 raw counts give 18x, and the narrower 234-count
+window of the 814 ceiling gives 20x. One raw sensor count is ~44 mV at the
+jack. That is why sensor noise and finger tremor are plainly visible on a
+scope — they are being amplified by design, and a narrower window trades noise
+for sensitivity.
+
+**Update rate.** Pressure is computed and written to the DAC once per 200 Hz
+scan (from `0x800030A6`, via the factory slew stage at `0x80002D80`), so the
+output is a zero-order-hold staircase with 5 ms treads. Smoothing that would
+mean interpolating at the 1 kHz DAC flush rather than holding.
 
 **Smoothing.** The factory 16-tap boxcar (80 ms at the 200 Hz scan rate) was
 replaced by the 218r's **growing average** over up to 8 samples (40 ms). It

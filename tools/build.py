@@ -399,6 +399,8 @@ def write_properties(path: Path, cfg: dict, blocks, features, tables) -> None:
         lines.append(f"block.{name}={1 if enabled else 0}")
     for name, enabled in sorted(features.items()):
         lines.append(f"feature.{name}={1 if enabled else 0}")
+    for name, value in sorted(cfg.get("_numbers", {}).items()):
+        lines.append(f"number.{name}={value}")
     for name, values in sorted(tables.items()):
         lines.append(f"table.{name}=" + ",".join(str(v) for v in values))
     path.write_text("\n".join(lines) + "\n")
@@ -555,6 +557,14 @@ def main() -> None:
     )
 
     # --- settings ---------------------------------------------------------
+    calib = cfg["pressure"]["calibration"]
+    cfg["_numbers"] = {
+        "pressure_floor_default": calib["floor"],
+        "pressure_ceiling_default": calib["ceiling"],
+    }
+    if not calib["floor"] + 32 <= calib["ceiling"]:
+        raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
+
     blocks, features, summary = resolve_flags(cfg)
     print("settings:")
     print("\n".join(summary))

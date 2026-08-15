@@ -102,6 +102,13 @@ For a calibration run, point slot 2 at `tunings/12TET.scl` rather than
 `"factory"` first: the factory temperament is up to 1.65 cents off exact
 12-TET, and measuring against it folds that error into your readings.
 
+**Change the pressure feel.** `[pressure.calibration]` sets the floor and
+ceiling used when there is no stored calibration — the state after every flash.
+A lower ceiling reaches full pressure sooner but amplifies sensor noise, since
+the floor-to-ceiling window is mapped onto the whole output range. Both must
+stay in 256..1023 so the immediates keep their encoding width; the build
+rejects anything else.
+
 **Hand a control back to the factory.** Set any knob to `"factory"`, or
 `[arp].switch = "factory"`. The patch that activates the new behaviour is then
 simply not applied, so the original code runs untouched — verified by

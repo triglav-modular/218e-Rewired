@@ -39,6 +39,18 @@ public class AssemblePressureFix extends GhidraScript {
         return on("feature." + name);
     }
 
+    private int number(String key, int fallback) {
+        String raw = cfg.getProperty("number." + key, "").trim();
+        int value = raw.isEmpty() ? fallback : Integer.parseInt(raw);
+        // Every use below is a MOV Rd,imm that has to stay four bytes wide, so
+        // the immediate must need more than eight bits.
+        if (value < 0x100 || value > 0x3ff) {
+            throw new IllegalStateException(
+                "Setting " + key + " must be 256..1023 to keep the encoding width: " + value);
+        }
+        return value;
+    }
+
     private int[] table(String name) {
         String raw = cfg.getProperty("table." + name, "").trim();
         if (raw.isEmpty()) {
@@ -206,7 +218,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R11,0x3ff");
         emit("BR{ls} 0x8001434a");
         padTo(0x80014346L);
-        emit("MOV R11,0x348");
+        emit(String.format("MOV R11,0x%x", number("pressure_ceiling_default", 0x348)));
         padTo(0x8001434aL);
         emit("MOV R12,R11");
         emit("SUB R12,0x20");
@@ -336,7 +348,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LSR R11,R9,0x10");
         emit("CP.W R11,0x3ff");
         emit("BR{ls} 0x80019518");
-        emit("MOV R11,0x244");
+        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244)));
         padTo(0x80019518L);
         emit("MOV R12,R11");
         emit("SUB R12,-0x20");
@@ -417,8 +429,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R7,0x5");
         emit("BR{eq} 0x80019628");
         emit("MOV R7,0x0");
-        emit("MOV R10,0x244");
-        emit("MOV R9,0x348");
+        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348)));
         emit("RJMP 0x80019670");
         padTo(0x80019628L);
         emit("BFEXTU R7,R11,0x0,0x5");
@@ -436,8 +448,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R11,0x1f");
         emit("BR{hi} 0x80019670");
         padTo(0x80019666L);
-        emit("MOV R10,0x244");
-        emit("MOV R9,0x348");
+        emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348)));
         padTo(0x80019670L);
 
         emit("CP.W R8,R10");
@@ -568,8 +580,8 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x80019820L);
         emit("MOV R11,0x0");
         emit("ST.B R7[-0xd],R11");
-        emit("MOV R11,0x244");
-        emit("MOV R9,0x348");
+        emit(String.format("MOV R11,0x%x", number("pressure_floor_default", 0x244)));
+        emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348)));
         padTo(0x80019834L);
         emit("ST.H R7[-0xa],R11");       // applied floor
         emit("ST.H R7[-0xc],R9");        // applied ceiling
