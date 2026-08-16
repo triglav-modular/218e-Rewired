@@ -2029,9 +2029,6 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001ac74");
         emit("MOV R8,0x0");
         emit("LDDPC R10,0x8001ac7c");
-        if (feature("poly_midi_default_off")) {
-            emit("ST.B R10[0x84],R8");
-        }
         // Empty press-order state and every first-read signal-processing cell.
         emit("MOV R9,0x6000");
         emit("ST.B R9[0x0],R8");
@@ -2112,6 +2109,17 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001aca0L);
         word(0x8001ac84L);
         finish("pressure_vibrato_pool", 0x8001aca4L);
+
+        // The factory's long-hold switch combination also toggles polyphonic
+        // MIDI, independently of the edit-mode setting. Preserve its debounce
+        // completion flag but skip the toggle, MIDI flush and status flash so
+        // the saved edit-mode value has a single owner.
+        begin(0x8000456cL);
+        emit("LDDPC R9,0x800045cc");
+        emit("MOV R8,0x1");
+        emit("ST.B R9[0x38],R8");
+        emit("RJMP 0x800045c6");
+        finish("poly_arp_independence", 0x8000458cL);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
@@ -2440,6 +2448,12 @@ public class AssemblePressureFix extends GhidraScript {
         // once per scan too, so their timings scale with it.
         fixedPatch("scan_period", 0x80007c0cL, 2,
             String.format("MOV R10,0x%x", number("scan_period_ms", 5, 1, 20)));
+
+        // Both cold-start defaults must agree. The persistent-settings loader
+        // still runs afterward and restores any value explicitly saved from
+        // edit mode; these sites only govern a new/invalid record and reset.
+        fixedPatch("poly_powerup_default_off", 0x800071d6L, 2, "MOV R8,0x0");
+        fixedPatch("poly_factory_reset_default_off", 0x8000a444L, 2, "MOV R8,0x0");
 
         // Octave-switch reader: redirect the second switch's stores to shadow
         // RAM so flipping it changes only the pressure A/B (debug builds).

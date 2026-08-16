@@ -12,7 +12,7 @@ FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/LEM218_PressureFix_fwflash_log.txt"
-EXPECTED_SHA256="273bf65f03279bfe6852551c2f6df5faa2512e8e1ac724bac168e577f4010daf"
+EXPECTED_SHA256="29c7f561fea8d267f1386b58243d0fd2e8814fd6fac559d89426b6f323421fc3"
 
 # Support launching from either the package root or its mac directory.
 if [ -d "$SCRIPT_DIR/mac/support" ]; then

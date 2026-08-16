@@ -418,9 +418,17 @@ hook once the new pitch is in the DAC buffer. Confirmed fixed on hardware.
 Polyphonic MIDI mode has its own per-voice release logic that breaks the
 two-key pressure handover: release the second of two held keys and pitch stays
 on the released key while pressure reads a fingerless sensor. With
-`[midi].poly_default = "off"`, `first_use_initializer` forces the mode off
-**once per power-up** (guarded by a marker at RAM `0x602A`), whatever was
-saved.
+`[midi].poly_default = "off"`, a new settings record and a factory reset now
+default the mode to **off**. After that, the factory persistence path is left
+in control: changing the setting with edit-mode key 29 is saved and restored
+on the next power-up.
+
+The factory also had a long-hold panel-switch shortcut that toggled the same
+live flag without marking the settings record dirty. That made the apparent
+polyphonic-MIDI state depend on the arpeggiator switch and allowed it to revert
+after power cycling. `poly_arp_independence` disables that toggle while
+preserving the switch handler's debounce bookkeeping, leaving edit mode as the
+only user-facing owner of the setting.
 
 ---
 
@@ -428,6 +436,7 @@ saved.
 
 | Address | Contents |
 |---------|----------|
+| `0x8000456C` / `0x800071D6` / `0x8000A444` | poly-MIDI switch bypass and off defaults |
 | `0x80014300` / `0x80014380` | knob 3 floor / knob 4 curve handlers |
 | `0x80018D00` / `0x80018D40` | note-on and source-change wrappers |
 | `0x80018D80` | pressure curve table (914 halfwords) |

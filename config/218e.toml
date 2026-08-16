@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "273bf65f03279bfe6852551c2f6df5faa2512e8e1ac724bac168e577f4010daf"
+golden_sha256  = "29c7f561fea8d267f1386b58243d0fd2e8814fd6fac559d89426b6f323421fc3"
 
 
 # ---------------------------------------------------------------------------
@@ -63,10 +63,10 @@ switch = "latch"
 # MIDI
 # ---------------------------------------------------------------------------
 [midi]
-# "off"     — polyphonic MIDI mode is forced off once per power-up, whatever
-#             was saved.  Its per-voice release logic breaks the two-key
-#             pressure handover, so it should stay off for normal playing.
-# "factory" — the saved setting is honoured at boot.
+# "off"     — a new settings record and a factory reset default to off. The
+#             value subsequently selected in edit mode is saved and restored
+#             at boot; the arpeggiator switch cannot change it.
+# "factory" — factory default-on and switch-shortcut behaviour.
 poly_default = "off"
 
 

@@ -74,7 +74,11 @@ FEATURE_MAP = {
         ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle"],
         ["arp_latch"],
     ),
-    "midi.poly_default":      ([], ["poly_midi_default_off"]),
+    "midi.poly_default":      (
+        ["poly_powerup_default_off", "poly_factory_reset_default_off",
+         "poly_arp_independence"],
+        [],
+    ),
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "pressure.multi_key":     ([], ["multi_key_pressure"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply"], ["pressure_blend"]),
