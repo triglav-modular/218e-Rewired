@@ -1351,13 +1351,25 @@ public class AssemblePressureFix extends GhidraScript {
         // which just marks the pulse pending; the pitch-store hook fires the
         // real routine after the pitch lands. Word first: the real routine's
         // address, read by the hook's MCALL PC[0x8001a268].
+        //
+        // The mark is a countdown of scans, not a flag, so the trigger can be
+        // held past the scan that writes the pitch — see gate_settle_scans at
+        // the hook.  A pulse arriving while one is already pending does NOT
+        // restart the countdown: the gate then always rises within a bounded
+        // number of scans of the FIRST request, instead of being pushed back
+        // indefinitely by a fast arp whose steps land inside the window.
         begin(0x8001a268L);
         word(0x800077f8L); // real pulse-high routine
         emit("MOV R8,0x3232");
-        emit("MOV R9,0x1");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001a27a");
+        emit(String.format("MOV R9,0x%x",
+            number("gate_settle_scans", 1, 0, 3) + 1));
         emit("ST.B R8[0x0],R9");
+        padTo(0x8001a27aL);
         emit("MOV PC,LR");
-        finish("pulse_defer_set", 0x8001a278L);
+        finish("pulse_defer_set", 0x8001a280L);
 
         // Latch mode (arp switch position 1). Three pieces:
         //   latch_noteoff  — physical releases are ignored while latched;
@@ -1845,21 +1857,34 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MOV R10,0x38a0");
             emit("LD.UB R11,R10[0x0]");
             emit("CP.W R11,0x1");
-            emit("BR{ne} 0x8001a8d8");
+            emit("BR{ne} 0x8001a8e4");
             emit("LD.UB R10,R10[0xd]");
-            emit("CP.W R10,0x1c");
-            emit("BR{hi} 0x8001a8d8");
+            // 0x1d with BR{ge}, not 0x1c with BR{hi}: the key arrives
+            // zero-extended from LD.UB, so the signed test is the same test,
+            // and {ge} has a two-byte encoding where {hi} does not.  The two
+            // bytes pay for the held check below.
+            emit("CP.W R10,0x1d");
+            emit("BR{ge} 0x8001a8e4");
+            // A stamp only means anything for a slot that is sounding, so
+            // gate on the held flag (state+0x21b) before reading it.  Without
+            // this the shim re-based the transpose off the last arp key's
+            // stamp cell even when that slot had never been latched, which
+            // replaced the live transpose with a stale one.
+            emit("MOV R11,0x377b");
+            emit("LD.UB R11,R11[R10 << 0x0]");
+            emit("CP.W R11,0x1");
+            emit("BR{ne} 0x8001a8e4");
             emit("ADD R8,R8,R10 << 0x1");
             emit("LD.SH R8,R8[0x2]");
             emit("SUB R8,R8,R9 << 0x0");
             emit("ADD R12,R8");
         }
-        padTo(0x8001a8d8L);
-        emit("MCALL PC[0x8001a8e0]");
+        padTo(0x8001a8e4L);
+        emit("MCALL PC[0x8001a8ec]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001a8e0L);
+        padTo(0x8001a8ecL);
         word(0x80019c64L); // the real blend cave entry
-        finish("transpose_capture", 0x8001a8e4L);
+        finish("transpose_capture", 0x8001a8f0L);
 
         // Post-glide blend apply, with smoothing.  The blend cave publishes a
         // raw offset target each scan; this shim slews the APPLIED offset
@@ -1943,8 +1968,23 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ADD R8,R8,R0 << 0x1");
         emit("LD.SH R8,R8[0x2]");
         emit("ADD R9,R8");
-        emit("CP.W R9,R11");
-        emit("BR{eq} 0x8001a9e8");
+        // Match with a tolerance, not for bit-equality.  Both sides are built
+        // from the same transpose at 0x60A0, but that term is not stable:
+        // the latch probe measured it reading -485 on some presses and -484
+        // on others, because the generated tuning tables round and adjacent
+        // octaves land 484 or 485 units apart.  One unit is 2.48 cents, so an
+        // exact compare missed, the allocator ran, and the press added a note
+        // instead of releasing one.  Semitones are ~40 units apart (484/12),
+        // so a tolerance this small cannot reach the neighbouring note.
+        //
+        // BR{lt} against tolerance+1 rather than BR{le} against the tolerance:
+        // {lt} has a two-byte encoding here and {le} does not, and |x| is
+        // never negative, so the two tests are the same test.
+        emit("SUB R9,R11");
+        emit("ABS R9");
+        emit(String.format("CP.W R9,0x%x",
+            number("latch_match_tolerance", 8, 0, 30) + 1));
+        emit("BR{lt} 0x8001a9e8");
         padTo(0x8001a98cL);
         emit("SUB R0,-0x1");
         emit("CP.W R0,0x1c");
@@ -2147,6 +2187,18 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R9[0x0],R8");
         emit("MOV R9,0x60e0");
         emit("ST.W R9[0x0],R8");
+        // The 29 latch stamps that follow the live transpose.  A slot sounds
+        // at table[k] plus its stamp, so an uninitialised stamp gives a slot
+        // an arbitrary pitch — read by the latch toggle's match loop and by
+        // the transpose shim before anything has written one.  Zero is the
+        // rest state: the slot sounds at its own key's nominal pitch.
+        emit("MOV R9,0x60a2");
+        emit("MOV R12,0x1c");
+        padTo(0x8001ac00L);
+        emit("ST.H R9[0x0],R8");
+        emit("SUB R9,-0x2");
+        emit("SUB R12,0x1");
+        emit("BR{ge} 0x8001ac00");
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
@@ -2166,7 +2218,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R9[0x0],R8");        // tuning-apply guard
         emit("ST.H R9[0x2],R8");        // 0x322a arp knob 2 latch
         emit("ST.H R9[0x6],R8");        // 0x322e arp knob 3 latch
-        emit("ST.B R9[0xa],R8");        // 0x3232 deferred-pulse flag
+        emit("ST.B R9[0xa],R8");        // 0x3232 deferred-pulse countdown
         emit("ST.H R9[0xc],R8");        // 0x3234 vibrato knob latch
         if (feature("arp_latch")) {
             emit("LD.UB R8,R10[0x340]");
@@ -2410,7 +2462,37 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001a280L);
         finish("noteoff_pool_2", 0x8000627cL);
 
-
+        // Guard the touch-scan release bookkeeping, in place.
+        //
+        // The factory keeps two parallel held-key structures.  The note pair
+        // at state+0x21a/0x21b is guarded at both ends — 0x80005A04 only
+        // counts up when the flag was clear, 0x80005A50 only counts down when
+        // it was set — so it cannot drift.  The touch-scan pair at
+        // state+0x238/0x239 is guarded on the way up (0x80005B86) and not on
+        // the way down: this release path clears the flag and decrements the
+        // count unconditionally, with no zero check.  One unpaired release
+        // therefore takes the count from 0 to 255 through the byte store, and
+        // six sites read it as "some key is down".
+        //
+        // Nothing branches into these 36 bytes, so they can be rewritten as a
+        // unit.  The base pointer moves to R10 so the count store can reuse it
+        // instead of loading the pool word a second time; those four bytes,
+        // plus the redundant CASTU.B before a byte store, pay for the guard.
+        // R10 is free here — the function takes its arguments in R12/R11 and
+        // nothing writes R10 before this point.
+        begin(0x80005ef0L);
+        emit("LD.UB R8,R7[-0xc]");          // the released key
+        emit("LD.W R10,PC[0x380]");         // state base, from the factory pool
+        emit("ADD R9,R10,R8 << 0x0");
+        emit("LD.UB R8,R9[0x239]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x80005f14");          // never registered: nothing to undo
+        emit("MOV R8,0x0");
+        emit("ST.B R9[0x239],R8");
+        emit("LD.UB R8,R10[0x238]");
+        emit("SUB R8,0x1");
+        emit("ST.B R10[0x238],R8");
+        finish("release_count_guard", 0x80005f14L);
 
         // Repointed pulse-caller pools (arp advance + three key-scan sites).
         begin(0x8000243cL);
@@ -2598,15 +2680,29 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.SH R8,R8[0x0]");
         emit("MOV R12,R8");
         emit("MCALL PC[0x8000336c]");
+        //
+        // The pending mark is a countdown of scans.  Firing in this same pass
+        // puts the gate on the correct DAC VALUE, but the pitch CV itself is
+        // still moving: the output stage is a single pole of tau ~= 0.9 ms
+        // (measured, 1.97 ms 10-90% on the jack), so at the instant the
+        // trigger rises the CV has covered 89% of the step — 132 cents short
+        // on an octave jump.  gate_settle_scans holds the trigger that many
+        // further scans; one scan is 5.6 tau, which lands within 0.4% of the
+        // target.  Zero restores the fire-immediately behaviour.
+        //
+        // The cost is trigger latency: up to one more scan period on top of
+        // the up-to-one this hook already imposes.  It also cannot help an arp
+        // whose steps are closer together than the countdown, which drops
+        // triggers rather than delaying them — see the config note.
         emit("MOV R8,0x3232");
         emit("LD.UB R9,R8[0x0]");
-        emit("CP.W R9,0x1");
-        emit("BR{ne} 0x80003252");
-        emit("MOV R9,0x0");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x80003256");      // nothing pending
+        emit("SUB R9,0x1");
         emit("ST.B R8[0x0],R9");
+        emit("CP.W R9,0x0");            // SUB set the flags, but ST.B sits
+        emit("BR{ne} 0x80003256");      // between it and the branch
         emit("MCALL PC[0x8001a268]");
-        padTo(0x80003252L);
-        padTo(0x80003256L);
         finish("pitch_store_hook", 0x80003256L);
 
         // Repurposed pool word: was the last-sent mirror address (0x3212),

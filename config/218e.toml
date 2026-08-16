@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "3c2f1cec3495cba7e2b0f52054f1e2f199945e23980a3de4101bd22d50af8a61"
+golden_sha256  = "a99311bed2e466f35e6ac08f1949edfd4a7070752525583d636a75a4021ebffb"
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +60,14 @@ knob4 = "vibrato"
 #             position releases everything.
 # "factory" — the original ascending / random / off behaviour.
 switch = "latch"
+
+# How close a press has to come to a latched note's sounding pitch to release
+# it, in pitch units of 2.48 cents.  This is not a musical setting: the toggle
+# builds both pitches from the same transpose term, and that term rounds, so
+# the value the press computes can differ by a unit from the one the latch
+# stamped.  An exact compare (0) misses, and the press adds a note instead of
+# releasing it.  A semitone is ~40 units, so 8 leaves a wide margin either way.
+latch_match_tolerance = 8
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +370,30 @@ factory_gain_shift = 3
 # conversions and the scan work do not fit in the period, events pile up.
 # Nothing here can predict that — measure it, see docs/BUILD.md.
 scan_period_ms = 5
+
+# How many extra scans the trigger waits after the new pitch reaches the DAC.
+#
+# The deferred pulse already puts the gate on the correct DAC *value*, but the
+# CV is still moving when it rises: the pitch output stage is a single pole of
+# tau ~= 0.9 ms (measured on the jack — 1.97 ms rise, 2.06 ms fall, 10-90%),
+# so at that instant the CV has covered only 89% of the step.  That is 132
+# cents short on an octave jump.  One scan is 5.6 tau, which lands within 0.4%
+# — under 5 cents for any interval up to two octaves.
+#
+#   0 — fire as soon as the pitch lands (the behaviour before this setting)
+#   1 — hold one further scan, ~5 ms at the default period  (default)
+#
+# The cost is trigger latency: up to one more scan on top of the up-to-one the
+# deferred pulse already costs, so up to 10 ms after the key or arp event.
+# It also cannot help an arp stepping faster than the countdown — steps closer
+# together than ~2 scans start dropping triggers instead of delaying them, so
+# if a fast arp loses notes, put this back to 0.
+#
+# This is analog settling, not a firmware slew: nothing in the firmware can
+# ramp the pitch, because it only writes the DAC once per scan.  The real fix
+# is the RC on the output stage; this setting just stops the gate arriving
+# ahead of it.
+gate_settle_scans = 1
 
 
 # ---------------------------------------------------------------------------

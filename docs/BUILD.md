@@ -112,6 +112,7 @@ shipped ones.
 | --- | --- | --- |
 | `[knobs].knob1`–`knob4` | `arp_order`, `arp_rhythm`, `arp_octaves`, `vibrato` | Panel knobs outside edit mode. `"factory"` on any one hands just that knob back. |
 | `[arp].switch` | `latch` | Three-position switch becomes latch / regular / off. |
+| `[arp].latch_match_tolerance` | `8` | How close a press must come to a latched note's pitch to release it, in units of 2.48 cents. The shared transpose term rounds, so `0` (exact) misses and the press stacks a note instead. A semitone is ~40 units. |
 | `[midi].poly_default` | `off` | Polyphonic MIDI off on first boot and after a factory reset; the edit-mode choice is then saved and restored. |
 | `[pressure].multi_key` | `max` | Pressure source with several keys held: `max`, `mean` or `factory` (last key touched). |
 | `[pressure].common_mode` | `true` | Subtract the per-key hovering-hand proximity lift. |
@@ -137,6 +138,7 @@ shipped ones.
 | `[diagnostics].telemetry_smoothing` | `false` | Reports the live filter depth and interpolation length in the scan-component telemetry fields. |
 | `[diagnostics].factory_gain_shift` | `3` | The factory law's gain as a power of two, for the A/B above. |
 | `[timing].scan_period_ms` | `5` | The instrument's master update clock. Also scales glide, vibrato and attack rates — measure before lowering. |
+| `[timing].gate_settle_scans` | `1` | Extra scans the trigger waits after the pitch reaches the DAC, so the CV (single pole, τ ≈ 0.9 ms) can arrive. Costs that much trigger latency; set `0` if a fast arp drops notes. |
 
 `scan_profiler` and `telemetry_smoothing` share the same two telemetry fields,
 and the build refuses to enable both at once. `[firmware]` and `[tools]` hold

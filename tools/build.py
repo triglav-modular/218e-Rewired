@@ -71,7 +71,8 @@ FEATURE_MAP = {
         ["knob4_vibrato"],
     ),
     "arp.switch":             (
-        ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle"],
+        ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
+         "release_count_guard"],
         ["arp_latch"],
     ),
     "midi.poly_default":      (
@@ -517,7 +518,7 @@ RAM_REGIONS = [
     (0x3228, 0x322A, "tuning-apply guard"),
     (0x322A, 0x322C, "arp knob 2 latch"),
     (0x322E, 0x3230, "arp knob 3 latch"),
-    (0x3232, 0x3233, "deferred-pulse flag"),
+    (0x3232, 0x3233, "deferred-pulse countdown, in scans"),
     (0x3233, 0x3234, "previous switch position"),
     (0x3234, 0x3236, "vibrato knob latch"),
     (0x6000, 0x6021, "arp press-order list"),
@@ -560,6 +561,7 @@ FACTORY_CELLS = [
     (0x3212, 0x3214, "pitch mirror"),
     (0x3490, 0x34AD, "per-key touch state"),
     (0x3686, 0x36C0, "per-key raw pressure"),
+    (0x377B, 0x3798, "state+0x21b: per-slot held flags"),
     (0x3866, 0x3868, "arp step state"),
     (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
     (0x38B0, 0x38B2, "state+0x350: transpose"),
@@ -964,6 +966,21 @@ def main() -> None:
             "captures the live octave offset through the blend hook"
         )
 
+    # How far apart two derived pitches may be and still count as the same
+    # note.  Both sides of the toggle's match are built from the transpose at
+    # 0x60A0, which rounds: the probe measured it moving by one unit between a
+    # latch and the press meant to release it.  Semitones are ~40 units apart,
+    # so anything well under 20 cannot reach the neighbouring note.  The
+    # assembler compares against tolerance+1, which must stay inside imm6.
+    tolerance = cfg["arp"].get("latch_match_tolerance", 8)
+    if isinstance(tolerance, bool) or not isinstance(tolerance, int) or not 0 <= tolerance <= 30:
+        raise SystemExit("[arp].latch_match_tolerance must be an integer from 0 to 30")
+    cfg["_numbers"]["latch_match_tolerance"] = tolerance
+    if get(cfg, "arp.switch") == "latch":
+        summary.append(f"  {'arp.latch_match_tolerance':28s} "
+                       f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
+                       f"{'exact match' if tolerance == 0 else 'semitone is ~40 units'})")
+
     mode = calib.get("trim_mode", "independent")
     if mode not in ("independent", "scale"):
         raise SystemExit("[pressure.calibration].trim_mode must be 'independent' or 'scale'")
@@ -1001,6 +1018,19 @@ def main() -> None:
         raise SystemExit("[pressure].output_smoothing must be an integer from 0 to 8")
     if smoothing:
         cfg["_numbers"]["output_interpolation_steps"] = smoothing
+
+    # Extra scans the trigger waits after the pitch reaches the DAC, so the CV
+    # has time to arrive.  The output stage is a single pole of tau ~= 0.9 ms,
+    # so one scan (5.6 tau at the default period) lands within 0.4% of target.
+    settle = cfg["timing"].get("gate_settle_scans", 1)
+    if isinstance(settle, bool) or not isinstance(settle, int) or not 0 <= settle <= 3:
+        raise SystemExit("[timing].gate_settle_scans must be an integer from 0 to 3")
+    cfg["_numbers"]["gate_settle_scans"] = settle
+    period = cfg["timing"]["scan_period_ms"]
+    summary.append(f"  {'timing.gate_settle_scans':28s} {settle}  "
+                   + ("fire as soon as the pitch lands" if settle == 0 else
+                      f"trigger held up to {settle * period} ms longer "
+                      f"(total up to {(settle + 1) * period} ms after the event)"))
 
     # Bend slew: 1/2^n of the remaining gap per scan, 0 meaning no smoothing.
     slew = cfg["portamento"].get("blend_slew_shift", 2)

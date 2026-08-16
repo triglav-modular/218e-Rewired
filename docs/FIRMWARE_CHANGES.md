@@ -430,6 +430,47 @@ toggle test in `latch_pitch_toggle` (`0x8001A930`) and the release-all watch in
 > to the scanner, still "held" for the selector. If latch is ever reworked,
 > use the factory's own suppression gates at `state+0x2E9/0x2EA` instead.
 
+**The match carries a tolerance** (`[arp].latch_match_tolerance`, default 8
+units of 2.48 cents). The toggle builds the pressed pitch and each latched
+slot's sounding pitch from one shared term — the transpose at RAM `0x60A0` —
+and that term is not stable. The `latch_probe` diagnostic measured it reading
+−485 on some presses and −484 on others, because the generated tuning tables
+round and adjacent octaves land 484 or 485 units apart. The original exact
+compare therefore missed, the allocator ran, and a press that should have
+released a latched note added another one instead — worst on keys 1–13. A
+semitone is ~40 units (484/12), so the tolerance cannot reach a neighbour.
+
+> Comparing derived pitches for bit-equality was the original design mistake.
+> Three plausible theories were falsified before the probe settled it; measure
+> here rather than reason about it.
+
+Two defects around the same code went with it:
+
+- **The 29 stamp cells at `0x60A2`–`0x60DB` are now initialised.** They were
+  declared in `RAM_REGIONS` but `first_use_initializer` wrote only `0x60A0`
+  and `0x60E0`, so a slot's stamp — the offset that decides what pitch it
+  sounds — started as whatever the SRAM powered up holding, and both the
+  toggle's match loop and the transpose shim read it. The shim also now
+  checks the held flag at `state+0x21B` before re-basing off a stamp, instead
+  of trusting the last arp key's cell whether or not that slot was latched.
+- **The touch-scan release bookkeeping is guarded** (`release_count_guard`,
+  rewritten in place at `0x80005EF0`). The factory keeps two parallel held-key
+  structures. The note pair at `state+0x21A`/`0x21B` is guarded at both ends
+  (`0x80005A04` counts up only when the flag was clear, `0x80005A50` down only
+  when it was set). The touch-scan pair at `state+0x238`/`0x239` was guarded
+  on the way up (`0x80005B86`) and not on the way down: the release cleared
+  the flag and decremented the count unconditionally, with no zero check, so
+  one unpaired release took the count from 0 to 255 through the byte store —
+  and six sites read it as "some key is down". It now matches the other pair.
+
+> **What is *not* wrong here.** The note-on caller sets `state+0x238`/`0x239`
+> before the toggle runs and never undoes them when the toggle returns −1,
+> which looks like a leak from the disassembly alone. It is not: latch
+> suppresses only the callee half of the release (`0x80005A50`, via
+> `latch_v2`), never the caller half (`FUN_80005EDC`), so every press is still
+> balanced by its physical release. Adding an undo on the −1 return would
+> create exactly the unpaired decrement the guard above exists to prevent.
+
 ---
 
 ## 5. Trigger timing
@@ -438,9 +479,37 @@ The arp advances at 1 kHz but pitch only updates at 200 Hz, and the factory
 fired the trigger immediately — so a gate could rise up to 5 ms early, carrying
 the *previous* note's pitch. Audibly, this read as slew.
 
-Fixed by **deferring the pulse**: the four pulse-caller pools now set a flag at
-RAM `0x3232` (`pulse_defer_set`), and the real pulse fires from the pitch-store
-hook once the new pitch is in the DAC buffer. Confirmed fixed on hardware.
+Fixed by **deferring the pulse**: the four pulse-caller pools now set a
+countdown at RAM `0x3232` (`pulse_defer_set`), and the real pulse fires from
+the pitch-store hook once the new pitch is in the DAC buffer. Confirmed fixed
+on hardware.
+
+**Waiting for the CV as well as the value** (`[timing].gate_settle_scans`,
+default 1). The deferred pulse puts the gate on the correct DAC *value*, but
+the CV is still moving when it rises. The pitch output stage is a single pole,
+measured on the jack at **1.97 ms rise / 2.06 ms fall (10–90%)**, i.e.
+τ ≈ 0.90 ms — independently confirmed by fitting the pitch trajectory out of a
+recording, which gave τ = 0.89 ± 0.02 ms. At the moment the trigger rises the
+CV has therefore covered 89% of the step: 132 cents short on an octave jump.
+Each extra scan of hold is 5.6 τ at the default period, landing within 0.4% of
+target. `0` restores the fire-immediately behaviour.
+
+> **This is analog settling, not a firmware slew, and it cannot be anything
+> else.** The pitch DAC is written once per scan, so the firmware can only
+> produce a staircase with `scan_period_ms` treads — never a 2 ms curve. The
+> 1 kHz `dac_interpolator` is redirected onto the *pressure* slot and never
+> touches DAC slot 2; glide is forced to rate 0 by `glide_rate_clamp`; and
+> `blend_slew_shift` is τ ≈ 17 ms. The real fix is the RC on the output stage.
+> This setting only stops the gate arriving ahead of it.
+
+> **Cost, and when to turn it off.** Up to one more scan of trigger latency on
+> top of the up-to-one the deferred pulse already costs — up to 10 ms after the
+> key or arp event at the default period. It also cannot help an arp whose
+> steps are closer together than the countdown: those drop triggers rather than
+> delaying them, so a fast arp losing notes is the signal to set this to 0.
+> `pulse_defer_set` deliberately does *not* restart a countdown already in
+> flight, so the gate always rises within a bounded number of scans of the
+> first request instead of being pushed back indefinitely.
 
 ---
 
@@ -542,7 +611,7 @@ only user-facing owner of the setting.
 > is covered by neither `RAM_REGIONS` (ours) nor `FACTORY_CELLS` (theirs).
 > That is what the vibrato latch needed and did not have.
 
-RAM scratch: `0x322A`/`0x322E` arp knob latches · `0x3232` pulse flag ·
+RAM scratch: `0x322A`/`0x322E` arp knob latches · `0x3232` pulse countdown ·
 `0x3233` previous switch position · `0x6000` press-order
 list · `0x6024`–`0x6028` vibrato state · `0x602A` power-up marker ·
 `0x602C`/`0x602E` interpolator target snapshot and ticks remaining ·
