@@ -128,6 +128,19 @@ entry keeps `table[i+1]` in range), and the expansion divides by the scaled
 span. Averaging dithered samples genuinely recovers sub-count information, so
 this is real precision, not invention.
 
+**Error diffusion** (`[pressure].error_diffusion`). An 8-tap mean of integer
+counts has 2409 distinct states across the window, and that — not the 12-bit
+DAC — is the ceiling. The chain used to reach all 2409 with a linear response
+but only 1816 with the full curve: the blend's `>>8` collapsed levels before
+the output saw them, and the final divide then dropped its remainder. The
+blend now carries four more bits (`((n-cv)*k*16 + 128) >> 8` is
+`((n-cv)*k + 8) >> 4`, so it costs one shift), which recovers 2190 states, and
+the quantiser feeds its remainder into the next scan instead of discarding it,
+which delivers them as effective resolution. `DIVU` leaves the remainder in
+the register above the quotient, so the error is free. The accumulator lives
+at RAM `0x6094`. The cost is a sub-LSB dither at the scan rate, which the
+1 kHz interpolation and the LPG both smooth.
+
 How much arrives depends on the smoothing depth, because the filter can only
 produce averages of the form `(sum << bits) / taps`: at the default 8 taps the window reaches about 2400 output codes linear
 (11.2 effective bits) and 1800 with the full curve (10.8 bits), against
@@ -388,9 +401,17 @@ block is always present — the individual behaviours are what the toggles gate.
 - **Knob 2 — rhythm.** Fully left, even pulses; fully right, randomly spaced,
   using the Micro_Easel's pulser spacing law.
 - **Knob 3 — random octaves.** Increasing probability of ±1 octave per note.
-- **Knob 4 — global vibrato** (`vibrato_engine`, `0x8001A350`), the
+- **Knob 4 — global vibrato** (`vibrato_engine`, `0x8001A350`; sine table at
+  `0x80019E98`), the
   Micro_Easel one-knob law: depth and rate rise together, up to 33 cents at
-  ~6 Hz, smoothed so it fades in rather than switching on. Pressure scales
+  ~6 Hz, smoothed so it fades in rather than switching on. Depth is carried
+  in Q4 pitch units and slewed 16 of them per scan — the same ~65 ms swell as
+  the old whole-unit step — snapping once within a step so it lands on the
+  fractional target. The sine is interpolated between entries with the phase
+  fraction (a 65th entry repeats the first so the neighbour read needs no
+  wrap), and the output carries its remainder between scans at RAM `0x6098`.
+  Without that last part the offset leaves in whole pitch units of 2.48 cents,
+  which is what made shallow vibrato step instead of glide. Pressure scales
   the effective knob linearly: zero pressure uses one-half of its value and
   maximum pressure uses its full value, preserving the previous full-pressure
   depth and rate. The fixed-point mapping is
@@ -528,7 +549,7 @@ list · `0x6024`–`0x6028` vibrato state · `0x602A` power-up marker ·
 `0x6032`–`0x6035` profiler reports · `0x6036` interpolator target ·
 `0x6038`–`0x6043` profiler accumulators · `0x6046`–`0x604D` diagnostic octave
 shadow and boot counter · `0x6050`–`0x608D` pressure filter
-ring · `0x608E` latch mirror · `0x6090` tuning slot · `0x60A0` live transpose and `0x60A2` latch
+ring · `0x608E` latch mirror · `0x6090` tuning slot · `0x6094`/`0x6098` output and vibrato error · `0x60A0` live transpose and `0x60A2` latch
 stamps · `0x60E0`/`0x60E2` portamento target/applied offsets · `0x6100`
 per-key corrected-pressure cache. `tools/build.py` holds the authoritative map
 for these high-RAM regions in `RAM_REGIONS` and fails the build on any overlap.

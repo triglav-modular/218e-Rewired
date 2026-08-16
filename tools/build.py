@@ -67,7 +67,7 @@ FEATURE_MAP = {
     "knobs.knob2":            (["arp_rhythm_hook"], []),
     "knobs.knob3":            (["arp_octave_hook"], []),
     "knobs.knob4":            (
-        ["vibrato_engine", "pressure_vibrato_scale", "pressure_vibrato_pool"],
+        ["vibrato_engine", "vibrato_sine", "pressure_vibrato_scale", "pressure_vibrato_pool"],
         ["knob4_vibrato"],
     ),
     "arp.switch":             (
@@ -82,6 +82,7 @@ FEATURE_MAP = {
     ),
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "pressure.multi_key":     ([], ["multi_key_pressure"]),
+    "pressure.error_diffusion": ([], ["error_diffusion"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
@@ -103,6 +104,7 @@ ENABLED_WHEN = {
     "midi.poly_default": "off",
     "pressure.common_mode": True,
     "pressure.multi_key": "max",
+    "pressure.error_diffusion": True,
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
@@ -541,6 +543,8 @@ RAM_REGIONS = [
     (0x60E2, 0x60E4, "blend applied offset"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
+    (0x6094, 0x6098, "output error accumulator"),
+    (0x6098, 0x609A, "vibrato error accumulator"),
     (0x6100, 0x613A, "corrected-pressure cache"),
 ]
 

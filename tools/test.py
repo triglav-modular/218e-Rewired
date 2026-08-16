@@ -133,15 +133,32 @@ def test_resolution(cfg: dict) -> None:
             n -= ((n - tab[n]) * k + 128) >> 8
         return (4095 * n + span//2) // span
 
-    def new(a16, lvl):
+    diffuse = cfg["pressure"].get("error_diffusion", False)
+    extra = 4 if diffuse else 0
+    scaled = (span << bits) << extra
+
+    def blended(a16, lvl):
+        """The normalised, curve-blended value handed to the quantiser."""
         f, c = floor << bits, ceil << bits
         n = 0 if a16 <= f else span << bits if a16 >= c else (a16-f)*span//(ceil-floor)
-        if lvl:
-            i, fr = n >> bits, n & ((1 << bits) - 1)
-            cv = (tab[i] << bits) + (tab[i+1] - tab[i]) * fr
-            k = (lvl << 3) + (lvl >> 2)
-            n -= ((n - cv) * k + 128) >> 8
-        return (4095 * n + (span << bits)//2) // (span << bits)
+        i, fr = n >> bits, n & ((1 << bits) - 1)
+        cv = (tab[i] << bits) + (tab[i+1] - tab[i]) * fr
+        k = (lvl << 3) + (lvl >> 2)
+        if diffuse:                       # level 0 gives k = 0, so one path
+            return (n << 4) - (((n - cv) * k + 8) >> 4)
+        return n - (((n - cv) * k + 128) >> 8) if lvl else n
+
+    def new(a16, lvl):
+        n = blended(a16, lvl)
+        if not diffuse:
+            return (4095 * n + scaled//2) // scaled
+        # Hold the input and let the diffuser settle; its mean is the value
+        # the instrument actually delivers, which is the point of the change.
+        err, total, ticks = 0, 0, 64
+        for _ in range(ticks):
+            q, err = divmod(4095 * n + err, scaled)
+            total += q
+        return round(total / ticks)
 
     ok = True
     for lvl in (0, 15, 31):
@@ -157,11 +174,31 @@ def test_resolution(cfg: dict) -> None:
     # the full 1/16 grid.  Measuring the grid would overstate the resolution.
     taps = cfg["pressure"].get("smoothing_taps", 8)
     coarse = ceil - floor
+    states = range(floor * taps, ceil * taps + 1)
     for lvl in (0, 31):
-        reachable = len({new((total << bits) // taps, lvl)
-                         for total in range(floor * taps, ceil * taps + 1)})
+        reachable = len({new((total << bits) // taps, lvl) for total in states})
         check(f"level {lvl}: reachable codes beat the old {coarse} by 5x",
               reachable > 5 * coarse, f"{reachable}")
+
+    if diffuse:
+        # An 8-tap mean of integer counts has exactly this many states; no
+        # output stage can distinguish more, so it is the bar to measure against.
+        limit = len({(total << bits) // taps for total in states})
+        for lvl in (0, 31):
+            instant = len({(4095 * blended((t << bits)//taps, lvl) + scaled//2) // scaled
+                           for t in states})
+            effective = len({new((t << bits)//taps, lvl) for t in states})
+            check(f"level {lvl}: diffusion resolves more than the bare quantiser",
+                  effective >= instant, f"{effective} vs {instant}")
+            check(f"level {lvl}: within the {limit}-state ceiling of an 8-tap mean",
+                  effective <= limit, f"{effective}")
+        # The error carried between scans cannot run away.
+        err, worst = 0, 0
+        for t in list(states) + list(reversed(states)):
+            _, err = divmod(4095 * blended((t << bits)//taps, 31) + err, scaled)
+            worst = max(worst, err)
+        check("the error accumulator stays inside one divisor",
+              worst < scaled, f"{worst} vs {scaled}")
     check("curve monotone with the sentinel", tab == sorted(tab))
 
 
@@ -333,6 +370,72 @@ def test_vibrato_pressure_scaling() -> None:
     check("zero pressure halves the effective knob with rounding", zero_ok)
     check("maximum pressure preserves the original knob exactly", full_ok)
     check("effective knob rises monotonically with pressure", monotonic)
+
+
+def test_vibrato() -> None:
+    """Fractional depth and an interpolated, diffused LFO."""
+    print("vibrato")
+    SINE = [0, 12, 25, 37, 49, 60, 71, 81, 90, 98, 106, 112, 117, 122, 125, 126,
+            127, 126, 125, 122, 117, 112, 106, 98, 90, 81, 71, 60, 49, 37, 25, 12,
+            0, -12, -25, -37, -49, -60, -71, -81, -90, -98, -106, -112, -117, -122,
+            -125, -126, -127, -126, -125, -122, -117, -112, -106, -98, -90, -81,
+            -71, -60, -49, -37, -25, -12]
+    SINE = SINE + [SINE[0]]
+
+    def run(knob, scans, interpolate=True, diffuse=True, depth_q4=True):
+        target = ((0xD0 if depth_q4 else 0xE) * knob) >> 10
+        depth = phase = err = 0
+        out = []
+        for _ in range(scans):
+            gap = target - depth
+            step = 16 if depth_q4 else 1
+            depth = target if abs(gap) <= step else depth + (step if gap > 0 else -step)
+            phase = (phase + (((knob * 0x6B8) >> 10) + 0x148)) & 0xFFFF
+            i, fr = phase >> 10, phase & 0x3FF
+            v = SINE[i] + (((SINE[i+1] - SINE[i]) * fr) >> 10) if interpolate else SINE[i]
+            if diffuse:
+                total = v * depth + err
+                q = total >> 11                      # floor, so err stays >= 0
+                err = total - (q << 11)
+                out.append((q, err))
+            else:
+                out.append(((v * depth) >> 7, 0))
+        return out
+
+    full = [q for q, _ in run(1023, 4000)]
+    # The old chain truncated a 12.84-unit peak to 12 every cycle; the diffuser
+    # alternates 12 and 13 so the mean is the real amplitude.  Depth is
+    # therefore unchanged in substance and must not exceed one more unit.
+    ideal = 127 * ((0xD0 * 1023) >> 10) / 2048
+    peak = max(full)
+    check("full-knob peak brackets the true amplitude, not above it",
+          peak == math.ceil(ideal) and ideal < 13, f"peak {peak}, ideal {ideal:.2f}")
+    check("the carried error stays inside one step",
+          all(0 <= e < 2048 for _, e in run(1023, 4000)))
+
+    # 13 whole-unit steps at 16 Q4-units each is the same ~65 ms swell.
+    depth, target, scans = 0, (0xD0 * 1023) >> 10, 0
+    while depth != target:
+        gap = target - depth
+        depth = target if abs(gap) <= 16 else depth + 16
+        scans += 1
+    check("swell still takes ~13 scans", scans == 13, f"{scans}")
+
+    # At shallow depth the old chain collapses the LFO to a few levels.
+    shallow = 120
+    old = [q for q, _ in run(shallow, 600, interpolate=False, diffuse=False, depth_q4=False)]
+    new = [q for q, _ in run(shallow, 600)]
+    check("shallow vibrato resolves more than the integer chain",
+          len(set(new)) > len(set(old)), f"{len(set(new))} vs {len(set(old))} levels")
+    check("shallow vibrato still swings both ways",
+          min(new) < 0 < max(new), f"{min(new)}..{max(new)}")
+
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    cave = source[source.index("begin(0x8001a350L)"):source.index('finish("vibrato_engine"')]
+    check("the engine interpolates between table entries",
+          'emit("LD.SH R8,R0[0x2]");' in cave)
+    check("the sine carries a wrap sentinel",
+          "halfword(sine[0]);" in source)
 
 
 def test_poly_midi_lifecycle() -> None:
@@ -565,6 +668,7 @@ def main() -> None:
     test_blend(cfg)
     test_output_interpolation(cfg)
     test_vibrato_pressure_scaling()
+    test_vibrato()
     test_poly_midi_lifecycle()
     test_local_proximity()
     test_held_flag_bounds()

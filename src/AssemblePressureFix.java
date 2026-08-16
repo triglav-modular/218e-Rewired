@@ -504,8 +504,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("DIVU R8,R8,R9");
         padTo(0x800196acL);
 
-        emit("CP.W R7,0x0");
-        emit("BR{eq} 0x800196f4");
+        if (!feature("error_diffusion")) {
+            emit("CP.W R7,0x0");
+            emit("BR{eq} 0x800196f4");
+        }
+        // With diffusion the level-0 shortcut is dropped: at level 0 the blend
+        // weight is zero, so the same path produces exactly n, and both paths
+        // must reach the quantiser with the extra fractional bits in place.
         emit("LDDPC R12,0x8001972c");
         if (BITS > 0) {
             // Interpolate the curve between adjacent table entries, so the
@@ -530,15 +535,39 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LSL R10,0x3");
         emit("ADD R10,R11");
         emit("MUL R9,R10,R9");
-        emit("SUB R9,-0x80");
-        emit("ASR R9,0x8");
+        if (feature("error_diffusion")) {
+            // Carry the blend four bits further before it is rounded off.
+            // ((n-cv)*k*16 + 128) >> 8 is ((n-cv)*k + 8) >> 4, so the wider
+            // result costs one shift.  This is where the resolution was going:
+            // the >>8 alone collapsed 2409 distinct levels to 1933.
+            emit("SUB R9,-0x8");
+            emit("ASR R9,0x4");
+            emit("LSL R8,0x4");
+        } else {
+            emit("SUB R9,-0x80");
+            emit("ASR R9,0x8");
+        }
         emit("SUB R8,R9");
         padTo(0x800196f4L);
         emit("MOV R9,0xfff");
         emit("MUL R8,R9,R8");
-        emit(String.format("SUB R8,-0x%x", SPAN / 2));
-        emit(String.format("MOV R9,0x%x", SPAN));
-        emit("DIVU R8,R8,R9");
+        if (feature("error_diffusion")) {
+            // First-order error diffusion.  What the division throws away is
+            // carried into the next scan instead of being discarded, so the
+            // output's time average tracks the true value to far better than
+            // one code.  DIVU leaves the remainder in the register above the
+            // quotient, so the error costs nothing to obtain.
+            emit("MOV R10,0x6094");
+            emit("LD.W R11,R10[0x0]");
+            emit("ADD R8,R11");
+            emit(String.format("MOV R9,0x%x", SPAN << 4));
+            emit("DIVU R8,R8,R9");
+            emit("ST.W R10[0x0],R9");
+        } else {
+            emit(String.format("SUB R8,-0x%x", SPAN / 2));
+            emit(String.format("MOV R9,0x%x", SPAN));
+            emit("DIVU R8,R8,R9");
+        }
         emit("MOV R12,R8");
         emit("MCALL PC[0x80019730]");
         emit("MCALL PC[0x80019724]");
@@ -2084,6 +2113,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x608c");
         emit("ST.H R9[0x0],R8");
         emit("ST.B R9[0x4],R8");        // 0x6090 tuning slot 0, the declared default
+        emit("ST.W R9[0x8],R8");        // 0x6094 output error accumulator
+        emit("ST.H R9[0xc],R8");        // 0x6098 vibrato error accumulator
         // Finite DAC interpolation state and its live slot start together.
         emit("MOV R9,0x602c");
         emit("ST.W R9[0x0],R8");
@@ -2207,9 +2238,9 @@ public class AssemblePressureFix extends GhidraScript {
         // 0x6024 LFO phase, 0x6026 smoothed depth (steps +-1/scan, ~65 ms
         // swell), 0x6028 signed output offset in pitch units.
         begin(0x8001a350L);
-        emit("STM --SP,R7,LR");
+        emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
-        emit("LDDPC R10,0x8001a3f8");
+        emit("LDDPC R10,0x8001a470");
         emit("LD.UB R8,R10[0x39]");
         emit("CP.W R8,0x1");
         emit("BR{eq} 0x8001a370");
@@ -2225,23 +2256,32 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001a384L);
         emit("SUB R11,0x30");
         emit("MCALL PC[0x8001aca0]");
-        emit("MOV R8,0xe");
+        emit("MOV R8,0xd0");            // depth target in Q4 pitch units
         emit("MUL R8,R8,R11");
         emit("LSR R8,0xa");
         emit("MOV R9,0x6026");
         emit("LD.SH R12,R9[0x0]");
-        emit("CP.W R12,0xd");
-        emit("BR{ls} 0x8001a3a0");
+        emit("CP.W R12,0xd0");
+        emit("BR{ls} 0x8001a3a8");
         emit("MOV R12,0x0");
-        padTo(0x8001a3a0L);
-        emit("CP.W R12,R8");
-        emit("BR{eq} 0x8001a3b0");
-        emit("BR{lt} 0x8001a3ac");
-        emit("SUB R12,0x1");
-        emit("RJMP 0x8001a3b0");
-        padTo(0x8001a3acL);
-        emit("SUB R12,-0x1");
-        padTo(0x8001a3b0L);
+        // Depth slews toward the target at 16 Q4-units (one whole pitch unit)
+        // per scan, the same ~65 ms swell as the old integer step, and snaps
+        // once it is within one step so it lands on the fractional target
+        // instead of oscillating around it.
+        padTo(0x8001a3a8L);
+        emit("SUB R1,R8,R12 << 0x0");   // gap = target - depth
+        emit("CP.W R1,0x10");
+        emit("BR{gt} 0x8001a3bc");
+        emit("CP.W R1,-0x10");
+        emit("BR{lt} 0x8001a3c2");
+        emit("MOV R12,R8");             // within a step: land exactly
+        emit("RJMP 0x8001a3c8");
+        padTo(0x8001a3bcL);
+        emit("SUB R12,-0x10");
+        emit("RJMP 0x8001a3c8");
+        padTo(0x8001a3c2L);
+        emit("SUB R12,0x10");
+        padTo(0x8001a3c8L);
         emit("ST.H R9[0x0],R12");
         emit("MOV R8,0x6b8");
         emit("MUL R11,R11,R8");
@@ -2252,23 +2292,53 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ADD R8,R11");
         emit("CASTU.H R8");
         emit("ST.H R9[0x0],R8");
-        emit("LSR R8,0xa");
-        emit("LDDPC R9,0x8001a3fc");
-        emit("ADD R9,R9,R8 << 0x1");
-        emit("LD.SH R11,R9[0x0]");
-        emit("MUL R11,R11,R12");
-        emit("ASR R11,0x7");
+        // Interpolate the sine between table entries with the phase fraction.
+        // 64 entries over a 16-bit phase is a 5.6-degree step; without this
+        // the LFO is a staircase no matter how fine the depth is.  The table
+        // carries a 65th entry repeating the first, so the neighbour read
+        // needs no wrap.
+        emit("MOV R11,R8");             // keep the phase
+        emit("LSR R8,0xa");             // table index, 0..63
+        emit("LDDPC R0,0x8001a474");
+        emit("ADD R0,R0,R8 << 0x1");
+        emit("LD.SH R10,R0[0x0]");
+        emit("LD.SH R8,R0[0x2]");
+        emit("SUB R8,R10");             // delta to the next entry
+        emit("BFEXTU R11,R11,0x0,0xa"); // phase fraction
+        emit("MUL R8,R8,R11");
+        emit("ASR R8,0xa");
+        emit("ADD R8,R10");             // Q7 sine, interpolated
+        // Amplitude, carrying the remainder between scans.  The offset leaves
+        // here in whole pitch units — 2.48 cents each — so at shallow depth
+        // plain truncation quantises the modulation into audible steps.
+        // Diffusing it lets the average land between them.
+        emit("MUL R8,R8,R12");          // Q7 sine * Q4 depth = Q11
+        emit("MOV R9,0x6098");
+        emit("LD.SH R10,R9[0x0]");
+        emit("ADD R8,R10");
+        emit("MOV R10,R8");
+        emit("ASR R10,0xb");            // floor: the remainder stays positive
+        emit("LSL R1,R10,0xb");
+        emit("SUB R8,R1");
+        emit("ST.H R9[0x0],R8");        // carry the remainder
         emit("MOV R9,0x6028");
-        emit("ST.H R9[0x0],R11");
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001a3f8L);
+        emit("ST.H R9[0x0],R10");
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(0x8001a470L);
         word(0x00003560L); // global state base
-        word(0x8001a400L); // sine table
+        word(0x80019e98L); // sine table, relocated to free the code space
+        finish("vibrato_engine", 0x8001a480L);
+
+        // The sine, moved out of the engine's cave so the interpolation above
+        // fits.  65 entries: the last repeats the first as the interpolation
+        // sentinel.
+        begin(0x80019e98L);
         int[] sine = {0, 12, 25, 37, 49, 60, 71, 81, 90, 98, 106, 112, 117, 122, 125, 126, 127, 126, 125, 122, 117, 112, 106, 98, 90, 81, 71, 60, 49, 37, 25, 12, 0, 65524, 65511, 65499, 65487, 65476, 65465, 65455, 65446, 65438, 65430, 65424, 65419, 65414, 65411, 65410, 65409, 65410, 65411, 65414, 65419, 65424, 65430, 65438, 65446, 65455, 65465, 65476, 65487, 65499, 65511, 65524};
         for (int v : sine) {
             halfword(v);
         }
-        finish("vibrato_engine", 0x8001a480L);
+        halfword(sine[0]);
+        finish("vibrato_sine", 0x80019f1cL);
 
         // Per-scan housekeeping (chained from applier_plus):
         //   (a) run the shared first-use bootstrap before reading custom RAM;

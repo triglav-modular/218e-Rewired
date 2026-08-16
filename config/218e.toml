@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "26a3fab48d7abc26bae237f2a511d45d78ca32eaa416ed6320671bfc651827c3"
+golden_sha256  = "fdcc43374da5275fc389afe20ed7515ec0c6c5f7cad76b99d1cdad444ffe9bd5"
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +44,9 @@ knob3 = "arp_octaves"
 # knob 4 — global vibrato; one-knob law (depth and rate rise together).
 #          Pressure scales its effective value from one-half at zero pressure
 #          to full at maximum pressure (up to 33 cents at ~6 Hz).
+#          Depth is carried in quarter-sixteenths of a pitch unit and the
+#          sine is interpolated, so shallow settings are smooth rather
+#          than stepping in 2.48-cent jumps.
 #                                                 "vibrato" | "factory"
 knob4 = "vibrato"
 
@@ -145,6 +148,23 @@ output_smoothing = 5
 # the same mapping sampled finely, so the feel does not change.  0 restores
 # the original integer arithmetic exactly.
 resolution_bits = 4
+
+# Carry the curve blend four bits further, and feed what the final division
+# throws away back into the next scan instead of discarding it.
+#
+# The 12-bit output is not the limit: an 8-tap mean of integer sensor counts
+# has 2409 distinct states across the calibration window, and that is the real
+# ceiling at any depth.  The old chain reached all 2409 with a linear response
+# but only 1816 with the full curve, because the blend's >>8 collapsed levels
+# before the output ever saw them and the final divide then dropped its
+# remainder.  Widening the blend recovers 2190 of them; diffusion delivers
+# that as effective resolution rather than instantaneous codes, by dithering
+# between adjacent codes so the average lands where the true value is.
+#
+# The cost is a sub-LSB dither at the scan rate, which the 1 kHz output
+# interpolation and the LPG both smooth.  false restores the plain rounding —
+# and with resolution_bits = 0 as well, the original integer chain exactly.
+error_diffusion = true
 
 # Depth of the growing-average filter, in taps (8..24 = 40..120 ms at the
 # 5 ms scan).  Deep settings smooth wobble during holds but lag the attack —
