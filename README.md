@@ -41,6 +41,32 @@ the four preset-voltage knobs and the arpeggiator switch.
 
 Full details, with addresses: [`docs/FIRMWARE_CHANGES.md`](docs/FIRMWARE_CHANGES.md).
 
+## Controls
+
+Everything below is remapped. Anything not listed — including the
+octave/preset/none switch — behaves as it did from the factory. Any single
+entry can be handed back in `config/218e.toml`.
+
+**Playing**
+
+| Control | What it does |
+|---|---|
+| Knob 1 | Arp note order: fully left = strict press order, fully right = random. |
+| Knob 2 | Arp rhythm: fully left = even pulses, fully right = randomly spaced. |
+| Knob 3 | Random octave displacement per arp note, rising with the knob. |
+| Knob 4 | Global vibrato, one-knob law (depth and rate together), up to 33 cents at ~6 Hz. Pressure scales it from half its value at rest to full at maximum pressure. |
+| Portamento | How much pressure a second held note needs to pull the pitch toward it. **At zero it is fully off**, and there is no time-based glide at any setting — notes snap. |
+| Arp switch | latch / regular / off. In latch, keys are toggles; leaving the position releases everything. Latched notes are *pitches*, so one key held in three octaves stacks three notes, each releasable from any octave where its pitch still maps. |
+
+**Edit mode**
+
+| Control | What it does |
+|---|---|
+| Knob 1 | Scales the whole pressure window, both endpoints together, 0.50x–1.14x. The built-in 592/893 calibration sits at about ¾ of travel; the feet-up condition is ~⅓. Lower = reaches full output sooner. |
+| Knob 4 | Pressure curve amount, linear through to the full 218r curve. Fresh from a flash it starts linear until you move it. |
+| Key 28 / Key 27 | Tuning slot: key 28 toggles slot 0 (Sabat II) against slot 2, key 27 toggles slot 1 (ADDAC JI) against slot 2 (12-TET). LEDs: *rem-en* lit = slot 0, *trn* lit = slot 1, both dark = slot 2. |
+| Knobs 2, 3 | Factory behaviour. (Knob 2 briefly carried a smoothing control; it was removed because its ADC mirror never tracked the physical knob. Filter depth and interpolation length are build settings.) |
+
 ## Build
 
 ```bash
