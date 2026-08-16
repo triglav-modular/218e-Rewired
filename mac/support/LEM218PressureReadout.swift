@@ -150,7 +150,10 @@ final class PressureMonitor {
         }
     }
 
+    private(set) var framesWritten = 0
+
     private func writeFrame(_ frame: PressureFrame, event: String) {
+        if event == "sample" { framesWritten += 1 }
         writeCSV("\(dateFormatter.string(from: frame.timestamp)),\(event),\(frame.rawInstant),\(frame.rawAverage),\(frame.scanComponentA),\(frame.scanComponentB),\(frame.scanDifference),\(frame.scanDifferenceError),\(frame.normalized),\(frame.curved),\(frame.output12),\(frame.floor),\(frame.ceiling),\(frame.curveLevel)\n")
     }
 
@@ -274,6 +277,7 @@ func endpointName(_ endpoint: MIDIEndpointRef) -> String {
 let arguments = CommandLine.arguments
 var signalSources: [DispatchSourceSignal] = []
 let selfTest = arguments.contains("--self-test")
+let unattended = arguments.contains("--unattended")
 let csvPath = arguments.dropFirst().first(where: { !$0.hasPrefix("--") })
     ?? FileManager.default.currentDirectoryPath + "/LEM218_PressureReadout.csv"
 
@@ -339,6 +343,26 @@ do {
 
     print("Connected to: \(connected.joined(separator: ", "))")
     print("CSV log: \(csvPath)")
+
+    if unattended {
+        // Every telemetry frame is already written as a "sample" row, so a
+        // capture needs no interaction at all — the labelled commands below
+        // only add extra rows.  This mode exists for diagnosing things that
+        // cannot be done with a hand on the keyboard and one on the keys.
+        print("Enter ordinary edit mode; telemetry exists only there.")
+        print("Logging every frame. Press Ctrl-C or close this window when done.\n")
+        let heartbeat = DispatchSource.makeTimerSource(queue: .main)
+        heartbeat.schedule(deadline: .now() + 2, repeating: 2)
+        heartbeat.setEventHandler {
+            let written = monitor.framesWritten
+            FileHandle.standardOutput.write(
+                "\r\(written) frame\(written == 1 ? "" : "s") logged".data(using: .utf8)!)
+        }
+        heartbeat.resume()
+        RunLoop.main.run()
+        exit(0)
+    }
+
     print("Enter ordinary edit mode; telemetry exists only there.")
     print("Hold a pressure steady for about two seconds, then type settings, min, mid, max, or proximity and press return.")
     print("Type q and press return to show the capture summary and quit.\n")

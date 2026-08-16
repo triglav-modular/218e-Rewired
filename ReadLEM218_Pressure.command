@@ -20,7 +20,13 @@ CSV_FILE="$SCRIPT_DIR/LEM218_PressureReadout_${STAMP}.csv"
 echo "Buchla 218e PressureFix USB readout"
 echo "This is read-only: it does not flash or alter any setting."
 echo
-"$READER" "$CSV_FILE"
+# Unattended by default: every telemetry frame goes to the CSV without any
+# typing.  Pass --interactive for the labelled min/mid/max capture prompts.
+if [ "${1:-}" = "--interactive" ]; then
+    "$READER" "$CSV_FILE"
+else
+    "$READER" --unattended "$CSV_FILE"
+fi
 STATUS=$?
 
 echo
