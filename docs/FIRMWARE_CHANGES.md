@@ -43,8 +43,8 @@ linear) is why noise and proximity stop being obtrusive.
 calibration ritual. How the edit-mode knobs trim them depends on `trim_mode`,
 described next.
 
-With `trim_mode = "scale"` knob 1 instead multiplies *both* endpoints by
-0.5x..1.5x, unity at centre, and knob 3 returns to its factory job. That is the
+With `trim_mode = "scale"` knob 1 instead multiplies *both* endpoints by a
+single factor, and knob 3 returns to its factory job. That is the
 shape the physics asks for: coupling scales the whole signal rather than moving
 one endpoint, so holding the floor/ceiling ratio fixed keeps the response
 identical and just re-ranges it. The build sizes that range so the scaled ceiling never hits the 1023 the
