@@ -496,6 +496,18 @@ only user-facing owner of the setting.
 > once per scan. The neighbours are live and must be left alone: `0x3210`
 > (read at `0x800031FC`), `0x3236` (read at `0x8000B8F4`), `0x3238` and the
 > array from `0x323C`.
+>
+> These cells are declared in `RAM_REGIONS` and zeroed by
+> `first_use_initializer` like the `0x6000` block, so nothing reads them
+> before they are valid. The clear runs off a single base register while `R8`
+> still holds zero — it has to precede the latch section, which loads the
+> switch position into `R8`; clearing after it would seed the deferred-pulse
+> flag with a 1 and fire a trigger at power-up.
+>
+> `tools/build.py` also checks the map is *complete*: it reads back every
+> address the assembler builds with `MOV Rn,imm` and refuses to build if one
+> is covered by neither `RAM_REGIONS` (ours) nor `FACTORY_CELLS` (theirs).
+> That is what the vibrato latch needed and did not have.
 
 RAM scratch: `0x322A`/`0x322E` arp knob latches · `0x3232` pulse flag ·
 `0x3233` previous switch position · `0x6000` press-order

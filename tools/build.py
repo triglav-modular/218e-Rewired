@@ -506,6 +506,16 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 # a cave writing into another's state is invisible in the patch bytes, since
 # the addresses only exist as immediates.
 RAM_REGIONS = [
+    # Repurposed cells inside the factory's own 16-tap pressure history
+    # (0x3216..0x3235).  That array is dead: we replaced the filter, and
+    # pitch_clamp_skip_1 jumps over every instruction that touched it.  See
+    # docs/FIRMWARE_CHANGES.md — disabling that patch takes these back.
+    (0x3228, 0x322A, "tuning-apply guard"),
+    (0x322A, 0x322C, "arp knob 2 latch"),
+    (0x322E, 0x3230, "arp knob 3 latch"),
+    (0x3232, 0x3233, "deferred-pulse flag"),
+    (0x3233, 0x3234, "previous switch position"),
+    (0x3234, 0x3236, "vibrato knob latch"),
     (0x6000, 0x6021, "arp press-order list"),
     (0x6024, 0x6026, "vibrato LFO phase"),
     (0x6026, 0x6028, "vibrato smoothed depth"),
@@ -533,9 +543,87 @@ RAM_REGIONS = [
     (0x6100, 0x613A, "corrected-pressure cache"),
 ]
 
+# Factory-owned RAM the patches address absolutely.  Not ours to initialise —
+# the factory already does — but listed so that a new cell of our own cannot
+# be placed on top of one without the coverage check noticing.
+FACTORY_CELLS = [
+    (0x0854, 0x088E, "key pitch table"),
+    (0x2EEE, 0x2EF0, "glide rate"),
+    (0x3212, 0x3214, "pitch mirror"),
+    (0x3490, 0x34AD, "per-key touch state"),
+    (0x3686, 0x36C0, "per-key raw pressure"),
+    (0x3866, 0x3868, "arp step state"),
+    (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
+    (0x38B0, 0x38B2, "state+0x350: transpose"),
+]
+
+# Immediates that are values rather than addresses, so the coverage check does
+# not mistake them for a cell.  Anything new landing here deserves a look.
+NON_ADDRESS_IMMEDIATES = {0xFFF}
+
+
+def declared_ram() -> list[tuple[int, int, str]]:
+    return sorted(RAM_REGIONS + FACTORY_CELLS)
+
+
+def check_ram_coverage() -> None:
+    """Every RAM cell the assembler addresses must be declared somewhere.
+
+    The patches reach their own state by building the address with `MOV Rn,imm`
+    and then loading or storing through it, so that idiom is the inventory.
+    Anything it turns up that no region covers is a cell someone added without
+    putting it on the map — which is how the vibrato latch came to sit
+    undeclared inside the factory's dead filter array.
+    """
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    emits = re.findall(r'emit\((?:String\.format\()?"([^"]+)"', source)
+    movi = re.compile(r"^MOV (R\d+|LR),0x([0-9a-f]+)$")
+    addx = re.compile(r"^ADD (R\d+),(R\d+),(R\d+) << 0x\d$")
+    # Stores carry no signedness, so ST.H must be accepted alongside LD.SH.
+    mem = re.compile(r"^(LD|ST)\.(?:UB|SB|UH|SH|W|D|B|H) (?:(R\d+|LR),)?(R\d+|LR)\[")
+
+    known: dict[str, int] = {}
+    used: dict[int, str] = {}
+    for text in emits:
+        match = movi.match(text)
+        if match:
+            known[match.group(1)] = int(match.group(2), 16)
+            continue
+        match = addx.match(text)
+        if match:
+            if match.group(2) in known:
+                known[match.group(1)] = known[match.group(2)]
+            else:
+                known.pop(match.group(1), None)
+            continue
+        match = mem.match(text)
+        if match:
+            kind, dst, base = match.groups()
+            if base in known:
+                value = known[base]
+                if 0x800 <= value < 0x10000 and value not in NON_ADDRESS_IMMEDIATES:
+                    used.setdefault(value, text)
+            if kind == "LD" and dst:
+                known.pop(dst, None)
+            continue
+        match = re.match(r"^\w[\w.{}]*\s+(R\d+|LR)\b", text)
+        if match and not text.startswith(("ST.", "CP.", "BR", "TST")):
+            known.pop(match.group(1), None)
+
+    regions = declared_ram()
+    stray = [(a, t) for a, t in sorted(used.items())
+             if not any(start <= a < end for start, end, _ in regions)]
+    if stray:
+        raise SystemExit(
+            "RAM addressed by the patches but declared nowhere:\n"
+            + "\n".join(f"  0x{a:04X}  first used by: {t}" for a, t in stray)
+            + "\nAdd it to RAM_REGIONS (ours) or FACTORY_CELLS (theirs) in "
+              "tools/build.py.")
+    print(f"  {len(used)} addressed RAM cells, all declared")
+
 
 def check_ram_regions() -> None:
-    ordered = sorted(RAM_REGIONS)
+    ordered = declared_ram()
     for (a1, b1, n1), (a2, b2, n2) in zip(ordered, ordered[1:]):
         if a2 < b1:
             raise SystemExit(
@@ -849,6 +937,7 @@ def main() -> None:
         raise SystemExit("[pressure.calibration]: ceiling must exceed floor by at least 32")
 
     check_ram_regions()
+    check_ram_coverage()
     blocks, features, summary = resolve_flags(cfg)
     if features.get("scan_profiler") and features.get("telemetry_smoothing"):
         raise SystemExit(

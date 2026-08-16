@@ -2082,6 +2082,18 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R9,-0x2");
         emit("SUB R12,0x1");
         emit("BR{ge} 0x8001ac40");
+        // The scratch inside the factory's dead filter array, cleared off one
+        // base to stay inside this cave's remaining bytes.  Zero is the safe
+        // rest state for each: no arp rhythm or octave randomness, no pending
+        // pulse, and a vibrato depth that clamps to its minimum.  This must
+        // stay ahead of the latch section below, which loads the switch
+        // position into R8 and so ends the run of zero stores.
+        emit("MOV R9,0x3228");
+        emit("ST.H R9[0x0],R8");        // tuning-apply guard
+        emit("ST.H R9[0x2],R8");        // 0x322a arp knob 2 latch
+        emit("ST.H R9[0x6],R8");        // 0x322e arp knob 3 latch
+        emit("ST.B R9[0xa],R8");        // 0x3232 deferred-pulse flag
+        emit("ST.H R9[0xc],R8");        // 0x3234 vibrato knob latch
         if (feature("arp_latch")) {
             emit("LD.UB R8,R10[0x340]");
             emit("MOV R9,0x608e");
