@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import subprocess
 import sys
 import tomllib
@@ -374,6 +375,41 @@ def test_local_proximity() -> None:
           max(probe_counts) <= 6, str(probe_counts))
 
 
+def test_held_flag_bounds() -> None:
+    """Nothing may walk the held-flag array past key 28.
+
+    The array is 29 entries; the factory's own selectors start their walk at
+    0x1c.  Reading further treats unrelated state as held keys, and the arp's
+    random branch plays whatever it is handed without re-checking — which is
+    how a phantom key 29..31 reached the DAC as a pitch an octave up.
+    """
+    print("held-flag array bounds")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+
+    def cave(start: str, name: str) -> str:
+        head = source.index(f"begin({start})")
+        return source[head:source.index(f'finish("{name}"', head)]
+
+    selector = cave("0x8001a020L", "arp_order_selector")
+    scan = re.findall(r'emit\("CP\.W R3,0x([0-9a-f]+)"\)', selector)
+    check("the arp candidate scan stops at key 28", scan and scan[0] == "1d",
+          f"scans 0..0x{scan[0] if scan else '?'}")
+
+    housekeeping = cave("0x8001a480L", "scan_housekeeping")
+    clear = re.search(r'emit\("MOV R9,0x([0-9a-f]+)"\);\s*\n\s*padTo\(0x8001a500L\)',
+                      housekeeping)
+    check("the latch-exit clear stops at key 28",
+          clear is not None and clear.group(1) == "1c",
+          f"clears 0..0x{clear.group(1) if clear else '?'}")
+
+    # The press-order path is bounded by the list's own length rather than a
+    # key count, but every candidate it returns is re-checked against the held
+    # flags — that re-check is what kept knob 1 at zero free of this bug.
+    check("the press-order path re-checks the held flag",
+          'emit("LD.UB R9,R9[0x0]");' in selector
+          and 'emit("CP.W R9,0x1");' in selector)
+
+
 def test_overlap_and_range() -> None:
     print("patch safety")
     memory = {a: 0 for a in range(0x1000, 0x2000)}
@@ -444,6 +480,7 @@ def main() -> None:
     test_vibrato_pressure_scaling()
     test_poly_midi_lifecycle()
     test_local_proximity()
+    test_held_flag_bounds()
     test_filter_equivalence(cfg)
     test_overlap_and_range()
     test_atomic_replace()

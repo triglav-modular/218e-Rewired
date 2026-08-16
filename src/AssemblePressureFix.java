@@ -1158,7 +1158,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R2,0x0");
         emit("MOV R3,0x0");
         padTo(0x8001a0f0L);
-        emit("CP.W R3,0x20");
+        // Keys 0..28 only.  The held-flag array is 29 entries — the factory's
+        // own selectors start their walk at 0x1c — so scanning 32 read three
+        // bytes of unrelated state beyond it and treated any that happened to
+        // hold 1 as a held key.  The random branch trusts these flags without
+        // the press-order path's held re-check, so a phantom 29/30/31 played
+        // straight out as a pitch up to an octave above the real key.
+        emit("CP.W R3,0x1d");
         emit("BR{ge} 0x8001a110");
         emit("ADD R8,R0,R3 << 0x0");
         emit("LD.UB R8,R8[0x0]");
@@ -2224,7 +2230,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Per-scan housekeeping (chained from applier_plus):
         //   (a) run the shared first-use bootstrap before reading custom RAM;
         //   (b) latch-exit watch: on state+0x340 leaving 1 (prev at RAM
-        //       0x3233) clear the held count and all 32 held flags;
+        //       0x3233) clear the held count and all 29 held flags;
         begin(0x8001a480L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -2246,7 +2252,9 @@ public class AssemblePressureFix extends GhidraScript {
             emit("BR{eq} 0x8001a510");
             emit("MOV R9,0x0");
             emit("ST.B R10[0x21a],R9");
-            emit("MOV R9,0x1f");
+            // 0..28, the real extent of the array.  Clearing 32 zeroed the
+            // same three bytes of adjacent state the selector was misreading.
+            emit("MOV R9,0x1c");
             padTo(0x8001a500L);
             emit("ADD R12,R10,R9 << 0x0");
             emit("MOV R8,0x0");

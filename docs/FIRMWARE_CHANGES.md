@@ -355,6 +355,17 @@ block is always present — the individual behaviours are what the toggles gate.
   length byte is zeroed by `first_use_initializer`: SRAM
   comes up arbitrary, and a junk list that happens to repeat a real key number
   makes the selector lock onto that key.
+
+  > The two paths are not equally defensive. The press-order walk re-checks
+  > each candidate against the held flags before returning it; the random
+  > branch trusts the flag array as it stands. So a bad entry in that array is
+  > inaudible at knob 1 = 0 and plays out as a wrong note above it. The array
+  > is **29 entries** — the factory's own selectors begin their walk at `0x1c`
+  > — and scanning the 32 the buffer has room for read three bytes of
+  > unrelated state past the end, which sometimes hold 1. That put phantom
+  > keys 29–31 in the candidate pool, sounding as a pitch up to an octave
+  > above the key actually held. The same miscount had the latch-exit clear
+  > zeroing those three foreign bytes. `tools/test.py` now pins both bounds.
 - **Knob 2 — rhythm.** Fully left, even pulses; fully right, randomly spaced,
   using the Micro_Easel's pulser spacing law.
 - **Knob 3 — random octaves.** Increasing probability of ±1 octave per note.
