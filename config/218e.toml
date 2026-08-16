@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "0cf36984af4c5b832f4752f340ffbedf59920330e30cf5b0dc69572da6caef88"
+golden_sha256  = "2c39db9f10dd6406a17353451430211843754d8184d9cc4cb7621d5101fdfb30"
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,9 @@ black_key_scale = 1.2
 # pressure tail.  0 disables it and restores the plain zero-order-hold output.
 #
 # This is the alternative to shortening the scan period, which the profiler
-# showed has no headroom for it.
+# showed has no headroom for it.  (That reading predates several additions to
+# the scan; it only ever argued against a shorter period, but re-measure
+# rather than trusting the old numbers — see docs/BUILD.md.)
 #
 # TUNING NOTE.  The number changed meaning on 2026-08-15, and the same 5 is
 # now far less smoothing than it used to be.  The old scheme closed 1/2^5 of

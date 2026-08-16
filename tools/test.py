@@ -410,6 +410,55 @@ def test_held_flag_bounds() -> None:
           and 'emit("CP.W R9,0x1");' in selector)
 
 
+def test_factory_entry_points(cfg: dict) -> None:
+    """Burying a live factory branch target must fail the build."""
+    print("factory entry points")
+    sha = cfg["firmware"]["factory_sha256"]
+    transfers = [(int(a, 16), int(b, 16)) for a, b in
+                 (l.split() for l in B.CONTROL_FLOW.read_text().splitlines()
+                  if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}$", l))]
+    # A target whose branch comes from far enough away to be outside any patch
+    # we could plausibly build around it.
+    source, target = next((s, t) for s, t in transfers if abs(t - s) > 0x200)
+
+    raises("a patch burying a live branch target is rejected",
+           lambda: B.check_factory_entry_points(
+               [(target - 4, b"\0" * 16, "synthetic")], sha),
+           "live factory branch target")
+    # The same target as the patch's first byte is the legitimate case: callers
+    # are meant to keep arriving there.
+    B.check_factory_entry_points([(target, b"\0" * 16, "synthetic")], sha)
+    check("a patch starting exactly on the target is allowed", True)
+    raises("a control-flow table from another image is rejected",
+           lambda: B.check_factory_entry_points([], "0" * 64),
+           "different base image")
+    recorded = next(l.split()[1] for l in B.CONTROL_FLOW.read_text().splitlines()
+                    if l.startswith("factory_sha256 "))
+    check("the recorded table matches the pinned factory image", recorded == sha)
+
+
+def test_migration_and_empty_hand() -> None:
+    """Two contracts that are invisible in behaviour but bite at the edges."""
+    print("register contracts")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+
+    def cave(start: str, name: str) -> str:
+        head = source.index(f"begin({start})")
+        return source[head:source.index(f'finish("{name}"', head)]
+
+    migration = cave("0x8001aca4L", "poly_settings_migration")
+    check("the migration returns the loader's value, not the saver's",
+          'emit("ST.W --SP,R12");' in migration
+          and 'emit("LD.W R12,SP++");' in migration)
+    check("it restores on both the migrating and the already-migrated path",
+          migration.index('emit("LD.W R12,SP++");') > migration.index("padTo(0x8001ace0L)"))
+
+    cache = cave("0x8001aa10L", "pressure_cache")
+    zero = cache.index('emit("MOV R12,0x0");')
+    check("an empty hand returns zero pressure explicitly",
+          zero < cache.index('emit("CP.W R2,0x0");'))
+
+
 def test_overlap_and_range() -> None:
     print("patch safety")
     memory = {a: 0 for a in range(0x1000, 0x2000)}
@@ -481,6 +530,8 @@ def main() -> None:
     test_poly_midi_lifecycle()
     test_local_proximity()
     test_held_flag_bounds()
+    test_factory_entry_points(cfg)
+    test_migration_and_empty_hand()
     test_filter_equivalence(cfg)
     test_overlap_and_range()
     test_atomic_replace()

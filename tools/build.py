@@ -562,6 +562,46 @@ def check_extents(output: str) -> None:
     print(f"  {len(extents)} block extents, no flash collisions")
 
 
+CONTROL_FLOW = REPO / "tools" / "factory_control_flow.txt"
+
+
+def check_factory_entry_points(patches, factory_sha: str) -> None:
+    """No patch may bury a factory branch target that is still branched to.
+
+    Overwriting factory code is normal here — most patches do.  What is not
+    safe is overwriting an address some *other* piece of factory code still
+    jumps to, because the jump then lands in the middle of our instructions.
+    A target inside a patch whose only sources are inside the same patch is
+    fine: we replaced the branch and its destination together.
+    """
+    if not CONTROL_FLOW.exists():
+        raise SystemExit(f"missing {CONTROL_FLOW} — cannot verify patch entry points")
+    lines = CONTROL_FLOW.read_text().splitlines()
+    recorded = next((l.split()[1] for l in lines if l.startswith("factory_sha256 ")), None)
+    if recorded != factory_sha:
+        raise SystemExit(
+            f"{CONTROL_FLOW.name} was generated from a different base image\n"
+            f"  recorded {recorded}\n  current  {factory_sha}\n"
+            "Regenerate it (see the header of that file) before building.")
+    transfers = [(int(a, 16), int(b, 16)) for a, b in
+                 (l.split() for l in lines if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}$", l))]
+
+    problems = []
+    for start, payload, description in patches:
+        end = start + len(payload)
+        # The patch's own start is a legitimate entry point: callers are meant
+        # to keep reaching it.  Anything past it is interior.
+        for source, target in transfers:
+            if start < target < end and not (start <= source < end):
+                problems.append(
+                    f"  {description or 'patch'} [0x{start:08X}..0x{end:08X}) buries "
+                    f"0x{target:08X}, still branched to from 0x{source:08X}")
+    if problems:
+        raise SystemExit("patch overwrites a live factory branch target:\n"
+                         + "\n".join(sorted(set(problems))))
+    print(f"  {len(transfers)} factory control transfers checked, no buried entry points")
+
+
 def parse_patches(output: str) -> list[tuple[int, bytes, str]]:
     patches, skipped = [], []
     for raw in output.splitlines():
@@ -891,6 +931,7 @@ def main() -> None:
     check_extents(output)
     patches = parse_patches(output)
     print(f"  {len(patches)} patch record(s) assembled")
+    check_factory_entry_points(patches, cfg["firmware"]["factory_sha256"])
 
     # --- apply ------------------------------------------------------------
     original = dict(memory)

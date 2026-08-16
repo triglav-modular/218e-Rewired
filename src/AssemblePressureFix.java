@@ -1991,6 +1991,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R9,0x1");
         emit("BR{ge} 0x8001aa30");
         if (feature("multi_key_pressure")) {
+            // No key under a finger means no pressure.  Say so, rather than
+            // leaving the caller's R12 to travel on: it only read as silence
+            // because the value it happened to carry sat below the floor.
+            emit("MOV R12,0x0");
             emit("CP.W R2,0x0");
             emit("BR{eq} 0x8001aae8");
             if (number("multi_key_max", 0, 0, 1) == 1) {
@@ -2136,6 +2140,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,R8,R9,R10,R11,LR");
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001acf0]");
+        // Hold the loader's return across the migration: on the migrating
+        // boot the saver runs last, and returning *its* R12 would hand the
+        // caller a different value than an ordinary boot does.
+        emit("ST.W --SP,R12");
         emit("LDDPC R10,0x8001acf4");
         emit("LDDPC R8,0x8001acf8");
         emit("LD.W R8,R8[0x0]");
@@ -2147,6 +2155,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.B R10[0x84],R9");
         emit("MCALL PC[0x8001acfc]");
         padTo(0x8001ace0L);
+        emit("LD.W R12,SP++");
         emit("LDM SP++,R7,R8,R9,R10,R11,PC");
         padTo(0x8001acf0L);
         word(0x8000a264L); // factory persistent-settings loader

@@ -99,6 +99,13 @@ much less smoothing — see the tuning note in
 This is the alternative to shortening the scan period, which measurement ruled
 out — see [BUILD.md](BUILD.md).
 
+> That measurement (68.6 % main-loop load, 145,120 cycles worst dispatch) was
+> taken before the per-key proximity estimator, the 29-slot portamento blend,
+> the ring-buffer filter and the first-use bootstrap now at the head of every
+> handler. It only ever argued *against* a shorter period, and everything
+> added since pushes the same way — but the numbers themselves are stale, so
+> re-run the profiler rather than quoting them.
+
 **Update rate.** Pressure is computed once per scan (from `0x800030A6`, via
 the factory slew stage at `0x80002D80`). With output interpolation disabled it
 is a zero-order-hold staircase whose treads are one scan period long. In the
@@ -474,6 +481,21 @@ only user-facing owner of the setting.
 | `0x8001AA10` / `0x8001AB20` | per-key pressure cache, key-colour table |
 | `0x8001AB60` | first-use initialiser (all added RAM state) |
 | `0x8001AC84` | pressure-to-vibrato scaling helper |
+
+> **Why the `0x32xx` scratch is free, and what keeps it free.** Those cells sit
+> inside the factory's own 16-tap pressure history — a shift register based at
+> RAM `0x3216`, spanning `0x3216`–`0x3235`, shifted at `0x800033F8`–`0x80003496`
+> and indexed at `0x800034AC`. We replaced that filter, and the
+> `pitch_clamp_skip_1` patch (`RJMP 0x80003506` at `0x800033F8`) jumps over the
+> whole block, so every instruction that touches the array is unreachable:
+> nothing outside branches into `0x800033FA`–`0x80003505`, and no pool or table
+> word points into it. The array is therefore dead, and the cells are ours.
+>
+> This is load-bearing. Disable `pitch_clamp_skip_1` and the factory filter
+> resumes, shifting the arp knob latches, the pulse flag and the switch mirror
+> once per scan. The neighbours are live and must be left alone: `0x3210`
+> (read at `0x800031FC`), `0x3236` (read at `0x8000B8F4`), `0x3238` and the
+> array from `0x323C`.
 
 RAM scratch: `0x322A`/`0x322E` arp knob latches · `0x3232` pulse flag ·
 `0x3233` previous switch position · `0x6000` press-order
