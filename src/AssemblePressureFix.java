@@ -2083,6 +2083,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.W R9[0x0],R8");
         emit("MOV R9,0x608c");
         emit("ST.H R9[0x0],R8");
+        emit("ST.B R9[0x4],R8");        // 0x6090 tuning slot 0, the declared default
         // Finite DAC interpolation state and its live slot start together.
         emit("MOV R9,0x602c");
         emit("ST.W R9[0x0],R8");
@@ -2386,11 +2387,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("LDDPC R10,0x80019ae8");
-        emit("LD.UB R8,R10[0x2]");
+        emit("MOV R9,0x6090");          // tuning slot, off the factory's flags
+        emit("LD.UB R8,R9[0x0]");
         emit("CP.W R8,0x2");
         emit("BR{ls} 0x80019a58");
         emit("MOV R8,0x0");
-        emit("ST.B R10[0x2],R8");
+        emit("ST.B R9[0x0],R8");
         padTo(0x80019a58L);
         emit("MOV R9,0x0");
         emit("ST.B R10[0x6a],R9");
@@ -2451,15 +2453,22 @@ public class AssemblePressureFix extends GhidraScript {
         finish("tuning_applier_tables", 0x80019bb8L);
 
         // Edit key 27 (was transpose-mode toggle): ADDAC JI <-> 12TET.
+        // The slot lives at RAM 0x6090, not state+0x2 where the first version
+        // put it.  state+0x2 is the factory's remote-enable flag: it gates the
+        // MIDI command handler at 0x80004FD2, and two of those commands write
+        // it directly.  Sharing the byte meant selecting a tuning other than
+        // slot 0 silently switched remote control on, and a remote-enable
+        // message silently retuned the instrument.
         begin(0x80003d82L);
-        emit("LDDPC R8,0x80003e24");
-        emit("LD.UB R9,R8[0x2]");
+        emit("MOV R9,0x6090");
+        emit("LD.UB R8,R9[0x0]");
         emit("MOV R10,0x1");
-        emit("CP.W R9,0x1");
+        emit("CP.W R8,0x1");
         emit("BR{ne} 0x80003d92");
         emit("MOV R10,0x2");
         padTo(0x80003d92L);
-        emit("ST.B R8[0x2],R10");
+        emit("ST.B R9[0x0],R10");
+        emit("LDDPC R8,0x80003e24");
         emit("MOV R9,0x0");
         emit("ST.B R8[0x6a],R9");
         emit("MOV R9,0x1");
@@ -2470,14 +2479,15 @@ public class AssemblePressureFix extends GhidraScript {
 
         // Edit key 28 (was remote-enable toggle): Sabat II <-> 12TET.
         begin(0x80003db8L);
-        emit("LDDPC R8,0x80003e24");
-        emit("LD.UB R9,R8[0x2]");
+        emit("MOV R9,0x6090");
+        emit("LD.UB R8,R9[0x0]");
         emit("MOV R10,0x0");
-        emit("CP.W R9,0x0");
+        emit("CP.W R8,0x0");
         emit("BR{ne} 0x80003dc8");
         emit("MOV R10,0x2");
         padTo(0x80003dc8L);
-        emit("ST.B R8[0x2],R10");
+        emit("ST.B R9[0x0],R10");
+        emit("LDDPC R8,0x80003e24");
         emit("MOV R9,0x1");
         emit("ST.B R8[0x3a],R9");
         emit("RJMP 0x80003e10");

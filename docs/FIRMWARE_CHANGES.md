@@ -292,13 +292,25 @@ selected table into RAM `0x854` within one 5 ms scan and drives the LEDs.
 | 1 | ADDAC Just Intonation | edit key 27 toggles 1 ⇄ 2 | trn lit |
 | 2 | 12-TET (exact) | edit key 28 toggles 0 ⇄ 2 | both dark |
 
-The selector persists with the settings (it reuses the old remote-enable byte,
-whose "off" value maps to slot 0). Octave switches keep working in every tuning
-because each scale has a pure 2/1 octave — exactly 484 units.
+The selector lives at RAM `0x6090` and does **not** persist: it returns to
+slot 0 at every power-up. Octave switches keep working in every tuning because
+each scale has a pure 2/1 octave — exactly 484 units.
 
-**Retired to make room:** transpose *mode* and remote enable are permanently
-off; their three factory `if (remote_enable)` guards now read constant zero.
-The octave *selectors* are untouched.
+> It first reused the old remote-enable byte at `state+0x2`, on the assumption
+> that byte was retired and persisted. Neither held. The factory saver never
+> reads it and the loader never writes it, so it never persisted; and only
+> *three* of the `if (remote_enable)` guards were patched to constant zero
+> (`0x80006528`, `0x800066AE`, `0x800085DA`). Four more survive in the MIDI
+> command dispatch — `0x80004FD2`, `0x80005014`, `0x80005108`, `0x8000514E` —
+> and two MIDI commands write the byte directly at `0x8000505A`/`0x80005062`.
+> Sharing it therefore ran both ways: choosing any tuning but slot 0 set the
+> byte non-zero and silently switched remote control on, and a remote-enable
+> message silently retuned the instrument. Moving the selector to its own cell
+> leaves `state+0x2` to the factory, zero from reset as it expects.
+
+**Retired to make room:** transpose *mode* is permanently off, and three of the
+factory's remote-enable guards read constant zero. The octave *selectors* are
+untouched.
 
 ---
 
@@ -516,7 +528,7 @@ list · `0x6024`–`0x6028` vibrato state · `0x602A` power-up marker ·
 `0x6032`–`0x6035` profiler reports · `0x6036` interpolator target ·
 `0x6038`–`0x6043` profiler accumulators · `0x6046`–`0x604D` diagnostic octave
 shadow and boot counter · `0x6050`–`0x608D` pressure filter
-ring · `0x608E` latch mirror · `0x60A0` live transpose and `0x60A2` latch
+ring · `0x608E` latch mirror · `0x6090` tuning slot · `0x60A0` live transpose and `0x60A2` latch
 stamps · `0x60E0`/`0x60E2` portamento target/applied offsets · `0x6100`
 per-key corrected-pressure cache. `tools/build.py` holds the authoritative map
 for these high-RAM regions in `RAM_REGIONS` and fails the build on any overlap.

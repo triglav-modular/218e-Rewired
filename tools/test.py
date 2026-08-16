@@ -477,6 +477,18 @@ def test_migration_and_empty_hand() -> None:
     check("an empty hand returns zero pressure explicitly",
           zero < cache.index('emit("CP.W R2,0x0");'))
 
+    # state+0x2 is the factory's remote-enable flag: it gates the MIDI command
+    # handler and two commands write it.  The tuning slot must not share it,
+    # or picking a tuning enables remote control and a remote-enable message
+    # retunes the instrument.
+    for start, name in (("0x80003d82L", "edit_key27_tuning_addac"),
+                        ("0x80003db8L", "edit_key28_tuning_sabat"),
+                        ("0x80019a40L", "tuning_applier_tables")):
+        body = cave(start, name)
+        check(f"{name} keeps the tuning slot off state+0x2",
+              'emit("MOV R9,0x6090");' in body
+              and not re.search(r'emit\("(LD|ST)\.\w+ R\d+,?R?\d*\[0x2\]', body))
+
     # The low scratch is cleared with whatever R8 holds, and the latch section
     # loads the switch position into it.  Clearing after that would seed the
     # pulse flag with a 1 and fire a trigger at power-up.

@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "1d6aa8299fd548dda0f953c3f7ee366d73cc7572b6394a3381ac8e9eba9ada61"
+golden_sha256  = "26a3fab48d7abc26bae237f2a511d45d78ca32eaa416ed6320671bfc651827c3"
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +247,7 @@ blend_slew_shift = 2
 # Three tuning tables live in the firmware.  Slot 0 is the power-on default.
 # In edit mode, key 28 toggles slot 0 <-> slot 2, key 27 toggles slot 1 <-> 2.
 # LEDs: rem-en lit = slot 0, trn lit = slot 1, both dark = slot 2.
+# The selection is not persisted: every power-up starts at slot 0.
 #
 # Each file must be a 12-note Scala scale with a 2/1 octave, because the key
 # table repeats every octave across the 32 keys.
