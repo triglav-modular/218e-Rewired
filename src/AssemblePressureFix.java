@@ -2121,6 +2121,34 @@ public class AssemblePressureFix extends GhidraScript {
         emit("RJMP 0x800045c6");
         finish("poly_arp_independence", 0x8000458cL);
 
+        // One-time migration for settings records written by older firmware.
+        // Byte zero of the persisted payload is written but never restored by
+        // the factory loader, so it can safely identify the new ownership
+        // model without consuming RAM or resetting any other saved setting.
+        // Load first, then migrate only poly MIDI and save the whole record.
+        begin(0x8001aca4L);
+        emit("STM --SP,R7,R8,R9,R10,R11,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001acf0]");
+        emit("LDDPC R10,0x8001acf4");
+        emit("LDDPC R8,0x8001acf8");
+        emit("LD.W R8,R8[0x0]");
+        emit("LD.UB R9,R8[0x2]");
+        emit("MOV R11,0xa5");
+        emit("CP.W R9,R11");
+        emit("BR{eq} 0x8001ace0");
+        emit("MOV R9,0x0");
+        emit("ST.B R10[0x84],R9");
+        emit("MCALL PC[0x8001acfc]");
+        padTo(0x8001ace0L);
+        emit("LDM SP++,R7,R8,R9,R10,R11,PC");
+        padTo(0x8001acf0L);
+        word(0x8000a264L); // factory persistent-settings loader
+        word(0x00003560L); // global state base
+        word(0x00000968L); // pointer to the persisted settings record
+        word(0x80009fb8L); // factory persistent-settings saver
+        finish("poly_settings_migration", 0x8001ad00L);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -2454,6 +2482,9 @@ public class AssemblePressureFix extends GhidraScript {
         // edit mode; these sites only govern a new/invalid record and reset.
         fixedPatch("poly_powerup_default_off", 0x800071d6L, 2, "MOV R8,0x0");
         fixedPatch("poly_factory_reset_default_off", 0x8000a444L, 2, "MOV R8,0x0");
+        fixedPatch("poly_persistence_marker", 0x80009fc2L, 4, "MOV R8,0xa5");
+        wordPatch("poly_settings_loader_pool", 0x80007da8L, 0x8001aca4L,
+            "settings loader -> one-time poly-MIDI migration wrapper");
 
         // Octave-switch reader: redirect the second switch's stores to shadow
         // RAM so flipping it changes only the pressure A/B (debug builds).

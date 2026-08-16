@@ -76,7 +76,8 @@ FEATURE_MAP = {
     ),
     "midi.poly_default":      (
         ["poly_powerup_default_off", "poly_factory_reset_default_off",
-         "poly_arp_independence"],
+         "poly_arp_independence", "poly_settings_migration",
+         "poly_persistence_marker", "poly_settings_loader_pool"],
         [],
     ),
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),

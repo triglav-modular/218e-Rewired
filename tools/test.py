@@ -319,19 +319,22 @@ def test_poly_midi_lifecycle() -> None:
     """Defaults, edit persistence and the arp switch have separate roles."""
     print("polyphonic MIDI lifecycle")
 
-    saved = None
+    nv = {"marker": False, "poly": True}     # record from older firmware
 
     def boot() -> bool:
-        return False if saved is None else saved
+        if not nv["marker"]:
+            nv["poly"] = False
+            nv["marker"] = True
+        return nv["poly"]
 
     live = boot()
-    check("a new settings record defaults to off", live is False)
-    saved = live = True                       # edit-mode key 29
+    check("the first new-firmware boot migrates only poly MIDI to off", live is False)
+    nv["poly"] = live = True                  # edit-mode key 29
     live = boot()
     check("an edit-mode choice survives a power cycle", live is True)
     live_after_arp = live                     # arp switch is read-only here
     check("the arpeggiator switch cannot change poly MIDI", live_after_arp is live)
-    saved = live = False                      # edit-mode key 29 again
+    nv["poly"] = live = False                 # edit-mode key 29 again
     check("the saved off choice also survives", boot() is False)
 
 

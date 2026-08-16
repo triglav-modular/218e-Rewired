@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "29c7f561fea8d267f1386b58243d0fd2e8814fd6fac559d89426b6f323421fc3"
+golden_sha256  = "b31e7bbd988ebfd2e29ebf8e9d7653df11622ad44f707da7479c806e33819d26"
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +63,10 @@ switch = "latch"
 # MIDI
 # ---------------------------------------------------------------------------
 [midi]
-# "off"     — a new settings record and a factory reset default to off. The
-#             value subsequently selected in edit mode is saved and restored
-#             at boot; the arpeggiator switch cannot change it.
+# "off"     — the first boot after installing this firmware, a new settings
+#             record, and a factory reset default to off. The value subsequently
+#             selected in edit mode is saved and restored at boot; the
+#             arpeggiator switch cannot change it.
 # "factory" — factory default-on and switch-shortcut behaviour.
 poly_default = "off"
 
