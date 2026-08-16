@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "31f73b8f24301187eab1113dc90c1368b38d0f2a8f4941db8d683ee7aa0eadd3"
+golden_sha256  = "1d6aa8299fd548dda0f953c3f7ee366d73cc7572b6394a3381ac8e9eba9ada61"
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +224,21 @@ pressure_blend = true
 # Force a true zero glide time at the bottom of the portamento knob (the
 # factory rate table never quite reaches zero, which left audible glide).
 zero_snap = true
+
+# How hard the applied bend is smoothed on its way to the pressure-derived
+# target.  Each scan it closes 1/2^n of the remaining gap, so this is an
+# exponential slew rather than a fixed settling time:
+#
+#   n=0  no smoothing: the bend follows the pressure cache directly
+#   n=1  ~8 ms to 63%, ~22 ms to 95%
+#   n=2  ~17 ms to 63%, ~55 ms to 95%, ~85 ms to 99%   (default)
+#   n=3  ~35 ms to 63%, ~115 ms to 95%
+#
+# It exists because sensor jitter walking the cubic weighting near the bend
+# threshold otherwise frequency-modulates the pitch — that FM is what this
+# damps, so lowering it trades immediacy for that artefact coming back.
+# Add one scan period of pressure-cache latency on top of any setting.
+blend_slew_shift = 2
 
 
 # ---------------------------------------------------------------------------

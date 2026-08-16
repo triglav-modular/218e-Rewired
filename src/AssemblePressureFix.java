@@ -1715,45 +1715,60 @@ public class AssemblePressureFix extends GhidraScript {
         // per scan instead of shifting the whole history and re-summing it.
         // A zero count — set by the note-on and source-change wrappers — also
         // resets the ring, so a new touch starts clean.
+        //
+        // Count and index are checked against the depth before they are
+        // trusted, not just the depth against its own bounds.  The write index
+        // scales a store off 0x6050, so an out-of-range one is a wild halfword
+        // write into whatever follows — the corrected-pressure cache, or the
+        // stack.  Power-up normally clears these, but that clearing is gated
+        // on a 16-bit marker surviving in SRAM; a collision, or a brownout
+        // that retains the marker and little else, would otherwise walk
+        // straight into that store.  Everything reachable is one comparison
+        // away, so check rather than rely on the marker.
         emit("MOV R9,0x6080");
-        emit("LD.UH R10,R9[0x0]");
+        emit("LD.UH R10,R9[0x0]");      // count
+        emit("LD.UH R12,R9[0x6]");      // write index
         emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001a834");
-        emit("MOV R12,0x6086");
-        emit("ST.H R12[0x0],R10");
-        emit("MOV R12,0x6088");
-        emit("ST.W R12[0x0],R10");
-        padTo(0x8001a834L);
-        emit("MOV R12,0x6086");
-        emit("LD.UH R12,R12[0x0]");
-        emit("MOV R9,0x6088");
-        emit("LD.W R9,R9[0x0]");
+        emit("BR{eq} 0x8001a836");      // empty: also clears a stale index/sum
         emit("CP.W R10,R11");
-        emit("BR{lt} 0x8001a854");
+        emit("BR{hi} 0x8001a836");      // more samples than the ring holds
+        // Reversed operands: the assembler takes {hi} but not {lo}.
+        emit("CP.W R11,R12");
+        emit("BR{hi} 0x8001a842");      // depth > index, so it is inside: trust it
+        padTo(0x8001a836L);
+        emit("MOV R10,0x0");
+        emit("MOV R12,0x0");
+        emit("ST.H R9[0x0],R10");
+        emit("ST.H R9[0x6],R12");
+        emit("ST.W R9[0x8],R10");
+        padTo(0x8001a842L);
+        emit("LD.W R9,R9[0x8]");        // running sum; base is done with
+        emit("CP.W R10,R11");
+        emit("BR{lt} 0x8001a858");
         // Full: drop the oldest sample, which is the one at the write index.
         emit("MOV LR,0x6050");
         emit("LD.UH LR,LR[R12 << 0x1]");
         emit("SUB R9,R9,LR << 0x0");
-        emit("RJMP 0x8001a858");
-        padTo(0x8001a854L);
-        emit("SUB R10,-0x1");
+        emit("RJMP 0x8001a85c");
         padTo(0x8001a858L);
+        emit("SUB R10,-0x1");
+        padTo(0x8001a85cL);
         emit("MOV LR,0x6050");
         emit("ST.H LR[R12 << 0x1],R8");
         emit("ADD R9,R8");
         emit("SUB R12,-0x1");
         emit("CP.W R12,R11");
-        emit("BR{lt} 0x8001a86c");
+        emit("BR{lt} 0x8001a870");
         emit("MOV R12,0x0");
-        padTo(0x8001a86cL);
-        emit("MOV LR,0x6086");
-        emit("ST.H LR[0x0],R12");
-        emit("MOV LR,0x6088");
-        emit("ST.W LR[0x0],R9");
+        padTo(0x8001a870L);
+        // Write the ring state back off one base: the four cells live within
+        // 0x6080..0x608d, and folding the addresses into displacements buys
+        // the bytes the validation above costs.
         emit("MOV LR,0x6080");
-        emit("ST.H LR[0x0],R10");
-        emit("MOV LR,0x608c");
-        emit("ST.H LR[0x0],R8");
+        emit("ST.H LR[0x0],R10");       // 0x6080 count
+        emit("ST.H LR[0x6],R12");       // 0x6086 write index
+        emit("ST.W LR[0x8],R9");        // 0x6088 running sum
+        emit("ST.H LR[0xc],R8");        // 0x608c newest sample
         // Keep `resolution_bits` fractional bits of the mean.
         if (number("resolution_bits", 4, 0, 4) > 0) {
             emit(String.format("LSL R9,0x%x", number("resolution_bits", 4, 0, 4)));
@@ -1803,11 +1818,17 @@ public class AssemblePressureFix extends GhidraScript {
         finish("transpose_capture", 0x8001a8e4L);
 
         // Post-glide blend apply, with smoothing.  The blend cave publishes a
-        // raw offset target each scan; this shim slews the APPLIED offset a
-        // quarter of the way there per scan (~20 ms settle, RAM 0x60e2), so
-        // sensor jitter walking the z quantisation near the threshold cannot
-        // frequency-modulate the pitch.  The +-1 nudge prevents the shift
-        // from stalling short of the target.
+        // raw offset target each scan; this shim slews the APPLIED offset
+        // (RAM 0x60e2) toward it by 1/2^blend_slew_shift of the remaining gap
+        // per scan, so sensor jitter walking the z quantisation near the
+        // threshold cannot frequency-modulate the pitch.  The +-1 nudge
+        // prevents the shift from stalling short of the target.
+        //
+        // This is exponential, not a fixed settling time: at the default shift
+        // of 2 it closes a quarter of the gap every 5 ms, which is ~17 ms to
+        // 63%, ~55 ms to 95% and ~85 ms to 99%, plus up to one scan of
+        // pressure-cache latency ahead of it.  An earlier comment called it a
+        // "20 ms settle", which is the time constant, not the settle.
         begin(0x8001a8f0L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -1816,7 +1837,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.SH R10,R9[0x0]");
         emit("LD.SH R8,R9[0x2]");
         emit("SUB R11,R10,R8 << 0x0");
-        emit("ASR R11,0x2");
+        emit(String.format("ASR R11,0x%x", number("blend_slew_shift", 2, 0, 4)));
         emit("CP.W R11,0x0");
         emit("BR{ne} 0x8001a914");
         emit("CP.W R10,R8");

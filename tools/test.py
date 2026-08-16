@@ -185,8 +185,10 @@ def test_filter_equivalence(cfg: dict) -> None:
             self.depth = depth
 
         def push(self, new):
-            if self.count == 0:
-                self.idx = self.sum = 0
+            # Reject state that cannot be true of a live ring, rather than
+            # trusting SRAM that the power-up marker may have let through.
+            if self.count == 0 or self.count > self.depth or self.idx >= self.depth:
+                self.count = self.idx = self.sum = 0
             if self.count >= self.depth:
                 self.sum -= self.t[self.idx]
             else:
@@ -212,6 +214,23 @@ def test_filter_equivalence(cfg: dict) -> None:
         ring.push(value)
     ring.count = 0                       # what the note-on wrapper does
     check("a note-on reset restarts the average cleanly", ring.push(500) == (500 << bits))
+
+    # Garbage that a marker collision or a brownout could leave behind.  The
+    # index scales a store off 0x6050, so an out-of-range one is a wild write.
+    for name, state in (("index past the ring", {"idx": 0x4000, "count": 3}),
+                        ("count past the depth", {"idx": 2, "count": 0x7FFF}),
+                        ("both nonsense", {"idx": 0xFFFF, "count": 0xFFFF})):
+        ring = Ring(8)
+        ring.__dict__.update(state)
+        ring.sum = 0x123456
+        out = ring.push(700)
+        check(f"{name} resets rather than indexing out of bounds",
+              out == (700 << bits) and ring.idx == 1 and ring.count == 1)
+
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    cave = source[source.index("begin(0x8001a800L)"):source.index('finish("variable_filter"')]
+    check("the firmware validates count and index, not just depth",
+          'emit("CP.W R10,R11");' in cave and 'emit("CP.W R11,R12");' in cave)
 
 
 def test_blend(cfg: dict) -> None:

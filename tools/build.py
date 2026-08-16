@@ -987,6 +987,14 @@ def main() -> None:
         raise SystemExit("[pressure].output_smoothing must be an integer from 0 to 8")
     if smoothing:
         cfg["_numbers"]["output_interpolation_steps"] = smoothing
+
+    # Bend slew: 1/2^n of the remaining gap per scan, 0 meaning no smoothing.
+    slew = cfg["portamento"].get("blend_slew_shift", 2)
+    if isinstance(slew, bool) or not isinstance(slew, int) or not 0 <= slew <= 4:
+        raise SystemExit("[portamento].blend_slew_shift must be an integer from 0 to 4")
+    cfg["_numbers"]["blend_slew_shift"] = slew
+    summary.append(f"  {'portamento.blend_slew_shift':28s} "
+                   f"{slew}  ({'no smoothing' if slew == 0 else f'1/{1 << slew} of the gap per scan'})")
     for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "
