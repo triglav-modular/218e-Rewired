@@ -507,6 +507,9 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 # the addresses only exist as immediates.
 RAM_REGIONS = [
     (0x6000, 0x6021, "arp press-order list"),
+    (0x6024, 0x6026, "vibrato LFO phase"),
+    (0x6026, 0x6028, "vibrato smoothed depth"),
+    (0x6028, 0x602A, "vibrato output offset"),
     (0x602A, 0x602C, "power-up marker"),
     (0x602C, 0x602E, "interpolator target snapshot"),
     (0x602E, 0x6030, "interpolator ticks remaining"),

@@ -369,8 +369,8 @@ block is always present — the individual behaviours are what the toggles gate.
 **Switch — latch / regular / off** (`[arp].switch = "latch"`). In the latch
 position keys are toggles: press to hold, press again to release, and leaving
 the position releases everything. Implemented by routing both note-off pointer
-pools (`0x80005B18`, `0x80006278`) through `latch_noteoff` (`0x8001A280`), with
-the toggle test in the note-on wrapper and the release-all watch in
+pools (`0x80005B18`, `0x80006278`) through `latch_v2` (`0x8001A280`), with the
+toggle test in `latch_pitch_toggle` (`0x8001A930`) and the release-all watch in
 `scan_housekeeping`.
 
 > **Design note.** The release path splits its bookkeeping between caller and

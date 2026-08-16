@@ -103,7 +103,45 @@ failed attempt leaves the instrument as it was.
 
 ## Changing the firmware's behaviour
 
-Everything that is a choice lives in `config/218e.toml`.
+Everything that is a choice lives in `config/218e.toml`. Every setting is
+commented in place with the reasoning behind its value; this is the index, so
+you can see what exists without reading the whole file. Defaults are the
+shipped ones.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `[knobs].knob1`–`knob4` | `arp_order`, `arp_rhythm`, `arp_octaves`, `vibrato` | Panel knobs outside edit mode. `"factory"` on any one hands just that knob back. |
+| `[arp].switch` | `latch` | Three-position switch becomes latch / regular / off. |
+| `[midi].poly_default` | `off` | Polyphonic MIDI off on first boot and after a factory reset; the edit-mode choice is then saved and restored. |
+| `[pressure].multi_key` | `max` | Pressure source with several keys held: `max`, `mean` or `factory` (last key touched). |
+| `[pressure].common_mode` | `true` | Subtract the per-key hovering-hand proximity lift. |
+| `[pressure].proximity_reference` | `300` | Raw count above which a neighbouring key's reading counts as proximity. Lower = stronger rejection. |
+| `[pressure].black_key_scale` | `1.2` | Multiplies black-key readings so both colours share one calibration window. `1.0` disables. |
+| `[pressure].output_smoothing` | `5` | Length in 1 ms ticks of the DAC output ramp. `0` gives the plain zero-order-hold staircase. |
+| `[pressure].resolution_bits` | `4` | Fractional bits carried through the pressure chain. `0` restores integer arithmetic. |
+| `[pressure].smoothing_taps` | `8` | Growing-average depth, 8..24 taps (40..120 ms). |
+| `[pressure.calibration].floor` / `ceiling` | `592` / `893` | Post-flash pressure window in raw counts. Its width sets the noise gain. |
+| `[pressure.calibration].trim_mode` | `scale` | `scale` = edit knob 1 multiplies both endpoints; `independent` = knobs 1 and 3 trim ceiling and floor separately. |
+| `[pressure.calibration].trim_span` | `512` | How far those knobs can trim, in raw counts. |
+| `[pressure.curve].span` / `onset_db` | `913` / `-10.0` | The 218r response curve: its working range, and the output level at the first count above the floor. |
+| `[pressure.curve].default_level` | `0` | Curve amount after a flash, 0 (linear) to 31 (full 218r). Edit knob 4 still sets it live. |
+| `[pressure.curve].onset_fade` | `60` | Ramps the onset step in over this many curve counts so soft notes do not cut off abruptly. `0` = pure step. |
+| `[portamento].pressure_blend` | `true` | Pressure-weighted portamento: pitch is pulled toward the harder-pressed of the held keys. |
+| `[portamento].zero_snap` | `true` | Forces a true zero glide time at the bottom of the portamento knob. |
+| `[tuning].slots` | Sabat II, ADDAC JI, 12TET | The three tuning tables. Slot 0 is the power-on default; `"factory"` copies the original temperament. |
+| `[tuning].base_units` / `units_per_octave` | `485` / `484` | Factory key-table constants. Changing them retunes the whole instrument. |
+| `[pitch].calibration_csv` | `calibration/218e-pitch-calibration.csv` | The single pitch-CV correction table (octave scaling plus per-key tracking). |
+| `[pitch].dac_counts` / `dac_vref` / `dac_gain` | `4096` / `2.5` / `4.09` | Pitch DAC scaling — 400.59 counts per volt at the jack. |
+| `[diagnostics].scan_profiler` | `false` | Times every event handler with the cycle counter and reports through the telemetry. |
+| `[diagnostics].pressure_ab_switch` | `false` | Repurposes the octave switch to A/B our pressure law against the factory one. Freezes the octave setting at its power-on position. |
+| `[diagnostics].telemetry_smoothing` | `false` | Reports the live filter depth and interpolation length in the scan-component telemetry fields. |
+| `[diagnostics].factory_gain_shift` | `3` | The factory law's gain as a power of two, for the A/B above. |
+| `[timing].scan_period_ms` | `5` | The instrument's master update clock. Also scales glide, vibrato and attack rates — measure before lowering. |
+
+`scan_profiler` and `telemetry_smoothing` share the same two telemetry fields,
+and the build refuses to enable both at once. `[firmware]` and `[tools]` hold
+paths and checksums rather than behaviour; `golden_sha256` is rewritten by the
+build and checked by `tools/test.py --golden`.
 
 **Retune.** Drop a Scala file into `tunings/`, list it in `[tuning].slots`, and
 rebuild. Files must have 12 degrees and a 2/1 octave — the key table repeats
