@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "fdcc43374da5275fc389afe20ed7515ec0c6c5f7cad76b99d1cdad444ffe9bd5"
+golden_sha256  = "3c2f1cec3495cba7e2b0f52054f1e2f199945e23980a3de4101bd22d50af8a61"
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +334,13 @@ pressure_ab_switch = false
 # These are currently build-time defaults; the attempted live edit-knob-2
 # control was removed because its ADC mirror did not follow the physical knob.
 telemetry_smoothing = false
+
+# Report what the latch toggle saw on its last press: scan A = the transpose
+# term it built the pressed pitch from, scan B = the pressed pitch.  For
+# diagnosing a latched note that will not release — press the same key
+# repeatedly with the arp running and watch whether the two move when the key
+# has not.  Shares the same telemetry fields as the two above.
+latch_probe = false
 factory_gain_shift = 3
 
 

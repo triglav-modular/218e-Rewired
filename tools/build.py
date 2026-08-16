@@ -87,6 +87,7 @@ FEATURE_MAP = {
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
+    "diagnostics.latch_probe": ([], ["latch_probe"]),
     "diagnostics.pressure_ab_switch": (
         ["octswitch_sync"] + [f"octsw_redirect_{i}" for i in range(1, 10)],
         ["pressure_ab_switch"],
@@ -109,6 +110,7 @@ ENABLED_WHEN = {
     "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
     "diagnostics.telemetry_smoothing": True,
+    "diagnostics.latch_probe": True,
     "diagnostics.pressure_ab_switch": True,
 }
 
@@ -545,6 +547,7 @@ RAM_REGIONS = [
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
     (0x6098, 0x609A, "vibrato error accumulator"),
+    (0x609A, 0x609E, "latch probe snapshot"),
     (0x6100, 0x613A, "corrected-pressure cache"),
 ]
 
@@ -944,6 +947,12 @@ def main() -> None:
     check_ram_regions()
     check_ram_coverage()
     blocks, features, summary = resolve_flags(cfg)
+    claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe")
+              if features.get(n)]
+    if len(claims) > 1:
+        raise SystemExit(
+            "diagnostics: " + " and ".join(claims) + " all claim the same two "
+            "telemetry fields; enable one at a time")
     if features.get("scan_profiler") and features.get("telemetry_smoothing"):
         raise SystemExit(
             "diagnostics: scan_profiler and telemetry_smoothing both claim the "

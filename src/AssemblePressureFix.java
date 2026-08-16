@@ -709,6 +709,21 @@ public class AssemblePressureFix extends GhidraScript {
             emit("ST.H R7[-0x10],R8");
             emit("LD.UH R8,R10[0x2]");
             emit("ST.H R7[-0x12],R8");
+        } else if (feature("latch_probe")) {
+
+            // Diagnostic: what the latch toggle saw on its last press.
+            // CC 114/115 is the live transpose it built the pressed pitch
+            // from (RAM 0x609A), CC 116/117 the pressed pitch itself
+            // (0x609C).  Press the same key repeatedly with the arp running:
+            // if the transpose moves while the key does not, the shared term
+            // is drifting; if it holds and the press still fails to match, a
+            // stamp is wrong instead.
+            emit("MOV R10,0x609a");
+            emit("LD.UH R8,R10[0x0]");      // as of the last latch press
+            emit("ST.H R7[-0x10],R8");
+            emit("MOV R10,0x60a0");
+            emit("LD.UH R8,R10[0x0]");      // live now
+            emit("ST.H R7[-0x12],R8");
         } else if (feature("telemetry_smoothing")) {
 
             // Diagnostic: the two scan-component fields carry the live
@@ -1906,6 +1921,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x60a0");
         emit("LD.SH R8,R8[0x0]");
         emit("ADD R11,R8");
+        if (feature("latch_probe")) {
+            // Snapshot both halves of the comparison before anything acts on
+            // them, so a failed match can be read back afterwards.
+            emit("MOV R9,0x609a");
+            emit("ST.H R9[0x0],R8");        // the transpose term, as seen here
+        }
         emit("LD.UB R8,R10[0x340]");
         emit("CP.W R8,0x1");
         emit("BR{ne} 0x8001a9c0");

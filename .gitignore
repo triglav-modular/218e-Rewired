@@ -18,6 +18,10 @@ ProgramLEM218.command
 Buchla 218 Firmware Flashing Guide.pdf
 changelog.txt
 
+# Diagnostic image, rebuilt on demand from config/218e.toml with
+# [diagnostics].latch_probe = true.
+mac/firmware/218eV3_v369_LatchProbe_DFU.hex
+
 # --- captures, logs, scratch ---
 LEM218_PressureReadout_*.csv
 *_fwflash_log.txt
