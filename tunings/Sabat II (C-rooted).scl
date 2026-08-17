@@ -1,0 +1,49 @@
+! Sabat II (C-rooted).scl
+!
+! Marc Sabat, "Well temperament revisited: two tunings for two keyboards
+! a quartertone apart in extended JI" (Berlin, 19 February 2019), main
+! keyboard of Sabat II.
+!
+! Sabat notates the tuning normalized from A (1/1 = A, Kammerton A = 0c).
+! This build's key table plants degree 0 on the bottom key, which is a C,
+! so the published A-rooted list is rotated here by 32/27 (C is 32/27 above
+! A) to put each ratio on the key Sabat intended.
+!
+! Reference pitch is A, which Sabat fixes at the Kammerton (A = 0 cents).
+! Tune the A key to 440.000 Hz and every other key falls on the figures
+! below; "tuner" is what a chromatic tuner set to A440 will read.
+!
+! key   degree      ratio to A   Hz (A4=440)   tuner
+! C     1/1          32/27          260.741    -5.9
+! Db    16/15        512/405        278.123    +5.9
+! D     9/8          4/3            293.333    -2.0
+! Eb    81/68        24/17          310.588    -3.0
+! E     81/64        3/2            330.000    +2.0
+! F     4/3          128/81         347.654    -7.8
+! F#    729/512      27/16          371.250    +5.9
+! G     3/2          16/9           391.111    -3.9
+! Ab    51/32        17/9           415.556    +1.0
+! A     27/16        1/1            440.000     0.0
+! Bb    3645/2048    135/128        464.062    -7.8
+! B     243/128      9/8            495.000    +3.9
+!
+! Other octaves are these figures halved or doubled.  Note that with
+! base_units = 485 the bottom C sits at nominal 12-TET, which puts A 5.87
+! cents sharp (441.5 Hz); pulling A down to 440 is an absolute-pitch trim on
+! the 208p or in the pitch calibration, not a property of this scale.
+!
+Sabat II (C-rooted)
+ 12
+!
+ 16/15
+ 9/8
+ 81/68
+ 81/64
+ 4/3
+ 729/512
+ 3/2
+ 51/32
+ 27/16
+ 3645/2048
+ 243/128
+ 2/1

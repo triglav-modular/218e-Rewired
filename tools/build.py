@@ -46,6 +46,10 @@ BUILD = REPO / "build"
 # instrument's original temperament bit-exact instead of re-deriving it.
 FACTORY_KEY_TABLE = 0x80016574
 
+# Key names by semitone above the bottom key of the 218e, which is a C.  Used
+# only to say in the build log which note a tuning is anchored to.
+NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+
 # The pitch remap clamps its semitone index to 0x4D and interpolates against
 # index+1, so the calibration table must supply 79 entries.  A shorter table
 # would leave the rest of the fixed table area as assembler padding, which the
@@ -184,10 +188,36 @@ def factory_tuning(memory: dict[int, int]) -> list[int]:
         )
 
 
-def tuning_table(cents: list[float], base: int, per_octave: int) -> list[int]:
-    """32 key-table entries: octave-periodic, `per_octave` units per octave."""
+def anchor_offset(cents: list[float], reference_key: int) -> float:
+    """Cents to shift a scale so `reference_key` lands on the 12-TET grid.
+
+    A scale's degree 0 sits on the bottom key, but its degrees do not otherwise
+    agree with equal temperament, so each scale puts a given key at its own
+    pitch.  Shifting by this offset pins one chosen key -- the note you tune the
+    instrument to -- to the same place in every scale, so switching slots never
+    moves it and one trim on the 208p serves all three.
+    """
+    if not isinstance(reference_key, int) or isinstance(reference_key, bool):
+        raise ValueError(f"[tuning].reference_key must be a whole number, got {reference_key!r}")
+    if not 0 <= reference_key <= 11:
+        raise ValueError(
+            f"[tuning].reference_key is {reference_key}; it is a semitone above the "
+            "bottom key (a C), so it must be 0..11 — 0 = C, 9 = A"
+        )
+    return 100.0 * reference_key - cents[reference_key]
+
+
+def tuning_table(cents: list[float], base: int, per_octave: int,
+                 offset: float = 0.0) -> list[int]:
+    """32 key-table entries: octave-periodic, `per_octave` units per octave.
+
+    `offset` shifts the whole table by a number of cents, for the anchoring
+    above.  It is applied before quantising, so it costs no extra resolution:
+    the table's own step is 1200/`per_octave` cents either way.
+    """
     return [
-        base + math.floor((1200 * (k // 12) + cents[k % 12]) * per_octave / 1200 + 0.5)
+        base + math.floor(
+            (1200 * (k // 12) + cents[k % 12] + offset) * per_octave / 1200 + 0.5)
         for k in range(32)
     ]
 
@@ -877,17 +907,25 @@ def main() -> None:
         ),
         "pitch_remap": pitch_table(cfg, read_calibration(calibration)),
     }
+    reference_key = tuning.get("reference_key", 9)
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             tables[f"tuning_slot{index}"] = factory_tuning(memory)
-            print(f"  tuning slot {index}: factory temperament (from the base image)")
+            print(f"  tuning slot {index}: factory temperament (from the base image, "
+                  "copied bit-exact, so the anchor does not apply)")
             continue
         path = REPO / relative
         cents = parse_scala(path)
+        try:
+            offset = anchor_offset(cents, reference_key)
+        except ValueError as error:
+            raise SystemExit(str(error))
         tables[f"tuning_slot{index}"] = tuning_table(
-            cents, tuning["base_units"], tuning["units_per_octave"]
+            cents, tuning["base_units"], tuning["units_per_octave"], offset
         )
-        print(f"  tuning slot {index}: {path.name}")
+        anchor = NOTE_NAMES[reference_key]
+        print(f"  tuning slot {index}: {path.name}"
+              f"  ({anchor} anchored, {offset:+.2f} cents)")
     if len(tuning["slots"]) != 3:
         raise SystemExit("[tuning].slots must list exactly three scales")
 

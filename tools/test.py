@@ -72,7 +72,7 @@ def test_pitch_table(cfg: dict) -> None:
 
 def test_scala() -> None:
     print("scala parsing")
-    for name in ("Sabat II", "ADDAC Just Intonation", "12TET"):
+    for name in ("Sabat II", "Sabat II (C-rooted)", "ADDAC Just Intonation", "12TET"):
         cents = B.parse_scala(REPO / "tunings" / f"{name}.scl")
         ok = len(cents) == 12 and cents[0] == 0 and all(
             b > a for a, b in zip(cents, cents[1:]))
@@ -103,6 +103,43 @@ def test_tables(cfg: dict) -> None:
     check("tuning octaves are exact", all(
         table[k + 12] - table[k] == tuning["units_per_octave"] for k in range(20)))
     check("tuning table ascends", table == sorted(table))
+
+    # The anchor's whole point is that the reference key holds still across
+    # slots, so check the shipped scales agree there rather than checking the
+    # offsets one at a time.
+    reference_key = tuning.get("reference_key", 9)
+    anchored = {}
+    for name in ("Sabat II (C-rooted)", "ADDAC Just Intonation", "12TET"):
+        cents = B.parse_scala(REPO / "tunings" / f"{name}.scl")
+        offset = B.anchor_offset(cents, reference_key)
+        anchored[name] = B.tuning_table(cents, tuning["base_units"],
+                                        tuning["units_per_octave"], offset)
+    entries = {t[reference_key] for t in anchored.values()}
+    check("every slot puts the reference key at the same pitch", len(entries) == 1,
+          f"{ {n: t[reference_key] for n, t in anchored.items()} }")
+
+    # And that pitch is the 12-TET one, so tuning to it needs no correction.
+    equal = anchored["12TET"]
+    check("the reference key sits on the 12-TET grid",
+          entries == {equal[reference_key]})
+    for name, t in anchored.items():
+        check(f"{name} stays ascending and octave-exact when anchored",
+              t == sorted(t) and all(
+                  t[k + 12] - t[k] == tuning["units_per_octave"] for k in range(20)))
+
+    # An anchor of 0 is the old unshifted behaviour, since degree 0 is 0 cents.
+    plain12 = B.parse_scala(REPO / "tunings" / "12TET.scl")
+    check("anchoring on the bottom key is a no-op",
+          B.anchor_offset(plain12, 0) == 0.0 and B.tuning_table(
+              plain12, tuning["base_units"], tuning["units_per_octave"], 0.0)
+          == B.tuning_table(plain12, tuning["base_units"], tuning["units_per_octave"]))
+
+    raises("out-of-range reference key rejected",
+           lambda: B.anchor_offset(plain12, 12), "0..11")
+    raises("negative reference key rejected",
+           lambda: B.anchor_offset(plain12, -1), "0..11")
+    raises("non-integer reference key rejected",
+           lambda: B.anchor_offset(plain12, 9.0), "whole number")
 
     curve = cfg["pressure"]["curve"]
     plain = B.pressure_curve(curve["span"], curve["onset_db"], 0)

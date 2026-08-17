@@ -142,8 +142,11 @@ shipped ones.
 
 `scan_profiler` and `telemetry_smoothing` share the same two telemetry fields,
 and the build refuses to enable both at once. `[firmware]` and `[tools]` hold
-paths and checksums rather than behaviour; `golden_sha256` is rewritten by the
-build and checked by `tools/test.py --golden`.
+paths and checksums rather than behaviour. `golden_sha256` records the image
+this configuration is meant to produce; `tools/test.py --golden` rebuilds and
+compares against it. The build does not rewrite it — when you change something
+that legitimately alters the image, update it by hand from the SHA the build
+prints, which is what makes every other change show up as a test failure.
 
 **Retune.** Drop a Scala file into `tunings/`, list it in `[tuning].slots`, and
 rebuild. Files must have 12 degrees and a 2/1 octave — the key table repeats
@@ -151,6 +154,23 @@ every octave across the 32 keys, so anything else would put the octave switches
 out of tune, and the build rejects it. Slot 0 is the power-on default. The
 special value `"factory"` copies the instrument's original temperament
 bit-exact out of the base image.
+
+A Scala file says nothing about which note its degree 0 is, and degree 0 always
+lands on the bottom key, which is a C. A scale published against some other
+reference has to be rotated before it will sit on the intended keys — `Sabat
+II.scl` is Marc Sabat's own A-rooted listing, and `Sabat II (C-rooted).scl` is
+the same tuning rotated by 32/27 so that its Pythagorean chain falls on
+F-C-G-D-A-E-B-F# as designed. Slot 0 uses the rotated one; the original is kept
+for reference.
+
+`[tuning].reference_key` is the note you tune the instrument to, as a semitone
+above that bottom C (0 = C, 9 = A, the default). Each scale is shifted so this
+key lands on the 12-TET grid, which pins it to the same pitch in every slot —
+tune the 208p once, at that note, and switching slots no longer moves it. The
+shift is derived from each scale, not configured: Sabat II needs −5.87 cents
+and the ADDAC scale +15.64 to bring their A's together. The build log prints
+the offset it used for each slot. A `"factory"` slot is copied verbatim and is
+not shifted.
 
 **Recalibrate the pitch CV.** All of it — the octave scaling that used to live
 in the uTune and each key's own tracking error — is one table,

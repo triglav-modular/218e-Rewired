@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "a99311bed2e466f35e6ac08f1949edfd4a7070752525583d636a75a4021ebffb"
+golden_sha256  = "b69f42f170aa9585fc3eabab2ab7988bfc737c47f1526ddb0b16d7037f8acab1"
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +281,13 @@ blend_slew_shift = 2
 # table repeats every octave across the 32 keys.
 [tuning]
 slots = [
-    "tunings/Sabat II.scl",              # slot 0 — power-on default
+    "tunings/Sabat II (C-rooted).scl",   # slot 0 — power-on default.  Sabat
+                                         #          publishes Sabat II with
+                                         #          1/1 = A; degree 0 lands on
+                                         #          the bottom key, a C, so the
+                                         #          rotated-by-32/27 file is the
+                                         #          one that puts each ratio on
+                                         #          the intended key.
     "tunings/ADDAC Just Intonation.scl", # slot 1
     "tunings/12TET.scl",                 # slot 2 — mathematically exact 12-TET,
                                          #          and the reference the pitch
@@ -292,6 +298,24 @@ slots = [
                                          #          which is up to 1.65 cents off
                                          #          exact 12-TET.
 ]
+
+# The note you tune the instrument to, as a semitone above the bottom key
+# (which is a C): 0 = C, 9 = A.  Each scale is shifted so this key lands on the
+# 12-TET grid, which pins it to the same pitch in all three slots — tune the
+# 208p once, at this note, and switching slots never moves it.
+#
+# Without this, each scale put its own degree 0 on the bottom C and every other
+# key fell where the ratios happened to land, so the slots disagreed about A by
+# up to 21 cents and the 208p needed retrimming on every switch.
+#
+# The shift is a property of each scale, not a free parameter:
+#   slot 0  Sabat II   -5.87c   its A is 27/16 above the C, 5.87c sharp of ET
+#   slot 1  ADDAC JI  +15.64c   its A is 5/3, 15.64c flat of ET
+#   slot 2  12-TET      0.00c   already agrees with ET everywhere
+# Anchoring ADDAC on A necessarily moves its tonic C 15.64c sharp; set this to
+# 0 instead if you would rather have that scale's tonic at a standard C and
+# retune when you select it.
+reference_key    = 9
 
 # Key-table units.  The bottom key sits at `base_units`, and every octave adds
 # `units_per_octave`.  These are the factory table's own constants — changing
