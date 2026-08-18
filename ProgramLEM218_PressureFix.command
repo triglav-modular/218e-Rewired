@@ -117,7 +117,19 @@ if command -v caffeinate >/dev/null 2>&1; then
 fi
 
 [ "$(uname -s)" = "Darwin" ] || fail "This launcher is for macOS."
-[ -f "$FIRMWARE" ] || fail "Patched firmware is missing: $FIRMWARE"
+if [ ! -f "$FIRMWARE" ]; then
+    echo "No firmware image found at:"
+    echo "  $FIRMWARE"
+    echo
+    echo "None ships with this package: the patched image is Buchla's firmware"
+    echo "with our changes in it, so it is not ours to redistribute. Build it"
+    echo "from your own copy of the factory image:"
+    echo
+    echo "  1. copy your 218eV3_v369_DFU.hex into mac/firmware/"
+    echo "  2. python3 tools/build.py --no-ghidra"
+    echo
+    fail "Nothing to flash."
+fi
 [ -x "$SENDMIDI" ] || fail "sendmidi is missing or not executable: $SENDMIDI"
 
 actual_sha256="$(shasum -a 256 "$FIRMWARE" | awk '{print $1}')"

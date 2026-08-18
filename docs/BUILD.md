@@ -26,6 +26,20 @@ export GHIDRA_HOME=/path/to/ghidra_12.1.2_PUBLIC
 
 ## Build
 
+You supply the factory image. None ships with this repository: the stock
+firmware is Buchla's and the patched image is that firmware with these changes
+in it, so neither is ours to redistribute. Copy your own — it comes with the
+official flashing kit — to the path in `config/218e.toml`:
+
+```bash
+cp /path/to/218eV3_v369_DFU.hex mac/firmware/
+```
+
+The build checks it against
+`565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47` before
+anything is applied, so a wrong or altered file is rejected rather than
+patched.
+
 ```bash
 python3 tools/build.py
 ```

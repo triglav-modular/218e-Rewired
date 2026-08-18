@@ -978,6 +978,18 @@ def main() -> None:
 
     # --- factory image ----------------------------------------------------
     factory = REPO / cfg["firmware"]["factory_hex"]
+    if not factory.exists():
+        raise SystemExit(
+            f"factory image not found: {cfg['firmware']['factory_hex']}\n"
+            "\n"
+            "  No firmware image ships with this repository — the factory image\n"
+            "  is Buchla's, and the patched one is that firmware with our\n"
+            "  changes in it, so neither is ours to redistribute.\n"
+            "\n"
+            "  Copy your own 218eV3_v369_DFU.hex to that path.  It comes with\n"
+            "  the official Buchla flashing kit; the build checks it against\n"
+            f"  SHA-256 {cfg['firmware']['factory_sha256']}\n"
+            "  before touching it, so a wrong or altered file is rejected.")
     digest = hashlib.sha256(factory.read_bytes()).hexdigest()
     if digest != cfg["firmware"]["factory_sha256"]:
         raise SystemExit(

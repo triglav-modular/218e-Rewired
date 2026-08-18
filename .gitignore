@@ -18,9 +18,17 @@ ProgramLEM218.command
 Buchla 218 Firmware Flashing Guide.pdf
 changelog.txt
 
-# Diagnostic image, rebuilt on demand from config/218e.toml with
-# [diagnostics].latch_probe = true.
-mac/firmware/218eV3_v369_LatchProbe_DFU.hex
+# --- firmware images ---
+# No firmware image is distributed from this repository.
+#
+# The factory image is Buchla's, and is not ours to redistribute; you already
+# have it if you have the official flashing kit.  The patched image is that
+# same firmware with our patches spliced in, so it is not ours to redistribute
+# either.  What this repository ships is the recipe: put your own factory
+# image at the path in config/218e.toml and build.
+mac/firmware/*.hex
+
+# Diagnostic updater, rebuilt on demand alongside the latch-probe image.
 ProgramLEM218_LatchProbe.command
 
 # --- captures, logs, scratch ---

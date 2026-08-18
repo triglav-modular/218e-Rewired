@@ -7,9 +7,18 @@ the four preset-voltage knobs and the arpeggiator switch.
 
 | | |
 |---|---|
-| **Base image** | `mac/firmware/218eV3_v369_DFU.hex` (AT32UC3B1256, AVR32) |
-| **Output** | `mac/firmware/218eV3_v369_PressureFix_DFU.hex` |
-| **Settings** | [`config/218e.toml`](config/218e.toml) |
+| **Base image** | stock v36.9, **you supply it** (AT32UC3B1256, AVR32) |
+| **Output** | `mac/firmware/218eV3_v369_PressureFix_DFU.hex`, built locally |
+| **Settings** | [`config/218e.toml`](config/218e.toml) — seven options |
+| **Licence** | [Unlicense](UNLICENSE) (public domain), for this repository's own work |
+
+> **No firmware image ships here.** The factory image is Buchla's, and the
+> patched one is that firmware with these changes spliced in, so neither is
+> ours to redistribute. What this repository is, is the recipe. Put your own
+> `218eV3_v369_DFU.hex` — the one that comes with the official flashing kit —
+> in `mac/firmware/`, and the build produces the patched image locally. The
+> build verifies it by SHA-256 first, so a wrong file is rejected rather than
+> flashed.
 
 ## What it does
 
@@ -72,7 +81,8 @@ entry can be handed back in `config/218e.toml`.
 ## Build
 
 ```bash
-python3 tools/build.py     # build the firmware
+cp /path/to/218eV3_v369_DFU.hex mac/firmware/   # your own copy, once
+python3 tools/build.py --no-ghidra              # build the firmware
 python3 tools/test.py      # regression tests (add --golden to rebuild and compare)
 ```
 
@@ -108,7 +118,7 @@ tunings/      Scala files (12 degrees, 2/1 octave) — opt in
 calibration/  measured per-key tracking error — opt in, instrument-specific
 src/          Ghidra scripts: the AVR32 assembler and verification tools
 tools/        build.py — config to firmware; avr32/ — the Ghidra-free build
-mac/          firmware images and the macOS flashing kit
+mac/          the macOS flashing kit; put your factory image in mac/firmware/
 docs/         what changed and how to build
 ```
 
