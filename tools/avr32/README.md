@@ -33,7 +33,7 @@ To re-check against Ghidra after changing the Java:
 
 ```bash
 $GHIDRA_HOME/support/analyzeHeadless build/ghidra_project buchla218 \
-  -import mac/firmware/218eV3_v369_DFU.hex -processor avr32:BE:32:default \
+  -import firmware/218eV3_v369_DFU.hex -processor avr32:BE:32:default \
   -noanalysis -readOnly -scriptPath src \
   -postScript AssemblePressureFix.java build/build.properties \
   > build/reference.ghidra.log

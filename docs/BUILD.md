@@ -32,7 +32,7 @@ in it, so neither is ours to redistribute. Copy your own — it comes with the
 official flashing kit — to the path in `config/218e.toml`:
 
 ```bash
-cp /path/to/218eV3_v369_DFU.hex mac/firmware/
+cp /path/to/218eV3_v369_DFU.hex firmware/
 ```
 
 The build checks it against
@@ -46,7 +46,7 @@ python3 tools/build.py
 
 This reads `config/218e.toml`, generates the tables, assembles every patch,
 applies them to the factory image, and writes
-`mac/firmware/218eV3_v369_PressureFix_DFU.hex`. It also rewrites the updater's
+`firmware/218eV3_v369_PressureFix_DFU.hex`. It also rewrites the updater's
 `EXPECTED_SHA256`, so the flasher always matches the image you just built.
 
 The first run imports the factory hex into a Ghidra project under `build/` and
@@ -120,7 +120,18 @@ notarisation.
 
 ## Flashing
 
-Run `ProgramLEM218_PressureFix.command`.
+Put the built image in `firmware/` and run the flasher for your platform —
+`ProgramLEM218_PressureFix.command` on macOS, `ProgramLEM218_PressureFix.bat`
+on Windows. Both do the same sequence, and the build rewrites the expected
+checksum and printed instructions in each, so neither can describe or install a
+build it was not generated for.
+
+The Windows script needs the tools from Buchla's own `windows\` kit, which is
+not redistributed here, and the DFU device needs the WinUSB driver installed
+once with the Zadig executable that kit bundles. Buchla's own
+`ProgramLEM218.bat` is **not** a substitute: it verifies no checksum, checks
+neither `BOOTPROT` nor `ISP_FORCE`, does not gate on read-back, and flashes
+whichever `.hex` it finds first.
 
 The updater verifies the image checksum, confirms `BOOTPROT=3` (the 8 KiB
 bootloader region is protected), programs, and validates by read-back. If the
@@ -243,7 +254,7 @@ its intended design:
 
 ```bash
 $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
-  -import mac/firmware/218eV3_v369_PressureFix_DFU.hex \
+  -import firmware/218eV3_v369_PressureFix_DFU.hex \
   -processor "avr32:BE:32:default" \
   -scriptPath src \
   -postScript RecoverPressurePatch.java \

@@ -29,7 +29,7 @@ OUT = REPO / "tools" / "avr32" / "corpus.json"
 #
 #   python3 - <<<'...force every block./feature. key to 1...'   (see README)
 #   $GHIDRA_HOME/support/analyzeHeadless build/ghidra_project buchla218 \
-#       -import mac/firmware/218eV3_v369_DFU.hex -processor avr32:BE:32:default \
+#       -import firmware/218eV3_v369_DFU.hex -processor avr32:BE:32:default \
 #       -noanalysis -readOnly -scriptPath src \
 #       -postScript AssemblePressureFix.java build/build.allon.properties
 # Merge every log present.  A single build never covers the whole program:

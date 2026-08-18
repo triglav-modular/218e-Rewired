@@ -85,13 +85,15 @@ pressure_portamento = true
 # Paths and checksums (not behaviour)
 # ---------------------------------------------------------------------------
 [firmware]
-factory_hex    = "mac/firmware/218eV3_v369_DFU.hex"
+factory_hex    = "firmware/218eV3_v369_DFU.hex"
 factory_sha256 = "565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-output_hex     = "mac/firmware/218eV3_v369_PressureFix_DFU.hex"
+output_hex     = "firmware/218eV3_v369_PressureFix_DFU.hex"
 
-# The macOS updater refuses to flash an image whose checksum it does not know.
-# The build rewrites that script's EXPECTED_SHA256 so the two can never drift.
-updater        = "ProgramLEM218_PressureFix.command"
+# The updaters refuse to flash an image whose checksum they do not know.  The
+# build rewrites their EXPECTED_SHA256 and the instructions they print, so a
+# flasher can never describe or install a build it was not generated for.
+updaters       = ["ProgramLEM218_PressureFix.command",
+                  "ProgramLEM218_PressureFix.bat"]
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,

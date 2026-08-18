@@ -26,7 +26,7 @@ changelog.txt
 # same firmware with our patches spliced in, so it is not ours to redistribute
 # either.  What this repository ships is the recipe: put your own factory
 # image at the path in config/218e.toml and build.
-mac/firmware/*.hex
+firmware/*.hex
 
 # Diagnostic updater, rebuilt on demand alongside the latch-probe image.
 ProgramLEM218_LatchProbe.command

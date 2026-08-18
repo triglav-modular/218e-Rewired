@@ -868,10 +868,14 @@ def replace_atomically(path: Path, text: str) -> None:
     The replacement carries the temporary file's permissions, so the original
     mode has to be copied across first — otherwise this silently strips the
     execute bit from the updater and Finder refuses to launch it.
+
+    Bytes are written exactly as given: text mode would translate newlines on
+    a Windows host, which would corrupt the line endings this deliberately
+    preserves.
     """
     mode = path.stat().st_mode if path.exists() else None
     temporary = path.with_name(path.name + ".new")
-    temporary.write_text(text)
+    temporary.write_bytes(text.encode())
     if mode is not None:
         os.chmod(temporary, stat.S_IMODE(mode))
     os.replace(temporary, path)
@@ -891,7 +895,20 @@ def knob_line(cfg: dict) -> str:
     return f'echo "Outside edit mode: {", ".join(active)}; the others are factory."'
 
 
-def updater_summary(cfg: dict) -> str:
+def bat_echo(text: str) -> str:
+    """One ECHO line for cmd.exe.
+
+    Percent signs introduce variables and must be doubled; the redirection and
+    pipe characters need caret escapes; and the em dashes in the prose are not
+    in cmd's default code page, so they become hyphens rather than mojibake.
+    """
+    text = text.replace("%", "%%").replace("—", "-")
+    for ch in "&<>|^":
+        text = text.replace(ch, "^" + ch)
+    return "ECHO " + text if text else "ECHO."
+
+
+def updater_summary(cfg: dict, dialect: str = "sh") -> str:
     """The panel description the flasher prints, derived from this config."""
     calib, curve = cfg["pressure"]["calibration"], cfg["pressure"]["curve"]
     knobs = []
@@ -935,7 +952,16 @@ def updater_summary(cfg: dict) -> str:
         lines.append(f'echo "  3. Adjust knob 3 until it reports a floor near {calib["floor"]}."')
         lines.append('echo "  4. Turn knob 4 right to taste, then leave edit mode to save."')
     lines.append("# --- END GENERATED SUMMARY ---")
-    return "\n".join(lines)
+    if dialect == "sh":
+        return "\n".join(lines)
+    # Re-emit the same text for cmd.exe: same words, same order, different
+    # quoting, so the two flashers can never describe different builds.
+    out = ["REM --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---"]
+    for line in lines[1:-1]:
+        match = re.match(r"^echo \"(.*)\"$", line)
+        out.append(bat_echo(match.group(1)) if match else bat_echo(""))
+    out.append("REM --- END GENERATED SUMMARY ---")
+    return "\n".join(out)
 
 
 def main() -> None:
@@ -1270,34 +1296,46 @@ def main() -> None:
     # Stage the updater's edits too, so a malformed updater cannot leave a new
     # image paired with an old flasher.  Both tracked outputs are validated
     # first, then written together.
-    staged_updater: tuple[Path, str, str] | None = None
-    updater_name = cfg["firmware"].get("updater")
-    if updater_name:
+    staged_updaters: list[tuple[Path, str, str]] = []
+    names = cfg["firmware"].get("updaters") or (
+        [cfg["firmware"]["updater"]] if cfg["firmware"].get("updater") else [])
+    for updater_name in names:
         updater = REPO / updater_name
-        text = updater.read_text()
+        if not updater.exists():
+            raise SystemExit(f"{updater_name}: listed in [firmware].updaters but missing")
+        # cmd.exe scripts are CRLF; keep whatever the file already uses so the
+        # rewrite does not flip line endings underneath it.
+        raw = updater.read_bytes().decode()
+        dialect = "bat" if updater.suffix.lower() == ".bat" else "sh"
+        marker = "REM" if dialect == "bat" else "#"
+        # Matches both quoting styles: the shell's EXPECTED_SHA256="..." and
+        # cmd's SET "EXPECTED_SHA256=...", replacing only the digest so each
+        # file keeps its own syntax.
         patched, count = re.subn(
-            r'EXPECTED_SHA256="[0-9a-f]{64}"', f'EXPECTED_SHA256="{digest}"', text
-        )
+            r'(EXPECTED_SHA256="?)[0-9a-f]{64}',
+            lambda m: m.group(1) + digest, raw)
         if count != 1:
             raise SystemExit(f"{updater_name}: expected exactly one EXPECTED_SHA256 line")
-        # The panel summary is generated from this configuration, so the
-        # instructions the flasher prints can never describe a build it is not
-        # actually installing.
+        # The panel summary is generated from this configuration, so no flasher
+        # can describe a build it is not actually installing.
         patched, count = re.subn(
-            r"# --- BEGIN GENERATED SUMMARY.*?# --- END GENERATED SUMMARY ---",
-            updater_summary(cfg), patched, flags=re.S,
-        )
+            marker + r" --- BEGIN GENERATED SUMMARY.*?" + marker + r" --- END GENERATED SUMMARY ---",
+            updater_summary(cfg, dialect).replace("\\", "\\\\"), patched, flags=re.S)
         if count != 1:
             raise SystemExit(f"{updater_name}: generated-summary markers missing")
-        staged_updater = (updater, patched, text)
+        # The generated block is assembled with \n; a cmd script is CRLF and
+        # mixing the two breaks GOTO across some cmd versions.  Normalise the
+        # whole file to whatever it already used.
+        if "\r\n" in raw:
+            patched = patched.replace("\r\n", "\n").replace("\n", "\r\n")
+        staged_updaters.append((updater, patched, raw))
 
     # Each replacement is atomic (sibling file, then os.replace), so no reader
     # sees a half-written file.  The pair is still written in sequence: an
     # interruption between them can leave a new image beside an old updater,
     # which the flasher's checksum then refuses to flash.
     replace_atomically(out_path, rendered)
-    if staged_updater is not None:
-        updater, patched, text = staged_updater
+    for updater, patched, text in staged_updaters:
         if patched != text:
             replace_atomically(updater, patched)
             print(f"updated {updater.name} checksum and summary")

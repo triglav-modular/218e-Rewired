@@ -8,7 +8,7 @@ the four preset-voltage knobs and the arpeggiator switch.
 | | |
 |---|---|
 | **Base image** | stock v36.9, **you supply it** (AT32UC3B1256, AVR32) |
-| **Output** | `mac/firmware/218eV3_v369_PressureFix_DFU.hex`, built locally |
+| **Output** | `firmware/218eV3_v369_PressureFix_DFU.hex`, built locally |
 | **Settings** | [`config/218e.toml`](config/218e.toml) — seven options |
 | **Licence** | [Unlicense](UNLICENSE) (public domain), for this repository's own work |
 
@@ -16,7 +16,7 @@ the four preset-voltage knobs and the arpeggiator switch.
 > patched one is that firmware with these changes spliced in, so neither is
 > ours to redistribute. What this repository is, is the recipe. Put your own
 > `218eV3_v369_DFU.hex` — the one that comes with the official flashing kit —
-> in `mac/firmware/`, and the build produces the patched image locally. The
+> in `firmware/`, and the build produces the patched image locally. The
 > build verifies it by SHA-256 first, so a wrong file is rejected rather than
 > flashed.
 
@@ -81,7 +81,7 @@ entry can be handed back in `config/218e.toml`.
 ## Build
 
 ```bash
-cp /path/to/218eV3_v369_DFU.hex mac/firmware/   # your own copy, once
+cp /path/to/218eV3_v369_DFU.hex firmware/   # your own copy, once
 python3 tools/build.py --no-ghidra              # build the firmware
 python3 tools/test.py      # regression tests (add --golden to rebuild and compare)
 ```
@@ -104,7 +104,16 @@ and checks the images match.
 
 ## Flash
 
-Run `ProgramLEM218_PressureFix.command`.
+Put the built image in `firmware/`, then run the flasher for your platform:
+
+| Platform | Flasher | Notes |
+|---|---|---|
+| macOS | `ProgramLEM218_PressureFix.command` | needs Rosetta on Apple silicon — `dfu-programmer` is x86_64 only |
+| Windows | `ProgramLEM218_PressureFix.bat` | uses Buchla's own `windows\` kit; the DFU device needs WinUSB installed once with the bundled Zadig |
+
+Both are generated against the image they will install: the build rewrites
+their expected checksum and the instructions they print, so a flasher can never
+describe or install a build it was not made for.
 
 The updater verifies the image checksum and `BOOTPROT=3` before programming and
 validates by read-back. If the keyboard does not enter DFU it aborts **before
@@ -118,7 +127,7 @@ tunings/      Scala files (12 degrees, 2/1 octave) — opt in
 calibration/  measured per-key tracking error — opt in, instrument-specific
 src/          Ghidra scripts: the AVR32 assembler and verification tools
 tools/        build.py — config to firmware; avr32/ — the Ghidra-free build
-mac/          the macOS flashing kit; put your factory image in mac/firmware/
+mac/          the macOS flashing kit; put your factory image in firmware/
 docs/         what changed and how to build
 ```
 

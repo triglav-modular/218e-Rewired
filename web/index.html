@@ -151,11 +151,19 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     <button id="preflight" disabled>3 · Pre-flight checks</button>
   </div>
   <pre id="flashLog" class="mono" style="margin:14px 0 0;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;max-height:220px;overflow:auto;white-space:pre-wrap"></pre>
-  <div class="msg warn" style="margin-top:14px"><strong>Programming is not implemented.</strong>
-  This page can put the instrument into DFU and inspect the bootloader, but it does not
-  erase or write. Flash the downloaded image with <span class="mono">ProgramLEM218_PressureFix.command</span>,
-  which verifies the checksum, confirms the bootloader region is protected, and validates by
-  read-back before leaving DFU.</div>
+  <div class="msg warn" style="margin-top:14px"><strong>Programming is not done here.</strong>
+  This page puts the instrument into DFU and inspects the bootloader, but it does not erase or
+  write — that is left to the flasher for your platform, which verifies the checksum, confirms
+  the bootloader region is protected, and validates by read-back before leaving DFU.
+  <br><br>
+  <strong>macOS</strong> — put the built image in <span class="mono">firmware/</span> and run
+  <span class="mono">ProgramLEM218_PressureFix.command</span>. Needs Rosetta on Apple silicon,
+  because <span class="mono">dfu-programmer</span> is x86_64 only.
+  <br><br>
+  <strong>Windows</strong> — put the built image in <span class="mono">firmware\</span> and run
+  <span class="mono">ProgramLEM218_PressureFix.bat</span>. It uses the tools from Buchla's own
+  <span class="mono">windows\</span> kit, which is not redistributed here, and the DFU device
+  needs the WinUSB driver installed once with the bundled Zadig.</div>
 </section>
 </div>
 

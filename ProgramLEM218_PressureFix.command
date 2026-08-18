@@ -12,13 +12,17 @@ FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/LEM218_PressureFix_fwflash_log.txt"
-EXPECTED_SHA256="24b76ba0aa5610c81dbb0609f3615e48ff4900366adcbc8879156a8e01a422a7"
+EXPECTED_SHA256="e0edd5fbd33eb1e9fda4920c3521b7416b473b06033c2094b9d2b57ed76fd1cc"
 
-# Support launching from either the package root or its mac directory.
+# Support launching from either the package root or its mac directory.  The
+# macOS tools live under mac/, but the firmware image is shared with the
+# Windows flasher and sits at the package root.
 if [ -d "$SCRIPT_DIR/mac/support" ]; then
     RUNTIME_DIR="$SCRIPT_DIR/mac"
+    PACKAGE_ROOT="$SCRIPT_DIR"
 elif [ -d "$SCRIPT_DIR/support" ]; then
     RUNTIME_DIR="$SCRIPT_DIR"
+    PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 else
     echo "Could not find the mac/support directory next to this script."
     echo "Keep this command inside the 218ev3-Firmware-Flashing package."
@@ -26,7 +30,7 @@ else
     exit 1
 fi
 
-FIRMWARE="$RUNTIME_DIR/firmware/218eV3_v369_PressureFix_DFU.hex"
+FIRMWARE="$PACKAGE_ROOT/firmware/218eV3_v369_PressureFix_DFU.hex"
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 DFU_BUNDLED="$RUNTIME_DIR/support/buchla-dfu/dfu/dfu-programmer"
 DFU_SYSTEM="$RUNTIME_DIR/support/dfu-programmer"
@@ -125,7 +129,7 @@ if [ ! -f "$FIRMWARE" ]; then
     echo "with our changes in it, so it is not ours to redistribute. Build it"
     echo "from your own copy of the factory image:"
     echo
-    echo "  1. copy your 218eV3_v369_DFU.hex into mac/firmware/"
+    echo "  1. copy your 218eV3_v369_DFU.hex into firmware/"
     echo "  2. python3 tools/build.py --no-ghidra"
     echo
     fail "Nothing to flash."
@@ -154,10 +158,7 @@ echo "Ordinary edit mode provides the pressure calibration:"
 echo "  knob 1 = pressure calibration, scaling both endpoints (592/893 at centre)"
 echo "  knob 3 = factory behaviour"
 echo "  knob 4 = curve, linear (left) to full 218r (right), default 0"
-echo "Outside edit mode those knobs control the arpeggiator and vibrato."
-echo "Arp switch: latch / regular / off. In latch, keys toggle by"
-echo "sounding pitch, so any octave position can release a note."
-echo "Portamento knob = pressure needed to bend between held notes."
+echo "Outside edit mode all four knobs keep their factory behaviour."
 echo ""
 echo "Calibrating, in ordinary edit mode:"
 echo "  1. Knob 4 fully left for a linear response."

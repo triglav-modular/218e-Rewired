@@ -93,7 +93,7 @@ def main() -> None:
             js = subprocess.run(
                 [str(JSC), "web/generated.js", "web/sha256.js", "web/buildlib.js",
                  "web/test_properties.js", "--", str(TMP / "_opts.json"),
-                 "mac/firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties"),
+                 "firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties"),
                  "config/_web.toml"],
                 capture_output=True, text=True, cwd=REPO)
             out = (js.stdout + js.stderr).strip()
@@ -105,7 +105,7 @@ def main() -> None:
                 [str(JSC), "web/generated.js", "web/sha256.js", "web/buildlib.js",
                  "tools/avr32/encoder.js", "tools/avr32/runtime.js",
                  "tools/avr32/program.js", "web/build.js", "web/test_e2e.js", "--",
-                 str(TMP / "_opts.json"), "mac/firmware/218eV3_v369_DFU.hex"],
+                 str(TMP / "_opts.json"), "firmware/218eV3_v369_DFU.hex"],
                 capture_output=True, text=True, cwd=REPO)
             m = re.search(r"SHA ([0-9a-f]{64})", e2e.stdout)
             web_sha = m.group(1) if m else (e2e.stdout + e2e.stderr).strip()[:60]
