@@ -1293,6 +1293,10 @@ def main() -> None:
             "\n  nothing was written"
         )
 
+    version = cfg["firmware"].get("version", "0.0.0")
+    version_string = f"Rewired {version} ({digest[:8]})"
+    (BUILD / "VERSION").write_text(version_string + "\n")
+
     # every difference from the factory image must be inside a declared patch
     covered = {a + i for a, data, _ in patches for i in range(len(data))}
     stray = [a for a in original if original[a] != memory[a] and a not in covered]
@@ -1328,6 +1332,13 @@ def main() -> None:
             lambda m: m.group(1) + digest, raw)
         if count != 1:
             raise SystemExit(f"{updater_name}: expected exactly one EXPECTED_SHA256 line")
+        # The version travels with the checksum so a flasher can never announce
+        # one build while installing another.
+        patched, count = re.subn(
+            r'(FIRMWARE_VERSION="?)[^"\r\n]*',
+            lambda m: m.group(1) + version_string, patched)
+        if count != 1:
+            raise SystemExit(f"{updater_name}: expected exactly one FIRMWARE_VERSION line")
         # The panel summary is generated from this configuration, so no flasher
         # can describe a build it is not actually installing.
         patched, count = re.subn(
@@ -1356,6 +1367,7 @@ def main() -> None:
     print(f"  {changed} bytes changed, {added} newly programmed into erased flash")
     print("  all differences from the factory image lie inside declared patches")
     print(f"  SHA-256 {digest}")
+    print(f"  {version_string}")
 
     if args.expect_sha:
         print("  matches --expect-sha")

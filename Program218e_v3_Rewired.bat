@@ -11,6 +11,7 @@ REM ProgramLEM218.bat does none of those and flashes whatever .hex it finds
 REM first, which is why this is a separate script.
 
 SET "EXPECTED_SHA256=9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
+SET "FIRMWARE_VERSION=Rewired 1.0.0 (9474624b)"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
 SET "ERASE_STARTED=0"
@@ -76,6 +77,7 @@ IF NOT DEFINED FIRMWARE (
 )
 CALL :ok Found !FIRMWARE!
 CALL :ok Checksum matches the image this flasher installs
+CALL :ok %FIRMWARE_VERSION%
 
 REM Keep it where it belongs, so the next run finds it first.  A failure here
 REM is not fatal: the image is already verified.
@@ -322,8 +324,14 @@ IF ERRORLEVEL 1 (
 )
 SET "DFU_SESSION_ACTIVE=0"
 
+REM A record of what is actually on the instrument, beside the image.
+> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO %FIRMWARE_VERSION%
+>> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO flashed  %DATE% %TIME%
+>> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO image    %EXPECTED_SHA256%
+
 ECHO.
-ECHO   Flashing complete.  Log: %LOG_FILE%
+ECHO   Flashing complete.  %FIRMWARE_VERSION% is now on the instrument.
+ECHO   Log: %LOG_FILE%
 ECHO If the 218e does not reappear, power-cycle the instrument.
 PAUSE
 ENDLOCAL

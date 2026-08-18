@@ -206,9 +206,13 @@ var WEBBUILD = (function () {
         });
         if (stray) throw new Error(stray + ' byte(s) changed outside any patch');
 
+        var sha = SHA256.hashString(hex);
         return {
             hex: hex,
-            sha256: SHA256.hashString(hex),
+            sha256: sha,
+            // Same shape the command-line build reports and both flashers
+            // carry: a declared version plus the image's own fingerprint.
+            version: 'Rewired ' + GEN.version + ' (' + sha.slice(0, 8) + ')',
             properties: BUILDLIB.writeProperties('config/218e.toml', flags.blocks,
                                                  flags.features, numbers, tables),
             patches: records.patches.length,

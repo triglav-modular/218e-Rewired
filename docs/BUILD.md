@@ -295,6 +295,25 @@ assembled into unused flash, but nothing reaches them.
 > gate. The DAC has no gain bit, so **no software fix exists** — that one needs
 > the analog booster mod, whatever this option is set to.
 
+## Version identity
+
+Builds are named `Rewired <version> (<sha8>)` — for example
+`Rewired 1.0.0 (9474624b)`. The version is declared in `[firmware].version`;
+the eight hex digits are the front of the image's own SHA-256, so they are
+derived and cannot be set to something the image is not.
+
+The build prints it, writes it to `build/VERSION`, and rewrites it into both
+flashers alongside the checksum, so a flasher cannot announce one build and
+install another. Each flasher prints it before erasing and, on success, writes
+`firmware/INSTALLED.txt` recording the version, the image hash and when it was
+flashed. The browser derives the identical string from the image it just built.
+
+That answers "which build is this?" from the package. It does not yet answer
+"which build is on the instrument?" — the firmware does not report a version
+over MIDI. Adding one means extending the telemetry frame the readout
+validates strictly and rebuilding the readout binary, which is worth doing
+after the firmware has been flashed and played, not before.
+
 ## Checking a change
 
 ```bash

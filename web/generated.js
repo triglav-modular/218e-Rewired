@@ -2,6 +2,7 @@
 
 var GEN = {
   factorySha256: "565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47",
+  version: "1.0.0",
   factoryKeyTable: 2147575156,
   pitchTableEntries: 79,
   calibrationVoltsPerOctave: 1.0,

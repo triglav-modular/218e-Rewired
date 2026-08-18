@@ -14,6 +14,7 @@ ERASE_STARTED=0
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
 EXPECTED_SHA256="9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
+FIRMWARE_VERSION="Rewired 1.0.0 (9474624b)"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
@@ -252,6 +253,7 @@ if [ -z "$FIRMWARE" ]; then
 fi
 ok "Found $(basename "$FIRMWARE")"
 ok "Checksum matches the image this flasher installs"
+ok "${C_BOLD}$FIRMWARE_VERSION${C_RESET}"
 
 # Keep it where it belongs, so the next run finds it first and the log records
 # one canonical location.  A failure here is not fatal: the image was already
@@ -480,8 +482,17 @@ else
     warn "The 218e MIDI port is not visible yet — power-cycle the instrument if needed"
 fi
 
+# Leave a record beside the image.  Without it the only answer to "what is on
+# this instrument" is whatever the person remembers.
+cat > "$PACKAGE_ROOT/firmware/INSTALLED.txt" <<RECORD 2>/dev/null || true
+$FIRMWARE_VERSION
+flashed  $(timestamp)
+image    $EXPECTED_SHA256
+RECORD
+
 echo
 echo "  ${C_GREEN}${C_BOLD}✓ Flashing complete.${C_RESET}"
+echo "  ${C_BOLD}$FIRMWARE_VERSION${C_RESET} is now on the instrument."
 echo "  ${C_DIM}Log: $LOG_FILE${C_RESET}"
 echo
 read -r -p "  Press return to close. "

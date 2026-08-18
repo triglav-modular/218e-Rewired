@@ -60,3 +60,6 @@ __pycache__/
 
 # Never let a firmware image sit in the served web directory.
 web/*.hex
+
+# Written by the flasher: what is actually on the instrument.
+firmware/INSTALLED.txt

@@ -418,6 +418,7 @@
                 var r = WEBBUILD.build(options(), state.factoryText);
                 state.result = r;
                 msg($('buildMsg'), 'ok',
+                    r.version + '\n' +
                     'Built in ' + (Date.now() - t0) + ' ms.\n\n' +
                     'SHA-256  ' + r.sha256 + '\n' +
                     r.patches + ' patches · ' + r.changed + ' bytes changed · ' +

@@ -37,6 +37,7 @@ def main() -> None:
         "",
         "var GEN = {",
         f"  factorySha256: {json.dumps(cfg['firmware']['factory_sha256'])},",
+        f"  version: {json.dumps(cfg['firmware'].get('version', '0.0.0'))},",
         f"  factoryKeyTable: {B.FACTORY_KEY_TABLE},",
         f"  pitchTableEntries: {B.PITCH_TABLE_ENTRIES},",
         f"  calibrationVoltsPerOctave: {B.CALIBRATION_VOLTS_PER_OCTAVE},",
