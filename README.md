@@ -134,12 +134,15 @@ Put the built image in `firmware/`, then run the flasher for your platform:
 
 **Each platform needs one thing set up first, or the flash cannot work:**
 
-- **Windows — bind the DFU device to WinUSB.** Run `zadig-2.8.exe` from
-  Buchla's kit, select the **AT32UC3B DFU** device, install WinUSB. Without
-  this, `dfu-programmer` never sees the instrument and the flasher will keep
-  reporting that no DFU device appeared. Once per machine. The Windows flasher
-  also uses `dfu-programmer.exe` and `sendmidi.exe` from that kit, which are
-  not redistributed here — put its `windows\` folder beside the flasher.
+- **Windows — bind the DFU device to WinUSB.** Without it, `dfu-programmer`
+  never sees the instrument and the flasher keeps reporting that no DFU device
+  appeared. Zadig can only see the keyboard while it is in DFU, so the flasher
+  handles that: say WinUSB is not installed yet and it offers to put the
+  keyboard into DFU. Then run `zadig-2.8.exe`, pick the **AT32UC3B DFU**
+  device, install WinUSB, and start the flasher again. Once per machine.
+  The Windows flasher also uses `dfu-programmer.exe` and `sendmidi.exe` from
+  Buchla's kit, which are not redistributed here — put its `windows\` folder
+  beside the flasher.
 - **macOS on Apple silicon — install Rosetta.** `dfu-programmer` is x86_64
   only: `softwareupdate --install-rosetta`.
 

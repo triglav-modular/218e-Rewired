@@ -141,11 +141,12 @@ device and install WinUSB — once per machine. Skip it and `dfu-programmer`
 never sees the instrument, so the flasher reports that no DFU device appeared
 however many times it is retried.
 
-Zadig can only see the device while it *is* in DFU, so the order is: put the
-keyboard into DFU, run Zadig, then flash. The flasher asks whether WinUSB is
-installed before it sends the DFU request, and stops if the answer is no —
-better than rebooting the instrument into a bootloader nothing on the machine
-can reach. That kit also supplies the
+Zadig can only bind a device it can see, and the DFU device only exists while
+the instrument is in DFU. The flasher resolves that rather than leaving it as a
+puzzle: it asks whether WinUSB is installed before sending the DFU request, and
+if the answer is no it offers to put the keyboard into DFU and stop there, so
+Zadig has something to bind. Run Zadig without power-cycling, then start the
+flasher again. That kit also supplies the
 `dfu-programmer.exe` and `sendmidi.exe` the script calls, neither of which is
 redistributed here.
 

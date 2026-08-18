@@ -169,22 +169,53 @@ CALL :ok dfu-programmer.exe runs
 
 ECHO.
 ECHO   Windows needs the DFU device bound to the WinUSB driver before
-ECHO   dfu-programmer can see it.  This is done once per machine, with
-ECHO     %TOOLS%\zadig-2.8.exe
-ECHO   selecting the AT32UC3B DFU device and installing WinUSB.
-ECHO.
-ECHO   If that has not been done, answer N here.  Answering Y without it puts
-ECHO   the instrument into a DFU mode this script cannot reach - harmless, and
-ECHO   undone by a power cycle, but pointless.
+ECHO   dfu-programmer can see it.  This is done once per machine.
 ECHO.
 SET "ZADIG="
 SET /P "ZADIG=  Has WinUSB been installed for the AT32UC3B DFU device? (Y/N): "
-IF /I NOT "%ZADIG%"=="Y" (
+IF /I "%ZADIG%"=="Y" GOTO :winusb_ok
+
+REM Zadig can only bind a device it can see, and the DFU device only exists
+REM while the instrument is in DFU.  Rather than leaving that as a puzzle,
+REM offer to do it: put the keyboard into DFU, stop, and let them run Zadig
+REM with the device present.  Nothing is erased by this.
+ECHO.
+ECHO   Zadig can only see the keyboard while it is in DFU mode, so it has to
+ECHO   go there first.  Nothing is erased by that, and a power cycle undoes it.
+ECHO.
+SET "PUTDFU="
+SET /P "PUTDFU=  Put the keyboard into DFU now so Zadig can see it? (Y/N): "
+IF /I NOT "%PUTDFU%"=="Y" (
     ECHO.
-    ECHO   Run %TOOLS%\zadig-2.8.exe first, then start this again.
-    ECHO   The instrument has not been touched.
+    ECHO   Nothing was done.  The instrument has not been touched.
     GOTO :fail_early
 )
+
+"%SENDMIDI%" list 2>&1 | FINDSTR /I "218e" >NUL
+IF ERRORLEVEL 1 (
+    ECHO.
+    ECHO   The 218e MIDI port is unavailable, so it cannot be asked into DFU.
+    ECHO   Check it is powered and connected by USB directly, then try again.
+    GOTO :fail_early
+)
+"%SENDMIDI%" dev 218e syx 0 2 55 2 1 1 >> "%LOG_FILE%" 2>&1
+ECHO.
+ECHO   Done - the keyboard should now be in DFU and will have disappeared
+ECHO   from MIDI.  That is expected.
+ECHO.
+ECHO   Now, without power-cycling it:
+ECHO     1. run %TOOLS%\zadig-2.8.exe
+ECHO     2. select the AT32UC3B DFU device
+ECHO     3. install WinUSB
+ECHO     4. start this script again and answer Y
+ECHO.
+ECHO   If anything goes wrong, power-cycle the 218e and it comes back normally.
+ECHO Put the instrument into DFU for Zadig; stopped for driver install.>> "%LOG_FILE%"
+PAUSE
+ENDLOCAL
+EXIT /B 0
+
+:winusb_ok
 
 REM --- into DFU ----------------------------------------------------------
 CALL :step Putting the instrument into DFU
