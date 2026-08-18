@@ -217,7 +217,8 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
       <span class="mono">softwareupdate --install-rosetta</span></dd>
 
       <dt>Both — your system will warn about unsigned software</dt>
-      <dd>macOS blocks the flasher, and then <span class="mono">dfu-programmer</span>, as being from an unidentified developer: open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. Windows Defender may warn about the <span class="mono">.bat</span> — choose <strong>More info → Run anyway</strong>.</dd>
+      <dd>On macOS this is avoidable: get the package with <span class="mono">git clone</span> rather than downloading the ZIP, and there is no warning at all. A browser download marks every file as quarantined; a clone does not.</dd>
+      <dd style="margin-top:6px">If you did download it, macOS blocks the flasher and then <span class="mono">dfu-programmer</span> as being from an unidentified developer — open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. The flasher spots the second one itself and offers to clear it. Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
     </dl>
   </div>
 

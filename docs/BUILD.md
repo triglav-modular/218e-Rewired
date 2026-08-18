@@ -150,24 +150,21 @@ a power cycle brings it back.
 **macOS on Apple silicon needs Rosetta**, because `dfu-programmer` is an
 x86_64 binary: `softwareupdate --install-rosetta`.
 
-**Signing (macOS).** `tools/sign-macos.sh` signs every shipped binary with a
-Developer ID Application certificate, builds a disk image of the package,
-notarises it and staples the ticket. A stapled image opens with no warnings at
-all, first try, offline. Two one-time steps first — create the certificate at
-developer.apple.com and install it, then
+**This software is not code-signed**, on either platform. On macOS that costs
+nothing if the package is obtained with `git clone`: Gatekeeper only refuses
+files carrying `com.apple.quarantine`, which a browser download sets on every
+file and a clone sets on none. A downloaded ZIP does hit it, and the flasher
+handles the part it can reach.
 
-```bash
-xcrun notarytool store-credentials rewired-notary \
-    --apple-id you@example.com --team-id TEAMID
-```
+`tools/sign-macos.sh` exists and will sign, notarise and staple a disk image
+if a **Developer ID Application** certificate is ever available — that is the
+only certificate type Apple accepts for notarisation, it can only be created
+by the Account Holder of a team, and development certificates (`Mac
+Developer`, `Apple Development`) do not work for it. The script says as much
+if you point it at the wrong one. Windows signing is separate again and needs
+an Authenticode certificate.
 
-which keeps the app-specific password in your keychain. No credential belongs
-in this repository, and the script reads none.
-
-The repository itself keeps unsigned binaries; the signed, notarised disk image
-is a release artefact. So the Gatekeeper handling below still matters for
-anyone working from a clone. Windows code signing is separate and needs an
-Authenticode certificate, which is a different purchase.
+Until then:
 
 **Without that, the first run is blocked on both platforms**: macOS reports the flasher and
 then `dfu-programmer` as being from an unidentified developer, each cleared

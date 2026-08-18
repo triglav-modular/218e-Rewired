@@ -145,10 +145,13 @@ Then run the flasher for your platform:
   and carries on once the driver is installed. Once per machine.
 - **macOS on Apple silicon — install Rosetta.** `dfu-programmer` is x86_64
   only: `softwareupdate --install-rosetta`.
-- **Both — unsigned software warnings.** macOS blocks the flasher, then
-  `dfu-programmer`, as being from an unidentified developer: **System Settings
-  → Privacy & Security → Open Anyway**, for each. Windows Defender may warn
-  about the `.bat`: **More info → Run anyway**.
+- **Both — unsigned software warnings.** On macOS, `git clone` this repository
+  instead of downloading the ZIP and there is no warning at all: a browser
+  download marks every file as quarantined, a clone does not. If you did
+  download it, macOS blocks the flasher and then `dfu-programmer` as being from
+  an unidentified developer — **System Settings → Privacy & Security → Open
+  Anyway** for each; the flasher catches the second and offers to clear it.
+  Windows Defender may warn about the `.bat`: **More info → Run anyway**.
 
 There is nothing to move or rename: each flasher looks in `firmware/`, its own
 directory, Downloads and the Desktop, and takes whichever file matches the
