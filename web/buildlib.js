@@ -82,7 +82,15 @@ var BUILDLIB = (function () {
             cfg._pressure_factory = true;
         }
 
+        // Same rule as tools/options.py: the blend's pressure source is the
+        // corrected-pressure cache, which only the reworked pressure pass
+        // fills.  Without it the option builds and then silently does nothing.
         var blend = want('pressure_portamento', true);
+        if (blend && !want('pressure_fix', true)) {
+            throw new Error('Pressure-based portamento needs the pressure response ' +
+                            'fix: the blend weights pitch by per-key pressure, and ' +
+                            'only the reworked pressure path measures it.');
+        }
         cfg.portamento.pressure_blend = blend;
         cfg.portamento.zero_snap = blend;
         return cfg;

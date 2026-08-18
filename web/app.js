@@ -390,6 +390,19 @@
         return o;
     }
 
+    // Portamento depends on the pressure fix for its data, so the page keeps
+    // the pair consistent rather than letting the build refuse it later.
+    function syncPortamento() {
+        var fix = $('pressure_fix'), porta = $('pressure_portamento');
+        porta.disabled = !fix.checked;
+        var label = porta.closest('label');
+        label.style.opacity = fix.checked ? '' : '0.45';
+        label.title = fix.checked ? ''
+            : 'Needs the pressure response fix: the blend weights pitch by per-key pressure.';
+        if (!fix.checked) porta.checked = false;
+    }
+    $('pressure_fix').addEventListener('change', syncPortamento);
+
     function refresh() {
         $('build').disabled = !state.factoryText;
         $('download').disabled = !state.result;
@@ -430,5 +443,5 @@
         refresh();
     });
 
-    renderSlots(); buildTable(); drawPlot(); refresh();
+    renderSlots(); buildTable(); drawPlot(); syncPortamento(); refresh();
 })();

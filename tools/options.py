@@ -141,7 +141,17 @@ def expand(options: dict) -> dict:
         cfg["_pressure_factory"] = True
 
     # 7. Pressure-based portamento ------------------------------------------
+    # The blend weights pitch by per-key pressure from the corrected-pressure
+    # cache, and the only thing that fills that cache is the reworked pressure
+    # pass.  With pressure_fix off the cave is unreachable, the cache stays at
+    # its power-up zeros, and the blend's own zero-sum guard skips it forever —
+    # the option would build and then silently do nothing.  Refuse instead.
     blend = want("pressure_portamento", True)
+    if blend and not want("pressure_fix", True):
+        raise SystemExit(
+            "pressure_portamento needs pressure_fix: the blend weights pitch by "
+            "per-key pressure, and only the reworked pressure path measures it. "
+            "Set pressure_portamento = false as well, or turn pressure_fix on.")
     cfg["portamento"]["pressure_blend"] = blend
     cfg["portamento"]["zero_snap"] = blend
 

@@ -164,7 +164,11 @@ the seven options into the full internal settings the build has always used.
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 
-The options are independent: any combination builds.
+The options combine freely, with one exception the build enforces:
+**pressure-based portamento needs the pressure response fix**. The blend
+weights pitch by per-key pressure, and only the reworked pressure path
+measures it — without it the option would build and then silently do nothing,
+so the build refuses the pair instead.
 
 **Per-key pitch correction.** `calibration/218e-pitch-calibration.csv` was
 measured on one specific instrument **with its 208 trimmed to 1 V/oct** — the
