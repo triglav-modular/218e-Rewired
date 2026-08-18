@@ -3,7 +3,19 @@
 ## Requirements
 
 - Python 3.11 or newer (the build uses `tomllib` from the standard library)
-- Ghidra 12.x — the AVR32 assembler that encodes every patch
+- A JavaScript engine — macOS already has one (`jsc`, part of
+  JavaScriptCore); otherwise Node
+- Ghidra 12.x is **optional**, and only needed without `--no-ghidra`
+
+```bash
+python3 tools/build.py --no-ghidra     # no Ghidra, no JDK
+```
+
+The AVR32 assembler in `tools/avr32/` encodes every patch itself, and is
+checked against Ghidra's own output instruction by instruction and image by
+image — see [`../tools/avr32/README.md`](../tools/avr32/README.md). Ghidra
+remains the reference for verification, and for the disassembly work in
+`src/RecoverPressurePatch.java` and `src/ExportAnalysis.java`.
 
 Point the build at Ghidra either in `config/218e.toml` under `[tools]`, or with
 an environment variable:

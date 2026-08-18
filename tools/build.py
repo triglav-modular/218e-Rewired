@@ -551,6 +551,67 @@ def run_ghidra(cfg: dict, properties: Path, log: Path) -> str:
     return output
 
 
+
+# The JavaScript assembler in tools/avr32/, used instead of Ghidra when
+# --no-ghidra is given.  It reproduces Ghidra's encoding exactly; see
+# tools/avr32/README.md for how that is established and checked.
+AVR32 = REPO / "tools" / "avr32"
+
+# jsc ships with macOS and needs nothing installed; node is the fallback.
+JS_ENGINES = [
+    Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/"
+         "Helpers/jsc"),
+]
+
+
+def find_js_engine() -> tuple[list[str], str]:
+    for engine in JS_ENGINES:
+        if engine.exists():
+            return [str(engine)], engine.name
+    for name in ("node", "nodejs", "bun", "deno"):
+        found = shutil.which(name)
+        if found:
+            return ([found, "run"] if name == "deno" else [found]), name
+    raise SystemExit(
+        "no JavaScript engine found for --no-ghidra.\n"
+        "  macOS ships one at /System/Library/Frameworks/JavaScriptCore."
+        "framework/Versions/A/Helpers/jsc\n"
+        "  otherwise install Node.")
+
+
+def run_javascript(properties: Path, log: Path) -> str:
+    """Assemble the patch set without Ghidra.
+
+    The sources are concatenated into one bundle rather than passed as
+    separate files, because only jsc loads several scripts into a shared
+    scope; Node would run just the first.  One code path for every engine, and
+    the bundle is also exactly what a browser build would load.
+    """
+    # Regenerate program.js from the Java first, so it cannot go stale against
+    # a source edit.
+    subprocess.run([sys.executable, str(AVR32 / "transpile.py")],
+                   check=True, cwd=REPO, capture_output=True)
+
+    parts = ["shim.js", "encoder.js", "runtime.js", "program.js", "assemble.js"]
+    bundle = BUILD / "assemble_bundle.js"
+    bundle.write_text("\n".join((AVR32 / name).read_text() for name in parts))
+
+    command, engine = find_js_engine()
+    argv = command + [str(bundle)]
+    # jsc needs `--` before script arguments; node takes them directly.
+    argv += ["--", str(properties)] if engine == "jsc" else [str(properties)]
+
+    result = subprocess.run(argv, capture_output=True, text=True, cwd=REPO)
+    output = result.stdout + result.stderr
+    log.write_text(output)
+    if result.returncode != 0 or "ASSEMBLY FAILED" in output:
+        for line in output.splitlines()[:20]:
+            print(line, file=sys.stderr)
+        raise SystemExit(f"JavaScript assembly failed — full log: {log}")
+    print(f"  assembled with {engine} (no Ghidra)")
+    return output
+
+
 PATCH_RE = re.compile(r"^PATCH ([0-9a-f]{8}) ([0-9a-f]+)(?: ; (.*))?$")
 EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 
@@ -882,6 +943,9 @@ def main() -> None:
     parser.add_argument("--config", default="config/218e.toml")
     parser.add_argument("--tables-only", action="store_true")
     parser.add_argument("--expect-sha")
+    parser.add_argument("--no-ghidra", action="store_true",
+                        help="assemble with the JavaScript toolchain in "
+                             "tools/avr32/ instead of Ghidra")
     parser.add_argument("--fold-measurement", metavar="CSV",
                         help="fold tuner readings into the pitch calibration table, then exit")
     args = parser.parse_args()
@@ -1149,7 +1213,10 @@ def main() -> None:
     write_properties(properties, cfg, blocks, features, tables)
 
     # --- assemble ---------------------------------------------------------
-    output = run_ghidra(cfg, properties, BUILD / "assemble.log")
+    if args.no_ghidra:
+        output = run_javascript(properties, BUILD / "assemble.js.log")
+    else:
+        output = run_ghidra(cfg, properties, BUILD / "assemble.log")
     check_extents(output)
     patches = parse_patches(output)
     print(f"  {len(patches)} patch record(s) assembled")

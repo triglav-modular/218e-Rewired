@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Build many configurations both ways and check the images agree.
 
-For each variant: tools/build.py assembles it through Ghidra, then
-tools/avr32/build_js.py assembles the same settings through the JavaScript
-toolchain, and the two SHA-256s must match.  Agreement on one configuration
+For each variant: tools/build.py assembles it through Ghidra, then again with
+--no-ghidra through the JavaScript toolchain, and the two SHA-256s must match.  Agreement on one configuration
 proves very little — the whole point of the feature gating is that different
 settings emit different code — so this walks the options.
 
@@ -102,7 +101,7 @@ def main() -> None:
                 failures += 1
                 continue
             sha = match.group(1)
-            js = run([sys.executable, "tools/avr32/build_js.py",
+            js = run([sys.executable, "tools/build.py", "--no-ghidra",
                       "--config", str(TEMP), "--expect-sha", sha])
             ok = js.returncode == 0
             note = "match" if ok else "MISMATCH"

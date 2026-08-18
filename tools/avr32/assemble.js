@@ -8,7 +8,10 @@
 
 // jsc exposes script arguments as a GLOBAL `arguments` object, which a
 // wrapping function would shadow — so capture it out here, before the IIFE.
-var ARGV = (typeof arguments !== 'undefined') ? arguments : [];
+// Node has no such global and puts them in process.argv instead.
+var ARGV = (typeof arguments !== 'undefined')
+    ? Array.prototype.slice.call(arguments)
+    : (typeof process !== 'undefined' && process.argv ? process.argv.slice(2) : []);
 
 (function () {
     'use strict';

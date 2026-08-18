@@ -18,8 +18,8 @@ for byte**, on the shapes in the corpus.
 ## Running
 
 ```bash
-python3 tools/avr32/sweep.py                     # both toolchains over 30 configurations
-python3 tools/avr32/build_js.py                  # build the image, check golden_sha256
+python3 tools/build.py --no-ghidra               # build with no Ghidra at all
+python3 tools/avr32/sweep.py                     # both toolchains over every option
 jsc tools/avr32/encoder.js tools/avr32/test_corpus.js   # encoder unit test
 python3 tools/avr32/extract_corpus.py            # rebuild corpus.json from build/assemble*.log
 ```
@@ -54,21 +54,24 @@ jsc tools/avr32/encoder.js tools/avr32/runtime.js tools/avr32/program.js \
 | `transpile.py` | translates `run()` in the Java into `program.js` |
 | `program.js` | **generated** — do not edit |
 | `assemble.js` | driver: reads `build.properties`, prints the record stream |
-| `build_js.py` | transpiles, assembles, applies patches, checks `golden_sha256` |
+| `shim.js` | print/readFile/arguments compatibility for engines other than jsc |
 | `test_corpus.js` | encoder unit test against `corpus.json` |
 | `extract_corpus.py` | builds `corpus.json` from `build/assemble*.log` |
 | `samples.py` | shows corpus samples for one shape, for deriving layouts |
 | `sweep.py` | builds many configurations both ways and compares the images |
 
-`build_js.py` re-runs `transpile.py` every time, so `program.js` cannot drift
-from the Java.
+`tools/build.py --no-ghidra` re-runs `transpile.py` every time, so `program.js`
+cannot drift from the Java. It concatenates the sources into
+`build/assemble_bundle.js` and runs that, because only jsc loads several
+scripts into one scope — one code path for every engine, and the bundle is
+also what a browser build would load.
 
 ## Status
 
 **The JavaScript toolchain reproduces the firmware bit-for-bit.**
 
 ```
-python3 tools/avr32/build_js.py
+python3 tools/build.py --no-ghidra
   ...
   built    0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22
   golden   0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22
