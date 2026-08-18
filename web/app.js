@@ -5,7 +5,7 @@
     'use strict';
 
     var $ = function (id) { return document.getElementById(id); };
-    var state = { factoryText: null, scales: [], calibration: null, result: null };
+    var state = { factoryText: null, slots: null, calibration: null, result: null };
 
     function download(text, name, type) {
         var a = document.createElement('a');
@@ -101,34 +101,93 @@
     });
 
     // --- Scala files ------------------------------------------------------
+    // The three slots are not interchangeable, so which file goes where is a
+    // real choice rather than upload order: slot 0 is what the instrument
+    // powers up in, and the two edit keys each toggle against slot 2.
+    var SLOTS = [
+        { name: 'Slot 0', note: 'power-on default · rem-en LED lit · edit key 28 toggles it against slot 2' },
+        { name: 'Slot 1', note: 'trn LED lit · edit key 27 toggles it against slot 2' },
+        { name: 'Slot 2', note: 'both LEDs dark · the slot the other two toggle against' }
+    ];
+    state.slots = [null, null, null];
+
+    function renderSlots() {
+        var host = $('slots');
+        host.innerHTML = '';
+        SLOTS.forEach(function (meta, i) {
+            var entry = state.slots[i];
+            var row = document.createElement('div');
+            row.className = 'slot';
+
+            var who = document.createElement('div');
+            who.className = 'who';
+            who.innerHTML = '<b>' + meta.name + '</b><span>' + meta.note + '</span>';
+
+            var what = document.createElement('div');
+            what.className = 'what' + (entry ? '' : ' empty');
+            what.textContent = entry ? entry.name : 'factory temperament';
+            if (entry) what.title = entry.name;
+
+            var ctl = document.createElement('div');
+            ctl.className = 'ctl';
+            [['↑', i - 1], ['↓', i + 1]].forEach(function (pair) {
+                var b = document.createElement('button');
+                b.textContent = pair[0];
+                b.title = 'move to slot ' + pair[1];
+                b.disabled = !entry || pair[1] < 0 || pair[1] > 2;
+                b.addEventListener('click', function () {
+                    var to = pair[1], tmp = state.slots[to];
+                    state.slots[to] = state.slots[i];
+                    state.slots[i] = tmp;
+                    renderSlots(); refresh();
+                });
+                ctl.appendChild(b);
+            });
+            var x = document.createElement('button');
+            x.textContent = '✕'; x.title = 'clear this slot';
+            x.disabled = !entry;
+            x.addEventListener('click', function () {
+                state.slots[i] = null; renderSlots(); refresh();
+            });
+            ctl.appendChild(x);
+
+            row.appendChild(who); row.appendChild(what); row.appendChild(ctl);
+            host.appendChild(row);
+        });
+        var filled = state.slots.filter(Boolean).length;
+        $('sclCount').textContent = filled
+            ? filled + ' of 3 slots set'
+            : 'all three slots factory';
+    }
+
     $('sclPick').addEventListener('click', function () { $('scl').click(); });
     $('scl').addEventListener('change', function (e) {
-        var files = Array.prototype.slice.call(e.target.files).slice(0, 3);
-        state.scales = [];
-        $('sclList').innerHTML = '';
+        var files = Array.prototype.slice.call(e.target.files);
+        var problems = [];
+        var pending = files.length;
+        if (!pending) return;
         files.forEach(function (f) {
             var r = new FileReader();
             r.onload = function () {
                 var entry = { name: f.name, text: r.result };
-                var line = document.createElement('div');
                 try {
-                    // Validate now rather than at build time, so a bad scale is
-                    // caught while you can still see which file it was.
+                    // Validate now, so a bad scale is caught while it is still
+                    // obvious which file it was.
                     BUILDLIB.parseScala(entry.text, entry.name);
-                    state.scales.push(entry);
-                    line.className = 'ok';
-                    line.textContent = '✓ ' + f.name;
+                    var free = state.slots.indexOf(null);
+                    if (free < 0) problems.push(f.name + ' — all three slots are full');
+                    else state.slots[free] = entry;
                 } catch (err) {
-                    line.className = 'bad';
-                    line.textContent = '✗ ' + f.name + ' — ' + err.message;
+                    problems.push(err.message);
                 }
-                $('sclList').appendChild(line);
-                $('sclCount').textContent = state.scales.length
-                    ? state.scales.length + ' loaded' : 'none';
-                refresh();
+                if (--pending === 0) {
+                    renderSlots(); refresh();
+                    msg($('sclMsg'), problems.length ? 'bad' : '', problems.join('\n'));
+                }
             };
             r.readAsText(f);
         });
+        e.target.value = '';   // so the same file can be picked again
     });
 
     // --- calibration ------------------------------------------------------
@@ -292,7 +351,13 @@
             pressure_portamento: $('pressure_portamento').checked,
             volts_per_octave: vpo
         };
-        if (state.scales.length) o.alternate_tunings = state.scales;
+        // Trailing empty slots simply shorten the list; a gap in the middle
+        // has to stay a gap, so it is sent as an explicit factory slot.
+        var slots = state.slots.slice();
+        while (slots.length && !slots[slots.length - 1]) slots.pop();
+        if (slots.length) {
+            o.alternate_tunings = slots.map(function (e) { return e || 'factory'; });
+        }
         if ($('useCal').checked) o.pitch_correction = rows();
         return o;
     }
@@ -329,8 +394,8 @@
 
     $('download').addEventListener('click', function () {
         if (!state.result) return;
-        download(state.result.hex, '218eV3_v369_PressureFix_DFU.hex', 'text/plain');
+        download(state.result.hex, '218eV3_v369_Rewired_DFU.hex', 'text/plain');
     });
 
-    buildTable(); drawPlot(); refresh();
+    renderSlots(); buildTable(); drawPlot(); refresh();
 })();

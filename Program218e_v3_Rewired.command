@@ -3,7 +3,7 @@
 # Experimental Buchla 218e V3 v36.9 pressure-curve and touch-filter firmware
 # flasher.
 # This is intentionally separate from ProgramLEM218.command and flashes only
-# 218eV3_v369_PressureFix_DFU.hex after verifying its SHA-256 checksum.
+# 218eV3_v369_Rewired_DFU.hex after verifying its SHA-256 checksum.
 
 set -o pipefail
 
@@ -31,7 +31,7 @@ else
 fi
 
 FIRMWARE_DIR="$PACKAGE_ROOT/firmware"
-FIRMWARE_NAME="218eV3_v369_PressureFix_DFU.hex"
+FIRMWARE_NAME="218eV3_v369_Rewired_DFU.hex"
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 DFU_BUNDLED="$RUNTIME_DIR/support/buchla-dfu/dfu/dfu-programmer"
 DFU_SYSTEM="$RUNTIME_DIR/support/dfu-programmer"

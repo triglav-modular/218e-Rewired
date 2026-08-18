@@ -59,13 +59,13 @@ var BUILDLIB = (function () {
         // no filesystem and the UI edits the offsets directly.
         cfg._calibration = want('pitch_correction', null) || flatCalibration();
 
+        // Entries are either a {name, text} Scala file or the string
+        // 'factory', so an empty slot between two filled ones keeps its place.
         var tunings = want('alternate_tunings', null);
+        cfg._tunings = ['factory', 'factory', 'factory'];
         if (tunings && tunings.length) {
-            if (tunings.length > 3) throw new Error('at most three tunings');
-            cfg._tunings = tunings.slice();
-            while (cfg._tunings.length < 3) cfg._tunings.push('factory');
-        } else {
-            cfg._tunings = ['factory', 'factory', 'factory'];
+            if (tunings.length > 3) throw new Error('at most three tuning slots');
+            tunings.forEach(function (t, i) { cfg._tunings[i] = t || 'factory'; });
         }
 
         var vpo = want('volts_per_octave', 1.2);
