@@ -18,6 +18,7 @@ for byte**, on the shapes in the corpus.
 ## Running
 
 ```bash
+python3 tools/avr32/sweep.py                     # both toolchains over 30 configurations
 python3 tools/avr32/build_js.py                  # build the image, check golden_sha256
 jsc tools/avr32/encoder.js tools/avr32/test_corpus.js   # encoder unit test
 python3 tools/avr32/extract_corpus.py            # rebuild corpus.json from build/assemble*.log
@@ -57,6 +58,7 @@ jsc tools/avr32/encoder.js tools/avr32/runtime.js tools/avr32/program.js \
 | `test_corpus.js` | encoder unit test against `corpus.json` |
 | `extract_corpus.py` | builds `corpus.json` from `build/assemble*.log` |
 | `samples.py` | shows corpus samples for one shape, for deriving layouts |
+| `sweep.py` | builds many configurations both ways and compares the images |
 
 `build_js.py` re-runs `transpile.py` every time, so `program.js` cannot drift
 from the Java.
@@ -75,10 +77,10 @@ python3 tools/avr32/build_js.py
 
 - **Encoder**: 3,731 / 3,731 corpus instructions, all 71 shapes, zero mismatches.
 - **Structure**: the transpiled program emits every EXTENT / BLOCK / SKIP /
-  listing / PATCH record *identically* to a fresh Ghidra run — checked on both
-  the shipped configuration and `[pressure].multi_key = "factory"`.
-- **Image**: applying those patches reproduces `golden_sha256`, and matches
-  `tools/build.py` on the factory-pressure configuration too.
+  listing / PATCH record *identically* to a fresh Ghidra run.
+- **Image**: `tools/avr32/sweep.py` builds **30 configurations** both ways and
+  compares the images — 30/30 agree, and all 30 SHAs are distinct, so each
+  variant really does change the firmware rather than passing vacuously.
 
 Corpus coverage is now complete: every mnemonic in
 `AssemblePressureFix.java` appears in `corpus.json` and encodes correctly.
@@ -213,6 +215,19 @@ Two ordering traps here:
   operand that lands in the high field at bits 28..25.
 - **`BFEXTU` does the opposite** — its *first* operand takes the high field.
   Two neighbouring instruction families, opposite conventions.
+
+## What the sweep covers
+
+`sweep.py` walks each knob and the arp switch handed back to the factory, the
+three `multi_key` modes, common-mode off, blend and zero-snap off, all four
+diagnostics, the smoothing and resolution extremes, error diffusion off, both
+trim modes, the factory temperament, and the timing and tuning numbers at
+their edges. Combinations `tools/build.py` rejects on purpose are avoided —
+arp latch needs `portamento.pressure_blend`, and the three diagnostics share
+two telemetry fields so only one may be on at a time.
+
+It leaves the shipped image and the updater alone: every variant redirects
+`output_hex` into `build/` and drops the `updater` key.
 
 ## Coverage caveat
 
