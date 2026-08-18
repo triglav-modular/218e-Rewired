@@ -68,7 +68,7 @@ var BUILDLIB = (function () {
             cfg._tunings = ['factory', 'factory', 'factory'];
         }
 
-        var vpo = want('volts_per_octave', 1.0);
+        var vpo = want('volts_per_octave', 1.2);
         if (vpo !== 1.0 && vpo !== 1.2) {
             throw new Error('volts_per_octave must be 1.0 or 1.2');
         }
@@ -141,7 +141,7 @@ var BUILDLIB = (function () {
     }
 
     // Cents to shift a scale so reference_key lands on the 12-TET grid, so the
-    // note the 208p is tuned to sits in the same place in every slot.
+    // note the 208 is tuned to sits in the same place in every slot.
     function anchorOffset(cents, referenceKey) {
         if (!(referenceKey >= 0 && referenceKey <= 11)) {
             throw new Error('reference_key must be 0..11 (0 = C, 9 = A)');

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Buchla 218e firmware builder</title>
+<title>218e v3 Rewired — firmware builder</title>
 <style>
 :root {
   --bg:#faf9f7; --panel:#fff; --ink:#1b1a18; --muted:#6b6560; --line:#e0dcd6;
@@ -61,19 +61,44 @@ td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-al
 .msg.bad{background:color-mix(in srgb,var(--bad) 14%,transparent)}
 .msg.warn{background:color-mix(in srgb,var(--warn) 16%,transparent)}
 .files div{font-size:12px;padding:4px 0;font-family:var(--mono)}
+.danger{border:2px solid var(--bad);border-radius:10px;padding:18px 20px;margin:0 0 16px;
+  background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.danger h2{color:var(--bad);font-size:15px;letter-spacing:.04em;margin:0 0 10px}
+.danger p{margin:0 0 9px;font-size:14px}
+.danger strong{color:var(--bad)}
+.danger p:last-child{margin-bottom:0}
 svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </style>
 </head>
 <body>
 <div class="wrap">
-<h1>Buchla 218e V3 — firmware builder</h1>
-<p class="sub">Builds custom v36.9 firmware in your browser. Your firmware file never leaves this machine — there is no server.</p>
+<h1>218e v3 Rewired — firmware builder</h1>
+<p class="sub">Builds custom v36.9 firmware for the Buchla 218e in your browser. Your firmware file never leaves this machine — there is no server.</p>
+
+<div class="danger">
+  <h2>⚠ READ THIS BEFORE YOU FLASH ANYTHING</h2>
+  <p><strong>This is only for the Buchla 218e version 3, running firmware v36.9.</strong>
+  Not the 218, not the 218r, not the 218e v1 or v2, not any other touchplate
+  controller. The build refuses any file that is not the exact v36.9 image.</p>
+  <p><strong>You do this entirely at your own risk.</strong> This is experimental,
+  unofficial firmware, not made or supported by Buchla. It has been tested on
+  <em>one</em> instrument. It can brick your keyboard. Recovering a bricked unit may
+  need JTAG hardware and opening the instrument, and may not be possible at all.</p>
+  <p>A failed flash usually leaves the keyboard in DFU mode, where the flasher can try
+  again — but <strong>nobody is promising that</strong>. If losing the use of your 218e
+  would be a problem, stop here and keep the factory firmware.</p>
+  <p>No warranty of any kind. Not the authors, not Buchla, nobody is liable for damage,
+  loss of use, or a keyboard that no longer works.</p>
+</div>
 
 <section>
   <h2>1 · Your factory firmware</h2>
+  <p class="d muted" style="margin:0 0 12px;font-size:13px">No firmware ships with this page. Supply the stock <strong>218e v3 v36.9</strong> image — it is in Buchla's own flashing kit:<br>
+  <a href="https://buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip" class="mono">buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip</a><br>
+  The file is <span class="mono">218eV3_v369_DFU.hex</span> inside that archive.</p>
   <div class="drop" id="drop">
     <strong>Drop 218eV3_v369_DFU.hex here</strong><br>
-    <span class="muted">or click to choose — it comes with the official Buchla flashing kit</span>
+    <span class="muted">or click to choose</span>
   </div>
   <input type="file" id="file" accept=".hex" hidden>
   <div id="fileMsg"></div>
@@ -85,7 +110,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     <span><span class="t">Latching arpeggiator</span><br>
     <span class="d">Arp switch becomes latch / regular / off. Latched notes are pitches, so one key held in three octaves stacks three notes.</span></span></label>
   <label class="opt"><input type="checkbox" id="remap_knobs" checked>
-    <span><span class="t">Remap knobs 1–4</span><br>
+    <span><span class="t">Remap knobs 1–4 to arpeggiator and vibrato controls</span><br>
     <span class="d">Outside edit mode: arp note order, arp rhythm, random octaves, vibrato. Edit-mode knobs are unaffected.</span></span></label>
   <label class="opt"><input type="checkbox" id="pressure_fix" checked>
     <span><span class="t">Pressure response fix</span><br>
@@ -95,11 +120,11 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     <span class="d">Notes snap, and pitch moves between held notes as their relative pressure moves.</span></span></label>
   <div style="padding-top:14px">
     <span class="t" style="font-weight:600">Volts per octave</span>
-    <span class="d muted" style="font-size:13px"> — 1.0 is what this firmware has always produced. Changing it means retrimming the 208p.</span>
+    <span class="d muted" style="font-size:13px"> — 1.2 is the standard Buchla scaling and the normal choice. 1 V/oct is for other gear. Either way the 208 needs retrimming after a change.</span>
     <div class="row" style="margin-top:8px">
       <div class="seg" id="vpo">
-        <button data-v="1.0" aria-pressed="true">1.0 V/oct</button>
-        <button data-v="1.2" aria-pressed="false">1.2 V/oct <span class="tag">Buchla</span></button>
+        <button data-v="1.2" aria-pressed="true">1.2 V/oct <span class="tag">Buchla</span></button>
+        <button data-v="1.0" aria-pressed="false">1 V/oct</button>
       </div>
     </div>
   </div>
@@ -116,17 +141,30 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 
 <section>
   <h2>4 · Per-key pitch correction <span class="tag">optional</span></h2>
-  <p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208p's tracking error, replacing an external uTune. Measured on <em>your</em> instrument — offsets in cents from an ideal ramp, positive = sharper. Leave at zero for a flat ramp.</p>
+  <p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208's pitch tracking per semitone, so the keyboard plays in tune across its whole range. Enter what your tuner reads: <strong>how many cents sharp each note played</strong>, positive for sharp and negative for flat. The builder works out the correction from that — do not negate anything yourself. Leave everything at zero for an uncorrected ramp.</p>
+
+  <details style="margin:0 0 12px"><summary>How to measure your 208 — read this first</summary>
+    <div style="font-size:13px;line-height:1.7;color:var(--muted);margin-top:8px">
+      <p style="margin:0 0 8px"><strong style="color:var(--ink)">1. Let it warm up.</strong> Power the 208 on and leave it for <strong style="color:var(--ink)">at least 30 minutes</strong>. The oscillator drifts as it comes up to temperature, and a table measured cold will be wrong once it settles — often by more than the error you are trying to correct.</p>
+      <p style="margin:0 0 8px"><strong style="color:var(--ink)">2. Tune the lowest C perfectly.</strong> With the octave switch at its lowest setting, hold the lowest C on the keyboard and trim the 208 until a tuner reads it exactly in tune. Everything after this is measured relative to that note, so if it drifts, the whole table shifts with it.</p>
+      <p style="margin:0 0 8px"><strong style="color:var(--ink)">3. Play every note and write down how far off it is.</strong> Work up from that lowest C, one note at a time, then change octave and keep going until you run out of range. For each one, note what the tuner says in <strong style="color:var(--ink)">cents from the correct pitch</strong> — <span class="mono">+12</span> if it plays 12 cents sharp, <span class="mono">−7</span> if it plays 7 cents flat. Enter those numbers, not the pitch you wanted.</p>
+      <p style="margin:0 0 8px"><strong style="color:var(--ink)">4. Build, flash, and check.</strong> Play back through the keyboard with a tuner. Nothing accumulates: each box is simply what that note measured, so if you want to redo the measurement, disable the correction, measure again from scratch, and type the new readings in.</p>
+      <p style="margin:0"><strong style="color:var(--ink)">Measure against equal temperament.</strong> If you have an alternate tuning loaded, its own intervals will read as error. Use 12-TET, or no alternate tuning at all, while measuring.</p>
+    </div>
+  </details>
+
   <div class="row">
     <label class="row" style="gap:7px"><input type="checkbox" id="useCal"> <span>Enable correction</span></label>
     <button id="calPick">Load CSV…</button>
+    <button id="calSave">Save CSV</button>
     <button id="calZero">Reset to zero</button>
   </div>
   <input type="file" id="calFile" accept=".csv" hidden>
   <svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none" aria-hidden="true"></svg>
-  <details><summary>Edit all 79 semitones</summary>
+  <details><summary>Enter offsets — 65 playable notes</summary>
+    <p class="d muted" style="font-size:12px;margin:8px 0 0">Only pitches the keyboard can actually produce are listed — from its lowest C up to the highest note the octave switch reaches. The firmware's table runs past both ends; those entries are filled in from these, since nobody can play them to measure them.</p>
     <div class="scroll"><table id="calTable">
-      <thead><tr><th style="text-align:left">Note</th><th>Key</th><th>Semitone</th><th>Offset (cents)</th></tr></thead>
+      <thead><tr><th style="text-align:left">Note</th><th>Key</th><th title="index into the firmware table">#</th><th>Played sharp by (cents)</th></tr></thead>
       <tbody></tbody></table></div>
   </details>
   <div id="calMsg"></div>
@@ -149,8 +187,8 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     <li>Connect the 218e by USB, directly rather than through an unpowered hub, on stable power.</li>
     <li>Run the flasher and follow it:
       <div style="margin-top:8px">
-        <div><strong>macOS</strong> — double-click <span class="mono">ProgramLEM218_PressureFix.command</span></div>
-        <div><strong>Windows</strong> — double-click <span class="mono">ProgramLEM218_PressureFix.bat</span></div>
+        <div><strong>macOS</strong> — double-click <span class="mono">Program218e_v3_Rewired.command</span></div>
+        <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired.bat</span></div>
       </div>
     </li>
   </ol>

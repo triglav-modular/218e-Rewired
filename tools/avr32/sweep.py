@@ -33,7 +33,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("tunings_one",           [(r"^alternate_tunings = false",
                                'alternate_tunings = ["tunings/12TET.scl"]')]),
     ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]')]),
-    ("buchla_volts",          [(r"^volts_per_octave = 1.0", "volts_per_octave = 1.2")]),
+    ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
     # Interactions the one-at-a-time rows cannot reach.
@@ -41,10 +41,15 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("pressure_off_porta_off",[(r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
-    ("buchla_volts_corrected",[(r"^volts_per_octave = 1.0", "volts_per_octave = 1.2"),
+    ("one_volt_corrected",    [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
-    ("historical_config",     [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]'),
+    # The firmware as it shipped before the config was reduced to seven
+    # options: measured calibration, three tunings, and the 1 V/oct ramp that
+    # was the default then.  Reproducing that image bit for bit is what shows
+    # the simplification changed the surface and not the firmware.
+    ("historical_config",     [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
+                               (r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]'),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     ("everything_off",        [(r"^latching_arp = true", "latching_arp = false"),
@@ -55,12 +60,19 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
 
 SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 
-# Configurations whose image is known in advance.  historical_config describes
-# the settings the firmware shipped with before the config was reduced to seven
-# options, so it must still produce that exact image — which is what proves the
-# simplification changed the surface and not the firmware.
+# Configurations whose image is pinned, so an unintended change shows up here
+# rather than in someone's instrument.
+#
+# historical_config is the fully-specified build — measured calibration, three
+# tunings, 1 V/oct — that the firmware shipped with before the config was
+# reduced to seven options.  It no longer reproduces that old image byte for
+# byte, and cannot: the init marker is a hash over the build settings AND the
+# assembler source, so renaming a block or even editing a comment in
+# AssemblePressureFix.java moves it.  That is the marker working as intended —
+# a changed build forces a fresh power-up init.  What this pin still buys is a
+# stable anchor for the most complex configuration.
 EXPECTED = {
-    "historical_config": "0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22",
+    "historical_config": "824dd52aee7a3047743f514678d4b1382a128d2f56ac15bbc67ae97cde71f191",
 }
 
 

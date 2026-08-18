@@ -11,8 +11,8 @@ DFU_SESSION_ACTIVE=0
 FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_FILE="$SCRIPT_DIR/LEM218_PressureFix_fwflash_log.txt"
-EXPECTED_SHA256="24b76ba0aa5610c81dbb0609f3615e48ff4900366adcbc8879156a8e01a422a7"
+LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
+EXPECTED_SHA256="5d9a352e380e9ad26e354408755e2be150ccdd8ae1a3957950ff2ae5373ec78b"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
@@ -108,7 +108,7 @@ fail() {
         echo
         echo "RECOVERY-SAFE STOP"
         echo "Do NOT run 'start'. Do NOT disconnect or power-cycle the 218e."
-        echo "Leave it in DFU mode and run this PressureFix command again."
+        echo "Leave it in DFU mode and run this Rewired command again."
         echo "If power was already lost, reconnect power: ISP_FORCE should return it to DFU."
         log "No START command was sent; the 218e was intentionally left in DFU mode."
     fi
@@ -169,7 +169,7 @@ read_fuse_decimal() {
 }
 
 : > "$LOG_FILE"
-log "Starting Buchla LEM218 PressureFix programming."
+log "Starting Buchla LEM218 Rewired programming."
 log "Runtime directory: $RUNTIME_DIR"
 
 # Prevent macOS idle/system sleep for the lifetime of this launcher. The
@@ -252,6 +252,28 @@ else
 fi
 [ -x "$DFUPATH" ] || fail "dfu-programmer is missing or not executable: $DFUPATH"
 log "Using dfu-programmer: $DFUPATH"
+
+echo ""
+echo "======================================================================"
+echo "  THIS IS FOR THE BUCHLA 218e VERSION 3 ONLY, RUNNING v36.9"
+echo ""
+echo "  Not the 218.  Not the 218r.  Not the 218e v1 or v2.  Not any other"
+echo "  touchplate controller.  Flashing this into anything else will not"
+echo "  work and may leave it unusable."
+echo ""
+echo "  YOU DO THIS ENTIRELY AT YOUR OWN RISK."
+echo ""
+echo "  This is experimental, unofficial firmware.  It is not made by or"
+echo "  supported by Buchla.  It has been tested on ONE instrument.  It can"
+echo "  brick your keyboard.  Recovery may need JTAG hardware and opening"
+echo "  the instrument, and may not be possible at all."
+echo ""
+echo "  No warranty of any kind.  Nobody is liable for damage, loss of use,"
+echo "  or a keyboard that no longer works."
+echo "======================================================================"
+echo ""
+read -r -p "  Type YES (capitals) to accept and continue: " consent
+[ "$consent" = "YES" ] || fail "Not confirmed. Nothing was changed."
 
 echo
 echo "This is EXPERIMENTAL firmware based on Buchla 218e V3 v36.9."

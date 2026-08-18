@@ -7,6 +7,14 @@
     var $ = function (id) { return document.getElementById(id); };
     var state = { factoryText: null, scales: [], calibration: null, result: null };
 
+    function download(text, name, type) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([text], { type: type }));
+        a.download = name;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    }
+
     function msg(el, kind, text) {
         el.innerHTML = '';
         if (!text) return;
@@ -17,16 +25,26 @@
     }
 
     // --- semitone naming -------------------------------------------------
-    // Semitone 0 is the 208p's 0 V pitch, which is an A.  The bottom key is a
+    // Semitone 0 is the 208's 0 V pitch, which is an A.  The bottom key is a
     // C, at semitone 3, and keys are numbered from 1 — the three different
     // ways the CSV let you name a row, and the reason this shows all of them.
     var NAMES = ['A','A#','B','C','C#','D','D#','E','F','F#','G','G#'];
     function noteName(semitone) {
         return NAMES[semitone % 12] + (Math.floor((semitone + 9) / 12));
     }
-    function keyNumber(semitone) {
-        return semitone >= 3 && semitone <= 34 ? String(semitone - 2) : '';
+    // The 32 physical keys are semitones 3..34, key 1 being the bottom C.
+    // Above that the same keys reach higher pitches through the octave switch.
+    function keyLabel(semitone) {
+        if (semitone >= 3 && semitone <= 34) return String(semitone - 2);
+        return '+oct';
     }
+
+    // Only pitches the instrument can actually produce are editable.  The
+    // firmware indexes semitones 0..78, but 0..2 sit below the bottom key and
+    // 68..78 above anything the octave switch can reach, so neither can be
+    // played or measured.  They are filled in from the ends of the measured
+    // range instead of being offered as boxes nobody can fill.
+    var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;
 
     // --- factory image ---------------------------------------------------
     function loadFactory(file) {
@@ -72,7 +90,7 @@
     });
 
     // --- volts per octave -------------------------------------------------
-    var vpo = 1.0;
+    var vpo = 1.2;
     Array.prototype.forEach.call($('vpo').children, function (b) {
         b.addEventListener('click', function () {
             vpo = parseFloat(b.dataset.v);
@@ -114,15 +132,27 @@
     });
 
     // --- calibration ------------------------------------------------------
-    var offsets = [];
-    for (var i = 0; i < 79; i++) offsets.push(0);
+    // What the user types is a MEASUREMENT: how many cents sharp the note
+    // played, positive for sharp.  The firmware wants the opposite — a
+    // correction that pushes the pitch back — so rows() negates.
+    //
+    // That negation is exact rather than approximate.  Folding a reading into
+    // an existing table has to scale it by the octave width at that pitch,
+    // because a cent costs more voltage where the 208's scaling is stretched;
+    // but this table starts flat, where the width is exactly 1.000, so the
+    // correction is simply minus the reading.  Which is also why nothing
+    // accumulates here: each entry stands alone.
+    var measured = [];
+    for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);
 
     function drawPlot() {
-        var svg = $('calPlot'), lo = Math.min.apply(null, offsets),
-            hi = Math.max.apply(null, offsets);
+        var play = measured.slice(PLAYABLE_LOW, PLAYABLE_HIGH + 1);
+        var svg = $('calPlot'), lo = Math.min.apply(null, play),
+            hi = Math.max.apply(null, play);
         if (hi - lo < 1) { lo -= 1; hi += 1; }
-        var pts = offsets.map(function (v, n) {
-            return (n / 78 * 700).toFixed(1) + ',' +
+        var span = PLAYABLE_HIGH - PLAYABLE_LOW;
+        var pts = play.map(function (v, i) {
+            return (i / span * 700).toFixed(1) + ',' +
                    (110 - (v - lo) / (hi - lo) * 100).toFixed(1);
         }).join(' ');
         svg.innerHTML =
@@ -136,19 +166,21 @@
     function buildTable() {
         var body = $('calTable').tBodies[0];
         body.innerHTML = '';
-        offsets.forEach(function (v, n) {
-            var tr = document.createElement('tr');
-            tr.innerHTML = '<td class="note">' + noteName(n) + '</td><td class="muted">' +
-                keyNumber(n) + '</td><td class="muted">' + n + '</td><td></td>';
-            var input = document.createElement('input');
-            input.type = 'number'; input.step = '0.01'; input.value = v.toFixed(2);
-            input.addEventListener('change', function () {
-                offsets[n] = parseFloat(input.value) || 0;
-                drawPlot(); validateCal();
-            });
-            tr.lastChild.appendChild(input);
-            body.appendChild(tr);
-        });
+        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
+            (function (n) {
+                var tr = document.createElement('tr');
+                tr.innerHTML = '<td class="note">' + noteName(n) + '</td><td class="muted">' +
+                    keyLabel(n) + '</td><td class="muted">' + n + '</td><td></td>';
+                var input = document.createElement('input');
+                input.type = 'number'; input.step = '0.01'; input.value = measured[n].toFixed(2);
+                input.addEventListener('change', function () {
+                    measured[n] = parseFloat(input.value) || 0;
+                    drawPlot(); validateCal();
+                });
+                tr.lastChild.appendChild(input);
+                body.appendChild(tr);
+            })(n);
+        }
     }
 
     function validateCal() {
@@ -159,20 +191,66 @@
             msg($('calMsg'), 'ok', 'Correction is monotonic and inside the 12-bit DAC.');
             return true;
         } catch (e) {
-            msg($('calMsg'), 'bad', e.message);
+            var hint = '';
+            if (/DAC range/.test(e.message)) {
+                hint = '\n\nThe corrected pitch runs past what the DAC can produce. That ' +
+                       'usually means the lowest C was not tuned in before measuring, so ' +
+                       'every reading carries the same offset — retune it and measure again.';
+            } else if (/monotonic/.test(e.message)) {
+                hint = '\n\nThe corrected pitch goes backwards somewhere: a note ends up ' +
+                       'lower than the one below it. Check for a reading with the wrong ' +
+                       'sign, or one entered against the wrong note.';
+            }
+            msg($('calMsg'), 'bad', e.message + hint);
             return false;
         }
     }
 
+    // Extend the playable range over the rest of the table: below the bottom
+    // key everything holds the lowest measured value, and above the top the
+    // correction keeps climbing at the slope it ended on, which is what the
+    // shipped calibration does.
     function rows() {
-        return offsets.map(function (v, n) { return { semitone: n, cents: v }; });
+        var full = measured.map(function (v) { return -v; });
+        // Below the lowest playable note the correction is zero, matching the
+        // shipped calibration.  Carrying the lowest correction down instead
+        // would push semitone 0 below zero volts for any instrument reading
+        // uniformly sharp, and those entries are unreachable anyway.
+        for (var n = PLAYABLE_LOW - 1; n >= 0; n--) full[n] = 0;
+        var slope = full[PLAYABLE_HIGH] - full[PLAYABLE_HIGH - 1];
+        for (n = PLAYABLE_HIGH + 1; n < TABLE_ENTRIES; n++) {
+            full[n] = full[n - 1] + slope;
+        }
+        return full.map(function (v, i) { return { semitone: i, cents: v }; });
     }
 
     $('useCal').addEventListener('change', function () { validateCal(); refresh(); });
     $('calZero').addEventListener('click', function () {
-        offsets = offsets.map(function () { return 0; });
+        measured = measured.map(function () { return 0; });
         buildTable(); drawPlot(); validateCal();
+        msg($('calMsg'), '', '');
     });
+    // Same columns the loader reads and the repository's own calibration file
+    // uses, so a table can go out, be edited or shared, and come back.
+    $('calSave').addEventListener('click', function () {
+        var out = [
+            '# 218e pitch measurements, saved from the Rewired firmware builder.',
+            '#',
+            '# Measured_Cents is how far each note played from correct pitch, as read',
+            '# on a tuner.  Positive means it played SHARP.  The builder works out the',
+            '# correction from these; do not negate them yourself.',
+            '#',
+            '# Semitone is the index into the firmware table; the lowest C on the',
+            '# keyboard is semitone ' + PLAYABLE_LOW + '.  Only notes the keyboard can play are',
+            '# listed - the rest of the table is derived from these.',
+            'Semitone;Note;Key;Measured_Cents'
+        ];
+        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
+            out.push([n, noteName(n), keyLabel(n), measured[n].toFixed(6)].join(';'));
+        }
+        download(out.join('\n') + '\n', '218e-pitch-measurements.csv', 'text/csv');
+    });
+
     $('calPick').addEventListener('click', function () { $('calFile').click(); });
     $('calFile').addEventListener('change', function (e) {
         var f = e.target.files[0];
@@ -180,11 +258,20 @@
         var r = new FileReader();
         r.onload = function () {
             var found = 0;
+            // A file of Offset_Cents holds corrections, the opposite sign to a
+            // measurement, so it is flipped on the way in.
+            var isCorrection = /Offset_Cents/i.test(r.result);
             r.result.split('\n').forEach(function (line) {
                 if (!line.trim() || line.charAt(0) === '#' || /^Semitone/i.test(line)) return;
                 var p = line.split(line.indexOf(';') >= 0 ? ';' : ',');
                 var n = parseInt(p[0], 10), c = parseFloat(p[3]);
-                if (!isNaN(n) && n < 79 && !isNaN(c)) { offsets[n] = c; found++; }
+                if (isCorrection) c = -c;
+                // Only the playable rows are taken; anything outside is
+                // regenerated from them, so a CSV with filled-in tails cannot
+                // disagree with what the editor shows.
+                if (!isNaN(n) && n >= PLAYABLE_LOW && n <= PLAYABLE_HIGH && !isNaN(c)) {
+                    measured[n] = c; found++;
+                }
             });
             $('useCal').checked = found > 0;
             buildTable(); drawPlot(); validateCal(); refresh();
@@ -242,12 +329,7 @@
 
     $('download').addEventListener('click', function () {
         if (!state.result) return;
-        var blob = new Blob([state.result.hex], { type: 'text/plain' });
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = '218eV3_v369_PressureFix_DFU.hex';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+        download(state.result.hex, '218eV3_v369_PressureFix_DFU.hex', 'text/plain');
     });
 
     buildTable(); drawPlot(); refresh();

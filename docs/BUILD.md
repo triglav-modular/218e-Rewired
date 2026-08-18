@@ -35,6 +35,13 @@ official flashing kit — to the path in `config/218e.toml`:
 cp /path/to/218eV3_v369_DFU.hex firmware/
 ```
 
+The stock image is in Buchla's own flashing kit:
+<https://buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip> — the file
+inside is `218eV3_v369_DFU.hex`.
+
+**This is for the 218e version 3 only, running v36.9.** Not the 218, not the
+218r, not the 218e v1 or v2. The checksum below is what enforces that.
+
 The build checks it against
 `565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47` before
 anything is applied, so a wrong or altered file is rejected rather than
@@ -123,8 +130,8 @@ notarisation.
 Run the flasher for your platform — it finds the image itself, searching
 `firmware/`, its own directory, Downloads and the Desktop and accepting only a
 file whose checksum matches the image it was generated for, so a browser
-download works where it landed. `ProgramLEM218_PressureFix.command` on macOS and
-`ProgramLEM218_PressureFix.bat` on Windows. Both do the same sequence, and the build rewrites the expected
+download works where it landed. `Program218e_v3_Rewired.command` on macOS and
+`Program218e_v3_Rewired.bat` on Windows. Both do the same sequence, and the build rewrites the expected
 checksum and printed instructions in each, so neither can describe or install a
 build it was not generated for.
 
@@ -150,10 +157,10 @@ the seven options into the full internal settings the build has always used.
 | Option | Default | What it does |
 | --- | --- | --- |
 | `latching_arp` | `true` | Arp switch becomes latch / regular / off. Latched notes are *pitches*, so a key held in three octaves stacks three notes. `false` restores the factory switch. |
-| `remap_knobs` | `true` | Knobs 1–4 outside edit mode become arp order, arp rhythm, random octaves and vibrato. `false` hands all four back. Edit-mode knobs 1 and 4 are unaffected. |
-| `pitch_correction` | `false` | Path to a per-semitone correction CSV, replacing an external uTune. `false` emits an ideal ramp with no per-key trim. |
+| `remap_knobs` | `true` | Remaps knobs 1–4 to arpeggiator and vibrato controls: arp order, arp rhythm, random octaves, vibrato. `false` hands all four back. Edit-mode knobs 1 and 4 are unaffected. |
+| `pitch_correction` | `false` | Path to a per-semitone correction CSV. `false` emits an ideal ramp with no per-key trim. |
 | `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` gives all three slots the factory temperament. |
-| `volts_per_octave` | `1.0` | What the firmware has always produced at the jack. `1.2` rescales the ramp to the 208p's native law. |
+| `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 
@@ -161,9 +168,9 @@ The options are independent: any combination builds.
 
 **Per-key pitch correction.** The shipped
 `calibration/218e-pitch-calibration.csv` was measured on one specific
-instrument — the correction reaches **+280 cents** at the top, where that 208p
+instrument — the correction reaches **+280 cents** at the top, where that 208
 needs 6.23 V for a nominal 6 V. It is deliberately **not** the default, because
-another 208p would be corrected toward the wrong curve. To calibrate your own,
+another 208 would be corrected toward the wrong curve. To calibrate your own,
 measure each key against 12-TET with a tuner and fold the readings in:
 
 ```bash
@@ -192,22 +199,24 @@ tune, and the build rejects it. Slot 0 is the power-on default; in edit mode
 key 28 toggles slot 0 against slot 2 and key 27 toggles slot 1 against slot 2.
 Slots you do not fill keep the factory temperament. Each scale is shifted so
 the same key lands on the 12-TET grid in every slot, so switching tuning never
-moves the note you tuned the 208p to.
+moves the note you tuned the 208 to.
 
-**Volts per octave.** `1.0` is what this firmware has always produced at the
-pitch jack, and what the shipped calibration was measured against — the table
-places one octave 400.59 counts apart, and 4096 / (2.5 x 4.09) = 400.59 counts
-per volt. `1.2` rescales the whole ramp uniformly to the 208p's native law,
-changing the octave span while leaving every relative pitch where it was; a
-`pitch_correction` table stays valid across the change, because it is stored
-in cents rather than volts. **The 208p will need retrimming after a change.**
+**Volts per octave.** `1.2` is the standard Buchla scaling and the default.
+`1.0` rescales the whole ramp uniformly for 1 V/oct gear, changing the octave
+span while leaving every relative pitch where it was; a `pitch_correction`
+table stays valid across the change, because it is stored in cents rather than
+volts. **The 208 will need retrimming after a change.**
+
+The underlying table places one octave 400.59 counts apart at 1 V/oct, since
+4096 / (2.5 x 4.09) = 400.59 counts per volt at the jack; the setting scales
+that.
 
 **Pressure response fix.** `false` returns every pointer that reaches the
 reworked pressure path to its factory value: the original curve, filter and
 single-key sourcing run exactly as they shipped. The code caves are still
 assembled into unused flash, but nothing reaches them.
 
-> The pressure CV tops out at 10 V and the 208p wants ~13.5 V for a fully open
+> The pressure CV tops out at 10 V and the 208 wants ~13.5 V for a fully open
 > gate. The DAC has no gain bit, so **no software fix exists** — that one needs
 > the analog booster mod, whatever this option is set to.
 

@@ -661,7 +661,7 @@ def test_atomic_replace() -> None:
     mode = stat_module.S_IMODE(path.stat().st_mode)
     check("replacement keeps the executable bit", mode == 0o755, oct(mode))
     check("replacement writes the new content", "rewritten" in path.read_text())
-    updater = REPO / "ProgramLEM218_PressureFix.command"
+    updater = REPO / "Program218e_v3_Rewired.command"
     if updater.exists():
         mode = stat_module.S_IMODE(updater.stat().st_mode)
         check("the shipped updater is executable", bool(mode & 0o111), oct(mode))

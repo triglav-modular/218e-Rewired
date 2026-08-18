@@ -1,8 +1,26 @@
-# Buchla 218e V3 — custom firmware
+# 218e v3 Rewired — custom firmware for the Buchla 218e v3
+
+
+> ## ⚠ Read this first
+>
+> **This is for the Buchla 218e version 3 only, running firmware v36.9.** Not
+> the 218, not the 218r, not the 218e v1 or v2, not any other touchplate
+> controller. The build refuses any file that is not the exact v36.9 image.
+>
+> **You do this entirely at your own risk.** This is experimental, unofficial
+> firmware, not made or supported by Buchla. It has been tested on *one*
+> instrument. **It can brick your keyboard.** Recovering a bricked unit may need
+> JTAG hardware and opening the instrument, and may not be possible at all.
+>
+> A failed flash usually leaves the keyboard in DFU mode, where the flasher can
+> try again — but nobody is promising that. If losing the use of your 218e would
+> be a problem, stop here and keep the factory firmware.
+>
+> No warranty of any kind. Neither the authors nor Buchla are liable for damage,
+> loss of use, or a keyboard that no longer works.
 
 A patched build of the stock **v36.9** firmware for the Buchla 218e touch
-keyboard, driving a 208p (Easel). It reworks the pressure response, replaces an
-external uTune with in-firmware tuning and per-key calibration, and repurposes
+keyboard, driving a 208 (Easel). It reworks the pressure response, adds in-firmware tuning and per-key pitch calibration, and repurposes
 the four preset-voltage knobs and the arpeggiator switch.
 
 | | |
@@ -14,11 +32,12 @@ the four preset-voltage knobs and the arpeggiator switch.
 
 > **No firmware image ships here.** The factory image is Buchla's, and the
 > patched one is that firmware with these changes spliced in, so neither is
-> ours to redistribute. What this repository is, is the recipe. Put your own
-> `218eV3_v369_DFU.hex` — the one that comes with the official flashing kit —
-> in `firmware/`, and the build produces the patched image locally. The
-> build verifies it by SHA-256 first, so a wrong file is rejected rather than
-> flashed.
+> ours to redistribute. What this repository is, is the recipe.
+>
+> Get the stock image from Buchla's own flashing kit —
+> <https://buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip> — and take
+> `218eV3_v369_DFU.hex` out of it. The build verifies it by SHA-256 before
+> anything else, so a wrong file is rejected rather than flashed.
 
 ## What it does
 
@@ -34,15 +53,15 @@ the four preset-voltage knobs and the arpeggiator switch.
   1 ms DAC ticks and reaches the target exactly, without a long pressure tail.
 - **In-firmware tuning** *(opt in)* — up to three tuning tables built from your
   own Scala files, switched from edit mode with LED indication.
-- **Per-key pitch calibration** *(opt in)* — corrects your 208p's measured
-  tracking error per semitone, finer than the uTune's per-octave scheme
+- **Per-key pitch calibration** *(opt in)* — corrects your 208's measured
+  tracking error per semitone, corrected per semitone rather than per octave
   (≤1.5 cents residual on the instrument it was measured on). Also selectable
   1.2 V/oct (Buchla) or 1.0 V/oct (standard).
 - **Pressure-weighted portamento** — Haken Continuum style: notes snap, and
   pitch moves between held notes as their relative pressure moves. The
   portamento knob sets how much pressure a second note needs to bend, and is
   fully off at zero.
-- **Arpeggiator controls on the four knobs** — note order, rhythm randomness,
+- **Knobs 1–4 remapped to arpeggiator and vibrato controls** — note order, rhythm randomness,
   random octaves, and pressure-responsive global vibrato (one-half to full
   effective knob value).
 - **Latch mode** on the arpeggiator switch: latch / regular / off. Latched
@@ -95,7 +114,7 @@ portamento. Everything else is fixed at the tested value. See
 [`docs/BUILD.md`](docs/BUILD.md).
 
 Pitch correction and alternate tunings are **off by default**: the shipped
-calibration was measured on one specific 208p, and would push another
+calibration was measured on one specific 208, and would push another
 instrument toward the wrong curve.
 
 `tools/avr32/` holds a second, Ghidra-free toolchain that assembles the same
@@ -108,8 +127,8 @@ Put the built image in `firmware/`, then run the flasher for your platform:
 
 | Platform | Flasher | Notes |
 |---|---|---|
-| macOS | `ProgramLEM218_PressureFix.command` | needs Rosetta on Apple silicon — `dfu-programmer` is x86_64 only |
-| Windows | `ProgramLEM218_PressureFix.bat` | uses Buchla's own `windows\` kit; the DFU device needs WinUSB installed once with the bundled Zadig |
+| macOS | `Program218e_v3_Rewired.command` | needs Rosetta on Apple silicon — `dfu-programmer` is x86_64 only |
+| Windows | `Program218e_v3_Rewired.bat` | uses Buchla's own `windows\` kit; the DFU device needs WinUSB installed once with the bundled Zadig |
 
 There is nothing to move or rename: each flasher looks in `firmware/`, its own
 directory, Downloads and the Desktop, and takes whichever file matches the
@@ -138,6 +157,6 @@ docs/         what changed and how to build
 
 ## Notes
 
-- The pressure CV tops out at 10 V; the 208p wants ~13.5 V for a fully open
+- The pressure CV tops out at 10 V; the 208 wants ~13.5 V for a fully open
   gate. The DAC has no gain bit, so that one needs the analog booster mod.
 - Never repurpose the protected DFU bootloader region.

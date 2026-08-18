@@ -1,20 +1,20 @@
 @ECHO OFF
 SETLOCAL EnableDelayedExpansion
-TITLE Buchla 218e V3 - PressureFix firmware
+TITLE Buchla 218e V3 - Rewired firmware
 
 REM Experimental Buchla 218e V3 v36.9 firmware flasher for Windows.
 REM
-REM Mirrors ProgramLEM218_PressureFix.command: it verifies the image checksum,
+REM Mirrors Program218e_v3_Rewired.command: it verifies the image checksum,
 REM confirms the bootloader region is protected, programs, and validates by
 REM read-back before it lets the instrument leave DFU.  Buchla's own
 REM ProgramLEM218.bat does none of those and flashes whatever .hex it finds
 REM first, which is why this is a separate script.
 
-SET "EXPECTED_SHA256=24b76ba0aa5610c81dbb0609f3615e48ff4900366adcbc8879156a8e01a422a7"
+SET "EXPECTED_SHA256=5d9a352e380e9ad26e354408755e2be150ccdd8ae1a3957950ff2ae5373ec78b"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
 SET "SCRIPT_DIR=%~dp0"
-SET "LOG_FILE=%SCRIPT_DIR%LEM218_PressureFix_fwflash_win_log.txt"
+SET "LOG_FILE=%SCRIPT_DIR%218e_v3_Rewired_flash_log_win.txt"
 
 REM The Windows tools come from Buchla's own kit; this repository does not
 REM redistribute them.  Support being run from the package root or windows\.
@@ -86,6 +86,32 @@ IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
     )
 )
 ECHO Using !FIRMWARE!>> "%LOG_FILE%"
+ECHO.
+ECHO ======================================================================
+ECHO   THIS IS FOR THE BUCHLA 218e VERSION 3 ONLY, RUNNING v36.9
+ECHO.
+ECHO   Not the 218.  Not the 218r.  Not the 218e v1 or v2.  Not any other
+ECHO   touchplate controller.  Flashing this into anything else will not
+ECHO   work and may leave it unusable.
+ECHO.
+ECHO   YOU DO THIS ENTIRELY AT YOUR OWN RISK.
+ECHO.
+ECHO   This is experimental, unofficial firmware.  It is not made by or
+ECHO   supported by Buchla.  It has been tested on ONE instrument.  It can
+ECHO   brick your keyboard.  Recovery may need JTAG hardware and opening
+ECHO   the instrument, and may not be possible at all.
+ECHO.
+ECHO   No warranty of any kind.  Nobody is liable for damage, loss of use,
+ECHO   or a keyboard that no longer works.
+ECHO ======================================================================
+ECHO.
+SET "CONSENT="
+SET /P "CONSENT=  Type YES (capitals) to accept and continue: "
+IF NOT "%CONSENT%"=="YES" (
+    ECHO   Not confirmed.  Nothing was changed.
+    GOTO :fail_early
+)
+
 ECHO.
 ECHO This is EXPERIMENTAL firmware based on Buchla 218e V3 v36.9.
 REM --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---

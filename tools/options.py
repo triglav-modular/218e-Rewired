@@ -13,7 +13,7 @@ and the JavaScript toolchain underneath are all unchanged.
     remap_knobs         = true/false     knobs 1-4: arp+vibrato / factory
     pitch_correction    = "<csv>"/false  per-key offsets, or a flat ramp
     alternate_tunings   = [scl,...]/false  up to 3 Scala files, or factory
-    volts_per_octave    = 1.0 / 1.2      pitch ramp scaling
+    volts_per_octave    = 1.2 / 1.0      pitch ramp scaling
     pressure_fix        = true/false     the reworked pressure path, or factory
     pressure_portamento = true/false     pitch follows relative pressure
 """
@@ -124,9 +124,9 @@ def expand(options: dict) -> dict:
         cfg["tuning"]["slots"] = ["factory"] * 3
 
     # 5. Volts per octave ----------------------------------------------------
-    vpo = want("volts_per_octave", 1.0)
+    vpo = want("volts_per_octave", 1.2)
     if vpo not in (1.0, 1.2):
-        raise SystemExit("volts_per_octave must be 1.0 (as shipped) or 1.2 (Buchla native)")
+        raise SystemExit("volts_per_octave must be 1.2 (standard Buchla) or 1.0")
     cfg["pitch"]["volts_per_octave"] = vpo
 
     # 6. Pressure response fix ----------------------------------------------

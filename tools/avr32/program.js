@@ -625,7 +625,7 @@ function assembleProgram() {
         word(0x80008034); // direct USB-MIDI CC sender
         finish("send_usb_midi_14bit", 0x80019980);
 
-        // Pitch-CV calibration remap (uTune replacement, stage 1).  The final
+        // Pitch-CV calibration remap, stage 1.  The final
         // pitch value (key table + transpose + glide + bend, clamped 0..4095,
         // 484 units/octave, lowest key C0 = 485) is remapped through a
         // piecewise-linear curve with one anchor per octave, encoding the
@@ -679,11 +679,11 @@ function assembleProgram() {
         word(0x80019bc0); // per-semitone tracking-corrected curve table
         word(0x00003560); // global state base
         word(0x8001a2e8); // tuning applier + latch watch + vibrato chain
-        finish("pitch_remap_utune", 0x80019a04);
+        finish("pitch_remap_calibration", 0x80019a04);
 
         // Per-semitone pitch curve: index 0 = the 208p's 0 V pitch (A);
         // index 3 = bottom key at the leftmost octave position (C).  Values
-        // are DAC units: uTune per-octave calibration interpolated per
+        // are DAC units: the per-octave calibration interpolated per
         // semitone, minus the measured tracking error at each semitone
         // (218e-key-calibration_done.csv), held constant beyond semi 64.
         begin(0x80019bc0);

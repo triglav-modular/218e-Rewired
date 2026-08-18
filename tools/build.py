@@ -198,7 +198,7 @@ def anchor_offset(cents: list[float], reference_key: int) -> float:
     agree with equal temperament, so each scale puts a given key at its own
     pitch.  Shifting by this offset pins one chosen key -- the note you tune the
     instrument to -- to the same place in every scale, so switching slots never
-    moves it and one trim on the 208p serves all three.
+    moves it and one trim on the 208 serves all three.
     """
     if not isinstance(reference_key, int) or isinstance(reference_key, bool):
         raise ValueError(f"[tuning].reference_key must be a whole number, got {reference_key!r}")
@@ -253,7 +253,7 @@ def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
 def read_calibration(path: Path) -> dict[int, float]:
     """Read the pitch calibration table: semitone -> offset in cents.
 
-    One row per semitone above the 208p's 0 V pitch.  Offset_Cents is measured
+    One row per semitone above the 208's 0 V pitch.  Offset_Cents is measured
     against an ideal 1 V/octave ramp, positive raising the pitch; it absorbs
     both the coarse octave scaling and each key's own tracking error, so this
     is the only pitch calibration data there is.
@@ -292,7 +292,7 @@ def counts_per_volt(cfg: dict) -> float:
 # 4096 counts / (2.5 V * 4.09) = 400.59 counts per volt, and the table puts one
 # octave 400.59 counts apart — 1.000 V/oct, confirmed flat across the bottom
 # five octaves of the shipped calibration.  (The top octave measures 1.216 V,
-# but that is the 208p's own tracking error being corrected, not a scaling.)
+# but that is the 208's own tracking error being corrected, not a scaling.)
 #
 # So this is the reference: volts_per_octave = 1.0 leaves the ramp untouched,
 # and any other value scales it uniformly — changing the octave span while
@@ -325,7 +325,7 @@ def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
 
 
 def octave_width_volts(offsets: dict[int, float], semitone: int) -> float:
-    """Volts per octave the 208p actually needs around this semitone.
+    """Volts per octave the 208 actually needs around this semitone.
 
     A cent of pitch costs more voltage where the oscillator's scaling is
     stretched, so folding a tuner reading into the table has to use the local
@@ -357,7 +357,7 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         if not raw:
             continue
         # Three accepted ways to say which note was measured.  "Semitone" is an
-        # index into the calibration table (0 = the 208p's 0 V pitch, an A);
+        # index into the calibration table (0 = the 208's 0 V pitch, an A);
         # "Semitones" and "Key" are relative to the bottom key, which is a C,
         # three semitones higher.
         if (row.get("Semitone") or "").strip():

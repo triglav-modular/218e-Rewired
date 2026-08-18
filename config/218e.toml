@@ -25,8 +25,8 @@ latching_arp = true
 remap_knobs = true
 
 # 3. PER-KEY PITCH CORRECTION
-# Corrects the 208p's measured tracking error per semitone, replacing an
-# external uTune.  Point this at a CSV of your own measurements:
+# Corrects the 208's measured tracking error per semitone.  Point this at a
+# CSV of your own measurements:
 #
 #   pitch_correction = "calibration/218e-pitch-calibration.csv"
 #
@@ -34,7 +34,7 @@ remap_knobs = true
 #   python3 tools/build.py --fold-measurement <your-readings.csv>
 #
 # false emits an ideal ramp with no per-key trim.  The shipped table was
-# measured on one specific instrument, so it is NOT the default: another 208p
+# measured on one specific instrument, so it is NOT the default: another 208
 # would be corrected toward the wrong curve.
 pitch_correction = false
 
@@ -52,17 +52,15 @@ pitch_correction = false
 alternate_tunings = false
 
 # 5. VOLTS PER OCTAVE
-# 1.0 is what this firmware has always produced at the pitch jack, and what
-# the shipped calibration was measured against.  Leave it here unless you
-# specifically want the other scaling.
+# 1.2 is the standard Buchla scaling and the default, since that is what this
+# keyboard normally drives.
 #
-# 1.2 is the Buchla 208p's native scaling, for driving it without the
-# firmware's own correction doing that work.
+# 1.0 rescales the pitch ramp for 1 V/oct gear.
 #
-# Changing this moves every pitch and the 208p will need retrimming.  A
+# Changing this moves every pitch and the 208 will need retrimming.  A
 # pitch_correction table stays valid across the change, because it is stored
 # in cents rather than volts.
-volts_per_octave = 1.0
+volts_per_octave = 1.2
 
 
 # 6. PRESSURE RESPONSE FIX
@@ -92,13 +90,13 @@ output_hex     = "firmware/218eV3_v369_PressureFix_DFU.hex"
 # The updaters refuse to flash an image whose checksum they do not know.  The
 # build rewrites their EXPECTED_SHA256 and the instructions they print, so a
 # flasher can never describe or install a build it was not generated for.
-updaters       = ["ProgramLEM218_PressureFix.command",
-                  "ProgramLEM218_PressureFix.bat"]
+updaters       = ["Program218e_v3_Rewired.command",
+                  "Program218e_v3_Rewired.bat"]
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "24b76ba0aa5610c81dbb0609f3615e48ff4900366adcbc8879156a8e01a422a7"
+golden_sha256  = "5d9a352e380e9ad26e354408755e2be150ccdd8ae1a3957950ff2ae5373ec78b"
 
 
 [tools]

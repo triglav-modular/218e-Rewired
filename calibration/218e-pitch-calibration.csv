@@ -1,8 +1,8 @@
-# 218e pitch-CV calibration — the voltage the 208p needs at each pitch.
+# 218e pitch-CV calibration — the voltage the 208 needs at each pitch.
 #
 # Offset_Cents is the only column the build reads: how far the output is
 # pushed from an ideal 1 V/octave ramp, in cents of that ramp.  Positive
-# raises the pitch.  Semitone 0 is the 208p's 0 V pitch, an A; the bottom
+# raises the pitch.  Semitone 0 is the 208's 0 V pitch, an A; the bottom
 # key of the keyboard is semitone 3 (a C), shown in the Key column.
 #
 # Source:  octave       — from the octave calibration only, below the first key
