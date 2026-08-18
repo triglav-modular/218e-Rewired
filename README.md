@@ -41,10 +41,9 @@ the four preset-voltage knobs and the arpeggiator switch.
 
 ## What it does
 
-- **Reworked pressure response** — the 218r's gentle 10 dB exponential curve
-  is available in place of the factory curve that stayed nearly silent until
-  85 % of travel, blended by edit knob 4 from linear (the current default) to
-  the full curve, with a faded onset so releases do not step off a cliff.
+- **Reworked pressure response** — a more gentle pressure curve allowing for
+  more expressive play, blended by edit knob 4 from linear (the default) to the
+  full curve, with a faded onset so releases do not step off a cliff.
   Calibration is hardcoded to defaults that survive a flash; edit knob 1
   scales the whole window live.
 - **Spatial proximity rejection** — estimates the hand field beside each held

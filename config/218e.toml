@@ -66,10 +66,9 @@ volts_per_octave = 1.2
 
 
 # 6. PRESSURE RESPONSE FIX
-# The reworked pressure path: the 218r's gentle exponential curve in place of
-# the factory law that stayed nearly silent until 85% of travel, pressure
-# combined across all held keys instead of following the last one, per-key
-# proximity rejection, and interpolated DAC output.
+# The reworked pressure path: a more gentle pressure curve allowing for more
+# expressive play, pressure combined across all held keys instead of following
+# the last one, per-key proximity rejection, and interpolated DAC output.
 # false returns the whole pressure path to the factory behaviour.
 pressure_fix = true
 
