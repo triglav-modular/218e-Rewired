@@ -120,9 +120,11 @@ notarisation.
 
 ## Flashing
 
-Put the built image in `firmware/` and run the flasher for your platform —
-`ProgramLEM218_PressureFix.command` on macOS, `ProgramLEM218_PressureFix.bat`
-on Windows. Both do the same sequence, and the build rewrites the expected
+Run the flasher for your platform — it finds the image itself, searching
+`firmware/`, its own directory, Downloads and the Desktop and accepting only a
+file whose checksum matches the image it was generated for, so a browser
+download works where it landed. `ProgramLEM218_PressureFix.command` on macOS and
+`ProgramLEM218_PressureFix.bat` on Windows. Both do the same sequence, and the build rewrites the expected
 checksum and printed instructions in each, so neither can describe or install a
 build it was not generated for.
 

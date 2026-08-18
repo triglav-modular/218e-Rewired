@@ -78,7 +78,16 @@ def main() -> None:
                 raise SystemExit(f"{name}: edit {pattern!r} matched {n} times")
         text = re.sub(r'^output_hex\s*=\s*".*"', 'output_hex     = "build/_web.hex"',
                       text, flags=re.M)
-        text = re.sub(r'^updater\s*=\s*".*"\n', "", text, flags=re.M)
+        # Strip the updater list so a variant build cannot rewrite the real
+        # flashers with its own checksum.  This is asserted rather than assumed:
+        # it was previously a single-line regex, the key became a multi-line array,
+        # the match silently stopped happening, and every sweep quietly left the
+        # shipped flashers expecting a variant image.
+        text, removed = re.subn(r'^updaters?\s*=\s*(?:".*"|\[[^\]]*\])\n', "",
+                                text, flags=re.M | re.S)
+        if removed != 1:
+            raise SystemExit("could not strip [firmware].updaters from the config — "
+                             "a variant build would overwrite the real flashers")
         cfg_path = REPO / "config" / "_web.toml"
         cfg_path.write_text(text)
         try:

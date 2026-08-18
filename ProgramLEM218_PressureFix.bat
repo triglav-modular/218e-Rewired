@@ -10,7 +10,7 @@ REM read-back before it lets the instrument leave DFU.  Buchla's own
 REM ProgramLEM218.bat does none of those and flashes whatever .hex it finds
 REM first, which is why this is a separate script.
 
-SET "EXPECTED_SHA256=e0edd5fbd33eb1e9fda4920c3521b7416b473b06033c2094b9d2b57ed76fd1cc"
+SET "EXPECTED_SHA256=24b76ba0aa5610c81dbb0609f3615e48ff4900366adcbc8879156a8e01a422a7"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
 SET "SCRIPT_DIR=%~dp0"
@@ -33,41 +33,59 @@ IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
     GOTO :fail_early
 )
 
-SET "FIRMWARE=%PACKAGE_ROOT%firmware\218eV3_v369_PressureFix_DFU.hex"
-SET "DFU=%TOOLS%\dfu-programmer.exe"
-SET "SENDMIDI=%TOOLS%\sendmidi.exe"
+SET "FIRMWARE_DIR=%PACKAGE_ROOT%firmware"
+SET "FIRMWARE_NAME=218eV3_v369_PressureFix_DFU.hex"
+SET "FIRMWARE="
+SET "TOTAL_STEPS=6"
+SET "STEP=0"
 
-ECHO [%DATE% %TIME%] Starting PressureFix programming.> "%LOG_FILE%"
+REM --- find the image ----------------------------------------------------
+REM Searching is safe because the checksum decides: only an image matching the
+REM one this flasher was generated for is accepted, so a stray .hex is skipped
+REM rather than flashed.  That lets a downloaded file be used where it landed.
+CALL :step Locating the firmware image
 
-IF NOT EXIST "%FIRMWARE%" (
-    ECHO No firmware image found at:
-    ECHO   %FIRMWARE%
+CALL :try_image "%FIRMWARE_DIR%\%FIRMWARE_NAME%"
+CALL :try_image "%SCRIPT_DIR%%FIRMWARE_NAME%"
+CALL :try_image "%USERPROFILE%\Downloads\%FIRMWARE_NAME%"
+CALL :try_image "%USERPROFILE%\Desktop\%FIRMWARE_NAME%"
+
+REM Then any recent .hex in Downloads or on the Desktop, so a browser that
+REM renamed the file to "...(1).hex" still works.
+FOR /F "delims=" %%F IN ('DIR /B /O-D "%USERPROFILE%\Downloads\*.hex" 2^>NUL') DO (
+    CALL :try_image "%USERPROFILE%\Downloads\%%F"
+)
+FOR /F "delims=" %%F IN ('DIR /B /O-D "%USERPROFILE%\Desktop\*.hex" 2^>NUL') DO (
+    CALL :try_image "%USERPROFILE%\Desktop\%%F"
+)
+
+IF NOT DEFINED FIRMWARE (
     ECHO.
-    ECHO None ships with this package: the patched image is Buchla's firmware
-    ECHO with our changes in it, so it is not ours to redistribute.  Build it
-    ECHO from your own copy of the factory image:
+    ECHO   Looked in firmware\, beside this script, Downloads and Desktop.
+    ECHO   Nothing there matches the image this flasher installs:
+    ECHO     %EXPECTED_SHA256%
     ECHO.
-    ECHO   1. copy your 218eV3_v369_DFU.hex into firmware\
-    ECHO   2. python tools\build.py --no-ghidra
+    ECHO   No firmware ships with this package - the patched image is Buchla's
+    ECHO   firmware with our changes in it, so it is not ours to redistribute.
+    ECHO   Build one from your own factory image with the page in web\, or:
+    ECHO     python tools\build.py --no-ghidra
     ECHO.
     GOTO :fail_early
 )
+CALL :ok Found !FIRMWARE!
+CALL :ok Checksum matches the image this flasher installs
 
-REM --- checksum, before anything is touched -----------------------------
-SET "ACTUAL_SHA256="
-FOR /F "skip=1 tokens=* delims=" %%H IN ('certutil -hashfile "%FIRMWARE%" SHA256 ^| findstr /R "^[0-9a-f ]*$"') DO (
-    IF NOT DEFINED ACTUAL_SHA256 SET "ACTUAL_SHA256=%%H"
+REM Keep it where it belongs, so the next run finds it first.  A failure here
+REM is not fatal: the image is already verified.
+IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
+    IF NOT EXIST "%FIRMWARE_DIR%" MKDIR "%FIRMWARE_DIR%" 2>NUL
+    COPY /Y "!FIRMWARE!" "%FIRMWARE_DIR%\%FIRMWARE_NAME%" >NUL 2>&1
+    IF NOT ERRORLEVEL 1 (
+        SET "FIRMWARE=%FIRMWARE_DIR%\%FIRMWARE_NAME%"
+        CALL :ok Copied into firmware\
+    )
 )
-SET "ACTUAL_SHA256=!ACTUAL_SHA256: =!"
-IF /I NOT "!ACTUAL_SHA256!"=="%EXPECTED_SHA256%" (
-    ECHO Firmware checksum mismatch; refusing to erase the instrument.
-    ECHO   expected %EXPECTED_SHA256%
-    ECHO   found    !ACTUAL_SHA256!
-    GOTO :fail_early
-)
-ECHO Verified patched firmware SHA-256: !ACTUAL_SHA256!
-ECHO Verified SHA-256 !ACTUAL_SHA256!>> "%LOG_FILE%"
-
+ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 ECHO.
 ECHO This is EXPERIMENTAL firmware based on Buchla 218e V3 v36.9.
 REM --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---
@@ -75,7 +93,10 @@ ECHO Ordinary edit mode provides the pressure calibration:
 ECHO   knob 1 = pressure calibration, scaling both endpoints (592/893 at centre)
 ECHO   knob 3 = factory behaviour
 ECHO   knob 4 = curve, linear (left) to full 218r (right), default 0
-ECHO Outside edit mode all four knobs keep their factory behaviour.
+ECHO Outside edit mode those knobs control the arpeggiator and vibrato.
+ECHO Arp switch: latch / regular / off. In latch, keys toggle by
+ECHO sounding pitch, so any octave position can release a note.
+ECHO Portamento knob = pressure needed to bend between held notes.
 ECHO.
 ECHO Calibrating, in ordinary edit mode:
 ECHO   1. Knob 4 fully left for a linear response.
@@ -95,6 +116,7 @@ ECHO.
 PAUSE
 
 REM --- into DFU ----------------------------------------------------------
+CALL :step Putting the instrument into DFU
 "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
 IF NOT ERRORLEVEL 1 (
     ECHO The 218e is already in DFU mode.
@@ -141,7 +163,7 @@ ECHO AT32UC3B DFU device detected.
 REM Each accepted ISP command sets ISP_FORCE=1.  START is the only operation
 REM below that clears it, and it runs only after read-back validation passes.
 REM That is what makes an interrupted flash recoverable over USB.
-ECHO Reading bootloader version and safety fuses before erase.
+CALL :step Checking the bootloader and safety fuses
 "%DFU%" at32uc3b1256 get bootloader-version >> "%LOG_FILE%" 2>&1
 
 CALL :read_fuse BOOTPROT
@@ -149,27 +171,27 @@ IF NOT "!FUSE_VALUE!"=="3" (
     ECHO BOOTPROT is "!FUSE_VALUE!", not 3 ^(8 KiB^); refusing to erase.
     GOTO :recovery_safe_stop
 )
-ECHO Verified BOOTPROT=3: the 8 KiB DFU bootloader region is protected.
+CALL :ok BOOTPROT=3 - the 8 KiB bootloader region is protected
 
 CALL :read_fuse ISP_FORCE
 IF NOT "!FUSE_VALUE!"=="1" (
     ECHO ISP_FORCE did not read back as 1; refusing to erase.
     GOTO :recovery_safe_stop
 )
-ECHO Verified ISP_FORCE=1: an interrupted session should boot back into DFU.
+CALL :ok ISP_FORCE=1 - an interrupted session boots back into DFU
 
 ECHO.
 ECHO Ready to erase the application flash.
 PAUSE
 
-ECHO Erasing AT32UC3B1256 application flash.
+CALL :step Erasing the application flash
 "%DFU%" at32uc3b1256 erase >> "%LOG_FILE%" 2>&1
 IF ERRORLEVEL 1 (
     ECHO Chip erase failed.
     GOTO :recovery_safe_stop
 )
 
-ECHO Writing firmware, with read-back validation.
+CALL :step Writing and validating the firmware
 "%DFU%" at32uc3b1256 flash --suppress-bootloader-mem "%FIRMWARE%" >> "%LOG_FILE%" 2>&1
 IF ERRORLEVEL 1 (
     ECHO Firmware programming failed.  Do not disconnect; run this script again
@@ -178,7 +200,8 @@ IF ERRORLEVEL 1 (
 )
 
 SET "FLASH_VALIDATED=1"
-ECHO Programming and read-back validation completed successfully.
+CALL :ok Written and validated by read-back
+CALL :step Restarting the instrument
 ECHO.
 ECHO The patched application has passed read-back validation.
 ECHO Only now is it safe to leave DFU mode.
@@ -192,13 +215,36 @@ IF ERRORLEVEL 1 (
 SET "DFU_SESSION_ACTIVE=0"
 
 ECHO.
-ECHO PressureFix flashing is complete.
+ECHO   Flashing complete.  Log: %LOG_FILE%
 ECHO If the 218e does not reappear, power-cycle the instrument.
 PAUSE
 ENDLOCAL
 EXIT /B 0
 
 REM --- helpers -----------------------------------------------------------
+:step
+SET /A STEP+=1
+ECHO.
+ECHO [!STEP!/%TOTAL_STEPS%] %*
+ECHO === step !STEP!/%TOTAL_STEPS%: %*>> "%LOG_FILE%"
+EXIT /B 0
+
+:ok
+ECHO   [ok] %*
+ECHO OK: %*>> "%LOG_FILE%"
+EXIT /B 0
+
+:try_image
+IF DEFINED FIRMWARE EXIT /B 0
+IF NOT EXIST "%~1" EXIT /B 0
+SET "_SHA="
+FOR /F "skip=1 tokens=* delims=" %%H IN ('certutil -hashfile "%~1" SHA256 ^| findstr /R "^[0-9a-f ]*$"') DO (
+    IF NOT DEFINED _SHA SET "_SHA=%%H"
+)
+SET "_SHA=!_SHA: =!"
+IF /I "!_SHA!"=="%EXPECTED_SHA256%" SET "FIRMWARE=%~1"
+EXIT /B 0
+
 :read_fuse
 SET "FUSE_VALUE="
 FOR /F "tokens=* delims=" %%L IN ('"%DFU%" at32uc3b1256 getfuse %1 2^>^&1') DO (

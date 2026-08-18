@@ -111,6 +111,11 @@ Put the built image in `firmware/`, then run the flasher for your platform:
 | macOS | `ProgramLEM218_PressureFix.command` | needs Rosetta on Apple silicon — `dfu-programmer` is x86_64 only |
 | Windows | `ProgramLEM218_PressureFix.bat` | uses Buchla's own `windows\` kit; the DFU device needs WinUSB installed once with the bundled Zadig |
 
+There is nothing to move or rename: each flasher looks in `firmware/`, its own
+directory, Downloads and the Desktop, and takes whichever file matches the
+checksum it was generated against — so a fresh download works where it landed,
+even if the browser renamed it. It then copies the image into `firmware/`.
+
 Both are generated against the image they will install: the build rewrites
 their expected checksum and the instructions they print, so a flasher can never
 describe or install a build it was not made for.

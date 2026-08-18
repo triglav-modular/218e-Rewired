@@ -142,28 +142,23 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </section>
 
 <section>
-  <h2>6 · Flash</h2>
-  <div id="caps" class="msg warn"></div>
-  <p class="d muted" style="font-size:13px">The instrument must be powered from a stable supply and connected by USB directly, not through an unpowered hub.</p>
-  <div class="row">
-    <button id="enterDfu">1 · Ask for DFU</button>
-    <button id="connectDfu">2 · Connect</button>
-    <button id="preflight" disabled>3 · Pre-flight checks</button>
-  </div>
-  <pre id="flashLog" class="mono" style="margin:14px 0 0;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;max-height:220px;overflow:auto;white-space:pre-wrap"></pre>
-  <div class="msg warn" style="margin-top:14px"><strong>Programming is not done here.</strong>
-  This page puts the instrument into DFU and inspects the bootloader, but it does not erase or
-  write — that is left to the flasher for your platform, which verifies the checksum, confirms
-  the bootloader region is protected, and validates by read-back before leaving DFU.
-  <br><br>
-  <strong>macOS</strong> — put the built image in <span class="mono">firmware/</span> and run
-  <span class="mono">ProgramLEM218_PressureFix.command</span>. Needs Rosetta on Apple silicon,
-  because <span class="mono">dfu-programmer</span> is x86_64 only.
-  <br><br>
-  <strong>Windows</strong> — put the built image in <span class="mono">firmware\</span> and run
-  <span class="mono">ProgramLEM218_PressureFix.bat</span>. It uses the tools from Buchla's own
-  <span class="mono">windows\</span> kit, which is not redistributed here, and the DFU device
-  needs the WinUSB driver installed once with the bundled Zadig.</div>
+  <h2>6 · Flash it</h2>
+  <p class="d muted" style="margin:0 0 12px;font-size:13px">Flashing is done by the script for your platform, not by this page. Each one verifies the image checksum, confirms the bootloader region is protected, and validates by read-back before letting the instrument leave DFU.</p>
+  <ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.9">
+    <li>Download the image above — leaving it in your Downloads folder is fine.</li>
+    <li>Connect the 218e by USB, directly rather than through an unpowered hub, on stable power.</li>
+    <li>Run the flasher and follow it:
+      <div style="margin-top:8px">
+        <div><strong>macOS</strong> — double-click <span class="mono">ProgramLEM218_PressureFix.command</span></div>
+        <div><strong>Windows</strong> — double-click <span class="mono">ProgramLEM218_PressureFix.bat</span></div>
+      </div>
+    </li>
+  </ol>
+  <div class="msg ok" style="margin-top:14px">The flasher finds the image itself. It looks in <span class="mono">firmware/</span>, beside itself, and in your Downloads folder, and takes whichever file matches the checksum it expects — so there is nothing to move or rename.</div>
+  <details><summary>Platform notes</summary>
+    <p class="d muted" style="font-size:13px"><strong>macOS</strong> needs Rosetta on Apple silicon, because <span class="mono">dfu-programmer</span> is x86_64 only: <span class="mono">softwareupdate --install-rosetta</span>.<br><br>
+    <strong>Windows</strong> uses the tools from Buchla's own <span class="mono">windows\</span> kit, which is not redistributed here. The DFU device needs the WinUSB driver installed once, with the Zadig executable that kit bundles.</p>
+  </details>
 </section>
 </div>
 
@@ -172,7 +167,6 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 <script src="buildlib.js"></script>
 <script src="assembler.js"></script>
 <script src="build.js"></script>
-<script src="flash.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -12,7 +12,7 @@ FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/LEM218_PressureFix_fwflash_log.txt"
-EXPECTED_SHA256="e0edd5fbd33eb1e9fda4920c3521b7416b473b06033c2094b9d2b57ed76fd1cc"
+EXPECTED_SHA256="24b76ba0aa5610c81dbb0609f3615e48ff4900366adcbc8879156a8e01a422a7"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
@@ -30,21 +30,80 @@ else
     exit 1
 fi
 
-FIRMWARE="$PACKAGE_ROOT/firmware/218eV3_v369_PressureFix_DFU.hex"
+FIRMWARE_DIR="$PACKAGE_ROOT/firmware"
+FIRMWARE_NAME="218eV3_v369_PressureFix_DFU.hex"
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 DFU_BUNDLED="$RUNTIME_DIR/support/buchla-dfu/dfu/dfu-programmer"
 DFU_SYSTEM="$RUNTIME_DIR/support/dfu-programmer"
+
+# Colour only when attached to a terminal, so the log file stays plain text.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RESET=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
+    C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'; C_BLUE=$'\033[36m'
+else
+    C_RESET=; C_DIM=; C_BOLD=; C_GREEN=; C_RED=; C_YELLOW=; C_BLUE=
+fi
+
+TOTAL_STEPS=6
+STEP=0
 
 timestamp() {
     date '+%Y-%m-%d %H:%M:%S'
 }
 
 log() {
-    echo "[$(timestamp)] $*" | tee -a "$LOG_FILE"
+    echo "[$(timestamp)] $*" >> "$LOG_FILE"
+    echo "${C_DIM}$*${C_RESET}"
+}
+
+# A step banner plus a progress bar, so it is obvious how far along this is and
+# — more usefully — which steps have already passed.
+step() {
+    STEP=$((STEP + 1))
+    local filled=$((STEP * 24 / TOTAL_STEPS)) bar= i=0
+    while [ "$i" -lt 24 ]; do
+        if [ "$i" -lt "$filled" ]; then bar="$bar█"; else bar="$bar·"; fi
+        i=$((i + 1))
+    done
+    echo
+    echo "${C_BLUE}${bar}${C_RESET} ${C_DIM}${STEP}/${TOTAL_STEPS}${C_RESET}  ${C_BOLD}$*${C_RESET}"
+    echo "[$(timestamp)] === step $STEP/$TOTAL_STEPS: $* ===" >> "$LOG_FILE"
+}
+
+ok() {
+    echo "  ${C_GREEN}✓${C_RESET} $*"
+    echo "[$(timestamp)] OK: $*" >> "$LOG_FILE"
+}
+
+warn() {
+    echo "  ${C_YELLOW}!${C_RESET} $*"
+    echo "[$(timestamp)] WARN: $*" >> "$LOG_FILE"
+}
+
+# Run a long command, showing a spinner while it works.  dfu-programmer writes
+# its own progress to stderr, which is kept in the log rather than shown, so
+# the screen stays readable.
+spin() {
+    local label="$1"; shift
+    "$@" >> "$LOG_FILE" 2>&1 &
+    local pid=$! frames='|/-\' i=0
+    if [ -t 1 ]; then
+        while kill -0 "$pid" 2>/dev/null; do
+            i=$(((i + 1) % 4))
+            printf '\r  %s %s' "${frames:$i:1}" "$label"
+            sleep 0.1
+        done
+        printf '\r%*s\r' $((${#label} + 6)) ''
+    else
+        wait "$pid"
+    fi
+    wait "$pid"
 }
 
 fail() {
-    log "ERROR: $*"
+    echo
+    echo "  ${C_RED}✗ $*${C_RESET}"
+    echo "[$(timestamp)] ERROR: $*" >> "$LOG_FILE"
     if [ "$DFU_SESSION_ACTIVE" -eq 1 ] && [ "$FLASH_VALIDATED" -eq 0 ]; then
         echo
         echo "RECOVERY-SAFE STOP"
@@ -121,25 +180,68 @@ if command -v caffeinate >/dev/null 2>&1; then
 fi
 
 [ "$(uname -s)" = "Darwin" ] || fail "This launcher is for macOS."
-if [ ! -f "$FIRMWARE" ]; then
-    echo "No firmware image found at:"
-    echo "  $FIRMWARE"
-    echo
-    echo "None ships with this package: the patched image is Buchla's firmware"
-    echo "with our changes in it, so it is not ours to redistribute. Build it"
-    echo "from your own copy of the factory image:"
-    echo
-    echo "  1. copy your 218eV3_v369_DFU.hex into firmware/"
-    echo "  2. python3 tools/build.py --no-ghidra"
-    echo
-    fail "Nothing to flash."
-fi
 [ -x "$SENDMIDI" ] || fail "sendmidi is missing or not executable: $SENDMIDI"
 
-actual_sha256="$(shasum -a 256 "$FIRMWARE" | awk '{print $1}')"
-[ "$actual_sha256" = "$EXPECTED_SHA256" ] || \
-    fail "Firmware checksum mismatch; refusing to erase the instrument."
-log "Verified patched firmware SHA-256: $actual_sha256"
+# --- find the image -----------------------------------------------------
+# Searching several places is safe because the checksum decides: only an image
+# matching the one this flasher was generated for is accepted, so a stray .hex
+# is skipped rather than flashed.  That is what lets a downloaded file be used
+# where it landed, instead of asking anyone to move it.
+step "Locating the firmware image"
+FIRMWARE=""
+try_candidate() {
+    [ -f "$1" ] || return 1
+    [ "$(shasum -a 256 "$1" | awk '{print $1}')" = "$EXPECTED_SHA256" ] || return 1
+    FIRMWARE="$1"
+    return 0
+}
+
+for candidate in \
+    "$FIRMWARE_DIR/$FIRMWARE_NAME" \
+    "$SCRIPT_DIR/$FIRMWARE_NAME" \
+    "$HOME/Downloads/$FIRMWARE_NAME" \
+    "$HOME/Desktop/$FIRMWARE_NAME"
+do
+    try_candidate "$candidate" && break
+done
+
+# Then the newest .hex files in Downloads, so a browser that renamed the file
+# to "...(1).hex" still works.
+if [ -z "$FIRMWARE" ]; then
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        try_candidate "$candidate" && break
+    done <<EOF
+$(ls -t "$HOME/Downloads"/*.hex "$HOME/Desktop"/*.hex 2>/dev/null | head -20)
+EOF
+fi
+
+if [ -z "$FIRMWARE" ]; then
+    echo
+    echo "  Looked in firmware/, beside this script, Downloads and Desktop."
+    echo "  Nothing there matches the image this flasher installs:"
+    echo "    ${C_BOLD}$EXPECTED_SHA256${C_RESET}"
+    echo
+    echo "  No firmware ships with this package — the patched image is Buchla's"
+    echo "  firmware with our changes in it, so it is not ours to redistribute."
+    echo "  Build one from your own factory image with the page in web/, or:"
+    echo "    ${C_BOLD}python3 tools/build.py --no-ghidra${C_RESET}"
+    fail "No matching firmware image found."
+fi
+ok "Found $(basename "$FIRMWARE")"
+ok "Checksum matches the image this flasher installs"
+
+# Keep it where it belongs, so the next run finds it first and the log records
+# one canonical location.  A failure here is not fatal: the image was already
+# verified, and flashing it from where it sits is equally correct.
+if [ "$FIRMWARE" != "$FIRMWARE_DIR/$FIRMWARE_NAME" ]; then
+    mkdir -p "$FIRMWARE_DIR" 2>/dev/null
+    if cp "$FIRMWARE" "$FIRMWARE_DIR/$FIRMWARE_NAME" 2>/dev/null; then
+        FIRMWARE="$FIRMWARE_DIR/$FIRMWARE_NAME"
+        ok "Copied into firmware/"
+    fi
+fi
+log "Using $FIRMWARE"
 
 # Match the selection logic used by Buchla's original command. The bundled
 # version carries its own libusb; the other build uses Homebrew's libusb.
@@ -158,7 +260,10 @@ echo "Ordinary edit mode provides the pressure calibration:"
 echo "  knob 1 = pressure calibration, scaling both endpoints (592/893 at centre)"
 echo "  knob 3 = factory behaviour"
 echo "  knob 4 = curve, linear (left) to full 218r (right), default 0"
-echo "Outside edit mode all four knobs keep their factory behaviour."
+echo "Outside edit mode those knobs control the arpeggiator and vibrato."
+echo "Arp switch: latch / regular / off. In latch, keys toggle by"
+echo "sounding pitch, so any octave position can release a note."
+echo "Portamento knob = pressure needed to bend between held notes."
 echo ""
 echo "Calibrating, in ordinary edit mode:"
 echo "  1. Knob 4 fully left for a linear response."
@@ -178,6 +283,7 @@ echo "  - if any operation fails, leave the 218e in DFU and rerun this command"
 echo
 read -r -p "Press return to continue with the connected 218e. "
 
+step "Putting the instrument into DFU"
 if check_dfu_device; then
     log "MIDI port was unavailable, but the 218e is already in DFU mode."
 else
@@ -212,6 +318,7 @@ log "AT32UC3B DFU device detected."
 # Each accepted ISP command sets ISP_FORCE=1. START is the only ISP operation
 # below that clears it. Keeping it set until read-back validation succeeds is
 # what makes an interrupted application flash recoverable over USB.
+step "Checking the bootloader and safety fuses"
 log "Reading bootloader version and safety fuses before erase."
 run_logged "$DFUPATH" at32uc3b1256 get bootloader-version || \
     fail "The DFU bootloader did not answer the version query."
@@ -228,30 +335,37 @@ log "Verified ISP_FORCE=1: an interrupted session should boot back into DFU."
 
 echo
 read -r -p "Press return to begin the chip erase. "
-log "Erasing AT32UC3B1256 application flash."
-run_logged "$DFUPATH" at32uc3b1256 erase || fail "Chip erase failed."
+step "Erasing the application flash"
+spin "erasing…" "$DFUPATH" at32uc3b1256 erase || fail "Chip erase failed."
+ok "Application flash erased"
 
-log "Flashing only: $FIRMWARE"
-run_logged "$DFUPATH" at32uc3b1256 flash --suppress-bootloader-mem "$FIRMWARE" || \
+step "Writing and validating the firmware"
+spin "writing and verifying…" "$DFUPATH" at32uc3b1256 flash \
+    --suppress-bootloader-mem "$FIRMWARE" || \
     fail "Firmware programming failed. Do not disconnect; retry the flasher while the unit remains in DFU mode."
 
 FLASH_VALIDATED=1
+ok "Written and validated by read-back"
 log "Programming and dfu-programmer read-back validation completed successfully."
-sleep 3
+sleep 1
+
+step "Restarting the instrument"
+echo "  ${C_GREEN}The patched application has passed read-back validation.${C_RESET}"
+echo "  Only now is it safe to leave DFU mode."
 echo
-echo "The patched application has passed read-back validation."
-echo "Only now is it safe to leave DFU mode."
-read -r -p "Press return to send START and restart the 218e. "
-run_logged "$DFUPATH" at32uc3b1256 start || fail "The DFU start command failed."
+read -r -p "  Press return to send START and restart the 218e. "
+spin "restarting…" "$DFUPATH" at32uc3b1256 start || fail "The DFU start command failed."
 DFU_SESSION_ACTIVE=0
 
 sleep 4
 if "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
-    log "The 218e returned as a MIDI device. Finished."
+    ok "The 218e returned as a MIDI device"
 else
-    log "Programming finished, but the 218e MIDI port is not visible yet. Power-cycle the instrument if needed."
+    warn "The 218e MIDI port is not visible yet — power-cycle the instrument if needed"
 fi
 
 echo
-echo "PressureFix flashing is complete."
-read -r -p "Press return to close. "
+echo "  ${C_GREEN}${C_BOLD}✓ Flashing complete.${C_RESET}"
+echo "  ${C_DIM}Log: $LOG_FILE${C_RESET}"
+echo
+read -r -p "  Press return to close. "
