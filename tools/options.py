@@ -62,7 +62,7 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'tuning': {   'base_units': 485,
                   'reference_key': 9,
                   'slots': [   'tunings/Sabat II (C-rooted).scl',
-                               'tunings/ADDAC Just Intonation.scl',
+                               'tunings/5-Limit JI with Septimal 7th.scl',
                                'tunings/12TET.scl'],
                   'units_per_octave': 484}}
 

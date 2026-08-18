@@ -1,9 +1,12 @@
-! ADDAC Just Intonation.scl
+! 5-Limit JI with Septimal 7th.scl
+! Ten 5-limit just ratios, with the seventh harmonic on two degrees:
+! 7/5 for the tritone and 7/4 for the minor seventh.
+!
 ! Created using Scale Workshop 2.0.0
 !
 ! https://sevish.com/scaleworkshop/?n=ADDAC%20Just%20Intonation&l=gFf_9F8_6F5_5F4_4F3_7F5_3F2_8F5_5F3_7F4_fF8_2F1&version=2.0.0
 !
-ADDAC Just Intonation
+5-Limit JI with Septimal 7th
  12
 !
  16/15

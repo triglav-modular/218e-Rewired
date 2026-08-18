@@ -43,8 +43,8 @@ var WEBBUILD = (function () {
         var anyTuning = cfg._tunings.some(function (t) { return t !== 'factory'; });
         features.alternate_tunings = anyTuning;
         if (!anyTuning) {
-            blocks.edit_key27_tuning_addac = false;
-            blocks.edit_key28_tuning_sabat = false;
+            blocks.edit_key27_tuning_slot1 = false;
+            blocks.edit_key28_tuning_slot0 = false;
         }
 
         if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {

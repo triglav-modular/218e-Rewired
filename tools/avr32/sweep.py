@@ -32,7 +32,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     ("tunings_one",           [(r"^alternate_tunings = false",
                                'alternate_tunings = ["tunings/12TET.scl"]')]),
-    ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]')]),
+    ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]')]),
     ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
@@ -49,7 +49,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     # was measured at that scaling — so this is the one configuration where
     # the calibration in calibration/ is the right one to use.
     ("historical_config",     [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
-                               (r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]'),
+                               (r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]'),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     ("everything_off",        [(r"^latching_arp = true", "latching_arp = false"),
@@ -72,7 +72,7 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # a changed build forces a fresh power-up init.  What this pin still buys is a
 # stable anchor for the most complex configuration.
 EXPECTED = {
-    "historical_config": "377cab754ab7c8e70acb9d88edff9292ea63b409f4f09bba6d1a5fb701699157",
+    "historical_config": "d189a35fc74443201eca9936e77582c221e0ac3e56948dafbdc7953131800f3b",
 }
 
 

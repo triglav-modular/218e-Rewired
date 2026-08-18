@@ -320,7 +320,7 @@ selected table into RAM `0x854` within one 5 ms scan and drives the LEDs.
 | Slot | Default contents | Selection | LED |
 |------|------------------|-----------|-----|
 | 0 | Sabat II | power-on default | rem-en lit |
-| 1 | ADDAC Just Intonation | edit key 27 toggles 1 ⇄ 2 | trn lit |
+| 1 | 5-Limit JI with Septimal 7th | edit key 27 toggles 1 ⇄ 2 | trn lit |
 | 2 | 12-TET (exact) | edit key 28 toggles 0 ⇄ 2 | both dark |
 
 The selector lives at RAM `0x6090` and does **not** persist: it returns to

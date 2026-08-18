@@ -17,7 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 JSC = Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc")
 TMP = REPO / "build"
-SCALES = ["tunings/Sabat II (C-rooted).scl", "tunings/ADDAC Just Intonation.scl",
+SCALES = ["tunings/Sabat II (C-rooted).scl", "tunings/5-Limit JI with Septimal 7th.scl",
           "tunings/12TET.scl"]
 CAL = "calibration/218e-pitch-calibration.csv"
 

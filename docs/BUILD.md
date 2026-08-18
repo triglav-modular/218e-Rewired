@@ -194,7 +194,7 @@ fold that error in.
 
 ```toml
 alternate_tunings = ["tunings/Sabat II (C-rooted).scl",
-                     "tunings/ADDAC Just Intonation.scl",
+                     "tunings/5-Limit JI with Septimal 7th.scl",
                      "tunings/12TET.scl"]
 ```
 
@@ -214,7 +214,7 @@ nothing is taken over.
 **Anchoring.** Each scale is shifted so that **A** lands on the 12-TET grid,
 which keeps the note you tuned the 208 to in the same place in every slot;
 switching tuning never sends you back to the trimmer. The shift is computed
-from the file — Sabat II needs −5.87 cents, ADDAC JI +15.64, 12-TET none — and
+from the file — Sabat II needs −5.87 cents, the septimal JI +15.64, 12-TET none — and
 is not read out of it, so any scale you supply gets the same treatment. The
 reference note is fixed at A (`reference_key = 9` internally).
 

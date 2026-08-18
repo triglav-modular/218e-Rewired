@@ -51,7 +51,7 @@ def main() -> None:
     # page stays a self-contained set of files.
     bundled = [
         "tunings/Sabat II (C-rooted).scl",
-        "tunings/ADDAC Just Intonation.scl",
+        "tunings/5-Limit JI with Septimal 7th.scl",
         "tunings/12TET.scl",
     ]
     tunings = [{"name": Path(t).name, "text": (REPO / t).read_text()} for t in bundled]

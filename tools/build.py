@@ -1147,8 +1147,8 @@ def main() -> None:
     # transpose-mode byte, so all three have to go, not just the keys.
     if all(slot == "factory" for slot in cfg["tuning"]["slots"]):
         features["alternate_tunings"] = False
-        blocks["edit_key27_tuning_addac"] = False
-        blocks["edit_key28_tuning_sabat"] = False
+        blocks["edit_key27_tuning_slot1"] = False
+        blocks["edit_key28_tuning_slot0"] = False
     else:
         features["alternate_tunings"] = True
 

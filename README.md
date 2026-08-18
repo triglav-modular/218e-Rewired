@@ -96,7 +96,7 @@ entry can be handed back in `config/218e.toml`.
 |---|---|
 | Knob 1 | Scales the whole pressure window, both endpoints together, 0.50x–1.14x. The built-in 592/893 calibration sits at about ¾ of travel; the feet-up condition is ~⅓. Lower = reaches full output sooner. |
 | Knob 4 | Pressure curve amount, linear through to the full 218r curve. Fresh from a flash it starts linear until you move it. |
-| Key 28 / Key 27 | Tuning slot: key 28 toggles slot 0 (Sabat II) against slot 2, key 27 toggles slot 1 (ADDAC JI) against slot 2 (12-TET). LEDs: *rem-en* lit = slot 0, *trn* lit = slot 1, both dark = slot 2. |
+| Key 28 / Key 27 | Tuning slot: key 28 toggles slot 0 against slot 2, key 27 toggles slot 1 against slot 2. LEDs: *rem-en* lit = slot 0, *trn* lit = slot 1, both dark = slot 2. |
 | Knobs 2, 3 | Factory behaviour. (Knob 2 briefly carried a smoothing control; it was removed because its ADC mirror never tracked the physical knob. Filter depth and interpolation length are build settings.) |
 
 ## Build

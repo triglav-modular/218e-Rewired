@@ -3064,8 +3064,8 @@ function assembleProgram() {
 
         // Tuning applier and tables.  Selector lives in the old remote-enable
         // byte (state+2, persisted with settings): 0 = Sabat II (default),
-        // 1 = ADDAC JI, 2 = 12TET.  On change: copy the 32-entry table to RAM
-        // 0x854 and set the LEDs (rem-en = ch 5 = Sabat, trn = ch 8 = ADDAC).
+        // 1 = slot 1, 2 = slot 2.  On change: copy the 32-entry table to RAM
+        // 0x854 and set the LEDs (rem-en = ch 5 = slot 0, trn = ch 8 = slot 1).
         // Outside edit mode the LEDs are re-asserted every scan.  The old
         // transpose-mode byte (state+0x6a) is forced to zero permanently.
         begin(0x80019a40);
@@ -3129,7 +3129,7 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x80019ae8);
         word(0x00003560); // global state base
-        word(0x80019af8); // tuning tables (Sabat II, ADDAC, 12TET)
+        word(0x80019af8); // the three tuning tables
         word(0x80006808); // LED bit set
         word(0x800068cc); // LED bit clear
         emitTable("tuning_slot0");
@@ -3137,7 +3137,7 @@ function assembleProgram() {
         emitTable("tuning_slot2");
         finish("tuning_applier_tables", 0x80019bb8);
 
-        // Edit key 27 (was transpose-mode toggle): ADDAC JI <-> 12TET.
+        // Edit key 27 (was transpose-mode toggle): slot 1 <-> slot 2.
         // The slot lives at RAM 0x6090, not state+0x2 where the first version
         // put it.  state+0x2 is the factory's remote-enable flag: it gates the
         // MIDI command handler at 0x80004FD2, and two of those commands write
@@ -3160,9 +3160,9 @@ function assembleProgram() {
         emit("ST.B R8[0x3a],R9");
         emit("RJMP 0x80003e10");
         padTo(0x80003db8);
-        finish("edit_key27_tuning_addac", 0x80003db8);
+        finish("edit_key27_tuning_slot1", 0x80003db8);
 
-        // Edit key 28 (was remote-enable toggle): Sabat II <-> 12TET.
+        // Edit key 28 (was remote-enable toggle): slot 0 <-> slot 2.
         begin(0x80003db8);
         emit("MOV R9,0x6090");
         emit("LD.UB R8,R9[0x0]");
@@ -3177,7 +3177,7 @@ function assembleProgram() {
         emit("ST.B R8[0x3a],R9");
         emit("RJMP 0x80003e10");
         padTo(0x80003de8);
-        finish("edit_key28_tuning_sabat", 0x80003de8);
+        finish("edit_key28_tuning_slot0", 0x80003de8);
 
         // Hook: replace the factory pitch-DAC store and last-sent mirror with
         // a call into the remap.  The 0..0xfff clamp still runs just before.

@@ -72,7 +72,7 @@ def test_pitch_table(cfg: dict) -> None:
 
 def test_scala() -> None:
     print("scala parsing")
-    for name in ("Sabat II", "Sabat II (C-rooted)", "ADDAC Just Intonation", "12TET"):
+    for name in ("Sabat II", "Sabat II (C-rooted)", "5-Limit JI with Septimal 7th", "12TET"):
         cents = B.parse_scala(REPO / "tunings" / f"{name}.scl")
         ok = len(cents) == 12 and cents[0] == 0 and all(
             b > a for a, b in zip(cents, cents[1:]))
@@ -109,7 +109,7 @@ def test_tables(cfg: dict) -> None:
     # offsets one at a time.
     reference_key = tuning.get("reference_key", 9)
     anchored = {}
-    for name in ("Sabat II (C-rooted)", "ADDAC Just Intonation", "12TET"):
+    for name in ("Sabat II (C-rooted)", "5-Limit JI with Septimal 7th", "12TET"):
         cents = B.parse_scala(REPO / "tunings" / f"{name}.scl")
         offset = B.anchor_offset(cents, reference_key)
         anchored[name] = B.tuning_table(cents, tuning["base_units"],
@@ -621,8 +621,8 @@ def test_migration_and_empty_hand() -> None:
     # handler and two commands write it.  The tuning slot must not share it,
     # or picking a tuning enables remote control and a remote-enable message
     # retunes the instrument.
-    for start, name in (("0x80003d82L", "edit_key27_tuning_addac"),
-                        ("0x80003db8L", "edit_key28_tuning_sabat"),
+    for start, name in (("0x80003d82L", "edit_key27_tuning_slot1"),
+                        ("0x80003db8L", "edit_key28_tuning_slot0"),
                         ("0x80019a40L", "tuning_applier_tables")):
         body = cave(start, name)
         check(f"{name} keeps the tuning slot off state+0x2",
