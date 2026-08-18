@@ -28,7 +28,7 @@ the four preset-voltage knobs and the arpeggiator switch.
 | **Base image** | stock v36.9, **you supply it** (AT32UC3B1256, AVR32) |
 | **Output** | `firmware/218eV3_v369_Rewired_DFU.hex`, built locally |
 | **Settings** | [`config/218e.toml`](config/218e.toml) — seven options |
-| **Licence** | [Unlicense](UNLICENSE) (public domain), for this repository's own work |
+| **Licence** | [Unlicense](UNLICENSE) for this repository's own work; the bundled flashing tools keep their own — see [THIRD-PARTY.md](THIRD-PARTY.md) |
 
 > **No firmware image ships here.** The factory image is Buchla's, and the
 > patched one is that firmware with these changes spliced in, so neither is
@@ -134,15 +134,10 @@ Put the built image in `firmware/`, then run the flasher for your platform:
 
 **Each platform needs one thing set up first, or the flash cannot work:**
 
-- **Windows — bind the DFU device to WinUSB.** Without it, `dfu-programmer`
-  never sees the instrument and the flasher keeps reporting that no DFU device
-  appeared. Zadig can only see the keyboard while it is in DFU, so the flasher
-  handles that: say WinUSB is not installed yet and it offers to put the
-  keyboard into DFU. Then run `zadig-2.8.exe`, pick the **AT32UC3B DFU**
-  device, install WinUSB, and start the flasher again. Once per machine.
-  The Windows flasher also uses `dfu-programmer.exe` and `sendmidi.exe` from
-  Buchla's kit, which are not redistributed here — put its `windows\` folder
-  beside the flasher.
+- **Windows — the WinUSB driver.** `dfu-programmer` cannot reach the keyboard
+  until the DFU device is bound to WinUSB. The flasher handles this: if the
+  device does not appear it opens Zadig at the moment the device is visible,
+  and carries on once the driver is installed. Once per machine.
 - **macOS on Apple silicon — install Rosetta.** `dfu-programmer` is x86_64
   only: `softwareupdate --install-rosetta`.
 

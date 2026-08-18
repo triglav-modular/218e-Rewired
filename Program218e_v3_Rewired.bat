@@ -27,9 +27,10 @@ IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
 ) ELSE (
     ECHO Could not find windows\support\dfu-programmer.exe
     ECHO.
-    ECHO The Windows flashing tools are part of Buchla's official kit and are
-    ECHO not redistributed here.  Copy that kit's windows\ folder in beside
-    ECHO this script.
+    ECHO That folder ships with this package and contains the flashing tools.
+    ECHO If it is missing, re-download the package rather than assembling it
+    ECHO by hand - the tools have to sit together for Windows to find the
+    ECHO DLLs beside them.
     GOTO :fail_early
 )
 
@@ -167,55 +168,6 @@ IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" (
 )
 CALL :ok dfu-programmer.exe runs
 
-ECHO.
-ECHO   Windows needs the DFU device bound to the WinUSB driver before
-ECHO   dfu-programmer can see it.  This is done once per machine.
-ECHO.
-SET "ZADIG="
-SET /P "ZADIG=  Has WinUSB been installed for the AT32UC3B DFU device? (Y/N): "
-IF /I "%ZADIG%"=="Y" GOTO :winusb_ok
-
-REM Zadig can only bind a device it can see, and the DFU device only exists
-REM while the instrument is in DFU.  Rather than leaving that as a puzzle,
-REM offer to do it: put the keyboard into DFU, stop, and let them run Zadig
-REM with the device present.  Nothing is erased by this.
-ECHO.
-ECHO   Zadig can only see the keyboard while it is in DFU mode, so it has to
-ECHO   go there first.  Nothing is erased by that, and a power cycle undoes it.
-ECHO.
-SET "PUTDFU="
-SET /P "PUTDFU=  Put the keyboard into DFU now so Zadig can see it? (Y/N): "
-IF /I NOT "%PUTDFU%"=="Y" (
-    ECHO.
-    ECHO   Nothing was done.  The instrument has not been touched.
-    GOTO :fail_early
-)
-
-"%SENDMIDI%" list 2>&1 | FINDSTR /I "218e" >NUL
-IF ERRORLEVEL 1 (
-    ECHO.
-    ECHO   The 218e MIDI port is unavailable, so it cannot be asked into DFU.
-    ECHO   Check it is powered and connected by USB directly, then try again.
-    GOTO :fail_early
-)
-"%SENDMIDI%" dev 218e syx 0 2 55 2 1 1 >> "%LOG_FILE%" 2>&1
-ECHO.
-ECHO   Done - the keyboard should now be in DFU and will have disappeared
-ECHO   from MIDI.  That is expected.
-ECHO.
-ECHO   Now, without power-cycling it:
-ECHO     1. run %TOOLS%\zadig-2.8.exe
-ECHO     2. select the AT32UC3B DFU device
-ECHO     3. install WinUSB
-ECHO     4. start this script again and answer Y
-ECHO.
-ECHO   If anything goes wrong, power-cycle the 218e and it comes back normally.
-ECHO Put the instrument into DFU for Zadig; stopped for driver install.>> "%LOG_FILE%"
-PAUSE
-ENDLOCAL
-EXIT /B 0
-
-:winusb_ok
 
 REM --- into DFU ----------------------------------------------------------
 CALL :step Putting the instrument into DFU
@@ -248,22 +200,61 @@ FOR /L %%I IN (1,1,30) DO (
         IF "!FOUND!"=="0" PING -n 3 127.0.0.1 >NUL
     )
 )
+REM Not appearing almost always means one thing on Windows: the DFU device is
+REM not bound to WinUSB, so libusb cannot open it.  Zadig fixes that, and it
+REM can only do so while the device is present - which it is, right now.  So
+REM launch it here rather than sending anyone away to read instructions.
 IF "!FOUND!"=="0" (
     ECHO.
-    ECHO   The AT32UC3B DFU device did not appear.
+    ECHO   The AT32UC3B DFU device is not reachable yet.
     ECHO.
-    ECHO   The 218e accepted the request and is most likely sitting in DFU mode
-    ECHO   now, which is why it has disappeared from MIDI.  Nothing was erased
-    ECHO   and nothing was written.
+    ECHO   On Windows that nearly always means the DFU device still needs the
+    ECHO   WinUSB driver.  Zadig can install it, and the keyboard is in DFU
+    ECHO   right now, which is the only time Zadig can see it.
     ECHO.
-    ECHO   Power-cycle the instrument and it will come back up normally.
+    ECHO   Zadig is GPLv3, from https://zadig.akeo.ie/ , and ships with
+    ECHO   Buchla's kit.  Nothing has been erased.
     ECHO.
-    ECHO   Then check the WinUSB binding: run %TOOLS%\zadig-2.8.exe, select the
-    ECHO   AT32UC3B DFU device and install WinUSB.  Note that Zadig can only see
-    ECHO   the device while it IS in DFU - so it is worth leaving the instrument
-    ECHO   as it is, running Zadig now, and then starting this script again.
-    GOTO :fail_early
+    PAUSE
+    IF NOT EXIST "%TOOLS%\zadig-2.8.exe" (
+        ECHO   zadig-2.8.exe is not in %TOOLS%.
+        ECHO   Copy Buchla's windows\ folder in beside this script and retry.
+        GOTO :dfu_unreachable
+    )
+    ECHO   Starting Zadig.  In its window:
+    ECHO     1. Options - List All Devices, if the list looks empty
+    ECHO     2. select the AT32UC3B DFU device
+    ECHO     3. choose WinUSB and press Install Driver
+    ECHO     4. close Zadig and come back here
+    ECHO.
+    START /WAIT "" "%TOOLS%\zadig-2.8.exe"
+    ECHO.
+    PAUSE
+    ECHO   Looking for the DFU device again...
+    FOR /L %%I IN (1,1,10) DO (
+        IF "!FOUND!"=="0" (
+            "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
+            IF NOT ERRORLEVEL 1 SET "FOUND=1"
+            IF "!FOUND!"=="0" PING -n 2 127.0.0.1 >NUL
+        )
+    )
 )
+
+IF "!FOUND!"=="0" GOTO :dfu_unreachable
+GOTO :in_dfu
+
+:dfu_unreachable
+ECHO.
+ECHO   Still cannot reach the DFU device.
+ECHO.
+ECHO   Nothing was erased and nothing was written.  The keyboard is most
+ECHO   likely still in DFU, which is why it has vanished from MIDI.
+ECHO   Power-cycle it and it comes back up normally.
+ECHO.
+ECHO   Worth checking: USB connected directly rather than through a hub, and
+ECHO   that WinUSB really was installed against the AT32UC3B DFU device
+ECHO   rather than another entry in the Zadig list.
+GOTO :fail_early
 
 :in_dfu
 SET "DFU_SESSION_ACTIVE=1"

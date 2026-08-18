@@ -135,20 +135,17 @@ download works where it landed. `Program218e_v3_Rewired.command` on macOS and
 checksum and printed instructions in each, so neither can describe or install a
 build it was not generated for.
 
-**Windows needs the DFU device bound to WinUSB before any of this works.** Run
-the `zadig-2.8.exe` that Buchla's kit bundles, select the **AT32UC3B DFU**
-device and install WinUSB — once per machine. Skip it and `dfu-programmer`
-never sees the instrument, so the flasher reports that no DFU device appeared
-however many times it is retried.
+**Windows needs the DFU device bound to WinUSB**, or `dfu-programmer` cannot
+open it. The flasher deals with this itself, in the only order that works:
+Zadig can only bind a device it can see, and the DFU device exists only while
+the instrument is in DFU — so the request goes out first, and if the device
+still does not appear, Zadig is launched right there and the run continues once
+the driver is in. Once per machine.
 
-Zadig can only bind a device it can see, and the DFU device only exists while
-the instrument is in DFU. The flasher resolves that rather than leaving it as a
-puzzle: it asks whether WinUSB is installed before sending the DFU request, and
-if the answer is no it offers to put the keyboard into DFU and stop there, so
-Zadig has something to bind. Run Zadig without power-cycling, then start the
-flasher again. That kit also supplies the
-`dfu-programmer.exe` and `sendmidi.exe` the script calls, neither of which is
-redistributed here.
+That failure is also the common one, so it is treated as the expected path
+rather than an error. If it still cannot be reached afterwards, the script says
+so, confirms nothing was erased, and points out that the keyboard is in DFU and
+a power cycle brings it back. 
 
 **macOS on Apple silicon needs Rosetta**, because `dfu-programmer` is an
 x86_64 binary: `softwareupdate --install-rosetta`. Buchla's own

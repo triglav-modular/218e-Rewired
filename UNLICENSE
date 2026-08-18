@@ -41,18 +41,14 @@ COVERED — the work of this repository:
     tunings/        Scala files written or adapted here
     ProgramLEM218_PressureFix.command   the updater script
 
-NOT COVERED — third-party material that happens to sit in this tree, each
-of which keeps whatever licence it already had:
+NOT COVERED — the bundled flashing tools, each of which keeps its own
+licence.  dfu-programmer and SendMIDI on both platforms, Zadig on Windows,
+libusb, and the Microsoft C++ runtime.  Their presence does not place them in
+the public domain and nothing here attempts to relicense them; if you
+redistribute this tree, those files travel under their own terms.
 
-    mac/support/dfu-programmer              GPL
-    mac/support/buchla-dfu/dfu/dfu-programmer   GPL
-    mac/support/buchla-dfu/Frameworks/*.dylib   libusb, LGPL
-    mac/support/sendmidi                    its own licence
-    windows/, otherfirmware/                Buchla's flashing kit (untracked)
-
-Their presence does not place them in the public domain and nothing here
-attempts to relicense them.  If you redistribute this tree, those files
-travel under their own terms, not this dedication.
+THIRD-PARTY.md lists every one of them with its licence, its upstream project
+and a written offer for the corresponding source.
 
 NOT PRESENT — the firmware itself:
 

@@ -206,18 +206,18 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
   <h2>6 · Flash it</h2>
   <p class="d muted" style="margin:0 0 12px;font-size:13px">A script does the flashing, not this page. It checks the image, confirms the bootloader region is protected, and validates by read-back before letting the instrument leave DFU.</p>
   <div class="prereq">
-    <h3>Before that will work</h3>
+    <h3>One-time setup</h3>
     <dl>
-      <dt>Windows — install the WinUSB driver once</dt>
-      <dd>Windows will not let <span class="mono">dfu-programmer</span> reach the keyboard until the DFU device is bound to WinUSB. <strong>Skip this and the flasher never finds the instrument.</strong>
-      <br><br>Zadig can only see the keyboard while it is in DFU, so the flasher handles that: say WinUSB is not installed and it offers to put the keyboard there. Then run <span class="mono">zadig-2.8.exe</span>, pick <strong>AT32UC3B DFU</strong>, install WinUSB, and start the flasher again.</dd>
-      <dd style="margin-top:6px">The flasher also needs <span class="mono">dfu-programmer.exe</span> and <span class="mono">sendmidi.exe</span> from Buchla's kit — put its <span class="mono">windows\</span> folder beside the flasher.</dd>
+      <dt>Windows — the WinUSB driver</dt>
+      <dd>Windows will not let <span class="mono">dfu-programmer</span> reach the keyboard until the DFU device is bound to WinUSB. The flasher handles it: if the device does not appear, it opens Zadig at the point where the device is visible, and carries on once you have installed the driver. Once per machine.</dd>
+      <dd style="margin-top:6px">The tools themselves ship with this package — nothing extra to download.</dd>
 
-      <dt>macOS on Apple silicon — install Rosetta once</dt>
-      <dd><span class="mono">dfu-programmer</span> is x86_64 only, so an M-series Mac needs Rosetta:<br>
+      <dt>macOS on Apple silicon — Rosetta</dt>
+      <dd><span class="mono">dfu-programmer</span> is x86_64 only:<br>
       <span class="mono">softwareupdate --install-rosetta</span></dd>
     </dl>
   </div>
+
   <ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.9">
     <li>Download the image above. Leaving it in Downloads is fine.</li>
     <li>Connect the 218e by USB — directly, not through an unpowered hub — on stable power.</li>
