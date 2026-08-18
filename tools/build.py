@@ -936,7 +936,7 @@ def updater_summary(cfg: dict, dialect: str = "sh") -> str:
     lines.append('echo "Calibrating, in ordinary edit mode:"')
     if calib.get("trim_mode") == "scale":
         lines.append('echo "  1. Knob 4 fully left for a linear response."')
-        lines.append('echo "  2. Run ReadLEM218_Pressure.command; with no key held, turn knob 1"')
+        lines.append('echo "  2. Run ReadLEM218_Rewired.command; with no key held, turn knob 1"')
         span = cfg["_numbers"]["trim_scale_span"]
         unity_pct = round(128 * 1024 / span / 1023 * 100)
         lines.append(f'echo "     and type \'settings\' until floor/ceiling read near '

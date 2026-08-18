@@ -44,7 +44,7 @@ else
     C_RESET=; C_DIM=; C_BOLD=; C_GREEN=; C_RED=; C_YELLOW=; C_BLUE=
 fi
 
-TOTAL_STEPS=6
+TOTAL_STEPS=7
 STEP=0
 
 timestamp() {
@@ -289,7 +289,7 @@ echo "Portamento knob = pressure needed to bend between held notes."
 echo ""
 echo "Calibrating, in ordinary edit mode:"
 echo "  1. Knob 4 fully left for a linear response."
-echo "  2. Run ReadLEM218_Pressure.command; with no key held, turn knob 1"
+echo "  2. Run ReadLEM218_Rewired.command; with no key held, turn knob 1"
 echo "     and type 'settings' until floor/ceiling read near 592/893 — the built-in calibration,"
 echo "     at about 78% of knob travel."
 echo "  3. Play light/mid/max touches; knob 1 scales the whole window,"
@@ -304,6 +304,33 @@ echo "  - do not unplug anything until the script reports verified success"
 echo "  - if any operation fails, leave the 218e in DFU and rerun this command"
 echo
 read -r -p "Press return to continue with the connected 218e. "
+
+# Prove the DFU toolchain actually runs BEFORE asking the instrument to leave
+# MIDI.  Otherwise a broken toolchain is discovered only after the keyboard has
+# rebooted into a bootloader nothing here can reach — recoverable by a power
+# cycle, but alarming and entirely avoidable.
+#
+# "no device present" is the expected answer while the 218e is still in
+# application mode, and it proves the binary launched and libusb loaded.  A
+# success is fine too: the instrument is already in DFU.  Anything else means
+# the tool cannot run at all.
+step "Checking the DFU tools"
+probe_output="$("$DFUPATH" at32uc3b1256 get bootloader-version 2>&1)"
+probe_status=$?
+if [ "$probe_status" -ne 0 ] && \
+   ! printf '%s' "$probe_output" | grep -qi "no device present"; then
+    printf '%s\n' "$probe_output" >> "$LOG_FILE"
+    if printf '%s' "$probe_output" | grep -qi "bad cpu type"; then
+        echo "  dfu-programmer is an x86_64 binary and this Mac cannot run it."
+        echo "  Install Rosetta, then run this again:"
+        echo "    ${C_BOLD}softwareupdate --install-rosetta${C_RESET}"
+    else
+        echo "  dfu-programmer would not run:"
+        printf '    %s\n' "$probe_output" | head -4
+    fi
+    fail "The DFU tools are not usable. The instrument was not touched."
+fi
+ok "dfu-programmer runs"
 
 step "Putting the instrument into DFU"
 if check_dfu_device; then
@@ -331,7 +358,17 @@ if ! wait_for_dfu_device; then
     if check_218_usb_device; then
         fail "The 218e stayed in application mode after the DFU request. Nothing was erased; power-cycle it and retry."
     else
-        fail "The AT32UC3B DFU device did not appear on USB. Nothing was erased; reconnect USB directly and retry."
+        # The SysEx was delivered, so the instrument has almost certainly left
+        # application mode even though the DFU device never appeared.  Say so:
+        # a silent keyboard with no MIDI port looks far worse than it is.
+        echo
+        echo "  The 218e accepted the request and is most likely sitting in DFU"
+        echo "  mode now, which is why it has disappeared from MIDI."
+        echo
+        echo "  Nothing was erased, and nothing was written."
+        echo "  ${C_BOLD}Power-cycle the instrument and it will come back up normally.${C_RESET}"
+        echo
+        fail "The AT32UC3B DFU device did not appear on USB. Reconnect USB directly, avoid hubs, and retry."
     fi
 fi
 DFU_SESSION_ACTIVE=1

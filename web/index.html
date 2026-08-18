@@ -76,6 +76,13 @@ td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-al
 .danger p{margin:0 0 9px;font-size:14px}
 .danger strong{color:var(--bad)}
 .danger p:last-child{margin-bottom:0}
+.prereq{border:1px solid var(--warn);border-radius:8px;padding:14px 16px;margin:14px 0 0;
+  background:color-mix(in srgb,var(--warn) 10%,transparent)}
+.prereq h3{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--warn)}
+.prereq dl{margin:0;font-size:13px;line-height:1.6}
+.prereq dt{font-weight:700;margin-top:9px}
+.prereq dt:first-of-type{margin-top:0}
+.prereq dd{margin:2px 0 0}
 svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </style>
 </head>
@@ -209,10 +216,21 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     </li>
   </ol>
   <div class="msg ok" style="margin-top:14px">The flasher finds the image itself. It looks in <span class="mono">firmware/</span>, beside itself, and in your Downloads folder, and takes whichever file matches the checksum it expects — so there is nothing to move or rename.</div>
-  <details><summary>Platform notes</summary>
-    <p class="d muted" style="font-size:13px"><strong>macOS</strong> needs Rosetta on Apple silicon, because <span class="mono">dfu-programmer</span> is x86_64 only: <span class="mono">softwareupdate --install-rosetta</span>.<br><br>
-    <strong>Windows</strong> uses the tools from Buchla's own <span class="mono">windows\</span> kit, which is not redistributed here. The DFU device needs the WinUSB driver installed once, with the Zadig executable that kit bundles.</p>
-  </details>
+
+  <div class="prereq">
+    <h3>Before that will work</h3>
+    <dl>
+      <dt>Windows — install the WinUSB driver once</dt>
+      <dd>Windows will not let <span class="mono">dfu-programmer</span> talk to the keyboard until the DFU device is bound to WinUSB. <strong>Skip this and the flasher will never find the instrument</strong>, however many times you retry.
+      <br><br>The catch: Zadig can only see the device while it <em>is</em> in DFU. So put the keyboard into DFU first — start the flasher and let it ask, or send the DFU request from Buchla's own kit — then run <span class="mono">zadig-2.8.exe</span>, select the <strong>AT32UC3B DFU</strong> device, install WinUSB, and start the flasher again. Once per machine.
+      <br><br>The flasher asks whether you have done this before it touches the instrument, so answering honestly costs nothing.</dd>
+      <dd style="margin-top:6px">The Windows flasher also uses <span class="mono">dfu-programmer.exe</span> and <span class="mono">sendmidi.exe</span> from that same kit — they are not redistributed here. Put its <span class="mono">windows\</span> folder beside the flasher.</dd>
+
+      <dt>macOS on Apple silicon — install Rosetta once</dt>
+      <dd><span class="mono">dfu-programmer</span> is an x86_64 binary, so an M-series Mac needs Rosetta to run it:<br>
+      <span class="mono">softwareupdate --install-rosetta</span></dd>
+    </dl>
+  </div>
 </section>
 </div>
 

@@ -1,0 +1,13 @@
+[2026-08-19 01:00:08] Starting Buchla LEM218 Rewired programming.
+[2026-08-19 01:00:08] Runtime directory: /Users/marton_bertok/SDIY/218ev3-Firmware-Flashing/mac
+[2026-08-19 01:00:08] macOS sleep prevention enabled for this programming session.
+[2026-08-19 01:00:08] === step 1/7: Locating the firmware image ===
+[2026-08-19 01:00:08] OK: Found 218eV3_v369_Rewired_DFU.hex
+[2026-08-19 01:00:08] OK: Checksum matches the image this flasher installs
+[2026-08-19 01:00:08] Using /Users/marton_bertok/SDIY/218ev3-Firmware-Flashing/firmware/218eV3_v369_Rewired_DFU.hex
+[2026-08-19 01:00:08] Using dfu-programmer: /Users/marton_bertok/SDIY/218ev3-Firmware-Flashing/mac/support/buchla-dfu/dfu/dfu-programmer
+[2026-08-19 01:00:08] === step 2/7: Checking the DFU tools ===
+[2026-08-19 01:00:08] OK: dfu-programmer runs
+[2026-08-19 01:00:08] === step 3/7: Putting the instrument into DFU ===
+
+[2026-08-19 01:00:09] ERROR: The 218e CoreMIDI output port is unavailable. Nothing was erased; power-cycle the 218e, reconnect USB directly, and retry.

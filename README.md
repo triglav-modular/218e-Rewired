@@ -127,10 +127,21 @@ and checks the images match.
 
 Put the built image in `firmware/`, then run the flasher for your platform:
 
-| Platform | Flasher | Notes |
-|---|---|---|
-| macOS | `Program218e_v3_Rewired.command` | needs Rosetta on Apple silicon — `dfu-programmer` is x86_64 only |
-| Windows | `Program218e_v3_Rewired.bat` | uses Buchla's own `windows\` kit; the DFU device needs WinUSB installed once with the bundled Zadig |
+| Platform | Flasher |
+|---|---|
+| macOS | `Program218e_v3_Rewired.command` |
+| Windows | `Program218e_v3_Rewired.bat` |
+
+**Each platform needs one thing set up first, or the flash cannot work:**
+
+- **Windows — bind the DFU device to WinUSB.** Run `zadig-2.8.exe` from
+  Buchla's kit, select the **AT32UC3B DFU** device, install WinUSB. Without
+  this, `dfu-programmer` never sees the instrument and the flasher will keep
+  reporting that no DFU device appeared. Once per machine. The Windows flasher
+  also uses `dfu-programmer.exe` and `sendmidi.exe` from that kit, which are
+  not redistributed here — put its `windows\` folder beside the flasher.
+- **macOS on Apple silicon — install Rosetta.** `dfu-programmer` is x86_64
+  only: `softwareupdate --install-rosetta`.
 
 There is nothing to move or rename: each flasher looks in `firmware/`, its own
 directory, Downloads and the Desktop, and takes whichever file matches the

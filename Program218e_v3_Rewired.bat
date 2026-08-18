@@ -36,7 +36,7 @@ IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
 SET "FIRMWARE_DIR=%PACKAGE_ROOT%firmware"
 SET "FIRMWARE_NAME=218eV3_v369_Rewired_DFU.hex"
 SET "FIRMWARE="
-SET "TOTAL_STEPS=6"
+SET "TOTAL_STEPS=7"
 SET "STEP=0"
 
 REM --- find the image ----------------------------------------------------
@@ -126,7 +126,7 @@ ECHO Portamento knob = pressure needed to bend between held notes.
 ECHO.
 ECHO Calibrating, in ordinary edit mode:
 ECHO   1. Knob 4 fully left for a linear response.
-ECHO   2. Run ReadLEM218_Pressure.command; with no key held, turn knob 1
+ECHO   2. Run ReadLEM218_Rewired.command; with no key held, turn knob 1
 ECHO      and type 'settings' until floor/ceiling read near 592/893 - the built-in calibration,
 ECHO      at about 78%% of knob travel.
 ECHO   3. Play light/mid/max touches; knob 1 scales the whole window,
@@ -135,11 +135,56 @@ ECHO   4. Turn knob 4 right to taste, then leave edit mode to save.
 REM --- END GENERATED SUMMARY ---
 ECHO.
 ECHO Before continuing:
+ECHO   - the DFU device must be bound to WinUSB, or this cannot see the
+ECHO     instrument at all.  If you have not done that on this machine, run
+ECHO       %TOOLS%\zadig-2.8.exe
+ECHO     pick the AT32UC3B DFU device and install WinUSB.  Once per machine.
 ECHO   - use stable instrument power; do not switch off the boat
 ECHO   - connect USB directly if possible; avoid a loose cable or unpowered hub
 ECHO   - do not unplug anything until this script reports verified success
 ECHO.
 PAUSE
+
+REM --- can we talk to the bootloader at all? ------------------------------
+REM This runs BEFORE the SysEx.  Windows will not let dfu-programmer near the
+REM DFU device until it is bound to WinUSB, and there is no way to probe that
+REM binding while the device is absent - so the question has to be asked.
+REM Getting it wrong the other way round means the instrument reboots into a
+REM bootloader nothing here can reach: recoverable with a power cycle, but
+REM avoidable entirely.
+CALL :step Checking the DFU tools
+
+"%DFU%" at32uc3b1256 get bootloader-version >"%TEMP%\rewired_probe.txt" 2>&1
+SET "PROBE_RC=%ERRORLEVEL%"
+FINDSTR /I /C:"no device present" "%TEMP%\rewired_probe.txt" >NUL 2>&1
+SET "PROBE_ABSENT=%ERRORLEVEL%"
+DEL "%TEMP%\rewired_probe.txt" >NUL 2>&1
+IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" (
+    ECHO   dfu-programmer.exe would not run.  Check that Buchla's windows\ kit
+    ECHO   is beside this script and that its VC++ redistributables are
+    ECHO   installed ^(support\VC_redist.x64.exe^).
+    GOTO :fail_early
+)
+CALL :ok dfu-programmer.exe runs
+
+ECHO.
+ECHO   Windows needs the DFU device bound to the WinUSB driver before
+ECHO   dfu-programmer can see it.  This is done once per machine, with
+ECHO     %TOOLS%\zadig-2.8.exe
+ECHO   selecting the AT32UC3B DFU device and installing WinUSB.
+ECHO.
+ECHO   If that has not been done, answer N here.  Answering Y without it puts
+ECHO   the instrument into a DFU mode this script cannot reach - harmless, and
+ECHO   undone by a power cycle, but pointless.
+ECHO.
+SET "ZADIG="
+SET /P "ZADIG=  Has WinUSB been installed for the AT32UC3B DFU device? (Y/N): "
+IF /I NOT "%ZADIG%"=="Y" (
+    ECHO.
+    ECHO   Run %TOOLS%\zadig-2.8.exe first, then start this again.
+    ECHO   The instrument has not been touched.
+    GOTO :fail_early
+)
 
 REM --- into DFU ----------------------------------------------------------
 CALL :step Putting the instrument into DFU
@@ -173,12 +218,19 @@ FOR /L %%I IN (1,1,30) DO (
     )
 )
 IF "!FOUND!"=="0" (
-    ECHO The AT32UC3B DFU device did not appear.
     ECHO.
-    ECHO On Windows the DFU device needs the WinUSB driver.  Run
-    ECHO   %TOOLS%\zadig-2.8.exe
-    ECHO select the AT32UC3B DFU device, install WinUSB, then run this again.
-    ECHO Nothing was erased.
+    ECHO   The AT32UC3B DFU device did not appear.
+    ECHO.
+    ECHO   The 218e accepted the request and is most likely sitting in DFU mode
+    ECHO   now, which is why it has disappeared from MIDI.  Nothing was erased
+    ECHO   and nothing was written.
+    ECHO.
+    ECHO   Power-cycle the instrument and it will come back up normally.
+    ECHO.
+    ECHO   Then check the WinUSB binding: run %TOOLS%\zadig-2.8.exe, select the
+    ECHO   AT32UC3B DFU device and install WinUSB.  Note that Zadig can only see
+    ECHO   the device while it IS in DFU - so it is worth leaving the instrument
+    ECHO   as it is, running Zadig now, and then starting this script again.
     GOTO :fail_early
 )
 

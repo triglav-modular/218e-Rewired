@@ -135,9 +135,22 @@ download works where it landed. `Program218e_v3_Rewired.command` on macOS and
 checksum and printed instructions in each, so neither can describe or install a
 build it was not generated for.
 
-The Windows script needs the tools from Buchla's own `windows\` kit, which is
-not redistributed here, and the DFU device needs the WinUSB driver installed
-once with the Zadig executable that kit bundles. Buchla's own
+**Windows needs the DFU device bound to WinUSB before any of this works.** Run
+the `zadig-2.8.exe` that Buchla's kit bundles, select the **AT32UC3B DFU**
+device and install WinUSB — once per machine. Skip it and `dfu-programmer`
+never sees the instrument, so the flasher reports that no DFU device appeared
+however many times it is retried.
+
+Zadig can only see the device while it *is* in DFU, so the order is: put the
+keyboard into DFU, run Zadig, then flash. The flasher asks whether WinUSB is
+installed before it sends the DFU request, and stops if the answer is no —
+better than rebooting the instrument into a bootloader nothing on the machine
+can reach. That kit also supplies the
+`dfu-programmer.exe` and `sendmidi.exe` the script calls, neither of which is
+redistributed here.
+
+**macOS on Apple silicon needs Rosetta**, because `dfu-programmer` is an
+x86_64 binary: `softwareupdate --install-rosetta`. Buchla's own
 `ProgramLEM218.bat` is **not** a substitute: it verifies no checksum, checks
 neither `BOOTPROT` nor `ISP_FORCE`, does not gate on read-back, and flashes
 whichever `.hex` it finds first.
