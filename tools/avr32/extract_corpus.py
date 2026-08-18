@@ -21,8 +21,24 @@ from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-LOG = REPO / "build" / "assemble.log"
 OUT = REPO / "tools" / "avr32" / "corpus.json"
+
+# Prefer the all-features log: finish() only prints a block's listing when the
+# block is enabled, so a log from an ordinary build silently omits every
+# instruction that lives in a disabled cave.  Regenerate it with
+#
+#   python3 - <<<'...force every block./feature. key to 1...'   (see README)
+#   $GHIDRA_HOME/support/analyzeHeadless build/ghidra_project buchla218 \
+#       -import mac/firmware/218eV3_v369_DFU.hex -processor avr32:BE:32:default \
+#       -noanalysis -readOnly -scriptPath src \
+#       -postScript AssemblePressureFix.java build/build.allon.properties
+# Merge every log present.  A single build never covers the whole program:
+# finish() prints a block's listing only when that block is enabled, and a
+# branch guarded by `!feature(x)` is unreachable in a build where x is on.  So
+# coverage needs several configurations, and a run that later failed is still
+# a source of valid (address, instruction, bytes) triples for the part it did
+# assemble.
+LOGS = sorted((REPO / "build").glob("assemble*.log"))
 
 PREFIX = re.compile(r"^INFO\s+AssemblePressureFix\.java>\s")
 SUFFIX = re.compile(r"\s*\(GhidraScript\)\s*$")
@@ -35,11 +51,13 @@ def shape(text: str) -> str:
 
 
 def main() -> None:
-    if not LOG.exists():
-        raise SystemExit(f"missing {LOG} — run tools/build.py first")
+    logs = [Path(a) for a in sys.argv[1:] if not a.startswith("-")] or LOGS
+    logs = [l for l in logs if l.exists()]
+    if not logs:
+        raise SystemExit("no build/assemble*.log found — run tools/build.py first")
 
-    entries, malformed = [], 0
-    for line in LOG.read_text().splitlines():
+    entries, malformed, seen = [], 0, set()
+    for line in "\n".join(l.read_text() for l in logs).splitlines():
         if not PREFIX.match(line):
             continue
         rest = SUFFIX.sub("", PREFIX.sub("", line))
@@ -56,6 +74,10 @@ def main() -> None:
         if not re.fullmatch(r"[0-9a-f]+", encoded) or len(encoded) % 2:
             malformed += 1
             continue
+        key = (address, text, encoded)
+        if key in seen:
+            continue
+        seen.add(key)
         entries.append({
             "addr": address,
             "text": text,
@@ -73,7 +95,7 @@ def main() -> None:
     widths = Counter(e["width"] for e in entries)
 
     OUT.write_text(json.dumps({
-        "source": str(LOG.relative_to(REPO)),
+        "sources": [str(l.relative_to(REPO)) for l in logs],
         "count": len(entries),
         "entries": entries,
     }, indent=1) + "\n")

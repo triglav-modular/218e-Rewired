@@ -305,6 +305,15 @@ var AVR32 = (function () {
             }
         },
         {
+            // System-register read.  Only COUNT is proven; any other register
+            // name returns null rather than an invented number.
+            re: /^MFSR (\S+),(\w+)$/, fn: function (m) {
+                var rd = reg(m[1]), sysreg = SYSREG[m[2]];
+                if (rd === null || sysreg === undefined) return null;
+                return extended(0xE1B, rd, sysreg);
+            }
+        },
+        {
             re: /^(ANDL|ANDH) (\S+),(0x[0-9a-fA-F]+)$/, fn: function (m) {
                 var rd = reg(m[2]), v = imm(m[3]);
                 if (rd === null || v === null || v < 0 || v > 0xFFFF) return null;
@@ -363,7 +372,7 @@ var AVR32 = (function () {
     var REGREG = { 'ADD': 0x0, 'SUB': 0x1, 'CP.W': 0x3, 'OR': 0x4, 'MOV': 0x9 };
 
     // Compact one-operand: (op12 << 4) | Rd.
-    var UNARY = { 'ABS': 0x5C4, 'CASTU.H': 0x5C7, 'SR{EQ}': 0x5F0 };
+    var UNARY = { 'ABS': 0x5C4, 'CASTU.H': 0x5C7, 'CASTS.H': 0x5C8, 'SR{EQ}': 0x5F0 };
 
     // Compact shift-by-immediate.  The count is SPLIT: its high bits sit in
     // 12..9 and its least significant bit in bit 4.
@@ -425,6 +434,8 @@ var AVR32 = (function () {
         'LD.W': 15, 'LD.SH': 16, 'LD.UH': 17, 'LD.UB': 19,
         'ST.W': 20, 'ST.H': 21, 'ST.B': 22
     };
+    var SYSREG = { 'COUNT': 0x42 };
+
     var INDEXED = { 'LD.SH': 0x04, 'LD.UH': 0x05, 'LD.UB': 0x07, 'ST.H': 0x0A };
 
     // Compact base+displacement.  The displacement is scaled by the access

@@ -18,8 +18,9 @@ for byte**, on the shapes in the corpus.
 ## Running
 
 ```bash
-python3 tools/avr32/extract_corpus.py            # rebuild corpus.json from build/assemble.log
-jsc tools/avr32/encoder.js tools/avr32/test_corpus.js
+python3 tools/avr32/build_js.py                  # build the image, check golden_sha256
+jsc tools/avr32/encoder.js tools/avr32/test_corpus.js   # encoder unit test
+python3 tools/avr32/extract_corpus.py            # rebuild corpus.json from build/assemble*.log
 ```
 
 `jsc` ships with macOS at
@@ -27,13 +28,58 @@ jsc tools/avr32/encoder.js tools/avr32/test_corpus.js
 so no runtime install is needed. The same files run under Node once it is
 available.
 
+To re-check against Ghidra after changing the Java:
+
+```bash
+$GHIDRA_HOME/support/analyzeHeadless build/ghidra_project buchla218 \
+  -import mac/firmware/218eV3_v369_DFU.hex -processor avr32:BE:32:default \
+  -noanalysis -readOnly -scriptPath src \
+  -postScript AssemblePressureFix.java build/build.properties \
+  > build/reference.ghidra.log
+sed -E 's/^INFO  AssemblePressureFix\.java> //; s/ \(GhidraScript\) *$//' \
+  build/reference.ghidra.log | grep -E '^(EXTENT|BLOCK|SKIP|PATCH|[0-9a-f]{8}  )' \
+  > build/reference.ghidra.records
+jsc tools/avr32/encoder.js tools/avr32/runtime.js tools/avr32/program.js \
+  tools/avr32/assemble.js | grep -E '^(EXTENT|BLOCK|SKIP|PATCH|[0-9a-f]{8}  )' \
+  | diff build/reference.ghidra.records -
+```
+
+## Pieces
+
+| File | Role |
+|---|---|
+| `encoder.js` | AVR32 instruction encoder — replaces `assembler.assembleLine` |
+| `runtime.js` | the DSL (`begin`/`emit`/`padTo`/`finish`/...) and record output |
+| `transpile.py` | translates `run()` in the Java into `program.js` |
+| `program.js` | **generated** — do not edit |
+| `assemble.js` | driver: reads `build.properties`, prints the record stream |
+| `build_js.py` | transpiles, assembles, applies patches, checks `golden_sha256` |
+| `test_corpus.js` | encoder unit test against `corpus.json` |
+| `extract_corpus.py` | builds `corpus.json` from `build/assemble*.log` |
+| `samples.py` | shows corpus samples for one shape, for deriving layouts |
+
+`build_js.py` re-runs `transpile.py` every time, so `program.js` cannot drift
+from the Java.
+
 ## Status
 
-**100% — 3,370 / 3,370 instructions, all 67 shapes, zero mismatches.**
+**The JavaScript toolchain reproduces the firmware bit-for-bit.**
 
-The encoder reproduces every instruction Ghidra assembled for this firmware,
-byte for byte. See *Coverage caveat* below for what that does and does not
-prove.
+```
+python3 tools/avr32/build_js.py
+  ...
+  built  b69f42f170aa9585fc3eabab2ab7988bfc737c47f1526ddb0b16d7037f8acab1
+  golden b69f42f170aa9585fc3eabab2ab7988bfc737c47f1526ddb0b16d7037f8acab1
+  MATCHES golden_sha256
+```
+
+- **Encoder**: 3,643 / 3,643 corpus instructions, all 69 shapes, zero mismatches.
+- **Structure**: the transpiled program emits all 3,574 EXTENT / BLOCK / SKIP /
+  listing / PATCH records *identically* to a fresh Ghidra run.
+- **Image**: applying those patches reproduces `golden_sha256`.
+
+Ghidra and the JDK are no longer needed to build. Ghidra stays only for
+disassembly and verification (`RecoverPressurePatch.java`, `ExportAnalysis.java`).
 
 ## Derived layouts
 
@@ -167,17 +213,16 @@ Two ordering traps here:
 
 100% of the corpus is not 100% of the instruction set. Three limits:
 
-- **The corpus only covers what the current config builds.** `CASTS.H`, `MFSR`
-  and `ORH` appear in `AssemblePressureFix.java` but not in the corpus,
-  because the blocks holding them were skipped by `config/218e.toml` on the
-  build that produced the log. **Regenerate the corpus from a build with every
-  feature enabled before trusting the encoder across arbitrary configs.**
+- **One build never covers the whole program.** `finish()` prints a block's
+  listing only when that block is enabled, and a branch guarded by
+  `!feature(x)` is unreachable in any build where `x` is on. `corpus.json` is
+  therefore merged across several configurations —
+  `build/assemble*.log`, deduped — including runs that later failed, since the
+  part they did assemble is still valid Ghidra output.
+- **`ORH` is not covered, and cannot be.** Its only use sits in the
+  `!feature("multi_key_pressure")` branch, and that branch does not build (see
+  below). It returns null.
 - **Operand ranges are proven only where the corpus exercises them.** See below.
-- **The encoder is one half of the port.** `AssemblePressureFix.java` also
-  holds the block structure — which caves exist, at which addresses, gated by
-  which features, with `padTo`/`finish` asserting exact extents. That is
-  mechanical to port but it is not done, and the end-to-end proof (an image
-  matching `golden_sha256`) needs both halves.
 
 ## Open questions
 
