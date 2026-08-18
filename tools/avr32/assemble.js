@@ -6,12 +6,14 @@
 // Prints the same EXTENT / BLOCK / SKIP / PATCH records the Ghidra script
 // does, so the two can be compared line for line.
 
+// jsc exposes script arguments as a GLOBAL `arguments` object, which a
+// wrapping function would shadow — so capture it out here, before the IIFE.
+var ARGV = (typeof arguments !== 'undefined') ? arguments : [];
+
 (function () {
     'use strict';
 
-    var args = (typeof arguments !== 'undefined' && arguments.length)
-        ? arguments : [];
-    var path = args.length ? args[0] : 'build/build.properties';
+    var path = ARGV.length ? ARGV[ARGV.length - 1] : 'build/build.properties';
 
     var props = {};
     var text = readFile(path);

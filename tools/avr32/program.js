@@ -1518,8 +1518,13 @@ function assembleProgram() {
         } else if (!feature("multi_key_pressure")) {
             emit("LDDPC R10,0x8001a7f0");
             emit("LD.UB R8,R10[0x256]");
-            emit("CP.W R8,0x1c");
-            emit("BR{hi} 0x8001a7c0");
+            // 0x1d with BR{ge}, not 0x1c with BR{hi}: the key arrives
+            // zero-extended from LD.UB, so the signed test is the same test,
+            // and {ge} has a two-byte encoding where {hi} does not.  Those two
+            // bytes are what let this branch fit its cave — with BR{hi} it ran
+            // to 0x8001a7c2 and the build failed on the padTo below.
+            emit("CP.W R8,0x1d");
+            emit("BR{ge} 0x8001a7c0");
             emit("MOV R9,0xa54a");
             emit("ORH R9,0xa54");
             emit("LSR R9,R9,R8");

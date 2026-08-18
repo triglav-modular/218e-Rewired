@@ -314,10 +314,22 @@ var AVR32 = (function () {
             }
         },
         {
-            re: /^(ANDL|ANDH) (\S+),(0x[0-9a-fA-F]+)$/, fn: function (m) {
+            re: /^(ANDL|ANDH|ORH) (\S+),(0x[0-9a-fA-F]+)$/, fn: function (m) {
                 var rd = reg(m[2]), v = imm(m[3]);
                 if (rd === null || v === null || v < 0 || v > 0xFFFF) return null;
-                return extended(m[1] === 'ANDL' ? 0xE01 : 0xE41, rd, v);
+                var op = { 'ANDL': 0xE01, 'ANDH': 0xE41, 'ORH': 0xEA1 }[m[1]];
+                return extended(op, rd, v);
+            }
+        },
+        {
+            // Shift by a REGISTER amount, which is the triadic layout rather
+            // than the dyadic one the immediate form uses.  Only LSR is
+            // proven; LSL by register never appears, so it returns null
+            // instead of an encoding guessed from symmetry.
+            re: /^LSR (\S+),(\S+),(\w+)$/, fn: function (m) {
+                var rd = reg(m[1]), rs = reg(m[2]), rsh = reg(m[3]);
+                if (rd === null || rs === null || rsh === null) return null;
+                return triadic(rs, rsh, 0x0A, 4, rd);
             }
         },
         {

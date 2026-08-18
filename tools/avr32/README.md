@@ -68,15 +68,20 @@ from the Java.
 ```
 python3 tools/avr32/build_js.py
   ...
-  built  b69f42f170aa9585fc3eabab2ab7988bfc737c47f1526ddb0b16d7037f8acab1
-  golden b69f42f170aa9585fc3eabab2ab7988bfc737c47f1526ddb0b16d7037f8acab1
-  MATCHES golden_sha256
+  built    0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22
+  golden   0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22
+  MATCHES
 ```
 
-- **Encoder**: 3,643 / 3,643 corpus instructions, all 69 shapes, zero mismatches.
-- **Structure**: the transpiled program emits all 3,574 EXTENT / BLOCK / SKIP /
-  listing / PATCH records *identically* to a fresh Ghidra run.
-- **Image**: applying those patches reproduces `golden_sha256`.
+- **Encoder**: 3,731 / 3,731 corpus instructions, all 71 shapes, zero mismatches.
+- **Structure**: the transpiled program emits every EXTENT / BLOCK / SKIP /
+  listing / PATCH record *identically* to a fresh Ghidra run — checked on both
+  the shipped configuration and `[pressure].multi_key = "factory"`.
+- **Image**: applying those patches reproduces `golden_sha256`, and matches
+  `tools/build.py` on the factory-pressure configuration too.
+
+Corpus coverage is now complete: every mnemonic in
+`AssemblePressureFix.java` appears in `corpus.json` and encodes correctly.
 
 Ghidra and the JDK are no longer needed to build. Ghidra stays only for
 disassembly and verification (`RecoverPressurePatch.java`, `ExportAnalysis.java`).
@@ -219,9 +224,6 @@ Two ordering traps here:
   therefore merged across several configurations —
   `build/assemble*.log`, deduped — including runs that later failed, since the
   part they did assemble is still valid Ghidra output.
-- **`ORH` is not covered, and cannot be.** Its only use sits in the
-  `!feature("multi_key_pressure")` branch, and that branch does not build (see
-  below). It returns null.
 - **Operand ranges are proven only where the corpus exercises them.** See below.
 
 ## Open questions

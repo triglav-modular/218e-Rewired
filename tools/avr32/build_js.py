@@ -12,6 +12,7 @@ JavaScript toolchain produces the same firmware.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import subprocess
 import sys
@@ -41,7 +42,12 @@ def run_js(properties: Path) -> str:
 
 
 def main() -> None:
-    cfg = tomllib.loads((REPO / "config" / "218e.toml").read_text())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default="config/218e.toml")
+    parser.add_argument("--expect-sha", help="compare against this instead of golden_sha256")
+    args = parser.parse_args()
+
+    cfg = tomllib.loads((REPO / args.config).read_text())
     factory = REPO / cfg["firmware"]["factory_hex"]
     digest = hashlib.sha256(factory.read_bytes()).hexdigest()
     if digest != cfg["firmware"]["factory_sha256"]:
@@ -76,13 +82,14 @@ def main() -> None:
         raise SystemExit(f"{len(stray)} byte(s) changed outside any patch")
 
     built = hashlib.sha256(rendered.encode()).hexdigest()
-    golden = cfg["firmware"]["golden_sha256"]
+    expected = args.expect_sha or cfg["firmware"]["golden_sha256"]
+    label = "expected" if args.expect_sha else "golden  "
     print(f"  {changed} bytes changed, {added} newly programmed")
-    print(f"  built  {built}")
-    print(f"  golden {golden}")
-    if built != golden:
-        raise SystemExit("MISMATCH — the JavaScript build differs from the recorded image")
-    print("\nMATCHES golden_sha256 — the JavaScript toolchain reproduces the firmware.")
+    print(f"  built    {built}")
+    print(f"  {label} {expected}")
+    if built != expected:
+        raise SystemExit("MISMATCH — the JavaScript build differs from the reference image")
+    print("\nMATCHES — the JavaScript toolchain reproduces the firmware.")
 
 
 if __name__ == "__main__":
