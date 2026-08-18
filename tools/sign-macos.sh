@@ -45,10 +45,50 @@ IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
             | sed -E 's/.*"(.*)".*/\1/' || true)"
 if [ -z "$IDENTITY" ]; then
     echo "No 'Developer ID Application' certificate in the keychain." >&2
-    echo "Create one at developer.apple.com > Certificates and install it." >&2
+    echo >&2
+    # Naming what IS there matters: the Certificates page offers several
+    # types, and picking the wrong one is the usual mistake.
+    others="$(security find-certificate -a 2>/dev/null \
+              | grep -o '"labl"<blob>="[^"]*"' | sed 's/.*="//;s/"$//' \
+              | grep -iE "^(Mac Developer|Apple Development|Apple Distribution|3rd Party)" \
+              | sort -u || true)"
+    if [ -n "$others" ]; then
+        echo "These Apple code-signing certificates are installed:" >&2
+        echo "$others" | sed 's/^/  /' >&2
+        echo >&2
+        echo "None of them works for distribution.  'Mac Developer' and" >&2
+        echo "'Apple Development' sign builds for your own machines; notarising" >&2
+        echo "software for other people needs 'Developer ID Application'," >&2
+        echo "which is a separate certificate type on the same page." >&2
+    else
+        echo "Create one at developer.apple.com > Certificates." >&2
+    fi
+    echo >&2
+    echo "Note that only the Account Holder can create a Developer ID" >&2
+    echo "certificate; Admin and Developer roles cannot." >&2
     exit 1
 fi
 echo "Signing as: $IDENTITY"
+
+# A certificate can be present, unexpired and still unusable if the issuing
+# intermediate is missing — signing then fails with "unable to build chain to
+# self-signed root".  Catch that here rather than part-way through the run.
+PROBE="$(mktemp -d)"; cp /bin/echo "$PROBE/probe"
+if ! codesign --force --timestamp=none --sign "$IDENTITY" "$PROBE/probe" 2>"$PROBE/err"; then
+    if grep -qi "unable to build chain" "$PROBE/err"; then
+        echo >&2
+        echo "The certificate is installed but its trust chain is incomplete," >&2
+        echo "so signing fails.  Install the matching Apple Worldwide Developer" >&2
+        echo "Relations intermediate (G3 through G8, depending on when the" >&2
+        echo "certificate was issued) from:" >&2
+        echo "  https://www.apple.com/certificateauthority/" >&2
+    else
+        sed 's/^/  /' "$PROBE/err" >&2
+    fi
+    rm -rf "$PROBE"
+    exit 1
+fi
+rm -rf "$PROBE"
 
 # Everything Mach-O that ships.  Hardened runtime and a secure timestamp are
 # both required for notarisation; --force replaces the ad-hoc signatures these
