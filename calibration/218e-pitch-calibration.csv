@@ -1,5 +1,18 @@
 # 218e pitch-CV calibration — the voltage the 208 needs at each pitch.
 #
+# MEASURED ON ONE SPECIFIC INSTRUMENT, WITH ITS 208 SET TO 1 V/OCTAVE.
+#
+# Both halves of that matter.  A tracking-error curve belongs to the oscillator
+# it was measured from, so another 208 needs its own.  And it was taken with
+# that 208 trimmed to 1 V/oct, which is not the [options].volts_per_octave
+# default of 1.2 — the standard Buchla scaling that most instruments run.  At a
+# different scaling the oscillator sits at a different operating point and its
+# error curve is not the same one.
+#
+# So this file is an example and a record, not a starting point: measure your
+# own, at the scaling you actually use.  That is why [options].pitch_correction
+# is false by default.
+#
 # Offset_Cents is the only column the build reads: how far the output is
 # pushed from an ideal 1 V/octave ramp, in cents of that ramp.  Positive
 # raises the pitch.  Semitone 0 is the 208's 0 V pitch, an A; the bottom

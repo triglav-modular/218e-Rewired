@@ -44,10 +44,10 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("one_volt_corrected",    [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
-    # The firmware as it shipped before the config was reduced to seven
-    # options: measured calibration, three tunings, and the 1 V/oct ramp that
-    # was the default then.  Reproducing that image bit for bit is what shows
-    # the simplification changed the surface and not the firmware.
+    # The author's own instrument: the shipped calibration, three tunings, and
+    # the 1 V/oct ramp that 208 is trimmed to.  Those go together — that table
+    # was measured at that scaling — so this is the one configuration where
+    # the calibration in calibration/ is the right one to use.
     ("historical_config",     [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
                                (r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]'),
                                (r"^pitch_correction = false",

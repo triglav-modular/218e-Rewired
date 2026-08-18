@@ -33,9 +33,11 @@ remap_knobs = true
 # Measure with a tuner against 12-TET, then fold the readings in:
 #   python3 tools/build.py --fold-measurement <your-readings.csv>
 #
-# false emits an ideal ramp with no per-key trim.  The shipped table was
-# measured on one specific instrument, so it is NOT the default: another 208
-# would be corrected toward the wrong curve.
+# false emits an ideal ramp with no per-key trim, and is the default.  The
+# table in calibration/ is an example, not a starting point: it was measured on
+# one specific instrument with its 208 trimmed to 1 V/oct, which is neither
+# your oscillator nor, by default, your scaling.  Measure your own, at the
+# volts_per_octave you actually use.
 pitch_correction = false
 
 # 4. ALTERNATE TUNINGS

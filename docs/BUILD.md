@@ -166,11 +166,16 @@ the seven options into the full internal settings the build has always used.
 
 The options are independent: any combination builds.
 
-**Per-key pitch correction.** The shipped
-`calibration/218e-pitch-calibration.csv` was measured on one specific
-instrument — the correction reaches **+280 cents** at the top, where that 208
-needs 6.23 V for a nominal 6 V. It is deliberately **not** the default, because
-another 208 would be corrected toward the wrong curve. To calibrate your own,
+**Per-key pitch correction.** `calibration/218e-pitch-calibration.csv` was
+measured on one specific instrument **with its 208 trimmed to 1 V/oct** — the
+correction reaches **+280 cents** at the top, where that oscillator needs
+6.23 V for a nominal 6 V.
+
+Both of those make it an example rather than a default. A tracking-error curve
+belongs to the oscillator it came from, and it belongs to the scaling it was
+taken at: at a different `volts_per_octave` the oscillator sits at a different
+operating point and its error is not the same curve. Set `volts_per_octave` to
+match your 208 first, then measure against that. To calibrate your own,
 measure each key against 12-TET with a tuner and fold the readings in:
 
 ```bash

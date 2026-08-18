@@ -54,9 +54,12 @@ the four preset-voltage knobs and the arpeggiator switch.
 - **In-firmware tuning** *(opt in)* — up to three tuning tables built from your
   own Scala files, switched from edit mode with LED indication.
 - **Per-key pitch calibration** *(opt in)* — corrects your 208's measured
-  tracking error per semitone, corrected per semitone rather than per octave
-  (≤1.5 cents residual on the instrument it was measured on). Also selectable
-  1.2 V/oct (Buchla) or 1.0 V/oct (standard).
+  tracking error per semitone rather than per octave (≤1.5 cents residual on
+  the instrument it was measured on). Measure your own: the table in
+  `calibration/` came from one oscillator trimmed to 1 V/oct, and a
+  tracking-error curve belongs to both.
+- **Selectable volts per octave** — 1.2, the standard Buchla scaling, or
+  1 V/oct.
 - **Pressure-weighted portamento** — Haken Continuum style: notes snap, and
   pitch moves between held notes as their relative pressure moves. The
   portamento knob sets how much pressure a second note needs to bend, and is

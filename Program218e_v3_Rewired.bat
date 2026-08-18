@@ -207,7 +207,13 @@ IF NOT "!FUSE_VALUE!"=="1" (
 CALL :ok ISP_FORCE=1 - an interrupted session boots back into DFU
 
 ECHO.
-ECHO Ready to erase the application flash.
+ECHO   Ready to erase the application flash.
+ECHO.
+ECHO   From here on, if anything goes wrong - including closing this window or
+ECHO   pressing Ctrl-C - the instrument stays in DFU mode, because START is
+ECHO   only sent after the write has been validated.  Reconnect power if you
+ECHO   have to, then run this script again.
+ECHO.
 PAUSE
 
 CALL :step Erasing the application flash
@@ -280,19 +286,43 @@ FOR /F "tokens=* delims=" %%L IN ('"%DFU%" at32uc3b1256 getfuse %1 2^>^&1') DO (
 EXIT /B 0
 
 :recovery_safe_stop
+IF "!FLASH_VALIDATED!"=="1" GOTO :started_but_not_launched
 ECHO.
-ECHO RECOVERY-SAFE STOP
-ECHO Do NOT run "start".  Do NOT disconnect or power-cycle the 218e.
-ECHO Leave it in DFU mode and run this script again.
-ECHO If power was already lost, reconnect power: ISP_FORCE should return it to DFU.
-ECHO No START command was sent.>> "%LOG_FILE%"
+ECHO ======================================================================
+ECHO   RECOVERY-SAFE STOP
+ECHO.
+ECHO   Do NOT disconnect or power-cycle the 218e.
+ECHO   Leave it in DFU mode and run this script again.
+ECHO.
+ECHO   No START command was sent, so the bootloader keeps ISP_FORCE set.
+ECHO   Even if power is lost now, the instrument should come back up in DFU
+ECHO   and this script can try again.
+ECHO ======================================================================
+ECHO No START command was sent; the 218e was left in DFU mode.>> "%LOG_FILE%"
+PAUSE
+ENDLOCAL
+EXIT /B 1
+
+:started_but_not_launched
+REM The image is written and read-back validated; only the launch failed, so
+REM there is nothing to recover - the instrument just has not left DFU yet.
+ECHO.
+ECHO   The firmware IS written and has passed read-back validation.
+ECHO   Only the restart command failed.  Power-cycle the 218e and it should
+ECHO   come up on the new firmware; if it returns to DFU instead, run this
+ECHO   script again.
+ECHO Flash validated; START failed.>> "%LOG_FILE%"
 PAUSE
 ENDLOCAL
 EXIT /B 1
 
 :fail_early
+REM Defensive: every current path here runs before the DFU session opens, but
+REM if one ever does not, "nothing was erased" would be a dangerous thing to
+REM print.  Hand those to the recovery-safe stop instead.
+IF "!DFU_SESSION_ACTIVE!"=="1" GOTO :recovery_safe_stop
 ECHO.
-ECHO Nothing was erased.
+ECHO Nothing was erased.  The instrument was not touched.
 PAUSE
 ENDLOCAL
 EXIT /B 1
