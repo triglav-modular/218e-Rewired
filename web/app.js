@@ -109,7 +109,12 @@
         { name: 'Slot 1', note: 'trn LED lit · edit key 27 toggles it against slot 2' },
         { name: 'Slot 2', note: 'both LEDs dark · the slot the other two toggle against' }
     ];
-    state.slots = [null, null, null];
+    // Start with the three bundled scales already in their slots, but behind
+    // a checkbox that defaults to off: ticking it is what opts in, and the
+    // slots are then already sensible rather than empty.
+    state.slots = GEN.bundledTunings.map(function (t) {
+        return { name: t.name, text: t.text };
+    });
 
     function renderSlots() {
         var host = $('slots');
@@ -372,9 +377,11 @@
             pressure_portamento: $('pressure_portamento').checked,
             volts_per_octave: vpo
         };
-        // Trailing empty slots simply shorten the list; a gap in the middle
-        // has to stay a gap, so it is sent as an explicit factory slot.
-        var slots = state.slots.slice();
+        // The checkbox is the opt-in: off means factory everything, however
+        // the slots are filled.  Trailing empty slots simply shorten the
+        // list; a gap in the middle stays a gap, sent as an explicit factory
+        // slot.
+        var slots = $('useTunings').checked ? state.slots.slice() : [];
         while (slots.length && !slots[slots.length - 1]) slots.pop();
         if (slots.length) {
             o.alternate_tunings = slots.map(function (e) { return e || 'factory'; });
@@ -416,6 +423,11 @@
     $('download').addEventListener('click', function () {
         if (!state.result) return;
         download(state.result.hex, '218eV3_v369_Rewired_DFU.hex', 'text/plain');
+    });
+
+    $('useTunings').addEventListener('change', function () {
+        $('tuningsBody').style.display = $('useTunings').checked ? '' : 'none';
+        refresh();
     });
 
     renderSlots(); buildTable(); drawPlot(); refresh();

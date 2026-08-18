@@ -59,8 +59,8 @@ the four preset-voltage knobs and the arpeggiator switch.
   tracking-error curve belongs to both.
 - **Selectable volts per octave** — 1.2, the standard Buchla scaling, or
   1 V/oct.
-- **Pressure-weighted portamento** — Haken Continuum style: notes snap, and
-  pitch moves between held notes as their relative pressure moves. The
+- **Pressure-based portamento** — notes snap, and pitch moves between held
+  notes as their relative pressure moves. The
   portamento knob sets how much pressure a second note needs to bend, and is
   fully off at zero.
 - **Knobs 1–4 remapped to arpeggiator and vibrato controls** — note order, rhythm randomness,

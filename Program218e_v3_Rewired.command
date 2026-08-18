@@ -12,7 +12,7 @@ FLASH_VALIDATED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
-EXPECTED_SHA256="60ad9331956da7d7b0a8db350c0d2b8dd72be3d839ba3c8dbdb1d2c02cfc0fc1"
+EXPECTED_SHA256="44de7afec022016189a6c44055815a7b52679f24177a5fe1d00964e97b9ed08b"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the

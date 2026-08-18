@@ -41,7 +41,7 @@ public class RecoverPressurePatch extends GhidraScript {
         recover(0x80019940L, "send_usb_midi_14bit");
         recover(0x80019980L, "pitch_remap_calibration");
         recover(0x80019a40L, "tuning_applier_tables");
-        recover(0x80019c64L, "pressure_blend_continuum");
+        recover(0x80019c64L, "pressure_blend");
         recover(0x80019d44L, "arp_random_knobs");
         recover(0x8001a020L, "arp_order_list");
         recover(0x8001a0a0L, "arp_order_selector");

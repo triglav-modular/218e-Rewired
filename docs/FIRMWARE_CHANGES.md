@@ -347,10 +347,9 @@ untouched.
 
 ## 3. Portamento
 
-**Pressure-weighted portamento** (`pressure_blend_continuum`, `0x80019C60`),
-ported from the Micro_Easel and based on the Haken Continuum patent
-(US 7,902,450 B2). With several keys held, the sounding pitch is a
-pressure-weighted average of every held key, at any interval:
+**Pressure-based portamento** (`pressure_blend`, `0x80019C60`), ported from
+the Micro_Easel. With several keys held, the sounding pitch is a
+pressure-based average of every held key, at any interval:
 
 ```
 X = Σ(z³·Xk) / Σ(z³)      z = clamp((pressure − threshold) >> 4, 0, 63)
@@ -590,7 +589,7 @@ only user-facing owner of the setting.
 | `0x80019740` / `0x80019940` | edit-mode telemetry, 14-bit USB-MIDI send |
 | `0x80019980` / `0x80019BC0` | pitch remap + per-semitone correction table |
 | `0x80019A40` | tuning applier + three tuning tables |
-| `0x80019C60` | pressure-weighted portamento |
+| `0x80019C60` | pressure-based portamento |
 | `0x80019D38` | arp knob housekeeping, octave and rhythm entries |
 | `0x8001A020` | arp press-order list |
 | `0x8001A230` / `0x8001A268` | glide-rate clamp, deferred-pulse setter |

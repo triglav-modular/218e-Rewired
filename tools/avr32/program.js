@@ -690,8 +690,8 @@ function assembleProgram() {
         emitTable("pitch_remap");
         finish("tracking_correction_table", 0x80019c5e);
 
-        // Pressure-weighted portamento (Haken Continuum, US 7,902,450 B2, as
-        // in the Micro_Easel MonoKeyboard): each scan the pitch target becomes
+        // Pressure-based portamento (as in the Micro_Easel MonoKeyboard):
+        // each scan the pitch target becomes
         // X_port = sum(z^3 * X_k) / sum(z^3) over held keys within PInterv
         // (484 units = 12 semitones) of the sounding base, z = per-key sensor
         // delta minus 110, scaled to 0..63, up to four contributors.  The
@@ -813,7 +813,7 @@ function assembleProgram() {
         emit("LDM SP++,R0,R1,R2,R3,R4,R5,R7,PC");
         padTo(0x80019d34);
         word(0x00003560); // global state base
-        finish("pressure_blend_continuum", 0x80019d38);
+        finish("pressure_blend", 0x80019d38);
 
         // Arpeggiator randomness on the preset-voltage knobs (outside edit):
         //   knob 1 (0x30a) -> state+0x38c, the factory weighted-random key
@@ -1124,7 +1124,7 @@ function assembleProgram() {
         begin(0x8001a230);
         word(0x8001a234);
         if (feature("pressure_blend")) {
-            // No time-based glide: the pressure-weighted blend is the only
+            // No time-based glide: the pressure-based blend is the only
             // portamento.  Notes snap; the knob means pressure-needed-to-bend.
             emit("STM --SP,R7,LR");
             emit("MOV R7,SP");

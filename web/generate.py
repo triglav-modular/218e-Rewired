@@ -46,6 +46,17 @@ def main() -> None:
         f"  javaSourceBase64: {json.dumps(base64.b64encode(java).decode())},",
     ]
 
+    # The bundled tunings, preloaded into the page's slots (behind a checkbox
+    # that defaults to off).  Shipped as content rather than fetched, so the
+    # page stays a self-contained set of files.
+    bundled = [
+        "tunings/Sabat II (C-rooted).scl",
+        "tunings/ADDAC Just Intonation.scl",
+        "tunings/12TET.scl",
+    ]
+    tunings = [{"name": Path(t).name, "text": (REPO / t).read_text()} for t in bundled]
+    parts.append(f"  bundledTunings: {json.dumps(tunings)},")
+
     # Factory control transfers, as a flat [src, dst, src, dst, ...] array —
     # about 2,700 pairs, and much smaller than re-parsing the text file.
     lines = (REPO / "tools" / "factory_control_flow.txt").read_text().splitlines()

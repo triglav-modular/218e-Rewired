@@ -73,7 +73,7 @@ volts_per_octave = 1.2
 pressure_fix = true
 
 # 7. PRESSURE-BASED PORTAMENTO
-# Haken Continuum style: notes snap, and pitch moves between held notes as
+# Notes snap, and pitch moves between held notes as
 # their relative pressure moves.  The portamento knob sets how much pressure a
 # second note needs to bend, and is fully off at zero.
 # false restores the factory time-based glide.
@@ -97,7 +97,7 @@ updaters       = ["Program218e_v3_Rewired.command",
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "60ad9331956da7d7b0a8db350c0d2b8dd72be3d839ba3c8dbdb1d2c02cfc0fc1"
+golden_sha256  = "44de7afec022016189a6c44055815a7b52679f24177a5fe1d00964e97b9ed08b"
 
 
 [tools]
