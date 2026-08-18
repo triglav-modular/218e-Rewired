@@ -23,10 +23,12 @@ the four preset-voltage knobs and the arpeggiator switch.
   key independently, so two distant hands do not share the wrong correction.
 - **Bounded pressure interpolation** — spreads each 5 ms scan update over five
   1 ms DAC ticks and reaches the target exactly, without a long pressure tail.
-- **In-firmware tuning** — three tuning tables built from Scala files
-  (Sabat II, ADDAC JI, 12-TET), switched from edit mode with LED indication.
-- **Per-key pitch calibration** — the 208p's measured tracking error corrected
-  per semitone, finer than the uTune's per-octave scheme (≤1.5 cents residual).
+- **In-firmware tuning** *(opt in)* — up to three tuning tables built from your
+  own Scala files, switched from edit mode with LED indication.
+- **Per-key pitch calibration** *(opt in)* — corrects your 208p's measured
+  tracking error per semitone, finer than the uTune's per-octave scheme
+  (≤1.5 cents residual on the instrument it was measured on). Also selectable
+  1.2 V/oct (Buchla) or 1.0 V/oct (standard).
 - **Pressure-weighted portamento** — Haken Continuum style: notes snap, and
   pitch moves between held notes as their relative pressure moves. The
   portamento knob sets how much pressure a second note needs to bend, and is
@@ -75,9 +77,20 @@ python3 tools/test.py      # regression tests (add --golden to rebuild and compa
 ```
 
 Needs Python 3.11+ and Ghidra 12.x (set `GHIDRA_HOME` or `[tools].ghidra_home`).
-Everything that is a *choice* — tuning files, calibration data, and whether
-each knob and the arp switch use the new or the factory behaviour — lives in
-`config/218e.toml`. See [`docs/BUILD.md`](docs/BUILD.md).
+
+There are **seven options**, all in [`config/218e.toml`](config/218e.toml):
+latching arpeggiator, knob remapping, per-key pitch correction, alternate
+tunings, volts per octave, the pressure response fix, and pressure-based
+portamento. Everything else is fixed at the tested value. See
+[`docs/BUILD.md`](docs/BUILD.md).
+
+Pitch correction and alternate tunings are **off by default**: the shipped
+calibration was measured on one specific 208p, and would push another
+instrument toward the wrong curve.
+
+`tools/avr32/` holds a second, Ghidra-free toolchain that assembles the same
+firmware in JavaScript; `tools/avr32/sweep.py` builds every option both ways
+and checks the images match.
 
 ## Flash
 
@@ -90,11 +103,11 @@ erasing anything**.
 ## Layout
 
 ```
-config/       build settings — the only file you normally edit
-tunings/      Scala files (12 degrees, 2/1 octave)
-calibration/  measured per-key tracking error
+config/       the seven options — the only file you normally edit
+tunings/      Scala files (12 degrees, 2/1 octave) — opt in
+calibration/  measured per-key tracking error — opt in, instrument-specific
 src/          Ghidra scripts: the AVR32 assembler and verification tools
-tools/        build.py — config to firmware
+tools/        build.py — config to firmware; avr32/ — the Ghidra-free build
 mac/          firmware images and the macOS flashing kit
 docs/         what changed and how to build
 ```

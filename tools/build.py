@@ -38,6 +38,9 @@ import tomllib
 from fractions import Fraction
 from pathlib import Path
 
+# tools/ on the path so `import options` works however build.py is invoked.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 REPO = Path(__file__).resolve().parent.parent
 BUILD = REPO / "build"
 
@@ -285,13 +288,23 @@ def counts_per_volt(cfg: dict) -> float:
     return pitch["dac_counts"] / (pitch["dac_vref"] * pitch["dac_gain"])
 
 
+# The volts/octave the shipped calibration was measured at.  The 208p signal
+# path lands 1.2 V/oct at the jack, so that is the reference: volts_per_octave
+# = 1.2 leaves the ramp untouched, and any other value scales it uniformly,
+# which changes the octave span while keeping every relative pitch (the
+# calibration is in cents, a ratio) exactly where it was.
+CALIBRATION_VOLTS_PER_OCTAVE = 1.2
+
+
 def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
     """Per-semitone pitch curve, in DAC counts.
 
-    counts(i) = counts_per_volt * (i/12 + offset(i)/1200): an ideal
-    1 V/octave ramp displaced by the measured calibration.
+    counts(i) = counts_per_volt * vpo/1.2 * (i/12 + offset(i)/1200): an ideal
+    1 V/octave ramp displaced by the measured calibration, then scaled from the
+    1.2 V/oct the calibration assumes to the configured volts_per_octave.
     """
-    scale = counts_per_volt(cfg)
+    vpo = cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE)
+    scale = counts_per_volt(cfg) * (vpo / CALIBRATION_VOLTS_PER_OCTAVE)
     table = [
         math.floor(scale * (i / 12.0 + offsets[i] / 1200.0) + 0.5)
         for i in range(max(offsets) + 1)
@@ -869,7 +882,15 @@ def main() -> None:
     args = parser.parse_args()
 
     config_path = (REPO / args.config) if not Path(args.config).is_absolute() else Path(args.config)
-    cfg = tomllib.loads(config_path.read_text())
+    raw = tomllib.loads(config_path.read_text())
+    # The config holds seven user options plus [firmware]/[tools] paths.
+    # options.expand() turns those into the full internal settings this script
+    # has always consumed, so everything below is unchanged.
+    import options
+    cfg = options.expand(raw.get("options", {}))
+    cfg["firmware"] = raw["firmware"]
+    if "tools" in raw:
+        cfg["tools"] = raw["tools"]
     # config/local.toml (untracked) overrides machine-specific settings, so the
     # committed configuration stays portable.  Only [tools] is merged.
     local = config_path.parent / "local.toml"
@@ -998,11 +1019,28 @@ def main() -> None:
             "diagnostics: scan_profiler and telemetry_smoothing both claim the "
             "scan-component telemetry fields — enable only one"
         )
-    if get(cfg, "arp.switch") == "latch" and not get(cfg, "portamento.pressure_blend"):
-        raise SystemExit(
-            "arp latch needs portamento.pressure_blend: the latch transpose hold "
-            "captures the live octave offset through the blend hook"
-        )
+    # Pressure response fix off: return every pointer that reaches the reworked
+    # pressure path to its factory value, and drop the one hook that overwrites
+    # factory code outright.  The caves are still assembled into unused flash —
+    # nothing reaches them, so the original curve, filter and single-key
+    # sourcing run exactly as they shipped.
+    #
+    # note_on_pool / active_key_pool are deliberately NOT gated here: those
+    # wrappers also carry the arp latch toggle and the press-order append, and
+    # their filter-reset stores land on a cell the factory path never reads.
+    if cfg.get("_pressure_factory"):
+        for name in ("pressure_fn_pool", "pressure_float_helper_pool",
+                     "knob1_pool", "knob4_pool", "pressure_gain_nop"):
+            blocks[name] = False
+
+    # Arp latch reads the live octave offset through the blend hook, so the
+    # blend *caves* have to exist whenever latch is on — but the pressure
+    # *following* inside them (feature.pressure_blend) is independent, and can
+    # be off.  Forcing the blocks on here decouples "latch" from "pressure
+    # portamento": each is its own switch.
+    if get(cfg, "arp.switch") == "latch":
+        blocks["pitch_target_blend_hook"] = True
+        blocks["blend_offset_apply"] = True
 
     # How far apart two derived pitches may be and still count as the same
     # note.  Both sides of the toggle's match are built from the transpose at

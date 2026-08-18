@@ -1,15 +1,83 @@
-# Buchla 218e V3 — firmware build settings
-# =========================================
+# ===========================================================================
+# Buchla 218e V3 — custom firmware
+# ===========================================================================
+# Seven options.  Everything else is fixed at the value the firmware was built
+# and tested with; see tools/options.py for those constants and docs/BUILD.md
+# for what they are.
 #
-# Everything the patched firmware does that is a *choice* rather than a bug fix
-# is declared here.  Edit this file, run `python3 tools/build.py`, flash the
-# result.  Nothing else needs editing for a retune, a recalibration, or to hand
-# any knob back to its factory behaviour.
-#
-# Rule of thumb for the toggles below: "factory" means the patch that activates
-# the new behaviour is simply not applied, so the original code runs untouched.
-# The new code still sits in unused flash, it is just never reached.
+#   python3 tools/build.py
+# ===========================================================================
 
+[options]
+
+# 1. LATCHING ARPEGGIATOR
+# The three-position arp switch becomes latch / regular / off.  In latch, keys
+# are toggles and leaving the position releases everything.  Latched notes are
+# pitches, not keys, so one key held in three octaves stacks three notes.
+# false restores the factory ascending / random / off switch.
+latching_arp = true
+
+# 2. REMAP KNOBS 1-4
+# Outside edit mode the four preset-voltage knobs become arpeggiator note
+# order, arpeggiator rhythm, random octave displacement, and global vibrato.
+# false hands all four back to the factory preset voltages.
+# Edit-mode knob 1 (pressure calibration) and knob 4 (curve) are unaffected.
+remap_knobs = true
+
+# 3. PER-KEY PITCH CORRECTION
+# Corrects the 208p's measured tracking error per semitone, replacing an
+# external uTune.  Point this at a CSV of your own measurements:
+#
+#   pitch_correction = "calibration/218e-pitch-calibration.csv"
+#
+# Measure with a tuner against 12-TET, then fold the readings in:
+#   python3 tools/build.py --fold-measurement <your-readings.csv>
+#
+# false emits an ideal ramp with no per-key trim.  The shipped table was
+# measured on one specific instrument, so it is NOT the default: another 208p
+# would be corrected toward the wrong curve.
+pitch_correction = false
+
+# 4. ALTERNATE TUNINGS
+# Up to three Scala files, switchable from edit mode (key 28 toggles slot 0,
+# key 27 toggles slot 1; LEDs rem-en / trn).  Each must be a 12-note scale
+# with a true 2/1 octave, because the key table repeats every octave.
+#
+#   alternate_tunings = ["tunings/Sabat II (C-rooted).scl",
+#                        "tunings/ADDAC Just Intonation.scl",
+#                        "tunings/12TET.scl"]
+#
+# Slots you do not fill keep the instrument's own temperament.  false gives
+# all three slots the factory temperament, i.e. no retuning at all.
+alternate_tunings = false
+
+# 5. VOLTS PER OCTAVE
+# 1.2 is the Buchla 208p scaling and what the instrument produces today.
+# 1.0 rescales the pitch ramp for standard Eurorack gear.
+#
+# Changing this moves every pitch: the 208p will need retrimming, and any
+# pitch_correction table stays valid because it is stored in cents.
+volts_per_octave = 1.2
+
+# 6. PRESSURE RESPONSE FIX
+# The reworked pressure path: the 218r's gentle exponential curve in place of
+# the factory law that stayed nearly silent until 85% of travel, pressure
+# combined across all held keys instead of following the last one, per-key
+# proximity rejection, and interpolated DAC output.
+# false returns the whole pressure path to the factory behaviour.
+pressure_fix = true
+
+# 7. PRESSURE-BASED PORTAMENTO
+# Haken Continuum style: notes snap, and pitch moves between held notes as
+# their relative pressure moves.  The portamento knob sets how much pressure a
+# second note needs to bend, and is fully off at zero.
+# false restores the factory time-based glide.
+pressure_portamento = true
+
+
+# ---------------------------------------------------------------------------
+# Paths and checksums (not behaviour)
+# ---------------------------------------------------------------------------
 [firmware]
 factory_hex    = "mac/firmware/218eV3_v369_DFU.hex"
 factory_sha256 = "565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
@@ -22,407 +90,9 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22"
+golden_sha256  = "24b76ba0aa5610c81dbb0609f3615e48ff4900366adcbc8879156a8e01a422a7"
 
 
-# ---------------------------------------------------------------------------
-# Panel knobs (the four preset-voltage knobs, outside edit mode)
-# ---------------------------------------------------------------------------
-[knobs]
-# knob 1 — arpeggiator note order: fully left = strict press order,
-#          fully right = fully random.            "arp_order" | "factory"
-knob1 = "arp_order"
-
-# knob 2 — arpeggiator rhythm: fully left = even pulses,
-#          fully right = randomly spaced.         "arp_rhythm" | "factory"
-knob2 = "arp_rhythm"
-
-# knob 3 — random octave displacement per arp note, increasing with the knob.
-#                                                 "arp_octaves" | "factory"
-knob3 = "arp_octaves"
-
-# knob 4 — global vibrato; one-knob law (depth and rate rise together).
-#          Pressure scales its effective value from one-half at zero pressure
-#          to full at maximum pressure (up to 33 cents at ~6 Hz).
-#          Depth is carried in quarter-sixteenths of a pitch unit and the
-#          sine is interpolated, so shallow settings are smooth rather
-#          than stepping in 2.48-cent jumps.
-#                                                 "vibrato" | "factory"
-knob4 = "vibrato"
-
-
-# ---------------------------------------------------------------------------
-# Arpeggiator switch
-# ---------------------------------------------------------------------------
-[arp]
-# "latch"   — three positions become latch / regular / off.  In latch, keys are
-#             toggles: press to hold, press again to release, and leaving the
-#             position releases everything.
-# "factory" — the original ascending / random / off behaviour.
-switch = "latch"
-
-# How close a press has to come to a latched note's sounding pitch to release
-# it, in pitch units of 2.48 cents.  This is not a musical setting: the toggle
-# builds both pitches from the same transpose term, and that term rounds, so
-# the value the press computes can differ by a unit from the one the latch
-# stamped.  An exact compare (0) misses, and the press adds a note instead of
-# releasing it.  A semitone is ~40 units, so 8 leaves a wide margin either way.
-latch_match_tolerance = 8
-
-
-# ---------------------------------------------------------------------------
-# MIDI
-# ---------------------------------------------------------------------------
-[midi]
-# "off"     — the first boot after installing this firmware, a new settings
-#             record, and a factory reset default to off. The value subsequently
-#             selected in edit mode is saved and restored at boot; the
-#             arpeggiator switch cannot change it.
-# "factory" — factory default-on and switch-shortcut behaviour.
-poly_default = "off"
-
-
-# ---------------------------------------------------------------------------
-# Pressure
-# ---------------------------------------------------------------------------
-[pressure]
-# Where the pressure CV comes from when several keys are held at once.  The
-# factory sources it from the last key touched, so adding a second key hands
-# the CV to it — touch one lightly while holding another hard and the output
-# drops to that light touch, or to zero if it is below the floor.
-#
-# "mean"    — average of every physically held key.  A light second finger
-#             halves the output; releasing it restores the first.
-# "max"     — the hardest-pressed key wins.  Adding a light finger changes
-#             nothing, and there is no jump when it leaves.
-# "factory" — last key touched.
-#
-# Latched keys are excluded either way: with no finger on them they read at
-# baseline and would only drag the result down.
-#
-# "max" is the default because an arithmetic mean has a discontinuity at the
-# threshold of contact: a second key at zero is excluded and the output holds,
-# while the same key at one count halves it — from 893 to 447, which is below
-# the floor and therefore silent.  "mean" is still available if you want two
-# fingers to share control of the level.
-multi_key = "max"
-
-# Subtract a live estimate of the proximity lift — a hovering hand raises every
-# key near it, the played one included — before the colour correction, per key.
-common_mode = true
-
-# The estimator treats whatever the nearest untouched key reads above this
-# level (raw counts, idle baseline is ~110) as a hovering hand, and subtracts
-# it.  It sits above the baseline because the playing hand itself always lifts
-# its own neighbourhood a little, and that lift was already present when the
-# calibration levels were measured.  Raise it if normal single-hand playing
-# feels lighter than before; lower it toward 110 for stronger rejection.
-proximity_reference = 300
-
-# Black keys have smaller pads, so the same press couples less charge — the
-# measured black/white ratio runs 0.72x (light) to 0.81x (full).  This
-# multiplies their reading, putting both key colours in one calibration
-# window.  It is applied per key with rounding, and used by the portamento
-# weighting as well, which matters because that weight is cubed.  1.0
-# disables it.
-black_key_scale = 1.2
-
-# Smooth the pressure CV at the 1 kHz DAC flush instead of letting it step
-# once per scan.  The value is the number of one-millisecond interpolation
-# steps used to reach each new scan value.  Unlike exponential smoothing it
-# always reaches the target in exactly this many ticks and cannot leave a long
-# pressure tail.  0 disables it and restores the plain zero-order-hold output.
-#
-# This is the alternative to shortening the scan period, which the profiler
-# showed has no headroom for it.  (That reading predates several additions to
-# the scan; it only ever argued against a shorter period, but re-measure
-# rather than trusting the old numbers — see docs/BUILD.md.)
-#
-# TUNING NOTE.  The number changed meaning on 2026-08-15, and the same 5 is
-# now far less smoothing than it used to be.  The old scheme closed 1/2^5 of
-# the gap every millisecond, which needed ~73 ms to settle; this one is done
-# in 5 ms.  If the stair-stepping that this originally cured comes back, raise
-# the value — but the ceiling is 8, so a finite ramp cannot reproduce the old
-# feel.  If that tail is intentionally wanted, add an explicit exponential
-# mode; do not revert the whole firmware, because later bug fixes are separate.
-output_smoothing = 5
-
-# Fractional bits carried through the pressure chain (0..4).  Averaging N
-# dithered samples recovers sub-count information that the old integer chain
-# threw away, which limited the 12-bit DAC to one step per raw count — about
-# 300 levels across the calibration window.  Carrying the fraction through
-# the normalisation, an interpolated curve lookup and the expansion fills the
-# steps in between.  The transfer function is identical either way: this is
-# the same mapping sampled finely, so the feel does not change.  0 restores
-# the original integer arithmetic exactly.
-resolution_bits = 4
-
-# Carry the curve blend four bits further, and feed what the final division
-# throws away back into the next scan instead of discarding it.
-#
-# The 12-bit output is not the limit: an 8-tap mean of integer sensor counts
-# has 2409 distinct states across the calibration window, and that is the real
-# ceiling at any depth.  The old chain reached all 2409 with a linear response
-# but only 1816 with the full curve, because the blend's >>8 collapsed levels
-# before the output ever saw them and the final divide then dropped its
-# remainder.  Widening the blend recovers 2190 of them; diffusion delivers
-# that as effective resolution rather than instantaneous codes, by dithering
-# between adjacent codes so the average lands where the true value is.
-#
-# The cost is a sub-LSB dither at the scan rate, which the 1 kHz output
-# interpolation and the LPG both smooth.  false restores the plain rounding —
-# and with resolution_bits = 0 as well, the original integer chain exactly.
-error_diffusion = true
-
-# Depth of the growing-average filter, in taps (8..24 = 40..120 ms at the
-# 5 ms scan).  Deep settings smooth wobble during holds but lag the attack —
-# the growing average trails a rising signal.  The staircase on the CV is
-# handled by output_smoothing, not by this.
-smoothing_taps = 8
-
-[pressure.calibration]
-# Where the pressure window sits when the instrument has no stored calibration
-# — which is the state after every firmware flash.  `floor` is the raw sensor
-# count at which output begins, `ceiling` the count that gives full output.
-# These are what you get before touching a knob; how the edit-mode knobs trim
-# them from there depends on trim_mode below.
-#
-# The window is mapped onto the full output range, so its width sets the noise
-# gain: the 301 counts here give about 16x, and narrowing it to reach full
-# pressure sooner raises that proportionally.
-floor   = 592
-ceiling = 893
-
-# "independent" — knob 1 trims the ceiling, knob 3 the floor, each centred on
-#                 the value above and reaching half of trim_span either side.
-# "scale"       — knob 1 alone multiplies BOTH endpoints and knob 3 returns to
-#                 its factory job.  Coupling changes scale the whole signal, so
-#                 one control that keeps the floor/ceiling ratio fixed matches
-#                 the physics: 0.70x is the feet-up calibration, 1.0x this one.
-#
-#                 The build sizes the multiplier range so the scaled ceiling
-#                 never reaches the 1023 the pressure path rejects — otherwise
-#                 the ceiling would pin partway up the knob while the floor
-#                 kept rising, narrowing the window instead of moving it.  With
-#                 the ceiling below, that gives 0.50x..1.14x, which puts this
-#                 calibration at roughly three-quarters of knob travel rather
-#                 than at the centre.  A lower ceiling buys more upward range.
-trim_mode = "scale"
-
-# How far edit-mode knobs 3 and 1 can trim those, in raw counts.  Each knob
-# centres on the value above and reaches half this span either side, so the
-# trim range follows the defaults instead of being fixed.
-#
-# 256 trims finely.  512 is wide enough to re-trim the instrument between very
-# different coupling conditions — playing with your feet on the floor and with
-# them up differ by about 30% of signal, which a 256-count range cannot span.
-trim_span = 512
-
-[pressure.curve]
-# The 218r-style response curve: zero at the calibration floor, an immediate
-# onset step, then a smooth rise to full scale.  onset_db is the output level
-# at the very first count above the floor, relative to full scale; -10 dB
-# (≈32 %) is the 218r's own value and the reason it feels gentle.
-span     = 913
-onset_db = -10.0
-
-# How much of that curve is applied when the instrument has no stored setting
-# — the state after every flash.  0 is a purely linear response, 31 the full
-# 218r curve.  Edit knob 4 still sets it live.
-default_level = 0
-
-# Width of the linear ramp at the very bottom of the curve, in curve counts
-# (0..913 across the floor-to-ceiling window).  The 218r onset is a step —
-# ~31% of full output within one count of the floor — which is what makes
-# light touches speak instantly, but it also means a soft note cuts off
-# abruptly as it crosses the floor on release.  The fade ramps that step in
-# over this many counts instead.  0 restores the pure step.
-onset_fade = 60
-
-
-# ---------------------------------------------------------------------------
-# Portamento
-# ---------------------------------------------------------------------------
-[portamento]
-# Pressure-weighted portamento (Haken Continuum, US 7,902,450): with several
-# keys held, the sounding pitch is pulled toward the harder-pressed ones.
-# Mapped to the portamento knob; at zero it is fully disabled.
-pressure_blend = true
-
-# Force a true zero glide time at the bottom of the portamento knob (the
-# factory rate table never quite reaches zero, which left audible glide).
-zero_snap = true
-
-# How hard the applied bend is smoothed on its way to the pressure-derived
-# target.  Each scan it closes 1/2^n of the remaining gap, so this is an
-# exponential slew rather than a fixed settling time:
-#
-#   n=0  no smoothing: the bend follows the pressure cache directly
-#   n=1  ~8 ms to 63%, ~22 ms to 95%
-#   n=2  ~17 ms to 63%, ~55 ms to 95%, ~85 ms to 99%   (default)
-#   n=3  ~35 ms to 63%, ~115 ms to 95%
-#
-# It exists because sensor jitter walking the cubic weighting near the bend
-# threshold otherwise frequency-modulates the pitch — that FM is what this
-# damps, so lowering it trades immediacy for that artefact coming back.
-# Add one scan period of pressure-cache latency on top of any setting.
-blend_slew_shift = 2
-
-
-# ---------------------------------------------------------------------------
-# Tuning
-# ---------------------------------------------------------------------------
-# Three tuning tables live in the firmware.  Slot 0 is the power-on default.
-# In edit mode, key 28 toggles slot 0 <-> slot 2, key 27 toggles slot 1 <-> 2.
-# LEDs: rem-en lit = slot 0, trn lit = slot 1, both dark = slot 2.
-# The selection is not persisted: every power-up starts at slot 0.
-#
-# Each file must be a 12-note Scala scale with a 2/1 octave, because the key
-# table repeats every octave across the 32 keys.
-[tuning]
-slots = [
-    "tunings/Sabat II (C-rooted).scl",   # slot 0 — power-on default.  Sabat
-                                         #          publishes Sabat II with
-                                         #          1/1 = A; degree 0 lands on
-                                         #          the bottom key, a C, so the
-                                         #          rotated-by-32/27 file is the
-                                         #          one that puts each ratio on
-                                         #          the intended key.
-    "tunings/ADDAC Just Intonation.scl", # slot 1
-    "tunings/12TET.scl",                 # slot 2 — mathematically exact 12-TET,
-                                         #          and the reference the pitch
-                                         #          calibration was measured
-                                         #          against.  "factory" would
-                                         #          instead copy the instrument's
-                                         #          own temperament bit-exact,
-                                         #          which is up to 1.65 cents off
-                                         #          exact 12-TET.
-]
-
-# The note you tune the instrument to, as a semitone above the bottom key
-# (which is a C): 0 = C, 9 = A.  Each scale is shifted so this key lands on the
-# 12-TET grid, which pins it to the same pitch in all three slots — tune the
-# 208p once, at this note, and switching slots never moves it.
-#
-# Without this, each scale put its own degree 0 on the bottom C and every other
-# key fell where the ratios happened to land, so the slots disagreed about A by
-# up to 21 cents and the 208p needed retrimming on every switch.
-#
-# The shift is a property of each scale, not a free parameter:
-#   slot 0  Sabat II   -5.87c   its A is 27/16 above the C, 5.87c sharp of ET
-#   slot 1  ADDAC JI  +15.64c   its A is 5/3, 15.64c flat of ET
-#   slot 2  12-TET      0.00c   already agrees with ET everywhere
-# Anchoring ADDAC on A necessarily moves its tonic C 15.64c sharp; set this to
-# 0 instead if you would rather have that scale's tonic at a standard C and
-# retune when you select it.
-reference_key    = 9
-
-# Key-table units.  The bottom key sits at `base_units`, and every octave adds
-# `units_per_octave`.  These are the factory table's own constants — changing
-# them retunes the whole instrument, so leave them alone unless you know why.
-base_units       = 485
-units_per_octave = 484
-
-
-# ---------------------------------------------------------------------------
-# Pitch CV calibration (the in-firmware replacement for the uTune)
-# ---------------------------------------------------------------------------
-[pitch]
-# One row per semitone, holding the voltage the 208p needs at that pitch as an
-# offset from an ideal 1 V/octave ramp.  This single table absorbs both the
-# coarse octave scaling that used to live in the uTune and each key's own
-# measured tracking error.  To recalibrate, measure the keys with a tuner and
-# run:  python3 tools/build.py --fold-measurement <your-readings.csv>
-calibration_csv = "calibration/218e-pitch-calibration.csv"
-
-# Pitch DAC scaling: full-scale counts, reference volts, output-stage gain.
-# 4096 / (2.5 * 4.09) = 400.59 counts per volt at the jack.
-dac_counts = 4096
-dac_vref   = 2.5
-dac_gain   = 4.09
-
-
-# ---------------------------------------------------------------------------
-# Diagnostics
-# ---------------------------------------------------------------------------
-[diagnostics]
-# Time every event handler with the CPU cycle counter and report the result
-# through the pressure telemetry, to find out how much of each scan period is
-# already used before shortening it.  Off for normal builds: it repurposes two
-# telemetry fields and adds a little overhead to every dispatch.
-scan_profiler = false
-
-# A/B the pressure processing from the panel: the octave/preset/none switch
-# stops changing the octave mode (that function is frozen at whatever position
-# the switch sits in at power-on) and instead selects the pressure law live —
-# one end position runs the FACTORY law (linear gain with hard saturation, no
-# window, no curve, no proximity correction), the other positions run ours.
-# factory_gain_shift is the factory gain as a power of two: 3 = 8x, so full
-# output at ~512 raw counts.
-pressure_ab_switch = false
-
-# Report the live smoothing state in the telemetry's scan-component fields:
-# scan A = filter depth in taps (8..24), scan B = interpolation ticks (1..8).
-# These are currently build-time defaults; the attempted live edit-knob-2
-# control was removed because its ADC mirror did not follow the physical knob.
-telemetry_smoothing = false
-
-# Report what the latch toggle saw on its last press: scan A = the transpose
-# term it built the pressed pitch from, scan B = the pressed pitch.  For
-# diagnosing a latched note that will not release — press the same key
-# repeatedly with the arp running and watch whether the two move when the key
-# has not.  Shares the same telemetry fields as the two above.
-latch_probe = false
-factory_gain_shift = 3
-
-
-# ---------------------------------------------------------------------------
-# Timing
-# ---------------------------------------------------------------------------
-[timing]
-# How often the instrument scans the keys and updates the pressure and pitch
-# CVs, in milliseconds.  5 ms (200 Hz) is the factory rate.
-#
-# Lowering it updates the pressure target more often.  With output_smoothing=0
-# the zero-order-hold treads are exactly this long; otherwise the 1 kHz DAC
-# flush divides each target change into finite 1 ms steps.  This is still the
-# instrument's master update clock, not just a pressure setting.  The glide
-# engine, vibrato phase and pressure attack ramp each advance once per scan,
-# so at 4 ms they all run 1.25x faster, and scan CPU cost rises by the same factor.
-#
-# The scan is also ADC-completion driven, so there is a hardware floor: if the
-# conversions and the scan work do not fit in the period, events pile up.
-# Nothing here can predict that — measure it, see docs/BUILD.md.
-scan_period_ms = 5
-
-# How many extra scans the trigger waits after the new pitch reaches the DAC.
-#
-# The deferred pulse already puts the gate on the correct DAC *value*, but the
-# CV is still moving when it rises: the pitch output stage is a single pole of
-# tau ~= 0.9 ms (measured on the jack — 1.97 ms rise, 2.06 ms fall, 10-90%),
-# so at that instant the CV has covered only 89% of the step.  That is 132
-# cents short on an octave jump.  One scan is 5.6 tau, which lands within 0.4%
-# — under 5 cents for any interval up to two octaves.
-#
-#   0 — fire as soon as the pitch lands (the behaviour before this setting)
-#   1 — hold one further scan, ~5 ms at the default period  (default)
-#
-# The cost is trigger latency: up to one more scan on top of the up-to-one the
-# deferred pulse already costs, so up to 10 ms after the key or arp event.
-# It also cannot help an arp stepping faster than the countdown — steps closer
-# together than ~2 scans start dropping triggers instead of delaying them, so
-# if a fast arp loses notes, put this back to 0.
-#
-# This is analog settling, not a firmware slew: nothing in the firmware can
-# ramp the pitch, because it only writes the DAC once per scan.  The real fix
-# is the RC on the output stage; this setting just stops the gate arriving
-# ahead of it.
-gate_settle_scans = 1
-
-
-# ---------------------------------------------------------------------------
-# Toolchain
-# ---------------------------------------------------------------------------
 [tools]
 # Ghidra assembles every patch.  This path is machine-specific, so set it
 # with the GHIDRA_HOME environment variable or in config/local.toml, which is

@@ -22,59 +22,53 @@ REPO = Path(__file__).resolve().parent.parent.parent
 BASE = REPO / "config" / "218e.toml"
 TEMP = REPO / "config" / "_sweep.toml"
 
-SLOTS_RE = re.compile(r"^slots = \[.*?^\]", re.S | re.M)
-
 # name -> list of (pattern, replacement) applied to config/218e.toml.
-# Combinations that tools/build.py rejects on purpose are avoided: arp latch
-# needs portamento.pressure_blend, and the three diagnostics share the same
-# two telemetry fields so only one may be on at a time.
+# Every one of the seven options at both settings, plus the interactions that
+# one-at-a-time rows cannot reach.
 VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
-    ("baseline",              []),
-    ("knob1_factory",         [(r'^knob1 = "arp_order"',  'knob1 = "factory"')]),
-    ("knob2_factory",         [(r'^knob2 = "arp_rhythm"', 'knob2 = "factory"')]),
-    ("knob3_factory",         [(r'^knob3 = "arp_octaves"','knob3 = "factory"')]),
-    ("knob4_factory",         [(r'^knob4 = "vibrato"',    'knob4 = "factory"')]),
-    ("all_knobs_factory",     [(r'^knob1 = "arp_order"',  'knob1 = "factory"'),
-                               (r'^knob2 = "arp_rhythm"', 'knob2 = "factory"'),
-                               (r'^knob3 = "arp_octaves"','knob3 = "factory"'),
-                               (r'^knob4 = "vibrato"',    'knob4 = "factory"')]),
-    ("arp_factory",           [(r'^switch = "latch"',     'switch = "factory"')]),
-    ("poly_factory",          [(r'^poly_default = "off"', 'poly_default = "factory"')]),
-    ("multi_key_mean",        [(r'^multi_key = "max"',    'multi_key = "mean"')]),
-    ("multi_key_factory",     [(r'^multi_key = "max"',    'multi_key = "factory"')]),
-    ("common_mode_off",       [(r'^common_mode = true',   'common_mode = false')]),
-    ("blend_off",             [(r'^pressure_blend = true','pressure_blend = false'),
-                               (r'^switch = "latch"',     'switch = "factory"')]),
-    ("zero_snap_off",         [(r'^zero_snap = true',     'zero_snap = false')]),
-    ("scan_profiler",         [(r'^scan_profiler = false','scan_profiler = true')]),
-    ("telemetry_smoothing",   [(r'^telemetry_smoothing = false','telemetry_smoothing = true')]),
-    ("latch_probe",           [(r'^latch_probe = false',  'latch_probe = true')]),
-    ("pressure_ab_switch",    [(r'^pressure_ab_switch = false','pressure_ab_switch = true')]),
-    ("smoothing_off",         [(r'^output_smoothing = 5', 'output_smoothing = 0')]),
-    ("smoothing_max",         [(r'^output_smoothing = 5', 'output_smoothing = 8')]),
-    ("resolution_0",          [(r'^resolution_bits = 4',  'resolution_bits = 0')]),
-    ("error_diffusion_off",   [(r'^error_diffusion = true','error_diffusion = false')]),
-    ("trim_independent",      [(r'^trim_mode = "scale"',  'trim_mode = "independent"')]),
-    ("tuning_factory",        [("SLOTS", 'slots = ["factory", "tunings/12TET.scl", "tunings/12TET.scl"]')]),
-    ("gate_settle_0",         [(r'^gate_settle_scans = 1','gate_settle_scans = 0')]),
-    ("scan_period_4",         [(r'^scan_period_ms = 5',   'scan_period_ms = 4')]),
-    ("blend_slew_0",          [(r'^blend_slew_shift = 2', 'blend_slew_shift = 0')]),
-    ("tolerance_0",           [(r'^latch_match_tolerance = 8','latch_match_tolerance = 0')]),
-    ("taps_24",               [(r'^smoothing_taps = 8',   'smoothing_taps = 24')]),
-    ("black_key_1",           [(r'^black_key_scale = 1.2','black_key_scale = 1.0')]),
-    ("curve_full",            [(r'^default_level = 0',    'default_level = 31')]),
+    ("defaults",              []),
+    ("arp_off",               [(r"^latching_arp = true", "latching_arp = false")]),
+    ("knobs_off",             [(r"^remap_knobs = true", "remap_knobs = false")]),
+    ("pitch_correction",      [(r"^pitch_correction = false",
+                               'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    ("tunings_one",           [(r"^alternate_tunings = false",
+                               'alternate_tunings = ["tunings/12TET.scl"]')]),
+    ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]')]),
+    ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
+    ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false")]),
+    ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
+    # Interactions the one-at-a-time rows cannot reach.
+    ("arp_off_portamento_off",[(r"^latching_arp = true", "latching_arp = false"),
+                               (r"^pressure_portamento = true", "pressure_portamento = false")]),
+    ("pressure_off_porta_off",[(r"^pressure_fix = true", "pressure_fix = false"),
+                               (r"^pressure_portamento = true", "pressure_portamento = false")]),
+    ("one_volt_corrected",    [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
+                               (r"^pitch_correction = false",
+                                'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    ("historical_config",     [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]'),
+                               (r"^pitch_correction = false",
+                                'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    ("everything_off",        [(r"^latching_arp = true", "latching_arp = false"),
+                               (r"^remap_knobs = true", "remap_knobs = false"),
+                               (r"^pressure_fix = true", "pressure_fix = false"),
+                               (r"^pressure_portamento = true", "pressure_portamento = false")]),
 ]
 
 SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
+
+# Configurations whose image is known in advance.  historical_config describes
+# the settings the firmware shipped with before the config was reduced to seven
+# options, so it must still produce that exact image — which is what proves the
+# simplification changed the surface and not the firmware.
+EXPECTED = {
+    "historical_config": "0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22",
+}
 
 
 def write_variant(edits: list[tuple[str, str]]) -> None:
     text = BASE.read_text()
     for pattern, replacement in edits:
-        if pattern == "SLOTS":
-            text, n = SLOTS_RE.subn(replacement, text)
-        else:
-            text, n = re.subn(pattern, replacement, text, flags=re.M)
+        text, n = re.subn(pattern, replacement, text, flags=re.M)
         if n != 1:
             raise SystemExit(f"edit {pattern!r} matched {n} times, expected 1")
     # Never touch the shipped image or the updater.
@@ -111,7 +105,13 @@ def main() -> None:
             js = run([sys.executable, "tools/avr32/build_js.py",
                       "--config", str(TEMP), "--expect-sha", sha])
             ok = js.returncode == 0
-            rows.append((name, sha[:12], "match" if ok else "MISMATCH"))
+            note = "match" if ok else "MISMATCH"
+            want = EXPECTED.get(name)
+            if want and sha != want:
+                note, ok = f"WRONG IMAGE (expected {want[:12]})", False
+            elif want:
+                note = "match + known image"
+            rows.append((name, sha[:12], note))
             if not ok:
                 failures += 1
     finally:
@@ -123,6 +123,18 @@ def main() -> None:
     for name, sha, result in rows:
         print(f"{name.ljust(width)}  {sha:12s}  {result}")
     print(f"\n{len(rows) - failures}/{len(rows)} configurations agree")
+
+    # Every variant must change the firmware.  Without this a substitution that
+    # silently stopped matching would still report "match" — a green result
+    # proving nothing.
+    images = [r[1] for r in rows if r[1] != "-"]
+    duplicates = {i for i in images if images.count(i) > 1}
+    if duplicates:
+        print(f"WARNING: {len(duplicates)} image(s) produced by more than one "
+              f"configuration — a variant may not be taking effect")
+        failures += 1
+    else:
+        print(f"all {len(images)} images distinct")
     if failures:
         raise SystemExit(1)
 

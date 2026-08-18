@@ -697,7 +697,14 @@ def main() -> None:
                         help="also build and compare against [firmware].golden_sha256")
     args = parser.parse_args()
 
-    cfg = tomllib.loads((REPO / "config" / "218e.toml").read_text())
+    # The config holds the seven user options; the generators and validators
+    # below work on the expanded internal settings, same as build.py.
+    import options
+    raw = tomllib.loads((REPO / "config" / "218e.toml").read_text())
+    cfg = options.expand(raw.get("options", {}))
+    cfg["firmware"] = raw["firmware"]
+    if "tools" in raw:
+        cfg["tools"] = raw["tools"]
     test_pitch_table(cfg)
     test_scala()
     test_tables(cfg)
