@@ -46,10 +46,32 @@ firmware shipped with before the config was reduced to seven options.
 
 A build takes about 200 ms.
 
-## Not done yet
+## Flashing
 
-Flashing. Entering DFU is one Web MIDI SysEx (`F0 00 02 55 02 01 01 F7`), but
-programming means reimplementing Atmel's DFU protocol over WebUSB — including
-the fuse checks that make the current flasher safe — and WebUSB is Chrome and
-Edge only. Until then the page produces the image and
-`ProgramLEM218_PressureFix.command` flashes it.
+`flash.js` does the **pre-flight only**: it asks the running firmware to reboot
+into DFU over Web MIDI (`F0 00 02 55 02 01 01 F7`, the same SysEx the
+`.command` flasher sends), attaches to the bootloader over WebUSB, and reads
+its state. Every request it makes is either a standard DFU 1.1 class request or
+a read. **Nothing in it writes flash, fuses or security bits.**
+
+WebUSB is Chrome and Edge only — Safari and Firefox have both declined it.
+Windows additionally needs Zadig to bind WinUSB to the DFU device, and Linux a
+udev rule.
+
+Erase and programming are deliberately absent. Two reasons:
+
+- **It cannot be tested here.** Shipping an untested chip-erase sequence is not
+  the same kind of risk as shipping an untested build step. The failure is
+  bounded — any accepted ISP command sets `ISP_FORCE`, and only a successful
+  `start` clears it, so a botched flash powers back up in DFU and the
+  `.command` flasher can recover it — but "bounded" is not "verified".
+- **Licence.** The protocol byte sequences are Atmel's documented interface and
+  are facts, but a transliteration of dfu-programmer's implementation would be
+  a derivative of GPL code, which this repository's Unlicense does not cover.
+  An independent implementation from the protocol is fine; a port is not.
+
+The commands themselves are short and known — select memory unit
+`06 03 00 <unit>`, select page `06 03 01 <hi> <lo>`, erase `04 00 FF`, read
+`03 00 <start> <end>`, blank check `03 01 <start> <end>`, launch `04 03 00`,
+with memory units flash 0, security 2, config 3, bootloader 4, user 6 — so
+finishing this is a bounded job, but it needs an instrument in front of it.

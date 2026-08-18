@@ -143,7 +143,19 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 
 <section>
   <h2>6 · Flash</h2>
-  <p class="d muted" style="margin:0;font-size:13px">Flashing from the browser is not implemented yet. Build the image above, put it in <span class="mono">mac/firmware/</span>, and run <span class="mono">ProgramLEM218_PressureFix.command</span> — it verifies the checksum, confirms the bootloader is protected, and validates by read-back before leaving DFU.</p>
+  <div id="caps" class="msg warn"></div>
+  <p class="d muted" style="font-size:13px">The instrument must be powered from a stable supply and connected by USB directly, not through an unpowered hub.</p>
+  <div class="row">
+    <button id="enterDfu">1 · Ask for DFU</button>
+    <button id="connectDfu">2 · Connect</button>
+    <button id="preflight" disabled>3 · Pre-flight checks</button>
+  </div>
+  <pre id="flashLog" class="mono" style="margin:14px 0 0;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;max-height:220px;overflow:auto;white-space:pre-wrap"></pre>
+  <div class="msg warn" style="margin-top:14px"><strong>Programming is not implemented.</strong>
+  This page can put the instrument into DFU and inspect the bootloader, but it does not
+  erase or write. Flash the downloaded image with <span class="mono">ProgramLEM218_PressureFix.command</span>,
+  which verifies the checksum, confirms the bootloader region is protected, and validates by
+  read-back before leaving DFU.</div>
 </section>
 </div>
 
@@ -152,6 +164,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 <script src="buildlib.js"></script>
 <script src="assembler.js"></script>
 <script src="build.js"></script>
+<script src="flash.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
