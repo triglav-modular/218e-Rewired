@@ -141,7 +141,8 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 
 <section>
   <h2>3 · Alternate tunings <span class="tag">optional</span></h2>
-  <p class="d muted" style="margin:0 0 12px;font-size:13px">Up to three tuning tables live in the firmware, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave, because the key table repeats every octave. Any slot you leave empty keeps the factory temperament.</p>
+  <p class="d muted" style="margin:0 0 12px;font-size:13px">Up to three tuning tables live in the firmware, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave, because the key table repeats every octave. Any slot you leave empty keeps the factory temperament, and with all three empty the edit keys and their LEDs are left alone entirely.</p>
+  <p class="d muted" style="margin:0 0 12px;font-size:12px">Each scale is shifted automatically so that <strong>A</strong> lands on the 12-TET grid — the amount is shown per slot. That is what keeps the note you tuned the 208 to in the same place in every slot, so switching tuning never sends you back to the trimmer. It is computed from the file, not read out of it. Which degree sits on the bottom C, though, <em>is</em> a property of the file: a scale published rooted on A needs rotating before it will put its ratios on the keys you expect.</p>
   <div class="row" style="margin-bottom:10px"><button id="sclPick">Add .scl files…</button>
     <span class="muted" id="sclCount">all three slots factory</span></div>
   <input type="file" id="scl" accept=".scl" multiple hidden>

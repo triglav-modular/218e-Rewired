@@ -45,6 +45,12 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
         ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
          'knob4_pool', 'pressure_gain_nop'].forEach(function (n) { blocks[n] = false; });
     }
+    var anyTuning = cfg._tunings.some(function (t) { return t !== 'factory'; });
+    features.alternate_tunings = anyTuning;
+    if (!anyTuning) {
+        blocks.edit_key27_tuning_addac = false;
+        blocks.edit_key28_tuning_sabat = false;
+    }
     if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {
         blocks.pitch_target_blend_hook = true;
         blocks.blend_offset_apply = true;

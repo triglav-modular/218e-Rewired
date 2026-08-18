@@ -125,8 +125,29 @@
 
             var what = document.createElement('div');
             what.className = 'what' + (entry ? '' : ' empty');
-            what.textContent = entry ? entry.name : 'factory temperament';
-            if (entry) what.title = entry.name;
+            if (entry) {
+                // Each scale is shifted so the same key lands on the 12-TET
+                // grid in every slot, which is why switching tuning never
+                // moves the note the 208 was trimmed to.  Worth showing: it is
+                // computed here, not baked into the file.
+                var shift = '';
+                try {
+                    var cents = BUILDLIB.parseScala(entry.text, entry.name);
+                    var off = BUILDLIB.anchorOffset(cents, 9);
+                    shift = '  ' + (off >= 0 ? '+' : '') + off.toFixed(2) + 'c';
+                } catch (e) { /* already reported on load */ }
+                what.textContent = entry.name;
+                what.title = entry.name + (shift ? ' — anchored on A by' + shift : '');
+                if (shift) {
+                    var tag = document.createElement('span');
+                    tag.className = 'muted';
+                    tag.style.cssText = 'font-family:inherit;font-size:11px;margin-left:8px';
+                    tag.textContent = 'A anchored' + shift;
+                    what.appendChild(tag);
+                }
+            } else {
+                what.textContent = 'factory temperament';
+            }
 
             var ctl = document.createElement('div');
             ctl.className = 'ctl';

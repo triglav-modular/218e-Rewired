@@ -72,7 +72,7 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # a changed build forces a fresh power-up init.  What this pin still buys is a
 # stable anchor for the most complex configuration.
 EXPECTED = {
-    "historical_config": "824dd52aee7a3047743f514678d4b1382a128d2f56ac15bbc67ae97cde71f191",
+    "historical_config": "7411da00967dd52290c9800fb938c3458d0d9c76538dbf6eb9c409f5ef3aad2b",
 }
 
 

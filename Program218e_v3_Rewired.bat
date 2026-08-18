@@ -10,7 +10,7 @@ REM read-back before it lets the instrument leave DFU.  Buchla's own
 REM ProgramLEM218.bat does none of those and flashes whatever .hex it finds
 REM first, which is why this is a separate script.
 
-SET "EXPECTED_SHA256=5d9a352e380e9ad26e354408755e2be150ccdd8ae1a3957950ff2ae5373ec78b"
+SET "EXPECTED_SHA256=60ad9331956da7d7b0a8db350c0d2b8dd72be3d839ba3c8dbdb1d2c02cfc0fc1"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
 SET "SCRIPT_DIR=%~dp0"

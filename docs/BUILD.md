@@ -159,7 +159,7 @@ the seven options into the full internal settings the build has always used.
 | `latching_arp` | `true` | Arp switch becomes latch / regular / off. Latched notes are *pitches*, so a key held in three octaves stacks three notes. `false` restores the factory switch. |
 | `remap_knobs` | `true` | Remaps knobs 1–4 to arpeggiator and vibrato controls: arp order, arp rhythm, random octaves, vibrato. `false` hands all four back. Edit-mode knobs 1 and 4 are unaffected. |
 | `pitch_correction` | `false` | Path to a per-semitone correction CSV. `false` emits an ideal ramp with no per-key trim. |
-| `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` gives all three slots the factory temperament. |
+| `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` leaves the edit keys and their LEDs entirely alone. |
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
@@ -202,9 +202,25 @@ Each must have 12 degrees and a true 2/1 octave — the key table repeats every
 octave across the 32 keys, so anything else puts the octave switches out of
 tune, and the build rejects it. Slot 0 is the power-on default; in edit mode
 key 28 toggles slot 0 against slot 2 and key 27 toggles slot 1 against slot 2.
-Slots you do not fill keep the factory temperament. Each scale is shifted so
-the same key lands on the 12-TET grid in every slot, so switching tuning never
-moves the note you tuned the 208 to.
+Slots you do not fill keep the factory temperament, and a slot left empty
+between two filled ones stays empty rather than collapsing.
+
+**With no Scala file at all, none of that is installed.** The two edit keys
+keep their factory jobs — key 27 the transpose-mode toggle, key 28 the
+remote-enable toggle — and the rem-en and trn LEDs are left alone, because the
+applier that drives them is not called. There is nothing to switch between, so
+nothing is taken over.
+
+**Anchoring.** Each scale is shifted so that **A** lands on the 12-TET grid,
+which keeps the note you tuned the 208 to in the same place in every slot;
+switching tuning never sends you back to the trimmer. The shift is computed
+from the file — Sabat II needs −5.87 cents, ADDAC JI +15.64, 12-TET none — and
+is not read out of it, so any scale you supply gets the same treatment. The
+reference note is fixed at A (`reference_key = 9` internally).
+
+What *is* a property of the file is which degree sits on the bottom C. A scale
+published rooted on A, as Sabat II is, has to be rotated before its ratios land
+on the keys you expect — which is what `tunings/Sabat II (C-rooted).scl` is.
 
 **Volts per octave.** `1.2` is the standard Buchla scaling and the default.
 `1.0` rescales the whole ramp uniformly for 1 V/oct gear, changing the octave

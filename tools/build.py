@@ -1140,6 +1140,18 @@ def main() -> None:
                      "knob1_pool", "knob4_pool", "pressure_gain_nop"):
             blocks[name] = False
 
+    # No Scala file supplied means no tuning to switch between, so the edit
+    # keys and their LEDs stay factory.  Both key blocks overwrite factory code
+    # in place — key 27 was the transpose-mode toggle, key 28 the remote-enable
+    # toggle — and the applier asserts the LEDs and zeroes the old
+    # transpose-mode byte, so all three have to go, not just the keys.
+    if all(slot == "factory" for slot in cfg["tuning"]["slots"]):
+        features["alternate_tunings"] = False
+        blocks["edit_key27_tuning_addac"] = False
+        blocks["edit_key28_tuning_sabat"] = False
+    else:
+        features["alternate_tunings"] = True
+
     # Arp latch reads the live octave offset through the blend hook, so the
     # blend *caves* have to exist whenever latch is on — but the pressure
     # *following* inside them (feature.pressure_blend) is independent, and can

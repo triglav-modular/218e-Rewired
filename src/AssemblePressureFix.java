@@ -1416,7 +1416,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001ac80]");
-        emit("MCALL PC[0x8001a340]");          // tuning applier
+        // Only reached when a tuning has actually been supplied.  With every
+        // slot on the factory temperament the applier would copy that table
+        // over itself each scan, but it also asserts the rem-en and trn LEDs
+        // and permanently zeroes the old transpose-mode byte — so leaving it
+        // out is what hands those back to the factory.
+        if (feature("alternate_tunings")) {
+            emit("MCALL PC[0x8001a340]");      // tuning applier
+        }
         if (feature("knob4_vibrato")) {
             emit("MCALL PC[0x8001a344]");      // vibrato engine
         }

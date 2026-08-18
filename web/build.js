@@ -37,6 +37,16 @@ var WEBBUILD = (function () {
             ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
              'knob4_pool', 'pressure_gain_nop'].forEach(function (n) { blocks[n] = false; });
         }
+        // Same rule as tools/build.py: with no Scala file the edit keys and
+        // their LEDs stay factory, which means the applier goes too — it
+        // asserts those LEDs and zeroes the old transpose-mode byte.
+        var anyTuning = cfg._tunings.some(function (t) { return t !== 'factory'; });
+        features.alternate_tunings = anyTuning;
+        if (!anyTuning) {
+            blocks.edit_key27_tuning_addac = false;
+            blocks.edit_key28_tuning_sabat = false;
+        }
+
         if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {
             blocks.pitch_target_blend_hook = true;
             blocks.blend_offset_apply = true;
