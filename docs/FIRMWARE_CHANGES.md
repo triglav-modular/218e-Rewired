@@ -211,6 +211,16 @@ drag the result down. `"mean"` rounds rather than truncates (a lost half-count
 would be a persistent several-DAC-count bias), `"max"` takes the hardest press,
 and `"factory"` restores the original last-key behaviour.
 
+> **`"factory"` did not build until the branch was made to fit.** With
+> `multi_key_pressure` off, the prep cave still has to black-key-correct the
+> single key inline, and that path ran two bytes past its `0x8001A7C0` target
+> — `Code crossed target: pc=8001a7c2`. The cost was `BR{hi}`: condition
+> codes 8 and above have no two-byte encoding, because compact `BR` gives the
+> condition only bits 2..0 and bit 3 is what marks `RJMP`. Comparing against
+> `0x1d` with `BR{ge}` is the same test, since the key arrives zero-extended
+> from `LD.UB`, and it fits. The same two bytes were also blocking any build
+> with the optional features off.
+
 **Black-key correction.** Black keys have smaller pads and couple less
 charge, so the same press reads 0.72–0.81x of a white key. The correction is
 a per-key Q8 excess in a 32-entry table (`0x8001AB20`), read directly from

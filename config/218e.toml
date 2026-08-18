@@ -22,7 +22,7 @@ updater        = "ProgramLEM218_PressureFix.command"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "b69f42f170aa9585fc3eabab2ab7988bfc737c47f1526ddb0b16d7037f8acab1"
+golden_sha256  = "0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22"
 
 
 # ---------------------------------------------------------------------------
