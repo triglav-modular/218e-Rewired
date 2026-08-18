@@ -13,6 +13,7 @@ REM first, which is why this is a separate script.
 SET "EXPECTED_SHA256=9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
+SET "ERASE_STARTED=0"
 SET "SCRIPT_DIR=%~dp0"
 SET "LOG_FILE=%SCRIPT_DIR%218e_v3_Rewired_flash_log_win.txt"
 
@@ -291,6 +292,7 @@ ECHO.
 PAUSE
 
 CALL :step Erasing the application flash
+SET "ERASE_STARTED=1"
 "%DFU%" at32uc3b1256 erase >> "%LOG_FILE%" 2>&1
 IF ERRORLEVEL 1 (
     ECHO Chip erase failed.
@@ -364,15 +366,30 @@ IF "!FLASH_VALIDATED!"=="1" GOTO :started_but_not_launched
 ECHO.
 ECHO ======================================================================
 ECHO   RECOVERY-SAFE STOP
+ECHO   No START command was sent, so the 218e is still in DFU.
 ECHO.
-ECHO   Do NOT disconnect or power-cycle the 218e.
-ECHO   Leave it in DFU mode and run this script again.
-ECHO.
-ECHO   No START command was sent, so the bootloader keeps ISP_FORCE set.
-ECHO   Even if power is lost now, the instrument should come back up in DFU
-ECHO   and this script can try again.
+IF "!ERASE_STARTED!"=="0" (
+    REM Nothing erased: the application is intact.  A power cycle will NOT
+    REM bring it back, because reading the fuses set ISP_FORCE - START does.
+    ECHO   Your firmware was not touched.  Nothing was erased.
+    ECHO.
+    ECHO   To put the instrument back to normal right now:
+    ECHO     "%DFU%" at32uc3b1256 start
+    ECHO.
+    ECHO   Power-cycling alone will not do it: reading the fuses set ISP_FORCE,
+    ECHO   so the 218e returns to DFU until START is sent.  Or just run this
+    ECHO   script again to try the flash.
+    ECHO Stopped before erase; application intact; START not sent.>> "%LOG_FILE%"
+) ELSE (
+    ECHO   The application flash has been erased.
+    ECHO.
+    ECHO   Do NOT send START and do not expect it to boot - there is nothing
+    ECHO   to boot yet.  Leave it in DFU and run this script again to finish
+    ECHO   the flash.  If power was lost, reconnect it: ISP_FORCE returns the
+    ECHO   instrument to DFU.
+    ECHO Stopped after erase; application not valid; START not sent.>> "%LOG_FILE%"
+)
 ECHO ======================================================================
-ECHO No START command was sent; the 218e was left in DFU mode.>> "%LOG_FILE%"
 PAUSE
 ENDLOCAL
 EXIT /B 1

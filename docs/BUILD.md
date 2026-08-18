@@ -150,11 +150,42 @@ a power cycle brings it back.
 **macOS on Apple silicon needs Rosetta**, because `dfu-programmer` is an
 x86_64 binary: `softwareupdate --install-rosetta`.
 
-**Nothing here is code-signed**, so the first run is blocked on both platforms:
-macOS reports the flasher and then `dfu-programmer` as being from an
-unidentified developer, each cleared once from System Settings → Privacy &
-Security → Open Anyway; Windows Defender may need More info → Run anyway.
-Signing and notarising properly needs a paid Apple developer account.
+**Signing (macOS).** `tools/sign-macos.sh` signs every shipped binary with a
+Developer ID Application certificate, builds a disk image of the package,
+notarises it and staples the ticket. A stapled image opens with no warnings at
+all, first try, offline. Two one-time steps first — create the certificate at
+developer.apple.com and install it, then
+
+```bash
+xcrun notarytool store-credentials rewired-notary \
+    --apple-id you@example.com --team-id TEAMID
+```
+
+which keeps the app-specific password in your keychain. No credential belongs
+in this repository, and the script reads none.
+
+The repository itself keeps unsigned binaries; the signed, notarised disk image
+is a release artefact. So the Gatekeeper handling below still matters for
+anyone working from a clone. Windows code signing is separate and needs an
+Authenticode certificate, which is a different purchase.
+
+**Without that, the first run is blocked on both platforms**: macOS reports the flasher and
+then `dfu-programmer` as being from an unidentified developer, each cleared
+once from System Settings → Privacy & Security → Open Anyway; Windows Defender
+may need More info → Run anyway. A package downloaded through a browser is also
+quarantined, which the macOS flasher detects and offers to clear.
+
+**Getting an instrument out of DFU by hand.** If a run stopped before the erase
+the application is intact, but a power cycle will not boot it: reading the fuses
+sets `ISP_FORCE`, so the bootloader keeps returning to DFU until it is told to
+start.
+
+```bash
+mac/support/dfu-programmer at32uc3b1256 start
+```
+
+If the erase had already happened there is nothing to start — run the flasher
+again and let it finish. Both scripts now say which case you are in.
 
 **Connecting.** A standalone LEM218 takes USB-C to the computer with its own
 power connected and switched on. A 218e module is reached over USB-B through

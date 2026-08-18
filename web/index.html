@@ -217,7 +217,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
       <span class="mono">softwareupdate --install-rosetta</span></dd>
 
       <dt>Both — your system will warn about unsigned software</dt>
-      <dd>macOS blocks the flasher, and then <span class="mono">dfu-programmer</span>, as being from an unidentified developer: open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. Windows Defender may warn about the <span class="mono">.bat</span> — choose <strong>More info → Run anyway</strong>. None of it is signed; that needs a paid developer account.</dd>
+      <dd>macOS blocks the flasher, and then <span class="mono">dfu-programmer</span>, as being from an unidentified developer: open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. Windows Defender may warn about the <span class="mono">.bat</span> — choose <strong>More info → Run anyway</strong>.</dd>
     </dl>
   </div>
 
@@ -236,6 +236,30 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
       </div>
     </li>
   </ol>
+  <details style="margin-top:14px"><summary>If something goes wrong</summary>
+    <dl style="font-size:13px;line-height:1.6;margin:10px 0 0">
+      <dt style="font-weight:700;margin-top:10px">The keyboard is stuck in DFU and will not come back as MIDI</dt>
+      <dd style="margin:2px 0 0">If nothing was erased, the flasher tells you so and prints the command that boots it again. A power cycle on its own may not be enough: once the fuses have been read, <span class="mono">ISP_FORCE</span> is set and the instrument returns to DFU until it is told to start.
+      <br>macOS: <span class="mono">mac/support/dfu-programmer at32uc3b1256 start</span>
+      <br>Windows: <span class="mono">windows\support\dfu-programmer.exe at32uc3b1256 start</span></dd>
+
+      <dt style="font-weight:700;margin-top:10px">Every LED is lit and the keyboard does nothing</dt>
+      <dd style="margin:2px 0 0">There is no valid firmware on it — an erase happened but the write did not finish. Run the flasher again; it will find the instrument in DFU and complete the job.</dd>
+
+      <dt style="font-weight:700;margin-top:10px">Windows: <span class="mono">no device present</span>, or Device Manager lists <strong>AT32UC3B DFU</strong> under <em>Other devices</em></dt>
+      <dd style="margin:2px 0 0">The WinUSB driver is not bound. Run Zadig as above. Installed correctly, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
+
+      <dt style="font-weight:700;margin-top:10px">Windows: the 218e appears under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
+      <dd style="margin:2px 0 0">Windows has picked the wrong MIDI driver, so the DFU request never reaches the instrument. Right-click it, <strong>Update driver</strong>, choose manually, and pick <strong>USB Audio Device</strong>.</dd>
+
+      <dt style="font-weight:700;margin-top:10px">Windows: <span class="mono">VCRUNTIME140_1.dll was not found</span>, or a tool is "not recognized"</dt>
+      <dd style="margin:2px 0 0">The Microsoft C++ runtime is missing. Install it from <a href="https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist">Microsoft's redistributable page</a>, or from Buchla's kit.</dd>
+
+      <dt style="font-weight:700;margin-top:10px">Removing the driver Zadig installed</dt>
+      <dd style="margin:2px 0 0">Rarely needed. <span class="mono">pnputil /enum-drivers</span> in a Command Prompt, find the entry mentioning <span class="mono">at32uc3b</span> or <span class="mono">libusb</span>, note its <span class="mono">oemNN.inf</span>, then as Administrator: <span class="mono">pnputil -f -d oemNN.inf</span></dd>
+    </dl>
+  </details>
+
   <div class="msg ok" style="margin-top:14px">The flasher finds the image itself — it checks <span class="mono">firmware/</span>, its own folder and Downloads, and takes whichever file matches the checksum it expects. Nothing to move or rename.</div>
 
 </section>

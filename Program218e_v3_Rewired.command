@@ -9,6 +9,7 @@ set -o pipefail
 
 DFU_SESSION_ACTIVE=0
 FLASH_VALIDATED=0
+ERASE_STARTED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
@@ -106,11 +107,32 @@ fail() {
     echo "[$(timestamp)] ERROR: $*" >> "$LOG_FILE"
     if [ "$DFU_SESSION_ACTIVE" -eq 1 ] && [ "$FLASH_VALIDATED" -eq 0 ]; then
         echo
-        echo "RECOVERY-SAFE STOP"
-        echo "Do NOT run 'start'. Do NOT disconnect or power-cycle the 218e."
-        echo "Leave it in DFU mode and run this Rewired command again."
-        echo "If power was already lost, reconnect power: ISP_FORCE should return it to DFU."
-        log "No START command was sent; the 218e was intentionally left in DFU mode."
+        echo "  ${C_BOLD}RECOVERY-SAFE STOP${C_RESET}"
+        echo "  No START command was sent, so the 218e is still in DFU."
+        echo
+        if [ "$ERASE_STARTED" -eq 0 ]; then
+            # Nothing was erased: the original application is intact, and the
+            # only reason the instrument is in DFU is that we asked it there.
+            # A power cycle will NOT help — reading the fuses set ISP_FORCE, so
+            # it comes straight back to DFU.  START is what boots it.
+            echo "  ${C_GREEN}Your firmware was not touched.${C_RESET}  Nothing was erased."
+            echo
+            echo "  To put the instrument back to normal right now:"
+            echo "    ${C_BOLD}"$DFUPATH" at32uc3b1256 start${C_RESET}"
+            echo
+            echo "  Power-cycling alone will not do it: reading the fuses set"
+            echo "  ISP_FORCE, so the 218e returns to DFU until START is sent."
+            echo "  Or just run this command again to try the flash."
+            log "Stopped before erase; application intact; START not sent."
+        else
+            echo "  ${C_YELLOW}The application flash has been erased.${C_RESET}"
+            echo
+            echo "  Do NOT send START and do not expect it to boot — there is"
+            echo "  nothing to boot yet.  Leave it in DFU and run this command"
+            echo "  again to finish the flash.  If power was lost, reconnect it:"
+            echo "  ISP_FORCE returns the instrument to DFU."
+            log "Stopped after erase; application not valid; START not sent."
+        fi
     fi
     read -r -p "Press return to close. "
     exit 1
@@ -429,6 +451,7 @@ log "Verified ISP_FORCE=1: an interrupted session should boot back into DFU."
 echo
 read -r -p "Press return to begin the chip erase. "
 step "Erasing the application flash"
+ERASE_STARTED=1
 spin "erasing…" "$DFUPATH" at32uc3b1256 erase || fail "Chip erase failed."
 ok "Application flash erased"
 

@@ -148,8 +148,7 @@ Then run the flasher for your platform:
 - **Both — unsigned software warnings.** macOS blocks the flasher, then
   `dfu-programmer`, as being from an unidentified developer: **System Settings
   → Privacy & Security → Open Anyway**, for each. Windows Defender may warn
-  about the `.bat`: **More info → Run anyway**. Nothing here is signed, which
-  needs a paid developer account.
+  about the `.bat`: **More info → Run anyway**.
 
 There is nothing to move or rename: each flasher looks in `firmware/`, its own
 directory, Downloads and the Desktop, and takes whichever file matches the
