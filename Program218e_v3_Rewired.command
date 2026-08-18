@@ -324,11 +324,45 @@ if [ "$probe_status" -ne 0 ] && \
         echo "  dfu-programmer is an x86_64 binary and this Mac cannot run it."
         echo "  Install Rosetta, then run this again:"
         echo "    ${C_BOLD}softwareupdate --install-rosetta${C_RESET}"
+        fail "The DFU tools are not usable. The instrument was not touched."
+    fi
+
+    # Anything downloaded through a browser carries com.apple.quarantine, and
+    # Gatekeeper kills these binaries outright because they are unsigned —
+    # SIGKILL, so the status is 137 and the output is empty or "Killed".
+    if [ "$probe_status" -ge 128 ] || \
+       printf '%s' "$probe_output" | grep -qiE "killed|cannot be opened|not be verified"; then
+        echo "  macOS blocked dfu-programmer: it is unsigned, and the copy you"
+        echo "  downloaded is marked as quarantined."
+        echo
+        echo "  The fix is to clear that mark on the bundled tools.  It affects"
+        echo "  only the files in this package, and only on this machine."
+        echo
+        read -r -p "  Clear it now? [y/N] " unquarantine
+        case "$unquarantine" in
+            [yY]*)
+                xattr -dr com.apple.quarantine "$RUNTIME_DIR/support" 2>/dev/null
+                xattr -dr com.apple.quarantine "$SCRIPT_DIR" 2>/dev/null
+                probe_output="$("$DFUPATH" at32uc3b1256 get bootloader-version 2>&1)"
+                probe_status=$?
+                if [ "$probe_status" -eq 0 ] || \
+                   printf '%s' "$probe_output" | grep -qi "no device present"; then
+                    ok "Quarantine cleared; dfu-programmer runs"
+                else
+                    fail "Still blocked. Approve it once in System Settings > Privacy & Security, then run this again."
+                fi
+                ;;
+            *)
+                echo "  Approve it in System Settings > Privacy & Security instead,"
+                echo "  then run this again."
+                fail "The DFU tools are blocked. The instrument was not touched."
+                ;;
+        esac
     else
         echo "  dfu-programmer would not run:"
         printf '    %s\n' "$probe_output" | head -4
+        fail "The DFU tools are not usable. The instrument was not touched."
     fi
-    fail "The DFU tools are not usable. The instrument was not touched."
 fi
 ok "dfu-programmer runs"
 

@@ -148,7 +148,18 @@ so, confirms nothing was erased, and points out that the keyboard is in DFU and
 a power cycle brings it back. 
 
 **macOS on Apple silicon needs Rosetta**, because `dfu-programmer` is an
-x86_64 binary: `softwareupdate --install-rosetta`. Buchla's own
+x86_64 binary: `softwareupdate --install-rosetta`.
+
+**Nothing here is code-signed**, so the first run is blocked on both platforms:
+macOS reports the flasher and then `dfu-programmer` as being from an
+unidentified developer, each cleared once from System Settings → Privacy &
+Security → Open Anyway; Windows Defender may need More info → Run anyway.
+Signing and notarising properly needs a paid Apple developer account.
+
+**Connecting.** A standalone LEM218 takes USB-C to the computer with its own
+power connected and switched on. A 218e module is reached over USB-B through
+the 5xIO module that carries its USB and MIDI. Either way, connect directly
+rather than through an unpowered hub. Buchla's own
 `ProgramLEM218.bat` is **not** a substitute: it verifies no checksum, checks
 neither `BOOTPROT` nor `ISP_FORCE`, does not gate on read-back, and flashes
 whichever `.hex` it finds first.

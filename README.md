@@ -125,7 +125,12 @@ and checks the images match.
 
 ## Flash
 
-Put the built image in `firmware/`, then run the flasher for your platform:
+**Connect the instrument** directly rather than through an unpowered hub:
+
+- **Standalone LEM218** — USB-C to the computer, power connected, switched on.
+- **218e module** — USB-B from the 5xIO module that carries its USB and MIDI.
+
+Then run the flasher for your platform:
 
 | Platform | Flasher |
 |---|---|
@@ -140,6 +145,11 @@ Put the built image in `firmware/`, then run the flasher for your platform:
   and carries on once the driver is installed. Once per machine.
 - **macOS on Apple silicon — install Rosetta.** `dfu-programmer` is x86_64
   only: `softwareupdate --install-rosetta`.
+- **Both — unsigned software warnings.** macOS blocks the flasher, then
+  `dfu-programmer`, as being from an unidentified developer: **System Settings
+  → Privacy & Security → Open Anyway**, for each. Windows Defender may warn
+  about the `.bat`: **More info → Run anyway**. Nothing here is signed, which
+  needs a paid developer account.
 
 There is nothing to move or rename: each flasher looks in `firmware/`, its own
 directory, Downloads and the Desktop, and takes whichever file matches the
