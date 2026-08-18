@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buchla 218e firmware builder</title>
+<style>
+:root {
+  --bg:#faf9f7; --panel:#fff; --ink:#1b1a18; --muted:#6b6560; --line:#e0dcd6;
+  --accent:#8a5a2b; --ok:#2f6b3a; --bad:#a33028; --warn:#8a6d1f;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#17181a; --panel:#1f2124; --ink:#e9e6e2; --muted:#9a948d; --line:#33363b;
+  --accent:#d79a5b; --ok:#7fc08c; --bad:#e8897f; --warn:#d8bd6a;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:780px;margin:0 auto;padding:32px 20px 96px}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 28px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:20px;margin-bottom:16px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+  margin:0 0 14px;font-weight:600}
+label.opt{display:flex;gap:12px;align-items:flex-start;padding:9px 0;
+  border-bottom:1px solid var(--line);cursor:pointer}
+label.opt:last-child{border-bottom:0}
+label.opt input{margin-top:3px;flex:none;width:16px;height:16px;accent-color:var(--accent)}
+.opt .t{font-weight:600}
+.opt .d{color:var(--muted);font-size:13px}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:26px;text-align:center;
+  color:var(--muted);cursor:pointer;transition:.15s}
+.drop:hover,.drop.over{border-color:var(--accent);color:var(--ink)}
+.drop.ok{border-style:solid;border-color:var(--ok)}
+.drop.err{border-style:solid;border-color:var(--bad)}
+button{font:inherit;font-weight:600;padding:11px 20px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mono{font-family:var(--mono);font-size:12px;word-break:break-all}
+.ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .muted{color:var(--muted)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:8px 16px;font-weight:500;background:transparent}
+.seg button[aria-pressed=true]{background:var(--accent);color:#fff}
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--accent);font-size:13px;font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:10px}
+th,td{padding:3px 6px;text-align:right;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;text-align:right;position:sticky;top:0;background:var(--panel)}
+td.note{text-align:left;font-family:var(--mono)}
+td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-align:right;
+  border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink)}
+.scroll{max-height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
+.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:99px;
+  background:var(--line);color:var(--muted);margin-left:6px}
+.msg{padding:11px 14px;border-radius:8px;font-size:13px;margin-top:12px;white-space:pre-wrap}
+.msg.ok{background:color-mix(in srgb,var(--ok) 14%,transparent)}
+.msg.bad{background:color-mix(in srgb,var(--bad) 14%,transparent)}
+.msg.warn{background:color-mix(in srgb,var(--warn) 16%,transparent)}
+.files div{font-size:12px;padding:4px 0;font-family:var(--mono)}
+svg{width:100%;height:120px;margin-top:10px;overflow:visible}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Buchla 218e V3 — firmware builder</h1>
+<p class="sub">Builds custom v36.9 firmware in your browser. Your firmware file never leaves this machine — there is no server.</p>
+
+<section>
+  <h2>1 · Your factory firmware</h2>
+  <div class="drop" id="drop">
+    <strong>Drop 218eV3_v369_DFU.hex here</strong><br>
+    <span class="muted">or click to choose — it comes with the official Buchla flashing kit</span>
+  </div>
+  <input type="file" id="file" accept=".hex" hidden>
+  <div id="fileMsg"></div>
+</section>
+
+<section>
+  <h2>2 · Options</h2>
+  <label class="opt"><input type="checkbox" id="latching_arp" checked>
+    <span><span class="t">Latching arpeggiator</span><br>
+    <span class="d">Arp switch becomes latch / regular / off. Latched notes are pitches, so one key held in three octaves stacks three notes.</span></span></label>
+  <label class="opt"><input type="checkbox" id="remap_knobs" checked>
+    <span><span class="t">Remap knobs 1–4</span><br>
+    <span class="d">Outside edit mode: arp note order, arp rhythm, random octaves, vibrato. Edit-mode knobs are unaffected.</span></span></label>
+  <label class="opt"><input type="checkbox" id="pressure_fix" checked>
+    <span><span class="t">Pressure response fix</span><br>
+    <span class="d">The 218r's gentle curve instead of the factory law that stays near-silent to 85% of travel; pressure combined across held keys; proximity rejection.</span></span></label>
+  <label class="opt"><input type="checkbox" id="pressure_portamento" checked>
+    <span><span class="t">Pressure-based portamento</span><br>
+    <span class="d">Notes snap, and pitch moves between held notes as their relative pressure moves.</span></span></label>
+  <div style="padding-top:14px">
+    <span class="t" style="font-weight:600">Volts per octave</span>
+    <span class="d muted" style="font-size:13px"> — 1.0 is what this firmware has always produced. Changing it means retrimming the 208p.</span>
+    <div class="row" style="margin-top:8px">
+      <div class="seg" id="vpo">
+        <button data-v="1.0" aria-pressed="true">1.0 V/oct</button>
+        <button data-v="1.2" aria-pressed="false">1.2 V/oct <span class="tag">Buchla</span></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>3 · Alternate tunings <span class="tag">optional</span></h2>
+  <p class="d muted" style="margin:0 0 10px;font-size:13px">Up to three Scala files, switchable from edit mode. Each needs 12 degrees and a true 2/1 octave. Leave empty to keep the factory temperament.</p>
+  <div class="row"><button id="sclPick">Add .scl files…</button>
+    <span class="muted" id="sclCount">none</span></div>
+  <input type="file" id="scl" accept=".scl" multiple hidden>
+  <div class="files" id="sclList"></div>
+</section>
+
+<section>
+  <h2>4 · Per-key pitch correction <span class="tag">optional</span></h2>
+  <p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208p's tracking error, replacing an external uTune. Measured on <em>your</em> instrument — offsets in cents from an ideal ramp, positive = sharper. Leave at zero for a flat ramp.</p>
+  <div class="row">
+    <label class="row" style="gap:7px"><input type="checkbox" id="useCal"> <span>Enable correction</span></label>
+    <button id="calPick">Load CSV…</button>
+    <button id="calZero">Reset to zero</button>
+  </div>
+  <input type="file" id="calFile" accept=".csv" hidden>
+  <svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none" aria-hidden="true"></svg>
+  <details><summary>Edit all 79 semitones</summary>
+    <div class="scroll"><table id="calTable">
+      <thead><tr><th style="text-align:left">Note</th><th>Key</th><th>Semitone</th><th>Offset (cents)</th></tr></thead>
+      <tbody></tbody></table></div>
+  </details>
+  <div id="calMsg"></div>
+</section>
+
+<section>
+  <h2>5 · Build</h2>
+  <div class="row">
+    <button class="primary" id="build" disabled>Build firmware</button>
+    <button id="download" disabled>Download .hex</button>
+  </div>
+  <div id="buildMsg"></div>
+</section>
+
+<section>
+  <h2>6 · Flash</h2>
+  <p class="d muted" style="margin:0;font-size:13px">Flashing from the browser is not implemented yet. Build the image above, put it in <span class="mono">mac/firmware/</span>, and run <span class="mono">ProgramLEM218_PressureFix.command</span> — it verifies the checksum, confirms the bootloader is protected, and validates by read-back before leaving DFU.</p>
+</section>
+</div>
+
+<script src="generated.js"></script>
+<script src="sha256.js"></script>
+<script src="buildlib.js"></script>
+<script src="assembler.js"></script>
+<script src="build.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

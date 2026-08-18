@@ -48,3 +48,6 @@ PRESSURE_OPAMP.psd
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Never let a firmware image sit in the served web directory.
+web/*.hex
