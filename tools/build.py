@@ -288,12 +288,17 @@ def counts_per_volt(cfg: dict) -> float:
     return pitch["dac_counts"] / (pitch["dac_vref"] * pitch["dac_gain"])
 
 
-# The volts/octave the shipped calibration was measured at.  The 208p signal
-# path lands 1.2 V/oct at the jack, so that is the reference: volts_per_octave
-# = 1.2 leaves the ramp untouched, and any other value scales it uniformly,
-# which changes the octave span while keeping every relative pitch (the
-# calibration is in cents, a ratio) exactly where it was.
-CALIBRATION_VOLTS_PER_OCTAVE = 1.2
+# The volts/octave the pitch table has always produced.  Measured at the jack:
+# 4096 counts / (2.5 V * 4.09) = 400.59 counts per volt, and the table puts one
+# octave 400.59 counts apart — 1.000 V/oct, confirmed flat across the bottom
+# five octaves of the shipped calibration.  (The top octave measures 1.216 V,
+# but that is the 208p's own tracking error being corrected, not a scaling.)
+#
+# So this is the reference: volts_per_octave = 1.0 leaves the ramp untouched,
+# and any other value scales it uniformly — changing the octave span while
+# keeping every relative pitch exactly where it was, because the calibration is
+# stored in cents, a ratio.
+CALIBRATION_VOLTS_PER_OCTAVE = 1.0
 
 
 def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:

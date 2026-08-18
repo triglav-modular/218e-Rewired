@@ -114,7 +114,7 @@ the seven options into the full internal settings the build has always used.
 | `remap_knobs` | `true` | Knobs 1–4 outside edit mode become arp order, arp rhythm, random octaves and vibrato. `false` hands all four back. Edit-mode knobs 1 and 4 are unaffected. |
 | `pitch_correction` | `false` | Path to a per-semitone correction CSV, replacing an external uTune. `false` emits an ideal ramp with no per-key trim. |
 | `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` gives all three slots the factory temperament. |
-| `volts_per_octave` | `1.2` | `1.2` is the Buchla 208p scaling. `1.0` rescales the pitch ramp for standard gear. |
+| `volts_per_octave` | `1.0` | What the firmware has always produced at the jack. `1.2` rescales the ramp to the 208p's native law. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 
@@ -155,11 +155,13 @@ Slots you do not fill keep the factory temperament. Each scale is shifted so
 the same key lands on the 12-TET grid in every slot, so switching tuning never
 moves the note you tuned the 208p to.
 
-**Volts per octave.** `1.2` is what the instrument produces today. `1.0`
-rescales the whole pitch ramp uniformly, which changes the octave span while
-leaving every relative pitch where it was — a `pitch_correction` table stays
-valid across the change, because it is stored in cents. **The 208p will need
-retrimming after a change.**
+**Volts per octave.** `1.0` is what this firmware has always produced at the
+pitch jack, and what the shipped calibration was measured against — the table
+places one octave 400.59 counts apart, and 4096 / (2.5 x 4.09) = 400.59 counts
+per volt. `1.2` rescales the whole ramp uniformly to the 208p's native law,
+changing the octave span while leaving every relative pitch where it was; a
+`pitch_correction` table stays valid across the change, because it is stored
+in cents rather than volts. **The 208p will need retrimming after a change.**
 
 **Pressure response fix.** `false` returns every pointer that reaches the
 reworked pressure path to its factory value: the original curve, filter and

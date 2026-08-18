@@ -34,7 +34,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("tunings_one",           [(r"^alternate_tunings = false",
                                'alternate_tunings = ["tunings/12TET.scl"]')]),
     ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]')]),
-    ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
+    ("buchla_volts",          [(r"^volts_per_octave = 1.0", "volts_per_octave = 1.2")]),
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
     # Interactions the one-at-a-time rows cannot reach.
@@ -42,7 +42,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("pressure_off_porta_off",[(r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
-    ("one_volt_corrected",    [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
+    ("buchla_volts_corrected",[(r"^volts_per_octave = 1.0", "volts_per_octave = 1.2"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     ("historical_config",     [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/ADDAC Just Intonation.scl",\n                     "tunings/12TET.scl"]'),

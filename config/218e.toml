@@ -52,12 +52,18 @@ pitch_correction = false
 alternate_tunings = false
 
 # 5. VOLTS PER OCTAVE
-# 1.2 is the Buchla 208p scaling and what the instrument produces today.
-# 1.0 rescales the pitch ramp for standard Eurorack gear.
+# 1.0 is what this firmware has always produced at the pitch jack, and what
+# the shipped calibration was measured against.  Leave it here unless you
+# specifically want the other scaling.
 #
-# Changing this moves every pitch: the 208p will need retrimming, and any
-# pitch_correction table stays valid because it is stored in cents.
-volts_per_octave = 1.2
+# 1.2 is the Buchla 208p's native scaling, for driving it without the
+# firmware's own correction doing that work.
+#
+# Changing this moves every pitch and the 208p will need retrimming.  A
+# pitch_correction table stays valid across the change, because it is stored
+# in cents rather than volts.
+volts_per_octave = 1.0
+
 
 # 6. PRESSURE RESPONSE FIX
 # The reworked pressure path: the 218r's gentle exponential curve in place of

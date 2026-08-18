@@ -282,7 +282,16 @@ the external booster resistor mod.
 This replaces an external uTune module entirely.
 
 **Signal path.** key → key-table (RAM `0x854`) → transpose → glide engine →
-**pitch remap** → DAC slot 2 → 1.2 V/oct jack.
+**pitch remap** → DAC slot 2 → pitch jack.
+
+The jack carries **1 V/octave**: 4096 counts / (2.5 V x 4.09) = 400.59 counts
+per volt, and the table places one octave 400.59 counts apart. Measured across
+the shipped calibration the bottom five octaves span 1.001, 0.999, 0.999,
+1.004 and 1.016 V. The top octave measures 1.216 V, which is the 208p's own
+tracking error being corrected rather than a scaling — an earlier revision of
+this document read that number as the jack's law and called it a 1.2 V/oct
+output, which it is not. `[options].volts_per_octave = 1.2` rescales the whole
+ramp to the 208p's native law if that is wanted instead.
 
 **Per-semitone calibration** (`pitch_remap_utune`, `0x80019980`, table at
 `0x80019BC0`). The remap replaces the tail of the factory update function
