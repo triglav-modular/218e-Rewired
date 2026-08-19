@@ -68,12 +68,39 @@ jobs:
       - name: Stage the site
         run: |
           mkdir -p _site
-          cp web/index.html web/app.js web/build.js web/buildlib.js \
-             web/sha256.js web/assembler.js web/generated.js _site/
+          # Copy everything in web/ except the build and test tooling, rather
+          # than naming each file: a hardcoded list silently drops any asset
+          # added later, which is exactly how images/ and fonts/ came to 404
+          # on a page that referenced them.
+          rsync -a --exclude '*.py' --exclude '_*' web/ _site/
           # No Jekyll: filenames here are ordinary, but underscore-prefixed
           # paths would be dropped silently and that is a nasty way to find out.
           touch _site/.nojekyll
-          ls -la _site
+          find _site -type f | sort
+
+      - name: Every asset the page asks for must be present
+        run: |
+          python3 - <<'CHECK'
+          import re, sys
+          from pathlib import Path
+          site = Path("_site")
+          html = (site / "index.html").read_text()
+          refs = set()
+          for m in re.finditer(r'(?:src|href)="([^"]+)"', html):
+              refs.add(m.group(1))
+          for m in re.finditer(r'url\(["\']?([^"\')]+)', html):
+              refs.add(m.group(1))
+          missing = []
+          for r in sorted(refs):
+              if r.startswith(("http://", "https://", "//", "#", "data:", "mailto:")):
+                  continue
+              if not (site / r).exists():
+                  missing.append(r)
+          for r in missing:
+              print(f"::error::index.html references {r}, which is not in _site")
+          print(f"checked {len(refs)} references, {len(missing)} missing")
+          sys.exit(1 if missing else 0)
+          CHECK
 
       - uses: actions/upload-pages-artifact@v3
         with:

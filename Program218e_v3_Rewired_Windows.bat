@@ -51,10 +51,10 @@ ECHO.
 ECHO                                   .-==-:
 ECHO                                  -=:...-=:
 ECHO                                .=-      .=:
-ECHO                                =-        :=
-ECHO                               -=  o    o .=:
+ECHO                                =          =
+ECHO                               -=  ^    ^  =:
 ECHO                               =-          =-
-ECHO                              :=.     u    =-
+ECHO                              :=.   \__/   =-
 ECHO                              =-           =-
 ECHO                             -=           .=:
 ECHO                       .:---===:          :=.
@@ -70,7 +70,6 @@ ECHO  :==:      .....:::...        .:===     -=.
 ECHO    :-==:..                .:-==-.-=    -=.
 ECHO       .:-====----------===--:.   :=-:-=:
 ECHO            .:---=====--:.          ::.
-ECHO.
 ECHO ======================================================================
 ECHO   THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3
 ECHO.
