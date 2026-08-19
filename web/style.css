@@ -955,20 +955,29 @@ strong {
   background: var(--panel2);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 14px 22px 14px 48px;
+  padding: 14px 22px 14px 58px;
   margin: 0 0 10px;
 }
 .steps > li:last-child {
   margin-bottom: 0;
 }
+/* Accent fill, dark digit - the same pairing the checked checkbox uses.
+   Top is set rather than left to the static position: the circle has a fixed
+   height and has to centre on the first line, not sit on its baseline. */
 .steps > li::before {
   content: counter(step);
   position: absolute;
-  left: 22px;
-  width: 16px;
-  text-align: right;
+  left: 20px;
+  top: 17px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #171716;
+  font-size: 13px;
   font-weight: 700;
-  color: var(--accent);
+  line-height: 24px;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 .faq {
