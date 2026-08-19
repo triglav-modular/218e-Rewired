@@ -78,12 +78,12 @@ function Test-IntelHex {
 # Collected with the foreach STATEMENT, not ForEach-Object: assigning to a
 # variable inside a ForEach-Object block writes to a copy scoped to that block,
 # leaving the outer list empty.
+$Dirs = $DirList -split ';' | Where-Object { $_ -ne '' }
+
 $candidates = foreach ($dir in $Dirs) {
     if (-not (Test-Path -LiteralPath $dir)) { continue }
     Get-ChildItem -LiteralPath $dir -Filter *.hex -File -ErrorAction SilentlyContinue
 }
-
-$Dirs = $DirList -split ';' | Where-Object { $_ -ne '' }
 
 $seen = @{}
 $found = foreach ($f in $candidates) {
