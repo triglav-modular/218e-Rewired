@@ -1,31 +1,4 @@
-[2026-08-19 12:04:17] Starting Buchla LEM218 Rewired programming.
-[2026-08-19 12:04:17] Runtime directory: /Users/marton_bertok/SDIY/218ev3-Firmware-Flashing/mac
-[2026-08-19 12:04:17] macOS sleep prevention enabled for this programming session.
-[2026-08-19 12:04:17] === step 1/7: Locating the firmware image ===
-[2026-08-19 12:04:30] OK: Checksum matches the image this flasher installs
-[2026-08-19 12:04:30] OK: Found 218eV3_v369_Rewired_DFU.hex
-[2026-08-19 12:04:30] OK: Checksum matches the image this flasher installs
-[2026-08-19 12:04:30] OK: [1mRewired 1.0.0 (9474624b)[0m
-[2026-08-19 12:04:30] Using /Users/marton_bertok/SDIY/218ev3-Firmware-Flashing/firmware/218eV3_v369_Rewired_DFU.hex
-[2026-08-19 12:04:30] Using dfu-programmer: /Users/marton_bertok/SDIY/218ev3-Firmware-Flashing/mac/support/buchla-dfu/dfu/dfu-programmer
-[2026-08-19 12:04:33] === step 2/7: Checking the DFU tools ===
-[2026-08-19 12:04:34] OK: dfu-programmer runs
-[2026-08-19 12:04:34] === step 3/7: Putting the instrument into DFU ===
-[2026-08-19 12:04:34] MIDI port was unavailable, but the 218e is already in DFU mode.
-[2026-08-19 12:04:34] AT32UC3B DFU device detected.
-[2026-08-19 12:04:34] === step 4/7: Checking the bootloader and safety fuses ===
-[2026-08-19 12:04:34] Reading bootloader version and safety fuses before erase.
-Bootloader Version: 0x02 (2)
-Bootloader protected area: 0x03 (3)
-[2026-08-19 12:04:34] Verified BOOTPROT=3: the 8 KiB DFU bootloader region is protected.
-ISP Force: 0x01 (1)
-[2026-08-19 12:04:34] Verified ISP_FORCE=1: an interrupted session should boot back into DFU.
-[2026-08-19 12:04:35] === step 5/7: Erasing the application flash ===
-[2026-08-19 12:04:38] OK: Application flash erased
-[2026-08-19 12:04:38] === step 6/7: Writing and validating the firmware ===
-Validating...
-100455 bytes used (39.56%)
-[2026-08-19 12:04:43] OK: Written and validated by read-back
-[2026-08-19 12:04:43] Programming and dfu-programmer read-back validation completed successfully.
-[2026-08-19 12:04:44] === step 7/7: Restarting the instrument ===
-[2026-08-19 12:04:50] OK: The 218e returned as a MIDI device
+[2026-08-19 12:15:03] Starting Buchla LEM218 Rewired programming.
+[2026-08-19 12:15:03] Runtime directory: /Users/marton_bertok/SDIY/218ev3-Firmware-Flashing/mac
+[2026-08-19 12:15:03] macOS sleep prevention enabled for this programming session.
+[2026-08-19 12:15:05] === step 1/7: Locating the firmware image ===
