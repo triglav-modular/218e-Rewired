@@ -191,7 +191,9 @@ jobs:
           findstr /C:"MIDI output ports Windows is offering" out2.txt >NUL || (echo FAILED: did not show the port list & exit /b 1)
           rem Not the bare word "erase" - the warning text contains "was erased".
           findstr /C:"Erasing the application flash" out2.txt >NUL && (echo FAILED: reached the erase & exit /b 1)
-          findstr /C:"Zadig" out2.txt >NUL && (echo FAILED: reached the Zadig launch & exit /b 1)
+          rem "Starting Zadig", not the bare word: the MIDI diagnostics mention
+          rem Zadig by name when explaining how to undo a wrong driver binding.
+          findstr /C:"Starting Zadig" out2.txt >NUL && (echo FAILED: reached the Zadig launch & exit /b 1)
           echo PASS: verified, versioned, stopped before touching anything
           rem ECHO does not reset ERRORLEVEL in cmd, so without this the step
           rem inherits the 1 from the last findstr that correctly found nothing.
