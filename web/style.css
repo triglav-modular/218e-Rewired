@@ -67,6 +67,7 @@
   --warn: #FFDA6C;
   --sans: "Euclid Circular A",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   --mono: "IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --chevron: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5l7.5 7.5-7.5 7.5"/></svg>');
 }
 * {
   box-sizing: border-box;
@@ -1094,13 +1095,21 @@ summary {
   align-items: center;
   gap: 10px;
 }
+/* Drawn rather than typed.  A ">" glyph is not centred in its own em box -
+   measured, its ink sat 5.5px above a baseline whose box centre was
+   elsewhere, so the mark read low against the caps beside it.  This path
+   puts the point at the exact middle of a square viewBox, so centring the
+   box centres the point, and rotating about that centre leaves it put.
+   Masked rather than drawn as an image so it inherits the summary colour
+   and follows it on hover. */
 summary::before {
-  content: ">";
+  content: "";
   flex: 0 0 auto;
   width: 15px;
-  font-size: 19px;
-  line-height: 1;
-  text-align: center;
+  height: 15px;
+  background: currentColor;
+  -webkit-mask: var(--chevron) center / contain no-repeat;
+  mask: var(--chevron) center / contain no-repeat;
   transform-origin: 50% 50%;
   transition: transform .18s ease;
 }
@@ -1162,7 +1171,6 @@ button {
    control is already wearing: pressed V/oct, a primary button, a ticked box
    all sat dead under the pointer.  Each gets a lighter accent instead, so
    "on" answers the mouse the same way "off" does. */
-button.primary:hover:not(:disabled),
 .vpo button[aria-pressed=true]:hover,
 input[type=checkbox]:checked:hover {
   background: color-mix(in srgb, var(--accent) 82%, #fff);
@@ -1183,6 +1191,43 @@ td input:hover {
 }
 .slot .ctl button.clear:hover:not(:disabled) {
   border-color: var(--bad);
+}
+
+/* The call to action carries the shine from the add-to-cart button on
+   triglavmodular.hu, toned down: the highlight is .16 where that one is .4,
+   the lift is 5% where it is 15%, and the saturate() is dropped - at 10% it
+   drains the accent it is supposed to warm.  The sweep is a pseudo-element
+   crossing under overflow:hidden, so nothing about it changes the layout. */
+button.primary:not(:disabled) {
+  position: relative;
+  overflow: hidden;
+  transition: background .15s, color .15s, border-color .15s,
+              transform .08s, filter .45s ease-in-out;
+}
+button.primary:not(:disabled)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background: linear-gradient(120deg, transparent, rgba(255, 255, 255, .16), transparent);
+  transition: left .7s ease-in-out;
+}
+button.primary:not(:disabled):hover::before {
+  left: 100%;
+}
+button.primary:not(:disabled):hover {
+  filter: brightness(1.05);
+}
+
+/* The calibration and tuning panels are shown by removing .hidden, so there
+   is no state to transition between - they get the same arrival the results
+   and the disclosure panels use. */
+#calBody:not(.hidden),
+#tuningsBody:not(.hidden) {
+  animation: rise-in .24s ease-out both;
 }
 
 /* Narrow screens.  Last in the sheet on purpose: these share specificity
