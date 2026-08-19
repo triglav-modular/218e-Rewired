@@ -184,7 +184,7 @@ section {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 30px 28px;
+  padding: 28px;
   margin-bottom: 20px;
 }
 h2 {
@@ -232,7 +232,7 @@ label.opt {
   display: flex;
   gap: 14px;
   align-items: flex-start;
-  padding: 13px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
@@ -317,7 +317,7 @@ button {
   font-size: 15px;
   text-transform: uppercase;
   letter-spacing: .08em;
-  padding: 13px 26px;
+  padding: 14px 26px;
   border-radius: 999px;
   border: 1px solid var(--accent);
   background: transparent;
@@ -514,7 +514,7 @@ td input {
   font-weight: 700;
 }
 .msg {
-  padding: 13px 16px;
+  padding: 14px 16px;
   border-radius: 12px;
   font-size: 14px;
   margin: 14px 0;
@@ -585,7 +585,7 @@ td input {
   gap: 6px;
 }
 .slot .ctl button {
-  padding: 7px 16px;
+  padding: 8px 16px;
   line-height: 0;
 }
 /* The icons are SVG, so they size from the button rather than from a font,
@@ -612,7 +612,7 @@ td input {
 .danger {
   border: 1px solid var(--bad);
   border-radius: 16px;
-  padding: 26px 28px;
+  padding: 28px;
   margin: 0 0 20px;
   background: color-mix(in srgb,var(--bad) 8%,var(--panel));
 }
@@ -623,7 +623,7 @@ td input {
   margin: 0 0 14px;
 }
 .danger p {
-  margin: 0 0 11px;
+  margin: 0 0 10px;
   font-size: 16px;
 }
 .danger strong {
@@ -635,19 +635,19 @@ td input {
 .winsetup {
   border: 1px solid var(--accent);
   border-radius: 16px;
-  padding: 24px 26px;
-  margin: 0 0 18px;
+  padding: 20px 22px;
+  margin: 0 0 14px;
   background: color-mix(in srgb,var(--accent) 8%,var(--panel));
 }
 .winsetup h3 {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   font-size: 14px;
   letter-spacing: .16em;
   color: var(--accent);
   text-transform: uppercase;
 }
 .winsetup p {
-  margin: 0 0 11px;
+  margin: 0 0 10px;
   font-size: 16px;
 }
 .winsetup ol {
@@ -663,10 +663,10 @@ td input {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 20px 22px;
-  margin: 16px 0 12px;
+  margin: 14px 0;
 }
 .prereq h3 {
-  margin: 0 0 10px;
+  margin: 0 0 14px;
   font-size: 13px;
   letter-spacing: .16em;
   text-transform: uppercase;
@@ -676,13 +676,6 @@ td input {
   margin: 0;
   font-size: 16px;
   line-height: 1.65;
-}
-.prereq dt {
-  font-weight: 700;
-  margin-top: 11px;
-}
-.prereq dt:first-of-type {
-  margin-top: 0;
 }
 .prereq dd {
   margin: 6px 0 0;
@@ -757,7 +750,7 @@ strong {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-  padding: 14px 18px;
+  padding: 14px 20px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: transparent;
@@ -1006,10 +999,24 @@ strong {
 .faq dt:first-of-type {
   margin-top: 10px;
 }
+/* .mono is a chip elsewhere - inline-block with 4px of vertical padding -
+   and an atomic box baselines on its own last line, which pushed the symptom
+   it sits in from 21px to 64px.  Inside a symptom it stays a chip but a flat
+   one, short enough to leave the line box alone. */
 .faq dt .mono {
   font-size: 13px;
   text-transform: none;
   letter-spacing: 0;
+  line-height: 1;
+  padding: 2px 6px;
+  margin: 0;
+}
+.faq dt .os {
+  width: 12px;
+  height: 12px;
+  margin: 0 6px 0 0;
+  display: inline-block;
+  vertical-align: -1px;
 }
 /* The whole symptom is already the emphasis, so strong inside it stays ink
    rather than pulling accent into a line that is meant to read as one. */

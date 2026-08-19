@@ -212,10 +212,10 @@
             <dt>Every LED is lit and nothing responds</dt>
             <dd>There is no valid firmware on it: the erase finished and the write did not. Run the flasher again. The instrument stays in DFU for exactly this reason.</dd>
 
-            <dt>Windows: the flasher says <span class="mono">no device present</span>, or <strong>AT32UC3B DFU</strong> sits under <em>Other devices</em></dt>
+            <dt><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows: the flasher says <span class="mono">no device present</span>, or <strong>AT32UC3B DFU</strong> sits under <em>Other devices</em></dt>
             <dd>WinUSB is not bound to the DFU device. Run Zadig as above. Once it is right, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
 
-            <dt>Windows: the 218e sits under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
+            <dt><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows: the 218e sits under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
             <dd>Windows picked the wrong MIDI driver, so the request to enter DFU never reaches the instrument. Right-click it, <strong>Update driver</strong>, choose manually, and pick <strong>USB Audio Device</strong>.</dd>
           </dl>
         </details>
