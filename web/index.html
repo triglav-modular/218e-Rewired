@@ -197,7 +197,8 @@ td input{width:78px;padding:4px 7px;font:inherit;font-family:var(--mono);text-al
 /* The icons are SVG, so they size from the button rather than from a font,
    and svg{width:100%} elsewhere on this page must not reach them. */
 .slot .ctl button svg{width:17px;height:17px;margin:0;display:block}
-.slot .ctl button.clear{color:var(--bad);
+.slot .ctl button.clear{color:var(--bad);font-size:22px;font-weight:700;
+  line-height:1;padding:2px 15px 4px;
   border-color:color-mix(in srgb,var(--bad) 55%,transparent)}
 .slot .ctl button.clear:hover:not(:disabled){background:var(--bad);color:#171716;
   border-color:var(--bad)}
@@ -409,7 +410,7 @@ strong{color:var(--accent)}
 <div class="group">
   <h3>Alternate tunings</h3>
   <p class="d muted" style="margin:0 0 12px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
-  <p class="d muted" style="margin:0 0 12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
+  <p class="d muted" style="margin:0 0 12px">Each scale is shifted so A sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
   <label class="row opt" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
     <span><strong>Enable alternate tunings</strong> <span class="muted">— turning this on remaps the <strong>rem.en</strong> and <strong>trn</strong> LEDs and edit keys.</span></span></label>
   <div id="tuningsBody" style="display:none">
