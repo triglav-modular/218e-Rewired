@@ -672,6 +672,10 @@ FACTORY_CELLS = [
     (0x0854, 0x088E, "key pitch table"),
     (0x2EEE, 0x2EF0, "glide rate"),
     (0x3212, 0x3214, "pitch mirror"),
+    # Live again whenever pressure_fix is off: the clamp skips are gated now,
+    # so the factory 16-tap pressure history shifts through here in that
+    # build.  Declared so no region of ours can ever move back in.
+    (0x3216, 0x3236, "factory 16-tap pressure history"),
     (0x3490, 0x34AD, "per-key touch state"),
     (0x3686, 0x36C0, "per-key raw pressure"),
     (0x377B, 0x3798, "state+0x21b: per-slot held flags"),

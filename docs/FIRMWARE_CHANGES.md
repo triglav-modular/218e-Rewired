@@ -502,7 +502,7 @@ fired the trigger immediately — so a gate could rise up to 5 ms early, carryin
 the *previous* note's pitch. Audibly, this read as slew.
 
 Fixed by **deferring the pulse**: the four pulse-caller pools now set a
-countdown at RAM `0x3232` (`pulse_defer_set`), and the real pulse fires from
+countdown at RAM `0x60EE` (`pulse_defer_set`), and the real pulse fires from
 the pitch-store hook once the new pitch is in the DAC buffer. Confirmed fixed
 on hardware.
 
@@ -635,8 +635,8 @@ only user-facing owner of the setting.
 > is covered by neither `RAM_REGIONS` (ours) nor `FACTORY_CELLS` (theirs).
 > That is what the vibrato latch needed and did not have.
 
-RAM scratch: `0x322A`/`0x322E` arp knob latches · `0x3232` pulse countdown ·
-`0x3233` previous switch position · `0x6000` press-order
+RAM scratch: `0x60E6`/`0x60EA` arp knob latches · `0x60EE` pulse countdown ·
+`0x60EF` previous switch position · `0x6000` press-order
 list · `0x6024`–`0x6028` vibrato state · `0x602A` power-up marker ·
 `0x602C`/`0x602E` interpolator target snapshot and ticks remaining ·
 `0x6032`–`0x6035` profiler reports · `0x6036` interpolator target ·

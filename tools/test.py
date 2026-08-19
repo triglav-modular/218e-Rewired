@@ -634,7 +634,7 @@ def test_migration_and_empty_hand() -> None:
     # pulse flag with a 1 and fire a trigger at power-up.
     init = cave("0x8001ab60L", "first_use_initializer")
     check("the low scratch is cleared while R8 is still zero",
-          init.index('emit("MOV R9,0x3228");') < init.index('emit("LD.UB R8,R10[0x340]");'))
+          init.index('emit("MOV R9,0x60e4");') < init.index('emit("LD.UB R8,R10[0x340]");'))
 
 
 def test_overlap_and_range() -> None:
