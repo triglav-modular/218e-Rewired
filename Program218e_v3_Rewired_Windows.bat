@@ -517,9 +517,14 @@ EXIT /B 0
 
 :read_fuse
 SET "FUSE_VALUE="
+REM dfu-programmer prints the value twice: "Bootloader protected area: 0x03 (3)".
+REM Take the decimal from between the brackets by splitting on ( and ) - the
+REM last whitespace-delimited token is "(3)", brackets included, which then
+REM fails every numeric comparison and refuses to erase a perfectly good chip.
+REM Lines without brackets yield no second token, so they set nothing.
 FOR /F "tokens=* delims=" %%L IN ('"%DFU%" at32uc3b1256 getfuse %1 2^>^&1') DO (
     ECHO %%L>> "%LOG_FILE%"
-    FOR %%T IN (%%L) DO SET "FUSE_VALUE=%%T"
+    FOR /F "tokens=2 delims=()" %%V IN ("%%L") DO SET "FUSE_VALUE=%%V"
 )
 EXIT /B 0
 

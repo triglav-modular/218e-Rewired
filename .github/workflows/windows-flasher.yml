@@ -154,6 +154,28 @@ jobs:
           echo PASS: a custom image is used without a checksum gate
           exit /b 0
 
+      - name: Fuse values parse out of dfu-programmer's format
+        shell: cmd
+        run: |
+          rem Reaching this needs a real device, so the parsing idiom is tested
+          rem directly against the exact lines dfu-programmer 1.0.0 prints.
+          setlocal EnableDelayedExpansion
+          set "FAIL=0"
+          for %%P in ("Bootloader protected area: 0x03 (3)=3" "ISP Force: 0x01 (1)=1" "Bootloader Version: 0x02 (2)=2") do (
+            for /f "tokens=1,2 delims==" %%A in (%%P) do (
+              set "V="
+              for /f "tokens=2 delims=()" %%V in ("%%A") do set "V=%%V"
+              if not "!V!"=="%%B" (echo FAILED: %%A parsed as [!V!], expected %%B & set "FAIL=1")
+            )
+          )
+          rem A line with no brackets must leave the value unset, not garbage.
+          set "V=untouched"
+          for /f "tokens=2 delims=()" %%V in ("dfu-programmer: no device present.") do set "V=%%V"
+          if not "!V!"=="untouched" (echo FAILED: bracketless line set [!V!] & set "FAIL=1")
+          if "!FAIL!"=="1" exit /b 1
+          echo PASS: fuse values parse correctly
+          exit /b 0
+
       - name: The USB probe runs and reports no Atmel DFU device
         shell: cmd
         run: |
