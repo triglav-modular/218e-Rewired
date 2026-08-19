@@ -40,7 +40,7 @@
    accent-outlined cards and solid accent pills.
    --------------------------------------------------------------------------- */
 :root {
-  --bg:#171716; --panel:#1e1e1c; --ink:#fff; --muted:#9d9a93; --line:#2e2e2b;
+  --bg:#171716; --panel:#1e1e1c; --panel2:#26261f; --ink:#fff; --muted:#9d9a93; --line:#2e2e2b;
   --accent:#FFDA6C; --ok:#8fd6a0; --bad:#ff8b7d; --warn:#FFDA6C;
   --sans:"Euclid Circular A",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -94,6 +94,17 @@ section{background:var(--panel);border:1px solid var(--line);border-radius:16px;
 h2{font-size:20px;text-transform:uppercase;letter-spacing:.16em;color:var(--accent);
   margin:0 0 20px;font-weight:700;text-align:left}
 h3,h4{font-weight:700;letter-spacing:.02em}
+/* The four option groups live inside step 2 rather than beside it: cards on a
+   card, so they need their own surface a step up from the section's, or the
+   nesting would not read at all. */
+.group{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+  padding:20px 22px 6px;margin:0 0 14px}
+.group:last-of-type{margin-bottom:0}
+.group>h3{margin:0 0 14px;font-size:13px;text-transform:uppercase;
+  letter-spacing:.16em;color:var(--muted);font-weight:700}
+/* Inputs inside a group sit on the lighter surface, so they take the darker
+   one to stay legible. */
+.group td input,.group .kbdwrap{background:var(--bg)}
 label.opt{display:flex;gap:14px;align-items:flex-start;padding:13px 0;
   border-bottom:1px solid var(--line);cursor:pointer}
 label.opt:last-child{border-bottom:0}
@@ -302,7 +313,9 @@ strong{color:var(--accent)}
 </section>
 
 <section>
-  <h2>2 · Arpeggiator</h2>
+  <h2>2 · Select your options</h2>
+<div class="group">
+  <h3>Arpeggiator</h3>
   <label class="opt"><input type="checkbox" id="latching_arp" checked>
     <span><span class="t">Latching arpeggiator</span><br>
     <span class="d">The arp switch becomes <strong>latch</strong>  — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
@@ -317,20 +330,20 @@ strong{color:var(--accent)}
       </table>
     </span></span></label>
 
-</section>
+</div>
 
-<section>
-  <h2>3 · Pressure</h2>
+<div class="group">
+  <h3>Pressure</h3>
   <label class="opt"><input type="checkbox" id="pressure_fix" checked>
     <span><span class="t">Pressure response fix</span><br>
     <span class="d">A gentler, linear pressure response for more expressive play.</span></span></label>
   <label class="opt"><input type="checkbox" id="pressure_portamento" checked>
     <span><span class="t">Pressure-based portamento</span><br>
     <span class="d">Pitch moves between held notes as their relative pressure moves.</span></span></label>
-</section>
+</div>
 
-<section>
-    <h2>4 · Keyboard scaling</h2>
+<div class="group">
+  <h3>Keyboard scaling</h3>
 <div>
   <span class="t" style="font-weight:600">Volts per octave</span>
   <div class="row" style="margin-top:8px">
@@ -377,11 +390,11 @@ strong{color:var(--accent)}
 <div id="calMsg"></div>
 
 
-</section>
+</div>
 
 
-<section>
-  <h2>5 · Alternate tunings</h2>
+<div class="group">
+  <h3>Alternate tunings</h3>
   <p class="d muted" style="margin:0 0 12px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
   <p class="d muted" style="margin:0 0 12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
   <label class="row opt" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
@@ -393,10 +406,11 @@ strong{color:var(--accent)}
   <div id="slots"></div>
   <div id="sclMsg"></div>
   </div>
+</div>
 </section>
 
 <section>
-  <h2>6 · Build</h2>
+  <h2>3 · Build it</h2>
   <div class="row">
     <button class="primary" id="build" disabled>Build firmware</button>
     <button id="download" disabled>Download .hex</button>
@@ -405,7 +419,7 @@ strong{color:var(--accent)}
 </section>
 
 <section>
-  <h2>7 · Flash it</h2>
+  <h2>4 · Flash it</h2>
 
   <ol style="margin:12px 0;padding-left:20px;line-height:1.9">
     <li>Download the <strong>.hex</strong> image above. Leaving it in Downloads is fine.</li>
