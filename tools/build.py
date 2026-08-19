@@ -316,11 +316,11 @@ def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
     ]
     if len(table) != PITCH_TABLE_ENTRIES:
         raise ValueError(
-            f"pitch curve has {len(table)} entries, firmware needs {PITCH_TABLE_ENTRIES}")
+            f"Pitch curve has {len(table)} entries, firmware needs {PITCH_TABLE_ENTRIES}.")
     if table != sorted(table):
-        raise ValueError("pitch curve is not monotonic — check the calibration table")
+        raise ValueError("Pitch curve is not monotonic — check the calibration table.")
     if table[0] < 0 or table[-1] > 4095:
-        raise ValueError("pitch curve leaves the 12-bit DAC range")
+        raise ValueError("Pitch curve leaves the 12-bit DAC range.")
     return table
 
 

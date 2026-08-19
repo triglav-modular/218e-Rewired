@@ -209,14 +209,14 @@ var BUILDLIB = (function () {
             table.push(floorHalf(scale * (i / 12.0 + offsets[i] / 1200.0)));
         }
         if (table.length !== GEN.pitchTableEntries) {
-            throw new Error('pitch curve has ' + table.length + ' entries, firmware needs ' +
-                            GEN.pitchTableEntries);
+            throw new Error('Pitch curve has ' + table.length + ' entries, firmware needs ' +
+                            GEN.pitchTableEntries + '.');
         }
         for (i = 1; i < table.length; i++) {
-            if (table[i] < table[i - 1]) throw new Error('pitch curve is not monotonic');
+            if (table[i] < table[i - 1]) throw new Error('Pitch curve is not monotonic \u2014 check the calibration table.');
         }
         if (table[0] < 0 || table[table.length - 1] > 4095) {
-            throw new Error('pitch curve leaves the 12-bit DAC range');
+            throw new Error('Pitch curve leaves the 12-bit DAC range.');
         }
         return table;
     }

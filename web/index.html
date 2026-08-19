@@ -3,8 +3,6 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <!-- Triglav's own icon set, copied from triglavmodular.hu so the builder is
-     recognisable in a tab beside it. -->
     <link rel="icon" href="icons/favicon.ico" sizes="any">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
@@ -54,15 +52,15 @@
           <h3>Arpeggiator</h3>
           <label class="opt"><input type="checkbox" id="latching_arp" checked>
             <span><span class="t">Latching arpeggiator</span><br>
-              <span class="d">Arp switch remapped to <strong>latch</strong> — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
+              <span class="d">Arpeggiator switch remapped to <strong>latch</strong> — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
           <label class="opt"><input type="checkbox" id="remap_knobs" checked>
             <span><span class="t">Remap the preset knobs to arpeggiator and vibrato controls</span><br>
               <span class="d">
                 <table class="knobs">
-                  <tr><td>1</td><th>Random note order</th></tr>
-                  <tr><td>2</td><th>Random trigger spacing</th></tr>
-                  <tr><td>3</td><th>Random octaves</th></tr>
-                  <tr><td>4</td><th>Vibrato</th></tr>
+                  <tr><td>1</td><th>Arp note order randomness</th></tr>
+                  <tr><td>2</td><th>Arp trigger spacing randomness</th></tr>
+                  <tr><td>3</td><th>Arp octave randomness</th></tr>
+                  <tr><td>4</td><th>Vibrato depth and frequency</th></tr>
                 </table>
               </span></span></label>
 
@@ -102,7 +100,7 @@
                 <p><strong class="step">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other. <strong>Measure against equal temperament.</strong></p>
                 <p><strong class="step">2. Warm up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
                 <p><strong class="step">3. Tune the lowest C.</strong> Octave switch at its lowest setting, hold the lowest C, and trim the 208 until a tuner reads it exactly in tune. Everything else is measured against this note.</p>
-                <p><strong class="step">4. Play every note, note how far off it is.</strong> Work up from that C, changing octave as you run out of keys. Enter the tuner reading in cents: <span class="mono">+12</span> for 12 cents sharp, <span class="mono">−7</span> for 7 flat.</p>
+                <p><strong class="step">4. Play every note, note how far off it is.</strong> Work up from that C, changing octave as you run out of keys. Enter the tuner reading in cents. For example, <span class="mono">+12</span> for 12 cents sharp, <span class="mono">−7</span> for 7 cents flat.</p>
                 <p><strong class="step">5. Build, flash, check.</strong></p>
                 <p></p>
               </div>
@@ -175,7 +173,7 @@
           <li class="spaced">Power on the 218e.</li>
           <li class="spaced">Run the flasher and follow their instructions:
             <div>
-              <div><strong>macOS</strong> — a download is quarantined and this is unsigned, so macOS blocks it. Clear the whole folder once, in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>.</div>
+              <div><strong>macOS</strong> — a download is quarantined and unsigned, so macOS blocks it. Dequarantine the whole folder in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>.</div>
               <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
             </div>
           </li>
