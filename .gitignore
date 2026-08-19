@@ -1,8 +1,6 @@
 
 !windows/support/
 !windows/support/dfu-programmer.exe
-!windows/support/libusb-1.0.dll
-!windows/support/msvcp140.dll
 !windows/support/sendmidi.exe
 !windows/support/zadig-2.8.exe
 #

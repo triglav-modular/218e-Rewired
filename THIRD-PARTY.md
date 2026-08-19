@@ -12,34 +12,67 @@ Nothing here is legal advice.
 
 | Tool | Licence | Upstream |
 |---|---|---|
-| `dfu-programmer` (macOS + Windows) | GPL-2.0-or-later | <https://dfu-programmer.github.io/> · <https://github.com/dfu-programmer/dfu-programmer> |
+| `dfu-programmer` 1.1.0 (macOS + Windows) | GPL-2.0-or-later | <https://dfu-programmer.github.io/> · <https://github.com/dfu-programmer/dfu-programmer> |
+| `libusb` 1.0.29 (inside `dfu-programmer`; also `libusb-1.0.0.dylib` on macOS) | LGPL-2.1-or-later | <https://libusb.info/> · <https://github.com/libusb/libusb> |
 | `SendMIDI` (macOS + Windows) | GPL-3.0 | <https://github.com/gbevin/SendMIDI> |
 | `Zadig` 2.8 (Windows) | GPL-3.0 | <https://zadig.akeo.ie/> · <https://github.com/pbatard/libwdi> |
-| `libusb` (`libusb-1.0.dll`, `libusb-*.dylib`) | LGPL-2.1-or-later | <https://libusb.info/> · <https://github.com/libusb/libusb> |
-| `msvcp140.dll` (Windows) | Microsoft VC++ redistributable terms | <https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist> |
 
-The macOS binaries came from Buchla's macOS flashing kit; the Windows ones from
-their Windows kit. Neither kit's own material — the firmware image, Buchla's
-updater scripts, their documentation — is redistributed here.
+`dfu-programmer` and `libusb` are built here from unmodified upstream source
+rather than taken from Buchla's kits. macOS gets a universal binary, x86_64
+and arm64 in one file. Windows is cross-compiled with mingw-w64 and links
+libusb and its C runtime statically, so it needs no `libusb-1.0.dll`, no
+`msvcp140.dll` and no Visual C++ redistributable; the only DLLs it imports
+are KERNEL32 and the Universal CRT, which are part of Windows itself from
+Windows 10 on.
+
+`SendMIDI` and `Zadig` are Buchla's kit binaries as published. Neither kit's
+own material — the firmware image, Buchla's updater scripts, their
+documentation — is redistributed here.
 
 ## Source code
 
 **Written offer.** For any GPL or LGPL binary in this repository, you may
-obtain the complete corresponding source code from the upstream project linked
-above, which is where these binaries were built from and where each project
-publishes the source for its releases. If an upstream link has gone dark and
-you need the source for a specific binary here, open an issue on this
-repository and it will be provided.
+obtain the complete corresponding source code from the upstream project
+linked above, which is where each project publishes the source for its
+releases. If an upstream link has gone dark and you need the source for a
+specific binary here, open an issue on this repository and it will be
+provided.
 
-None of these binaries has been modified.
+None of these binaries has been modified. The two we build ourselves come
+from these exact revisions:
+
+| Binary | Source revision |
+|---|---|
+| `dfu-programmer` | commit `c204739`, one docs-only commit after the `v1.1.0` tag |
+| `libusb` | tag `v1.0.29` |
+
+### How the Windows build is produced
+
+```sh
+# libusb, static, no DLL
+./bootstrap.sh
+./configure --host=x86_64-w64-mingw32 --prefix="$PREFIX" \
+            --enable-static --disable-shared --disable-udev
+make && make install
+
+# dfu-programmer, linked against it, runtime included
+autoreconf -ivf
+./configure --host=x86_64-w64-mingw32 \
+            CPPFLAGS="-I$PREFIX/include" \
+            LDFLAGS="-static -L$PREFIX/lib" \
+            LIBS="-lsetupapi -lole32 -ladvapi32 -lcfgmgr32"
+make
+```
+
+`configure` finds libusb with `AC_SEARCH_LIBS`, not pkg-config, which is why
+the include path and libusb's own Windows libraries are given explicitly.
 
 ## Why these and not others
 
-`VC_redist.x64.exe` and `VC_redist.x86.exe` ship in Buchla's kit but not here:
-they are 38 MB of Microsoft installer, and Microsoft distributes them
-themselves at the link above. `msvcp140.dll` is included because the flasher
-needs the runtime present and app-local deployment is the normal way to
-satisfy that.
+`VC_redist.x64.exe` and `VC_redist.x86.exe` ship in Buchla's kit but not here,
+and neither does `msvcp140.dll`. Both existed to satisfy a Visual C++-built
+`dfu-programmer`. Ours carries its runtime inside the executable, so there is
+nothing left to install and 38 MB of Microsoft installer to leave out.
 
 ## Typefaces on the builder page
 

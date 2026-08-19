@@ -581,8 +581,6 @@
             zip: 'Rewired-Windows.zip',
             tools: [
                 ['kit/windows/support/dfu-programmer.exe', 'windows/support/dfu-programmer.exe', false],
-                ['kit/windows/support/libusb-1.0.dll', 'windows/support/libusb-1.0.dll', false],
-                ['kit/windows/support/msvcp140.dll', 'windows/support/msvcp140.dll', false],
                 ['kit/windows/support/sendmidi.exe', 'windows/support/sendmidi.exe', false],
                 ['kit/windows/support/zadig-2.8.exe', 'windows/support/zadig-2.8.exe', false],
                 ['kit/tools/Scan-Images.ps1', 'tools/Scan-Images.ps1', false],

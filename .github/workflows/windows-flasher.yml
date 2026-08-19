@@ -158,7 +158,10 @@ jobs:
         shell: cmd
         run: |
           rem Reaching this needs a real device, so the parsing idiom is tested
-          rem directly against the exact lines dfu-programmer 1.0.0 prints.
+          rem directly against the exact lines dfu-programmer prints.  The
+          rem format string is "%s%s0x%02x (%d)\n" and is byte-identical in
+          rem 1.0.0 and 1.1.0, so moving Windows to our own 1.1.0 build did
+          rem not disturb the delims=() idiom the fuse gate depends on.
           setlocal EnableDelayedExpansion
           set "FAIL=0"
           for %%P in ("Bootloader protected area: 0x03 (3)=3" "ISP Force: 0x01 (1)=1" "Bootloader Version: 0x02 (2)=2") do (

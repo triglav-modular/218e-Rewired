@@ -134,7 +134,7 @@ input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:2p
 input[type=checkbox]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 label.opt input{margin-top:3px}
 .opt .t{font-weight:700}
-.opt .d{color:var(--muted);font-size:16px}
+.opt .d{color:var(--muted);font-size:16px; display: inline-block;}
 .drop{border:1px dashed #4a4740;border-radius:16px;padding:34px;text-align:center;
   color:var(--muted);cursor:pointer;transition:.15s}
 .drop:hover,.drop.over{border-color:var(--accent);color:var(--ink)}
@@ -360,7 +360,7 @@ strong{color:var(--accent)}
   <h3>Arpeggiator</h3>
   <label class="opt"><input type="checkbox" id="latching_arp" checked>
     <span><span class="t">Latching arpeggiator</span><br>
-    <span class="d">Arp switch: <strong>latch</strong> — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
+    <span class="d">Arp switch remapped to <strong>latch</strong> — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
   <label class="opt"><input type="checkbox" id="remap_knobs" checked>
     <span><span class="t">Remap the preset knobs to arpeggiator and vibrato controls</span><br>
     <span class="d">
@@ -397,7 +397,7 @@ strong{color:var(--accent)}
 </div>
 
 
-<label class="row opt" style="gap:7px; font-weight:600; margin-top: 20px; margin-bottom: 10px;"><input type="checkbox" id="useCal"> <span>Per-note oscillator calibration</span></label>
+<label class="row opt" style="gap:7px; font-weight:600; margin-top: 20px; margin-bottom: 10px;"><input type="checkbox" id="useCal"><span>Enable per-note oscillator calibration</span></label>
 
 <p class="d muted" style="margin:0 0 10px">Corrects your 208's tracking per semitone, so the keyboard plays in tune across the whole range. <strong>Enter what your tuner reads in cents.</strong> Positive for sharp, negative for flat.</p>
 <p class="d muted" style="margin:0 0 10px">Correcting the tuning for one oscillator will make any other oscillator play more out of tune, so this is only recommended if the keyboard is only ever played with one 208.</p>
