@@ -367,18 +367,29 @@ label.opt.row>input {
 label.opt.row>span {
   min-width: 0;
 }
+/* An inline-block baselines on its own last line, so a chip taller than the
+   text around it drags the whole line box with it - every one of these was
+   adding 6 to 7px to a line of running prose.  line-height:1 keeps the chip
+   inside the line it sits on; it stays a chip, it just stops pushing.
+   Chips that stand on their own line get their air back below. */
 .mono {
     font-family: var(--mono);
     font-size: 14px;
     font-weight: 600;
-    margin: 6px 0;
+    line-height: 1;
+    margin: 0;
     display: inline-block;
     word-break: break-all;
     background: rgba(17, 16, 11, 0.51);
-    padding: 4px 8px;
+    padding: 3px 7px;
     border-radius: 6px;
     border: 1px solid rgba(255,255,255,0.2);
     text-decoration: none;
+}
+/* Alone after a break, where a taller line is the point rather than a
+   side effect. */
+br + .mono {
+    margin: 5px 0;
 }
 .ok {
   color: var(--ok);
@@ -1015,9 +1026,7 @@ strong {
   font-size: 13px;
   text-transform: none;
   letter-spacing: 0;
-  line-height: 1;
   padding: 2px 6px;
-  margin: 0;
 }
 .faq dt {
   position: relative;
@@ -1228,6 +1237,15 @@ button.primary:not(:disabled):hover {
 #calBody:not(.hidden),
 #tuningsBody:not(.hidden) {
   animation: rise-in .24s ease-out both;
+}
+
+/* Build is the one thing on the page you cannot skip, so its sweep is the
+   one you are meant to notice: brighter than the download buttons and slow
+   enough to read as a pass across the button rather than a flicker.  No
+   glow - the light doing the work is the light crossing it. */
+#build:not(:disabled)::before {
+  background: linear-gradient(120deg, transparent, rgba(255, 255, 255, .5), transparent);
+  transition: left 1.1s ease-in-out;
 }
 
 /* Narrow screens.  Last in the sheet on purpose: these share specificity
