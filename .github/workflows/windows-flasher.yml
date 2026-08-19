@@ -89,8 +89,13 @@ jobs:
           echo :0410000000000000EC>> scan_test\lowaddr.hex
           echo :00000001FF>> scan_test\lowaddr.hex
           rem The scanner must list good.hex and nothing else.
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -Dirs "%CD%\scan_test" > scan_out.txt
+          powershell -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"
+          dir scan_test
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -Dirs "%CD%\scan_test" > scan_out.txt 2> scan_err.txt
+          echo --- stdout ---
           type scan_out.txt
+          echo --- stderr ---
+          type scan_err.txt
           findstr /C:"good.hex" scan_out.txt >NUL || (echo FAILED: scanner rejected a valid image & exit /b 1)
           findstr /C:"bad.hex" scan_out.txt >NUL && (echo FAILED: scanner accepted junk & exit /b 1)
           findstr /C:"lowaddr.hex" scan_out.txt >NUL && (echo FAILED: scanner accepted a bootloader-region image & exit /b 1)
