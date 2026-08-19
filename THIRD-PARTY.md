@@ -40,3 +40,24 @@ they are 38 MB of Microsoft installer, and Microsoft distributes them
 themselves at the link above. `msvcp140.dll` is included because the flasher
 needs the runtime present and app-local deployment is the normal way to
 satisfy that.
+
+## Typefaces on the builder page
+
+**IBM Plex Mono** — `web/fonts/`, SIL Open Font License 1.1, licence text
+alongside the files. Used for checksums, cent values and anything else where
+digits need to line up. Redistributed here, which the OFL permits.
+
+**Euclid Circular A** — Swiss Typefaces, licensed to Triglav Modular. It is
+**not** in this repository, and is not covered by the Unlicense. The page loads
+it from `triglavmodular.hu`, where that licence already applies, which needs the
+font files to be sent with a permissive CORS header:
+
+```apache
+<FilesMatch "\.(woff2?)$">
+  Header set Access-Control-Allow-Origin "*"
+</FilesMatch>
+```
+
+Without that header — and offline, opening `web/index.html` from a clone — the
+page falls back to the system sans and everything still works. Nothing depends
+on the face being present.

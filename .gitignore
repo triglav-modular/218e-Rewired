@@ -60,3 +60,15 @@ otherfirmware/
 web/*.hex
 windows/*
 windows/support/*
+
+# The complete licensed Euclid package, copied in for reference.  This repo is
+# public: committing it would publish a commercial font wholesale, including
+# the desktop .otf/.ttf.  Only the four WebXL woff2 the page actually loads
+# live in web/fonts/, and even those are a licensing decision - see
+# THIRD-PARTY.md.
+web/font/
+
+# The 960 KB master of the background.  The page loads wave_bg.jpg, which is
+# the same art at 2200px and 123 KB - the difference is invisible once it is
+# screened at half opacity behind the page.
+web/images/wave_bg.png

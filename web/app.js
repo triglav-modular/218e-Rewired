@@ -248,27 +248,47 @@
             lo.toFixed(1) + '</text>';
     }
 
+    // The offsets are laid out as the keyboard they describe: naturals along
+    // the bottom, accidentals raised between them, each key carrying its own
+    // cents box.  Sixty-five numbered rows made you count to find a note; a
+    // keyboard is found by shape.
+    var WHITE_W = 48, BLACK_W = 32;
     function buildTable() {
-        var body = $('calTable').tBodies[0];
-        body.innerHTML = '';
+        var kbd = $('calKeys');
+        kbd.innerHTML = '';
+        var whites = 0;
         for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
             (function (n) {
-                var tr = document.createElement('tr');
-                // A name containing # is a black key; everything else is white.
                 var black = NAMES[n % 12].indexOf('#') >= 0;
-                tr.innerHTML = '<td class="note ' + (black ? 'black' : 'white') + '">' +
-                    noteName(n) + '</td><td class="muted">' +
-                    keyLabel(n) + '</td><td></td>';
+                var key = document.createElement('div');
+                key.className = 'key ' + (black ? 'black' : 'white');
+                // A black key straddles the join between the two naturals it
+                // sits between, so it hangs half its width back from the next.
+                key.style.left = (black ? whites * WHITE_W - BLACK_W / 2
+                                        : whites * WHITE_W) + 'px';
+                if (!black) whites++;
+
+                var nm = document.createElement('span');
+                nm.className = 'nm';
+                nm.textContent = noteName(n);
+
                 var input = document.createElement('input');
-                input.type = 'number'; input.step = '0.01'; input.value = measured[n].toFixed(2);
+                input.type = 'number';
+                input.step = '0.01';
+                input.value = measured[n].toFixed(2);
+                input.title = noteName(n) + ' — key ' + keyLabel(n);
+                if (measured[n] !== 0) input.className = 'set';
                 input.addEventListener('change', function () {
                     measured[n] = parseFloat(input.value) || 0;
+                    input.className = measured[n] !== 0 ? 'set' : '';
                     drawPlot(); validateCal();
                 });
-                tr.lastChild.appendChild(input);
-                body.appendChild(tr);
+                key.appendChild(nm);
+                key.appendChild(input);
+                kbd.appendChild(key);
             })(n);
         }
+        kbd.style.width = (whites * WHITE_W) + 'px';
     }
 
     function validateCal() {
@@ -419,6 +439,11 @@
     function refresh() {
         $('build').disabled = !state.factoryText;
         $('download').disabled = !state.result;
+        // The accent marks whatever is next: Build until an image exists,
+        // then Download.  Changing an option clears state.result, so it
+        // hands the emphasis back on its own.
+        $('build').className = state.result ? '' : 'primary';
+        $('download').className = state.result ? 'primary' : '';
     }
 
     $('build').addEventListener('click', function () {

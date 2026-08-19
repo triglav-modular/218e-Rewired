@@ -5,107 +5,200 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>218e V3 Rewired firmware builder</title>
 <style>
+/* Euclid Circular A is licensed to Triglav Modular and served from
+   triglavmodular.hu, where that licence already applies.  It is deliberately
+   NOT copied into this repository: the repo is public and Unlicense-d, and a
+   licence to use the face is not a licence to redistribute the files.
+   Loading it cross-origin needs one header on that server:
+
+       <FilesMatch "\.(woff2?)$">
+         Header set Access-Control-Allow-Origin "*"
+       </FilesMatch>
+
+   Without it the page falls back to the system sans and still works — which
+   is also what happens offline, opening web/index.html from a local clone.
+
+   IBM Plex Mono is SIL OFL 1.1 and ships here; licence beside the files. */
+@font-face{font-family:"Euclid Circular A";font-weight:300;font-display:swap;
+  src:url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Light-WebXL.woff2") format("woff2")}
+@font-face{font-family:"Euclid Circular A";font-weight:400;font-display:swap;
+  src:url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Regular-WebXL.woff2") format("woff2")}
+@font-face{font-family:"Euclid Circular A";font-weight:500;font-display:swap;
+  src:url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Medium-WebXL.woff2") format("woff2")}
+@font-face{font-family:"Euclid Circular A";font-weight:700;font-display:swap;
+  src:url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Bold-WebXL.woff2") format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:400;font-display:swap;
+  src:url("fonts/IBMPlexMono-Regular.woff2") format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:600;font-display:swap;
+  src:url("fonts/IBMPlexMono-SemiBold.woff2") format("woff2")}
+/* ---------------------------------------------------------------------------
+   PROPOSAL A — "Editorial"
+   The triglavmodular.hu language applied directly: warm near-black, buttercream
+   accent, geometric sans, huge light display type, tracked uppercase labels,
+   accent-outlined cards and solid accent pills.
+   --------------------------------------------------------------------------- */
 :root {
-  --bg:#faf9f7; --panel:#fff; --ink:#1b1a18; --muted:#6b6560; --line:#e0dcd6;
-  --accent:#8a5a2b; --ok:#2f6b3a; --bad:#a33028; --warn:#8a6d1f;
-  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --bg:#171716; --panel:#1e1e1c; --ink:#fff; --muted:#9d9a93; --line:#2e2e2b;
+  --accent:#FFDA6C; --ok:#8fd6a0; --bad:#ff8b7d; --warn:#FFDA6C;
+  --sans:"Euclid Circular A",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 }
-@media (prefers-color-scheme:dark){:root{
-  --bg:#17181a; --panel:#1f2124; --ink:#e9e6e2; --muted:#9a948d; --line:#33363b;
-  --accent:#d79a5b; --ok:#7fc08c; --bad:#e8897f; --warn:#d8bd6a;
-}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-.wrap{max-width:780px;margin:0 auto;padding:32px 20px 96px}
-h1{font-size:24px;margin:0 0 4px;letter-spacing:-.01em}
-.sub{color:var(--muted);margin:0 0 28px}
-section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
-  padding:20px;margin-bottom:16px}
-h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
-  margin:0 0 14px;font-weight:600}
-label.opt{display:flex;gap:12px;align-items:flex-start;padding:9px 0;
+  font:400 16px/1.62 var(--sans);-webkit-font-smoothing:antialiased}
+/* The line art is white-on-black, so it is screened over the base colour
+   rather than laid on top: black areas fall away to #171716 and only the
+   strokes lighten it.  Fixed, so it sits still while the page scrolls past. */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:url("images/wave_bg.jpg") center/cover no-repeat;
+  mix-blend-mode:screen;opacity:.5}
+.wrap{position:relative;z-index:1;max-width:820px;margin:0 auto;padding:56px 20px 120px}
+h1{font-size:clamp(44px,9vw,82px);font-weight:400;line-height:.98;margin:0 0 14px;letter-spacing:-.015em}
+.sub{color:var(--muted);margin:0 0 44px;font-size:18px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  padding:30px 28px;margin-bottom:20px}
+h2{font-size:20px;text-transform:uppercase;letter-spacing:.16em;color:var(--accent);
+  margin:0 0 20px;font-weight:700;text-align:left}
+h3,h4{font-weight:700;letter-spacing:.02em}
+label.opt{display:flex;gap:14px;align-items:flex-start;padding:13px 0;
   border-bottom:1px solid var(--line);cursor:pointer}
 label.opt:last-child{border-bottom:0}
-label.opt input{margin-top:3px;flex:none;width:16px;height:16px;accent-color:var(--accent)}
-.opt .t{font-weight:600}
-.opt .d{color:var(--muted);font-size:13px}
-.drop{border:2px dashed var(--line);border-radius:8px;padding:26px;text-align:center;
+/* accent-color paints the box but leaves the browser's white tick, so the
+   checkbox is drawn here instead: accent fill, dark tick. */
+input[type=checkbox]{appearance:none;-webkit-appearance:none;margin:0;flex:none;
+  width:18px;height:18px;border:1px solid #4a4740;border-radius:4px;
+  background:transparent;cursor:pointer;position:relative;transition:.12s}
+input[type=checkbox]:hover{border-color:var(--accent)}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:checked::after{content:"";position:absolute;left:6px;top:2px;
+  width:4px;height:9px;border:solid #171716;border-width:0 2.2px 2.2px 0;
+  transform:rotate(45deg)}
+input[type=checkbox]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+label.opt input{margin-top:3px}
+.opt .t{font-weight:700}
+.opt .d{color:var(--muted);font-size:16px}
+.drop{border:1px dashed #4a4740;border-radius:16px;padding:34px;text-align:center;
   color:var(--muted);cursor:pointer;transition:.15s}
 .drop:hover,.drop.over{border-color:var(--accent);color:var(--ink)}
 .drop.ok{border-style:solid;border-color:var(--ok)}
 .drop.err{border-style:solid;border-color:var(--bad)}
-button{font:inherit;font-weight:600;padding:11px 20px;border-radius:8px;
-  border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-button:disabled{opacity:.45;cursor:not-allowed}
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.mono{font-family:var(--mono);font-size:12px;word-break:break-all}
+button{font:inherit;font-weight:700;font-size:15px;text-transform:uppercase;letter-spacing:.08em;
+  padding:13px 26px;border-radius:999px;border:1px solid var(--accent);
+  background:transparent;color:var(--accent);cursor:pointer;transition:.15s}
+button:hover:not(:disabled){background:var(--accent);color:#171716}
+button.primary{background:var(--accent);border-color:var(--accent);color:#171716}
+button:disabled{opacity:.4;cursor:not-allowed}
+/* A dimmed accent fill goes olive.  A disabled primary drops to an outline
+   instead, so "not yet" reads as waiting rather than as a muddy colour. */
+button.primary:disabled,button.primary:disabled:hover{background:transparent;
+  border-color:var(--line);color:var(--muted);opacity:.75}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.mono{font-family:var(--mono);font-size:13px;word-break:break-all}
 .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .muted{color:var(--muted)}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.seg button{border:0;border-radius:0;padding:8px 16px;font-weight:500;background:transparent}
-.seg button[aria-pressed=true]{background:var(--accent);color:#fff}
-details{margin-top:12px}
-summary{cursor:pointer;color:var(--accent);font-size:13px;font-weight:600}
-table{border-collapse:collapse;width:100%;font-size:12px;margin-top:10px}
-th,td{padding:3px 6px;text-align:right;border-bottom:1px solid var(--line)}
-th{color:var(--muted);font-weight:600;text-align:right;position:sticky;top:0;background:var(--panel)}
+.seg{display:inline-flex;border:1px solid var(--accent);border-radius:999px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:10px 20px;background:transparent}
+.seg button[aria-pressed=true]{background:var(--accent);color:#171716}
+details{margin-top:14px}
+summary{cursor:pointer;color:var(--accent);font-size:14px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.08em}
+table{border-collapse:collapse;width:100%;font-size:13px;margin-top:10px}
+th,td{padding:4px 7px;text-align:right;border-bottom:1px solid var(--line)}
+th{color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+  font-size:12px;position:sticky;top:0;background:var(--panel)}
 td.note{text-align:left;font-family:var(--mono)}
-/* Column 1 reads as a keyboard: naturals pale, accidentals dark, so a row is
-   found by the shape of the run rather than by reading every label. */
-td.note.white{background:#f2efe9;color:#1b1a18}
-td.note.black{background:#26241f;color:#e8e3da}
-:root:not([data-theme="light"]) td.note.white,
-[data-theme="dark"] td.note.white{background:#e8e3da;color:#1b1a18}
-:root:not([data-theme="light"]) td.note.black,
-[data-theme="dark"] td.note.black{background:#141310;color:#cfc8bd}
-td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-align:right;
-  border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink)}
-.scroll{max-height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
-.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:99px;
-  background:var(--line);color:var(--muted);margin-left:6px}
-.msg{padding:11px 14px;border-radius:8px;font-size:13px;margin-top:12px;white-space:pre-wrap}
-.msg.ok{background:color-mix(in srgb,var(--ok) 14%,transparent)}
-.msg.bad{background:color-mix(in srgb,var(--bad) 14%,transparent)}
-.msg.warn{background:color-mix(in srgb,var(--warn) 16%,transparent)}
-.files div{font-size:12px;padding:4px 0;font-family:var(--mono)}
-.slot{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+td.note.white{background:#e8e3da;color:#171716}
+td.note.black{background:#0e0e0d;color:#cfc8bd}
+td input{width:78px;padding:4px 7px;font:inherit;font-family:var(--mono);text-align:right;
+  border:1px solid var(--line);border-radius:4px;background:#111110;color:var(--ink)}
+.scroll{max-height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:12px}
+.tag{display:inline-block;font-size:11px;padding:3px 10px;border-radius:999px;
+  background:transparent;border:1px solid var(--accent);color:var(--accent);
+  margin-left:8px;text-transform:uppercase;letter-spacing:.1em;font-weight:700}
+.msg{padding:13px 16px;border-radius:12px;font-size:14px;margin-top:14px;white-space:pre-wrap}
+.msg.ok{background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.msg.bad{background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.msg.warn{background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.files div{font-size:13px;padding:4px 0;font-family:var(--mono)}
+.slot{display:flex;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
 .slot:last-child{border-bottom:0}
 .slot .who{flex:none;width:150px}
-.slot .who b{display:block;font-size:13px}
-.slot .who span{font-size:11px;color:var(--muted);line-height:1.35;display:block}
-.slot .what{flex:1;font-family:var(--mono);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slot .who b{display:block;font-size:14px}
+.slot .who span{font-size:12px;color:var(--muted);line-height:1.35;display:block}
+.slot .what{flex:1;font-family:var(--mono);font-size:13px;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
 .slot .what.empty{font-family:inherit;color:var(--muted);font-style:italic}
-.slot .ctl{flex:none;display:flex;gap:4px}
-.slot .ctl button{padding:4px 9px;font-size:12px;line-height:1}
-.danger{border:2px solid var(--bad);border-radius:10px;padding:18px 20px;margin:0 0 16px;
-  background:color-mix(in srgb,var(--bad) 10%,transparent)}
-.danger h2{color:var(--bad);font-size:15px;letter-spacing:.04em;margin:0 0 10px}
-.danger p{margin:0 0 9px;font-size:14px}
+.slot .ctl{flex:none;display:flex;gap:6px}
+.slot .ctl button{padding:6px 14px;font-size:11px;line-height:1}
+.danger{border:1px solid var(--bad);border-radius:16px;padding:26px 28px;margin:0 0 20px;
+  background:color-mix(in srgb,var(--bad) 8%,var(--panel))}
+.danger h2{color:var(--bad);font-size:14px;letter-spacing:.16em;margin:0 0 14px}
+.danger p{margin:0 0 11px;font-size:16px}
 .danger strong{color:var(--bad)}
 .danger p:last-child{margin-bottom:0}
-.winsetup{border:2px solid var(--warn);border-radius:10px;padding:16px 18px;margin:0 0 14px;
-  background:color-mix(in srgb,var(--warn) 13%,transparent)}
-.winsetup h3{margin:0 0 8px;font-size:14px;letter-spacing:.03em;color:var(--warn)}
-.winsetup p{margin:0 0 8px;font-size:14px}
-.winsetup ol{margin:0 0 10px;padding-left:22px;font-size:14px;line-height:1.85}
+.winsetup{border:1px solid var(--accent);border-radius:16px;padding:24px 26px;margin:0 0 18px;
+  background:color-mix(in srgb,var(--accent) 8%,var(--panel))}
+.winsetup h3{margin:0 0 12px;font-size:14px;letter-spacing:.16em;color:var(--accent);
+  text-transform:uppercase}
+.winsetup p{margin:0 0 11px;font-size:16px}
+.winsetup ol{margin:0 0 12px;padding-left:22px;font-size:16px;line-height:1.9}
 .winsetup p:last-child{margin-bottom:0}
-.prereq{border:2px solid var(--warn);border-radius:8px;padding:14px 16px;margin:14px 0 0;
-  background:color-mix(in srgb,var(--warn) 10%,transparent)}
-.prereq h3{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--warn)}
-.prereq dl{margin:0;font-size:13px;line-height:1.6}
-.prereq dt{font-weight:700;margin-top:9px}
+.prereq{border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin:16px 0 0}
+.prereq h3{margin:0 0 10px;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.prereq dl{margin:0;font-size:16px;line-height:1.65}
+.prereq dt{font-weight:700;margin-top:11px}
 .prereq dt:first-of-type{margin-top:0}
-.prereq dd{margin:2px 0 0}
+.prereq dd{margin:3px 0 0;color:var(--muted)}
 svg{width:100%;height:120px;margin-top:10px;overflow:visible}
-#build, #download {
-    width: 49%;
-    height: 80px;
-    box-sizing: border-box;
-}
-a {
-    color: var(--accent);
-}
+#build,#download{width:49%;height:80px;box-sizing:border-box}
+a{color:var(--accent)}
+strong{color:var(--accent)}
+
+
+/* --- volts per octave: two equal choices, not a squeezed pill ------------- */
+.vpo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;max-width:430px}
+.vpo button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
+  padding:14px 18px;border-radius:12px;border:1px solid var(--line);
+  background:transparent;color:var(--ink);text-transform:none;letter-spacing:0;
+  font-size:19px;font-weight:500;line-height:1.1}
+.vpo button .why{font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.16em;color:var(--muted)}
+/* The generic button hover fills with the accent; without resetting the
+   background here that rule and this one would put accent text on an accent
+   fill, which is invisible. */
+.vpo button:hover:not([aria-pressed=true]){background:transparent;
+  border-color:var(--accent);color:var(--accent)}
+.vpo button:hover:not([aria-pressed=true]) .why{color:var(--accent);opacity:.8}
+.vpo button[aria-pressed=true],
+.vpo button[aria-pressed=true]:hover{background:var(--accent);
+  border-color:var(--accent);color:#171716}
+.vpo button[aria-pressed=true] .why,
+.vpo button[aria-pressed=true]:hover .why{color:#171716;opacity:.7}
+
+/* --- the offsets laid out as the keyboard they describe -------------------- */
+.kbdwrap{overflow-x:auto;overflow-y:hidden;border:1px solid var(--line);
+  border-radius:12px;background:#111110}
+.kbd{position:relative;height:190px;margin:14px 14px 16px}
+.key{position:absolute;top:0;display:flex;flex-direction:column;justify-content:flex-end;
+  align-items:center;gap:5px;padding-bottom:9px;border-radius:0 0 5px 5px}
+.key.white{width:48px;height:190px;background:#e8e3da;color:#171716;
+  border:1px solid #b9b3a8;border-top:0}
+.key.black{width:32px;height:120px;background:#0d0d0c;color:#e8e3da;
+  border:1px solid #000;border-top:0;z-index:2}
+.key .nm{font-size:11px;font-weight:700;letter-spacing:.04em;opacity:.7}
+/* The spinner arrows cost about a third of the width of a key, which is the
+   difference between "-1.25" fitting and being clipped. */
+.key input{width:40px;padding:3px 1px;font-family:var(--mono);font-size:11px;
+  text-align:center;border-radius:3px;border:1px solid rgba(0,0,0,.28);
+  background:rgba(255,255,255,.85);color:#171716;
+  appearance:textfield;-moz-appearance:textfield}
+.key input::-webkit-outer-spin-button,
+.key input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.key.black input{border-color:#000;background:#2a2926;color:#f2f0ec}
+.key input:focus{outline:2px solid var(--accent);outline-offset:0}
+/* A non-zero offset is worth seeing at a glance across 65 keys. */
+.key input.set{background:var(--accent);color:#171716;font-weight:600}
+.kbdhint{font-size:11px;color:var(--muted);margin:9px 0 0;
+  text-transform:uppercase;letter-spacing:.16em;font-weight:700}
 </style>
 </head>
 <body>
@@ -131,7 +224,7 @@ a {
 
 <section>
   <h2>1 · Your factory firmware</h2>
-  <p class="d muted" style="margin:0 0 12px;font-size:13px">Supply the stock <strong>218e V3 v36.9</strong> image. It is in Buchla's flashing kit, as <span class="mono">218eV3_v369_DFU.hex</span>:<br>
+  <p class="d muted" style="margin:0 0 12px">Supply the stock <strong>218e V3 v36.9</strong> image. It is in Buchla's flashing kit, as <span class="mono">218eV3_v369_DFU.hex</span>:<br>
   <a href="https://buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip" class="mono">buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip</a></p>
   <div class="drop" id="drop">
     <strong>Drop 218eV3_v369_DFU.hex here</strong><br>
@@ -167,9 +260,9 @@ a {
 <div>
   <span class="t" style="font-weight:600">Volts per octave</span>
   <div class="row" style="margin-top:8px">
-    <div class="seg" id="vpo">
-      <button data-v="1.2" aria-pressed="true">1.2 V/oct<span class="tag">Buchla</span></button>
-      <button data-v="1.0" aria-pressed="false">1 V/oct <span class="tag">Eurorack</span></button>
+    <div class="vpo" id="vpo">
+      <button data-v="1.2" aria-pressed="true">1.2 V/oct<span class="why">Buchla standard</span></button>
+      <button data-v="1.0" aria-pressed="false">1 V/oct<span class="why">Eurorack</span></button>
     </div>
   </div>
 </div>
@@ -177,12 +270,12 @@ a {
 
 <label class="row opt" style="gap:7px; font-weight:600; margin-top: 20px; margin-bottom: 10px;"><input type="checkbox" id="useCal"> <span>Per-note oscillator calibration</span></label>
 
-<p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208's tracking per semitone, so the keyboard plays in tune across the whole range. Enter what your tuner reads: <strong>how many cents sharp each note played:</strong> positive sharp, negative flat.</p>
-<p class="d muted" style="margin:0 0 10px;font-size:12px"><strong>Correcting the tuning for one oscillator will make any other oscillator play more out of tune, so this is only recommended if the keyboard is only ever played with one 208.</strong></p>
+<p class="d muted" style="margin:0 0 10px">Corrects your 208's tracking per semitone, so the keyboard plays in tune across the whole range. Enter what your tuner reads: <strong>how many cents sharp each note played:</strong> positive sharp, negative flat.</p>
+<p class="d muted" style="margin:0 0 10px"><strong>Correcting the tuning for one oscillator will make any other oscillator play more out of tune, so this is only recommended if the keyboard is only ever played with one 208.</strong></p>
 
 <div id="calBody" style="display:none">
 <details style="margin:0 0 12px"><summary>How to measure your 208. Read this first!</summary>
-  <div style="font-size:13px;line-height:1.7;color:var(--muted);margin-top:8px">
+  <div style="line-height:1.7;color:var(--muted);margin-top:8px">
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other. <strong>Measure against equal temperament.</strong></p>
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">2. Warm up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">3. Tune the lowest C.</strong> Octave switch at its lowest setting, hold the lowest C, and trim the 208 until a tuner reads it exactly in tune. Everything else is measured against this note.</p>
@@ -196,9 +289,8 @@ a {
 <svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none" aria-hidden="true"></svg>
 <div class="row">
 <h4 style="margin-bottom: 0;">Enter offsets for the 65 playable notes</h4>
-  <div class="scroll" style="width: 100%; margin-bottom: 10px;"><table id="calTable">
-    <thead><tr><th style="text-align:left">Note</th><th>Key</th><th>Played sharp by (cents)</th></tr></thead>
-    <tbody></tbody></table></div>
+  <div class="kbdwrap"><div class="kbd" id="calKeys"></div></div>
+  <p class="kbdhint">Cents sharp, per key — scroll for the full range</p>
 </div>
 <div class="row">
 
@@ -216,10 +308,10 @@ a {
 
 <section>
   <h2>5 · Alternate tunings</h2>
-  <p class="d muted" style="margin:0 0 12px;font-size:13px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
-  <p class="d muted" style="margin:0 0 12px;font-size:12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
+  <p class="d muted" style="margin:0 0 12px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
+  <p class="d muted" style="margin:0 0 12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
   <label class="row opt" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
-    <span><strong>Enable alternate tunings</strong> <span class="muted" style="font-size:12px">— turning this on remaps the <strong>rem.en</strong> and <strong>trn</strong> LEDs and edit keys.</span></span></label>
+    <span><strong>Enable alternate tunings</strong> <span class="muted">— turning this on remaps the <strong>rem.en</strong> and <strong>trn</strong> LEDs and edit keys.</span></span></label>
   <div id="tuningsBody" style="display:none">
   <div class="row" style="margin-bottom:10px"><button id="sclPick">Add .scl files…</button>
     <span class="muted" id="sclCount">all three slots factory</span></div>
@@ -244,7 +336,7 @@ a {
   <ol style="margin:12px 0;padding-left:20px;font-size:14px;line-height:1.9">
     <li>Download the <strong>.hex</strong> image above. Leaving it in Downloads is fine.</li>
     <li>Connect the 218e, directly rather than through an unpowered hub:
-      <div style="margin-top:0px;font-size:13px">
+      <div style="margin-top:0px">
         <div><strong>Standalone LEM218</strong> — USB-C to the computer, power connected, switched on.</div>
         <div><strong>218e module</strong> — USB-B from the 5xIO module that carries its USB and MIDI.</div>
       </div>
@@ -275,7 +367,7 @@ a {
   </div>
 
   <details style="margin-top:14px"><summary>If something went wrong</summary>
-    <dl style="font-size:13px;line-height:1.6;margin:10px 0 0">
+    <dl style="line-height:1.6;margin:10px 0 0">
       <dt style="font-weight:700;margin-top:10px">The keyboard is stuck in DFU and will not come back as MIDI (unresponsive keyboard with some LEDs lit up)</dt>
       <dd style="margin:2px 0 0">Either run the programmer scripts again, or use the ExitDFU scripts to restart the instrument in regular mode.
       <br>macOS: <span class="mono">ExitDFU_218e_v3_macOS.command</span>
