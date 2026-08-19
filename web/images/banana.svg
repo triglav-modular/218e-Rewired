@@ -6,7 +6,7 @@
           stroke: #04070b;
           stroke-width: 1.4;
           stroke-linejoin: round;
-        fill: #feed4f;
+        fill: #FFDA6C;
       }
 
       .cls-2 {
