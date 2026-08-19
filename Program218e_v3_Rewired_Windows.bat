@@ -159,8 +159,11 @@ CALL :ok Found !FIRMWARE!
 CALL :ok !FIRMWARE_VERSION!
 ECHO     !CHOSEN_SHA!
 
-REM Keep it where it belongs, so the next run finds it first.  A failure here
-REM is not fatal: the image is already verified.
+REM Only the default build is filed under firmware\ as %FIRMWARE_NAME%.  Copying
+REM a custom image there leaves a second file with that name and different
+REM contents, and it then shows up twice in the list - once where it was built
+REM and once as the copy.  A failure here is not fatal: the image is verified.
+IF DEFINED CUSTOM GOTO :no_copy
 IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
     IF NOT EXIST "%FIRMWARE_DIR%" MKDIR "%FIRMWARE_DIR%" 2>NUL
     COPY /Y "!FIRMWARE!" "%FIRMWARE_DIR%\%FIRMWARE_NAME%" >NUL 2>&1
@@ -169,10 +172,14 @@ IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
         CALL :ok Copied into firmware\
     )
 )
+:no_copy
 ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 
 ECHO.
 ECHO Before continuing:
+ECHO   - if you have flashed a 218e from this machine before, Zadig will show
+ECHO     libusb0 already bound; its button then says Replace Driver, and it
+ECHO     still has to be pressed - this tool speaks only WinUSB.
 ECHO   - the DFU device must be bound to WinUSB, or this cannot see the
 ECHO     instrument at all.  If you have not done that on this machine, run
 ECHO       %TOOLS%\zadig-2.8.exe
@@ -325,9 +332,10 @@ IF "!FOUND!"=="0" (
     ECHO.
     ECHO   The AT32UC3B DFU device is not reachable yet.
     ECHO.
-    ECHO   On Windows that nearly always means the DFU device still needs the
-    ECHO   WinUSB driver.  Zadig can install it, and the keyboard is in DFU
-    ECHO   right now, which is the only time Zadig can see it.
+    REM Name the driver actually bound.  "Not reachable" plus a pointer at
+    REM Zadig is useless once Zadig has been run: the device can be sitting
+    REM there under libusb0, which this dfu-programmer cannot open at all.
+    CALL :report_driver
     ECHO.
     ECHO   Zadig is GPLv3, from https://zadig.akeo.ie/ , and ships with
     ECHO   Buchla's kit.  Nothing has been erased.
@@ -360,6 +368,37 @@ IF "!FOUND!"=="0" (
 IF "!FOUND!"=="0" GOTO :dfu_unreachable
 GOTO :in_dfu
 
+:report_driver
+REM What Windows has bound to the Atmel bootloader, in its own words.
+SET "USBSTATE="
+FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
+ECHO !USBSTATE! | FINDSTR /B /C:"PRESENT" >NUL 2>&1
+IF ERRORLEVEL 1 (
+    ECHO   Windows does not see an Atmel DFU device on USB at all, so the
+    ECHO   instrument is probably not in DFU.  Power-cycle it and retry.
+    EXIT /B 0
+)
+FOR /F "tokens=2,3,* delims=|" %%A IN ("!USBSTATE!") DO (
+    ECHO   Windows does see it:    %%C
+    ECHO   Driver currently bound: %%A   ^(status %%B^)
+    ECHO.
+    IF /I "%%A"=="WinUSB" (
+        ECHO   That is the right driver, so something else is holding the device.
+        ECHO   Close other MIDI or flashing software, replug the USB cable, and
+        ECHO   run this again - it stays in DFU across a replug.
+    ) ELSE (
+        ECHO   dfu-programmer 1.0.0 dropped libusb0 support and speaks only to
+        ECHO   WinUSB, so it cannot open a %%A device.  If an older Buchla kit
+        ECHO   flashed this machine before, that is where %%A came from.
+        ECHO.
+        ECHO   In Zadig: select AT32UC3B DFU ^(USB ID 03EB 2FF6^), set the
+        ECHO   right-hand box to WinUSB, and press Replace Driver.  The button
+        ECHO   reads Replace, not Install, when a driver is already bound -
+        ECHO   leaving it unpressed changes nothing.
+    )
+)
+EXIT /B 0
+
 :dfu_present_unreachable
 REM In DFU and visible to Windows, but not openable.  Distinct from
 REM :dfu_unreachable, which is reached when the device never appeared at all.
@@ -377,6 +416,8 @@ ECHO.
 ECHO   Nothing was erased and nothing was written.  The keyboard is most
 ECHO   likely still in DFU, which is why it has vanished from MIDI.
 ECHO   Power-cycle it and it comes back up normally.
+ECHO.
+CALL :report_driver
 ECHO.
 ECHO   Worth checking: USB connected directly rather than through a hub, and
 ECHO   that WinUSB really was installed against the AT32UC3B DFU device

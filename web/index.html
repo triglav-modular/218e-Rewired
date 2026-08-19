@@ -210,7 +210,8 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     <h3>One-time setup</h3>
     <dl>
       <dt>Windows: the WinUSB driver</dt>
-      <dd>Windows will not let <span class="mono">dfu-programmer</span> reach the keyboard until the DFU device is bound to WinUSB. The flasher opens Zadig for you at the point the device is visible. In Zadig: if the list looks empty, turn on <strong>Options → List All Devices</strong>, select <strong>AT32UC3B DFU</strong> (USB ID <span class="mono">03EB 2FF6</span>), then <strong>Install Driver</strong>. It can pause for several seconds before starting. Once per machine.</dd>
+      <dd>Windows will not let <span class="mono">dfu-programmer</span> reach the keyboard until the DFU device is bound to WinUSB. The flasher opens Zadig for you at the point the device is visible. In Zadig: if the list looks empty, turn on <strong>Options → List All Devices</strong>, select <strong>AT32UC3B DFU</strong> (USB ID <span class="mono">03EB 2FF6</span>), set the right-hand box to <strong>WinUSB</strong>, then press the button. It can pause for several seconds before starting. Once per machine.</dd>
+      <dd style="margin-top:6px"><strong>If you have flashed a 218e from this machine before</strong>, Zadig will show a driver already bound — most likely <span class="mono">libusb0</span>, which older kits used. The button then reads <strong>Replace Driver</strong> rather than Install Driver, and it must still be pressed: <span class="mono">dfu-programmer</span> 1.0.0 dropped libusb0 support and talks to WinUSB only, so it cannot open a libusb0 device. The symptom is the flasher putting the keyboard into DFU and then never finding it.</dd>
       <dd style="margin-top:6px">The tools themselves ship with this package, nothing extra to download.</dd>
 
       <dt>Both: your system might warn about unsigned software</dt>
