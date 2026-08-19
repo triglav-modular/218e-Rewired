@@ -27,6 +27,7 @@ the four preset-voltage knobs and the arpeggiator switch.
 |---|---|
 | **Base image** | stock v369, **you supply it** (AT32UC3B1256, AVR32) |
 | **Output** | `build/218eV3_v369_Rewired_DFU.hex`, built locally |
+| **Builder** | <https://triglav-modular.github.io/218e-v3-Rewired/> — runs in your browser |
 | **Settings** | [`config/218e.toml`](config/218e.toml) — seven options |
 | **Licence** | [Unlicense](UNLICENSE) for this repository's own work; the bundled flashing tools keep their own — see [THIRD-PARTY.md](THIRD-PARTY.md) |
 

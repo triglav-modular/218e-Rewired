@@ -1,0 +1,86 @@
+name: Builder page
+
+# The builder runs entirely in the browser: it needs the user's own factory
+# image, which is not in this repository and never leaves their machine.  So it
+# can be served as a static page with nothing behind it.
+#
+# generated.js is regenerated here rather than trusting the committed copy, so
+# the deployed page can never describe a build the source no longer produces.
+# Everything it reads is tracked; the factory checksum comes from the config,
+# not from the image itself.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'src/AssemblePressureFix.java'
+      - 'config/218e.toml'
+      - 'tunings/**'
+      - 'tools/avr32/**'
+      - 'tools/factory_control_flow.txt'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let a running one finish rather than cancelling it
+# halfway through publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate the page's embedded data
+        run: python3 web/generate.py
+
+      - name: The regenerated bundle must match what is committed
+        # A mismatch means someone edited the source without re-running
+        # generate.py.  The deploy is still correct - it uses what was just
+        # generated - but the repository is stale and should be fixed.
+        run: |
+          if ! git diff --quiet -- web/generated.js web/assembler.js; then
+            echo "::warning::web/generated.js or web/assembler.js is stale in git; run python3 web/generate.py and commit"
+            git diff --stat -- web/generated.js web/assembler.js
+          else
+            echo "committed bundle is up to date"
+          fi
+
+      - name: The seven options still build identically to tools/build.py
+        run: python3 web/test_configs.py
+
+      - name: Stage the site
+        run: |
+          mkdir -p _site
+          cp web/index.html web/app.js web/build.js web/buildlib.js \
+             web/sha256.js web/assembler.js web/generated.js _site/
+          # No Jekyll: filenames here are ordinary, but underscore-prefixed
+          # paths would be dropped silently and that is a nasty way to find out.
+          touch _site/.nojekyll
+          ls -la _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
