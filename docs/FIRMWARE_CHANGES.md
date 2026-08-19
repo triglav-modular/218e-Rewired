@@ -606,7 +606,7 @@ only user-facing owner of the setting.
 | `0x8001AB60` | first-use initialiser (all added RAM state) |
 | `0x8001AC84` | pressure-to-vibrato scaling helper |
 
-> **Why the `0x32xx` scratch is free, and what keeps it free.** Those cells sit
+> **Historic: the `0x32xx` scratch.** These cells used to live here. Those sit
 > inside the factory's own 16-tap pressure history — a shift register based at
 > RAM `0x3216`, spanning `0x3216`–`0x3235`, shifted at `0x800033F8`–`0x80003496`
 > and indexed at `0x800034AC`. We replaced that filter, and the
@@ -615,9 +615,11 @@ only user-facing owner of the setting.
 > nothing outside branches into `0x800033FA`–`0x80003505`, and no pool or table
 > word points into it. The array is therefore dead, and the cells are ours.
 >
-> This is load-bearing. Disable `pitch_clamp_skip_1` and the factory filter
-> resumes, shifting the arp knob latches, the pulse flag and the switch mirror
-> once per scan. The neighbours are live and must be left alone: `0x3210`
+> That made the skip load-bearing, and so unconditional: the factory filter
+> could never come back, whatever the options said. The block has since moved
+> whole to `0x60E4`–`0x60F2`, keeping its relative offsets, and the skip now
+> follows `pressure_fix` like the rest of the pressure work. With the pressure
+> response off, the factory filter runs as it shipped. The neighbours are live and must be left alone: `0x3210`
 > (read at `0x800031FC`), `0x3236` (read at `0x8000B8F4`), `0x3238` and the
 > array from `0x323C`.
 >

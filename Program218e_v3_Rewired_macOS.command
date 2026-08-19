@@ -15,11 +15,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"' EXIT
-EXPECTED_SHA256="80b502c82076ff3d5c71b821f3ccf944c4faeba21bd62d4a0e693615f078aff6"
+EXPECTED_SHA256="b21c816227644d630c97fc4e2be8f9c37be778be1cb00dea39b4b3677cac058e"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 1.0.0 (80b502c8)"
+FIRMWARE_VERSION="Rewired 1.0.0 (b21c8162)"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the

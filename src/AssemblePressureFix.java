@@ -991,16 +991,16 @@ public class AssemblePressureFix extends GhidraScript {
         //   knob 3 (0x30e) -> random +-octave on each arp note with
         //     probability knob/1024 (bottom deadzone = off, factory-exact).
         // Knob values latch only outside edit mode so edit-mode knob use
-        // never disturbs the arp.  RAM: 0x322a knob2 latch, 0x322c last
-        // countdown, 0x322e knob3 latch, 0x3230 gate threshold.
+        // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60e8 last
+        // countdown, 0x60ea knob3 latch, 0x60ec gate threshold.
         // Arp controls on the preset knobs (outside edit; latches edit-gated):
         //   knob 1 (0x30a>>3 -> state+0x38c latch): press-order vs random key
         //     selection, applied by the replacement selector below;
-        //   knob 2 (0x30c -> 0x322a latch): rhythm randomness — the per-step
+        //   knob 2 (0x30c -> 0x60e6 latch): rhythm randomness — the per-step
         //     countdown reload becomes T*((1024-r) + r*E)/1024 with E an
         //     exponential draw (mean ~1, CLZ-geometric approximation, clamp
         //     4x), the Micro_Easel RANDOM PULSER law; knob low = even pulses;
-        //   knob 3 (0x30e -> 0x322e latch): random +-octave per arp note.
+        //   knob 3 (0x30e -> 0x60ea latch): random +-octave per arp note.
         // Gate-off timing itself is factory (compare == 3 restored).
         begin(0x80019d38L);
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
@@ -1021,10 +1021,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LSR R8,0x3");
         emit("ST.B R10[0x38c],R8");
         emit("LD.SH R8,R10[0x30c]");
-        emit("MOV R11,0x322a");
+        emit("MOV R11,0x60e6");
         emit("ST.H R11[0x0],R8");
         emit("LD.SH R8,R10[0x30e]");
-        emit("MOV R11,0x322e");
+        emit("MOV R11,0x60ea");
         emit("ST.H R11[0x0],R8");
         padTo(0x80019d98L);
         emit("LDM SP++,R7,R9,R10,R11,R12,LR");
@@ -1034,7 +1034,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x80019da8L);
         emit("STM --SP,R0,R7,R9,R10,R11,R12,LR");
         emit("MOV R7,SP");
-        emit("MOV R11,0x322e");
+        emit("MOV R11,0x60ea");
         emit("LD.SH R11,R11[0x0]");
         emit("CP.W R11,0x30");
         emit("BR{lt} 0x80019df0");
@@ -1061,7 +1061,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R9,R12");
-        emit("MOV R10,0x322a");
+        emit("MOV R10,0x60e6");
         emit("LD.SH R10,R10[0x0]");
         emit("CP.W R10,0x30");
         emit("BR{ge} 0x80019e18");
@@ -1336,7 +1336,7 @@ public class AssemblePressureFix extends GhidraScript {
         // indefinitely by a fast arp whose steps land inside the window.
         begin(0x8001a268L);
         word(0x800077f8L); // real pulse-high routine
-        emit("MOV R8,0x3232");
+        emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x8001a27a");
@@ -1353,7 +1353,7 @@ public class AssemblePressureFix extends GhidraScript {
         //                    (called from the note-on wrapper, returns -1);
         //   applier_plus   — runs the tuning applier then watches state+0x340
         //                    for the latch->off/regular edge (prev byte at
-        //                    RAM 0x3233) and clears all held flags + count.
+        //                    RAM 0x60ef) and clears all held flags + count.
         // Latch mode v2 (restored — the earlier symptom was factory
         // polyphonic-MIDI release semantics, not the latch).
         begin(0x8001a280L);
@@ -2208,17 +2208,17 @@ public class AssemblePressureFix extends GhidraScript {
         // pulse, and a vibrato depth that clamps to its minimum.  This must
         // stay ahead of the latch section below, which loads the switch
         // position into R8 and so ends the run of zero stores.
-        emit("MOV R9,0x3228");
+        emit("MOV R9,0x60e4");
         emit("ST.H R9[0x0],R8");        // tuning-apply guard
-        emit("ST.H R9[0x2],R8");        // 0x322a arp knob 2 latch
-        emit("ST.H R9[0x6],R8");        // 0x322e arp knob 3 latch
-        emit("ST.B R9[0xa],R8");        // 0x3232 deferred-pulse countdown
-        emit("ST.H R9[0xc],R8");        // 0x3234 vibrato knob latch
+        emit("ST.H R9[0x2],R8");        // 0x60e6 arp knob 2 latch
+        emit("ST.H R9[0x6],R8");        // 0x60ea arp knob 3 latch
+        emit("ST.B R9[0xa],R8");        // 0x60ee deferred-pulse countdown
+        emit("ST.H R9[0xc],R8");        // 0x60f0 vibrato knob latch
         if (feature("arp_latch")) {
             emit("LD.UB R8,R10[0x340]");
             emit("MOV R9,0x608e");
             emit("ST.B R9[0x0],R8");
-            emit("MOV R9,0x3233");
+            emit("MOV R9,0x60ef");
             emit("ST.B R9[0x0],R8");
         }
         // Commit the marker only after all dependent state is coherent.
@@ -2300,7 +2300,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
         // Pressure scales the effective knob from one-half to full value.
-        // Runs at 200 Hz from applier_plus. RAM: 0x3234 knob latch
+        // Runs at 200 Hz from applier_plus. RAM: 0x60f0 knob latch
         // (edit-gated — knob 4 in edit still sets the pressure curve),
         // 0x6024 LFO phase, 0x6026 smoothed depth (steps +-1/scan, ~65 ms
         // swell), 0x6028 signed output offset in pitch units.
@@ -2312,10 +2312,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R8,0x1");
         emit("BR{eq} 0x8001a370");
         emit("LD.SH R8,R10[0x310]");
-        emit("MOV R9,0x3234");
+        emit("MOV R9,0x60f0");
         emit("ST.H R9[0x0],R8");
         padTo(0x8001a370L);
-        emit("MOV R9,0x3234");
+        emit("MOV R9,0x60f0");
         emit("LD.SH R11,R9[0x0]");
         emit("CP.W R11,0x30");
         emit("BR{ge} 0x8001a384");
@@ -2410,7 +2410,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Per-scan housekeeping (chained from applier_plus):
         //   (a) run the shared first-use bootstrap before reading custom RAM;
         //   (b) latch-exit watch: on state+0x340 leaving 1 (prev at RAM
-        //       0x3233) clear the held count and all 29 held flags;
+        //       0x60ef) clear the held count and all 29 held flags;
         begin(0x8001a480L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -2423,7 +2423,7 @@ public class AssemblePressureFix extends GhidraScript {
             // Mirror the latch position where the blend can read it cheaply.
             emit("MOV R9,0x608e");
             emit("ST.B R9[0x0],R8");
-            emit("MOV R11,0x3233");
+            emit("MOV R11,0x60ef");
             emit("LD.UB R9,R11[0x0]");
             emit("ST.B R11[0x0],R8");
             emit("CP.W R9,0x1");
@@ -2565,7 +2565,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.B R10[0x6a],R9");
         emit("MOV R11,0xa5a0");
         emit("ADD R11,R8");
-        emit("MOV R9,0x3228");
+        emit("MOV R9,0x60e4");
         emit("LD.UH R12,R9[0x0]");
         emit("CP.W R12,R11");
         emit("BR{ne} 0x80019a80");
@@ -2664,7 +2664,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Hook: replace the factory pitch-DAC store and last-sent mirror with
         // a call into the remap.  The 0..0xfff clamp still runs just before.
         // After the remap stores the fresh pitch to DAC slot 2, fire any
-        // pulse deferred by the flag at RAM 0x3232 — the trigger then always
+        // pulse deferred by the flag at RAM 0x60ee — the trigger then always
         // rises with the correct pitch already in the DAC buffer (the arp
         // advance runs at 1 kHz but pitch only updates here at 200 Hz; the
         // factory called the pulse routine immediately, shipping the new
@@ -2688,7 +2688,7 @@ public class AssemblePressureFix extends GhidraScript {
         // the up-to-one this hook already imposes.  It also cannot help an arp
         // whose steps are closer together than the countdown, which drops
         // triggers rather than delaying them — see the config note.
-        emit("MOV R8,0x3232");
+        emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x80003256");      // nothing pending

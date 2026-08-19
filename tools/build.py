@@ -620,16 +620,20 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 # a cave writing into another's state is invisible in the patch bytes, since
 # the addresses only exist as immediates.
 RAM_REGIONS = [
-    # Repurposed cells inside the factory's own 16-tap pressure history
-    # (0x3216..0x3235).  That array is dead: we replaced the filter, and
-    # pitch_clamp_skip_1 jumps over every instruction that touched it.  See
-    # docs/FIRMWARE_CHANGES.md — disabling that patch takes these back.
-    (0x3228, 0x322A, "tuning-apply guard"),
-    (0x322A, 0x322C, "arp knob 2 latch"),
-    (0x322E, 0x3230, "arp knob 3 latch"),
-    (0x3232, 0x3233, "deferred-pulse countdown, in scans"),
-    (0x3233, 0x3234, "previous switch position"),
-    (0x3234, 0x3236, "vibrato knob latch"),
+    # These used to sit inside the factory's own 16-tap pressure history at
+    # 0x3216..0x3235, which was only free because pitch_clamp_skip_1 jumped
+    # over the filter that shifts it.  That made the skip load-bearing and
+    # meant the factory filter could never come back, however the options
+    # were set.  The block moved here whole, keeping its relative offsets:
+    # the initialiser addresses it as base+2/+6/+a/+c.
+    (0x60E4, 0x60E6, "tuning-apply guard"),
+    (0x60E6, 0x60E8, "arp knob 2 latch"),
+    (0x60E8, 0x60EA, "arp last countdown"),
+    (0x60EA, 0x60EC, "arp knob 3 latch"),
+    (0x60EC, 0x60EE, "arp gate threshold"),
+    (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
+    (0x60EF, 0x60F0, "previous switch position"),
+    (0x60F0, 0x60F2, "vibrato knob latch"),
     (0x6000, 0x6021, "arp press-order list"),
     (0x6024, 0x6026, "vibrato LFO phase"),
     (0x6026, 0x6028, "vibrato smoothed depth"),
@@ -1057,6 +1061,13 @@ def main() -> None:
         for name in ("pressure_fn_pool", "pressure_float_helper_pool",
                      "knob1_pool", "pressure_gain_nop"):
             blocks[name] = False
+        # The clamp skips jump over the factory's own 16-tap pressure filter.
+        # They used to be unconditional, so "pressure off" still ran without
+        # that filter and without ours - neither factory nor Rewired.  The
+        # cells that made the skip necessary have moved out of the array, so
+        # it can go with the rest of the pressure work.
+        blocks["pitch_clamp_skip_1"] = False
+        blocks["pitch_clamp_skip_2"] = False
 
     # No Scala file supplied means no tuning to switch between, so the edit
     # keys and their LEDs stay factory.  Both key blocks overwrite factory code
@@ -1095,6 +1106,12 @@ def main() -> None:
     if get(cfg, "arp.switch") == "latch":
         blocks["pitch_target_blend_hook"] = True
         blocks["blend_offset_apply"] = True
+    else:
+        # The factory's long-hold on the arp switch toggles polyphonic MIDI.
+        # We suppress it so the edit-mode setting has one owner, but that is
+        # only needed while we own the switch: with the factory arp switch
+        # back, its long-hold comes back with it.
+        blocks["poly_arp_independence"] = False
 
     # How far apart two derived pitches may be and still count as the same
     # note.  Both sides of the toggle's match are built from the transpose at
