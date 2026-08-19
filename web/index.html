@@ -23,7 +23,7 @@
       <div class="danger">
         <h2>⚠ READ THIS BEFORE YOU FLASH ANYTHING</h2>
         <p><strong>This firmware is for the Buchla 218e V3 only.</strong>
-          It won't work on the 218, the 218r, the 218e V1 or V2, or any other touchplate
+          It won’t work on the 218, the 218r, the 218e V1 or V2, or any other touchplate
           controller.</p>
         <p><strong>Using this tool and firmware is entirely at your own risk.</strong> This is an experimental,
           unofficial firmware, not made or supported by Buchla. Flashing this will probably void your warranty. It has been tested on
@@ -92,7 +92,7 @@
           <label class="row opt opt-toggle lead">
               <input type="checkbox" id="useCal">
               <span><span class="t">Enable per-note oscillator calibration</span><br>
-                <span class="d">Corrects your 208's tracking so the keyboard plays in tune across the whole range. This will make any other oscillator play more out of tune.</span>
+                <span class="d">Corrects your 208’s tracking so the keyboard plays in tune across the whole range. This will make any other oscillator play more out of tune.</span>
           </label>
 
 
@@ -137,7 +137,7 @@
         <div class="group">
           <h3>Alternate tunings</h3>
           <p class="d muted section-intro">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
-          <p class="d muted section-intro">Each scale is shifted so A sits at the same pitch in every slot so switching tuning doesn't need retuning. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
+          <p class="d muted section-intro">Each scale is shifted so A sits at the same pitch in every slot so switching tuning doesn’t need retuning. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
 
           <label class="row opt opt-toggle"><input type="checkbox" id="useTunings">
             <span>
@@ -173,15 +173,15 @@
           <li>Download and extract the built package for your operating system.</li>
           <li>Connect the 218e, directly rather than through an unpowered hub:
             <div>
-              <div><strong>Standalone LEM218</strong> — USB-C to the computer, power connected, switched on.</div>
-              <div><strong>218e module</strong> — USB-B from the 5xIO module that carries its USB and MIDI.</div>
+              <div><strong>Standalone LEM218</strong>: USB-C to the computer, power connected, switched on.</div>
+              <div><strong>218e module</strong>: USB-B from the 5xIO module that carries its USB and MIDI.</div>
             </div>
           </li>
           <li>Power on the 218e.</li>
           <li>Run the flasher and follow their instructions:
             <div>
-              <div><strong>macOS</strong> — a download is quarantined and unsigned, so macOS blocks it.<br>Dequarantine the whole folder in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>.</div>
-              <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
+              <div><strong>macOS</strong>: a download is quarantined and unsigned, so macOS blocks it.<br>Dequarantine the whole folder in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>.</div>
+              <div><strong>Windows</strong>: double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
             </div>
           </li>
         </ol>
@@ -192,7 +192,7 @@
           </dl>
         </div>
         <div class="winsetup">
-          <h3><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg> Windows only — the first flash pauses for a driver</h3>
+          <h3><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg> Windows only: the first flash pauses for a driver</h3>
           <p>Partway through the flash, the flasher will stop and open <strong>Zadig</strong> at the one moment it can see the device. Do the following steps in it:</p>
           <ol>
             <li><strong>Options → List All Devices</strong></li>

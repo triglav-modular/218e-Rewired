@@ -369,7 +369,7 @@ label.opt.row>span {
 .mono {
   font-family: var(--mono);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   word-break: break-all;
 }
 .ok {

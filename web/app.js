@@ -94,7 +94,7 @@
             } else {
                 state.factoryText = text;
                 $('drop').className = 'drop ok';
-                msg($('fileMsg'), 'ok', 'Factory image verified — SHA-256 matches. ' +
+                msg($('fileMsg'), 'ok', 'Factory image verified: SHA-256 matches. ' +
                     'It stays on this machine.');
             }
             refresh();
@@ -202,7 +202,7 @@
                     shift = '  ' + (off >= 0 ? '+' : '') + off.toFixed(2) + 'c';
                 } catch (e) { /* already reported on load */ }
                 what.textContent = entry.name;
-                what.title = entry.name + (shift ? ' — anchored on A by' + shift : '');
+                what.title = entry.name + (shift ? ': anchored on A by' + shift : '');
                 if (shift) {
                     var tag = document.createElement('span');
                     tag.className = 'muted';
@@ -265,7 +265,7 @@
                     // obvious which file it was.
                     BUILDLIB.parseScala(entry.text, entry.name);
                     var free = state.slots.indexOf(null);
-                    if (free < 0) problems.push(f.name + ' — all three slots are full');
+                    if (free < 0) problems.push(f.name + ': all three slots are full');
                     else state.slots[free] = entry;
                 } catch (err) {
                     problems.push(err.message);
@@ -340,7 +340,7 @@
                 input.type = 'number';
                 input.step = '0.01';
                 input.value = measured[n].toFixed(2);
-                input.title = noteName(n) + ' — key ' + keyLabel(n);
+                input.title = noteName(n) + ', key ' + keyLabel(n);
                 if (measured[n] !== 0) input.className = 'set';
                 input.addEventListener('change', function () {
                     measured[n] = parseFloat(input.value) || 0;
@@ -367,7 +367,7 @@
             if (/DAC range/.test(e.message)) {
                 hint = '\n\nThe corrected pitch runs past what the DAC can produce. That ' +
                        'usually means the lowest C was not tuned in before measuring, so ' +
-                       'every reading carries the same offset — retune it and measure again.';
+                       'every reading carries the same offset. Retune it and measure again.';
             } else if (/monotonic/.test(e.message)) {
                 hint = '\n\nThe corrected pitch goes backwards somewhere: a note ends up ' +
                        'lower than the one below it. Check for a reading with the wrong ' +
@@ -460,7 +460,7 @@
             msg($('calMsg'), found ? 'ok' : 'bad',
                 found ? 'Loaded ' + found + ' rows from ' + f.name
                       : 'No usable rows in ' + f.name +
-                        ' — expected Semitone;Note;Key;Offset_Cents;Source');
+                        ': expected Semitone;Note;Key;Offset_Cents;Source');
         };
         r.readAsText(f);
     });
@@ -659,7 +659,7 @@
                 }, function (e) {
                     // Name the file: "Load failed" on its own says nothing about
                     // which of eleven requests gave up.
-                    throw new Error(t[0] + ' — ' + (e && e.message ? e.message : e));
+                    throw new Error(t[0] + ': ' + (e && e.message ? e.message : e));
                 });
             })).then(function (tools) {
                 btn.querySelector('span').textContent = 'Packing…';
@@ -669,7 +669,7 @@
                 if (offline) {
                     msg($('buildMsg'), 'warn',
                         'This page is open from a file rather than a web server, so the ' +
-                        'browser will not let it read the flashing tools — every file:// ' +
+                        'browser will not let it read the flashing tools. Every file:// ' +
                         'address counts as a separate origin.\n\nThe download has the ' +
                         'firmware and the scripts. Take the tools from the repository, ' +
                         'or use the hosted page for a complete one:\n' +
@@ -687,7 +687,7 @@
                 btn.querySelector('span').textContent = label; btn.disabled = false;
                 msg($('buildMsg'), 'bad',
                     'Could not assemble the download: ' + e.message +
-                    '\n\nThe firmware itself built fine — this is the packaging step.');
+                    '\n\nThe firmware itself built fine. This is the packaging step.');
             });
         });
     });
