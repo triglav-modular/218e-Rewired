@@ -91,8 +91,8 @@ output_hex     = "firmware/218eV3_v369_Rewired_DFU.hex"
 # The updaters refuse to flash an image whose checksum they do not know.  The
 # build rewrites their EXPECTED_SHA256 and the instructions they print, so a
 # flasher can never describe or install a build it was not generated for.
-updaters       = ["Program218e_v3_Rewired.command",
-                  "Program218e_v3_Rewired.bat"]
+updaters       = ["Program218e_v3_Rewired_macOS.command",
+                  "Program218e_v3_Rewired_Windows.bat"]
 
 # Human-readable version of this firmware.  The image's real identity is its
 # SHA-256, which is derived and cannot drift; this is the part people can say

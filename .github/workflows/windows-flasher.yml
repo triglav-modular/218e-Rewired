@@ -12,7 +12,7 @@ name: Windows flasher
 on:
   push:
     paths:
-      - 'Program218e_v3_Rewired.bat'
+      - 'Program218e_v3_Rewired_Windows.bat'
       - 'windows/support/**'
       - '.github/workflows/windows-flasher.yml'
   workflow_dispatch:
@@ -55,7 +55,7 @@ jobs:
         shell: cmd
         run: |
           (echo YES)> answers0.txt
-          CALL Program218e_v3_Rewired.bat < answers0.txt > out.txt 2>&1
+          CALL Program218e_v3_Rewired_Windows.bat < answers0.txt > out.txt 2>&1
           type out.txt
           findstr /C:"Looked in firmware" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
           echo PASS: refused with the expected message
@@ -83,7 +83,7 @@ jobs:
           echo :00000001FF>> "%USERPROFILE%\Downloads\custom.hex"
           rem Refuse: consent yes, but do NOT type FLASH.
           (echo YES& echo.& echo notflash)> ans.txt
-          CALL Program218e_v3_Rewired.bat < ans.txt > out3.txt 2>&1
+          CALL Program218e_v3_Rewired_Windows.bat < ans.txt > out3.txt 2>&1
           type out3.txt
           findstr /C:"newest valid" out3.txt >NUL || (echo FAILED: did not offer the image & exit /b 1)
           findstr /C:"Not confirmed" out3.txt >NUL || (echo FAILED: did not refuse without FLASH & exit /b 1)
@@ -103,7 +103,7 @@ jobs:
           )
           setlocal EnableDelayedExpansion
           set "SHA=!SHA: =!"
-          powershell -Command "(Get-Content 'Program218e_v3_Rewired.bat' -Raw) -replace '(?<=EXPECTED_SHA256=)[0-9a-f]{64}', '!SHA!' | Set-Content 'ci.bat'"
+          powershell -Command "(Get-Content 'Program218e_v3_Rewired_Windows.bat' -Raw) -replace '(?<=EXPECTED_SHA256=)[0-9a-f]{64}', '!SHA!' | Set-Content 'ci.bat'"
           endlocal
           rem Answers come from a file, not a pipe: a piped line is consumed by
           rem the first subshell the script spawns, so SET /P then reads EOF and

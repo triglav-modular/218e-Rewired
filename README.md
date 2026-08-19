@@ -134,8 +134,8 @@ Then run the flasher for your platform:
 
 | Platform | Flasher |
 |---|---|
-| macOS | `Program218e_v3_Rewired.command` |
-| Windows | `Program218e_v3_Rewired.bat` |
+| macOS | `Program218e_v3_Rewired_macOS.command` |
+| Windows | `Program218e_v3_Rewired_Windows.bat` |
 
 **Each platform needs one thing set up first, or the flash cannot work:**
 
