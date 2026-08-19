@@ -460,7 +460,7 @@ IF NOT "!FUSE_VALUE!"=="1" (
 CALL :ok ISP_FORCE=1 - an interrupted session boots back into DFU
 
 ECHO.
-ECHO   Ready to erase the application flash.
+ECHO   Ready to erase the application flash and write the firmware.
 ECHO.
 ECHO   From here on, if anything goes wrong - including closing this window or
 ECHO   pressing Ctrl-C - the instrument stays in DFU mode, because START is

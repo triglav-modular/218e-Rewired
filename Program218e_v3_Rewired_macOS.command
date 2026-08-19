@@ -606,7 +606,7 @@ isp_force_value="$(read_fuse_decimal ISP_FORCE "ISP Force")"
 log "Verified ISP_FORCE=1: an interrupted session should boot back into DFU."
 
 echo
-read -r -p "Press return to begin the chip erase. "
+read -r -p "Press return to begin the chip erase and flash. "
 step "Erasing the application flash"
 ERASE_STARTED=1
 spin "erasing…" "$DFUPATH" at32uc3b1256 erase || fail "Chip erase failed."
