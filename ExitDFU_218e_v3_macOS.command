@@ -14,7 +14,7 @@ elif [ -d "$SCRIPT_DIR/support" ]; then
     RUNTIME_DIR="$SCRIPT_DIR"
 else
     echo "Could not find the mac/support directory next to this script."
-    echo "Keep this command inside the 218e-v3-Rewired package."
+    echo "Keep this command inside the 218e-Rewired package."
     exit 1
 fi
 DFU="$RUNTIME_DIR/support/dfu/bin/dfu-programmer"

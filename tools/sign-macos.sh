@@ -135,7 +135,7 @@ Buchla's flashing kit:
     https://buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip
 NOTE
 
-DMG="$REPO/build/218e-v3-Rewired.dmg"
+DMG="$REPO/build/218e-Rewired.dmg"
 mkdir -p "$REPO/build"
 rm -f "$DMG"
 hdiutil create -volname "218e v3 Rewired" -srcfolder "$PKG" \

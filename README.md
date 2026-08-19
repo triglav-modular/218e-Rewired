@@ -57,7 +57,7 @@ Then run the flasher for your platform from this repository:
 
 Only for changing the firmware itself — adding options, editing the assembler
 source, or reproducing an image independently. To *use* the firmware, build it
-on [the page](https://triglav-modular.github.io/218e-v3-Rewired/) instead;
+on [the page](https://triglav-modular.github.io/218e-Rewired/) instead;
 both toolchains produce identical images from the same options.
 
 ```bash

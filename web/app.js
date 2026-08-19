@@ -612,9 +612,9 @@
             'It was built from a page opened as a file rather than served, and a',
             'browser will not read neighbouring files in that case. Copy these',
             'files into a checkout of',
-            '  https://github.com/triglav-modular/218e-v3-Rewired',
+            '  https://github.com/triglav-modular/218e-Rewired',
             'and run the flasher from there, or take the download again from',
-            '  https://triglav-modular.github.io/218e-v3-Rewired/',
+            '  https://triglav-modular.github.io/218e-Rewired/',
             'which packs everything.', ''
         ] : [];
         return ['218e V3 Rewired ' + GEN.version, '']
@@ -671,7 +671,7 @@
                         'address counts as a separate origin.\n\nThe download has the ' +
                         'firmware and the scripts. Take the tools from the repository, ' +
                         'or use the hosted page for a complete one:\n' +
-                        'https://triglav-modular.github.io/218e-v3-Rewired/');
+                        'https://triglav-modular.github.io/218e-Rewired/');
                 }
                 return ZIP.build(files);
             }).then(function (blob) {

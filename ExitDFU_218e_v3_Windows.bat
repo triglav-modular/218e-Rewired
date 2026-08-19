@@ -14,7 +14,7 @@ IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
     SET "TOOLS=%SCRIPT_DIR%support"
 ) ELSE (
     ECHO Could not find windows\support\dfu-programmer.exe next to this script.
-    ECHO Keep this script inside the 218e-v3-Rewired package.
+    ECHO Keep this script inside the 218e-Rewired package.
     PAUSE
     EXIT /B 1
 )
