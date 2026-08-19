@@ -955,7 +955,7 @@ strong {
   background: var(--panel2);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 14px 22px 14px 58px;
+  padding: 14px 22px 14px 50px;
   margin: 0 0 10px;
 }
 .steps > li:last-child {
@@ -967,7 +967,7 @@ strong {
 .steps > li::before {
   content: counter(step);
   position: absolute;
-  left: 20px;
+  left: 14px;
   top: 17px;
   width: 24px;
   height: 24px;
