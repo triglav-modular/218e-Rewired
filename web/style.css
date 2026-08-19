@@ -972,7 +972,7 @@ strong {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 14px 22px 14px 50px;
-  margin: 0 0 10px;
+  margin: 0 0 14px;
 }
 .steps > li:last-child {
   margin-bottom: 0;
