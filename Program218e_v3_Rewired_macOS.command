@@ -40,8 +40,7 @@ fi
 FIRMWARE_DIR="$PACKAGE_ROOT/firmware"
 FIRMWARE_NAME="218eV3_v369_Rewired_DFU.hex"
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
-DFU_BUNDLED="$RUNTIME_DIR/support/buchla-dfu/dfu/dfu-programmer"
-DFU_SYSTEM="$RUNTIME_DIR/support/dfu-programmer"
+DFU_BUNDLED="$RUNTIME_DIR/support/dfu/bin/dfu-programmer"
 
 # Colour only when attached to a terminal, so the log file stays plain text.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -475,13 +474,12 @@ log "Using $FIRMWARE"
 # The bundled dfu-programmer is universal and carries its own libusb, so it
 # runs natively on both architectures with nothing installed.  Buchla's command
 # preferred a Homebrew build when /usr/local/opt/libusb existed, which only
-# mattered while the bundled one was x86_64-only; a system copy is still used if
-# the bundled one is missing.
-if [ -x "$DFU_BUNDLED" ]; then
-    DFUPATH="$DFU_BUNDLED"
-else
-    DFUPATH="$DFU_SYSTEM"
-fi
+# mattered while the bundled one was x86_64-only.  There is no longer a system
+# fallback: the one that used to sit here was Buchla's x86_64 1.0.0, linked
+# against /usr/local/opt/libusb, so it could only ever have loaded on an Intel
+# Mac with Homebrew libusb installed.  Failing here with the path named beats
+# falling through to a binary that cannot start.
+DFUPATH="$DFU_BUNDLED"
 [ -x "$DFUPATH" ] || fail "dfu-programmer is missing or not executable: $DFUPATH"
 log "Using dfu-programmer: $DFUPATH"
 

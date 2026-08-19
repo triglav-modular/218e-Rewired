@@ -94,12 +94,10 @@ rm -rf "$PROBE"
 # both required for notarisation; --force replaces the ad-hoc signatures these
 # binaries already carry.
 BINARIES=(
-    "mac/support/dfu-programmer"
     "mac/support/sendmidi"
     "mac/support/lem218-pressure-readout"
-    "mac/support/buchla-dfu/dfu/dfu-programmer"
-    "mac/support/buchla-dfu/Frameworks/libusb-1.0.0.dylib"
-    "mac/support/buchla-dfu/Frameworks/libusb-0.1.4.dylib"
+    "mac/support/dfu/bin/dfu-programmer"
+    "mac/support/dfu/Frameworks/libusb-1.0.0.dylib"
 )
 for rel in "${BINARIES[@]}"; do
     path="$REPO/$rel"

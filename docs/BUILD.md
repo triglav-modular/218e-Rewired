@@ -187,7 +187,7 @@ sets `ISP_FORCE`, so the bootloader keeps returning to DFU until it is told to
 start.
 
 ```bash
-mac/support/dfu-programmer at32uc3b1256 start
+mac/support/dfu/bin/dfu-programmer at32uc3b1256 start
 ```
 
 If the erase had already happened there is nothing to start — run the flasher

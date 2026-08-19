@@ -549,10 +549,10 @@
             zip: 'Rewired-macOS.zip',
             tools: [
                 ['kit/mac/support/sendmidi', 'mac/support/sendmidi', true],
-                ['kit/mac/support/buchla-dfu/dfu/dfu-programmer',
-                 'mac/support/buchla-dfu/dfu/dfu-programmer', true],
-                ['kit/mac/support/buchla-dfu/Frameworks/libusb-1.0.0.dylib',
-                 'mac/support/buchla-dfu/Frameworks/libusb-1.0.0.dylib', false],
+                ['kit/mac/support/dfu/bin/dfu-programmer',
+                 'mac/support/dfu/bin/dfu-programmer', true],
+                ['kit/mac/support/dfu/Frameworks/libusb-1.0.0.dylib',
+                 'mac/support/dfu/Frameworks/libusb-1.0.0.dylib', false],
                 ['kit/tools/validate_hex.py', 'tools/validate_hex.py', false]
             ],
             scripts: function (r) { return [

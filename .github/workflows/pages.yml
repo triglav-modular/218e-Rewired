@@ -77,12 +77,12 @@ jobs:
           # able to fetch them.  No VC_redist and no msvcp140.dll: our
           # dfu-programmer links its runtime statically, so there is nothing
           # to install.  Nor the pressure readout, which is not flashing.
-          mkdir -p _site/kit/mac/support/buchla-dfu/dfu \
-                   _site/kit/mac/support/buchla-dfu/Frameworks \
+          mkdir -p _site/kit/mac/support/dfu/bin \
+                   _site/kit/mac/support/dfu/Frameworks \
                    _site/kit/windows/support _site/kit/tools
           cp mac/support/sendmidi                                _site/kit/mac/support/
-          cp mac/support/buchla-dfu/dfu/dfu-programmer           _site/kit/mac/support/buchla-dfu/dfu/
-          cp mac/support/buchla-dfu/Frameworks/libusb-1.0.0.dylib _site/kit/mac/support/buchla-dfu/Frameworks/
+          cp mac/support/dfu/bin/dfu-programmer            _site/kit/mac/support/dfu/bin/
+          cp mac/support/dfu/Frameworks/libusb-1.0.0.dylib _site/kit/mac/support/dfu/Frameworks/
           for f in dfu-programmer.exe sendmidi.exe zadig-2.8.exe; do
             cp "windows/support/$f" _site/kit/windows/support/
           done

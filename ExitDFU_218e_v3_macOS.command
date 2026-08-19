@@ -17,7 +17,7 @@ else
     echo "Keep this command inside the 218e-v3-Rewired package."
     exit 1
 fi
-DFU="$RUNTIME_DIR/support/buchla-dfu/dfu/dfu-programmer"
+DFU="$RUNTIME_DIR/support/dfu/bin/dfu-programmer"
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 
 echo "Looking for the 218e..."
