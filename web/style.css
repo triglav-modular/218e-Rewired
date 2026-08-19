@@ -131,11 +131,11 @@ body::before {
   margin: 0;
 }
 .banana {
-  width: 160px;
+  width: 140px;
   position: absolute;
   z-index: -3;
   height: auto;
-  top: 30px;
+  top: 40px;
   right: 30px;
   flex: 0 0 auto;
   display: block;
