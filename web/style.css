@@ -71,6 +71,7 @@
 }
 * {
   box-sizing: border-box;
+  font-variant: tabular-nums;
 }
 /* No widows or orphans.  text-wrap inherits, so pretty goes on the root and
    reaches every block on the page - including ones added later, which a list
