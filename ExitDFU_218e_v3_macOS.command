@@ -20,6 +20,36 @@ fi
 DFU="$RUNTIME_DIR/support/dfu/bin/dfu-programmer"
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 
+# Quarantine has to go before either tool is run.  macOS does not fail a
+# quarantined unsigned binary, it holds it behind a dialog, so every probe
+# below would come back empty and this script would blame the cable for what
+# is really Gatekeeper.  Reading the attribute never blocks.
+for candidate in "$DFU" "$SENDMIDI"; do
+    if xattr -p com.apple.quarantine "$candidate" >/dev/null 2>&1; then
+        echo "The tools are quarantined, because this package was downloaded"
+        echo "rather than cloned.  macOS will refuse to run them, so that has to"
+        echo "be cleared before anything can talk to the instrument."
+        echo
+        read -r -p "Clear it now? [Y/n] " unquarantine
+        case "$unquarantine" in
+            [nN]*)
+                echo "Then clear it yourself and run this again:"
+                echo "  xattr -dr com.apple.quarantine \"$RUNTIME_DIR\""
+                exit 1
+                ;;
+        esac
+        xattr -dr com.apple.quarantine "$RUNTIME_DIR" 2>/dev/null
+        xattr -dr com.apple.quarantine "$SCRIPT_DIR" 2>/dev/null
+        if xattr -p com.apple.quarantine "$DFU" >/dev/null 2>&1; then
+            echo "Could not clear it.  Approve the tools in System Settings >"
+            echo "Privacy & Security, then run this again."
+            exit 1
+        fi
+        echo "Quarantine cleared."
+        break
+    fi
+done
+
 echo "Looking for the 218e..."
 
 if [ -x "$SENDMIDI" ] && "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
