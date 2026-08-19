@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web",
+      "name": "builder",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8123", "--directory", "web"],
-      "port": 8123
+      "runtimeArgs": ["-m", "http.server", "8731", "--directory", "web"],
+      "port": 8731
     }
   ]
 }

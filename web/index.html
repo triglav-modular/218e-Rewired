@@ -51,6 +51,14 @@ table{border-collapse:collapse;width:100%;font-size:12px;margin-top:10px}
 th,td{padding:3px 6px;text-align:right;border-bottom:1px solid var(--line)}
 th{color:var(--muted);font-weight:600;text-align:right;position:sticky;top:0;background:var(--panel)}
 td.note{text-align:left;font-family:var(--mono)}
+/* Column 1 reads as a keyboard: naturals pale, accidentals dark, so a row is
+   found by the shape of the run rather than by reading every label. */
+td.note.white{background:#f2efe9;color:#1b1a18}
+td.note.black{background:#26241f;color:#e8e3da}
+:root:not([data-theme="light"]) td.note.white,
+[data-theme="dark"] td.note.white{background:#e8e3da;color:#1b1a18}
+:root:not([data-theme="light"]) td.note.black,
+[data-theme="dark"] td.note.black{background:#141310;color:#cfc8bd}
 td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-align:right;
   border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink)}
 .scroll{max-height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
@@ -82,7 +90,7 @@ td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-al
 .winsetup p{margin:0 0 8px;font-size:14px}
 .winsetup ol{margin:0 0 10px;padding-left:22px;font-size:14px;line-height:1.85}
 .winsetup p:last-child{margin-bottom:0}
-.prereq{border:1px solid var(--warn);border-radius:8px;padding:14px 16px;margin:14px 0 0;
+.prereq{border:2px solid var(--warn);border-radius:8px;padding:14px 16px;margin:14px 0 0;
   background:color-mix(in srgb,var(--warn) 10%,transparent)}
 .prereq h3{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--warn)}
 .prereq dl{margin:0;font-size:13px;line-height:1.6}
@@ -90,6 +98,14 @@ td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-al
 .prereq dt:first-of-type{margin-top:0}
 .prereq dd{margin:2px 0 0}
 svg{width:100%;height:120px;margin-top:10px;overflow:visible}
+#build, #download {
+    width: 49%;
+    height: 80px;
+    box-sizing: border-box;
+}
+a {
+    color: var(--accent);
+}
 </style>
 </head>
 <body>
@@ -126,36 +142,83 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </section>
 
 <section>
-  <h2>2 · Options</h2>
+  <h2>2 · Arpeggiator</h2>
   <label class="opt"><input type="checkbox" id="latching_arp" checked>
     <span><span class="t">Latching arpeggiator</span><br>
-    <span class="d">The arp switch becomes latch / regular / off. Latched notes are pitches, so one key held in three octaves stacks three notes.</span></span></label>
+    <span class="d">The arp switch becomes <strong>latch</strong>  — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
   <label class="opt"><input type="checkbox" id="remap_knobs" checked>
-    <span><span class="t">Remap knobs 1–4 to arpeggiator and vibrato controls</span><br>
-    <span class="d">Outside edit mode: note order, rhythm, random octaves, vibrato. Edit-mode knobs are unchanged.</span></span></label>
-  <label class="opt"><input type="checkbox" id="pressure_fix" checked>
-    <span><span class="t">Pressure response fix</span><br>
-    <span class="d">A gentler pressure curve, for more expressive playing. Pressure is combined across all held keys instead of following the last one, with per-key proximity rejection.</span></span></label>
-  <label class="opt"><input type="checkbox" id="pressure_portamento" checked>
-    <span><span class="t">Pressure-based portamento</span><br>
-    <span class="d">Notes snap, and pitch moves between held notes as their relative pressure moves.</span></span></label>
-  <div style="padding-top:14px">
-    <span class="t" style="font-weight:600">Volts per octave</span>
-    <div class="d muted" style="font-size:13px">1.2 is the standard Buchla scaling. 1 V/oct is for other gear. The 208 needs retrimming after a change.</div>
-    <div class="row" style="margin-top:8px">
-      <div class="seg" id="vpo">
-        <button data-v="1.2" aria-pressed="true">1.2 V/oct <span class="tag">Buchla</span></button>
-        <button data-v="1.0" aria-pressed="false">1 V/oct</button>
-      </div>
-    </div>
-  </div>
+    <span><span class="t">Remap the preset knobs 1–4 to arpeggiator and vibrato controls</span><br>
+    <span class="d">Outside edit mode: note order, rhythm, random octaves, vibrato.</span></span></label>
+
 </section>
 
 <section>
-  <h2>3 · Alternate tunings <span class="tag">optional</span></h2>
+  <h2>3 · Pressure</h2>
+  <label class="opt"><input type="checkbox" id="pressure_fix" checked>
+    <span><span class="t">Pressure response fix</span><br>
+    <span class="d">A gentler pressure curve, for more expressive playing.</span></span></label>
+  <label class="opt"><input type="checkbox" id="pressure_portamento" checked>
+    <span><span class="t">Pressure-based portamento</span><br>
+    <span class="d">Pitch moves between held notes as their relative pressure moves.</span></span></label>
+</section>
+
+<section>
+    <h2>4 · Keyboard scaling</h2>
+<div>
+  <span class="t" style="font-weight:600">Volts per octave</span>
+  <div class="row" style="margin-top:8px">
+    <div class="seg" id="vpo">
+      <button data-v="1.2" aria-pressed="true">1.2 V/oct<span class="tag">Buchla</span></button>
+      <button data-v="1.0" aria-pressed="false">1 V/oct <span class="tag">Eurorack</span></button>
+    </div>
+  </div>
+</div>
+
+
+<label class="row opt" style="gap:7px; font-weight:600; margin-top: 20px; margin-bottom: 10px;"><input type="checkbox" id="useCal"> <span>Per-note oscillator calibration</span></label>
+
+<p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208's tracking per semitone, so the keyboard plays in tune across the whole range. Enter what your tuner reads: <strong>how many cents sharp each note played:</strong> positive sharp, negative flat.</p>
+<p class="d muted" style="margin:0 0 10px;font-size:12px"><strong>Correcting the tuning for one oscillator will make any other oscillator play more out of tune, so this is only recommended if the keyboard is only ever played with one 208.</strong></p>
+
+<div id="calBody" style="display:none">
+<details style="margin:0 0 12px"><summary>How to measure your 208. Read this first!</summary>
+  <div style="font-size:13px;line-height:1.7;color:var(--muted);margin-top:8px">
+    <p style="margin:0 0 8px"><strong style="color:var(--ink)">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other. <strong>Measure against equal temperament.</strong></p>
+    <p style="margin:0 0 8px"><strong style="color:var(--ink)">2. Warm up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
+    <p style="margin:0 0 8px"><strong style="color:var(--ink)">3. Tune the lowest C.</strong> Octave switch at its lowest setting, hold the lowest C, and trim the 208 until a tuner reads it exactly in tune. Everything else is measured against this note.</p>
+    <p style="margin:0 0 8px"><strong style="color:var(--ink)">4. Play every note, note how far off it is.</strong> Work up from that C, changing octave as you run out of keys. Enter the tuner reading in cents: <span class="mono">+12</span> for 12 cents sharp, <span class="mono">−7</span> for 7 flat.</p>
+    <p style="margin:0 0 8px"><strong style="color:var(--ink)">5. Build, flash, check.</strong></p>
+    <p style="margin:0"></p>
+  </div>
+</details>
+
+
+<svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none" aria-hidden="true"></svg>
+<div class="row">
+<h4 style="margin-bottom: 0;">Enter offsets for the 65 playable notes</h4>
+  <div class="scroll" style="width: 100%; margin-bottom: 10px;"><table id="calTable">
+    <thead><tr><th style="text-align:left">Note</th><th>Key</th><th>Played sharp by (cents)</th></tr></thead>
+    <tbody></tbody></table></div>
+</div>
+<div class="row">
+
+  <button id="calPick">Load CSV…</button>
+  <button id="calSave">Save CSV</button>
+  <button id="calZero">Reset to zero</button>
+</div>
+<input type="file" id="calFile" accept=".csv" hidden>
+</div>
+<div id="calMsg"></div>
+
+
+</section>
+
+
+<section>
+  <h2>5 · Alternate tunings</h2>
   <p class="d muted" style="margin:0 0 12px;font-size:13px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
   <p class="d muted" style="margin:0 0 12px;font-size:12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
-  <label class="row" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
+  <label class="row opt" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
     <span><strong>Enable alternate tunings</strong> <span class="muted" style="font-size:12px">— off leaves the edit keys, LEDs and temperament as the factory shipped them</span></span></label>
   <div id="tuningsBody" style="display:none">
   <div class="row" style="margin-bottom:10px"><button id="sclPick">Add .scl files…</button>
@@ -167,41 +230,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </section>
 
 <section>
-  <h2>4 · Per-note oscillator calibration <span class="tag">optional</span></h2>
-  <p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208's tracking per semitone, so the keyboard plays in tune across its range. Enter what your tuner reads: <strong>how many cents sharp each note played:</strong> positive sharp, negative flat. The builder works out the correction; do not negate anything yourself.</p>
-  <p class="d muted" style="margin:0 0 10px;font-size:12px">Every 208 is different, so there is no useful default and this starts at zero. Measurements only apply at the volts-per-octave you took them at.</p>
-  <p class="d muted" style="margin:0 0 10px;font-size:12px"><strong>Correcting the tuning for one oscillator will make any other oscillator play more out of tune, so this is only recommended if the keyboard is only ever played with one 208.</strong></p>
-
-  <details style="margin:0 0 12px"><summary>How to measure your 208. Read this first!</summary>
-    <div style="font-size:13px;line-height:1.7;color:var(--muted);margin-top:8px">
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other. <strong>Measure against equal temperament.</strong>An alternate tuning's own intervals would read as error.</p>
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">2. Warm up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">3. Tune the lowest C.</strong> Octave switch at its lowest setting, hold the lowest C, and trim the 208 until a tuner reads it exactly in tune. Everything else is measured against this note.</p>
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">4. Play every note, note how far off it is.</strong> Work up from that C, changing octave as you run out of keys. Enter the tuner reading in cents: <span class="mono">+12</span> for 12 cents sharp, <span class="mono">−7</span> for 7 flat.</p>
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">5. Build, flash, check.</strong></p>
-      <p style="margin:0"></p>
-    </div>
-  </details>
-
-  <div class="row">
-    <label class="row" style="gap:7px"><input type="checkbox" id="useCal"> <span>Enable correction</span></label>
-    <button id="calPick">Load CSV…</button>
-    <button id="calSave">Save CSV</button>
-    <button id="calZero">Reset to zero</button>
-  </div>
-  <input type="file" id="calFile" accept=".csv" hidden>
-  <svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none" aria-hidden="true"></svg>
-  <details open><summary>Enter offsets for the 65 playable notes</summary>
-    <p class="d muted" style="font-size:12px;margin:8px 0 0">Only notes the keyboard can play, from its lowest C to the top of the octave switch's reach. The firmware's table runs past both ends; those entries are filled in from these.</p>
-    <div class="scroll"><table id="calTable">
-      <thead><tr><th style="text-align:left">Note</th><th>Key</th><th title="index into the firmware table">#</th><th>Played sharp by (cents)</th></tr></thead>
-      <tbody></tbody></table></div>
-  </details>
-  <div id="calMsg"></div>
-</section>
-
-<section>
-  <h2>5 · Build</h2>
+  <h2>6 · Build</h2>
   <div class="row">
     <button class="primary" id="build" disabled>Build firmware</button>
     <button id="download" disabled>Download .hex</button>
@@ -210,57 +239,50 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </section>
 
 <section>
-  <h2>6 · Flash it</h2>
-  <p class="d muted" style="margin:0 0 12px;font-size:13px">A script does the flashing, not this page. It checks the image, confirms the bootloader region is protected, and validates by read-back before letting the instrument leave DFU.</p>
-  <div class="winsetup">
-    <h3>⊞ Windows only — the first flash pauses for a driver</h3>
-    <p>Windows must bind the keyboard's DFU mode to the <strong>WinUSB</strong> driver, or the flasher cannot see the instrument. <strong>There is nothing to do in advance</strong> — the <span class="mono">AT32UC3B DFU</span> device does not exist until the keyboard is in DFU, partway through the flash. The flasher stops there and opens <strong>Zadig</strong> at the one moment it can see the device. In it:</p>
-    <ol>
-      <li>List empty? <strong>Options → List All Devices</strong></li>
-      <li>Select <strong>AT32UC3B DFU</strong> <span class="mono">(03EB 2FF6)</span></li>
-      <li>Set the right-hand box to <strong>WinUSB</strong>, press the button</li>
-    </ol>
-    <p><strong>If the button reads “Replace Driver”, press it anyway.</strong> That means an older Buchla kit left <span class="mono">libusb0</span> bound, which this flashing tool cannot use. Leaving it is the usual reason the keyboard goes into DFU and is then never found.</p>
-    <p class="muted" style="font-size:13px">Once per machine; it can pause a few seconds. Nothing was erased at that point, and the flash carries on afterwards. Everything needed ships with the package. <strong>macOS needs none of this</strong> — just run the flasher.</p>
-  </div>
-
-  <div class="prereq">
-    <h3>Also worth knowing</h3>
-    <dl>
-      <dt>Your system might warn about unsigned software</dt>
-      <dd>On macOS this is avoidable: get the package with <span class="mono">git clone</span> rather than downloading the ZIP, and there is no warning at all. A browser download marks every file as quarantined; a clone does not.</dd>
-      <dd style="margin-top:6px">If you did download it, macOS blocks the flasher and then <span class="mono">dfu-programmer</span> as being from an unidentified developer. Open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. The flasher spots the second one itself and offers to clear it. Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
-    </dl>
-  </div>
+  <h2>7 · Flash it</h2>
 
   <ol style="margin:12px 0;padding-left:20px;font-size:14px;line-height:1.9">
-    <li>Download the image above. Leaving it in Downloads is fine.</li>
+    <li>Download the <strong>.hex</strong> image above. Leaving it in Downloads is fine.</li>
     <li>Connect the 218e, directly rather than through an unpowered hub:
       <div style="margin-top:0px;font-size:13px">
         <div><strong>Standalone LEM218</strong> — USB-C to the computer, power connected, switched on.</div>
         <div><strong>218e module</strong> — USB-B from the 5xIO module that carries its USB and MIDI.</div>
       </div>
     </li>
-    <li style="margin-top:8px">If the keyboard is ever stuck in DFU after an interrupted flash, run
-      <span class="mono">ExitDFU_218e_v3_macOS.command</span> or
-      <span class="mono">ExitDFU_218e_v3_Windows.bat</span>. Power-cycling alone will not release it —
-      only the START command those scripts send does.</li>
-    <li style="margin-top:8px">Run the flasher and follow it:
+    <li  style="margin-top:8px">Power on the 218e.</li>
+    <li style="margin-top:8px">Run the flasher and follow their instructions:
       <div style="margin-top:0px">
         <div><strong>macOS</strong> — double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span></div>
         <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
       </div>
     </li>
   </ol>
-  <details style="margin-top:14px"><summary>If something goes wrong</summary>
+  <div class="prereq" style="margin-bottom: 12px;">
+    <h3>Your system might warn you about unsigned software</h3>
+    <dl>
+      <dd style="margin-top:6px">If macOS blocks the flasher, open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong>.<br>Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
+    </dl>
+  </div>
+  <div class="winsetup">
+    <h3>⊞ Windows only — the first flash pauses for a driver</h3>
+    <p>Partway through the flash, the flasher will stop and open <strong>Zadig</strong> at the one moment it can see the device. Do the following steps in it:</p>
+    <ol>
+      <li><strong>Options → List All Devices</strong></li>
+      <li>Select <strong>AT32UC3B DFU</strong> <span class="mono">(03EB 2FF6)</span></li>
+      <li>Set the right-hand box to <strong>WinUSB</strong>, press the <strong>Install Driver</strong> or <strong>Replace Driver</strong> button</li>
+      <li>Close Zadig.</li>
+    </ol>
+  </div>
+
+  <details style="margin-top:14px"><summary>If something went wrong</summary>
     <dl style="font-size:13px;line-height:1.6;margin:10px 0 0">
-      <dt style="font-weight:700;margin-top:10px">The keyboard is stuck in DFU and will not come back as MIDI</dt>
-      <dd style="margin:2px 0 0">If nothing was erased, the flasher tells you so and prints the command that boots it again. A power cycle on its own may not be enough: once the fuses have been read, <span class="mono">ISP_FORCE</span> is set and the instrument returns to DFU until it is told to start.
-      <br>macOS: <span class="mono">mac/support/dfu-programmer at32uc3b1256 start</span>
-      <br>Windows: <span class="mono">windows\support\dfu-programmer.exe at32uc3b1256 start</span></dd>
+      <dt style="font-weight:700;margin-top:10px">The keyboard is stuck in DFU and will not come back as MIDI (unresponsive keyboard with some LEDs lit up)</dt>
+      <dd style="margin:2px 0 0">Either run the programmer scripts again, or use the ExitDFU scripts to restart the instrument in regular mode.
+      <br>macOS: <span class="mono">ExitDFU_218e_v3_macOS.command</span>
+      <br>Windows: <span class="mono">ExitDFU_218e_v3_Windows.bat</span></dd>
 
       <dt style="font-weight:700;margin-top:10px">Every LED is lit and the keyboard does nothing</dt>
-      <dd style="margin:2px 0 0">There is no valid firmware on it. An erase happened but the write did not finish. Run the flasher again; it will find the instrument in DFU and complete the job.</dd>
+      <dd style="margin:2px 0 0">There is no valid firmware on it. An erase happened but the write did not finish. Try running the flasher again.</dd>
 
       <dt style="font-weight:700;margin-top:10px">Windows: <span class="mono">no device present</span>, or Device Manager lists <strong>AT32UC3B DFU</strong> under <em>Other devices</em></dt>
       <dd style="margin:2px 0 0">The WinUSB driver is not bound. Run Zadig as above. Installed correctly, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
@@ -270,13 +292,10 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 
       <dt style="font-weight:700;margin-top:10px">Windows: <span class="mono">VCRUNTIME140_1.dll was not found</span>, or a tool is "not recognized"</dt>
       <dd style="margin:2px 0 0">The Microsoft C++ runtime is missing. Install it from <a href="https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist">Microsoft's redistributable page</a>, or from Buchla's kit.</dd>
-
-      <dt style="font-weight:700;margin-top:10px">Removing the driver Zadig installed</dt>
-      <dd style="margin:2px 0 0">Rarely needed. <span class="mono">pnputil /enum-drivers</span> in a Command Prompt, find the entry mentioning <span class="mono">at32uc3b</span> or <span class="mono">libusb</span>, note its <span class="mono">oemNN.inf</span>, then as Administrator: <span class="mono">pnputil -f -d oemNN.inf</span></dd>
     </dl>
   </details>
 
-  <div class="msg ok" style="margin-top:14px">The flasher should find the image itself. It checks <span class="mono">firmware/</span>, its own folder, Downloads and the Desktop. The default build flashes straight away; any other image you built is validated, shown with its fingerprint, and flashed once you confirm it. Nothing to move, rename or re-download.</div>
+
 
 </section>
 </div>

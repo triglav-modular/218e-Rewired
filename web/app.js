@@ -254,8 +254,11 @@
         for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
             (function (n) {
                 var tr = document.createElement('tr');
-                tr.innerHTML = '<td class="note">' + noteName(n) + '</td><td class="muted">' +
-                    keyLabel(n) + '</td><td class="muted">' + n + '</td><td></td>';
+                // A name containing # is a black key; everything else is white.
+                var black = NAMES[n % 12].indexOf('#') >= 0;
+                tr.innerHTML = '<td class="note ' + (black ? 'black' : 'white') + '">' +
+                    noteName(n) + '</td><td class="muted">' +
+                    keyLabel(n) + '</td><td></td>';
                 var input = document.createElement('input');
                 input.type = 'number'; input.step = '0.01'; input.value = measured[n].toFixed(2);
                 input.addEventListener('change', function () {
@@ -309,7 +312,12 @@
         return full.map(function (v, i) { return { semitone: i, cents: v }; });
     }
 
-    $('useCal').addEventListener('change', function () { validateCal(); refresh(); });
+    function syncCalBody() {
+        $('calBody').style.display = $('useCal').checked ? '' : 'none';
+    }
+    $('useCal').addEventListener('change', function () {
+        syncCalBody(); validateCal(); refresh();
+    });
     $('calZero').addEventListener('click', function () {
         measured = measured.map(function () { return 0; });
         buildTable(); drawPlot(); validateCal();
@@ -363,6 +371,7 @@
                 }
             });
             $('useCal').checked = found > 0;
+            syncCalBody();
             buildTable(); drawPlot(); validateCal(); refresh();
             msg($('calMsg'), found ? 'ok' : 'bad',
                 found ? 'Loaded ' + found + ' rows from ' + f.name
@@ -449,5 +458,5 @@
         refresh();
     });
 
-    renderSlots(); buildTable(); drawPlot(); syncPortamento(); refresh();
+    renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
 })();
