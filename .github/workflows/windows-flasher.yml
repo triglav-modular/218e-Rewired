@@ -64,8 +64,8 @@ jobs:
       - name: The hex validator accepts good images and rejects bad
         shell: cmd
         run: |
-          echo :020000040000FA> good.hex
-          echo :10200000000102030405060708090A0B0C0D0E0F78>> good.hex
+          echo :0200000480007A> good.hex
+          echo :10200000000102030405060708090A0B0C0D0E0F58>> good.hex
           echo :00000001FF>> good.hex
           python tools\validate_hex.py good.hex || (echo FAILED: rejected a valid image & exit /b 1)
           echo not a hex file> bad.hex
@@ -78,8 +78,8 @@ jobs:
         run: |
           rem A structurally valid image the flasher was NOT generated for.
           mkdir "%USERPROFILE%\Downloads" 2>NUL
-          echo :020000040000FA> "%USERPROFILE%\Downloads\custom.hex"
-          echo :10200000000102030405060708090A0B0C0D0E0F78>> "%USERPROFILE%\Downloads\custom.hex"
+          echo :0200000480007A> "%USERPROFILE%\Downloads\custom.hex"
+          echo :10200000000102030405060708090A0B0C0D0E0F58>> "%USERPROFILE%\Downloads\custom.hex"
           echo :00000001FF>> "%USERPROFILE%\Downloads\custom.hex"
           rem Refuse: consent yes, but do NOT type FLASH.
           (echo YES& echo.& echo notflash)> ans.txt
