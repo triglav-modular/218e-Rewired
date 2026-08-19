@@ -219,19 +219,62 @@ IF NOT ERRORLEVEL 1 (
     GOTO :in_dfu
 )
 
-"%SENDMIDI%" list 2>&1 | findstr /I "218e" >NUL
+"%SENDMIDI%" list > "%TEMP%\rewired_midi.txt" 2>&1
+FINDSTR /I "218e" "%TEMP%\rewired_midi.txt" >NUL
 IF ERRORLEVEL 1 (
-    ECHO The 218e MIDI port is unavailable.  Nothing was erased; power-cycle the
-    ECHO 218e, reconnect USB directly, and retry.
+    ECHO.
+    ECHO   No MIDI output port with "218e" in its name.
+    ECHO.
+    ECHO   These are the MIDI output ports Windows is offering:
+    ECHO.
+    REM Showing the list turns "unavailable" into something diagnosable: either
+    REM the instrument is absent, or it is present under a name this does not
+    REM match.
+    TYPE "%TEMP%\rewired_midi.txt"
+    ECHO.
+    ECHO   If nothing is listed at all, the 218e is not connected as a MIDI
+    ECHO   device: check the cable, use a directly connected port, and make sure
+    ECHO   the instrument is powered on.
+    ECHO.
+    ECHO   If the 218e is listed above under some other name, tell us the name -
+    ECHO   this looks for "218e" and Windows may be presenting it differently.
+    ECHO.
+    ECHO   If it used to work and stopped after running Zadig, Zadig was very
+    ECHO   likely pointed at the 218e's own MIDI interface instead of the
+    ECHO   AT32UC3B DFU device.  That replaces the MIDI driver with WinUSB and
+    ECHO   the port disappears.  To undo it: Device Manager, find the 218e,
+    ECHO   Uninstall device with "delete the driver" ticked, then unplug and
+    ECHO   replug so Windows reinstalls its own driver.
+    ECHO.
+    DEL "%TEMP%\rewired_midi.txt" >NUL 2>&1
+    ECHO   Nothing was erased.
     GOTO :fail_early
 )
+DEL "%TEMP%\rewired_midi.txt" >NUL 2>&1
 ECHO Asking the 218e to enter DFU mode over MIDI.
-"%SENDMIDI%" dev 218e syx 0 2 55 2 1 1 >> "%LOG_FILE%" 2>&1
-IF ERRORLEVEL 1 (
-    ECHO SendMIDI could not deliver the DFU request.  Nothing was erased;
-    ECHO power-cycle the 218e and retry.
-    GOTO :fail_early
-)
+REM SendMIDI can report a failure in its output while still exiting zero, so
+REM the text is checked as well as the status - the macOS flasher has always
+REM done this and the Windows one did not.
+"%SENDMIDI%" dev 218e syx 0 2 55 2 1 1 > "%TEMP%\rewired_syx.txt" 2>&1
+SET "SYX_RC=%ERRORLEVEL%"
+TYPE "%TEMP%\rewired_syx.txt" >> "%LOG_FILE%" 2>&1
+FINDSTR /I /C:"Couldn't find" /C:"No valid MIDI" "%TEMP%\rewired_syx.txt" >NUL 2>&1
+SET "SYX_BAD=%ERRORLEVEL%"
+IF NOT "%SYX_RC%"=="0" GOTO :syx_failed
+IF "%SYX_BAD%"=="0" GOTO :syx_failed
+DEL "%TEMP%\rewired_syx.txt" >NUL 2>&1
+GOTO :syx_sent
+
+:syx_failed
+ECHO.
+ECHO   SendMIDI could not deliver the DFU request.
+TYPE "%TEMP%\rewired_syx.txt" 2>NUL
+DEL "%TEMP%\rewired_syx.txt" >NUL 2>&1
+ECHO.
+ECHO   Nothing was erased; power-cycle the 218e and retry.
+GOTO :fail_early
+
+:syx_sent
 
 ECHO Waiting for the AT32UC3B DFU device to appear on USB.
 SET "FOUND=0"
