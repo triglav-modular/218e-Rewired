@@ -529,7 +529,7 @@
                 { name: 'Program218e_v3_Rewired_macOS.command', data: r.scripts.flasherMac, exec: true },
                 { name: 'ExitDFU_218e_v3_macOS.command', data: r.scripts.exitMac, exec: true }
             ]; },
-            note: function (r) { return readme(r, [
+            note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the folders together, and double-click',
                 '',
                 '    Program218e_v3_Rewired_macOS.command',
@@ -545,7 +545,7 @@
                 'If you would rather not deal with any of it, run it from Terminal:',
                 '',
                 '    bash Program218e_v3_Rewired_macOS.command'
-            ]); }
+            ], partial); }
         },
         dlWin: {
             zip: 'Rewired-Windows.zip',
@@ -563,7 +563,7 @@
                 { name: 'Program218e_v3_Rewired_Windows.bat', data: r.scripts.flasherWin },
                 { name: 'ExitDFU_218e_v3_Windows.bat', data: r.scripts.exitWin }
             ]; },
-            note: function (r) { return readme(r, [
+            note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the folders together, and double-click',
                 '',
                 '    Program218e_v3_Rewired_Windows.bat',
@@ -574,18 +574,28 @@
                 'The flasher opens Zadig at the one moment that can be done, and',
                 'tells you what to pick. If Zadig says Replace Driver rather than',
                 'Install Driver, press it anyway.'
-            ]); }
+            ], partial); }
         }
     };
 
-    function readme(r, howto) {
+    function readme(r, howto, partial) {
+        var missing = partial ? [
+            'THE FLASHING TOOLS ARE NOT IN THIS ZIP', '',
+            'It was built from a page opened as a file rather than served, and a',
+            'browser will not read neighbouring files in that case. Copy these',
+            'files into a checkout of',
+            '  https://github.com/triglav-modular/218e-v3-Rewired',
+            'and run the flasher from there, or take the download again from',
+            '  https://triglav-modular.github.io/218e-v3-Rewired/',
+            'which packs everything.', ''
+        ] : [];
         return ['218e V3 Rewired ' + GEN.version, '']
             .concat(['This zip has everything needed to flash:', '',
                      '  218eV3_v369_Rewired_DFU.hex   the firmware you built',
                      '  SHA-256  ' + r.sha256, '',
                      'The flasher carries that checksum, so it installs this build',
                      'without asking which file to use.', '', 'HOW TO USE IT', ''])
-            .concat(howto)
+            .concat(missing, howto)
             .concat(['', 'IF A FLASH IS INTERRUPTED', '',
                      'The keyboard stays in DFU mode and a power cycle will not',
                      'release it. The ExitDFU script sends the command that does.',
@@ -602,19 +612,39 @@
             if (!r) return;
             var p = KIT[id];
             var btn = $(id), label = btn.querySelector('span').textContent;
-            btn.disabled = true; btn.querySelector('span').textContent = 'Fetching tools…';
-            Promise.all(p.tools.map(function (t) {
+            btn.disabled = true;
+            // A page opened from disk cannot fetch its neighbours: browsers
+            // refuse cross-origin reads on file:, and every file: URL is its
+            // own origin.  The tools simply cannot be collected, so the zip
+            // carries the firmware and the scripts and says where the rest is.
+            var offline = location.protocol === 'file:';
+            btn.querySelector('span').textContent = offline ? 'Packing…' : 'Fetching tools…';
+            Promise.all(offline ? [] : p.tools.map(function (t) {
                 return fetch(t[0]).then(function (res) {
-                    if (!res.ok) throw new Error(t[0] + ' (' + res.status + ')');
+                    if (!res.ok) throw new Error(t[0] + ' returned ' + res.status);
                     return res.arrayBuffer();
                 }).then(function (b) {
+                    if (!b || !b.byteLength) throw new Error(t[0] + ' came back empty');
                     return { name: t[1], data: new Uint8Array(b), exec: t[2] };
+                }, function (e) {
+                    // Name the file: "Load failed" on its own says nothing about
+                    // which of eleven requests gave up.
+                    throw new Error(t[0] + ' — ' + (e && e.message ? e.message : e));
                 });
             })).then(function (tools) {
                 btn.querySelector('span').textContent = 'Packing…';
                 var files = [{ name: '218eV3_v369_Rewired_DFU.hex', data: r.hex }]
                     .concat(p.scripts(r), tools,
-                            [{ name: 'README.txt', data: p.note(r) }]);
+                            [{ name: 'README.txt', data: p.note(r, offline) }]);
+                if (offline) {
+                    msg($('buildMsg'), 'warn',
+                        'This page is open from a file rather than a web server, so the ' +
+                        'browser will not let it read the flashing tools — every file:// ' +
+                        'address counts as a separate origin.\n\nThe download has the ' +
+                        'firmware and the scripts. Take the tools from the repository, ' +
+                        'or use the hosted page for a complete one:\n' +
+                        'https://triglav-modular.github.io/218e-v3-Rewired/');
+                }
                 return ZIP.build(files);
             }).then(function (blob) {
                 var a = document.createElement('a');

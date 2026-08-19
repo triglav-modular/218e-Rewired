@@ -31,16 +31,49 @@ var ZIP = (function () {
     var DOS_TIME = 0x6000;              // 12:00:00
     var DOS_DATE = ((2026 - 1980) << 9) | (1 << 5) | 1;   // 2026-01-01
 
+    // Deflate is an optimisation, never a requirement: every failure path here
+    // returns null and the entry is stored instead.  Reading a stream back
+    // through Response is the fragile step across browsers - Safari reports a
+    // failed body read as "Load failed" - so it is probed once with three
+    // bytes before any real data goes near it.
+    var deflateProbe = null;
+    function canDeflate() {
+        if (deflateProbe) return deflateProbe;
+        deflateProbe = raw(new Uint8Array([1, 2, 3]))
+            .then(function (out) { return !!out; })
+            .catch(function () { return false; });
+        return deflateProbe;
+    }
+
+    function raw(bytes) {
+        if (typeof CompressionStream === 'undefined' ||
+            typeof Response === 'undefined') return Promise.resolve(null);
+        return new Promise(function (resolve) {
+            var cs;
+            try { cs = new CompressionStream('deflate-raw'); }
+            catch (e) { resolve(null); return; }
+            var w;
+            try { w = cs.writable.getWriter(); } catch (e) { resolve(null); return; }
+            // The writer's promises must be handled or a rejection escapes as
+            // an unhandled one and the page reports a failure that is not one.
+            Promise.resolve(w.write(bytes)).catch(function () {});
+            Promise.resolve(w.close()).catch(function () {});
+            var done = false;
+            var settle = function (v) { if (!done) { done = true; resolve(v); } };
+            try {
+                new Response(cs.readable).arrayBuffer()
+                    .then(function (b) { settle(new Uint8Array(b)); })
+                    .catch(function () { settle(null); });
+            } catch (e) { settle(null); }
+            // A stream that never settles would hang the download for good.
+            setTimeout(function () { settle(null); }, 10000);
+        });
+    }
+
     function deflate(bytes) {
-        if (typeof CompressionStream === 'undefined') return Promise.resolve(null);
-        try {
-            var cs = new CompressionStream('deflate-raw');
-            var w = cs.writable.getWriter();
-            w.write(bytes); w.close();
-            return new Response(cs.readable).arrayBuffer()
-                .then(function (b) { return new Uint8Array(b); })
-                .catch(function () { return null; });
-        } catch (e) { return Promise.resolve(null); }
+        return canDeflate().then(function (ok) {
+            return ok ? raw(bytes).catch(function () { return null; }) : null;
+        }).catch(function () { return null; });
     }
 
     // files: [{name, data, exec}] where data is a string or Uint8Array.  exec
