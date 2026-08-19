@@ -70,8 +70,12 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # AssemblePressureFix.java moves it.  That is the marker working as intended —
 # a changed build forces a fresh power-up init.  What this pin still buys is a
 # stable anchor for the most complex configuration.
+# Re-pinned after the 0x32xx scratch moved to 0x60E4 and the transpose,
+# remote-enable and clamp-skip patches were gated on their options: every
+# image changed, this one with them, and the Ghidra and JS toolchains agree
+# on the new bytes.
 EXPECTED = {
-    "historical_config": "5060b4e1ad5a7704a30cc22030f3e05b4b553dbf108c5a1b7f1bf6cd24b8f037",
+    "historical_config": "1d00d905b7b850287565ba1085e1b2af7cafbd4fe06b85012bf6f4e94401a9a7",
 }
 
 
