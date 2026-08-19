@@ -55,11 +55,27 @@ font files to be sent with a permissive CORS header.
 That site runs **IIS behind Cloudflare**, so there are two places it can be set.
 Cloudflare is the easier one and needs no server access:
 
-**Cloudflare** — Rules → Transform Rules → Modify Response Header → Create.
-Set *If* to `URI Path ends with .woff2`, and *Then* to Set static,
-`Access-Control-Allow-Origin` = `*`. The files are cached at the edge
-(`cf-cache-status: HIT`), so purge the cache afterwards or the old
-header-less responses keep being served until they expire.
+**Cloudflare, transform rule** — Rules → Overview → Create rule → Modify
+Response Header. Set *If* to `URI Path ends with .woff2`, and *Then* to Set
+static, `Access-Control-Allow-Origin` = `*`.
+
+**Cloudflare, snippet** — if transform rules are not offered, Rules → Snippets
+does the same thing. Filter on `URI Path ends with .woff2` and use:
+
+```js
+export default {
+  async fetch(request) {
+    const response = await fetch(request);
+    const out = new Response(response.body, response);
+    out.headers.set("Access-Control-Allow-Origin", "*");
+    return out;
+  }
+};
+```
+
+Either way the files are cached at the edge (`cf-cache-status: HIT`), so purge
+the cache afterwards or the old header-less responses keep being served until
+they expire.
 
 **IIS** — a `web.config` in `wp-content/uploads/`:
 
