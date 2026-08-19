@@ -65,7 +65,6 @@ IF NOT ERRORLEVEL 1 (
 IF %TRIES% LSS 10 GOTO :wait_midi
 
 ECHO START was sent but the MIDI port has not appeared yet.
-ECHO Power-cycle the instrument once - after START that brings it up
-ECHO normally, because leaving DFU cleared the forced-DFU flag.
+ECHO Power-cycle the instrument once.  It will come up normally.
 PAUSE
 EXIT /B 0

@@ -32,10 +32,8 @@ IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
 ) ELSE (
     ECHO Could not find windows\support\dfu-programmer.exe
     ECHO.
-    ECHO That folder ships with this package and contains the flashing tools.
-    ECHO If it is missing, re-download the package rather than assembling it
-    ECHO by hand - the tools have to sit together for Windows to find the
-    ECHO DLLs beside them.
+    ECHO That folder ships with this package and holds the flashing tools.
+    ECHO Re-download the package rather than assembling it by hand.
     GOTO :fail_early
 )
 
@@ -155,13 +153,11 @@ ECHO.
 ECHO   Looked in firmware\, beside this script, Downloads and Desktop.
 ECHO   No flashable 218e image is there.
 ECHO.
-ECHO   No firmware ships with this package - the patched image is Buchla's
-ECHO   firmware with our changes in it, so it is not ours to redistribute.
-ECHO   Build one from your own factory image with the page in web\ and
-ECHO   save it to Downloads, or build locally:
+ECHO   No firmware ships with this package.  Build one from your own
+ECHO   factory image with the page in web\ and save it to Downloads, or
+ECHO   build locally:
 ECHO     python tools\build.py --no-ghidra
-ECHO   which writes build\218eV3_v369_Rewired_DFU.hex - deliberately outside
-ECHO   the searched folders, so copy it into firmware\ to flash it.
+ECHO   then copy build\218eV3_v369_Rewired_DFU.hex into firmware\.
 ECHO.
 GOTO :fail_early
 

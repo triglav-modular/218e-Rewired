@@ -78,8 +78,7 @@ if "$DFU" at32uc3b1256 start; then
         fi
     done
     echo "START was sent but the MIDI port has not appeared yet."
-    echo "Power-cycle the instrument once - after START that brings it up"
-    echo "normally, because leaving DFU cleared the forced-DFU flag."
+    echo "Power-cycle the instrument once.  It will come up normally."
     exit 0
 fi
 
