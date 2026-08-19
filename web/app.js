@@ -473,12 +473,14 @@
 
     function refresh() {
         $('build').disabled = !state.factoryText;
-        $('download').disabled = !state.result;
+        $('dlMac').disabled = !state.result;
+        $('dlWin').disabled = !state.result;
         // The accent marks whatever is next: Build until an image exists,
         // then Download.  Changing an option clears state.result, so it
         // hands the emphasis back on its own.
         $('build').className = state.result ? '' : 'primary';
-        $('download').className = state.result ? 'primary' : '';
+        $('dlMac').className = state.result ? 'primary' : '';
+        $('dlWin').className = state.result ? 'primary' : '';
     }
 
     $('build').addEventListener('click', function () {
@@ -507,9 +509,127 @@
         }, 30);
     });
 
-    $('download').addEventListener('click', function () {
-        if (!state.result) return;
-        download(state.result.hex, '218eV3_v369_Rewired_DFU.hex', 'text/plain');
+    // A download is everything needed to flash: the image, the flasher stamped
+    // with that image's checksum, the rescue script, and the vendor tools the
+    // flasher runs.  The tools are fetched at download time rather than
+    // carried in the page, which would put ten megabytes in front of every
+    // visitor for a file most of them take once.
+    var KIT = {
+        dlMac: {
+            zip: 'Rewired-macOS.zip',
+            tools: [
+                ['kit/mac/support/sendmidi', 'mac/support/sendmidi', true],
+                ['kit/mac/support/buchla-dfu/dfu/dfu-programmer',
+                 'mac/support/buchla-dfu/dfu/dfu-programmer', true],
+                ['kit/mac/support/buchla-dfu/Frameworks/libusb-1.0.0.dylib',
+                 'mac/support/buchla-dfu/Frameworks/libusb-1.0.0.dylib', false],
+                ['kit/tools/validate_hex.py', 'tools/validate_hex.py', false]
+            ],
+            scripts: function (r) { return [
+                { name: 'Program218e_v3_Rewired_macOS.command', data: r.scripts.flasherMac, exec: true },
+                { name: 'ExitDFU_218e_v3_macOS.command', data: r.scripts.exitMac, exec: true }
+            ]; },
+            note: function (r) { return readme(r, [
+                'Unzip it anywhere, keeping the folders together, and double-click',
+                '',
+                '    Program218e_v3_Rewired_macOS.command',
+                '',
+                'The first time, macOS will refuse: it marks everything that came',
+                'from a download as quarantined, and this software is not signed.',
+                'Right-click the file instead, choose Open, and confirm. That is',
+                'needed once; after it, double-clicking works.',
+                '',
+                'The same block applies to dfu-programmer a moment later. The',
+                'flasher spots that one itself and offers to clear it.',
+                '',
+                'If you would rather not deal with any of it, run it from Terminal:',
+                '',
+                '    bash Program218e_v3_Rewired_macOS.command'
+            ]); }
+        },
+        dlWin: {
+            zip: 'Rewired-Windows.zip',
+            tools: [
+                ['kit/windows/support/dfu-programmer.exe', 'windows/support/dfu-programmer.exe', false],
+                ['kit/windows/support/libusb-1.0.dll', 'windows/support/libusb-1.0.dll', false],
+                ['kit/windows/support/msvcp140.dll', 'windows/support/msvcp140.dll', false],
+                ['kit/windows/support/sendmidi.exe', 'windows/support/sendmidi.exe', false],
+                ['kit/windows/support/zadig-2.8.exe', 'windows/support/zadig-2.8.exe', false],
+                ['kit/tools/Scan-Images.ps1', 'tools/Scan-Images.ps1', false],
+                ['kit/tools/Find-DfuDevice.ps1', 'tools/Find-DfuDevice.ps1', false],
+                ['kit/tools/validate_hex.py', 'tools/validate_hex.py', false]
+            ],
+            scripts: function (r) { return [
+                { name: 'Program218e_v3_Rewired_Windows.bat', data: r.scripts.flasherWin },
+                { name: 'ExitDFU_218e_v3_Windows.bat', data: r.scripts.exitWin }
+            ]; },
+            note: function (r) { return readme(r, [
+                'Unzip it anywhere, keeping the folders together, and double-click',
+                '',
+                '    Program218e_v3_Rewired_Windows.bat',
+                '',
+                'Windows Defender may warn about it: More info, then Run anyway.',
+                '',
+                'The first flash on a machine pauses to bind the WinUSB driver.',
+                'The flasher opens Zadig at the one moment that can be done, and',
+                'tells you what to pick. If Zadig says Replace Driver rather than',
+                'Install Driver, press it anyway.'
+            ]); }
+        }
+    };
+
+    function readme(r, howto) {
+        return ['218e V3 Rewired ' + GEN.version, '']
+            .concat(['This zip has everything needed to flash:', '',
+                     '  218eV3_v369_Rewired_DFU.hex   the firmware you built',
+                     '  SHA-256  ' + r.sha256, '',
+                     'The flasher carries that checksum, so it installs this build',
+                     'without asking which file to use.', '', 'HOW TO USE IT', ''])
+            .concat(howto)
+            .concat(['', 'IF A FLASH IS INTERRUPTED', '',
+                     'The keyboard stays in DFU mode and a power cycle will not',
+                     'release it. The ExitDFU script sends the command that does.',
+                     'It flashes nothing.', '',
+                     'READ THE WARNING THE FLASHER PRINTS BEFORE YOU AGREE TO IT.',
+                     'This is experimental, unofficial firmware for the Buchla 218e',
+                     'V3 only, and it can brick the instrument.', ''])
+            .join('\n');
+    }
+
+    Object.keys(KIT).forEach(function (id) {
+        $(id).addEventListener('click', function () {
+            var r = state.result;
+            if (!r) return;
+            var p = KIT[id];
+            var btn = $(id), label = btn.querySelector('span').textContent;
+            btn.disabled = true; btn.querySelector('span').textContent = 'Fetching tools…';
+            Promise.all(p.tools.map(function (t) {
+                return fetch(t[0]).then(function (res) {
+                    if (!res.ok) throw new Error(t[0] + ' (' + res.status + ')');
+                    return res.arrayBuffer();
+                }).then(function (b) {
+                    return { name: t[1], data: new Uint8Array(b), exec: t[2] };
+                });
+            })).then(function (tools) {
+                btn.querySelector('span').textContent = 'Packing…';
+                var files = [{ name: '218eV3_v369_Rewired_DFU.hex', data: r.hex }]
+                    .concat(p.scripts(r), tools,
+                            [{ name: 'README.txt', data: p.note(r) }]);
+                return ZIP.build(files);
+            }).then(function (blob) {
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = p.zip;
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+                btn.querySelector('span').textContent = label; btn.disabled = false;
+            }).catch(function (e) {
+                btn.querySelector('span').textContent = label; btn.disabled = false;
+                msg($('buildMsg'), 'bad',
+                    'Could not assemble the download: ' + e.message +
+                    '\n\nThe firmware itself built fine — this is the packaging step.');
+            });
+        });
     });
 
 
@@ -517,6 +637,11 @@
         $('tuningsBody').style.display = $('useTunings').checked ? '' : 'none';
         refresh();
     });
+
+    // Major.minor only, from the same GEN.version the flashers are stamped
+    // with.  The patch number and the build's own fingerprint belong on the
+    // build result, not in the masthead.
+    $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
 
     renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
 })();

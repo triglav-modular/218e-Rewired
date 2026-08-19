@@ -73,6 +73,21 @@ jobs:
           # added later, which is exactly how images/ and fonts/ came to 404
           # on a page that referenced them.
           rsync -a --exclude '*.py' --exclude '_*' web/ _site/
+          # The flashing tools travel with a download, so the page has to be
+          # able to fetch them.  VC_redist is deliberately absent: 38 MB that
+          # Microsoft distributes itself, and msvcp140.dll covers the runtime
+          # app-locally.  So is the pressure readout, which is not flashing.
+          mkdir -p _site/kit/mac/support/buchla-dfu/dfu \
+                   _site/kit/mac/support/buchla-dfu/Frameworks \
+                   _site/kit/windows/support _site/kit/tools
+          cp mac/support/sendmidi                                _site/kit/mac/support/
+          cp mac/support/buchla-dfu/dfu/dfu-programmer           _site/kit/mac/support/buchla-dfu/dfu/
+          cp mac/support/buchla-dfu/Frameworks/libusb-1.0.0.dylib _site/kit/mac/support/buchla-dfu/Frameworks/
+          for f in dfu-programmer.exe libusb-1.0.dll msvcp140.dll sendmidi.exe zadig-2.8.exe; do
+            cp "windows/support/$f" _site/kit/windows/support/
+          done
+          cp tools/Scan-Images.ps1 tools/Find-DfuDevice.ps1 tools/validate_hex.py _site/kit/tools/
+          du -sh _site/kit/mac _site/kit/windows
           # No Jekyll: filenames here are ordinary, but underscore-prefixed
           # paths would be dropped silently and that is a nasty way to find out.
           touch _site/.nojekyll

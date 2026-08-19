@@ -213,6 +213,24 @@ var WEBBUILD = (function () {
             // Same shape the command-line build reports and both flashers
             // carry: a declared version plus the image's own fingerprint.
             version: 'Rewired ' + GEN.version + ' (' + sha.slice(0, 8) + ')',
+            // The scripts that go in a download, stamped for this image: the
+            // same two substitutions tools/build.py makes when it writes them
+            // into the repository.  A bundle therefore flashes the image it
+            // ships with, without asking.
+            scripts: (function () {
+                function stamp(text) {
+                    return text
+                        .replace(/(EXPECTED_SHA256="?)[0-9a-f]{64}/, '$1' + sha)
+                        .replace(/(FIRMWARE_VERSION="?)Rewired [^"\r\n]*/,
+                                 '$1Rewired ' + GEN.version + ' (' + sha.slice(0, 8) + ')');
+                }
+                return {
+                    flasherMac: stamp(GEN.flasherMac),
+                    flasherWin: stamp(GEN.flasherWin),
+                    exitMac: GEN.exitMac,
+                    exitWin: GEN.exitWin
+                };
+            })(),
             properties: BUILDLIB.writeProperties('config/218e.toml', flags.blocks,
                                                  flags.features, numbers, tables),
             patches: records.patches.length,

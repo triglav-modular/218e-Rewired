@@ -97,6 +97,11 @@ body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   .hdr:hover .banana{transform:rotate(-12deg) scale(1.06)}}
 h1{font-size:clamp(44px,9vw,82px);font-weight:900;line-height:.98;margin:0;letter-spacing:-.015em}
 .sub{color:var(--muted);margin:0 0 44px;font-size:18px}
+/* The version comes from the same GEN.version the flashers are stamped with,
+   so the page can never advertise a release the build does not produce. */
+.ver{display:inline-block;margin-left:10px;padding:3px 10px;border-radius:999px;
+  border:1px solid var(--line);color:var(--accent);font-size:12px;font-weight:700;
+  letter-spacing:.12em;text-transform:uppercase;vertical-align:2px}
 section{background:var(--panel);border:1px solid var(--line);border-radius:16px;
   padding:30px 28px;margin-bottom:20px}
 h2{font-size:20px;text-transform:uppercase;letter-spacing:.16em;color:var(--accent);
@@ -231,7 +236,20 @@ td input{width:78px;padding:4px 7px;font:inherit;font-family:var(--mono);text-al
 .prereq dt:first-of-type{margin-top:0}
 .prereq dd{margin:3px 0 0;color:var(--muted)}
 svg{width:100%;height:120px;margin-top:10px;overflow:visible}
-#build,#download{width:49%;height:80px;box-sizing:border-box}
+#build{width:100%;height:74px;box-sizing:border-box;margin-bottom:12px}
+#dlMac,#dlWin{width:calc(50% - 6px);height:62px;box-sizing:border-box;
+  display:inline-flex;align-items:center;justify-content:center;gap:10px}
+/* The platform marks are drawn: U+F8FF is Apple private-use and renders
+   nowhere else, and Unicode has no Windows logo at all. */
+#dlMac .os,#dlWin .os{width:19px;height:19px;flex:none;margin:0;display:block}
+/* Matched by ink, not by box.  The Apple mark occupies 14.9 units of its 24
+   where the Windows one occupies 18, so at equal box size it reads smaller;
+   22px brings its width to about the Windows mark's. */
+#dlMac .os{width:22px;height:22px}
+/* Same mark in the Windows-only heading, sized to its type and sitting on the
+   text baseline rather than on its own line. */
+.winsetup h3 .os{width:15px;height:15px;margin:0 4px 0 0;display:inline-block;
+  vertical-align:-2px}
 a{color:var(--accent)}
 strong{color:var(--accent)}
 
@@ -294,7 +312,7 @@ strong{color:var(--accent)}
   .hdr:hover .banana{transform:rotate(0deg) scale(1)}
   /* Two 49% buttons leave each about 150px wide on a phone, which is not
      enough for their labels.  Full width, stacked. */
-  #build,#download{width:100%;height:64px}
+  #build,#dlMac,#dlWin{width:100%;height:60px}
   .row{gap:10px}
 }
 </style>
@@ -305,7 +323,8 @@ strong{color:var(--accent)}
   <img class="banana" src="images/banana.svg" alt="" width="56" height="56">
   <h1>218e V3 Rewired</h1>
 </div>
-<p class="sub">Custom firmware builder for the Buchla 218e V3</p>
+<p class="sub">Custom firmware builder for the Buchla 218e V3
+  <span class="ver" id="ver"></span></p>
 
 <div class="danger">
   <h2>⚠ READ THIS BEFORE YOU FLASH ANYTHING</h2>
@@ -436,7 +455,8 @@ strong{color:var(--accent)}
   <h2>3 · Build it</h2>
   <div class="row">
     <button class="primary" id="build" disabled>Build firmware</button>
-    <button id="download" disabled>Download .hex</button>
+    <button id="dlMac" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16.7 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .8 1.11.7 2.3 2.9 2.2 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.2 0 2-1.1 2.8-2.2.9-1.3 1.2-2.5 1.3-2.5-.1 0-2.5-1-2.5-3.6zM14.4 5.9c.6-.8 1-1.9.9-3-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-.9 2.91 .1 2-.5 2.7-1.3z"/></svg><span>Download for macOS</span></button>
+    <button id="dlWin" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg><span>Download for Windows</span></button>
   </div>
   <div id="buildMsg"></div>
 </section>
@@ -445,7 +465,7 @@ strong{color:var(--accent)}
   <h2>4 · Flash it</h2>
 
   <ol style="margin:12px 0;padding-left:20px;line-height:1.9">
-    <li>Download the <strong>.hex</strong> image above. Leaving it in Downloads is fine.</li>
+    <li>Download the built package for your operating system.</li>
     <li>Connect the 218e, directly rather than through an unpowered hub:
       <div style="margin-top:0px">
         <div><strong>Standalone LEM218</strong> — USB-C to the computer, power connected, switched on.</div>
@@ -455,7 +475,7 @@ strong{color:var(--accent)}
     <li  style="margin-top:8px">Power on the 218e.</li>
     <li style="margin-top:8px">Run the flasher and follow their instructions:
       <div style="margin-top:0px">
-        <div><strong>macOS</strong> — double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span></div>
+        <div><strong>macOS</strong> — double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>. The first time macOS refuses it, because a download is quarantined and this is unsigned: right-click, choose <strong>Open</strong>, confirm. Once only.</div>
         <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
       </div>
     </li>
@@ -467,7 +487,7 @@ strong{color:var(--accent)}
     </dl>
   </div>
   <div class="winsetup">
-    <h3>⊞ Windows only — the first flash pauses for a driver</h3>
+    <h3><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg> Windows only — the first flash pauses for a driver</h3>
     <p>Partway through the flash, the flasher will stop and open <strong>Zadig</strong> at the one moment it can see the device. Do the following steps in it:</p>
     <ol>
       <li><strong>Options → List All Devices</strong></li>
@@ -507,6 +527,7 @@ strong{color:var(--accent)}
 <script src="sha256.js"></script>
 <script src="buildlib.js"></script>
 <script src="assembler.js"></script>
+<script src="zip.js"></script>
 <script src="build.js"></script>
 <script src="app.js"></script>
 </body>

@@ -23,6 +23,8 @@
 # Pressure measurements from one particular instrument.
 # Python bytecode
 # Stock firmware images for other models/versions.
+# THIRD-PARTY.md.
+# The complete licensed Euclid package, copied in for reference.  This repo is
 # The factory image is Buchla's, and is not ours to redistribute; you already
 # The flashing tools inside it are third-party and GPL-licensed, so they ship
 # Tracked: everything needed to build and flash our custom firmware.
@@ -31,7 +33,10 @@
 # have it if you have the official flashing kit.  The patched image is that
 # here alongside the macOS ones (see THIRD-PARTY.md).  What does not ship is
 # image at the path in config/218e.toml and build.
+# live in web/fonts/, and even those are a licensing decision - see
+# public: committing it would publish a commercial font wholesale, including
 # same firmware with our patches spliced in, so it is not ours to redistribute
+# the desktop .otf/.ttf.  Only the four WebXL woff2 the page actually loads
 # updater is never confused with the factory one.
 *.gpr
 *.pyc
@@ -58,12 +63,7 @@ firmware/INSTALLED.txt
 ghidra_project/
 otherfirmware/
 web/*.hex
+web/font/
+web/kit/
 windows/*
 windows/support/*
-
-# The complete licensed Euclid package, copied in for reference.  This repo is
-# public: committing it would publish a commercial font wholesale, including
-# the desktop .otf/.ttf.  Only the four WebXL woff2 the page actually loads
-# live in web/fonts/, and even those are a licensing decision - see
-# THIRD-PARTY.md.
-web/font/
