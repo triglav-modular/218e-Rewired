@@ -44,16 +44,16 @@ function Test-IntelHex {
         }
         $sum = 0; foreach ($b in $raw) { $sum += $b }
         if ($sum -band 0xFF) { $script:LastReason = 'record checksum mismatch'; return $false }
-        $len = $raw[0]; $addr = ($raw[1] -shl 8) -bor $raw[2]; $kind = $raw[3]
-        if ($script:Trace) {
-            [Console]::Error.WriteLine(
-                "    rec body=$($body.Substring(0,[Math]::Min(12,$body.Length))) n=$($raw.Length) len=$len addr=$addr kind=$kind upper=$upper")
-        }
+        # [int] casts are load-bearing: -shl keeps the left operand's type, so
+        # [byte]0x20 -shl 8 truncates back to a byte and yields 0, not 0x2000.
+        $len = $raw[0]
+        $addr = ([int]$raw[1] -shl 8) -bor [int]$raw[2]
+        $kind = $raw[3]
         if ($kind -eq 4) {
             # Multiply rather than -shl 16: shifting 0x8000 left overflows
             # Int32 and lands negative, which put every app-region image
             # "below" 0x80002000 and rejected all of them.
-            $upper = [int64](($raw[4] -shl 8) -bor $raw[5]) * 65536
+            $upper = [int64](([int]$raw[4] -shl 8) -bor [int]$raw[5]) * 65536
         } elseif ($kind -eq 0) {
             $a = $upper + [int64]$addr
             if ($null -eq $lo -or $a -lt $lo) { $lo = $a }
@@ -80,7 +80,6 @@ $candidates = foreach ($dir in $Dirs) {
     Get-ChildItem -LiteralPath $dir -Filter *.hex -File -ErrorAction SilentlyContinue
 }
 
-$script:Trace = $Explain
 $seen = @{}
 $found = foreach ($f in $candidates) {
     $key = $f.FullName.ToLower()
