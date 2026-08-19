@@ -69,10 +69,17 @@ jobs:
           set "SHA=!SHA: =!"
           powershell -Command "(Get-Content 'Program218e_v3_Rewired.bat' -Raw) -replace '(?<=EXPECTED_SHA256=)[0-9a-f]{64}', '!SHA!' | Set-Content 'ci.bat'"
           endlocal
-          (echo YES) | ci.bat > out2.txt 2>&1
+          rem Answers come from a file, not a pipe: a piped line is consumed by
+          rem the first subshell the script spawns, so SET /P then reads EOF and
+          rem the consent gate rejects an empty answer.  Repeated so each prompt
+          rem up to the MIDI check has one.
+          (echo YES& echo.& echo YES& echo.& echo YES)> answers.txt
+          ci.bat < answers.txt > out2.txt 2>&1
           type out2.txt
           findstr /C:"Checksum matches" out2.txt >NUL || (echo FAILED: checksum not accepted & exit /b 1)
-          findstr /C:"Rewired" out2.txt >NUL || (echo FAILED: version not shown & exit /b 1)
+          findstr /C:"Rewired 1.0.0" out2.txt >NUL || (echo FAILED: version not shown & exit /b 1)
           findstr /C:"MIDI port is unavailable" out2.txt >NUL || (echo FAILED: did not stop at MIDI & exit /b 1)
-          findstr /C:"erase" out2.txt >NUL && (echo FAILED: reached the erase & exit /b 1)
+          rem Not the bare word "erase" - the warning text contains "was erased".
+          findstr /C:"Erasing the application flash" out2.txt >NUL && (echo FAILED: reached the erase & exit /b 1)
+          findstr /C:"Zadig" out2.txt >NUL && (echo FAILED: reached the Zadig launch & exit /b 1)
           echo PASS: verified, versioned, stopped before touching anything
