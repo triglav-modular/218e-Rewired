@@ -18,7 +18,7 @@ keyboard.
 
 ## Build it in your browser
 
-### **<https://triglav-modular.github.io/218e-v3-Rewired/>**
+### **<https://triglav-modular.github.io/218e-Rewired/>**
 
 Then run the flasher for your platform from this repository:
 
