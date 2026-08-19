@@ -45,6 +45,10 @@ function Test-IntelHex {
         $sum = 0; foreach ($b in $raw) { $sum += $b }
         if ($sum -band 0xFF) { $script:LastReason = 'record checksum mismatch'; return $false }
         $len = $raw[0]; $addr = ($raw[1] -shl 8) -bor $raw[2]; $kind = $raw[3]
+        if ($script:Trace) {
+            [Console]::Error.WriteLine(
+                "    rec body=$($body.Substring(0,[Math]::Min(12,$body.Length))) n=$($raw.Length) len=$len addr=$addr kind=$kind upper=$upper")
+        }
         if ($kind -eq 4) {
             # Multiply rather than -shl 16: shifting 0x8000 left overflows
             # Int32 and lands negative, which put every app-region image
@@ -76,6 +80,7 @@ $candidates = foreach ($dir in $Dirs) {
     Get-ChildItem -LiteralPath $dir -Filter *.hex -File -ErrorAction SilentlyContinue
 }
 
+$script:Trace = $Explain
 $seen = @{}
 $found = foreach ($f in $candidates) {
     $key = $f.FullName.ToLower()
