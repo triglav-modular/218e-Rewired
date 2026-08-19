@@ -58,8 +58,12 @@ jobs:
             echo "committed bundle is up to date"
           fi
 
-      - name: The seven options still build identically to tools/build.py
-        run: python3 web/test_configs.py
+      # web/test_configs.py is NOT run here: it compares the browser build
+      # against tools/build.py, and build.py needs the factory image, which is
+      # Buchla's and not in this repository.  That equivalence is checked
+      # locally where the image exists.  What can be checked here is that the
+      # page's own data regenerates from tracked sources, which is the step
+      # above.
 
       - name: Stage the site
         run: |
