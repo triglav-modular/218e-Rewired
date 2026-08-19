@@ -67,8 +67,3 @@ windows/support/*
 # live in web/fonts/, and even those are a licensing decision - see
 # THIRD-PARTY.md.
 web/font/
-
-# The 960 KB master of the background.  The page loads wave_bg.jpg, which is
-# the same art at 2200px and 123 KB - the difference is invisible once it is
-# screened at half opacity behind the page.
-web/images/wave_bg.png
