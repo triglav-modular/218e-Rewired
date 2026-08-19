@@ -53,3 +53,11 @@ otherfirmware/
 web/*.hex
 windows/*
 windows/support/*
+
+# Flash logs: per-run, per-machine, and they name local paths.
+*_flash_log.txt
+218e_v3_Rewired_flash_log.txt
+
+# Pressure measurements from one particular instrument.
+LEM218_PressureReadout.csv
+PressureReadout_Protocol.md
