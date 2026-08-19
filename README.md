@@ -172,13 +172,26 @@ cycle brings it straight back — and `ExitDFU_218e_v3_macOS.command` or
 | macOS | `Program218e_v3_Rewired_macOS.command` |
 | Windows | `Program218e_v3_Rewired_Windows.bat` |
 
-**Each platform needs one thing set up first, or the flash cannot work:**
+### Windows only — one driver step
 
-- **Windows — the WinUSB driver.** `dfu-programmer` cannot reach the keyboard
-  until the DFU device is bound to WinUSB. The flasher handles this: if the
-  device does not appear it opens Zadig at the moment the device is visible,
-  and carries on once the driver is installed. Once per machine.
-- **Both — unsigned software warnings.** On macOS, `git clone` this repository
+Windows must bind the keyboard's DFU mode to the **WinUSB** driver or the
+flasher cannot see the instrument. The flasher opens **Zadig** at the moment
+the device appears; in it:
+
+1. List empty? **Options → List All Devices**
+2. Select **AT32UC3B DFU** (`03EB 2FF6`)
+3. Set the right-hand box to **WinUSB**, press the button
+
+**If the button reads "Replace Driver", press it anyway.** An older Buchla kit
+will have left `libusb0` bound, which the current flashing tool cannot use.
+Leaving it is the usual reason the keyboard goes into DFU and is then never
+found.
+
+Once per machine. **macOS needs none of this** — just run the flasher.
+
+### Both platforms
+
+- **Unsigned software warnings.** On macOS, `git clone` this repository
   instead of downloading the ZIP and there is no warning at all: a browser
   download marks every file as quarantined, a clone does not. If you did
   download it, macOS blocks the flasher and then `dfu-programmer` as being from

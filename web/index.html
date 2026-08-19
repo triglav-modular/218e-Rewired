@@ -76,6 +76,12 @@ td input{width:76px;padding:3px 6px;font:inherit;font-family:var(--mono);text-al
 .danger p{margin:0 0 9px;font-size:14px}
 .danger strong{color:var(--bad)}
 .danger p:last-child{margin-bottom:0}
+.winsetup{border:2px solid var(--warn);border-radius:10px;padding:16px 18px;margin:0 0 14px;
+  background:color-mix(in srgb,var(--warn) 13%,transparent)}
+.winsetup h3{margin:0 0 8px;font-size:14px;letter-spacing:.03em;color:var(--warn)}
+.winsetup p{margin:0 0 8px;font-size:14px}
+.winsetup ol{margin:0 0 10px;padding-left:22px;font-size:14px;line-height:1.85}
+.winsetup p:last-child{margin-bottom:0}
 .prereq{border:1px solid var(--warn);border-radius:8px;padding:14px 16px;margin:14px 0 0;
   background:color-mix(in srgb,var(--warn) 10%,transparent)}
 .prereq h3{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--warn)}
@@ -206,15 +212,22 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 <section>
   <h2>6 · Flash it</h2>
   <p class="d muted" style="margin:0 0 12px;font-size:13px">A script does the flashing, not this page. It checks the image, confirms the bootloader region is protected, and validates by read-back before letting the instrument leave DFU.</p>
-  <div class="prereq">
-    <h3>One-time setup</h3>
-    <dl>
-      <dt>Windows: the WinUSB driver</dt>
-      <dd>Windows will not let <span class="mono">dfu-programmer</span> reach the keyboard until the DFU device is bound to WinUSB. The flasher opens Zadig for you at the point the device is visible. In Zadig: if the list looks empty, turn on <strong>Options → List All Devices</strong>, select <strong>AT32UC3B DFU</strong> (USB ID <span class="mono">03EB 2FF6</span>), set the right-hand box to <strong>WinUSB</strong>, then press the button. It can pause for several seconds before starting. Once per machine.</dd>
-      <dd style="margin-top:6px"><strong>If you have flashed a 218e from this machine before</strong>, Zadig will show a driver already bound — most likely <span class="mono">libusb0</span>, which older kits used. The button then reads <strong>Replace Driver</strong> rather than Install Driver, and it must still be pressed: <span class="mono">dfu-programmer</span> 1.0.0 dropped libusb0 support and talks to WinUSB only, so it cannot open a libusb0 device. The symptom is the flasher putting the keyboard into DFU and then never finding it.</dd>
-      <dd style="margin-top:6px">The tools themselves ship with this package, nothing extra to download.</dd>
+  <div class="winsetup">
+    <h3>⊞ Windows only — one driver step, before you flash</h3>
+    <p>Windows must bind the keyboard's DFU mode to the <strong>WinUSB</strong> driver, or the flasher cannot see the instrument at all. The flasher opens <strong>Zadig</strong> at the moment the device appears. In it:</p>
+    <ol>
+      <li>List empty? <strong>Options → List All Devices</strong></li>
+      <li>Select <strong>AT32UC3B DFU</strong> <span class="mono">(03EB 2FF6)</span></li>
+      <li>Set the right-hand box to <strong>WinUSB</strong>, press the button</li>
+    </ol>
+    <p><strong>If the button reads “Replace Driver”, press it anyway.</strong> That means an older Buchla kit left <span class="mono">libusb0</span> bound, which this flashing tool cannot use. Leaving it is the usual reason the keyboard goes into DFU and is then never found.</p>
+    <p class="muted" style="font-size:13px">Once per machine; it can pause a few seconds. Everything needed ships with the package. <strong>macOS needs none of this</strong> — just run the flasher.</p>
+  </div>
 
-      <dt>Both: your system might warn about unsigned software</dt>
+  <div class="prereq">
+    <h3>Also worth knowing</h3>
+    <dl>
+      <dt>Your system might warn about unsigned software</dt>
       <dd>On macOS this is avoidable: get the package with <span class="mono">git clone</span> rather than downloading the ZIP, and there is no warning at all. A browser download marks every file as quarantined; a clone does not.</dd>
       <dd style="margin-top:6px">If you did download it, macOS blocks the flasher and then <span class="mono">dfu-programmer</span> as being from an unidentified developer. Open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. The flasher spots the second one itself and offers to clear it. Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
     </dl>
