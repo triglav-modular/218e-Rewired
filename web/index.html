@@ -439,8 +439,9 @@ strong{color:var(--accent)}
   <h3>Alternate tunings</h3>
   <p class="d muted" style="margin:0 0 12px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
   <p class="d muted" style="margin:0 0 12px">Each scale is shifted so A sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
-  <label class="row opt" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
-    <span><strong>Enable alternate tunings</strong><span class="muted"> — turning this on remaps the <strong>rem.en</strong> and <strong>trn</strong> LEDs and edit keys.</span></span></label>
+  <label class="row opt" style="gap:7px;margin-bottom:10px;cursor:pointer;font-weight:600;"><input type="checkbox" id="useTunings">
+  <span>Enable alternate tunings<span class="muted"></span></span></label>
+  <p class="d muted" style="margin:0 0 10px">Turning this on remaps the <strong>rem.en</strong> and <strong>trn</strong> LEDs and edit keys.</p>
   <div id="tuningsBody" style="display:none">
   <div class="row" style="margin-bottom:10px"><button id="sclPick">Add .scl files…</button>
     <span class="muted" id="sclCount">all three slots factory</span></div>
