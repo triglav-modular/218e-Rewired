@@ -50,7 +50,8 @@ jobs:
       - name: No image present - must refuse without touching anything
         shell: cmd
         run: |
-          (echo YES) | Program218e_v3_Rewired.bat > out.txt 2>&1
+          (echo YES)> answers0.txt
+          CALL Program218e_v3_Rewired.bat < answers0.txt > out.txt 2>&1
           type out.txt
           findstr /C:"Looked in firmware" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
           echo PASS: refused with the expected message
@@ -74,7 +75,11 @@ jobs:
           rem the consent gate rejects an empty answer.  Repeated so each prompt
           rem up to the MIDI check has one.
           (echo YES& echo.& echo YES& echo.& echo YES)> answers.txt
-          ci.bat < answers.txt > out2.txt 2>&1
+          rem CALL, not a bare invocation: running one .bat from another without
+          rem CALL transfers control and never returns, so every assertion below
+          rem would be skipped and the step would report the flasher's own exit
+          rem code instead.
+          CALL ci.bat < answers.txt > out2.txt 2>&1
           type out2.txt
           findstr /C:"Checksum matches" out2.txt >NUL || (echo FAILED: checksum not accepted & exit /b 1)
           findstr /C:"Rewired 1.0.0" out2.txt >NUL || (echo FAILED: version not shown & exit /b 1)
