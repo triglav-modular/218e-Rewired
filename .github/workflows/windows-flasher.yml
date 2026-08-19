@@ -46,6 +46,28 @@ jobs:
           findstr /I /C:"no device present" "%TEMP%\probe.txt" >NUL 2>&1
           echo findstr exit=%ERRORLEVEL%  ^(0 means the message was found^)
 
+      - name: Instrument the real flasher's probe
+        shell: cmd
+        run: |
+          rem Insert an echo of both captured values straight into a copy of the
+          rem flasher, so we see what it actually computed rather than what a
+          rem reproduction computes.
+          powershell -Command "(Get-Content 'Program218e_v3_Rewired.bat' -Raw) -replace [regex]::Escape('IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" ('), 'ECHO DBG rc=[%PROBE_RC%] absent=[%PROBE_ABSENT%]' + [char]13 + [char]10 + 'IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" (' | Set-Content 'dbg.bat'"
+          findstr /C:"DBG rc=" dbg.bat >NUL || (echo could not instrument & exit /b 1)
+          mkdir firmware 2>NUL
+          echo stand-in> firmware\218eV3_v369_Rewired_DFU.hex
+          for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile firmware\218eV3_v369_Rewired_DFU.hex SHA256 ^| findstr /R "^[0-9a-f ]*$"') do (
+            if not defined SHA set "SHA=%%H"
+          )
+          setlocal EnableDelayedExpansion
+          set "SHA=!SHA: =!"
+          powershell -Command "(Get-Content 'dbg.bat' -Raw) -replace '(?<=EXPECTED_SHA256=)[0-9a-f]{64}', '!SHA!' | Set-Content 'dbg2.bat'"
+          endlocal
+          (echo YES& echo.& echo YES& echo.& echo YES)> ans.txt
+          CALL dbg2.bat < ans.txt > dbg.out 2>&1
+          findstr /C:"DBG rc=" dbg.out
+          exit /b 0
+
       - name: certutil checksum parsing matches the real hash
         shell: cmd
         run: |
