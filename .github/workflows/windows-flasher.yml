@@ -34,6 +34,18 @@ jobs:
           windows\support\sendmidi.exe list
           echo exit=%ERRORLEVEL%
 
+      - name: Reproduce the flasher's probe exactly
+        shell: cmd
+        run: |
+          echo TEMP=[%TEMP%]
+          windows\support\dfu-programmer.exe at32uc3b1256 get bootloader-version >"%TEMP%\probe.txt" 2>&1
+          set "RC=%ERRORLEVEL%"
+          echo dfu exit=%RC%
+          echo --- captured file ---
+          type "%TEMP%\probe.txt"
+          findstr /I /C:"no device present" "%TEMP%\probe.txt" >NUL 2>&1
+          echo findstr exit=%ERRORLEVEL%  ^(0 means the message was found^)
+
       - name: certutil checksum parsing matches the real hash
         shell: cmd
         run: |
