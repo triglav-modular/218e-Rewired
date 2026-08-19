@@ -15,8 +15,10 @@ Prints one line per valid image, newest first:
 param([Parameter(Mandatory=$true)][string[]]$Dirs)
 
 $ErrorActionPreference = 'Stop'
-$APP_LOW  = 0x80002000
-$APP_HIGH = 0x8003FFFF
+# Decimal, and 64-bit: PowerShell parses an 8-digit hex literal as Int32, so
+# 0x80002000 would arrive already wrapped to a negative number.
+$APP_LOW  = [int64]2147491840   # 0x80002000
+$APP_HIGH = [int64]2147745791   # 0x8003FFFF
 
 function Test-IntelHex {
     param([string]$Path)
@@ -38,9 +40,12 @@ function Test-IntelHex {
         if ($sum -band 0xFF) { return $false }
         $len = $raw[0]; $addr = ($raw[1] -shl 8) -bor $raw[2]; $kind = $raw[3]
         if ($kind -eq 4) {
-            $upper = ((($raw[4] -shl 8) -bor $raw[5]) -shl 16)
+            # Multiply rather than -shl 16: shifting 0x8000 left overflows
+            # Int32 and lands negative, which put every app-region image
+            # "below" 0x80002000 and rejected all of them.
+            $upper = [int64](($raw[4] -shl 8) -bor $raw[5]) * 65536
         } elseif ($kind -eq 0) {
-            $a = $upper + $addr
+            $a = $upper + [int64]$addr
             if ($null -eq $lo -or $a -lt $lo) { $lo = $a }
             $end = $a + $len - 1
             if ($null -eq $hi -or $end -gt $hi) { $hi = $end }

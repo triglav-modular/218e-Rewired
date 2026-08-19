@@ -98,7 +98,7 @@ IF %IMG_COUNT% GTR 1 (
     ECHO.
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
-        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- built with this flasher"
+        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- shipped with this package"
         ECHO     %%I^) !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!
         ECHO        !IMG_PATH_%%I!!MARK!
     )
@@ -124,24 +124,12 @@ IF %IMG_COUNT% GTR 1 (
 CALL SET "FIRMWARE=%%IMG_PATH_!PICK!%%"
 CALL SET "CHOSEN_SHA=%%IMG_SHA_!PICK!%%"
 
-REM The image this flasher was generated for needs no confirmation.  Anything
-REM else is shown with its fingerprint and needs a typed FLASH.
+REM Any valid 218e image can be flashed.  The checksum this flasher was built
+REM with is only a label for the build that shipped with the package, so it can
+REM be told apart in the list above.  It is not a gate.
 IF /I NOT "!CHOSEN_SHA!"=="%EXPECTED_SHA256%" (
-    ECHO.
-    FOR %%N IN ("!FIRMWARE!") DO ECHO   %%~nxN is not the image this flasher was built
-    ECHO   for, so its checksum cannot vouch for it.  It is valid Intel HEX for
-    ECHO   this chip, and its fingerprint is:
-    ECHO     !CHOSEN_SHA!
-    ECHO.
-    ECHO   Only flash an image you built yourself or otherwise trust.
-    SET "CONF="
-    SET /P "CONF=  Type FLASH (capitals) to accept this image: "
-    IF NOT "!CONF!"=="FLASH" (
-        ECHO   Not confirmed.
-        GOTO :fail_early
-    )
     SET "CUSTOM=1"
-    SET "FIRMWARE_VERSION=custom image (!CHOSEN_SHA:~0,8!)"
+    SET "FIRMWARE_VERSION=image !CHOSEN_SHA:~0,8!"
 )
 GOTO :have_image
 
@@ -159,8 +147,8 @@ GOTO :fail_early
 
 :have_image
 CALL :ok Found !FIRMWARE!
-CALL :ok Checksum matches the image this flasher installs
-CALL :ok %FIRMWARE_VERSION%
+CALL :ok !FIRMWARE_VERSION!
+ECHO     !CHOSEN_SHA!
 
 REM Keep it where it belongs, so the next run finds it first.  A failure here
 REM is not fatal: the image is already verified.

@@ -329,28 +329,21 @@ scan_images() {
     done | head -12
 }
 
-# Accept a chosen image.  The one this flasher was generated for needs no
-# confirmation; anything else is fingerprinted and needs a typed FLASH.
+# Accept a chosen image.  The flasher installs any valid 218e image; the
+# checksum it was built with is only a label, marking the build that shipped
+# with this package so it can be told apart in the list.  It is not a gate.
 accept_choice() {
     local path="$1" sha
     sha="$(shasum -a 256 "$path" | cut -d" " -f1)"
-    if [ "$sha" = "$EXPECTED_SHA256" ]; then
-        FIRMWARE="$path"
-        ok "Checksum matches the image this flasher installs"
-        return 0
-    fi
-    echo
-    echo "  ${C_BOLD}$(basename "$path")${C_RESET} is not the image this flasher was built"
-    echo "  for, so its checksum cannot vouch for it.  It is valid Intel HEX for"
-    echo "  this chip, and its fingerprint is:"
-    echo "    ${C_BOLD}$sha${C_RESET}"
-    echo
-    echo "  Only flash an image you built yourself or otherwise trust."
-    read -r -p "  Type FLASH (capitals) to accept this image: " confirm
-    [ "$confirm" = "FLASH" ] || fail "Not confirmed. The instrument was not touched."
     FIRMWARE="$path"
-    CUSTOM_IMAGE=1
-    FIRMWARE_VERSION="custom image (${sha:0:8})"
+    if [ "$sha" = "$EXPECTED_SHA256" ]; then
+        ok "$FIRMWARE_VERSION"
+    else
+        CUSTOM_IMAGE=1
+        FIRMWARE_VERSION="image ${sha:0:8}"
+        ok "$FIRMWARE_VERSION"
+    fi
+    echo "    ${C_DIM}$sha${C_RESET}"
 }
 
 if [ -z "$FIRMWARE" ]; then
@@ -372,7 +365,7 @@ if [ -z "$FIRMWARE" ]; then
             sha="$(shasum -a 256 "$candidate" | cut -d" " -f1)"
             when="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$candidate" 2>/dev/null)"
             if [ "$sha" = "$EXPECTED_SHA256" ]; then
-                mark="  ${C_GREEN}<- built with this flasher${C_RESET}"
+                mark="  ${C_GREEN}<- shipped with this package${C_RESET}"
             else
                 mark=""
             fi
@@ -422,7 +415,6 @@ if [ -z "$FIRMWARE" ]; then
     accept_choice "$other"
 fi
 ok "Found $(basename "$FIRMWARE")"
-ok "Checksum matches the image this flasher installs"
 ok "${C_BOLD}$FIRMWARE_VERSION${C_RESET}"
 
 # Keep it where it belongs, so the next run finds it first and the log records
