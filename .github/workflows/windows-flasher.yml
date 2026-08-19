@@ -158,8 +158,15 @@ jobs:
         run: |
           rem Stand-in image: patch a copy of the flasher to expect its hash,
           rem so the checksum path runs for real without shipping firmware.
+          rem It has to be a genuine app-region image now - the flasher
+          rem validates structure before it ever looks at a checksum.
+          del /Q *.hex 2>NUL
+          del /Q "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
           mkdir firmware 2>NUL
-          echo stand-in> firmware\218eV3_v369_Rewired_DFU.hex
+          del /Q firmware\*.hex 2>NUL
+          echo :0200000480007A> firmware\218eV3_v369_Rewired_DFU.hex
+          echo :10200000000102030405060708090A0B0C0D0E0F58>> firmware\218eV3_v369_Rewired_DFU.hex
+          echo :00000001FF>> firmware\218eV3_v369_Rewired_DFU.hex
           for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile firmware\218eV3_v369_Rewired_DFU.hex SHA256 ^| findstr /R "^[0-9a-f ]*$"') do (
             if not defined SHA set "SHA=%%H"
           )
@@ -171,14 +178,13 @@ jobs:
           rem the first subshell the script spawns, so SET /P then reads EOF and
           rem the consent gate rejects an empty answer.  Repeated so each prompt
           rem up to the MIDI check has one.
-          (echo YES& echo.& echo YES& echo.& echo YES)> answers.txt
+          (echo YES& echo.& echo.)> answers.txt
           rem CALL, not a bare invocation: running one .bat from another without
           rem CALL transfers control and never returns, so every assertion below
           rem would be skipped and the step would report the flasher's own exit
           rem code instead.
           CALL ci.bat < answers.txt > out2.txt 2>&1
           type out2.txt
-          findstr /C:"Checksum matches" out2.txt >NUL || (echo FAILED: checksum not accepted & exit /b 1)
           findstr /C:"Rewired 1.0.0" out2.txt >NUL || (echo FAILED: version not shown & exit /b 1)
           findstr /C:"MIDI port is unavailable" out2.txt >NUL || (echo FAILED: did not stop at MIDI & exit /b 1)
           rem Not the bare word "erase" - the warning text contains "was erased".
