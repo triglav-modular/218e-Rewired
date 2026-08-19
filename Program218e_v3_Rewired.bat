@@ -36,6 +36,8 @@ IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
     GOTO :fail_early
 )
 
+SET "DFU=%TOOLS%\dfu-programmer.exe"
+SET "SENDMIDI=%TOOLS%\sendmidi.exe"
 SET "FIRMWARE_DIR=%PACKAGE_ROOT%firmware"
 SET "FIRMWARE_NAME=218eV3_v369_Rewired_DFU.hex"
 SET "FIRMWARE="
