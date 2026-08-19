@@ -1,4 +1,4 @@
-# 218e v3 Rewired — custom firmware for the Buchla 218e v3
+# 218e v3 Rewired
 
 A patched build of the stock **v36.9** firmware for the Buchla 218e V3 touch
 keyboard. 
