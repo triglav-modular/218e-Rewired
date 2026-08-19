@@ -213,17 +213,6 @@ var WEBBUILD = (function () {
             // Same shape the command-line build reports and both flashers
             // carry: a declared version plus the image's own fingerprint.
             version: 'Rewired ' + GEN.version + ' (' + sha.slice(0, 8) + ')',
-            // Flashers generated FOR this image: same text as the shipped
-            // ones, with the checksum and version they enforce swapped for
-            // this build's.  Same substitutions tools/build.py makes.
-            flasherCommand: GEN.flasherCommand
-                .replace(/(EXPECTED_SHA256="?)[0-9a-f]{64}/, '$1' + sha)
-                .replace(/(FIRMWARE_VERSION="?)[^"\r\n]*/,
-                         '$1Rewired ' + GEN.version + ' (' + sha.slice(0, 8) + ')'),
-            flasherBat: GEN.flasherBat
-                .replace(/(EXPECTED_SHA256="?)[0-9a-f]{64}/, '$1' + sha)
-                .replace(/(FIRMWARE_VERSION="?)[^"\r\n]*/,
-                         '$1Rewired ' + GEN.version + ' (' + sha.slice(0, 8) + ')'),
             properties: BUILDLIB.writeProperties('config/218e.toml', flags.blocks,
                                                  flags.features, numbers, tables),
             patches: records.patches.length,

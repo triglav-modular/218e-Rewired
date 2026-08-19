@@ -84,6 +84,41 @@ warn() {
     echo "[$(timestamp)] WARN: $*" >> "$LOG_FILE"
 }
 
+# Structural validation for an image the checksum does not vouch for: every
+# record's own checksum, hex-only content, an end-of-file record, and data
+# confined to the AT32UC3B1256 application flash.  Delegated to
+# tools/validate_hex.py when it is present (running from a repo checkout);
+# otherwise a compact inline awk does the same job for a standalone package.
+VALIDATOR=""
+for v in "$PACKAGE_ROOT/tools/validate_hex.py" "$SCRIPT_DIR/tools/validate_hex.py" \
+         "$SCRIPT_DIR/../tools/validate_hex.py"; do
+    [ -f "$v" ] && { VALIDATOR="$v"; break; }
+done
+validate_hex() {
+    if [ -n "$VALIDATOR" ] && command -v python3 >/dev/null 2>&1; then
+        python3 "$VALIDATOR" "$1"
+        return
+    fi
+    awk '
+function h2d(s,   i,v,c){v=0;for(i=1;i<=length(s);i++){c=index("0123456789abcdef",tolower(substr(s,i,1)))-1;if(c<0)return -1;v=v*16+c}return v}
+function fail(m){print "BAD " m;failed=1;exit 1}
+/^:/{hex=substr($0,2);gsub(/\r/,"",hex)
+  if(length(hex)<10||length(hex)%2)fail("malformed record at line " NR)
+  sum=0;for(i=1;i<length(hex)+1;i+=2){b=h2d(substr(hex,i,2));if(b<0)fail("non-hex characters at line " NR);sum+=b}
+  if(sum%256)fail("checksum mismatch at line " NR " - the file is corrupted")
+  type=h2d(substr(hex,7,2));len=h2d(substr(hex,1,2));addr=h2d(substr(hex,3,4))
+  if(type==4)ela=h2d(substr(hex,9,4))
+  if(type==0){a=ela*65536+addr;if(!seen||a<lo)lo=a;seen=1;if(a+len-1>hi)hi=a+len-1}
+  if(type==1)eof=1;next}
+NF{fail("line " NR " is not an Intel HEX record")}
+END{if(failed)exit 1
+  if(!eof){print "BAD no end-of-file record - truncated download?";exit 1}
+  if(!seen){print "BAD no data records";exit 1}
+  if(lo<2147491840){printf "BAD data at 0x%X - inside the bootloader region, or not AVR32 firmware\n",lo;exit 1}
+  if(hi>2147745791){printf "BAD data at 0x%X - beyond the AT32UC3B1256 flash\n",hi;exit 1}
+  printf "OK 0x%X..0x%X\n",lo,hi}' "$1"
+}
+
 # Run a command with a deadline, because a Gatekeeper-blocked binary does not
 # fail — it blocks on a modal dialog and waits, forever if nobody clicks.  Used
 # for the probe, so a blocked tool cannot hang the script.
@@ -233,6 +268,43 @@ fi
 # where it landed, instead of asking anyone to move it.
 step "Locating the firmware image"
 FIRMWARE=""
+CUSTOM_IMAGE=0
+
+# An explicitly chosen image: given as an argument, or dragged into the
+# prompt below.  It bypasses the checksum gate, so it gets the structural
+# validation and its own typed confirmation instead — and it is never
+# something the automatic search picks up on its own.
+use_explicit_image() {
+    local path="$1"
+    [ -f "$path" ] || fail "No such file: $path"
+    echo
+    echo "  Validating $(basename "$path") — this image is not the one this"
+    echo "  flasher was generated for, so it is checked structurally instead."
+    verdict="$(validate_hex "$path")"
+    case "$verdict" in
+        OK*)
+            ok "Valid Intel HEX, data in ${verdict#OK }"
+            ;;
+        *)
+            echo "  ${C_RED}${verdict}${C_RESET}"
+            fail "That file is not a flashable 218e image. The instrument was not touched."
+            ;;
+    esac
+    actual_sha256="$(shasum -a 256 "$path" | cut -d" " -f1)"
+    echo
+    echo "  SHA-256  ${C_BOLD}$actual_sha256${C_RESET}"
+    echo
+    echo "  Only flash an image you built yourself or otherwise trust."
+    read -r -p "  Type FLASH (capitals) to accept this image: " confirm
+    [ "$confirm" = "FLASH" ] || fail "Not confirmed. The instrument was not touched."
+    FIRMWARE="$path"
+    CUSTOM_IMAGE=1
+    FIRMWARE_VERSION="custom image (${actual_sha256:0:8})"
+}
+
+if [ -n "${1:-}" ]; then
+    use_explicit_image "$1"
+fi
 try_candidate() {
     [ -f "$1" ] || return 1
     [ "$(shasum -a 256 "$1" | awk '{print $1}')" = "$EXPECTED_SHA256" ] || return 1
@@ -240,6 +312,7 @@ try_candidate() {
     return 0
 }
 
+[ -n "$FIRMWARE" ] || \
 for candidate in \
     "$FIRMWARE_DIR/$FIRMWARE_NAME" \
     "$SCRIPT_DIR/$FIRMWARE_NAME" \
@@ -260,6 +333,27 @@ $(ls -t "$HOME/Downloads"/*.hex "$HOME/Desktop"/*.hex 2>/dev/null | head -20)
 EOF
 fi
 
+# Nothing matched the built-in checksum.  Before giving up, offer the newest
+# structurally valid image from the same places — this is how a build with
+# changed settings gets flashed without touching the flasher: it is suggested,
+# fingerprinted, and flashed only after a typed confirmation.  Never silently.
+if [ -z "$FIRMWARE" ]; then
+    suggestion=""
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] && [ -f "$candidate" ] || continue
+        case "$(validate_hex "$candidate")" in OK*) suggestion="$candidate"; break ;; esac
+    done <<EOF
+$(ls -t "$FIRMWARE_DIR"/*.hex "$SCRIPT_DIR"/*.hex "$HOME/Downloads"/*.hex "$HOME/Desktop"/*.hex 2>/dev/null | head -20)
+EOF
+    if [ -n "$suggestion" ]; then
+        echo
+        echo "  Nothing matches this flasher's built-in checksum, but the newest"
+        echo "  valid image around is:"
+        echo "    ${C_BOLD}$suggestion${C_RESET}"
+        use_explicit_image "$suggestion"
+    fi
+fi
+
 if [ -z "$FIRMWARE" ]; then
     echo
     echo "  Looked in firmware/, beside this script, Downloads and Desktop."
@@ -270,7 +364,14 @@ if [ -z "$FIRMWARE" ]; then
     echo "  firmware with our changes in it, so it is not ours to redistribute."
     echo "  Build one from your own factory image with the page in web/, or:"
     echo "    ${C_BOLD}python3 tools/build.py --no-ghidra${C_RESET}"
-    fail "No matching firmware image found."
+    echo
+    echo "  Or flash a different image than the one this flasher was made for:"
+    echo "  drag its .hex into this window, or press return to stop."
+    read -r -p "  Image to flash: " other
+    # Terminal drag-and-drop appends a space and may escape spaces in the path.
+    other="$(printf '%s' "$other" | sed 's/\\//g; s/[[:space:]]*$//')"
+    [ -n "$other" ] || fail "No matching firmware image found."
+    use_explicit_image "$other"
 fi
 ok "Found $(basename "$FIRMWARE")"
 ok "Checksum matches the image this flasher installs"
@@ -279,7 +380,7 @@ ok "${C_BOLD}$FIRMWARE_VERSION${C_RESET}"
 # Keep it where it belongs, so the next run finds it first and the log records
 # one canonical location.  A failure here is not fatal: the image was already
 # verified, and flashing it from where it sits is equally correct.
-if [ "$FIRMWARE" != "$FIRMWARE_DIR/$FIRMWARE_NAME" ]; then
+if [ "$CUSTOM_IMAGE" -eq 0 ] && [ "$FIRMWARE" != "$FIRMWARE_DIR/$FIRMWARE_NAME" ]; then
     mkdir -p "$FIRMWARE_DIR" 2>/dev/null
     if cp "$FIRMWARE" "$FIRMWARE_DIR/$FIRMWARE_NAME" 2>/dev/null; then
         FIRMWARE="$FIRMWARE_DIR/$FIRMWARE_NAME"
@@ -522,7 +623,7 @@ fi
 cat > "$PACKAGE_ROOT/firmware/INSTALLED.txt" <<RECORD 2>/dev/null || true
 $FIRMWARE_VERSION
 flashed  $(timestamp)
-image    $EXPECTED_SHA256
+image    ${actual_sha256:-$EXPECTED_SHA256}
 RECORD
 
 echo

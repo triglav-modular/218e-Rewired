@@ -64,6 +64,17 @@ FOR /F "delims=" %%F IN ('DIR /B /O-D "%USERPROFILE%\Desktop\*.hex" 2^>NUL') DO 
     CALL :try_image "%USERPROFILE%\Desktop\%%F"
 )
 
+REM Nothing matched the built-in checksum.  Offer the newest structurally
+REM valid image instead - this is how a build with changed settings gets
+REM flashed without changing the flasher: suggested, validated, and only
+REM flashed after a typed confirmation.
+IF NOT DEFINED FIRMWARE (
+    FOR /F "delims=" %%F IN ('DIR /B /O-D "%FIRMWARE_DIR%\*.hex" "%SCRIPT_DIR%*.hex" "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2^>NUL') DO (
+        IF NOT DEFINED CUSTOM CALL :offer_image "%%~fF"
+    )
+)
+IF DEFINED CUSTOM GOTO :have_image
+
 IF NOT DEFINED FIRMWARE (
     ECHO.
     ECHO   Looked in firmware\, beside this script, Downloads and Desktop.
@@ -75,8 +86,15 @@ IF NOT DEFINED FIRMWARE (
     ECHO   Build one from your own factory image with the page in web\, or:
     ECHO     python tools\build.py --no-ghidra
     ECHO.
-    GOTO :fail_early
+    ECHO   Or flash a different image: paste or drag its .hex path here,
+    ECHO   or press Enter to stop.
+    SET "OTHER="
+    SET /P "OTHER=  Image to flash: "
+    IF NOT DEFINED OTHER GOTO :fail_early
+    CALL :accept_image "%OTHER%"
+    IF NOT DEFINED CUSTOM GOTO :fail_early
 )
+:have_image
 CALL :ok Found !FIRMWARE!
 CALL :ok Checksum matches the image this flasher installs
 CALL :ok %FIRMWARE_VERSION%
@@ -355,6 +373,43 @@ EXIT /B 0
 :ok
 ECHO   [ok] %*
 ECHO OK: %*>> "%LOG_FILE%"
+EXIT /B 0
+
+:offer_image
+REM A candidate from the automatic search.  Validate it, and if it is good,
+REM put it forward for confirmation.  DIR already sorted newest-first, so the
+REM first valid one wins.
+IF DEFINED CUSTOM EXIT /B 0
+python "%PACKAGE_ROOT%tools\validate_hex.py" "%~1" >NUL 2>&1
+IF ERRORLEVEL 1 EXIT /B 0
+ECHO.
+ECHO   Nothing matches this flasher's built-in checksum, but the newest valid
+ECHO   image around is:
+ECHO     %~1
+CALL :accept_image "%~1"
+EXIT /B 0
+
+:accept_image
+REM Validate, fingerprint, and require a typed FLASH before accepting an image
+REM the checksum does not vouch for.
+IF NOT EXIST "%~1" ( ECHO   No such file: %~1 & EXIT /B 0 )
+ECHO.
+ECHO   Validating %~nx1 - not the image this flasher was made for, so it is
+ECHO   checked structurally instead.
+FOR /F "delims=" %%V IN ('python "%PACKAGE_ROOT%tools\validate_hex.py" "%~1" 2^>^&1') DO SET "VERDICT=%%V"
+ECHO   %VERDICT%
+ECHO %VERDICT% | FINDSTR /B "OK" >NUL || ( ECHO   That file is not a flashable 218e image. & EXIT /B 0 )
+FOR /F "tokens=1" %%H IN ('certutil -hashfile "%~1" SHA256 ^| findstr /R "^[0-9a-f]*$"') DO IF NOT DEFINED CSHA SET "CSHA=%%H"
+ECHO.
+ECHO   SHA-256  %CSHA%
+ECHO.
+ECHO   Only flash an image you built yourself or otherwise trust.
+SET "CONF="
+SET /P "CONF=  Type FLASH (capitals) to accept this image: "
+IF NOT "%CONF%"=="FLASH" ( ECHO   Not confirmed. & EXIT /B 0 )
+SET "FIRMWARE=%~1"
+SET "CUSTOM=1"
+SET "FIRMWARE_VERSION=custom image (%CSHA:~0,8%)"
 EXIT /B 0
 
 :try_image

@@ -406,8 +406,6 @@
     function refresh() {
         $('build').disabled = !state.factoryText;
         $('download').disabled = !state.result;
-        $('dlCommand').disabled = !state.result;
-        $('dlBat').disabled = !state.result;
     }
 
     $('build').addEventListener('click', function () {
@@ -440,14 +438,7 @@
         if (!state.result) return;
         download(state.result.hex, '218eV3_v369_Rewired_DFU.hex', 'text/plain');
     });
-    $('dlCommand').addEventListener('click', function () {
-        if (!state.result) return;
-        download(state.result.flasherCommand, 'Program218e_v3_Rewired.command', 'text/plain');
-    });
-    $('dlBat').addEventListener('click', function () {
-        if (!state.result) return;
-        download(state.result.flasherBat, 'Program218e_v3_Rewired.bat', 'text/plain');
-    });
+
 
     $('useTunings').addEventListener('change', function () {
         $('tuningsBody').style.display = $('useTunings').checked ? '' : 'none';

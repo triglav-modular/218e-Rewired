@@ -1334,11 +1334,14 @@ def main() -> None:
             raise SystemExit(f"{updater_name}: expected exactly one EXPECTED_SHA256 line")
         # The version travels with the checksum so a flasher can never announce
         # one build while installing another.
+        # Only the declared line, whose value is a literal "Rewired ...".  The
+        # flashers also assign FIRMWARE_VERSION at runtime for a custom image
+        # ("custom image (...)"), and the build must leave those alone.
         patched, count = re.subn(
-            r'(FIRMWARE_VERSION="?)[^"\r\n]*',
+            r'(FIRMWARE_VERSION="?)Rewired [^"\r\n]*',
             lambda m: m.group(1) + version_string, patched)
         if count != 1:
-            raise SystemExit(f"{updater_name}: expected exactly one FIRMWARE_VERSION line")
+            raise SystemExit(f"{updater_name}: expected exactly one declared FIRMWARE_VERSION line")
         # The panel summary is generated from this configuration, so no flasher
         # can describe a build it is not actually installing.
         patched, count = re.subn(
