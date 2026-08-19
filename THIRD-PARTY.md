@@ -50,12 +50,37 @@ digits need to line up. Redistributed here, which the OFL permits.
 **Euclid Circular A** — Swiss Typefaces, licensed to Triglav Modular. It is
 **not** in this repository, and is not covered by the Unlicense. The page loads
 it from `triglavmodular.hu`, where that licence already applies, which needs the
-font files to be sent with a permissive CORS header:
+font files to be sent with a permissive CORS header.
 
-```apache
-<FilesMatch "\.(woff2?)$">
-  Header set Access-Control-Allow-Origin "*"
-</FilesMatch>
+That site runs **IIS behind Cloudflare**, so there are two places it can be set.
+Cloudflare is the easier one and needs no server access:
+
+**Cloudflare** — Rules → Transform Rules → Modify Response Header → Create.
+Set *If* to `URI Path ends with .woff2`, and *Then* to Set static,
+`Access-Control-Allow-Origin` = `*`. The files are cached at the edge
+(`cf-cache-status: HIT`), so purge the cache afterwards or the old
+header-less responses keep being served until they expire.
+
+**IIS** — a `web.config` in `wp-content/uploads/`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.webServer>
+    <httpProtocol>
+      <customHeaders>
+        <add name="Access-Control-Allow-Origin" value="*" />
+      </customHeaders>
+    </httpProtocol>
+  </system.webServer>
+</configuration>
+```
+
+To check it worked:
+
+```bash
+curl -sI https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Regular-WebXL.woff2 \
+  | grep -i access-control
 ```
 
 Without that header — and offline, opening `web/index.html` from a clone — the
