@@ -61,7 +61,31 @@ body{margin:0;background:var(--bg);color:var(--ink);
 body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background:url("images/wave_bg.png") center/cover no-repeat;opacity:.5}
 .wrap{position:relative;z-index:1;max-width:820px;margin:0 auto;padding:56px 20px 120px}
-h1{font-size:clamp(44px,9vw,82px);font-weight:900;line-height:.98;margin:0 0 14px;letter-spacing:-.015em}
+/* The banana rides with the title, scaled off the same clamp so it keeps its
+   proportion to the type at every width.  Referenced rather than inlined: the
+   file carries its own <style> with generic .cls-1 names, which would leak
+   into the page if it were pasted in. */
+.hdr{display:flex;align-items:center;gap:clamp(12px,2.2vw,22px);margin:0 0 14px}
+.hdr h1{margin:0}
+.banana{
+    width: 160px;
+    position: absolute;
+    z-index: -3;
+    height: auto;
+    top: 30px;
+    right: 30px;
+    flex: 0 0 auto;
+    display: block;
+    transform: rotate(-12deg) scale(1.06);
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+}
+/* Tilted at rest and straightening on hover, so the motion settles instead of
+   starting. */
+.hdr:hover .banana{transform:rotate(0deg) scale(1)}
+@media (prefers-reduced-motion:reduce){.banana{transition:none}
+  .hdr:hover .banana{transform:rotate(-12deg) scale(1.06)}}
+h1{font-size:clamp(44px,9vw,82px);font-weight:900;line-height:.98;margin:0;letter-spacing:-.015em}
 .sub{color:var(--muted);margin:0 0 44px;font-size:18px}
 section{background:var(--panel);border:1px solid var(--line);border-radius:16px;
   padding:30px 28px;margin-bottom:20px}
@@ -109,6 +133,14 @@ button.primary:disabled,button.primary:disabled:hover{background:transparent;
 details{margin-top:14px}
 summary{cursor:pointer;color:var(--accent);font-size:14px;font-weight:700;
   text-transform:uppercase;letter-spacing:.08em}
+/* The knob numbers get their own right-aligned column against left-aligned
+   labels, so the list scans as a list instead of as prose. */
+table.knobs{width:auto;margin:5px 0 0;font-size:inherit}
+table.knobs td,table.knobs th{border:0;padding:1px 0;background:none;font-size:inherit}
+table.knobs td{text-align:right;padding-right:10px;font-weight:700;color:var(--accent);
+  font-variant-numeric:tabular-nums;width:1%;white-space:nowrap}
+table.knobs th{text-align:left;font-weight:400;color:inherit;position:static;
+  text-transform:none;letter-spacing:normal}
 table{border-collapse:collapse;width:100%;font-size:13px;margin-top:10px}
 th,td{padding:4px 7px;text-align:right;border-bottom:1px solid var(--line)}
 th{color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.1em;
@@ -211,7 +243,10 @@ strong{color:var(--accent)}
 </head>
 <body>
 <div class="wrap">
-<h1>218e V3 Rewired</h1>
+<div class="hdr">
+  <img class="banana" src="images/banana.svg" alt="" width="56" height="56">
+  <h1>218e V3 Rewired</h1>
+</div>
 <p class="sub">Custom firmware builder for the Buchla 218e V3</p>
 
 <div class="danger">
@@ -248,8 +283,15 @@ strong{color:var(--accent)}
     <span><span class="t">Latching arpeggiator</span><br>
     <span class="d">The arp switch becomes <strong>latch</strong>  — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
   <label class="opt"><input type="checkbox" id="remap_knobs" checked>
-    <span><span class="t">Remap the preset knobs 1–4 to arpeggiator and vibrato controls</span><br>
-    <span class="d">Outside edit mode: note order, rhythm, random octaves, vibrato.</span></span></label>
+    <span><span class="t">Remap the preset knobs to arpeggiator and vibrato controls</span><br>
+    <span class="d">
+      <table class="knobs">
+        <tr><td>1</td><th>Random note order</th></tr>
+        <tr><td>2</td><th>Random trigger spacing</th></tr>
+        <tr><td>3</td><th>Random octaves</th></tr>
+        <tr><td>4</td><th>Vibrato</th></tr>
+      </table>
+    </span></span></label>
 
 </section>
 
