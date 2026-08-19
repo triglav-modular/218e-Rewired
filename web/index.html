@@ -46,6 +46,12 @@
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 *{box-sizing:border-box}
+/* No widows or orphans.  text-wrap:pretty asks the browser to avoid leaving a
+   single word alone on a paragraph's last line; balance evens out the lines of
+   a heading instead, which is what short blocks need.  Both are ignored where
+   unsupported, so the fallback is ordinary wrapping. */
+p,li,dd,dt,.opt .d,.d,.sub,.msg,figcaption{text-wrap:pretty}
+h1,h2,h3,h4,summary,.opt .t,.vpo button,.tag,.kbdhint,th{text-wrap:balance}
 body{margin:0;background:var(--bg);color:var(--ink);
   font:400 16px/1.62 var(--sans);-webkit-font-smoothing:antialiased}
 /* The art is white strokes on transparency - 97% of the image has zero alpha -
