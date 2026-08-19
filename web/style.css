@@ -367,10 +367,17 @@ label.opt.row>span {
   min-width: 0;
 }
 .mono {
-  font-family: var(--mono);
-  font-size: 16px;
-  font-weight: 600;
-  word-break: break-all;
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    margin: 6px 0;
+    display: inline-block;
+    word-break: break-all;
+    background: rgba(17, 16, 11, 0.51);
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.2);
+    text-decoration: none;
 }
 .ok {
   color: var(--ok);
@@ -980,37 +987,38 @@ strong {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-/* Two groups rather than one flat run: what the instrument is doing, and
-   what Windows has bound to it.  The heading carries the platform so the
-   entries under it do not each have to repeat "Windows:". */
-.faq-group {
-  margin: 18px 0 0;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.faq-group:first-of-type {
-  margin-top: 14px;
-}
-.faq-group .os {
-  width: 13px;
-  height: 13px;
-  margin: 0 5px 0 0;
-  display: inline-block;
-  vertical-align: -1px;
-}
 .faq {
   line-height: 1.6;
   margin: 6px 0 0;
 }
+/* The symptom is the thing being scanned for, so it takes the page's label
+   treatment - tracked uppercase in ink - and the answer drops to muted.  A
+   literal keeps its own case: uppercasing "no device present" would misquote
+   what the flasher actually prints. */
 .faq dt {
+  margin-top: 20px;
+  font-size: 13px;
   font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.faq dt:first-of-type {
   margin-top: 10px;
 }
+.faq dt .mono {
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* The whole symptom is already the emphasis, so strong inside it stays ink
+   rather than pulling accent into a line that is meant to read as one. */
+.faq dt strong {
+  color: inherit;
+}
 .faq dd {
-  margin: 2px 0 0;
+  margin: 5px 0 0;
+  color: var(--muted);
 }
 /* Carried over from triglavmodular.hu.  The original markup set these inline
    through --wp--preset--* variables that do not exist here, so the margins and
