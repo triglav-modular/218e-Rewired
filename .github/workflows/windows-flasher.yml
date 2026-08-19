@@ -91,7 +91,7 @@ jobs:
           rem The scanner must list good.hex and nothing else.
           powershell -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"
           dir scan_test
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -Dirs "%CD%\scan_test" > scan_out.txt 2> scan_err.txt
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -Dirs "%CD%\scan_test" -Explain > scan_out.txt 2> scan_err.txt
           echo --- stdout ---
           type scan_out.txt
           echo --- stderr ---
