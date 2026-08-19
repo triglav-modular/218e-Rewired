@@ -481,7 +481,7 @@ strong{color:var(--accent)}
     <li  style="margin-top:8px">Power on the 218e.</li>
     <li style="margin-top:8px">Run the flasher and follow their instructions:
       <div style="margin-top:0px">
-        <div><strong>macOS</strong> — a download is quarantined and this is unsigned, so macOS blocks it. Clear the whole folder once, in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>. That also spares you the same block on <span class="mono">dfu-programmer</span> a moment later.</div>
+        <div><strong>macOS</strong> — a download is quarantined and this is unsigned, so macOS blocks it. Clear the whole folder once, in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>. The flasher clears the quarantine on the tools itself, and offers to; the one thing it cannot clear is its own, because macOS stops it before it runs.</div>
         <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
       </div>
     </li>
@@ -497,7 +497,7 @@ strong{color:var(--accent)}
     <p>Partway through the flash, the flasher will stop and open <strong>Zadig</strong> at the one moment it can see the device. Do the following steps in it:</p>
     <ol>
       <li><strong>Options → List All Devices</strong></li>
-      <li>Select <strong>AT32UC3B DFU</strong> <span class="mono">(03EB 2FF6)</span></li>
+      <li>Select <strong>AT32UC3B DFU</strong></li>
       <li>Set the right-hand box to <strong>WinUSB</strong>, press the <strong>Install Driver</strong> or <strong>Replace Driver</strong> button</li>
       <li>Close Zadig.</li>
     </ol>
