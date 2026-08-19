@@ -101,7 +101,7 @@ IF %IMG_COUNT% GTR 1 (
     ECHO.
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
-        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- shipped with this package"
+        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- the default Rewired build"
         IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  ^<- FACTORY firmware, back to stock v369"
         ECHO     %%I^) !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!
         ECHO        !IMG_PATH_%%I!!MARK!
