@@ -13,6 +13,8 @@ ERASE_STARTED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
+DEADLINE_OUT="$(mktemp -t rewired)"
+trap 'rm -f "$DEADLINE_OUT"' EXIT
 EXPECTED_SHA256="9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
 FIRMWARE_VERSION="Rewired 1.0.0 (9474624b)"
 
@@ -80,6 +82,25 @@ ok() {
 warn() {
     echo "  ${C_YELLOW}!${C_RESET} $*"
     echo "[$(timestamp)] WARN: $*" >> "$LOG_FILE"
+}
+
+# Run a command with a deadline, because a Gatekeeper-blocked binary does not
+# fail — it blocks on a modal dialog and waits, forever if nobody clicks.  Used
+# for the probe, so a blocked tool cannot hang the script.
+run_with_deadline() {
+    local seconds="$1"; shift
+    "$@" >"$DEADLINE_OUT" 2>&1 &
+    local pid=$! waited=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ "$waited" -ge "$seconds" ]; then
+            kill -9 "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            return 124
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    wait "$pid"
 }
 
 # Run a long command, showing a spinner while it works.  dfu-programmer writes
@@ -339,8 +360,56 @@ read -r -p "Press return to continue with the connected 218e. "
 # success is fine too: the instrument is already in DFU.  Anything else means
 # the tool cannot run at all.
 step "Checking the DFU tools"
-probe_output="$("$DFUPATH" at32uc3b1256 get bootloader-version 2>&1)"
+
+# Clear quarantine BEFORE running anything.  A quarantined unsigned binary does
+# not return an error when launched — macOS suspends it behind a modal dialog
+# and it waits indefinitely, so detecting the problem by running the tool means
+# hanging on it.  Reading the attribute costs nothing and never blocks.
+quarantined=""
+for candidate in "$DFUPATH" "$SENDMIDI"; do
+    if xattr -p com.apple.quarantine "$candidate" >/dev/null 2>&1; then
+        quarantined="yes"
+    fi
+done
+if [ -n "$quarantined" ]; then
+    echo "  These tools are marked as quarantined, because the package was"
+    echo "  downloaded rather than cloned.  macOS will refuse to run them, and"
+    echo "  it does so by holding them at a dialog rather than by failing — so"
+    echo "  this has to be cleared before the flash, not during it."
+    echo
+    echo "  It affects only the files in this package, on this machine."
+    echo
+    read -r -p "  Clear it now? [Y/n] " unquarantine
+    case "$unquarantine" in
+        [nN]*)
+            echo "  Then approve each tool in System Settings > Privacy & Security,"
+            echo "  or clear it yourself with:"
+            echo "    ${C_BOLD}xattr -dr com.apple.quarantine \"$PACKAGE_ROOT\"${C_RESET}"
+            fail "The DFU tools are blocked. The instrument was not touched."
+            ;;
+        *)
+            xattr -dr com.apple.quarantine "$PACKAGE_ROOT" 2>/dev/null
+            xattr -dr com.apple.quarantine "$RUNTIME_DIR" 2>/dev/null
+            if xattr -p com.apple.quarantine "$DFUPATH" >/dev/null 2>&1; then
+                fail "Could not clear it. Approve the tools in System Settings > Privacy & Security, then run this again."
+            fi
+            ok "Quarantine cleared"
+            ;;
+    esac
+fi
+
+# Now it is safe to actually run it.  The deadline is a backstop: if macOS
+# still holds it somewhere, this reports that instead of hanging.
+run_with_deadline 15 "$DFUPATH" at32uc3b1256 get bootloader-version
 probe_status=$?
+probe_output="$(cat "$DEADLINE_OUT" 2>/dev/null)"
+if [ "$probe_status" -eq 124 ]; then
+    echo "  dfu-programmer did not answer within 15 seconds."
+    echo "  That usually means macOS is holding it at a security dialog —"
+    echo "  check for one, allow the tool in System Settings > Privacy &"
+    echo "  Security, and run this again."
+    fail "The DFU tools are not responding. The instrument was not touched."
+fi
 if [ "$probe_status" -ne 0 ] && \
    ! printf '%s' "$probe_output" | grep -qi "no device present"; then
     printf '%s\n' "$probe_output" >> "$LOG_FILE"
@@ -348,45 +417,11 @@ if [ "$probe_status" -ne 0 ] && \
         echo "  dfu-programmer is an x86_64 binary and this Mac cannot run it."
         echo "  Install Rosetta, then run this again:"
         echo "    ${C_BOLD}softwareupdate --install-rosetta${C_RESET}"
-        fail "The DFU tools are not usable. The instrument was not touched."
-    fi
-
-    # Anything downloaded through a browser carries com.apple.quarantine, and
-    # Gatekeeper kills these binaries outright because they are unsigned —
-    # SIGKILL, so the status is 137 and the output is empty or "Killed".
-    if [ "$probe_status" -ge 128 ] || \
-       printf '%s' "$probe_output" | grep -qiE "killed|cannot be opened|not be verified"; then
-        echo "  macOS blocked dfu-programmer: it is unsigned, and the copy you"
-        echo "  downloaded is marked as quarantined."
-        echo
-        echo "  The fix is to clear that mark on the bundled tools.  It affects"
-        echo "  only the files in this package, and only on this machine."
-        echo
-        read -r -p "  Clear it now? [y/N] " unquarantine
-        case "$unquarantine" in
-            [yY]*)
-                xattr -dr com.apple.quarantine "$RUNTIME_DIR/support" 2>/dev/null
-                xattr -dr com.apple.quarantine "$SCRIPT_DIR" 2>/dev/null
-                probe_output="$("$DFUPATH" at32uc3b1256 get bootloader-version 2>&1)"
-                probe_status=$?
-                if [ "$probe_status" -eq 0 ] || \
-                   printf '%s' "$probe_output" | grep -qi "no device present"; then
-                    ok "Quarantine cleared; dfu-programmer runs"
-                else
-                    fail "Still blocked. Approve it once in System Settings > Privacy & Security, then run this again."
-                fi
-                ;;
-            *)
-                echo "  Approve it in System Settings > Privacy & Security instead,"
-                echo "  then run this again."
-                fail "The DFU tools are blocked. The instrument was not touched."
-                ;;
-        esac
     else
         echo "  dfu-programmer would not run:"
         printf '    %s\n' "$probe_output" | head -4
-        fail "The DFU tools are not usable. The instrument was not touched."
     fi
+    fail "The DFU tools are not usable. The instrument was not touched."
 fi
 ok "dfu-programmer runs"
 

@@ -154,7 +154,16 @@ x86_64 binary: `softwareupdate --install-rosetta`.
 nothing if the package is obtained with `git clone`: Gatekeeper only refuses
 files carrying `com.apple.quarantine`, which a browser download sets on every
 file and a clone sets on none. A downloaded ZIP does hit it, and the flasher
-handles the part it can reach.
+clears it before running anything.
+
+That ordering is not fussiness. A quarantined unsigned binary does not fail
+when launched: macOS suspends it behind a modal dialog and it waits
+indefinitely, so a script that tries to *detect* the problem by running the
+tool hangs on it instead. Reading the extended attribute answers the same
+question instantly and without executing anything, so the flasher checks
+`com.apple.quarantine` on `dfu-programmer` and `sendmidi` first, offers to
+clear it, and only then runs them. A fifteen-second deadline on that first call
+is the backstop if macOS holds them anyway.
 
 `tools/sign-macos.sh` exists and will sign, notarise and staple a disk image
 if a **Developer ID Application** certificate is ever available — that is the
