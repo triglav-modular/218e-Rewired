@@ -203,23 +203,25 @@
         </div>
 
         <details><summary>Oh no… something went wrong</summary>
+
+          <h4 class="faq-group">What the keyboard is doing</h4>
           <dl class="faq">
-            <dt>The keyboard seems stuck with some LEDs on</dt>
-            <dd>Either run the programmer scripts again, or use the ExitDFU scripts to restart the instrument in regular mode.
-              <br>macOS: <span class="mono">ExitDFU_218e_v3_macOS.command</span>
-              <br>Windows: <span class="mono">ExitDFU_218e_v3_Windows.bat</span></dd>
+            <dt>Some LEDs are lit and the keyboard ignores you</dt>
+            <dd>It is still in DFU mode, waiting. Run the flasher again, or bring it back with the ExitDFU script for your platform:
+              <br><span class="mono">ExitDFU_218e_v3_macOS.command</span>
+              <br><span class="mono">ExitDFU_218e_v3_Windows.bat</span></dd>
 
-            <dt>Every LED is lit and the keyboard does nothing</dt>
-            <dd>There is no valid firmware on it. An erase happened but the write did not finish. Try running the flasher again.</dd>
+            <dt>Every LED is lit and nothing responds</dt>
+            <dd>There is no valid firmware on it: the erase finished and the write did not. Run the flasher again. The instrument stays in DFU for exactly this reason.</dd>
+          </dl>
 
-            <dt>Windows: <span class="mono">no device present</span>, or Device Manager lists <strong>AT32UC3B DFU</strong> under <em>Other devices</em></dt>
-            <dd>The WinUSB driver is not bound. Run Zadig as above. Installed correctly, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
+          <h4 class="faq-group"><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg> Windows: the wrong driver is bound</h4>
+          <dl class="faq">
+            <dt>The flasher says <span class="mono">no device present</span>, or <strong>AT32UC3B DFU</strong> sits under <em>Other devices</em></dt>
+            <dd>WinUSB is not bound to the DFU device. Run Zadig as above. Once it is right, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
 
-            <dt>Windows: the 218e appears under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
-            <dd>Windows has picked the wrong MIDI driver, so the DFU request never reaches the instrument. Right-click it, <strong>Update driver</strong>, choose manually, and pick <strong>USB Audio Device</strong>.</dd>
-
-            <dt>Windows: <span class="mono">VCRUNTIME140_1.dll was not found</span>, or a tool is “not recognized”</dt>
-            <dd>The Microsoft C++ runtime is missing. Install it from <a href="https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist">Microsoft's redistributable page</a>, or from Buchla's kit.</dd>
+            <dt>The 218e sits under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
+            <dd>Windows picked the wrong MIDI driver, so the request to enter DFU never reaches the instrument. Right-click it, <strong>Update driver</strong>, choose manually, and pick <strong>USB Audio Device</strong>.</dd>
           </dl>
         </details>
 

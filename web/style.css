@@ -980,9 +980,30 @@ strong {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+/* Two groups rather than one flat run: what the instrument is doing, and
+   what Windows has bound to it.  The heading carries the platform so the
+   entries under it do not each have to repeat "Windows:". */
+.faq-group {
+  margin: 18px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.faq-group:first-of-type {
+  margin-top: 14px;
+}
+.faq-group .os {
+  width: 13px;
+  height: 13px;
+  margin: 0 5px 0 0;
+  display: inline-block;
+  vertical-align: -1px;
+}
 .faq {
   line-height: 1.6;
-  margin: 10px 0 0;
+  margin: 6px 0 0;
 }
 .faq dt {
   font-weight: 700;
