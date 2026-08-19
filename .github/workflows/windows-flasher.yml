@@ -74,6 +74,7 @@ jobs:
           python tools\validate_hex.py good.hex || (echo FAILED: rejected a valid image & exit /b 1)
           echo not a hex file> bad.hex
           python tools\validate_hex.py bad.hex && (echo FAILED: accepted junk & exit /b 1)
+          del /Q good.hex bad.hex 2>NUL
           echo PASS: validator discriminates
           exit /b 0
 
@@ -99,12 +100,16 @@ jobs:
           python tools\validate_hex.py scan_test\good.hex || (echo FAILED: python rejected a valid image & exit /b 1)
           python tools\validate_hex.py scan_test\bad.hex && (echo FAILED: python accepted junk & exit /b 1)
           python tools\validate_hex.py scan_test\lowaddr.hex && (echo FAILED: python accepted a bootloader image & exit /b 1)
+          rmdir /S /Q scan_test 2>NUL
+          del /Q scan_out.txt scan_err.txt 2>NUL
           echo PASS: both validators agree
           exit /b 0
 
       - name: More than one image - must list them and ask
         shell: cmd
         run: |
+          del /Q *.hex 2>NUL
+          del /Q firmware\*.hex "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
           mkdir "%USERPROFILE%\Downloads" 2>NUL
           echo :0200000480007A> "%USERPROFILE%\Downloads\custom.hex"
           echo :10200000000102030405060708090A0B0C0D0E0F58>> "%USERPROFILE%\Downloads\custom.hex"
@@ -129,6 +134,11 @@ jobs:
           rem The only valid image present is NOT the one shipped with the
           rem package.  It should be selected and used, not gated behind a
           rem second confirmation - the flasher installs any valid image.
+          rem Clear anything an earlier step left where the flasher searches,
+          rem so "exactly one image" is true rather than assumed.
+          del /Q *.hex 2>NUL
+          del /Q firmware\*.hex 2>NUL
+          del /Q "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
           mkdir "%USERPROFILE%\Downloads" 2>NUL
           echo :0200000480007A> "%USERPROFILE%\Downloads\custom.hex"
           echo :10200000000102030405060708090A0B0C0D0E0F58>> "%USERPROFILE%\Downloads\custom.hex"
