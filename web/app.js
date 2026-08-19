@@ -346,7 +346,11 @@
             // A file of Offset_Cents holds corrections, the opposite sign to a
             // measurement, so it is flipped on the way in.
             var isCorrection = /Offset_Cents/i.test(r.result);
-            r.result.split('\n').forEach(function (line) {
+            // Split on any line ending: CRLF from Windows, and CR alone,
+            // which Excel can still write.  CRLF already worked - a stray
+            // \r rides on the last field, which parseFloat ignores - but a
+            // CR-only file arrives as one long line and yields nothing.
+            r.result.split(/\r\n|\r|\n/).forEach(function (line) {
                 if (!line.trim() || line.charAt(0) === '#' || /^Semitone/i.test(line)) return;
                 var p = line.split(line.indexOf(';') >= 0 ? ';' : ',');
                 var n = parseInt(p[0], 10), c = parseFloat(p[3]);

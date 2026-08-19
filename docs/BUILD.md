@@ -53,7 +53,10 @@ python3 tools/build.py
 
 This reads `config/218e.toml`, generates the tables, assembles every patch,
 applies them to the factory image, and writes
-`firmware/218eV3_v369_Rewired_DFU.hex`. It also rewrites the updater's
+`build/218eV3_v369_Rewired_DFU.hex` — deliberately outside `firmware/`, which
+is where the flashers look. A build lands where it cannot be picked up by
+accident; put an image in `firmware/` only when you mean to flash it. It also
+rewrites the updater's
 `EXPECTED_SHA256`, so the flasher always matches the image you just built.
 
 The first run imports the factory hex into a Ghidra project under `build/` and
@@ -365,7 +368,7 @@ its intended design:
 
 ```bash
 $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
-  -import firmware/218eV3_v369_Rewired_DFU.hex \
+  -import build/218eV3_v369_Rewired_DFU.hex \
   -processor "avr32:BE:32:default" \
   -scriptPath src \
   -postScript RecoverPressurePatch.java \

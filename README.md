@@ -26,7 +26,7 @@ the four preset-voltage knobs and the arpeggiator switch.
 | | |
 |---|---|
 | **Base image** | stock v36.9, **you supply it** (AT32UC3B1256, AVR32) |
-| **Output** | `firmware/218eV3_v369_Rewired_DFU.hex`, built locally |
+| **Output** | `build/218eV3_v369_Rewired_DFU.hex`, built locally |
 | **Settings** | [`config/218e.toml`](config/218e.toml) — seven options |
 | **Licence** | [Unlicense](UNLICENSE) for this repository's own work; the bundled flashing tools keep their own — see [THIRD-PARTY.md](THIRD-PARTY.md) |
 

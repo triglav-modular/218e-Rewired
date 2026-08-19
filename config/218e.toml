@@ -86,7 +86,7 @@ pressure_portamento = true
 [firmware]
 factory_hex    = "firmware/218eV3_v369_DFU.hex"
 factory_sha256 = "565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-output_hex     = "firmware/218eV3_v369_Rewired_DFU.hex"
+output_hex     = "build/218eV3_v369_Rewired_DFU.hex"
 
 # The updaters refuse to flash an image whose checksum they do not know.  The
 # build rewrites their EXPECTED_SHA256 and the instructions they print, so a
