@@ -69,8 +69,18 @@ REM valid image instead - this is how a build with changed settings gets
 REM flashed without changing the flasher: suggested, validated, and only
 REM flashed after a typed confirmation.
 IF NOT DEFINED FIRMWARE (
-    FOR /F "delims=" %%F IN ('DIR /B /O-D "%FIRMWARE_DIR%\*.hex" "%SCRIPT_DIR%*.hex" "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2^>NUL') DO (
-        IF NOT DEFINED CUSTOM CALL :offer_image "%%~fF"
+    REM DIR /B prints bare names, so scan one directory at a time and rebuild
+    REM the full path from %%~fF, which is only correct when DIR is scoped to a
+    REM single folder.  Multiple globs in one DIR is unreliable across versions.
+    FOR %%D IN ("%FIRMWARE_DIR%" "%SCRIPT_DIR%." "%USERPROFILE%\Downloads" "%USERPROFILE%\Desktop") DO (
+        IF NOT DEFINED CUSTOM (
+            PUSHD "%%~D" 2>NUL && (
+                FOR /F "delims=" %%F IN ('DIR /B /O-D *.hex 2^>NUL') DO (
+                    IF NOT DEFINED CUSTOM CALL :offer_image "%%~fF"
+                )
+                POPD
+            )
+        )
     )
 )
 IF DEFINED CUSTOM GOTO :have_image
