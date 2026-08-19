@@ -186,13 +186,11 @@ ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 
 ECHO.
 ECHO Before continuing:
-ECHO   - if you have flashed a 218e from this machine before, Zadig will show
-ECHO     libusb0 already bound; its button then says Replace Driver, and it
-ECHO     still has to be pressed - this tool speaks only WinUSB.
-ECHO   - the DFU device must be bound to WinUSB, or this cannot see the
-ECHO     instrument at all.  If you have not done that on this machine, run
-ECHO       %TOOLS%\zadig-2.8.exe
-ECHO     pick the AT32UC3B DFU device and install WinUSB.  Once per machine.
+ECHO   - Windows needs the WinUSB driver bound to the keyboard's DFU mode.
+ECHO     There is nothing to do about that now: the AT32UC3B DFU device does
+ECHO     not exist until the instrument is in DFU, which is a step away.  If
+ECHO     the driver is needed this script stops there and opens Zadig itself,
+ECHO     at the one moment Zadig can see the device.
 ECHO   - use stable instrument power; do not switch off the boat
 ECHO   - connect USB directly if possible; avoid a loose cable or unpowered hub
 ECHO   - do not unplug anything until this script reports verified success
@@ -357,8 +355,11 @@ IF "!FOUND!"=="0" (
     )
     ECHO   Starting Zadig.  In its window:
     ECHO     1. Options - List All Devices, if the list looks empty
-    ECHO     2. select the AT32UC3B DFU device
-    ECHO     3. choose WinUSB and press Install Driver
+    ECHO     2. select AT32UC3B DFU  ^(USB ID 03EB 2FF6^)
+    ECHO     3. set the right-hand box to WinUSB and press the button
+    ECHO        it reads Replace Driver, not Install Driver, when something is
+    ECHO        already bound.  Press it anyway: an older Buchla kit leaves
+    ECHO        libusb0 there, which this tool cannot use.
     ECHO     4. close Zadig and come back here
     ECHO.
     START /WAIT "" "%TOOLS%\zadig-2.8.exe"

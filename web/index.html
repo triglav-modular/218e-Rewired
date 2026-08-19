@@ -213,15 +213,15 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
   <h2>6 · Flash it</h2>
   <p class="d muted" style="margin:0 0 12px;font-size:13px">A script does the flashing, not this page. It checks the image, confirms the bootloader region is protected, and validates by read-back before letting the instrument leave DFU.</p>
   <div class="winsetup">
-    <h3>⊞ Windows only — one driver step, before you flash</h3>
-    <p>Windows must bind the keyboard's DFU mode to the <strong>WinUSB</strong> driver, or the flasher cannot see the instrument at all. The flasher opens <strong>Zadig</strong> at the moment the device appears. In it:</p>
+    <h3>⊞ Windows only — the first flash pauses for a driver</h3>
+    <p>Windows must bind the keyboard's DFU mode to the <strong>WinUSB</strong> driver, or the flasher cannot see the instrument. <strong>There is nothing to do in advance</strong> — the <span class="mono">AT32UC3B DFU</span> device does not exist until the keyboard is in DFU, partway through the flash. The flasher stops there and opens <strong>Zadig</strong> at the one moment it can see the device. In it:</p>
     <ol>
       <li>List empty? <strong>Options → List All Devices</strong></li>
       <li>Select <strong>AT32UC3B DFU</strong> <span class="mono">(03EB 2FF6)</span></li>
       <li>Set the right-hand box to <strong>WinUSB</strong>, press the button</li>
     </ol>
     <p><strong>If the button reads “Replace Driver”, press it anyway.</strong> That means an older Buchla kit left <span class="mono">libusb0</span> bound, which this flashing tool cannot use. Leaving it is the usual reason the keyboard goes into DFU and is then never found.</p>
-    <p class="muted" style="font-size:13px">Once per machine; it can pause a few seconds. Everything needed ships with the package. <strong>macOS needs none of this</strong> — just run the flasher.</p>
+    <p class="muted" style="font-size:13px">Once per machine; it can pause a few seconds. Nothing was erased at that point, and the flash carries on afterwards. Everything needed ships with the package. <strong>macOS needs none of this</strong> — just run the flasher.</p>
   </div>
 
   <div class="prereq">

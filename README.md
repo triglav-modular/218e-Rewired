@@ -172,11 +172,13 @@ cycle brings it straight back — and `ExitDFU_218e_v3_macOS.command` or
 | macOS | `Program218e_v3_Rewired_macOS.command` |
 | Windows | `Program218e_v3_Rewired_Windows.bat` |
 
-### Windows only — one driver step
+### Windows only — the first flash pauses for a driver
 
 Windows must bind the keyboard's DFU mode to the **WinUSB** driver or the
-flasher cannot see the instrument. The flasher opens **Zadig** at the moment
-the device appears; in it:
+flasher cannot see the instrument. **There is nothing to do in advance:** the
+`AT32UC3B DFU` device does not exist until the keyboard is in DFU, partway
+through the flash. The flasher stops there and opens **Zadig** at the one
+moment it can see the device; in it:
 
 1. List empty? **Options → List All Devices**
 2. Select **AT32UC3B DFU** (`03EB 2FF6`)
@@ -187,7 +189,8 @@ will have left `libusb0` bound, which the current flashing tool cannot use.
 Leaving it is the usual reason the keyboard goes into DFU and is then never
 found.
 
-Once per machine. **macOS needs none of this** — just run the flasher.
+Once per machine, and nothing has been erased at that point — the flash carries
+on afterwards. **macOS needs none of this** — just run the flasher.
 
 ### Both platforms
 
