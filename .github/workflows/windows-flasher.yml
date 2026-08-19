@@ -14,6 +14,10 @@ on:
     paths:
       - 'Program218e_v3_Rewired_Windows.bat'
       - 'windows/support/**'
+      # The flasher shells out to both of these, so a change to either
+      # can break it without the .bat itself being touched.
+      - 'tools/Scan-Images.ps1'
+      - 'tools/validate_hex.py'
       - '.github/workflows/windows-flasher.yml'
   workflow_dispatch:
 
