@@ -16,6 +16,9 @@ LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"' EXIT
 EXPECTED_SHA256="9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
+# Buchla's own v369 image.  Recognised so that going back to stock is an
+# offered choice rather than something to be identified by hand.
+FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 FIRMWARE_VERSION="Rewired 1.0.0 (9474624b)"
 
 # Support launching from either the package root or its mac directory.  The
@@ -336,13 +339,19 @@ accept_choice() {
     local path="$1" sha
     sha="$(shasum -a 256 "$path" | cut -d" " -f1)"
     FIRMWARE="$path"
-    if [ "$sha" = "$EXPECTED_SHA256" ]; then
-        ok "$FIRMWARE_VERSION"
-    else
-        CUSTOM_IMAGE=1
-        FIRMWARE_VERSION="image ${sha:0:8}"
-        ok "$FIRMWARE_VERSION"
-    fi
+    case "$sha" in
+        "$EXPECTED_SHA256")
+            ok "$FIRMWARE_VERSION" ;;
+        "$FACTORY_SHA256")
+            CUSTOM_IMAGE=1
+            FIRMWARE_VERSION="factory firmware v369"
+            ok "$FIRMWARE_VERSION"
+            echo "    ${C_YELLOW}This is Buchla's stock image: it removes every Rewired change.${C_RESET}" ;;
+        *)
+            CUSTOM_IMAGE=1
+            FIRMWARE_VERSION="image ${sha:0:8}"
+            ok "$FIRMWARE_VERSION" ;;
+    esac
     echo "    ${C_DIM}$sha${C_RESET}"
 }
 
@@ -364,11 +373,13 @@ if [ -z "$FIRMWARE" ]; then
             i=$((i + 1))
             sha="$(shasum -a 256 "$candidate" | cut -d" " -f1)"
             when="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$candidate" 2>/dev/null)"
-            if [ "$sha" = "$EXPECTED_SHA256" ]; then
-                mark="  ${C_GREEN}<- shipped with this package${C_RESET}"
-            else
-                mark=""
-            fi
+            case "$sha" in
+                "$EXPECTED_SHA256")
+                    mark="  ${C_GREEN}<- shipped with this package${C_RESET}" ;;
+                "$FACTORY_SHA256")
+                    mark="  ${C_YELLOW}<- FACTORY firmware, back to stock v369${C_RESET}" ;;
+                *)  mark="" ;;
+            esac
             printf '    %d) %s   %s\n' "$i" "$when" "${sha:0:8}"
             printf '       %s%s\n' "$candidate" "$mark"
             i2=$i

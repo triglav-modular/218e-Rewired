@@ -11,6 +11,9 @@ REM ProgramLEM218.bat does none of those and flashes whatever .hex it finds
 REM first, which is why this is a separate script.
 
 SET "EXPECTED_SHA256=9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
+REM Buchla's own v369 image.  Recognised so that going back to stock is an
+REM offered choice rather than something to be identified by hand.
+SET "FACTORY_SHA256=565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 SET "FIRMWARE_VERSION=Rewired 1.0.0 (9474624b)"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
@@ -99,6 +102,7 @@ IF %IMG_COUNT% GTR 1 (
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
         IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- shipped with this package"
+        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  ^<- FACTORY firmware, back to stock v369"
         ECHO     %%I^) !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!
         ECHO        !IMG_PATH_%%I!!MARK!
     )
@@ -130,6 +134,11 @@ REM be told apart in the list above.  It is not a gate.
 IF /I NOT "!CHOSEN_SHA!"=="%EXPECTED_SHA256%" (
     SET "CUSTOM=1"
     SET "FIRMWARE_VERSION=image !CHOSEN_SHA:~0,8!"
+    IF /I "!CHOSEN_SHA!"=="%FACTORY_SHA256%" (
+        SET "FIRMWARE_VERSION=factory firmware v369"
+        ECHO.
+        ECHO   This is Buchla's stock image: it removes every Rewired change.
+    )
 )
 GOTO :have_image
 

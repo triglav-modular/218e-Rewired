@@ -1248,6 +1248,13 @@ def main() -> None:
             lambda m: m.group(1) + digest, raw)
         if count != 1:
             raise SystemExit(f"{updater_name}: expected exactly one EXPECTED_SHA256 line")
+        # The factory digest travels with the build too, so a flasher can name
+        # Buchla's stock image in the list instead of showing it as unknown.
+        patched, count = re.subn(
+            r'(FACTORY_SHA256="?)[0-9a-f]{64}',
+            lambda m: m.group(1) + cfg["firmware"]["factory_sha256"], patched)
+        if count != 1:
+            raise SystemExit(f"{updater_name}: expected exactly one FACTORY_SHA256 line")
         # The version travels with the checksum so a flasher can never announce
         # one build while installing another.
         # Only the declared line, whose value is a literal "Rewired ...".  The

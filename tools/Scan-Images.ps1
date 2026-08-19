@@ -61,7 +61,10 @@ function Test-IntelHex {
     }
     if (-not $sawEof) { $script:LastReason = 'no end-of-file record'; return $false }
     if ($null -eq $lo) { $script:LastReason = 'no data records'; return $false }
-    if ($lo -lt $APP_LOW -or $hi -gt $APP_HIGH) { $script:LastReason = 'outside the application flash'; return $false }
+    if ($lo -lt $APP_LOW -or $hi -gt $APP_HIGH) {
+        $script:LastReason = "outside the application flash (lo=$lo hi=$hi low=$APP_LOW high=$APP_HIGH)"
+        return $false
+    }
     return $true
 }
 
