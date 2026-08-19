@@ -26,9 +26,10 @@ SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 # is really Gatekeeper.  Reading the attribute never blocks.
 for candidate in "$DFU" "$SENDMIDI"; do
     if xattr -p com.apple.quarantine "$candidate" >/dev/null 2>&1; then
-        echo "The tools are quarantined, because this package was downloaded"
-        echo "rather than cloned.  macOS will refuse to run them, so that has to"
-        echo "be cleared before anything can talk to the instrument."
+        echo "These tools are quarantined because the package was downloaded."
+        echo "macOS will not run them until that is cleared."
+        echo
+        echo "It affects only the files in this package, on this machine."
         echo
         read -r -p "Clear it now? [Y/n] " unquarantine
         case "$unquarantine" in

@@ -522,10 +522,8 @@ for candidate in "$DFUPATH" "$SENDMIDI"; do
     fi
 done
 if [ -n "$quarantined" ]; then
-    echo "  These tools are marked as quarantined, because the package was"
-    echo "  downloaded rather than cloned.  macOS will refuse to run them, and"
-    echo "  it does so by holding them at a dialog rather than by failing — so"
-    echo "  this has to be cleared before the flash, not during it."
+    echo "  These tools are quarantined because the package was downloaded."
+    echo "  macOS will not run them until that is cleared."
     echo
     echo "  It affects only the files in this package, on this machine."
     echo

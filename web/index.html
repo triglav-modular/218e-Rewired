@@ -338,8 +338,7 @@ strong{color:var(--accent)}
   <p>A failed flash usually leaves the keyboard in DFU mode, where the flasher can try
   again, but <strong>there is no guarantee that it will succeed</strong>. If losing the use of your 218e
   would be a problem, stop here and keep the factory firmware.</p>
-  <p>No warranty of any kind. Not the authors, nor Buchla is liable for damage,
-  loss of use, or a keyboard that no longer works.</p>
+  <p>No warranty of any kind. Not the authors, nor Buchla is liable for damage to any equipment.</p>
 </div>
 
 <section>
@@ -481,7 +480,7 @@ strong{color:var(--accent)}
     <li  style="margin-top:8px">Power on the 218e.</li>
     <li style="margin-top:8px">Run the flasher and follow their instructions:
       <div style="margin-top:0px">
-        <div><strong>macOS</strong> — a download is quarantined and this is unsigned, so macOS blocks it. Clear the whole folder once, in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>. The flasher clears the quarantine on the tools itself, and offers to; the one thing it cannot clear is its own, because macOS stops it before it runs.</div>
+        <div><strong>macOS</strong> — a download is quarantined and this is unsigned, so macOS blocks it. Clear the whole folder once, in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>.</div>
         <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
       </div>
     </li>
@@ -489,7 +488,7 @@ strong{color:var(--accent)}
   <div class="prereq" style="margin-bottom: 12px;">
     <h3>Your system might warn you about unsigned software</h3>
     <dl>
-      <dd style="margin-top:6px">If you skipped the <span class="mono">xattr</span> command above and macOS blocks the flasher, open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong>. Control-clicking and choosing Open no longer works: macOS 15 removed that shortcut, and the dialog it now shows offers only <strong>Move to Trash</strong> or <strong>Done</strong>.<br>Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
+      <dd style="margin-top:6px">If you skipped the <span class="mono">xattr</span> command above and macOS blocks the flasher, open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong>. Control-clicking and choosing Open does not work.<br>Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
     </dl>
   </div>
   <div class="winsetup">
