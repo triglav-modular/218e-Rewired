@@ -268,7 +268,10 @@ fi
 # matching the one this flasher was generated for is accepted, so a stray .hex
 # is skipped rather than flashed.  That is what lets a downloaded file be used
 # where it landed, instead of asking anyone to move it.
-echo ""
+# The banana is shown twice - once over the warning, once over the result -
+# so it lives in one place.  A quoted heredoc keeps every backslash and
+# caret in the art literal.
+banana() {
 cat <<'BANANA'
                                   .-==-:
                                  -=:...-=:
@@ -293,6 +296,10 @@ cat <<'BANANA'
       .:-====----------===--:.   :=-:-=:
            .:---=====--:.          ::.
 BANANA
+}
+
+echo ""
+banana
 echo ""
 echo "======================================================================"
 echo "  THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3"
@@ -668,8 +675,14 @@ flashed  $(timestamp)
 image    ${actual_sha256:-$EXPECTED_SHA256}
 RECORD
 
+# Clear first so the good news is the first line in the window rather than
+# the last line of a long scroll.  Only on the success path, and only
+# after read-back validation has already passed.
+clear 2>/dev/null || true
+echo "${C_GREEN}${C_BOLD}Flashing successful, enjoy.${C_RESET}"
 echo
-echo "  ${C_GREEN}${C_BOLD}✓ Flashing complete.${C_RESET}"
+banana
+echo
 echo "  ${C_BOLD}$FIRMWARE_VERSION${C_RESET} is now on the instrument."
 echo "  ${C_DIM}Log: $LOG_FILE${C_RESET}"
 echo

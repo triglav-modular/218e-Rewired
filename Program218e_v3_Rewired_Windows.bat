@@ -48,28 +48,7 @@ SET "TOTAL_STEPS=7"
 SET "STEP=0"
 
 ECHO.
-ECHO                                   .-==-:
-ECHO                                  -=:...-=:
-ECHO                                .=-      .=:
-ECHO                                =          =
-ECHO                               -=  ^    ^  =:
-ECHO                               =-          =-
-ECHO                              :=.   \__/   =-
-ECHO                              =-           =-
-ECHO                             -=           .=:
-ECHO                       .:---===:          :=.
-ECHO                    .--:.  -=-:==:       .-=
-ECHO                   :=:    -=-   -=- :-=--:-=
-ECHO                  :=.   :==:    :==-:      =-
-ECHO                  ==  :==-      -==:       ==
-ECHO  .:::::::.......:==-==:      .=: =-       -=
-ECHO :=--=::::---------:.       .--.  -=       ==
-ECHO == .=:.                  :--.    -=      .=:
-ECHO :=-=:::----:::......::-=-:       -=      -=
-ECHO  :==:      .....:::...        .:===     -=.
-ECHO    :-==:..                .:-==-.-=    -=.
-ECHO       .:-====----------===--:.   :=-:-=:
-ECHO            .:---=====--:.          ::.
+CALL :banana
 ECHO ======================================================================
 ECHO   THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3
 ECHO.
@@ -527,15 +506,50 @@ REM A record of what is actually on the instrument, beside the image.
 >> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO flashed  %DATE% %TIME%
 >> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO image    !CHOSEN_SHA!
 
+REM Clear first so the good news is the first line in the window rather
+REM than the last line of a long scroll.  Success path only, and only
+REM after read-back validation has already passed.
+CLS
+ECHO Flashing successful, enjoy.
 ECHO.
-ECHO   Flashing complete.  %FIRMWARE_VERSION% is now on the instrument.
+CALL :banana
+ECHO.
+ECHO   %FIRMWARE_VERSION% is now on the instrument.
 ECHO   Log: %LOG_FILE%
-ECHO If the 218e does not reappear, power-cycle the instrument.
+ECHO   If the 218e does not reappear, power-cycle the instrument.
 PAUSE
 ENDLOCAL
 EXIT /B 0
 
 REM --- helpers -----------------------------------------------------------
+:banana
+REM Drawn in one place and called twice - over the warning at the start,
+REM and over the result at the end.  The carets are doubled because cmd
+REM treats a single one as an escape and would swallow the eyes.
+ECHO                                   .-==-:
+ECHO                                  -=:...-=:
+ECHO                                .=-      .=:
+ECHO                                =          =
+ECHO                               -=  ^^    ^^  =:
+ECHO                               =-          =-
+ECHO                              :=.   \__/   =-
+ECHO                              =-           =-
+ECHO                             -=           .=:
+ECHO                       .:---===:          :=.
+ECHO                    .--:.  -=-:==:       .-=
+ECHO                   :=:    -=-   -=- :-=--:-=
+ECHO                  :=.   :==:    :==-:      =-
+ECHO                  ==  :==-      -==:       ==
+ECHO  .:::::::.......:==-==:      .=: =-       -=
+ECHO :=--=::::---------:.       .--.  -=       ==
+ECHO == .=:.                  :--.    -=      .=:
+ECHO :=-=:::----:::......::-=-:       -=      -=
+ECHO  :==:      .....:::...        .:===     -=.
+ECHO    :-==:..                .:-==-.-=    -=.
+ECHO       .:-====----------===--:.   :=-:-=:
+ECHO            .:---=====--:.          ::.
+EXIT /B 0
+
 :step
 SET /A STEP+=1
 ECHO.

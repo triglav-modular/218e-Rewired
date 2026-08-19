@@ -45,6 +45,28 @@ jobs:
           windows\support\sendmidi.exe list
           echo exit=%ERRORLEVEL%
 
+      - name: The banana renders with its eyes
+        shell: pwsh
+        run: |
+          # cmd treats ^ as an escape, so "^ " prints a bare space and single
+          # carets would leave the banana blind.  Run the real :banana block
+          # through cmd and check the eyes survive to stdout.
+          $src   = Get-Content Program218e_v3_Rewired_Windows.bat
+          $start = ($src | Select-String -Pattern '^:banana$').LineNumber
+          if (-not $start) { throw ":banana label not found" }
+          $body = @()
+          for ($i = $start; $i -lt $src.Count; $i++) {
+            if ($src[$i] -match '^EXIT /B 0') { break }
+            if ($src[$i] -match '^ECHO ')     { $body += $src[$i] }
+          }
+          if ($body.Count -lt 20) { throw "banana is $($body.Count) lines, expected 22" }
+          Set-Content -Path banana.bat -Value (@('@echo off') + $body) -Encoding Ascii
+          $out = & cmd /c banana.bat
+          $out | ForEach-Object { Write-Host $_ }
+          $eyes = ($out | Where-Object { $_ -match '\^' }).Count
+          if ($eyes -lt 1) { throw "the banana printed no caret: the eyes were eaten" }
+          Write-Host "banana: $($body.Count) lines, $eyes line(s) carrying eyes"
+
       - name: certutil checksum parsing matches the real hash
         shell: cmd
         run: |
