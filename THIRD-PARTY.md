@@ -57,7 +57,15 @@ Cloudflare is the easier one and needs no server access:
 
 **Cloudflare, transform rule** — Rules → Overview → Create rule → Modify
 Response Header. Set *If* to `URI Path ends with .woff2`, and *Then* to Set
-static, `Access-Control-Allow-Origin` = `*`.
+static, `Access-Control-Allow-Origin` =
+`https://triglav-modular.github.io`.
+
+That is the origin only — scheme and host, no path and no trailing slash. A
+single origin is all the header can carry, which is enough here: the fonts are
+same-origin on triglavmodular.hu itself, and same-origin requests are not
+subject to CORS at all, so restricting this to the builder does not affect the
+main site. If the builder ever moves to a custom domain, this value moves with
+it.
 
 **Cloudflare, snippet** — if transform rules are not offered, Rules → Snippets
 does the same thing. Filter on `URI Path ends with .woff2` and use:
@@ -67,7 +75,8 @@ export default {
   async fetch(request) {
     const response = await fetch(request);
     const out = new Response(response.body, response);
-    out.headers.set("Access-Control-Allow-Origin", "*");
+    out.headers.set("Access-Control-Allow-Origin",
+                    "https://triglav-modular.github.io");
     return out;
   }
 };
@@ -85,7 +94,7 @@ they expire.
   <system.webServer>
     <httpProtocol>
       <customHeaders>
-        <add name="Access-Control-Allow-Origin" value="*" />
+        <add name="Access-Control-Allow-Origin" value="https://triglav-modular.github.io" />
       </customHeaders>
     </httpProtocol>
   </system.webServer>
