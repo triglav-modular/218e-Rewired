@@ -20,15 +20,38 @@
 > loss of use, or a keyboard that no longer works.
 
 A patched build of the stock **v369** firmware for the Buchla 218e touch
-keyboard, driving a 208 (Easel). It reworks the pressure response, adds in-firmware tuning and per-key pitch calibration, and repurposes
-the four preset-voltage knobs and the arpeggiator switch.
+keyboard, driving a 208 (Easel). It reworks the pressure response, adds
+in-firmware tuning and per-key pitch calibration, and repurposes the four
+preset-voltage knobs and the arpeggiator switch.
+
+## Start here
+
+### → **<https://triglav-modular.github.io/218e-v3-Rewired/>**
+
+The builder runs in your browser. Drop in your factory image, pick the seven
+options, and it hands you a firmware file — no toolchain, no Python, no clone.
+Nothing is uploaded: the build happens on your machine, and the page has no
+server behind it.
+
+Then get this repository for the flasher, and run the one for your platform:
+
+| Platform | Flasher | Stuck in DFU |
+|---|---|---|
+| macOS | `Program218e_v3_Rewired_macOS.command` | `ExitDFU_218e_v3_macOS.command` |
+| Windows | `Program218e_v3_Rewired_Windows.bat` | `ExitDFU_218e_v3_Windows.bat` |
+
+The flasher finds the image itself — it looks in `firmware/`, its own folder,
+Downloads and the Desktop, lists everything flashable it finds newest-first,
+and asks which one. It verifies the file before erasing anything, and it will
+not touch the instrument until you have agreed to the warning above.
+
+The rest of this page is for building from source, or changing what the seven
+options do.
 
 | | |
 |---|---|
 | **Base image** | stock v369, **you supply it** (AT32UC3B1256, AVR32) |
 | **Output** | `build/218eV3_v369_Rewired_DFU.hex`, built locally |
-| **Builder** | <https://triglav-modular.github.io/218e-v3-Rewired/> — runs in your browser |
-| **Stuck in DFU** | `ExitDFU_218e_v3_macOS.command` / `ExitDFU_218e_v3_Windows.bat` |
 | **Settings** | [`config/218e.toml`](config/218e.toml) — seven options |
 | **Licence** | [Unlicense](UNLICENSE) for this repository's own work; the bundled flashing tools keep their own — see [THIRD-PARTY.md](THIRD-PARTY.md) |
 
@@ -103,6 +126,12 @@ entry can be handed back in `config/218e.toml`.
 
 ## Build
 
+> Most people want the builder page instead:
+> <https://triglav-modular.github.io/218e-v3-Rewired/>. This section is for
+> building from a clone — which is what you need to change the assembler
+> source, add options, or reproduce an image independently.
+
+
 ```bash
 cp /path/to/218eV3_v369_DFU.hex firmware/   # your own copy, once
 python3 tools/build.py --no-ghidra              # build the firmware
@@ -132,7 +161,11 @@ and checks the images match.
 - **Standalone LEM218** — USB-C to the computer, power connected, switched on.
 - **218e module** — USB-B from the 5xIO module that carries its USB and MIDI.
 
-Then run the flasher for your platform:
+Then run the flasher for your platform. If a flash is ever interrupted the
+keyboard stays in DFU — reading the safety fuses sets ISP_FORCE, so a power
+cycle brings it straight back — and `ExitDFU_218e_v3_macOS.command` or
+`ExitDFU_218e_v3_Windows.bat` sends the START that releases it.
+
 
 | Platform | Flasher |
 |---|---|
