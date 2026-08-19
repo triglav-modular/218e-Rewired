@@ -21,7 +21,36 @@
         var d = document.createElement('div');
         d.className = 'msg ' + kind;
         d.textContent = text;
+        bindDashes(d);
         el.appendChild(d);
+    }
+
+    /* An em dash is Unicode line-break class B2 - "break opportunity before
+       and after" - so a browser may begin a line with one however the spacing
+       reads, and text-wrap:pretty can only choose among the breaks it is
+       handed.  Bind each dash to the word ahead of it: the no-break space
+       removes the break at the space, the word joiner removes B2, and a line
+       can then only break after the dash.
+
+       This runs over rendered text and never over the strings themselves -
+       the same sentences go into README.txt and the flasher scripts inside
+       the download, and those want plain ASCII spacing.  Idempotent: a bound
+       run no longer holds a plain space, so it stops matching.  */
+    function bindDashes(root) {
+        var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (n) {
+                var p = n.parentNode && n.parentNode.nodeName;
+                if (p === 'SCRIPT' || p === 'STYLE' || p === 'PRE' || p === 'CODE')
+                    return NodeFilter.FILTER_REJECT;
+                return / +\u2014 /.test(n.nodeValue)
+                    ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+        });
+        var n, hit = [];
+        while ((n = w.nextNode())) hit.push(n);
+        hit.forEach(function (t) {
+            t.nodeValue = t.nodeValue.replace(/ +\u2014 /g, '\u00a0\u2060\u2014 ');
+        });
     }
 
     // --- semitone naming -------------------------------------------------
@@ -481,6 +510,7 @@
         $('build').className = state.result ? '' : 'primary';
         $('dlMac').className = state.result ? 'primary' : '';
         $('dlWin').className = state.result ? 'primary' : '';
+    bindDashes(document.body);
     }
 
     $('build').addEventListener('click', function () {
@@ -674,4 +704,5 @@
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
 
     renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
+    bindDashes(document.body);
 })();
