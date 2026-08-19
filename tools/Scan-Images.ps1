@@ -31,10 +31,8 @@ function Test-IntelHex {
         if ($body.Length -lt 10 -or $body.Length % 2) { return $false }
         $raw = New-Object byte[] ($body.Length / 2)
         for ($i = 0; $i -lt $raw.Length; $i++) {
-            $pair = $body.Substring($i * 2, 2)
-            $b = 0
-            if (-not [int]::TryParse($pair, 'HexNumber', $null, [ref]$b)) { return $false }
-            $raw[$i] = [byte]$b
+            try { $raw[$i] = [Convert]::ToByte($body.Substring($i * 2, 2), 16) }
+            catch { return $false }
         }
         $sum = 0; foreach ($b in $raw) { $sum += $b }
         if ($sum -band 0xFF) { return $false }
@@ -56,17 +54,20 @@ function Test-IntelHex {
     return $true
 }
 
-$seen = @{}
-$found = @()
-foreach ($dir in $Dirs) {
+# Collected with the foreach STATEMENT, not ForEach-Object: assigning to a
+# variable inside a ForEach-Object block writes to a copy scoped to that block,
+# leaving the outer list empty.
+$candidates = foreach ($dir in $Dirs) {
     if (-not (Test-Path -LiteralPath $dir)) { continue }
-    Get-ChildItem -LiteralPath $dir -Filter *.hex -File -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            $full = $_.FullName
-            if ($seen.ContainsKey($full.ToLower())) { return }
-            $seen[$full.ToLower()] = $true
-            if (Test-IntelHex $full) { $found += $_ }
-        }
+    Get-ChildItem -LiteralPath $dir -Filter *.hex -File -ErrorAction SilentlyContinue
+}
+
+$seen = @{}
+$found = foreach ($f in $candidates) {
+    $key = $f.FullName.ToLower()
+    if ($seen.ContainsKey($key)) { continue }
+    $seen[$key] = $true
+    if (Test-IntelHex $f.FullName) { $f }
 }
 
 $found | Sort-Object LastWriteTime -Descending | Select-Object -First 12 | ForEach-Object {
