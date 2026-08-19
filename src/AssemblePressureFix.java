@@ -249,30 +249,6 @@ public class AssemblePressureFix extends GhidraScript {
 
         // Knob 4 handler. Preserve its old behavior for internal mode 4;
         // otherwise encode curve=(ADC>>5) and marker 101 in velocity-min byte.
-        begin(0x80014380L);
-        emit("STM --SP,R7,LR");
-        emit("MOV R7,SP");
-        emit("LDDPC R10,0x800143f8");
-        emit("LD.W R8,R10[0x34]");
-        emit("CP.W R8,0x4");
-        emit("BR{ne} 0x800143a4");
-        emit("MOV R12,0x5");
-        emit("MCALL PC[0x800143fc]");
-        emit("RJMP 0x800143ee");
-        padTo(0x800143a4L);
-        emit("CP.W R8,0x0");
-        emit("BR{ne} 0x800143ee");
-        emit("LD.UH R9,R10[0x310]");
-        emit("LSR R9,0x5");
-        emit("MOV R11,0xa0");
-        emit("OR R9,R11");
-        emit("ST.B R10[0x2db],R9");
-        padTo(0x800143eeL);
-        emit("LDM SP++,R7,PC");
-        padTo(0x800143f8L);
-        word(0x00003560L); // global state base
-        word(0x80004070L); // original special-mode knob-4 handler
-        finish("knob4_curve", 0x80014400L);
 
         // Note-on wrapper: perform the original key initialization, then
         // clear the raw-filter sample count so the growing average restarts.
@@ -2194,6 +2170,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x6036");
         emit("ST.H R9[0x0],R8");
         emit("ST.H R10[0x356],R8");
+        // The curve level byte sits in factory state, not in our RAM, so it
+        // outlives a firmware update.  A keyboard that once had a curve
+        // dialled in on knob 4 would keep it with no control left to undo it,
+        // so it is reset here: 0xa0 is the valid marker with level 0, linear.
+        emit("MOV R11,0xa0");
+        emit("ST.B R10[0x2db],R11");
         // Pitch offsets are read before the first blend scan on some paths.
         emit("MOV R9,0x60a0");
         emit("ST.H R9[0x0],R8");
@@ -2771,8 +2753,9 @@ public class AssemblePressureFix extends GhidraScript {
             "knob-1 pointer -> pressure-ceiling wrapper");
         wordPatch("knob3_pool", 0x800043ccL, 0x80014300L,
             "knob-3 pointer -> pressure-floor wrapper");
-        wordPatch("knob4_pool", 0x800043d0L, 0x80014380L,
-            "knob-4 pointer -> knob4_curve");
+        // Knob 4 in edit mode is left exactly as the factory shipped it.  The
+        // pressure curve is fixed linear now, so there is nothing for it to
+        // set, and the factory pool word already points at 0x80004070.
         // Remote-enable guards always see 0: state+2 now stores the tuning
         // selector, and the remote feature is permanently retired.
         begin(0x80006528L);

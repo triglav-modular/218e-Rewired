@@ -1055,7 +1055,7 @@ def main() -> None:
     # their filter-reset stores land on a cell the factory path never reads.
     if cfg.get("_pressure_factory"):
         for name in ("pressure_fn_pool", "pressure_float_helper_pool",
-                     "knob1_pool", "knob4_pool", "pressure_gain_nop"):
+                     "knob1_pool", "pressure_gain_nop"):
             blocks[name] = False
 
     # No Scala file supplied means no tuning to switch between, so the edit

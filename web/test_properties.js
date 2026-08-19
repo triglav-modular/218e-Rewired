@@ -43,7 +43,7 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
 
     if (cfg._pressure_factory) {
         ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
-         'knob4_pool', 'pressure_gain_nop'].forEach(function (n) { blocks[n] = false; });
+         'pressure_gain_nop'].forEach(function (n) { blocks[n] = false; });
     }
     var anyTuning = cfg._tunings.some(function (t) { return t !== 'factory'; });
     features.alternate_tunings = anyTuning;

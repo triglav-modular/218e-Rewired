@@ -38,9 +38,8 @@ it is verified by SHA-256 before anything is built or flashed.
 
 ## What it does
 
-- **Reworked pressure response** — a gentler curve for more expressive play,
-  blended by edit knob 4 from linear (the default) to the full curve, with a
-  faded onset so releases do not step off a cliff.
+- **Reworked pressure response** — a gentler, linear response for more
+  expressive play, with a faded onset so releases do not step off a cliff.
 - **Spatial proximity rejection** — estimates the hand field beside each held
   key independently, so two distant hands do not share the wrong correction.
 - **Bounded pressure interpolation** — spreads each 5 ms scan update over five
@@ -82,7 +81,6 @@ addresses: [`docs/FIRMWARE_CHANGES.md`](docs/FIRMWARE_CHANGES.md).
 | Control | What it does |
 |---|---|
 | Knob 1 | Scales the whole pressure window, 0.50x–1.14x. Lower reaches full output sooner. |
-| Knob 4 | Pressure curve amount, linear through to the full 218r curve. |
 | Key 28 / Key 27 | Tuning slot select. LEDs: *rem-en* = slot 0, *trn* = slot 1, both dark = slot 2. |
 
 ## Building from source

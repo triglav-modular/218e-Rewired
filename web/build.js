@@ -35,7 +35,7 @@ var WEBBUILD = (function () {
         var blocks = flags.blocks, features = flags.features;
         if (cfg._pressure_factory) {
             ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
-             'knob4_pool', 'pressure_gain_nop'].forEach(function (n) { blocks[n] = false; });
+             'pressure_gain_nop'].forEach(function (n) { blocks[n] = false; });
         }
         // Same rule as tools/build.py: with no Scala file the edit keys and
         // their LEDs stay factory, which means the applier goes too — it
