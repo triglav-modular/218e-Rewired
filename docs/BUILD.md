@@ -375,6 +375,36 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
   -postScript ExportAnalysis.java build/verify/export
 ```
 
+## What the tests cover, and what they cannot
+
+| | |
+|---|---|
+| `tools/test.py` | 97 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
+| `tools/test.py --golden` | the default build still reproduces its pinned image |
+| `tools/avr32/sweep.py` | 13 representative configurations, built by both toolchains and compared byte for byte |
+| `web/test_configs.py` | the browser build matches `build.py` for 10 configurations |
+| `web/test_matrix.js` | **all 192 option combinations** built through the guarded path |
+
+Every build, in either toolchain, has to pass four structural checks before it
+produces an image: no two patches overlap, no patch lands on a factory entry
+point (2,665 control transfers are traced), every byte differing from the
+factory image lies inside a declared patch, and the rendered hex re-parses to
+the same bytes. `web/test_matrix.js` runs all 192 combinations through those
+checks in about 40 seconds:
+
+```bash
+jsc web/generated.js web/sha256.js web/buildlib.js web/assembler.js \
+    web/build.js web/test_matrix.js -- \
+    firmware/218eV3_v369_DFU.hex calibration/218e-pitch-calibration.csv
+```
+
+**None of this says the firmware plays correctly.** It says no combination of
+options produces a malformed image — the class of fault that would matter
+before an instrument has even booted. Behaviour on the instrument has been
+confirmed for the default build and for one custom build (three tunings,
+measured calibration, 1 V/oct); the rest rest on the structure being sound and
+on each option being independent by construction.
+
 ## Rebuilding dfu-programmer
 
 The bundled `dfu-programmer` is **1.1.0**, built from
