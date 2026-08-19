@@ -126,7 +126,11 @@
 
             var who = document.createElement('div');
             who.className = 'who';
-            who.innerHTML = '<b>' + meta.name + '</b><span>' + meta.note + '</span>';
+            who.innerHTML = '<b>' + meta.name + '</b>';
+
+            var note = document.createElement('span');
+            note.className = 'note';
+            note.textContent = meta.note;
 
             var what = document.createElement('div');
             what.className = 'what' + (entry ? '' : ' empty');
@@ -170,6 +174,7 @@
                 ctl.appendChild(b);
             });
             var x = document.createElement('button');
+            x.className = 'clear';
             x.textContent = '✕'; x.title = 'clear this slot';
             x.disabled = !entry;
             x.addEventListener('click', function () {
@@ -177,7 +182,10 @@
             });
             ctl.appendChild(x);
 
-            row.appendChild(who); row.appendChild(what); row.appendChild(ctl);
+            // order sets the grid flow: name and controls share row 1, the
+            // file takes row 2, the note runs full width beneath both.
+            row.appendChild(who); row.appendChild(ctl);
+            row.appendChild(what); row.appendChild(note);
             host.appendChild(row);
         });
         var filled = state.slots.filter(Boolean).length;
