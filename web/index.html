@@ -198,7 +198,10 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
   <div class="row">
     <button class="primary" id="build" disabled>Build firmware</button>
     <button id="download" disabled>Download .hex</button>
+    <button id="dlCommand" disabled>macOS flasher</button>
+    <button id="dlBat" disabled>Windows flasher</button>
   </div>
+  <p class="d muted" style="margin:10px 0 0;font-size:12px">Each flasher accepts exactly one image. If you changed any option, download the matching flasher too — the one in the package only accepts the default build. Save it into your package folder (it needs the tools beside it) and run it there; on macOS a downloaded script needs <span class="mono">bash Program218e_v3_Rewired.command</span> rather than a double-click.</p>
   <div id="buildMsg"></div>
 </section>
 

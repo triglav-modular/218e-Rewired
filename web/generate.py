@@ -47,6 +47,15 @@ def main() -> None:
         f"  javaSourceBase64: {json.dumps(base64.b64encode(java).decode())},",
     ]
 
+    # Both flashers, whole.  The page substitutes the checksum and version of
+    # the image it just built, so a custom build leaves with a flasher that
+    # accepts exactly that image — the shipped ones only accept the default.
+    # JSON round-trips the .bat's CRLF endings intact.
+    command_text = (REPO / "Program218e_v3_Rewired.command").read_text()
+    bat_text = (REPO / "Program218e_v3_Rewired.bat").read_bytes().decode()
+    parts.append(f"  flasherCommand: {json.dumps(command_text)},")
+    parts.append(f"  flasherBat: {json.dumps(bat_text)},")
+
     # The bundled tunings, preloaded into the page's slots (behind a checkbox
     # that defaults to off).  Shipped as content rather than fetched, so the
     # page stays a self-contained set of files.
