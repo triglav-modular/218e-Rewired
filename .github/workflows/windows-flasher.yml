@@ -59,6 +59,7 @@ jobs:
           type out.txt
           findstr /C:"Looked in firmware" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
           echo PASS: refused with the expected message
+          exit /b 0
 
       - name: With a matching image - must verify and reach the MIDI step
         shell: cmd
@@ -92,3 +93,6 @@ jobs:
           findstr /C:"Erasing the application flash" out2.txt >NUL && (echo FAILED: reached the erase & exit /b 1)
           findstr /C:"Zadig" out2.txt >NUL && (echo FAILED: reached the Zadig launch & exit /b 1)
           echo PASS: verified, versioned, stopped before touching anything
+          rem ECHO does not reset ERRORLEVEL in cmd, so without this the step
+          rem inherits the 1 from the last findstr that correctly found nothing.
+          exit /b 0
