@@ -11,7 +11,7 @@ REM ProgramLEM218.bat does none of those and flashes whatever .hex it finds
 REM first, which is why this is a separate script.
 
 SET "EXPECTED_SHA256=9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
-REM Buchla's own v369 image.  Recognised so that going back to stock is an
+REM Buchla's own v36.9 image.  Recognised so that going back to stock is an
 REM offered choice rather than something to be identified by hand.
 SET "FACTORY_SHA256=565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 SET "FIRMWARE_VERSION=Rewired 1.0.0 (9474624b)"
@@ -54,20 +54,21 @@ ECHO.
 ECHO   It won't work on the 218, the 218r, the 218e v1 or v2, or any other
 ECHO   touchplate controller.
 ECHO.
-ECHO   YOU DO THIS ENTIRELY AT YOUR OWN RISK.
+ECHO   USING THIS TOOL AND FIRMWARE IS ENTIRELY AT YOUR OWN RISK.
 ECHO.
-ECHO   This is experimental, unofficial firmware, not made or supported by
-ECHO   Buchla.  It has been tested on ONE instrument.  It can brick your
-ECHO   keyboard.  Recovering a bricked unit may need JTAG hardware and
-ECHO   opening the instrument, and may not be possible at all.
+ECHO   This is an experimental, unofficial firmware, not made or supported
+ECHO   by Buchla.  It also probably voids your warranty.  It has been tested
+ECHO   on ONE instrument.  It can brick your keyboard.  Recovering a bricked
+ECHO   unit may need JTAG hardware and opening the instrument, or may not be
+ECHO   possible at all.
 ECHO.
 ECHO   A failed flash usually leaves the keyboard in DFU mode, where the
 ECHO   flasher can try again, but there is no guarantee that it will
 ECHO   succeed.  If losing the use of your 218e would be a problem, stop
 ECHO   here and keep the factory firmware.
 ECHO.
-ECHO   No warranty of any kind.  Not the authors, not Buchla, nobody is
-ECHO   liable for damage, loss of use, or a keyboard that no longer works.
+ECHO   No warranty of any kind.  Not the authors, nor Buchla is liable for
+ECHO   damage, loss of use, or a keyboard that no longer works.
 ECHO ======================================================================
 ECHO.
 SET "CONSENT="
@@ -108,7 +109,7 @@ IF %IMG_COUNT% GTR 1 (
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
         IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- the default Rewired build"
-        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  ^<- FACTORY firmware, back to stock v369"
+        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  ^<- FACTORY firmware, back to stock v36.9"
         ECHO     %%I^) !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!
         ECHO        !IMG_PATH_%%I!!MARK!
     )
@@ -141,7 +142,7 @@ IF /I NOT "!CHOSEN_SHA!"=="%EXPECTED_SHA256%" (
     SET "CUSTOM=1"
     SET "FIRMWARE_VERSION=image !CHOSEN_SHA:~0,8!"
     IF /I "!CHOSEN_SHA!"=="%FACTORY_SHA256%" (
-        SET "FIRMWARE_VERSION=factory firmware v369"
+        SET "FIRMWARE_VERSION=factory firmware v36.9"
         ECHO.
         ECHO   This is Buchla's stock image: it removes every Rewired change.
     )

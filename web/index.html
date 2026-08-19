@@ -118,20 +118,20 @@ a {
   <p><strong>This firmware is only for the Buchla 218e V3.</strong>
   It won't work on the 218, the 218r, the 218e v1 or v2, or any other touchplate
   controller.</p>
-  <p><strong>You do this entirely at your own risk.</strong> This is experimental,
-  unofficial firmware, not made or supported by Buchla. It has been tested on
+  <p><strong>Using this tool and firmware is entirely at your own risk.</strong> This is an experimental,
+  unofficial firmware, not made or supported by Buchla. It also probably voids your warranty. It has been tested on
   <em>one</em> instrument. It can brick your keyboard. Recovering a bricked unit may
-  need JTAG hardware and opening the instrument, and may not be possible at all.</p>
+  need JTAG hardware and opening the instrument, or may not be possible at all.</p>
   <p>A failed flash usually leaves the keyboard in DFU mode, where the flasher can try
   again, but <strong>there is no guarantee that it will succeed</strong>. If losing the use of your 218e
   would be a problem, stop here and keep the factory firmware.</p>
-  <p>No warranty of any kind. Not the authors, not Buchla, nobody is liable for damage,
+  <p>No warranty of any kind. Not the authors, nor Buchla is liable for damage,
   loss of use, or a keyboard that no longer works.</p>
 </div>
 
 <section>
   <h2>1 · Your factory firmware</h2>
-  <p class="d muted" style="margin:0 0 12px;font-size:13px">Supply the stock <strong>218e V3 v369</strong> image. It is in Buchla's flashing kit, as <span class="mono">218eV3_v369_DFU.hex</span>:<br>
+  <p class="d muted" style="margin:0 0 12px;font-size:13px">Supply the stock <strong>218e V3 v36.9</strong> image. It is in Buchla's flashing kit, as <span class="mono">218eV3_v369_DFU.hex</span>:<br>
   <a href="https://buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip" class="mono">buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip</a></p>
   <div class="drop" id="drop">
     <strong>Drop 218eV3_v369_DFU.hex here</strong><br>
@@ -156,7 +156,7 @@ a {
   <h2>3 · Pressure</h2>
   <label class="opt"><input type="checkbox" id="pressure_fix" checked>
     <span><span class="t">Pressure response fix</span><br>
-    <span class="d">A gentler pressure curve, for more expressive playing.</span></span></label>
+    <span class="d">A gentler pressure curve for more expressive play.</span></span></label>
   <label class="opt"><input type="checkbox" id="pressure_portamento" checked>
     <span><span class="t">Pressure-based portamento</span><br>
     <span class="d">Pitch moves between held notes as their relative pressure moves.</span></span></label>
@@ -219,7 +219,7 @@ a {
   <p class="d muted" style="margin:0 0 12px;font-size:13px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
   <p class="d muted" style="margin:0 0 12px;font-size:12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
   <label class="row opt" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
-    <span><strong>Enable alternate tunings</strong> <span class="muted" style="font-size:12px">— off leaves the edit keys, LEDs and temperament as the factory shipped them</span></span></label>
+    <span><strong>Enable alternate tunings</strong> <span class="muted" style="font-size:12px">— turning this on remaps the <strong>rem.en</strong> and <strong>trn</strong> LEDs and edit keys.</span></span></label>
   <div id="tuningsBody" style="display:none">
   <div class="row" style="margin-bottom:10px"><button id="sclPick">Add .scl files…</button>
     <span class="muted" id="sclCount">all three slots factory</span></div>

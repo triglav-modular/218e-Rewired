@@ -16,7 +16,7 @@ LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"' EXIT
 EXPECTED_SHA256="9474624bdaa85e20502e65f67471f500879ceda1bbc08bcd9aa5d59394bfe391"
-# Buchla's own v369 image.  Recognised so that going back to stock is an
+# Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 FIRMWARE_VERSION="Rewired 1.0.0 (9474624b)"
@@ -276,20 +276,21 @@ echo ""
 echo "  It won't work on the 218, the 218r, the 218e v1 or v2, or any other"
 echo "  touchplate controller."
 echo ""
-echo "  YOU DO THIS ENTIRELY AT YOUR OWN RISK."
+echo "  USING THIS TOOL AND FIRMWARE IS ENTIRELY AT YOUR OWN RISK."
 echo ""
-echo "  This is experimental, unofficial firmware, not made or supported by"
-echo "  Buchla.  It has been tested on ONE instrument.  It can brick your"
-echo "  keyboard.  Recovering a bricked unit may need JTAG hardware and"
-echo "  opening the instrument, and may not be possible at all."
+echo "  This is an experimental, unofficial firmware, not made or supported"
+echo "  by Buchla.  It also probably voids your warranty.  It has been tested"
+echo "  on ONE instrument.  It can brick your keyboard.  Recovering a bricked"
+echo "  unit may need JTAG hardware and opening the instrument, or may not be"
+echo "  possible at all."
 echo ""
 echo "  A failed flash usually leaves the keyboard in DFU mode, where the"
 echo "  flasher can try again, but there is no guarantee that it will"
 echo "  succeed.  If losing the use of your 218e would be a problem, stop"
 echo "  here and keep the factory firmware."
 echo ""
-echo "  No warranty of any kind.  Not the authors, not Buchla, nobody is"
-echo "  liable for damage, loss of use, or a keyboard that no longer works."
+echo "  No warranty of any kind.  Not the authors, nor Buchla is liable for"
+echo "  damage, loss of use, or a keyboard that no longer works."
 echo "======================================================================"
 echo ""
 read -r -p "  Type YES (capitals) to accept and continue: " consent
@@ -347,7 +348,7 @@ accept_choice() {
             ok "$FIRMWARE_VERSION" ;;
         "$FACTORY_SHA256")
             CUSTOM_IMAGE=1
-            FIRMWARE_VERSION="factory firmware v369"
+            FIRMWARE_VERSION="factory firmware v36.9"
             ok "$FIRMWARE_VERSION"
             echo "    ${C_YELLOW}This is Buchla's stock image: it removes every Rewired change.${C_RESET}" ;;
         *)
@@ -380,7 +381,7 @@ if [ -z "$FIRMWARE" ]; then
                 "$EXPECTED_SHA256")
                     mark="  ${C_GREEN}<- the default Rewired build${C_RESET}" ;;
                 "$FACTORY_SHA256")
-                    mark="  ${C_YELLOW}<- FACTORY firmware, back to stock v369${C_RESET}" ;;
+                    mark="  ${C_YELLOW}<- FACTORY firmware, back to stock v36.9${C_RESET}" ;;
                 *)  mark="" ;;
             esac
             printf '    %d) %s   %s\n' "$i" "$when" "${sha:0:8}"
