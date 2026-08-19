@@ -397,7 +397,7 @@
     }
 
     function syncCalBody() {
-        $('calBody').style.display = $('useCal').checked ? '' : 'none';
+        $('calBody').classList.toggle('hidden', !$('useCal').checked);
     }
     $('useCal').addEventListener('change', function () {
         syncCalBody(); validateCal(); refresh();
@@ -694,7 +694,7 @@
 
 
     $('useTunings').addEventListener('change', function () {
-        $('tuningsBody').style.display = $('useTunings').checked ? '' : 'none';
+        $('tuningsBody').classList.toggle('hidden', !$('useTunings').checked);
         refresh();
     });
 

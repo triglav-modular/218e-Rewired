@@ -99,21 +99,33 @@ jobs:
           import re, sys
           from pathlib import Path
           site = Path("_site")
-          html = (site / "index.html").read_text()
-          refs = set()
-          for m in re.finditer(r'(?:src|href)="([^"]+)"', html):
-              refs.add(m.group(1))
-          for m in re.finditer(r'url\(["\']?([^"\')]+)', html):
-              refs.add(m.group(1))
+          # The stylesheet is scanned as well as the page: the fonts and the
+          # background are reached through url() from style.css, so a check
+          # that only read index.html would have stopped seeing them the
+          # moment the CSS moved out of it.
+          sources = ["index.html", "style.css"]
           missing = []
-          for r in sorted(refs):
-              if r.startswith(("http://", "https://", "//", "#", "data:", "mailto:")):
+          total = 0
+          for name in sources:
+              f = site / name
+              if not f.exists():
+                  print(f"::error::{name} is not in _site at all")
+                  missing.append(name)
                   continue
-              if not (site / r).exists():
-                  missing.append(r)
-          for r in missing:
-              print(f"::error::index.html references {r}, which is not in _site")
-          print(f"checked {len(refs)} references, {len(missing)} missing")
+              text = f.read_text()
+              refs = set()
+              for m in re.finditer(r'(?:src|href)="([^"]+)"', text):
+                  refs.add(m.group(1))
+              for m in re.finditer(r'url\(["\']?([^"\')]+)', text):
+                  refs.add(m.group(1))
+              total += len(refs)
+              for r in sorted(refs):
+                  if r.startswith(("http://", "https://", "//", "#", "data:", "mailto:")):
+                      continue
+                  if not (site / r).exists():
+                      print(f"::error::{name} references {r}, which is not in _site")
+                      missing.append(r)
+          print(f"checked {total} references across {len(sources)} files, {len(missing)} missing")
           sys.exit(1 if missing else 0)
           CHECK
 

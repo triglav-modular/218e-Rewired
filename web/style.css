@@ -1,0 +1,997 @@
+/* Euclid Circular A is licensed to Triglav Modular and served from
+   triglavmodular.hu, where that licence already applies.  It is deliberately
+   NOT copied into this repository: the repo is public and Unlicense-d, and a
+   licence to use the face is not a licence to redistribute the files.
+   Loading it cross-origin needs one header on that server:
+
+       <FilesMatch "\.(woff2?)$">
+         Header set Access-Control-Allow-Origin "*"
+       </FilesMatch>
+
+   Without it the page falls back to the system sans and still works — which
+   is also what happens offline, opening web/index.html from a local clone.
+
+   IBM Plex Mono is SIL OFL 1.1 and ships here; licence beside the files. */
+@font-face {
+  font-family: "Euclid Circular A";
+  font-weight: 300;
+  font-display: swap;
+  src: url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Light-WebXL.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Euclid Circular A";
+  font-weight: 400;
+  font-display: swap;
+  src: url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Regular-WebXL.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Euclid Circular A";
+  font-weight: 500;
+  font-display: swap;
+  src: url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Medium-WebXL.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Euclid Circular A";
+  font-weight: 700;
+  font-display: swap;
+  src: url("https://triglavmodular.hu/wp-content/uploads/EuclidCircularA-Bold-WebXL.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/IBMPlexMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/IBMPlexMono-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/IBMPlexMono-Bold.woff2") format("woff2");
+}
+:root {
+  --bg: #171716;
+  --panel: #1e1e1c;
+  --panel2: #292928;
+  --ink: #fff;
+  --muted: #9d9a93;
+  --line: #2e2e2b;
+  --accent: #FFDA6C;
+  --ok: #8fd6a0;
+  --bad: #ff8b7d;
+  --warn: #FFDA6C;
+  --sans: "Euclid Circular A",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono: "IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+* {
+  box-sizing: border-box;
+}
+/* No widows or orphans.  text-wrap inherits, so pretty goes on the root and
+   reaches every block on the page - including ones added later, which a list
+   of selectors would have missed each time the markup changed.  It asks the
+   line breaker to look ahead rather than leave one word alone on a last line.
+   Headings and short labels take balance instead, which evens their lines.
+   Both are ignored where unsupported, so the fallback is ordinary wrapping. */
+h1,
+h2,
+h3,
+h4,
+summary,
+.opt .t,
+.vpo button,
+.tag,
+.kbdhint,
+th {
+  text-wrap: balance;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  text-wrap: pretty;
+  font: 400 16px/1.62 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+/* The art is white strokes on transparency - 97% of the image has zero alpha -
+   so it simply lies over the background at reduced opacity.  No blend mode:
+   screen was only ever compensating for a flattened, opaque copy.  Fixed, so
+   it sits still while the page scrolls past. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: url("images/wave_bg.png") center/cover no-repeat;
+  opacity: .5;
+}
+.wrap {
+  position: relative;
+  z-index: 1;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 56px 20px 120px;
+}
+/* The banana rides with the title, scaled off the same clamp so it keeps its
+   proportion to the type at every width.  Referenced rather than inlined: the
+   file carries its own <style> with generic .cls-1 names, which would leak
+   into the page if it were pasted in. */
+.hdr {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px,2.2vw,22px);
+  margin: 0 0 14px;
+}
+.hdr h1 {
+  margin: 0;
+}
+.banana {
+  width: 160px;
+  position: absolute;
+  z-index: -3;
+  height: auto;
+  top: 30px;
+  right: 30px;
+  flex: 0 0 auto;
+  display: block;
+  transform: rotate(-12deg) scale(1.06);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hdr:hover .banana {
+  transform: rotate(0deg) scale(1);
+}
+@media (prefers-reduced-motion:reduce) {
+  .banana {
+    transition: none;
+  }
+  .hdr:hover .banana {
+    transform: rotate(-12deg) scale(1.06);
+  }
+}
+h1 {
+  font-size: clamp(44px,9vw,82px);
+  font-weight: 900;
+  line-height: .98;
+  margin: 0;
+  letter-spacing: -.015em;
+}
+.sub {
+  color: var(--muted);
+  margin: 0 0 44px;
+  font-size: 18px;
+}
+/* The version comes from the same GEN.version the flashers are stamped with,
+   so the page can never advertise a release the build does not produce. */
+.ver {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+}
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 30px 28px;
+  margin-bottom: 20px;
+}
+h2 {
+  font-size: 20px;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  color: var(--accent);
+  margin: 0 0 20px;
+  font-weight: 700;
+  text-align: left;
+}
+h3,
+h4 {
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+/* The four option groups live inside step 2 rather than beside it: cards on a
+   card, so they need their own surface a step up from the section's, or the
+   nesting would not read at all. */
+.group {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 22px 6px;
+  margin: 0 0 14px;
+}
+.group:last-of-type {
+  margin-bottom: 0;
+}
+.group>h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  color: var(--muted);
+  font-weight: 700;
+}
+/* Inputs inside a group sit on the lighter surface, so they take the darker
+   one to stay legible. */
+.group td input,
+.group .kbdwrap {
+  background: var(--bg);
+}
+label.opt {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+label.opt:last-child {
+  border-bottom: 0;
+}
+/* accent-color paints the box but leaves the browser's white tick, so the
+   checkbox is drawn here instead: accent fill, dark tick. */
+input[type=checkbox] {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #4a4740;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: .12s;
+}
+input[type=checkbox]:hover {
+  border-color: var(--accent);
+}
+input[type=checkbox]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type=checkbox]:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 9px;
+  border: solid #171716;
+  border-width: 0 2.2px 2.2px 0;
+  transform: rotate(45deg);
+}
+input[type=checkbox]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+label.opt input {
+  margin-top: 3px;
+}
+.opt .t {
+  font-weight: 700;
+}
+.opt .d {
+  color: var(--muted);
+  font-size: 16px;
+  display: inline-block;
+}
+.drop {
+  border: 1px dashed #4a4740;
+  border-radius: 16px;
+  padding: 34px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  transition: .15s;
+}
+.drop:hover,
+.drop.over {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.drop.ok {
+  border-style: solid;
+  border-color: var(--ok);
+}
+.drop.err {
+  border-style: solid;
+  border-color: var(--bad);
+}
+button {
+  font: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  padding: 13px 26px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: .15s;
+}
+button:hover:not(:disabled) {
+  background: var(--accent);
+  color: #171716;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #171716;
+}
+button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+/* A dimmed accent fill goes olive.  A disabled primary drops to an outline
+   instead, so "not yet" reads as waiting rather than as a muddy colour. */
+button.primary:disabled,
+button.primary:disabled:hover {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+  opacity: .75;
+}
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* A checkbox and its label are one thing: .row's wrapping would drop the text
+   onto the line below the box as soon as it stopped fitting.  The box holds
+   its place and the text wraps inside its own column instead. */
+label.opt.row {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+label.opt.row>input {
+  margin-top: 3px;
+}
+label.opt.row>span {
+  min-width: 0;
+}
+.mono {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  word-break: break-all;
+}
+.ok {
+  color: var(--ok);
+}
+.bad {
+  color: var(--bad);
+}
+.warn {
+  color: var(--warn);
+}
+.muted {
+  color: var(--muted);
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.seg button {
+  border: 0;
+  border-radius: 0;
+  padding: 10px 20px;
+  background: transparent;
+}
+.seg button[aria-pressed=true] {
+  background: var(--accent);
+  color: #171716;
+}
+details {
+  margin-top: 14px;
+}
+summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+/* The knob numbers get their own right-aligned column against left-aligned
+   labels, so the list scans as a list instead of as prose. */
+table.knobs {
+  width: auto;
+  margin: 5px 0 0;
+  font-size: inherit;
+}
+table.knobs td,
+table.knobs th {
+  border: 0;
+  padding: 1px 0;
+  background: none;
+  font-size: inherit;
+}
+table.knobs td {
+  text-align: right;
+  padding-right: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  width: 1%;
+  white-space: nowrap;
+}
+table.knobs th {
+  text-align: left;
+  font-weight: 400;
+  color: inherit;
+  position: static;
+  text-transform: none;
+  letter-spacing: normal;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  margin-top: 10px;
+}
+th,
+td {
+  padding: 4px 7px;
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  color: var(--accent);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+td.note {
+  text-align: left;
+  font-family: var(--mono);
+}
+td.note.white {
+  background: #e8e3da;
+  color: #171716;
+}
+td.note.black {
+  background: #0e0e0d;
+  color: #cfc8bd;
+}
+td input {
+  width: 78px;
+  padding: 4px 7px;
+  font: inherit;
+  font-family: var(--mono);
+  text-align: right;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #111110;
+  color: var(--ink);
+}
+.scroll {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  margin-left: 8px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  font-weight: 700;
+}
+.msg {
+  padding: 13px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  margin: 14px 0;
+  white-space: pre-wrap;
+}
+.msg.ok {
+  background: color-mix(in srgb,var(--ok) 12%,transparent);
+}
+.msg.bad {
+  background: color-mix(in srgb,var(--bad) 12%,transparent);
+}
+.msg.warn {
+  background: color-mix(in srgb,var(--warn) 12%,transparent);
+}
+.files div {
+  font-size: 13px;
+  padding: 4px 0;
+  font-family: var(--mono);
+}
+/* A slot is two lines, not three columns: the name and its controls on the
+   first, the file on the second, and the explanation under both at full
+   width.  Squeezed into a 150px column that note wrapped to three lines of
+   12px and was the hardest thing on the page to read. */
+.slot {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 14px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.slot:last-child {
+  border-bottom: 0;
+}
+.slot .who {
+  grid-column: 1;
+  min-width: 0;
+}
+.slot .who b {
+  display: block;
+  font-size: 16px;
+}
+.slot .note {
+  grid-column: 1/-1;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.5;
+  display: block;
+}
+.slot .what {
+  grid-column: 1/-1;
+  font-family: var(--mono);
+  font-size: 15px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slot .what.empty {
+  font-family: inherit;
+  color: var(--muted);
+  font-style: italic;
+}
+.slot .ctl {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  gap: 6px;
+}
+.slot .ctl button {
+  padding: 7px 16px;
+  line-height: 0;
+}
+/* The icons are SVG, so they size from the button rather than from a font,
+   and svg{width:100%} elsewhere on this page must not reach them. */
+.slot .ctl button svg {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  display: block;
+}
+.slot .ctl button.clear {
+  color: var(--bad);
+  border-color: color-mix(in srgb,var(--bad) 55%,transparent);
+}
+/* A touch heavier than the arrows: it is the destructive one. */
+.slot .ctl button.clear svg path {
+  stroke-width: 2.9;
+}
+.slot .ctl button.clear:hover:not(:disabled) {
+  background: var(--bad);
+  color: #171716;
+  border-color: var(--bad);
+}
+.danger {
+  border: 1px solid var(--bad);
+  border-radius: 16px;
+  padding: 26px 28px;
+  margin: 0 0 20px;
+  background: color-mix(in srgb,var(--bad) 8%,var(--panel));
+}
+.danger h2 {
+  color: var(--bad);
+  font-size: 14px;
+  letter-spacing: .16em;
+  margin: 0 0 14px;
+}
+.danger p {
+  margin: 0 0 11px;
+  font-size: 16px;
+}
+.danger strong {
+  color: var(--bad);
+}
+.danger p:last-child {
+  margin-bottom: 0;
+}
+.winsetup {
+  border: 1px solid var(--accent);
+  border-radius: 16px;
+  padding: 24px 26px;
+  margin: 0 0 18px;
+  background: color-mix(in srgb,var(--accent) 8%,var(--panel));
+}
+.winsetup h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  letter-spacing: .16em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.winsetup p {
+  margin: 0 0 11px;
+  font-size: 16px;
+}
+.winsetup ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+  font-size: 16px;
+  line-height: 1.9;
+}
+.winsetup p:last-child {
+  margin-bottom: 0;
+}
+.prereq {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px 22px;
+  margin: 16px 0 12px;
+}
+.prereq h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.prereq dl {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.65;
+}
+.prereq dt {
+  font-weight: 700;
+  margin-top: 11px;
+}
+.prereq dt:first-of-type {
+  margin-top: 0;
+}
+.prereq dd {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+svg {
+  width: 100%;
+  height: 120px;
+  margin-top: 10px;
+  overflow: visible;
+}
+#build {
+  width: 100%;
+  height: 74px;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+}
+#dlMac,
+#dlWin {
+  width: calc(50% - 6px);
+  height: 62px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+/* The platform marks are drawn: U+F8FF is Apple private-use and renders
+   nowhere else, and Unicode has no Windows logo at all. */
+#dlMac .os,
+#dlWin .os {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  margin: 0;
+  display: block;
+}
+/* Matched by ink, not by box.  The Apple mark occupies 14.9 units of its 24
+   where the Windows one occupies 18, so at equal box size it reads smaller;
+   22px brings its width to about the Windows mark's. */
+#dlMac .os {
+  width: 22px;
+  height: 22px;
+  position: relative;
+  top: -1px;
+}
+/* Same mark in the Windows-only heading, sized to its type and sitting on the
+   text baseline rather than on its own line. */
+.winsetup h3 .os {
+  width: 15px;
+  height: 15px;
+  margin: 0 4px 0 0;
+  display: inline-block;
+  vertical-align: -2px;
+}
+a {
+  color: var(--accent);
+}
+strong {
+  color: var(--accent);
+}
+/* --- volts per octave: two equal choices, not a squeezed pill ------------- */
+.vpo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+  max-width: 430px;
+}
+.vpo button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+.vpo button .why {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  color: var(--muted);
+}
+/* The generic button hover fills with the accent; without resetting the
+   background here that rule and this one would put accent text on an accent
+   fill, which is invisible. */
+.vpo button:hover:not([aria-pressed=true]) {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.vpo button:hover:not([aria-pressed=true]) .why {
+  color: var(--accent);
+  opacity: .8;
+}
+.vpo button[aria-pressed=true],
+.vpo button[aria-pressed=true]:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #171716;
+}
+.vpo button[aria-pressed=true] .why,
+.vpo button[aria-pressed=true]:hover .why {
+  color: #171716;
+  opacity: .7;
+}
+/* --- the offsets laid out as the keyboard they describe -------------------- */
+.kbdwrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #111110;
+}
+.kbd {
+  position: relative;
+  height: 190px;
+  margin: 14px 14px 16px;
+}
+.key {
+  position: absolute;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 9px;
+  border-radius: 0 0 5px 5px;
+}
+.key.white {
+  width: 48px;
+  height: 190px;
+  background: #e8e3da;
+  color: #171716;
+  border: 1px solid #b9b3a8;
+  border-top: 0;
+}
+.key.black {
+  width: 32px;
+  height: 120px;
+  background: #0d0d0c;
+  color: #e8e3da;
+  border: 1px solid #000;
+  border-top: 0;
+  z-index: 2;
+}
+.key .nm {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  opacity: .7;
+}
+/* The spinner arrows cost about a third of the width of a key, which is the
+   difference between "-1.25" fitting and being clipped. */
+.key input {
+  width: 40px;
+  padding: 3px 1px;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: center;
+  border-radius: 3px;
+  border: 1px solid rgba(0,0,0,.28);
+  background: rgba(255,255,255,.85);
+  color: #171716;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.key input::-webkit-outer-spin-button,
+.key input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.key.black input {
+  border-color: #000;
+  background: #2a2926;
+  color: #f2f0ec;
+}
+.key input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+/* A non-zero offset is worth seeing at a glance across 65 keys. */
+.key input.set {
+  background: var(--accent);
+  color: #171716;
+  font-weight: 600;
+}
+.kbdhint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0px 0 20px;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  font-weight: 700;
+}
+.section-intro {
+  margin: 0 0 12px;
+}
+.section-note {
+  margin: 0 0 10px;
+}
+.field-label {
+  font-weight: 600;
+}
+.field-row {
+  margin-top: 8px;
+}
+/* label.opt already sets gap:14px at the same weight a lone class would
+   carry, so these have to match its specificity to win. */
+.opt.opt-toggle {
+  gap: 7px;
+  margin-bottom: 10px;
+}
+.opt.opt-toggle.lead {
+  margin-top: 20px;
+  font-weight: 600;
+}
+.row-bottom {
+  margin-bottom: 10px;
+}
+.kbd-heading {
+  margin-bottom: 0;
+}
+/* Toggled from app.js by class rather than by writing element.style. */
+.hidden {
+  display: none;
+}
+.howto-details {
+  margin: 0 0 12px;
+}
+.howto {
+  line-height: 1.7;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.howto p {
+  margin: 0 0 8px;
+}
+.howto p:last-child {
+  margin: 0;
+}
+/* Only the numbered openers, not every strong in the block: step 1 ends with
+   an accent strong that has to stay accent. */
+.howto .step {
+  color: var(--ink);
+}
+.steps {
+  margin: 12px 0;
+  padding-left: 20px;
+  line-height: 1.9;
+}
+.steps li.spaced {
+  margin-top: 8px;
+}
+.faq {
+  line-height: 1.6;
+  margin: 10px 0 0;
+}
+.faq dt {
+  font-weight: 700;
+  margin-top: 10px;
+}
+.faq dd {
+  margin: 2px 0 0;
+}
+/* Carried over from triglavmodular.hu.  The original markup set these inline
+   through --wp--preset--* variables that do not exist here, so the margins and
+   padding they named resolved to nothing; these are the values the browser
+   actually computed. */
+.triglav-title {
+  margin: 300px 0 0;
+  padding: 0;
+  font-size: .8rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #fff;
+  text-align: center;
+}
+/* Narrow screens.  Last in the sheet on purpose: these share specificity
+   with the rules they override, so order is what decides. */
+/* On a narrow screen the absolutely-positioned banana sits on top of the
+   title, so it comes back into the flow: the header stacks, the banana takes
+   its own line above the heading, and it shrinks to suit the width. */
+@media (max-width:640px) {
+  .hdr {
+    display: block;
+    margin: 0 0 12px;
+  }
+  .banana {
+    position: static;
+    width: clamp(64px,22vw,96px);
+    margin: 0 0 10px;
+    transform: rotate(-8deg) scale(1);
+  }
+  .hdr:hover .banana {
+    transform: rotate(0deg) scale(1);
+  }
+  /* Two 49% buttons leave each about 150px wide on a phone, which is not
+     enough for their labels.  Full width, stacked. */
+  #build,
+  #dlMac,
+  #dlWin {
+    width: 100%;
+    height: 60px;
+  }
+  .row {
+    gap: 10px;
+  }
+}
