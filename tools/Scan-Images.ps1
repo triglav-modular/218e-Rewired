@@ -13,7 +13,10 @@ Prints one line per valid image, newest first:
     yyyy-MM-dd HH:mm|<sha256>|<full path>
 #>
 param(
-    [Parameter(Mandatory=$true)][string[]]$Dirs,
+    # One semicolon-separated string, not a string[].  powershell.exe -File
+    # passes arguments literally, so -Dirs "a","b" arrives as the single string
+    # a,b rather than an array, and every directory is then missed.
+    [Parameter(Mandatory=$true)][string]$DirList,
     # Write a per-file verdict to stderr.  Silence is otherwise indistinguishable
     # from "found nothing", which is exactly the case that needs explaining.
     [switch]$Explain
@@ -79,6 +82,8 @@ $candidates = foreach ($dir in $Dirs) {
     if (-not (Test-Path -LiteralPath $dir)) { continue }
     Get-ChildItem -LiteralPath $dir -Filter *.hex -File -ErrorAction SilentlyContinue
 }
+
+$Dirs = $DirList -split ';' | Where-Object { $_ -ne '' }
 
 $seen = @{}
 $found = foreach ($f in $candidates) {

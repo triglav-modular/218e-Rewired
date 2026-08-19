@@ -85,7 +85,7 @@ REM always win on checksum alone.
 CALL :step Locating the firmware image
 
 SET "IMG_COUNT=0"
-FOR /F "tokens=1,2,* delims=|" %%A IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Scan-Images.ps1" -Dirs "%FIRMWARE_DIR%","%SCRIPT_DIR%.","%USERPROFILE%\Downloads","%USERPROFILE%\Desktop" 2^>NUL') DO (
+FOR /F "tokens=1,2,* delims=|" %%A IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Scan-Images.ps1" -DirList "%FIRMWARE_DIR%;%SCRIPT_DIR%.;%USERPROFILE%\Downloads;%USERPROFILE%\Desktop" 2^>NUL') DO (
     SET /A IMG_COUNT+=1
     CALL SET "IMG_WHEN_%%IMG_COUNT%%=%%A"
     CALL SET "IMG_SHA_%%IMG_COUNT%%=%%B"

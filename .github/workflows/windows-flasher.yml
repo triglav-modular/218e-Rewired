@@ -89,7 +89,7 @@ jobs:
           echo :0410000000000000EC>> scan_test\lowaddr.hex
           echo :00000001FF>> scan_test\lowaddr.hex
           rem The scanner must list good.hex and nothing else.
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -Dirs "%CD%\scan_test" -Explain > scan_out.txt 2> scan_err.txt
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -DirList "%CD%\scan_test" -Explain > scan_out.txt 2> scan_err.txt
           type scan_out.txt
           type scan_err.txt
           findstr /C:"good.hex" scan_out.txt >NUL || (echo FAILED: scanner rejected a valid image & exit /b 1)
