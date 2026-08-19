@@ -266,112 +266,160 @@ fi
 # matching the one this flasher was generated for is accepted, so a stray .hex
 # is skipped rather than flashed.  That is what lets a downloaded file be used
 # where it landed, instead of asking anyone to move it.
+echo ""
+echo "======================================================================"
+echo "  THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3"
+echo ""
+echo "  It won't work on the 218, the 218r, the 218e v1 or v2, or any other"
+echo "  touchplate controller."
+echo ""
+echo "  YOU DO THIS ENTIRELY AT YOUR OWN RISK."
+echo ""
+echo "  This is experimental, unofficial firmware, not made or supported by"
+echo "  Buchla.  It has been tested on ONE instrument.  It can brick your"
+echo "  keyboard.  Recovering a bricked unit may need JTAG hardware and"
+echo "  opening the instrument, and may not be possible at all."
+echo ""
+echo "  A failed flash usually leaves the keyboard in DFU mode, where the"
+echo "  flasher can try again, but there is no guarantee that it will"
+echo "  succeed.  If losing the use of your 218e would be a problem, stop"
+echo "  here and keep the factory firmware."
+echo ""
+echo "  No warranty of any kind.  Not the authors, not Buchla, nobody is"
+echo "  liable for damage, loss of use, or a keyboard that no longer works."
+echo "======================================================================"
+echo ""
+read -r -p "  Type YES (capitals) to accept and continue: " consent
+[ "$consent" = "YES" ] || fail "Not confirmed. Nothing was changed."
+
 step "Locating the firmware image"
 FIRMWARE=""
 CUSTOM_IMAGE=0
 
-# An explicitly chosen image: given as an argument, or dragged into the
-# prompt below.  It bypasses the checksum gate, so it gets the structural
-# validation and its own typed confirmation instead — and it is never
-# something the automatic search picks up on its own.
-use_explicit_image() {
-    local path="$1"
-    [ -f "$path" ] || fail "No such file: $path"
-    echo
-    echo "  Validating $(basename "$path") — this image is not the one this"
-    echo "  flasher was generated for, so it is checked structurally instead."
-    verdict="$(validate_hex "$path")"
-    case "$verdict" in
-        OK*)
-            ok "Valid Intel HEX, data in ${verdict#OK }"
-            ;;
-        *)
-            echo "  ${C_RED}${verdict}${C_RESET}"
-            fail "That file is not a flashable 218e image. The instrument was not touched."
-            ;;
+if [ -n "${1:-}" ]; then
+    [ -f "$1" ] || fail "No such file: $1"
+    case "$(validate_hex "$1")" in
+        OK*) ;;
+        *) echo "  ${C_RED}$(validate_hex "$1")${C_RESET}"
+           fail "That file is not a flashable 218e image. The instrument was not touched." ;;
     esac
-    actual_sha256="$(shasum -a 256 "$path" | cut -d" " -f1)"
+    accept_choice "$1"
+fi
+# Every .hex the flasher can see, newest first, structurally valid, deduped by
+# resolved path.  One list, one ordering, so what is offered and what is chosen
+# can never disagree.
+scan_images() {
+    # Sort by mtime here rather than with ls -t: given an unmatched glob among
+    # its operands, BSD ls groups the results by directory instead of sorting
+    # them together, which silently puts an older image above a newer one.
+    # Trailing slashes are stripped so the same file reached through two
+    # patterns dedupes as one string.
+    {
+        for dir in "${FIRMWARE_DIR%/}" "${SCRIPT_DIR%/}" \
+                   "$HOME/Downloads" "$HOME/Desktop"; do
+            for candidate in "$dir"/*.hex; do
+                [ -f "$candidate" ] || continue
+                printf '%s\t%s\n' "$(stat -f '%m' "$candidate" 2>/dev/null || echo 0)" \
+                                   "$candidate"
+            done
+        done
+    } | sort -rn -k1,1 | cut -f2- | awk '!seen[$0]++' |
+    while IFS= read -r candidate; do
+        case "$(validate_hex "$candidate")" in OK*) printf '%s\n' "$candidate" ;; esac
+    done | head -12
+}
+
+# Accept a chosen image.  The one this flasher was generated for needs no
+# confirmation; anything else is fingerprinted and needs a typed FLASH.
+accept_choice() {
+    local path="$1" sha
+    sha="$(shasum -a 256 "$path" | cut -d" " -f1)"
+    if [ "$sha" = "$EXPECTED_SHA256" ]; then
+        FIRMWARE="$path"
+        ok "Checksum matches the image this flasher installs"
+        return 0
+    fi
     echo
-    echo "  SHA-256  ${C_BOLD}$actual_sha256${C_RESET}"
+    echo "  ${C_BOLD}$(basename "$path")${C_RESET} is not the image this flasher was built"
+    echo "  for, so its checksum cannot vouch for it.  It is valid Intel HEX for"
+    echo "  this chip, and its fingerprint is:"
+    echo "    ${C_BOLD}$sha${C_RESET}"
     echo
     echo "  Only flash an image you built yourself or otherwise trust."
     read -r -p "  Type FLASH (capitals) to accept this image: " confirm
     [ "$confirm" = "FLASH" ] || fail "Not confirmed. The instrument was not touched."
     FIRMWARE="$path"
     CUSTOM_IMAGE=1
-    FIRMWARE_VERSION="custom image (${actual_sha256:0:8})"
+    FIRMWARE_VERSION="custom image (${sha:0:8})"
 }
 
-if [ -n "${1:-}" ]; then
-    use_explicit_image "$1"
-fi
-try_candidate() {
-    [ -f "$1" ] || return 1
-    [ "$(shasum -a 256 "$1" | awk '{print $1}')" = "$EXPECTED_SHA256" ] || return 1
-    FIRMWARE="$1"
-    return 0
-}
-
-[ -n "$FIRMWARE" ] || \
-for candidate in \
-    "$FIRMWARE_DIR/$FIRMWARE_NAME" \
-    "$SCRIPT_DIR/$FIRMWARE_NAME" \
-    "$HOME/Downloads/$FIRMWARE_NAME" \
-    "$HOME/Desktop/$FIRMWARE_NAME"
-do
-    try_candidate "$candidate" && break
-done
-
-# Then the newest .hex files in Downloads, so a browser that renamed the file
-# to "...(1).hex" still works.
 if [ -z "$FIRMWARE" ]; then
-    while IFS= read -r candidate; do
-        [ -n "$candidate" ] || continue
-        try_candidate "$candidate" && break
-    done <<EOF
-$(ls -t "$HOME/Downloads"/*.hex "$HOME/Desktop"/*.hex 2>/dev/null | head -20)
-EOF
-fi
+    images="$(scan_images)"
+    count=0
+    [ -n "$images" ] && count="$(printf '%s\n' "$images" | wc -l | tr -d ' ')"
 
-# Nothing matched the built-in checksum.  Before giving up, offer the newest
-# structurally valid image from the same places — this is how a build with
-# changed settings gets flashed without touching the flasher: it is suggested,
-# fingerprinted, and flashed only after a typed confirmation.  Never silently.
-if [ -z "$FIRMWARE" ]; then
-    suggestion=""
-    while IFS= read -r candidate; do
-        [ -n "$candidate" ] && [ -f "$candidate" ] || continue
-        case "$(validate_hex "$candidate")" in OK*) suggestion="$candidate"; break ;; esac
-    done <<EOF
-$(ls -t "$FIRMWARE_DIR"/*.hex "$SCRIPT_DIR"/*.hex "$HOME/Downloads"/*.hex "$HOME/Desktop"/*.hex 2>/dev/null | head -20)
-EOF
-    if [ -n "$suggestion" ]; then
+    if [ "$count" -gt 1 ]; then
+        # More than one flashable image is in reach.  Picking silently is how
+        # the wrong firmware gets installed — a stale build in firmware/ would
+        # always win on checksum alone — so list them and let the choice be
+        # made explicitly.  Newest first, because that is usually the intent.
         echo
-        echo "  Nothing matches this flasher's built-in checksum, but the newest"
-        echo "  valid image around is:"
-        echo "    ${C_BOLD}$suggestion${C_RESET}"
-        use_explicit_image "$suggestion"
+        echo "  ${C_BOLD}$count flashable images found.${C_RESET}  Newest first:"
+        echo
+        i=0
+        while IFS= read -r candidate; do
+            i=$((i + 1))
+            sha="$(shasum -a 256 "$candidate" | cut -d" " -f1)"
+            when="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$candidate" 2>/dev/null)"
+            if [ "$sha" = "$EXPECTED_SHA256" ]; then
+                mark="  ${C_GREEN}<- built with this flasher${C_RESET}"
+            else
+                mark=""
+            fi
+            printf '    %d) %s   %s\n' "$i" "$when" "${sha:0:8}"
+            printf '       %s%s\n' "$candidate" "$mark"
+            i2=$i
+        done <<EOF
+$images
+EOF
+        echo
+        read -r -p "  Which one? [1-$count, or return to stop] " pick
+        [ -n "$pick" ] || fail "Nothing chosen. The instrument was not touched."
+        case "$pick" in
+            ''|*[!0-9]*) fail "Not a number. The instrument was not touched." ;;
+        esac
+        [ "$pick" -ge 1 ] && [ "$pick" -le "$count" ] || \
+            fail "No image $pick in the list. The instrument was not touched."
+        chosen="$(printf '%s\n' "$images" | sed -n "${pick}p")"
+        accept_choice "$chosen"
+    elif [ "$count" -eq 1 ]; then
+        accept_choice "$images"
     fi
 fi
 
 if [ -z "$FIRMWARE" ]; then
     echo
     echo "  Looked in firmware/, beside this script, Downloads and Desktop."
-    echo "  Nothing there matches the image this flasher installs:"
-    echo "    ${C_BOLD}$EXPECTED_SHA256${C_RESET}"
+    echo "  No flashable 218e image is there."
     echo
     echo "  No firmware ships with this package — the patched image is Buchla's"
     echo "  firmware with our changes in it, so it is not ours to redistribute."
     echo "  Build one from your own factory image with the page in web/, or:"
     echo "    ${C_BOLD}python3 tools/build.py --no-ghidra${C_RESET}"
     echo
-    echo "  Or flash a different image than the one this flasher was made for:"
-    echo "  drag its .hex into this window, or press return to stop."
+    echo "  Or point this at one: drag its .hex into this window, or press"
+    echo "  return to stop."
     read -r -p "  Image to flash: " other
     # Terminal drag-and-drop appends a space and may escape spaces in the path.
     other="$(printf '%s' "$other" | sed 's/\\//g; s/[[:space:]]*$//')"
-    [ -n "$other" ] || fail "No matching firmware image found."
-    use_explicit_image "$other"
+    [ -n "$other" ] || fail "No firmware image found."
+    [ -f "$other" ] || fail "No such file: $other"
+    case "$(validate_hex "$other")" in
+        OK*) ;;
+        *) echo "  ${C_RED}$(validate_hex "$other")${C_RESET}"
+           fail "That file is not a flashable 218e image. The instrument was not touched." ;;
+    esac
+    accept_choice "$other"
 fi
 ok "Found $(basename "$FIRMWARE")"
 ok "Checksum matches the image this flasher installs"
@@ -399,31 +447,6 @@ fi
 [ -x "$DFUPATH" ] || fail "dfu-programmer is missing or not executable: $DFUPATH"
 log "Using dfu-programmer: $DFUPATH"
 
-echo ""
-echo "======================================================================"
-echo "  THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3"
-echo ""
-echo "  It won't work on the 218, the 218r, the 218e v1 or v2, or any other"
-echo "  touchplate controller."
-echo ""
-echo "  YOU DO THIS ENTIRELY AT YOUR OWN RISK."
-echo ""
-echo "  This is experimental, unofficial firmware, not made or supported by"
-echo "  Buchla.  It has been tested on ONE instrument.  It can brick your"
-echo "  keyboard.  Recovering a bricked unit may need JTAG hardware and"
-echo "  opening the instrument, and may not be possible at all."
-echo ""
-echo "  A failed flash usually leaves the keyboard in DFU mode, where the"
-echo "  flasher can try again, but there is no guarantee that it will"
-echo "  succeed.  If losing the use of your 218e would be a problem, stop"
-echo "  here and keep the factory firmware."
-echo ""
-echo "  No warranty of any kind.  Not the authors, not Buchla, nobody is"
-echo "  liable for damage, loss of use, or a keyboard that no longer works."
-echo "======================================================================"
-echo ""
-read -r -p "  Type YES (capitals) to accept and continue: " consent
-[ "$consent" = "YES" ] || fail "Not confirmed. Nothing was changed."
 
 echo
 echo "Before continuing:"

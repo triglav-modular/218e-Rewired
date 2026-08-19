@@ -44,82 +44,6 @@ SET "FIRMWARE="
 SET "TOTAL_STEPS=7"
 SET "STEP=0"
 
-REM --- find the image ----------------------------------------------------
-REM Searching is safe because the checksum decides: only an image matching the
-REM one this flasher was generated for is accepted, so a stray .hex is skipped
-REM rather than flashed.  That lets a downloaded file be used where it landed.
-CALL :step Locating the firmware image
-
-CALL :try_image "%FIRMWARE_DIR%\%FIRMWARE_NAME%"
-CALL :try_image "%SCRIPT_DIR%%FIRMWARE_NAME%"
-CALL :try_image "%USERPROFILE%\Downloads\%FIRMWARE_NAME%"
-CALL :try_image "%USERPROFILE%\Desktop\%FIRMWARE_NAME%"
-
-REM Then any recent .hex in Downloads or on the Desktop, so a browser that
-REM renamed the file to "...(1).hex" still works.
-FOR /F "delims=" %%F IN ('DIR /B /O-D "%USERPROFILE%\Downloads\*.hex" 2^>NUL') DO (
-    CALL :try_image "%USERPROFILE%\Downloads\%%F"
-)
-FOR /F "delims=" %%F IN ('DIR /B /O-D "%USERPROFILE%\Desktop\*.hex" 2^>NUL') DO (
-    CALL :try_image "%USERPROFILE%\Desktop\%%F"
-)
-
-REM Nothing matched the built-in checksum.  Offer the newest structurally
-REM valid image instead - this is how a build with changed settings gets
-REM flashed without changing the flasher: suggested, validated, and only
-REM flashed after a typed confirmation.
-IF NOT DEFINED FIRMWARE (
-    REM DIR /B prints bare names, so scan one directory at a time and rebuild
-    REM the full path from %%~fF, which is only correct when DIR is scoped to a
-    REM single folder.  Multiple globs in one DIR is unreliable across versions.
-    FOR %%D IN ("%FIRMWARE_DIR%" "%SCRIPT_DIR%." "%USERPROFILE%\Downloads" "%USERPROFILE%\Desktop") DO (
-        IF NOT DEFINED CUSTOM (
-            PUSHD "%%~D" 2>NUL && (
-                FOR /F "delims=" %%F IN ('DIR /B /O-D *.hex 2^>NUL') DO (
-                    IF NOT DEFINED CUSTOM CALL :offer_image "%%~fF"
-                )
-                POPD
-            )
-        )
-    )
-)
-IF DEFINED CUSTOM GOTO :have_image
-
-IF NOT DEFINED FIRMWARE (
-    ECHO.
-    ECHO   Looked in firmware\, beside this script, Downloads and Desktop.
-    ECHO   Nothing there matches the image this flasher installs:
-    ECHO     %EXPECTED_SHA256%
-    ECHO.
-    ECHO   No firmware ships with this package - the patched image is Buchla's
-    ECHO   firmware with our changes in it, so it is not ours to redistribute.
-    ECHO   Build one from your own factory image with the page in web\, or:
-    ECHO     python tools\build.py --no-ghidra
-    ECHO.
-    ECHO   Or flash a different image: paste or drag its .hex path here,
-    ECHO   or press Enter to stop.
-    SET "OTHER="
-    SET /P "OTHER=  Image to flash: "
-    IF NOT DEFINED OTHER GOTO :fail_early
-    CALL :accept_image "%OTHER%"
-    IF NOT DEFINED CUSTOM GOTO :fail_early
-)
-:have_image
-CALL :ok Found !FIRMWARE!
-CALL :ok Checksum matches the image this flasher installs
-CALL :ok %FIRMWARE_VERSION%
-
-REM Keep it where it belongs, so the next run finds it first.  A failure here
-REM is not fatal: the image is already verified.
-IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
-    IF NOT EXIST "%FIRMWARE_DIR%" MKDIR "%FIRMWARE_DIR%" 2>NUL
-    COPY /Y "!FIRMWARE!" "%FIRMWARE_DIR%\%FIRMWARE_NAME%" >NUL 2>&1
-    IF NOT ERRORLEVEL 1 (
-        SET "FIRMWARE=%FIRMWARE_DIR%\%FIRMWARE_NAME%"
-        CALL :ok Copied into firmware\
-    )
-)
-ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 ECHO.
 ECHO ======================================================================
 ECHO   THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3
@@ -149,6 +73,106 @@ IF NOT "%CONSENT%"=="YES" (
     ECHO   Not confirmed.  Nothing was changed.
     GOTO :fail_early
 )
+
+REM --- find the image ----------------------------------------------------
+REM Every .hex in reach is validated and listed newest first.  When more than
+REM one is flashable the choice is made explicitly: picking silently is how the
+REM wrong firmware gets installed, because a stale build in firmware\ would
+REM always win on checksum alone.
+CALL :step Locating the firmware image
+
+SET "IMG_COUNT=0"
+FOR /F "tokens=1,2,* delims=|" %%A IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Scan-Images.ps1" -Dirs "%FIRMWARE_DIR%","%SCRIPT_DIR%.","%USERPROFILE%\Downloads","%USERPROFILE%\Desktop" 2^>NUL') DO (
+    SET /A IMG_COUNT+=1
+    CALL SET "IMG_WHEN_%%IMG_COUNT%%=%%A"
+    CALL SET "IMG_SHA_%%IMG_COUNT%%=%%B"
+    CALL SET "IMG_PATH_%%IMG_COUNT%%=%%C"
+)
+
+IF "%IMG_COUNT%"=="0" GOTO :no_image
+
+SET "PICK=1"
+IF %IMG_COUNT% GTR 1 (
+    ECHO.
+    ECHO   %IMG_COUNT% flashable images found.  Newest first:
+    ECHO.
+    FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
+        SET "MARK="
+        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- built with this flasher"
+        ECHO     %%I^) !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!
+        ECHO        !IMG_PATH_%%I!!MARK!
+    )
+    ECHO.
+    SET "PICK="
+    SET /P "PICK=  Which one? [1-%IMG_COUNT%, or Enter to stop] "
+    IF NOT DEFINED PICK (
+        ECHO   Nothing chosen.
+        GOTO :fail_early
+    )
+    REM Reject anything that is not a plain number in range, rather than
+    REM letting SET /A turn junk into 0 and index nothing.
+    ECHO !PICK!| FINDSTR /R "^[1-9][0-9]*$" >NUL || (
+        ECHO   Not a number.
+        GOTO :fail_early
+    )
+    IF !PICK! GTR %IMG_COUNT% (
+        ECHO   No image !PICK! in the list.
+        GOTO :fail_early
+    )
+)
+
+CALL SET "FIRMWARE=%%IMG_PATH_!PICK!%%"
+CALL SET "CHOSEN_SHA=%%IMG_SHA_!PICK!%%"
+
+REM The image this flasher was generated for needs no confirmation.  Anything
+REM else is shown with its fingerprint and needs a typed FLASH.
+IF /I NOT "!CHOSEN_SHA!"=="%EXPECTED_SHA256%" (
+    ECHO.
+    FOR %%N IN ("!FIRMWARE!") DO ECHO   %%~nxN is not the image this flasher was built
+    ECHO   for, so its checksum cannot vouch for it.  It is valid Intel HEX for
+    ECHO   this chip, and its fingerprint is:
+    ECHO     !CHOSEN_SHA!
+    ECHO.
+    ECHO   Only flash an image you built yourself or otherwise trust.
+    SET "CONF="
+    SET /P "CONF=  Type FLASH (capitals) to accept this image: "
+    IF NOT "!CONF!"=="FLASH" (
+        ECHO   Not confirmed.
+        GOTO :fail_early
+    )
+    SET "CUSTOM=1"
+    SET "FIRMWARE_VERSION=custom image (!CHOSEN_SHA:~0,8!)"
+)
+GOTO :have_image
+
+:no_image
+ECHO.
+ECHO   Looked in firmware\, beside this script, Downloads and Desktop.
+ECHO   No flashable 218e image is there.
+ECHO.
+ECHO   No firmware ships with this package - the patched image is Buchla's
+ECHO   firmware with our changes in it, so it is not ours to redistribute.
+ECHO   Build one from your own factory image with the page in web\, or:
+ECHO     python tools\build.py --no-ghidra
+ECHO.
+GOTO :fail_early
+
+:have_image
+CALL :ok Found !FIRMWARE!
+CALL :ok Checksum matches the image this flasher installs
+CALL :ok %FIRMWARE_VERSION%
+
+REM Keep it where it belongs, so the next run finds it first.  A failure here
+REM is not fatal: the image is already verified.
+IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
+    IF NOT EXIST "%FIRMWARE_DIR%" MKDIR "%FIRMWARE_DIR%" 2>NUL
+    COPY /Y "!FIRMWARE!" "%FIRMWARE_DIR%\%FIRMWARE_NAME%" >NUL 2>&1
+    IF NOT ERRORLEVEL 1 (
+        SET "FIRMWARE=%FIRMWARE_DIR%\%FIRMWARE_NAME%"
+        CALL :ok Copied into firmware\
+    )
+)
+ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 
 ECHO.
 ECHO Before continuing:
@@ -366,54 +390,6 @@ EXIT /B 0
 :ok
 ECHO   [ok] %*
 ECHO OK: %*>> "%LOG_FILE%"
-EXIT /B 0
-
-:offer_image
-REM A candidate from the automatic search.  Validate it, and if it is good,
-REM put it forward for confirmation.  DIR already sorted newest-first, so the
-REM first valid one wins.
-IF DEFINED CUSTOM EXIT /B 0
-python "%PACKAGE_ROOT%tools\validate_hex.py" "%~1" >NUL 2>&1
-IF ERRORLEVEL 1 EXIT /B 0
-ECHO.
-ECHO   Nothing matches this flasher's built-in checksum, but the newest valid
-ECHO   image around is:
-ECHO     %~1
-CALL :accept_image "%~1"
-EXIT /B 0
-
-:accept_image
-REM Validate, fingerprint, and require a typed FLASH before accepting an image
-REM the checksum does not vouch for.
-IF NOT EXIST "%~1" ( ECHO   No such file: %~1 & EXIT /B 0 )
-ECHO.
-ECHO   Validating %~nx1 - not the image this flasher was made for, so it is
-ECHO   checked structurally instead.
-FOR /F "delims=" %%V IN ('python "%PACKAGE_ROOT%tools\validate_hex.py" "%~1" 2^>^&1') DO SET "VERDICT=%%V"
-ECHO   %VERDICT%
-ECHO %VERDICT% | FINDSTR /B "OK" >NUL || ( ECHO   That file is not a flashable 218e image. & EXIT /B 0 )
-FOR /F "tokens=1" %%H IN ('certutil -hashfile "%~1" SHA256 ^| findstr /R "^[0-9a-f]*$"') DO IF NOT DEFINED CSHA SET "CSHA=%%H"
-ECHO.
-ECHO   SHA-256  %CSHA%
-ECHO.
-ECHO   Only flash an image you built yourself or otherwise trust.
-SET "CONF="
-SET /P "CONF=  Type FLASH (capitals) to accept this image: "
-IF NOT "%CONF%"=="FLASH" ( ECHO   Not confirmed. & EXIT /B 0 )
-SET "FIRMWARE=%~1"
-SET "CUSTOM=1"
-SET "FIRMWARE_VERSION=custom image (%CSHA:~0,8%)"
-EXIT /B 0
-
-:try_image
-IF DEFINED FIRMWARE EXIT /B 0
-IF NOT EXIST "%~1" EXIT /B 0
-SET "_SHA="
-FOR /F "skip=1 tokens=* delims=" %%H IN ('certutil -hashfile "%~1" SHA256 ^| findstr /R "^[0-9a-f ]*$"') DO (
-    IF NOT DEFINED _SHA SET "_SHA=%%H"
-)
-SET "_SHA=!_SHA: =!"
-IF /I "!_SHA!"=="%EXPECTED_SHA256%" SET "FIRMWARE=%~1"
 EXIT /B 0
 
 :read_fuse
