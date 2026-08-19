@@ -17,6 +17,7 @@ on:
       # The flasher shells out to both of these, so a change to either
       # can break it without the .bat itself being touched.
       - 'tools/Scan-Images.ps1'
+      - 'tools/Find-DfuDevice.ps1'
       - 'tools/validate_hex.py'
       - '.github/workflows/windows-flasher.yml'
   workflow_dispatch:
@@ -151,6 +152,16 @@ jobs:
           findstr /C:"image " out3.txt >NUL || (echo FAILED: did not report the image fingerprint & exit /b 1)
           del "%USERPROFILE%\Downloads\custom.hex" 2>NUL
           echo PASS: a custom image is used without a checksum gate
+          exit /b 0
+
+      - name: The USB probe runs and reports no Atmel DFU device
+        shell: cmd
+        run: |
+          rem No instrument on a runner, so it must say ABSENT rather than fail.
+          for /f "delims=" %%S in ('powershell -NoProfile -ExecutionPolicy Bypass -File tools\Find-DfuDevice.ps1 2^>NUL') do set "STATE=%%S"
+          echo probe said: [%STATE%]
+          if not "%STATE%"=="ABSENT" (echo FAILED: expected ABSENT with no device & exit /b 1)
+          echo PASS: USB probe reports absence cleanly
           exit /b 0
 
       - name: With a matching image - must verify and reach the MIDI step

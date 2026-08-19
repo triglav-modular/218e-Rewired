@@ -219,6 +219,38 @@ IF NOT ERRORLEVEL 1 (
     GOTO :in_dfu
 )
 
+REM dfu-programmer could not open it, but that does not mean it is not there.
+REM Ask Windows directly before assuming the instrument is still in MIDI mode:
+REM once it is in DFU there is no MIDI port at all, so looking for one and
+REM telling someone to power-cycle is exactly the wrong advice.
+SET "USBSTATE="
+FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
+
+ECHO %USBSTATE% | FINDSTR /B /C:"PRESENT" >NUL 2>&1
+IF NOT ERRORLEVEL 1 (
+    FOR /F "tokens=2,3,* delims=|" %%A IN ("%USBSTATE%") DO (
+        ECHO.
+        ECHO   The instrument IS in DFU mode - Windows can see it:
+        ECHO     %%C
+        ECHO     driver: %%A    status: %%B
+        ECHO.
+        IF /I "%%A"=="WinUSB" (
+            ECHO   WinUSB is bound, which is what the flashing tool needs, but the
+            ECHO   tool still could not open it.  That is usually another process
+            ECHO   holding the device: close any other flashing or MIDI software,
+            ECHO   unplug and replug the USB cable, and run this again.  The
+            ECHO   instrument stays in DFU across a replug.
+        ) ELSE (
+            ECHO   That driver is not WinUSB, so the flashing tool cannot open the
+            ECHO   device.  Zadig can rebind it: pick the AT32UC3B DFU device -
+            ECHO   not the 218e's MIDI entry - choose WinUSB, and Install Driver.
+        )
+        ECHO.
+        ECHO   Nothing was erased.  No MIDI request is needed: it is already in DFU.
+    )
+    GOTO :dfu_present_unreachable
+)
+
 "%SENDMIDI%" list > "%TEMP%\rewired_midi.txt" 2>&1
 FINDSTR /I "218e" "%TEMP%\rewired_midi.txt" >NUL
 IF ERRORLEVEL 1 (
@@ -327,6 +359,16 @@ IF "!FOUND!"=="0" (
 
 IF "!FOUND!"=="0" GOTO :dfu_unreachable
 GOTO :in_dfu
+
+:dfu_present_unreachable
+REM In DFU and visible to Windows, but not openable.  Distinct from
+REM :dfu_unreachable, which is reached when the device never appeared at all.
+ECHO.
+ECHO   Run this again once the driver or the conflicting program is sorted out;
+ECHO   the instrument is already in DFU, so it will go straight to flashing.
+ECHO.
+PAUSE
+EXIT /B 1
 
 :dfu_unreachable
 ECHO.
