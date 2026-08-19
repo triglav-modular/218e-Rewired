@@ -342,8 +342,10 @@ each scale has a pure 2/1 octave — exactly 484 units.
 > message silently retuned the instrument. Moving the selector to its own cell
 > leaves `state+0x2` to the factory, zero from reset as it expects.
 
-**Retired to make room:** transpose *mode* is permanently off, and three of the
-factory's remote-enable guards read constant zero. The octave *selectors* are
+**Retired to make room:** three of the factory's remote-enable guards read
+constant zero, and transpose *mode* is off in any build that uses alternate
+tunings or the knob remap — the applier zeroes its byte, and the remap takes
+the knobs it is driven from. Build with both off and it works as it shipped. The octave *selectors* are
 untouched.
 
 ---

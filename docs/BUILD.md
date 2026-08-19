@@ -274,6 +274,12 @@ remote-enable toggle — and the rem-en and trn LEDs are left alone, because the
 applier that drives them is not called. There is nothing to switch between, so
 nothing is taken over.
 
+Transpose *mode* needs one more thing to survive: the knobs. It is driven from
+the knobs the remap takes over, so `remap_knobs` retires it as surely as a
+tuning does. With both off, the three `transpose_force_*` patches are skipped
+and transpose works as it shipped; with either on, they are applied and it does
+not. That is the only place two options combine to decide a third thing.
+
 **Anchoring.** Each scale is shifted so that **A** lands on the 12-TET grid,
 which keeps the note you tuned the 208 to in the same place in every slot;
 switching tuning never sends you back to the trimmer. The shift is computed

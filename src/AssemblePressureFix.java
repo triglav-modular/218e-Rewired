@@ -2756,8 +2756,10 @@ public class AssemblePressureFix extends GhidraScript {
         // Knob 4 in edit mode is left exactly as the factory shipped it.  The
         // pressure curve is fixed linear now, so there is nothing for it to
         // set, and the factory pool word already points at 0x80004070.
-        // Remote-enable guards always see 0: state+2 now stores the tuning
-        // selector, and the remote feature is permanently retired.
+        // Remote-enable guards read constant zero.  Only emitted with a
+        // tuning installed: the selector moved out of state+0x2 to RAM
+        // 0x6090, so nothing shares the flag and a build without tunings
+        // leaves the factory feature alone.
         begin(0x80006528L);
         emit("MOV R8,0x0");
         emit("CP.W R8,0x0");

@@ -45,6 +45,20 @@ var WEBBUILD = (function () {
         if (!anyTuning) {
             blocks.edit_key27_tuning_slot1 = false;
             blocks.edit_key28_tuning_slot0 = false;
+            // Remote enable goes back with them: its guards were added when
+            // the tuning selector shared state+0x2, which it no longer does.
+            ['remote_guard_1', 'remote_guard_2', 'remote_guard_3']
+                .forEach(function (n) { blocks[n] = false; });
+        }
+        // Same rule as tools/build.py: transpose mode survives only when
+        // neither the tuning applier nor the knob remap has taken what it
+        // needs, so with both off these three forcing patches stay out.
+        var factoryKnobs = Object.keys(cfg.knobs).every(function (k) {
+            return cfg.knobs[k] === 'factory';
+        });
+        if (!anyTuning && factoryKnobs) {
+            ['transpose_force_1', 'transpose_force_2', 'transpose_force_3']
+                .forEach(function (n) { blocks[n] = false; });
         }
 
         if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {

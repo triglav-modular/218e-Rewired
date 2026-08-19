@@ -1063,12 +1063,29 @@ def main() -> None:
     # in place — key 27 was the transpose-mode toggle, key 28 the remote-enable
     # toggle — and the applier asserts the LEDs and zeroes the old
     # transpose-mode byte, so all three have to go, not just the keys.
-    if all(slot == "factory" for slot in cfg["tuning"]["slots"]):
+    factory_tunings = all(slot == "factory" for slot in cfg["tuning"]["slots"])
+    if factory_tunings:
         features["alternate_tunings"] = False
         blocks["edit_key27_tuning_slot1"] = False
         blocks["edit_key28_tuning_slot0"] = False
+        # Remote enable goes back with them.  The guards were added when the
+        # tuning selector lived in state+0x2, the factory's remote-enable
+        # flag; it moved to RAM 0x6090 and nothing shares that byte any more,
+        # so with no tuning installed there is nothing to protect against.
+        for name in ("remote_guard_1", "remote_guard_2", "remote_guard_3"):
+            blocks[name] = False
     else:
         features["alternate_tunings"] = True
+
+    # Transpose mode survives only when nothing has taken what it needs.  The
+    # tuning applier zeroes the transpose-mode byte outright, and the knob
+    # remap takes the knobs transpose is driven with, so either option retires
+    # it.  With both off there is nothing in its way, so key 27 and the trn
+    # LED work as they shipped and these three forcing patches stay out.
+    factory_knobs = all(v == "factory" for v in cfg["knobs"].values())
+    if factory_tunings and factory_knobs:
+        for name in ("transpose_force_1", "transpose_force_2", "transpose_force_3"):
+            blocks[name] = False
 
     # Arp latch reads the live octave offset through the blend hook, so the
     # blend *caves* have to exist whenever latch is on — but the pressure
