@@ -116,14 +116,15 @@
         return { name: t.name, text: t.text };
     });
 
-    // The arrows are drawn, not typed: U+2191 and U+2193 are outside Latin-1,
-    // so every browser substituted a different system font for them and
-    // Safari picked a hairline.  An inline SVG renders the same everywhere and
-    // its weight is ours to set.  The clear cross stays text, because U+00D7
-    // is Latin-1 and the font really has it.
+    // All three are drawn, not typed.  U+2191 and U+2193 are outside Latin-1
+    // and were substituted per browser, which is what made the row look wrong
+    // in Safari.  The cross could be U+00D7, which Euclid does have, but a
+    // drawn one matches the arrows beside it and its weight is a number here
+    // rather than the font's idea of bold.
     var ICONS = {
         up:    'M12 19V5M5 12l7-7 7 7',
-        down:  'M12 5v14M19 12l-7 7-7-7'
+        down:  'M12 5v14M19 12l-7 7-7-7',
+        clear: 'M6 6l12 12M18 6L6 18'
     };
     function icon(name) {
         var ns = 'http://www.w3.org/2000/svg';
@@ -201,10 +202,7 @@
             });
             var x = document.createElement('button');
             x.className = 'clear';
-            // U+00D7 is Latin-1, so Euclid has it and its weight is the
-            // font's own.  The arrows stay drawn: U+2191 and U+2193 are
-            // outside Latin-1 and were being substituted per browser.
-            x.textContent = '\u00d7'; x.title = 'clear this slot';
+            x.appendChild(icon('clear')); x.title = 'clear this slot';
             x.disabled = !entry;
             x.addEventListener('click', function () {
                 state.slots[i] = null; renderSlots(); refresh();

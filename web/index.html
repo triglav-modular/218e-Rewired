@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Triglav's own icon set, copied from triglavmodular.hu so the builder is
+     recognisable in a tab beside it. -->
+<link rel="icon" href="icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+<link rel="mask-icon" href="icons/safari-pinned-tab.svg" color="#dc5cb0">
 <title>218e V3 Rewired firmware builder</title>
 <style>
 /* Euclid Circular A is licensed to Triglav Modular and served from
@@ -46,13 +53,14 @@
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 *{box-sizing:border-box}
-/* No widows or orphans.  text-wrap:pretty asks the browser to avoid leaving a
-   single word alone on a paragraph's last line; balance evens out the lines of
-   a heading instead, which is what short blocks need.  Both are ignored where
-   unsupported, so the fallback is ordinary wrapping. */
-p,li,dd,dt,.opt .d,.d,.sub,.msg,figcaption{text-wrap:pretty}
+/* No widows or orphans.  text-wrap inherits, so pretty goes on the root and
+   reaches every block on the page - including ones added later, which a list
+   of selectors would have missed each time the markup changed.  It asks the
+   line breaker to look ahead rather than leave one word alone on a last line.
+   Headings and short labels take balance instead, which evens their lines.
+   Both are ignored where unsupported, so the fallback is ordinary wrapping. */
 h1,h2,h3,h4,summary,.opt .t,.vpo button,.tag,.kbdhint,th{text-wrap:balance}
-body{margin:0;background:var(--bg);color:var(--ink);
+body{margin:0;background:var(--bg);color:var(--ink);text-wrap:pretty;
   font:400 16px/1.62 var(--sans);-webkit-font-smoothing:antialiased}
 /* The art is white strokes on transparency - 97% of the image has zero alpha -
    so it simply lies over the background at reduced opacity.  No blend mode:
@@ -197,9 +205,10 @@ td input{width:78px;padding:4px 7px;font:inherit;font-family:var(--mono);text-al
 /* The icons are SVG, so they size from the button rather than from a font,
    and svg{width:100%} elsewhere on this page must not reach them. */
 .slot .ctl button svg{width:17px;height:17px;margin:0;display:block}
-.slot .ctl button.clear{color:var(--bad);font-size:22px;font-weight:700;
-  line-height:1;padding:2px 15px 4px;
+.slot .ctl button.clear{color:var(--bad);
   border-color:color-mix(in srgb,var(--bad) 55%,transparent)}
+/* A touch heavier than the arrows: it is the destructive one. */
+.slot .ctl button.clear svg path{stroke-width:2.9}
 .slot .ctl button.clear:hover:not(:disabled){background:var(--bad);color:#171716;
   border-color:var(--bad)}
 .danger{border:1px solid var(--bad);border-radius:16px;padding:26px 28px;margin:0 0 20px;
@@ -350,7 +359,7 @@ strong{color:var(--accent)}
   <h3>Pressure</h3>
   <label class="opt"><input type="checkbox" id="pressure_fix" checked>
     <span><span class="t">Pressure response fix</span><br>
-    <span class="d">A gentler, linear pressure response for more expressive play.</span></span></label>
+    <span class="d">A gentler pressure response for more expressive play.</span></span></label>
   <label class="opt"><input type="checkbox" id="pressure_portamento" checked>
     <span><span class="t">Pressure-based portamento</span><br>
     <span class="d">Pitch moves between held notes as their relative pressure moves.</span></span></label>
@@ -468,9 +477,9 @@ strong{color:var(--accent)}
     </ol>
   </div>
 
-  <details style="margin-top:14px"><summary>If something went wrong</summary>
+  <details style="margin-top:14px"><summary>Oh no… something went wrong</summary>
     <dl style="line-height:1.6;margin:10px 0 0">
-      <dt style="font-weight:700;margin-top:10px">The keyboard is stuck in DFU and will not come back as MIDI (unresponsive keyboard with some LEDs lit up)</dt>
+      <dt style="font-weight:700;margin-top:10px">The keyboard seems stuck with some LEDs on</dt>
       <dd style="margin:2px 0 0">Either run the programmer scripts again, or use the ExitDFU scripts to restart the instrument in regular mode.
       <br>macOS: <span class="mono">ExitDFU_218e_v3_macOS.command</span>
       <br>Windows: <span class="mono">ExitDFU_218e_v3_Windows.bat</span></dd>
@@ -484,7 +493,7 @@ strong{color:var(--accent)}
       <dt style="font-weight:700;margin-top:10px">Windows: the 218e appears under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
       <dd style="margin:2px 0 0">Windows has picked the wrong MIDI driver, so the DFU request never reaches the instrument. Right-click it, <strong>Update driver</strong>, choose manually, and pick <strong>USB Audio Device</strong>.</dd>
 
-      <dt style="font-weight:700;margin-top:10px">Windows: <span class="mono">VCRUNTIME140_1.dll was not found</span>, or a tool is "not recognized"</dt>
+      <dt style="font-weight:700;margin-top:10px">Windows: <span class="mono">VCRUNTIME140_1.dll was not found</span>, or a tool is “not recognized”</dt>
       <dd style="margin:2px 0 0">The Microsoft C++ runtime is missing. Install it from <a href="https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist">Microsoft's redistributable page</a>, or from Buchla's kit.</dd>
     </dl>
   </details>
