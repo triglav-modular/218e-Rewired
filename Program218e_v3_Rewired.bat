@@ -164,9 +164,14 @@ FINDSTR /I /C:"no device present" "%TEMP%\rewired_probe.txt" >NUL 2>&1
 SET "PROBE_ABSENT=%ERRORLEVEL%"
 DEL "%TEMP%\rewired_probe.txt" >NUL 2>&1
 IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" (
-    ECHO   dfu-programmer.exe would not run.  Check that Buchla's windows\ kit
-    ECHO   is beside this script and that its VC++ redistributables are
-    ECHO   installed ^(support\VC_redist.x64.exe^).
+    ECHO   dfu-programmer.exe would not run.
+    ECHO.
+    ECHO   Tried:     %DFU%
+    ECHO   It exited %PROBE_RC% without reporting "no device present",
+    ECHO   which is what a working copy says when no instrument is attached.
+    ECHO.
+    ECHO   Check that the windows\support folder is beside this script with its
+    ECHO   DLLs intact, and that the Microsoft C++ runtime is installed.
     GOTO :fail_early
 )
 CALL :ok dfu-programmer.exe runs
