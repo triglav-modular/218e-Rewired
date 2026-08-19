@@ -116,6 +116,32 @@
         return { name: t.name, text: t.text };
     });
 
+    // Arrows and the clear cross are drawn, not typed.  U+2191/2193/2715 are
+    // not in Euclid Circular A, so every browser substituted a different
+    // system font for them and Safari picked a hairline.  An inline SVG
+    // renders the same everywhere and its weight is ours to set.
+    var ICONS = {
+        up:    'M12 19V5M5 12l7-7 7 7',
+        down:  'M12 5v14M19 12l-7 7-7-7',
+        clear: 'M6 6l12 12M18 6L6 18'
+    };
+    function icon(name) {
+        var ns = 'http://www.w3.org/2000/svg';
+        var svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+        var path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', ICONS[name]);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'currentColor');
+        path.setAttribute('stroke-width', '2.4');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(path);
+        return svg;
+    }
+
     function renderSlots() {
         var host = $('slots');
         host.innerHTML = '';
@@ -160,9 +186,9 @@
 
             var ctl = document.createElement('div');
             ctl.className = 'ctl';
-            [['↑', i - 1], ['↓', i + 1]].forEach(function (pair) {
+            [['up', i - 1], ['down', i + 1]].forEach(function (pair) {
                 var b = document.createElement('button');
-                b.textContent = pair[0];
+                b.appendChild(icon(pair[0]));
                 b.title = 'move to slot ' + pair[1];
                 b.disabled = !entry || pair[1] < 0 || pair[1] > 2;
                 b.addEventListener('click', function () {
@@ -175,7 +201,7 @@
             });
             var x = document.createElement('button');
             x.className = 'clear';
-            x.textContent = '✕'; x.title = 'clear this slot';
+            x.appendChild(icon('clear')); x.title = 'clear this slot';
             x.disabled = !entry;
             x.addEventListener('click', function () {
                 state.slots[i] = null; renderSlots(); refresh();

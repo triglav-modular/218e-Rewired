@@ -193,11 +193,12 @@ td input{width:78px;padding:4px 7px;font:inherit;font-family:var(--mono);text-al
   text-overflow:ellipsis;white-space:nowrap}
 .slot .what.empty{font-family:inherit;color:var(--muted);font-style:italic}
 .slot .ctl{grid-column:2;grid-row:1;display:flex;gap:6px}
-.slot .ctl button{padding:8px 16px;font-size:13px;line-height:1}
-/* U+2715 is a hairline at label size; the clear button carries it larger and
-   heavier so it reads as a control rather than a stray mark. */
-.slot .ctl button.clear{font-size:18px;font-weight:400;padding:5px 15px;
-  color:var(--bad);border-color:color-mix(in srgb,var(--bad) 55%,transparent)}
+.slot .ctl button{padding:7px 16px;line-height:0}
+/* The icons are SVG, so they size from the button rather than from a font,
+   and svg{width:100%} elsewhere on this page must not reach them. */
+.slot .ctl button svg{width:17px;height:17px;margin:0;display:block}
+.slot .ctl button.clear{color:var(--bad);
+  border-color:color-mix(in srgb,var(--bad) 55%,transparent)}
 .slot .ctl button.clear:hover:not(:disabled){background:var(--bad);color:#171716;
   border-color:var(--bad)}
 .danger{border:1px solid var(--bad);border-radius:16px;padding:26px 28px;margin:0 0 20px;
