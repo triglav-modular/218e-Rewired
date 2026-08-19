@@ -1248,6 +1248,39 @@ button.primary:not(:disabled):hover {
   transition: left 1.1s ease-in-out;
 }
 
+/* --- depth ----------------------------------------------------------------
+   Two tiers, matching the two the padding already follows.  Each card gets a
+   hairline of light along its top edge, as though the light were above the
+   page, and a shadow in two parts: a tight one that sits the card on the
+   surface, and a wide soft one that lifts it off.  A nested card gets less
+   of both, so it reads as sitting on its parent rather than beside it.
+   Shadows paint outside the border box and change no geometry. */
+section,
+.danger {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045),
+              0 1px 2px rgba(0, 0, 0, .22),
+              0 16px 36px -20px rgba(0, 0, 0, .55);
+}
+.group,
+.winsetup,
+.prereq,
+.steps > li {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .032),
+              0 1px 2px rgba(0, 0, 0, .16),
+              0 10px 22px -16px rgba(0, 0, 0, .42);
+}
+/* The drop zone is a dashed outline rather than a panel, so it takes the edge
+   light alone - a shadow under a dashed border reads as a mistake. */
+.drop {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03);
+}
+/* The keyboard is recessed rather than raised: it is a well the keys sit in,
+   so its light is at the bottom and its shadow is inside. */
+.kbdwrap {
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .45),
+              inset 0 -1px 0 rgba(255, 255, 255, .03);
+}
+
 /* Narrow screens.  Last in the sheet on purpose: these share specificity
    with the rules they override, so order is what decides. */
 /* On a narrow screen the absolutely-positioned banana sits on top of the
