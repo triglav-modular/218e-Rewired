@@ -410,6 +410,9 @@ label.opt.row>span {
 details {
   margin-top: 14px;
 }
+#calBody {
+    padding-bottom:20px;
+}
 summary {
   cursor: pointer;
   color: var(--accent);
@@ -1050,6 +1053,138 @@ strong {
   color: #fff;
   text-align: center;
 }
+/* --- motion ---------------------------------------------------------------
+   Only on things the reader just did: a box opening, a result arriving, a
+   control being pressed.  Nothing animates on load, because the page would
+   then be moving while somebody is trying to read it.  Everything here is
+   turned off wholesale under prefers-reduced-motion at the end of the file. */
+
+/* A result has to be noticed without stealing the scroll position, so it
+   arrives from just below rather than being switched on. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.msg {
+  animation: rise-in .22s ease-out both;
+}
+
+/* Panels expand instantly; their contents can still arrive rather than
+   appear, which reads as the box opening instead of the page jumping. */
+details[open] > *:not(summary) {
+  animation: rise-in .2s ease-out both;
+}
+summary {
+  transition: color .15s;
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary:hover {
+  color: var(--ink);
+}
+/* A > that turns to point down when the panel opens.  The summary is a flex
+   row so the mark centres on the text rather than sitting on its baseline -
+   the point of a > is at its own vertical middle, so centring the box is what
+   puts the point on the centreline.  The turn is a transform, which takes no
+   space, so the heading beside it cannot move. */
+summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+summary::before {
+  content: ">";
+  flex: 0 0 auto;
+  width: 15px;
+  font-size: 19px;
+  line-height: 1;
+  text-align: center;
+  transform-origin: 50% 50%;
+  transition: transform .18s ease;
+}
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+/* The whole row is the click target, so hovering the text has to answer -
+   but on the box, not behind the words.  A tint under a paragraph reads as
+   a selection rather than as a control. */
+label.opt:hover input[type=checkbox]:not(:checked) {
+  border-color: var(--accent);
+}
+label.opt:hover input[type=checkbox]:checked {
+  background: color-mix(in srgb, var(--accent) 82%, #fff);
+  border-color: color-mix(in srgb, var(--accent) 82%, #fff);
+}
+
+/* The tick is drawn, so it can grow into place instead of blinking on. */
+input[type=checkbox]::after {
+  transform-origin: center;
+  transition: transform .13s cubic-bezier(.34, 1.4, .64, 1), opacity .1s;
+}
+input[type=checkbox]:not(:checked)::after {
+  opacity: 0;
+}
+input[type=checkbox]:checked::after {
+  opacity: 1;
+}
+
+/* Every button already carries a .15s colour transition; this is the press,
+   which is the half that tells you the click landed. */
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button {
+  transition: background .15s, color .15s, border-color .15s, transform .08s;
+}
+
+/* Dropping a file is a drag, so the target grows very slightly to meet it. */
+.drop {
+  transition: border-color .15s, color .15s, background .15s, transform .15s;
+}
+.drop.over {
+  transform: scale(1.006);
+}
+
+/* A cell that has been given an offset lights up; worth easing so a row of
+   them does not flicker while values are typed. */
+.key input {
+  transition: background .18s, color .18s;
+}
+
+/* The accent moves from Build to Download when an image exists.  Both ends
+   of that already transition through the button rule above. */
+
+/* --- hover, including the states that are already on -----------------------
+   The generic button hover paints an accent fill, which is what a chosen
+   control is already wearing: pressed V/oct, a primary button, a ticked box
+   all sat dead under the pointer.  Each gets a lighter accent instead, so
+   "on" answers the mouse the same way "off" does. */
+button.primary:hover:not(:disabled),
+.vpo button[aria-pressed=true]:hover,
+input[type=checkbox]:checked:hover {
+  background: color-mix(in srgb, var(--accent) 82%, #fff);
+  border-color: color-mix(in srgb, var(--accent) 82%, #fff);
+}
+a:hover {
+  color: color-mix(in srgb, var(--accent) 82%, #fff);
+}
+/* The number fields are click targets too, and only showed themselves on
+   focus. */
+.key input:hover,
+td input:hover {
+  border-color: var(--accent);
+}
+/* Already destructive on hover; this is the off state answering as well. */
+.slot .ctl button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.slot .ctl button.clear:hover:not(:disabled) {
+  border-color: var(--bad);
+}
+
 /* Narrow screens.  Last in the sheet on purpose: these share specificity
    with the rules they override, so order is what decides. */
 /* On a narrow screen the absolutely-positioned banana sits on top of the
@@ -1079,5 +1214,18 @@ strong {
   }
   .row {
     gap: 10px;
+  }
+}
+
+/* One switch for everything above.  The banana keeps its own rule further up
+   because it also has to stop at its resting angle rather than snap upright. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -180,7 +180,7 @@
           <li>Power on the 218e.</li>
           <li>Run the flasher and follow their instructions:
             <div>
-              <div><strong>macOS</strong>: a download is quarantined and unsigned, so macOS blocks it.<br>Dequarantine the whole folder in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine </span><span class="mono muted">&lt;the unzipped folder&gt;</span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>.</div>
+              <div><strong>macOS</strong>: a download is quarantined and unsigned, so macOS blocks it.<br>Dequarantine the whole folder in Terminal:<br><span class="mono">xattr -dr com.apple.quarantine <span class="muted">&lt;the unzipped folder&gt;</span></span><br>then double-click <span class="mono">Program218e_v3_Rewired_macOS.command</span>.</div>
               <div><strong>Windows</strong>: double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
             </div>
           </li>
@@ -205,7 +205,7 @@
         <details><summary>Oh no… something went wrong</summary>
           <dl class="faq">
             <dt>Some LEDs are lit and the keyboard ignores you</dt>
-            <dd>It is still in DFU mode, waiting. Run the flasher again, or bring it back with the ExitDFU script for your platform:
+            <dd>The keyboard is probably in DFU mode. Run the flasher again, or bring it back with the ExitDFU script for your platform:
               <br><span class="mono">ExitDFU_218e_v3_macOS.command</span>
               <br><span class="mono">ExitDFU_218e_v3_Windows.bat</span></dd>
 
