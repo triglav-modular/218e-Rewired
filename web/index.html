@@ -83,6 +83,8 @@ body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
 /* Tilted at rest and straightening on hover, so the motion settles instead of
    starting. */
 .hdr:hover .banana{transform:rotate(0deg) scale(1)}
+
+
 @media (prefers-reduced-motion:reduce){.banana{transition:none}
   .hdr:hover .banana{transform:rotate(-12deg) scale(1.06)}}
 h1{font-size:clamp(44px,9vw,82px);font-weight:900;line-height:.98;margin:0;letter-spacing:-.015em}
@@ -125,6 +127,12 @@ button:disabled{opacity:.4;cursor:not-allowed}
 button.primary:disabled,button.primary:disabled:hover{background:transparent;
   border-color:var(--line);color:var(--muted);opacity:.75}
 .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+/* A checkbox and its label are one thing: .row's wrapping would drop the text
+   onto the line below the box as soon as it stopped fitting.  The box holds
+   its place and the text wraps inside its own column instead. */
+label.opt.row{flex-wrap:nowrap;align-items:flex-start}
+label.opt.row>input{margin-top:3px}
+label.opt.row>span{min-width:0}
 .mono{font-family:var(--mono);font-size:16px;font-weight:700; word-break:break-all}
 .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .muted{color:var(--muted)}
 .seg{display:inline-flex;border:1px solid var(--accent);border-radius:999px;overflow:hidden}
@@ -239,6 +247,22 @@ strong{color:var(--accent)}
 .key input.set{background:var(--accent);color:#171716;font-weight:600}
 .kbdhint{font-size:11px;color:var(--muted);margin:0px 0 20px;
   text-transform:uppercase;letter-spacing:.16em;font-weight:700}
+
+/* Narrow screens.  Last in the sheet on purpose: these share specificity
+   with the rules they override, so order is what decides. */
+/* On a narrow screen the absolutely-positioned banana sits on top of the
+   title, so it comes back into the flow: the header stacks, the banana takes
+   its own line above the heading, and it shrinks to suit the width. */
+@media (max-width:640px){
+  .hdr{display:block;margin:0 0 12px}
+  .banana{position:static;width:clamp(64px,22vw,96px);margin:0 0 10px;
+    transform:rotate(-8deg) scale(1)}
+  .hdr:hover .banana{transform:rotate(0deg) scale(1)}
+  /* Two 49% buttons leave each about 150px wide on a phone, which is not
+     enough for their labels.  Full width, stacked. */
+  #build,#download{width:100%;height:64px}
+  .row{gap:10px}
+}
 </style>
 </head>
 <body>
@@ -256,7 +280,7 @@ strong{color:var(--accent)}
   controller.</p>
   <p><strong>Using this tool and firmware is entirely at your own risk.</strong> This is an experimental,
   unofficial firmware, not made or supported by Buchla. It also probably voids your warranty. It has been tested on
-  <em>one</em> instrument. It can brick your keyboard. Recovering a bricked unit may
+  <em>one</em> instrument. Recovering a bricked unit may
   need JTAG hardware and opening the instrument, or may not be possible at all.</p>
   <p>A failed flash usually leaves the keyboard in DFU mode, where the flasher can try
   again, but <strong>there is no guarantee that it will succeed</strong>. If losing the use of your 218e
