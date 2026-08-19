@@ -881,88 +881,6 @@ def replace_atomically(path: Path, text: str) -> None:
     os.replace(temporary, path)
 
 
-def knob_line(cfg: dict) -> str:
-    """Describe the outside-edit-mode knobs this configuration actually builds."""
-    outside = [("knob1", "arp_order", "arp note order"),
-               ("knob2", "arp_rhythm", "arp rhythm"),
-               ("knob3", "arp_octaves", "arp random octaves"),
-               ("knob4", "vibrato", "vibrato")]
-    active = [label for key, enabled, label in outside if cfg["knobs"].get(key) == enabled]
-    if len(active) == len(outside):
-        return 'echo "Outside edit mode those knobs control the arpeggiator and vibrato."'
-    if not active:
-        return 'echo "Outside edit mode all four knobs keep their factory behaviour."'
-    return f'echo "Outside edit mode: {", ".join(active)}; the others are factory."'
-
-
-def bat_echo(text: str) -> str:
-    """One ECHO line for cmd.exe.
-
-    Percent signs introduce variables and must be doubled; the redirection and
-    pipe characters need caret escapes; and the em dashes in the prose are not
-    in cmd's default code page, so they become hyphens rather than mojibake.
-    """
-    text = text.replace("%", "%%").replace("—", "-")
-    for ch in "&<>|^":
-        text = text.replace(ch, "^" + ch)
-    return "ECHO " + text if text else "ECHO."
-
-
-def updater_summary(cfg: dict, dialect: str = "sh") -> str:
-    """The panel description the flasher prints, derived from this config."""
-    calib, curve = cfg["pressure"]["calibration"], cfg["pressure"]["curve"]
-    knobs = []
-    if calib.get("trim_mode") == "scale":
-        knobs.append("  knob 1 = pressure calibration, scaling both endpoints "
-                     f"({calib['floor']}/{calib['ceiling']} at centre)")
-        knobs.append("  knob 3 = factory behaviour")
-    else:
-        knobs.append(f"  knob 1 = full-pressure point (default {calib['ceiling']})")
-        knobs.append(f"  knob 3 = pressure floor (default {calib['floor']})")
-    knobs.append(f"  knob 4 = curve, linear (left) to full 218r (right), "
-                 f"default {curve.get('default_level', 0)}")
-    lines = [
-        "# --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---",
-        'echo "Ordinary edit mode provides the pressure calibration:"',
-        *[f'echo "{line}"' for line in knobs],
-        knob_line(cfg),
-    ]
-    if cfg["arp"]["switch"] == "latch":
-        lines.append('echo "Arp switch: latch / regular / off. In latch, keys toggle by"')
-        lines.append('echo "sounding pitch, so any octave position can release a note."')
-    if cfg["portamento"]["pressure_blend"]:
-        lines.append('echo "Portamento knob = pressure needed to bend between held notes."')
-    lines.append('echo ""')
-    lines.append('echo "Calibrating, in ordinary edit mode:"')
-    if calib.get("trim_mode") == "scale":
-        lines.append('echo "  1. Knob 4 fully left for a linear response."')
-        lines.append('echo "  2. Run ReadLEM218_Rewired.command; with no key held, turn knob 1"')
-        span = cfg["_numbers"]["trim_scale_span"]
-        unity_pct = round(128 * 1024 / span / 1023 * 100)
-        lines.append(f'echo "     and type \'settings\' until floor/ceiling read near '
-                     f'{calib["floor"]}/{calib["ceiling"]} — the built-in calibration,"')
-        lines.append(f'echo "     at about {unity_pct}% of knob travel."')
-        lines.append('echo "  3. Play light/mid/max touches; knob 1 scales the whole window,"')
-        lines.append('echo "     so one control follows a change in how the instrument couples."')
-        lines.append('echo "  4. Turn knob 4 right to taste, then leave edit mode to save."')
-    else:
-        lines.append('echo "  1. Knob 4 fully left for a linear response."')
-        lines.append(f'echo "  2. Adjust knob 1 until \'settings\' reports a ceiling near '
-                     f'{calib["ceiling"]}."')
-        lines.append(f'echo "  3. Adjust knob 3 until it reports a floor near {calib["floor"]}."')
-        lines.append('echo "  4. Turn knob 4 right to taste, then leave edit mode to save."')
-    lines.append("# --- END GENERATED SUMMARY ---")
-    if dialect == "sh":
-        return "\n".join(lines)
-    # Re-emit the same text for cmd.exe: same words, same order, different
-    # quoting, so the two flashers can never describe different builds.
-    out = ["REM --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---"]
-    for line in lines[1:-1]:
-        match = re.match(r"^echo \"(.*)\"$", line)
-        out.append(bat_echo(match.group(1)) if match else bat_echo(""))
-    out.append("REM --- END GENERATED SUMMARY ---")
-    return "\n".join(out)
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1322,8 +1240,6 @@ def main() -> None:
         # cmd.exe scripts are CRLF; keep whatever the file already uses so the
         # rewrite does not flip line endings underneath it.
         raw = updater.read_bytes().decode()
-        dialect = "bat" if updater.suffix.lower() == ".bat" else "sh"
-        marker = "REM" if dialect == "bat" else "#"
         # Matches both quoting styles: the shell's EXPECTED_SHA256="..." and
         # cmd's SET "EXPECTED_SHA256=...", replacing only the digest so each
         # file keeps its own syntax.
@@ -1342,13 +1258,6 @@ def main() -> None:
             lambda m: m.group(1) + version_string, patched)
         if count != 1:
             raise SystemExit(f"{updater_name}: expected exactly one declared FIRMWARE_VERSION line")
-        # The panel summary is generated from this configuration, so no flasher
-        # can describe a build it is not actually installing.
-        patched, count = re.subn(
-            marker + r" --- BEGIN GENERATED SUMMARY.*?" + marker + r" --- END GENERATED SUMMARY ---",
-            updater_summary(cfg, dialect).replace("\\", "\\\\"), patched, flags=re.S)
-        if count != 1:
-            raise SystemExit(f"{updater_name}: generated-summary markers missing")
         # The generated block is assembled with \n; a cmd script is CRLF and
         # mixing the two breaks GOTO across some cmd versions.  Normalise the
         # whole file to whatever it already used.

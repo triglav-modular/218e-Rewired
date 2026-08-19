@@ -122,21 +122,25 @@ IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
 ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 ECHO.
 ECHO ======================================================================
-ECHO   THIS IS FOR THE BUCHLA 218e VERSION 3 ONLY, RUNNING v36.9
+ECHO   THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3
 ECHO.
-ECHO   Not the 218.  Not the 218r.  Not the 218e v1 or v2.  Not any other
-ECHO   touchplate controller.  Flashing this into anything else will not
-ECHO   work and may leave it unusable.
+ECHO   It won't work on the 218, the 218r, the 218e v1 or v2, or any other
+ECHO   touchplate controller.
 ECHO.
 ECHO   YOU DO THIS ENTIRELY AT YOUR OWN RISK.
 ECHO.
-ECHO   This is experimental, unofficial firmware.  It is not made by or
-ECHO   supported by Buchla.  It has been tested on ONE instrument.  It can
-ECHO   brick your keyboard.  Recovery may need JTAG hardware and opening
-ECHO   the instrument, and may not be possible at all.
+ECHO   This is experimental, unofficial firmware, not made or supported by
+ECHO   Buchla.  It has been tested on ONE instrument.  It can brick your
+ECHO   keyboard.  Recovering a bricked unit may need JTAG hardware and
+ECHO   opening the instrument, and may not be possible at all.
 ECHO.
-ECHO   No warranty of any kind.  Nobody is liable for damage, loss of use,
-ECHO   or a keyboard that no longer works.
+ECHO   A failed flash usually leaves the keyboard in DFU mode, where the
+ECHO   flasher can try again, but there is no guarantee that it will
+ECHO   succeed.  If losing the use of your 218e would be a problem, stop
+ECHO   here and keep the factory firmware.
+ECHO.
+ECHO   No warranty of any kind.  Not the authors, not Buchla, nobody is
+ECHO   liable for damage, loss of use, or a keyboard that no longer works.
 ECHO ======================================================================
 ECHO.
 SET "CONSENT="
@@ -146,27 +150,6 @@ IF NOT "%CONSENT%"=="YES" (
     GOTO :fail_early
 )
 
-ECHO.
-ECHO This is EXPERIMENTAL firmware based on Buchla 218e V3 v36.9.
-REM --- BEGIN GENERATED SUMMARY (tools/build.py rewrites this block) ---
-ECHO Ordinary edit mode provides the pressure calibration:
-ECHO   knob 1 = pressure calibration, scaling both endpoints (592/893 at centre)
-ECHO   knob 3 = factory behaviour
-ECHO   knob 4 = curve, linear (left) to full 218r (right), default 0
-ECHO Outside edit mode those knobs control the arpeggiator and vibrato.
-ECHO Arp switch: latch / regular / off. In latch, keys toggle by
-ECHO sounding pitch, so any octave position can release a note.
-ECHO Portamento knob = pressure needed to bend between held notes.
-ECHO.
-ECHO Calibrating, in ordinary edit mode:
-ECHO   1. Knob 4 fully left for a linear response.
-ECHO   2. Run ReadLEM218_Rewired.command; with no key held, turn knob 1
-ECHO      and type 'settings' until floor/ceiling read near 592/893 - the built-in calibration,
-ECHO      at about 78%% of knob travel.
-ECHO   3. Play light/mid/max touches; knob 1 scales the whole window,
-ECHO      so one control follows a change in how the instrument couples.
-ECHO   4. Turn knob 4 right to taste, then leave edit mode to save.
-REM --- END GENERATED SUMMARY ---
 ECHO.
 ECHO Before continuing:
 ECHO   - the DFU device must be bound to WinUSB, or this cannot see the

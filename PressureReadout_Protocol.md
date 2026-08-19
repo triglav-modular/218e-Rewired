@@ -32,7 +32,7 @@ cannot be mistaken for a measurement.
 ## Measurement procedure
 
 1. Enable Polyphonic MIDI and connect the 218e directly over USB.
-2. Start `ReadLEM218_Rewired.command`, then enter ordinary edit mode.
+2. Start `Read218e_v3_Rewired.command`, then enter ordinary edit mode.
 3. Start with knob 4 fully left. Live redraw is intentionally suppressed so
    terminal input remains usable. Every touch is summarized automatically when
    it is released.

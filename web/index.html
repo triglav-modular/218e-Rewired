@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>218e v3 Rewired — firmware builder</title>
+<title>218e V3 Rewired firmware builder</title>
 <style>
 :root {
   --bg:#faf9f7; --panel:#fff; --ink:#1b1a18; --muted:#6b6560; --line:#e0dcd6;
@@ -88,20 +88,20 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </head>
 <body>
 <div class="wrap">
-<h1>218e v3 Rewired — firmware builder</h1>
-<p class="sub">Custom v36.9 firmware for the Buchla 218e, built in your browser.</p>
+<h1>218e V3 Rewired</h1>
+<p class="sub">Custom firmware builder for the Buchla 218e V3</p>
 
 <div class="danger">
   <h2>⚠ READ THIS BEFORE YOU FLASH ANYTHING</h2>
-  <p><strong>This is only for the Buchla 218e version 3, running firmware v36.9.</strong>
-  Not the 218, not the 218r, not the 218e v1 or v2, not any other touchplate
-  controller. The build refuses any file that is not the exact v36.9 image.</p>
+  <p><strong>This firmware is only for the Buchla 218e V3.</strong>
+  It won't work on the 218, the 218r, the 218e v1 or v2, or any other touchplate
+  controller.</p>
   <p><strong>You do this entirely at your own risk.</strong> This is experimental,
   unofficial firmware, not made or supported by Buchla. It has been tested on
   <em>one</em> instrument. It can brick your keyboard. Recovering a bricked unit may
   need JTAG hardware and opening the instrument, and may not be possible at all.</p>
   <p>A failed flash usually leaves the keyboard in DFU mode, where the flasher can try
-  again — but <strong>nobody is promising that</strong>. If losing the use of your 218e
+  again, but <strong>there is no guarantee that it will succeed</strong>. If losing the use of your 218e
   would be a problem, stop here and keep the factory firmware.</p>
   <p>No warranty of any kind. Not the authors, not Buchla, nobody is liable for damage,
   loss of use, or a keyboard that no longer works.</p>
@@ -109,7 +109,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 
 <section>
   <h2>1 · Your factory firmware</h2>
-  <p class="d muted" style="margin:0 0 12px;font-size:13px">Supply the stock <strong>218e v3 v36.9</strong> image. It is in Buchla's flashing kit, as <span class="mono">218eV3_v369_DFU.hex</span>:<br>
+  <p class="d muted" style="margin:0 0 12px;font-size:13px">Supply the stock <strong>218e V3 v369</strong> image. It is in Buchla's flashing kit, as <span class="mono">218eV3_v369_DFU.hex</span>:<br>
   <a href="https://buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip" class="mono">buchla.com/firmwarefiles/218ev3-Firmware-Flashing.zip</a></p>
   <div class="drop" id="drop">
     <strong>Drop 218eV3_v369_DFU.hex here</strong><br>
@@ -135,7 +135,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     <span class="d">Notes snap, and pitch moves between held notes as their relative pressure moves.</span></span></label>
   <div style="padding-top:14px">
     <span class="t" style="font-weight:600">Volts per octave</span>
-    <span class="d muted" style="font-size:13px"> — 1.2 is the standard Buchla scaling. 1 V/oct is for other gear. The 208 needs retrimming after a change.</span>
+    <div class="d muted" style="font-size:13px">1.2 is the standard Buchla scaling. 1 V/oct is for other gear. The 208 needs retrimming after a change.</div>
     <div class="row" style="margin-top:8px">
       <div class="seg" id="vpo">
         <button data-v="1.2" aria-pressed="true">1.2 V/oct <span class="tag">Buchla</span></button>
@@ -148,7 +148,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 <section>
   <h2>3 · Alternate tunings <span class="tag">optional</span></h2>
   <p class="d muted" style="margin:0 0 12px;font-size:13px">Three tuning tables, switched from edit mode. Each Scala file needs 12 degrees and a true 2/1 octave. Empty slots keep the factory temperament.</p>
-  <p class="d muted" style="margin:0 0 12px;font-size:12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot — the shift is shown per slot — so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
+  <p class="d muted" style="margin:0 0 12px;font-size:12px">Each scale is shifted so <strong>A</strong> sits at the same pitch in every slot (the shift is shown per slot) so switching tuning never means retrimming the 208. Which degree lands on the bottom C is up to the file: a scale published rooted on A needs rotating first.</p>
   <label class="row" style="gap:7px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="useTunings">
     <span><strong>Enable alternate tunings</strong> <span class="muted" style="font-size:12px">— off leaves the edit keys, LEDs and temperament as the factory shipped them</span></span></label>
   <div id="tuningsBody" style="display:none">
@@ -161,18 +161,19 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
 </section>
 
 <section>
-  <h2>4 · Per-key pitch correction <span class="tag">optional</span></h2>
-  <p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208's tracking per semitone, so the keyboard plays in tune across its range. Enter what your tuner reads: <strong>how many cents sharp each note played</strong> — positive sharp, negative flat. The builder works out the correction; do not negate anything yourself.</p>
+  <h2>4 · Per-note oscillator calibration <span class="tag">optional</span></h2>
+  <p class="d muted" style="margin:0 0 10px;font-size:13px">Corrects your 208's tracking per semitone, so the keyboard plays in tune across its range. Enter what your tuner reads: <strong>how many cents sharp each note played:</strong> positive sharp, negative flat. The builder works out the correction; do not negate anything yourself.</p>
   <p class="d muted" style="margin:0 0 10px;font-size:12px">Every 208 is different, so there is no useful default and this starts at zero. Measurements only apply at the volts-per-octave you took them at.</p>
+  <p class="d muted" style="margin:0 0 10px;font-size:12px"><strong>Correcting the tuning for one oscillator will make any other oscillator play more out of tune, so this is only recommended if the keyboard is only ever played with one 208.</strong></p>
 
-  <details style="margin:0 0 12px"><summary>How to measure your 208 — read this first</summary>
+  <details style="margin:0 0 12px"><summary>How to measure your 208. Read this first!</summary>
     <div style="font-size:13px;line-height:1.7;color:var(--muted);margin-top:8px">
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other.</p>
+      <p style="margin:0 0 8px"><strong style="color:var(--ink)">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other. <strong>Measure against equal temperament.</strong>An alternate tuning's own intervals would read as error.</p>
       <p style="margin:0 0 8px"><strong style="color:var(--ink)">2. Warm up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
       <p style="margin:0 0 8px"><strong style="color:var(--ink)">3. Tune the lowest C.</strong> Octave switch at its lowest setting, hold the lowest C, and trim the 208 until a tuner reads it exactly in tune. Everything else is measured against this note.</p>
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">4. Play every note, note how far off it is.</strong> Work up from that C, changing octave as you run out of keys. Enter the tuner reading in cents — <span class="mono">+12</span> for 12 cents sharp, <span class="mono">−7</span> for 7 flat.</p>
-      <p style="margin:0 0 8px"><strong style="color:var(--ink)">5. Build, flash, check.</strong> Nothing accumulates: each box is just what that note measured. To redo it, turn the correction off, measure again, and retype.</p>
-      <p style="margin:0"><strong style="color:var(--ink)">Measure against equal temperament</strong> — an alternate tuning's own intervals would read as error.</p>
+      <p style="margin:0 0 8px"><strong style="color:var(--ink)">4. Play every note, note how far off it is.</strong> Work up from that C, changing octave as you run out of keys. Enter the tuner reading in cents: <span class="mono">+12</span> for 12 cents sharp, <span class="mono">−7</span> for 7 flat.</p>
+      <p style="margin:0 0 8px"><strong style="color:var(--ink)">5. Build, flash, check.</strong></p>
+      <p style="margin:0"></p>
     </div>
   </details>
 
@@ -184,7 +185,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
   </div>
   <input type="file" id="calFile" accept=".csv" hidden>
   <svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none" aria-hidden="true"></svg>
-  <details><summary>Enter offsets — 65 playable notes</summary>
+  <details open><summary>Enter offsets for the 65 playable notes</summary>
     <p class="d muted" style="font-size:12px;margin:8px 0 0">Only notes the keyboard can play, from its lowest C to the top of the octave switch's reach. The firmware's table runs past both ends; those entries are filled in from these.</p>
     <div class="scroll"><table id="calTable">
       <thead><tr><th style="text-align:left">Note</th><th>Key</th><th title="index into the firmware table">#</th><th>Played sharp by (cents)</th></tr></thead>
@@ -208,30 +209,30 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
   <div class="prereq">
     <h3>One-time setup</h3>
     <dl>
-      <dt>Windows — the WinUSB driver</dt>
+      <dt>Windows: the WinUSB driver</dt>
       <dd>Windows will not let <span class="mono">dfu-programmer</span> reach the keyboard until the DFU device is bound to WinUSB. The flasher opens Zadig for you at the point the device is visible. In Zadig: if the list looks empty, turn on <strong>Options → List All Devices</strong>, select <strong>AT32UC3B DFU</strong> (USB ID <span class="mono">03EB 2FF6</span>), then <strong>Install Driver</strong>. It can pause for several seconds before starting. Once per machine.</dd>
-      <dd style="margin-top:6px">The tools themselves ship with this package — nothing extra to download.</dd>
+      <dd style="margin-top:6px">The tools themselves ship with this package, nothing extra to download.</dd>
 
-      <dt>macOS on Apple silicon — Rosetta</dt>
-      <dd><span class="mono">dfu-programmer</span> is x86_64 only:<br>
+      <dt>macOS on Apple silicon: Rosetta</dt>
+      <dd><span class="mono">dfu-programmer</span> is x86_64 only. Copy the following to the Terminal to install Rosetta:<br>
       <span class="mono">softwareupdate --install-rosetta</span></dd>
 
-      <dt>Both — your system will warn about unsigned software</dt>
+      <dt>Both: your system might warn about unsigned software</dt>
       <dd>On macOS this is avoidable: get the package with <span class="mono">git clone</span> rather than downloading the ZIP, and there is no warning at all. A browser download marks every file as quarantined; a clone does not.</dd>
-      <dd style="margin-top:6px">If you did download it, macOS blocks the flasher and then <span class="mono">dfu-programmer</span> as being from an unidentified developer — open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. The flasher spots the second one itself and offers to clear it. Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
+      <dd style="margin-top:6px">If you did download it, macOS blocks the flasher and then <span class="mono">dfu-programmer</span> as being from an unidentified developer. Open <strong>System Settings → Privacy &amp; Security</strong> and press <strong>Open Anyway</strong> for each. The flasher spots the second one itself and offers to clear it. Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
     </dl>
   </div>
 
-  <ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.9">
+  <ol style="margin:12px 0;padding-left:20px;font-size:14px;line-height:1.9">
     <li>Download the image above. Leaving it in Downloads is fine.</li>
     <li>Connect the 218e, directly rather than through an unpowered hub:
-      <div style="margin-top:6px;font-size:13px">
+      <div style="margin-top:0px;font-size:13px">
         <div><strong>Standalone LEM218</strong> — USB-C to the computer, power connected, switched on.</div>
         <div><strong>218e module</strong> — USB-B from the 5xIO module that carries its USB and MIDI.</div>
       </div>
     </li>
-    <li>Run the flasher and follow it:
-      <div style="margin-top:8px">
+    <li style="margin-top:8px">Run the flasher and follow it:
+      <div style="margin-top:0px">
         <div><strong>macOS</strong> — double-click <span class="mono">Program218e_v3_Rewired.command</span></div>
         <div><strong>Windows</strong> — double-click <span class="mono">Program218e_v3_Rewired.bat</span></div>
       </div>
@@ -245,7 +246,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
       <br>Windows: <span class="mono">windows\support\dfu-programmer.exe at32uc3b1256 start</span></dd>
 
       <dt style="font-weight:700;margin-top:10px">Every LED is lit and the keyboard does nothing</dt>
-      <dd style="margin:2px 0 0">There is no valid firmware on it — an erase happened but the write did not finish. Run the flasher again; it will find the instrument in DFU and complete the job.</dd>
+      <dd style="margin:2px 0 0">There is no valid firmware on it. An erase happened but the write did not finish. Run the flasher again; it will find the instrument in DFU and complete the job.</dd>
 
       <dt style="font-weight:700;margin-top:10px">Windows: <span class="mono">no device present</span>, or Device Manager lists <strong>AT32UC3B DFU</strong> under <em>Other devices</em></dt>
       <dd style="margin:2px 0 0">The WinUSB driver is not bound. Run Zadig as above. Installed correctly, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
@@ -261,7 +262,7 @@ svg{width:100%;height:120px;margin-top:10px;overflow:visible}
     </dl>
   </details>
 
-  <div class="msg ok" style="margin-top:14px">The flasher finds the image itself — it checks <span class="mono">firmware/</span>, its own folder, Downloads and the Desktop. The default build flashes straight away; any other image you built is validated, shown with its fingerprint, and flashed once you confirm it. Nothing to move, rename or re-download.</div>
+  <div class="msg ok" style="margin-top:14px">The flasher should find the image itself. It checks <span class="mono">firmware/</span>, its own folder, Downloads and the Desktop. The default build flashes straight away; any other image you built is validated, shown with its fingerprint, and flashed once you confirm it. Nothing to move, rename or re-download.</div>
 
 </section>
 </div>
