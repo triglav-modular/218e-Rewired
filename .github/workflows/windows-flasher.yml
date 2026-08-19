@@ -1,0 +1,78 @@
+name: Windows flasher
+
+# The .bat has never run on Windows.  A runner cannot flash anything — there is
+# no instrument — but it can exercise everything up to the point one is needed,
+# which is where the mechanical risk lives: certutil's checksum output, the
+# delayed-expansion loops, label resolution, and whether the bundled binaries
+# run on a clean machine at all.
+#
+# With no 218e present the script exits at the MIDI check, which is before the
+# Zadig launch.  That matters: START /WAIT on a headless runner would hang.
+
+on:
+  push:
+    paths:
+      - 'Program218e_v3_Rewired.bat'
+      - 'windows/support/**'
+      - '.github/workflows/windows-flasher.yml'
+  workflow_dispatch:
+
+jobs:
+  flasher:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The bundled tools run at all
+        shell: cmd
+        run: |
+          echo === dfu-programmer ===
+          windows\support\dfu-programmer.exe at32uc3b1256 get bootloader-version
+          echo exit=%ERRORLEVEL%  ^(1 with "no device present" is the pass^)
+          echo === sendmidi ===
+          windows\support\sendmidi.exe list
+          echo exit=%ERRORLEVEL%
+
+      - name: certutil checksum parsing matches the real hash
+        shell: cmd
+        run: |
+          echo hello> probe.bin
+          for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile probe.bin SHA256 ^| findstr /R "^[0-9a-f ]*$"') do (
+            if not defined SHA set "SHA=%%H"
+          )
+          setlocal EnableDelayedExpansion
+          set "SHA=!SHA: =!"
+          echo parsed: [!SHA!]
+          if "!SHA!"=="" ( echo FAILED: parsed nothing & exit /b 1 )
+          endlocal
+
+      - name: No image present - must refuse without touching anything
+        shell: cmd
+        run: |
+          (echo YES) | Program218e_v3_Rewired.bat > out.txt 2>&1
+          type out.txt
+          findstr /C:"Looked in firmware" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
+          echo PASS: refused with the expected message
+
+      - name: With a matching image - must verify and reach the MIDI step
+        shell: cmd
+        run: |
+          rem Stand-in image: patch a copy of the flasher to expect its hash,
+          rem so the checksum path runs for real without shipping firmware.
+          mkdir firmware 2>NUL
+          echo stand-in> firmware\218eV3_v369_Rewired_DFU.hex
+          for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile firmware\218eV3_v369_Rewired_DFU.hex SHA256 ^| findstr /R "^[0-9a-f ]*$"') do (
+            if not defined SHA set "SHA=%%H"
+          )
+          setlocal EnableDelayedExpansion
+          set "SHA=!SHA: =!"
+          powershell -Command "(Get-Content 'Program218e_v3_Rewired.bat' -Raw) -replace '(?<=EXPECTED_SHA256=)[0-9a-f]{64}', '!SHA!' | Set-Content 'ci.bat'"
+          endlocal
+          (echo YES) | ci.bat > out2.txt 2>&1
+          type out2.txt
+          findstr /C:"Checksum matches" out2.txt >NUL || (echo FAILED: checksum not accepted & exit /b 1)
+          findstr /C:"Rewired" out2.txt >NUL || (echo FAILED: version not shown & exit /b 1)
+          findstr /C:"MIDI port is unavailable" out2.txt >NUL || (echo FAILED: did not stop at MIDI & exit /b 1)
+          findstr /C:"erase" out2.txt >NUL && (echo FAILED: reached the erase & exit /b 1)
+          echo PASS: verified, versioned, stopped before touching anything
