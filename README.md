@@ -5,24 +5,15 @@ keyboard.
 
 ## Features
 
-- **Reworked pressure response** — a gentler response for more
-  expressive play.
-- **Pressure-based portamento** — pitch now moves between held
-  notes as their relative pressure moves.
+- **Reworked pressure response.**
+- **Pressure-based portamento.**
+- **Reworked arpeggiator with latching.**
+- **Arpeggiator controls** (random octave walk, random tempo, random note order)
+- **Global pressure-responsive vibrato**
 
-- **Reworked arpeggiator with latching** on the arpeggiator switch. Note order is now play order. Notes can be turned on and off in latch mode.
-- **Knobs 1–3 remapped** to arpeggiator controls.
-- **Knob 4** is now a global pressure-responsive vibrato.
-
-- **Alternate tunings** — up to three tuning tables from your own
-  Scala files, switched from edit mode with LED indication.
-- **Per-note pitch calibration** — corrects your 208's tracking error
-  per semitone.
-- **Selectable volts per octave** — 1.2 or 1.
-
-Anything not listed keeps its factory behaviour, and any single change can be
-handed back in [`config/218e.toml`](config/218e.toml). Full details, with
-addresses: [`docs/FIRMWARE_CHANGES.md`](docs/FIRMWARE_CHANGES.md).
+- **Alternate tunings** switched from edit mode. 
+- **Per-note pitch calibration.**
+- **Selectable volts per octave**
 
 
 ## Build it in your browser
