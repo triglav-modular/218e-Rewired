@@ -440,12 +440,15 @@ if [ "$CUSTOM_IMAGE" -eq 0 ] && [ "$FIRMWARE" != "$FIRMWARE_DIR/$FIRMWARE_NAME" 
 fi
 log "Using $FIRMWARE"
 
-# Match the selection logic used by Buchla's original command. The bundled
-# version carries its own libusb; the other build uses Homebrew's libusb.
-if [ -d /usr/local/opt/libusb ] && [ -x "$DFU_SYSTEM" ]; then
-    DFUPATH="$DFU_SYSTEM"
-else
+# The bundled dfu-programmer is universal and carries its own libusb, so it
+# runs natively on both architectures with nothing installed.  Buchla's command
+# preferred a Homebrew build when /usr/local/opt/libusb existed, which only
+# mattered while the bundled one was x86_64-only; a system copy is still used if
+# the bundled one is missing.
+if [ -x "$DFU_BUNDLED" ]; then
     DFUPATH="$DFU_BUNDLED"
+else
+    DFUPATH="$DFU_SYSTEM"
 fi
 [ -x "$DFUPATH" ] || fail "dfu-programmer is missing or not executable: $DFUPATH"
 log "Using dfu-programmer: $DFUPATH"

@@ -104,12 +104,12 @@ rewritten updater behind.
 |------|---------------|---------------|
 | `lem218-pressure-readout` | universal (arm64 + x86_64) | 11.0 |
 | `sendmidi` | universal | vendor build |
-| `dfu-programmer` | **x86_64 only** | vendor build |
+| `dfu-programmer` | universal (arm64 + x86_64) | 10.13 |
 
-`dfu-programmer` ships as a vendor binary with no source here, so **flashing
-on Apple silicon needs Rosetta** (`softwareupdate --install-rosetta`). The
-readout tool is built from `LEM218PressureReadout.swift` in this repo; rebuild
-it universal with:
+`dfu-programmer` is built from source — see *Rebuilding dfu-programmer* below —
+and runs natively on both architectures, so nothing needs installing to flash.
+The readout tool is built from `LEM218PressureReadout.swift` in this repo;
+rebuild it universal with:
 
 ```bash
 swiftc -O -target arm64-apple-macos11  -o /tmp/ro-arm64 mac/support/LEM218PressureReadout.swift
@@ -146,9 +146,6 @@ That failure is also the common one, so it is treated as the expected path
 rather than an error. If it still cannot be reached afterwards, the script says
 so, confirms nothing was erased, and points out that the keyboard is in DFU and
 a power cycle brings it back. 
-
-**macOS on Apple silicon needs Rosetta**, because `dfu-programmer` is an
-x86_64 binary: `softwareupdate --install-rosetta`.
 
 **This software is not code-signed**, on either platform. On macOS that costs
 nothing if the package is obtained with `git clone`: Gatekeeper only refuses
@@ -374,3 +371,88 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
   -postScript RecoverPressurePatch.java \
   -postScript ExportAnalysis.java build/verify/export
 ```
+
+## Rebuilding dfu-programmer
+
+The bundled `dfu-programmer` is **1.1.0**, built from
+[the upstream repository](https://github.com/dfu-programmer/dfu-programmer) as a
+universal binary with its own universal `libusb`, so it runs natively on Apple
+silicon and Intel with nothing installed. Buchla's own kit ships an x86_64-only
+0.6.2 that needs Rosetta; this replaces it.
+
+Both libraries and the tool are built once per architecture and joined with
+`lipo`, because neither autotools project cross-builds two architectures in one
+pass:
+
+```bash
+brew install autoconf automake pkg-config
+
+# libusb, per architecture
+curl -LO https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
+tar xf libusb-1.0.27.tar.bz2 && cd libusb-1.0.27
+for A in arm64 x86_64; do
+  mkdir -p build-$A && (cd build-$A && ../configure --host=$A-apple-darwin \
+    --prefix=$PWD/../out-$A --disable-udev --enable-shared --disable-static \
+    CFLAGS="-arch $A -mmacosx-version-min=10.13" \
+    LDFLAGS="-arch $A -mmacosx-version-min=10.13" && make -j4 && make install)
+done
+
+# dfu-programmer, per architecture, against the matching libusb
+git clone https://github.com/dfu-programmer/dfu-programmer && cd dfu-programmer
+git checkout v1.1.0 && ./bootstrap.sh
+for A in arm64 x86_64; do
+  mkdir -p b-$A && cp -r update-bash-completion.sh dfu_completion b-$A/
+  (cd b-$A && ../configure --host=$A-apple-darwin \
+    CFLAGS="-arch $A -mmacosx-version-min=10.13 -I<libusb>/out-$A/include" \
+    LDFLAGS="-arch $A -mmacosx-version-min=10.13 -L<libusb>/out-$A/lib" && make -j4)
+done
+
+# join, repoint at the bundled library, sign
+lipo -create b-arm64/src/dfu-programmer b-x86_64/src/dfu-programmer -output dfu-programmer
+for A in arm64 x86_64; do
+  install_name_tool -change <libusb>/out-$A/lib/libusb-1.0.0.dylib \
+    @executable_path/../Frameworks/libusb-1.0.0.dylib dfu-programmer
+done
+codesign --force -s - dfu-programmer
+```
+
+`install_name_tool -change` must run once per architecture: each slice records
+its own absolute path, and changing one leaves the other pointing into the build
+tree.
+
+Three build notes, each of which stops the build outright:
+
+- 1.1.0's post-build step runs `./update-bash-completion.sh`, which an
+  out-of-tree build cannot find — copy it and `dfu_completion` into the build
+  directory.
+- 1.1.0 includes `<libusb-1.0/libusb.h>`, so the include path is the `include`
+  directory, not `include/libusb-1.0`.
+- 0.6.2, if you build it instead, needs `-std=gnu99`: it defines `true` and
+  `false` as enum members, which are keywords under the C23 default.
+
+### What was checked before changing version
+
+0.6.2 → 1.1.0 is a large jump, so every command and string the flashers depend
+on was compared against the source and against the running binary:
+
+| | 0.6.2 | 1.1.0 |
+|---|---|---|
+| `at32uc3b1256` target | yes | yes |
+| `erase`, `start` | accepted | accepted |
+| `flash --suppress-bootloader-mem` | accepted | accepted (undocumented in `--help`) |
+| `get`/`getfuse` labels | `Bootloader Version`, `Bootloader protected area`, `ISP Force` | identical |
+| value format | `"%s%s0x%02x (%d)\n"` | identical |
+| `no device present.` | yes | yes |
+| exit status, success | 0 | 0 |
+| exit status, no device | 1 | **3** |
+| `bytes used` on flash | printed | **gone** |
+
+The last two are the only differences. Neither matters here: the flashers key
+the device probe on the message rather than the status, and `bytes used` is
+logged, never parsed. `erase` in 1.1.0 also skips an already-blank chip unless
+`--force` is given, which is harmless — a chip with firmware on it is not blank,
+and a blank one needs no erase.
+
+**Not verified without hardware:** the success paths. Everything above is either
+source-level or observable with no instrument attached; the actual erase, write,
+read-back and restart under 1.1.0 need a real flash to confirm.

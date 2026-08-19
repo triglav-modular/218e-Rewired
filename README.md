@@ -143,8 +143,6 @@ Then run the flasher for your platform:
   until the DFU device is bound to WinUSB. The flasher handles this: if the
   device does not appear it opens Zadig at the moment the device is visible,
   and carries on once the driver is installed. Once per machine.
-- **macOS on Apple silicon — install Rosetta.** `dfu-programmer` is x86_64
-  only: `softwareupdate --install-rosetta`.
 - **Both — unsigned software warnings.** On macOS, `git clone` this repository
   instead of downloading the ZIP and there is no warning at all: a browser
   download marks every file as quarantined, a clone does not. If you did
