@@ -68,6 +68,9 @@ var BUILDLIB = (function () {
             tunings.forEach(function (t, i) { cfg._tunings[i] = t || 'factory'; });
         }
 
+        // A hardware limit, not a shortlist: 6.5 octaves against a 10.22 V
+        // DAC caps the scaling at 1.573 V/oct.  2 V/oct would need 13.00 V
+        // and strand the top 17 keys at the ceiling.  See tools/options.py.
         var vpo = want('volts_per_octave', 1.2);
         if (vpo !== 1.0 && vpo !== 1.2) {
             throw new Error('volts_per_octave must be 1.0 or 1.2');

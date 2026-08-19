@@ -124,6 +124,12 @@ def expand(options: dict) -> dict:
         cfg["tuning"]["slots"] = ["factory"] * 3
 
     # 5. Volts per octave ----------------------------------------------------
+    # The pair is a hardware limit, not a shortlist.  The keyboard spans 6.5
+    # octaves and the DAC reaches 10.22 V (4096 counts / 400.59 per volt), so
+    # the steepest scaling that still fits the top note is 1.573 V/oct.  A
+    # vintage 2 V/oct would want 13.00 V and run out at semitone 61, leaving
+    # the top 17 keys pinned at the ceiling playing one pitch; it was weighed
+    # and declined rather than shipped with a dead upper register.
     vpo = want("volts_per_octave", 1.2)
     if vpo not in (1.0, 1.2):
         raise SystemExit("volts_per_octave must be 1.2 (standard Buchla) or 1.0")
