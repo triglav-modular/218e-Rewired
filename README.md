@@ -3,9 +3,9 @@
 
 > ## ⚠ Read this first
 >
-> **This is for the Buchla 218e version 3 only, running firmware v36.9.** Not
+> **This is for the Buchla 218e version 3 only, running firmware v369.** Not
 > the 218, not the 218r, not the 218e v1 or v2, not any other touchplate
-> controller. The build refuses any file that is not the exact v36.9 image.
+> controller. The build refuses any file that is not the exact v369 image.
 >
 > **You do this entirely at your own risk.** This is experimental, unofficial
 > firmware, not made or supported by Buchla. It has been tested on *one*
@@ -19,13 +19,13 @@
 > No warranty of any kind. Neither the authors nor Buchla are liable for damage,
 > loss of use, or a keyboard that no longer works.
 
-A patched build of the stock **v36.9** firmware for the Buchla 218e touch
+A patched build of the stock **v369** firmware for the Buchla 218e touch
 keyboard, driving a 208 (Easel). It reworks the pressure response, adds in-firmware tuning and per-key pitch calibration, and repurposes
 the four preset-voltage knobs and the arpeggiator switch.
 
 | | |
 |---|---|
-| **Base image** | stock v36.9, **you supply it** (AT32UC3B1256, AVR32) |
+| **Base image** | stock v369, **you supply it** (AT32UC3B1256, AVR32) |
 | **Output** | `build/218eV3_v369_Rewired_DFU.hex`, built locally |
 | **Settings** | [`config/218e.toml`](config/218e.toml) — seven options |
 | **Licence** | [Unlicense](UNLICENSE) for this repository's own work; the bundled flashing tools keep their own — see [THIRD-PARTY.md](THIRD-PARTY.md) |

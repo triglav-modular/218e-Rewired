@@ -338,6 +338,9 @@ scan_images() {
 accept_choice() {
     local path="$1" sha
     sha="$(shasum -a 256 "$path" | cut -d" " -f1)"
+    # The installed-record must name the image that actually went in, not the
+    # default this flasher was built for.
+    actual_sha256="$sha"
     FIRMWARE="$path"
     case "$sha" in
         "$EXPECTED_SHA256")
@@ -408,8 +411,11 @@ if [ -z "$FIRMWARE" ]; then
     echo
     echo "  No firmware ships with this package — the patched image is Buchla's"
     echo "  firmware with our changes in it, so it is not ours to redistribute."
-    echo "  Build one from your own factory image with the page in web/, or:"
+    echo "  Build one from your own factory image with the page in web/ and"
+    echo "  save it to Downloads, or build locally:"
     echo "    ${C_BOLD}python3 tools/build.py --no-ghidra${C_RESET}"
+    echo "  which writes ${C_BOLD}build/218eV3_v369_Rewired_DFU.hex${C_RESET} — deliberately outside"
+    echo "  the searched folders, so copy it into firmware/ to flash it."
     echo
     echo "  Or point this at one: drag its .hex into this window, or press"
     echo "  return to stop."

@@ -84,6 +84,12 @@ REM wrong firmware gets installed, because a stale build in firmware\ would
 REM always win on checksum alone.
 CALL :step Locating the firmware image
 
+IF NOT EXIST "%PACKAGE_ROOT%tools\Scan-Images.ps1" (
+    ECHO   tools\Scan-Images.ps1 is missing.  The flasher needs the whole
+    ECHO   repository beside it, not just this script - re-clone or re-download
+    ECHO   the package and run it from there.
+    GOTO :fail_early
+)
 SET "IMG_COUNT=0"
 FOR /F "tokens=1,2,* delims=|" %%A IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Scan-Images.ps1" -DirList "%FIRMWARE_DIR%;%SCRIPT_DIR%.;%USERPROFILE%\Downloads;%USERPROFILE%\Desktop" 2^>NUL') DO (
     SET /A IMG_COUNT+=1
@@ -149,8 +155,11 @@ ECHO   No flashable 218e image is there.
 ECHO.
 ECHO   No firmware ships with this package - the patched image is Buchla's
 ECHO   firmware with our changes in it, so it is not ours to redistribute.
-ECHO   Build one from your own factory image with the page in web\, or:
+ECHO   Build one from your own factory image with the page in web\ and
+ECHO   save it to Downloads, or build locally:
 ECHO     python tools\build.py --no-ghidra
+ECHO   which writes build\218eV3_v369_Rewired_DFU.hex - deliberately outside
+ECHO   the searched folders, so copy it into firmware\ to flash it.
 ECHO.
 GOTO :fail_early
 
@@ -492,7 +501,7 @@ SET "DFU_SESSION_ACTIVE=0"
 REM A record of what is actually on the instrument, beside the image.
 > "%FIRMWARE_DIR%\INSTALLED.txt" ECHO %FIRMWARE_VERSION%
 >> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO flashed  %DATE% %TIME%
->> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO image    %EXPECTED_SHA256%
+>> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO image    !CHOSEN_SHA!
 
 ECHO.
 ECHO   Flashing complete.  %FIRMWARE_VERSION% is now on the instrument.
