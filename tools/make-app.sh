@@ -20,14 +20,32 @@ PROFILE="rewired-notary"
 NOTARIZE=0
 [ "${1:-}" = "--notarize" ] && NOTARIZE=1
 
-IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
-            | grep "Developer ID Application" | head -1 \
-            | sed -E 's/.*"(.*)".*/\1/' || true)"
+# Sign by SHA-1, not by name.  Renewing a certificate leaves two in the
+# keychain under the identical name, and picking the first listed is a
+# coin toss between the new one and the one about to expire.  This takes
+# the latest expiry, and REWIRED_SIGN_ID overrides it.
+IDENTITY="${REWIRED_SIGN_ID:-}"
+if [ -z "$IDENTITY" ]; then
+    IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+                | awk '/Developer ID Application/ {print $2}' \
+                | while read -r h; do
+                      end=$(security find-certificate -a -Z -p \
+                                -c "Developer ID Application" 2>/dev/null \
+                            | awk -v h="$h" '
+                                /SHA-1 hash:/ { want = ($3 == h) }
+                                /BEGIN CERT/,/END CERT/ { if (want) print }' \
+                            | openssl x509 -noout -enddate 2>/dev/null \
+                            | cut -d= -f2)
+                      [ -n "$end" ] && printf '%s\t%s\n' \
+                          "$(date -j -f '%b %e %T %Y %Z' "$end" +%s 2>/dev/null || echo 0)" "$h"
+                  done | sort -rn | head -1 | cut -f2)"
+fi
 if [ -z "$IDENTITY" ]; then
     echo "No 'Developer ID Application' certificate in the keychain." >&2
     exit 1
 fi
 echo "signing as: $IDENTITY"
+security find-identity -v -p codesigning | grep "$IDENTITY" | sed 's/^/  /'
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
