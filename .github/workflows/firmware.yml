@@ -10,9 +10,14 @@ name: Firmware and flashers
 #
 # Anything that builds firmware needs Buchla's stock image, which is theirs
 # and is not in this repository - firmware/*.hex is gitignored.  Those steps
-# run only when a FACTORY_HEX secret supplies it, and are skipped with a
-# notice otherwise.  Everything that does not need the image always runs, so
-# an unconfigured fork still gets the flasher and validator checks.
+# are skipped with a notice unless the image is supplied.
+#
+# Not as a secret directly: the image is 255 KB and a GitHub secret caps at
+# 48 KB, so it does not fit even gzipped and base64-encoded.  FACTORY_HEX_URL
+# points at somewhere it can be fetched from - a private release asset or
+# private repository - and FACTORY_HEX_TOKEN authorises the fetch.  The secret
+# then holds a credential, which is what a secret is for, rather than a file
+# it cannot hold anyway.
 
 on:
   push:

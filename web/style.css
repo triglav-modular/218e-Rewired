@@ -123,11 +123,19 @@
    .cls-2, which would leak into the page as the banana's would.  Its two
    stroke widths are the only thing it carried that the page cannot say, so
    they come across as attributes; #fffdfb, the white it drew in, is on
-   .brand above. */
+   .brand above.
+
+   margin and overflow are reset for the same reason the slot icons reset
+   theirs: the svg rule further down this sheet dresses the page's diagrams,
+   and it reaches any svg that is not told otherwise.  Its margin-top put
+   10px above the glyph, which centring the box then hid by leaving the mark
+   sitting low in it. */
 .brand .mark {
   display: block;
   width: 34px;
   height: 34px;
+  margin: 0;
+  overflow: hidden;
   fill: currentColor;
   stroke: currentColor;
 }
