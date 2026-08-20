@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Drive the flasher's menu through a real terminal.
+"""Drive the flasher through a real terminal.
+
+The menu reads raw keys and the window fit talks to the terminal, so a pipe
+proves nothing about either: bash takes the no-terminal path there.  The last
+check runs the real script far enough to catch what only shows up when it is
+actually executed - a helper called above its own definition, say, which bash
+accepts happily at parse time and then cannot find.
 
 The menu reads raw keys and redraws by moving the cursor, so a pipe proves
 nothing about it: bash takes the no-terminal path there.  This opens a pty,
@@ -7,6 +13,8 @@ presses actual arrow keys, and checks what came back.
 """
 import fcntl
 import os
+import shutil
+import signal
 import pty
 import re
 import select
@@ -124,6 +132,66 @@ def window(rows, cols, term="xterm-256color"):
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
+def smoke_run():
+    """Run the flasher as far as choosing an image, in an empty HOME.
+
+    It stops at the prompt that asks for a path, so nothing reaches the
+    instrument: no probe, no START, no flash.
+    """
+    home = REPO / "build" / "_smoke_home"
+    for sub in ("Downloads", "Desktop"):
+        (home / sub).mkdir(parents=True, exist_ok=True)
+
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 100, 0, 0))
+    pid = os.fork()
+    if pid == 0:
+        os.setsid()
+        os.dup2(slave, 0); os.dup2(slave, 1); os.dup2(slave, 2)
+        os.close(master); os.close(slave)
+        env = dict(os.environ)
+        env["TERM"] = "xterm-256color"
+        env["HOME"] = str(home)
+        env["REWIRED_WORKDIR"] = str(home / "work")
+        env.pop("TERM_PROGRAM", None)      # no AppleScript detour in a test
+        os.execve("/bin/bash", ["/bin/bash", str(FLASHER)], env)
+    os.close(slave)
+
+    out = b""
+
+    def pump(seconds):
+        nonlocal out
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            r, _, _ = select.select([master], [], [], 0.15)
+            if not r:
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            out += chunk
+
+    pump(2.0)
+    os.write(master, b"\r")        # the menu: flash firmware
+    pump(1.0)
+    os.write(master, b"YES\r")     # the warning
+    pump(2.5)
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    os.close(master)
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    shutil.rmtree(home, ignore_errors=True)
+    return out.decode("utf-8", "replace")
+
+
 def main():
     items = ["Flash firmware onto the 218e", "Get the keyboard out of DFU mode"]
     details = ["Erases the chip.", "Sends START."]
@@ -166,6 +234,26 @@ def main():
     else:
         print(f"  FAIL  multi-line details: chose {got}")
         failures += 1
+
+    # bash -n does not notice a function called before it is defined: the
+    # parse is fine, and only running it says "command not found".  That
+    # shipped once, in the step that says where the image was looked for.
+    out = smoke_run()
+    for bad in ("command not found", "unbound variable", "syntax error",
+                "No such file or directory"):
+        if bad in out:
+            print(f"  FAIL  the flasher printed \"{bad}\"")
+            for line in out.splitlines():
+                if bad in line:
+                    print("        " + line.strip()[:160])
+            failures += 1
+        else:
+            print(f"  ok    no \"{bad}\" up to the image step")
+    if "Locating the firmware image" not in out:
+        print("  FAIL  never reached the image step")
+        failures += 1
+    else:
+        print("  ok    reached the image step")
 
     # The banner is 22 lines and Terminal opens 24, so the window is grown to
     # fit - but only grown.  This used to read the size with tput, which needs

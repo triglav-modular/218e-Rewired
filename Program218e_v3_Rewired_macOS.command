@@ -528,6 +528,60 @@ APPLESCRIPT
     sleep 0.2
 }
 
+# Where an image can be.  WORK_DIR is the folder the app sits in: inside a
+# bundle SCRIPT_DIR is Contents/Resources, so "beside the script" means inside
+# the app, and an image unzipped next to it would never be found.  Deduped,
+# because run loose from a folder several of these are the same place.
+search_dirs() {
+    local parent sub
+    {
+        printf '%s\n' "${FIRMWARE_DIR%/}" "${WORK_DIR%/}" "${SCRIPT_DIR%/}" \
+                      "$HOME/Downloads" "$HOME/Desktop"
+        # A download unzips into a folder of its own, and macOS runs a
+        # quarantined app from a read-only copy under /AppTranslocation
+        # instead of where it sits - so the app cannot see the firmware folder
+        # unzipped beside it, because from where it is running there isn't one.
+        # Looking one level down finds the folder the download actually made.
+        for parent in "$HOME/Downloads" "$HOME/Desktop"; do
+            for sub in "$parent"/*/firmware; do
+                [ -d "$sub" ] && printf '%s\n' "$sub"
+            done
+        done
+    } | awk 'NF && !seen[$0]++'
+}
+
+# Say where it looked and what was in each place.  Without this, an image that
+# does not appear in the list gives no clue as to why - and the commonest
+# reason is that the app was moved away from the folder it was unzipped into,
+# which nothing on screen would otherwise show.
+searched_note() {
+    local dir count candidate
+    # Worth saying out loud, because the paths below otherwise look absurd:
+    # macOS runs a quarantined app from a random read-only copy of itself, and
+    # from there the folder it was unzipped into does not exist.
+    case "$SCRIPT_DIR" in
+        */AppTranslocation/*)
+            echo "  ${C_DIM}macOS is running this app from a read-only copy, so the folder it${C_RESET}"
+            echo "  ${C_DIM}was unzipped into cannot be seen from here.  Looking for it instead.${C_RESET}"
+            echo ;;
+    esac
+    echo "  ${C_DIM}Looked in:${C_RESET}"
+    while IFS= read -r dir; do
+        if [ -d "$dir" ]; then
+            count=0
+            for candidate in "$dir"/*.hex; do
+                [ -f "$candidate" ] && count=$((count + 1))
+            done
+            printf '    %s%2d in %s%s\n' "$C_DIM" "$count" "$dir" "$C_RESET"
+        else
+            printf '    %s -- %s  (no such folder)%s\n' "$C_DIM" "$dir" "$C_RESET"
+        fi
+    done <<DIRS
+$(search_dirs)
+DIRS
+    echo
+}
+
 banana() {
 cat <<'BANANA'
                                   .-==-:
@@ -615,38 +669,6 @@ CUSTOM_IMAGE=0
 # Every .hex the flasher can see, newest first, structurally valid, deduped by
 # resolved path.  One list, one ordering, so what is offered and what is chosen
 # can never disagree.
-# Where an image can be.  WORK_DIR is the folder the app sits in: inside a
-# bundle SCRIPT_DIR is Contents/Resources, so "beside the script" means inside
-# the app, and an image unzipped next to it would never be found.  Deduped,
-# because run loose from a folder several of these are the same place.
-search_dirs() {
-    printf '%s\n' "${FIRMWARE_DIR%/}" "${WORK_DIR%/}" "${SCRIPT_DIR%/}" \
-                  "$HOME/Downloads" "$HOME/Desktop" | awk 'NF && !seen[$0]++'
-}
-
-# Say where it looked and what was in each place.  Without this, an image that
-# does not appear in the list gives no clue as to why - and the commonest
-# reason is that the app was moved away from the folder it was unzipped into,
-# which nothing on screen would otherwise show.
-searched_note() {
-    local dir count candidate
-    echo "  ${C_DIM}Looked in:${C_RESET}"
-    while IFS= read -r dir; do
-        if [ -d "$dir" ]; then
-            count=0
-            for candidate in "$dir"/*.hex; do
-                [ -f "$candidate" ] && count=$((count + 1))
-            done
-            printf '    %s%2d in %s%s\n' "$C_DIM" "$count" "$dir" "$C_RESET"
-        else
-            printf '    %s -- %s  (no such folder)%s\n' "$C_DIM" "$dir" "$C_RESET"
-        fi
-    done <<DIRS
-$(search_dirs)
-DIRS
-    echo
-}
-
 scan_images() {
     # Sort by mtime here rather than with ls -t: given an unmatched glob among
     # its operands, BSD ls groups the results by directory instead of sorting

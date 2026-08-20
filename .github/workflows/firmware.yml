@@ -106,7 +106,7 @@ jobs:
           lipo -archs mac/support/dfu/bin/dfu-programmer | grep -q "x86_64 arm64" \
             || { echo "::error::dfu-programmer is not universal"; exit 1; }
 
-      - name: The menu answers to arrow keys
+      - name: The flasher runs, and answers to arrow keys
         run: python3 tools/test_menu.py
 
       - name: A download built by the page still holds a trusted app
