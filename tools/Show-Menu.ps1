@@ -63,22 +63,12 @@ $interactive = $true
 try { $null = [Console]::CursorTop } catch { $interactive = $false }
 if ([Console]::IsInputRedirected) { $interactive = $false }
 
-if (-not $interactive) {
-    for ($i = 0; $i -lt $entries.Count; $i++) {
-        Write-Host ("    {0}) {1}" -f ($i + 1), $entries[$i][0])
-    }
-    $typed = Read-Host ("  Choose [1-{0}]" -f $entries.Count)
-    # Redirected input arrives with CRLF endings and Read-Host keeps the CR,
-    # so "1" reaches here as "1`r" and parses as nothing at all.
-    $typed = "$typed".Trim()
-    $n = 0
-    if ([int]::TryParse($typed, [ref]$n) -and $n -ge 1 -and $n -le $entries.Count) {
-        [IO.File]::WriteAllText($Out, "$n")
-    } else {
-        [IO.File]::WriteAllText($Out, "0")
-    }
-    exit
-}
+# Without a keyboard there is nothing useful to do here, and reading the
+# answer is not an option either: cmd buffers redirected input, so a child
+# process started from a batch file sees none of what was piped into it.  Say
+# nothing and write nothing - the caller notices the missing answer and asks
+# in the way that does work under redirection.
+if (-not $interactive) { exit }
 
 $sel = 0
 $top = [Console]::CursorTop

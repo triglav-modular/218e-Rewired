@@ -127,30 +127,27 @@ jobs:
           echo PASS: both validators agree
           exit /b 0
 
-      - name: The menu helper parses, and answers without a keyboard
+      - name: The menu helper parses, and stands aside without a keyboard
         shell: cmd
         run: |
           rem A syntax error here would only show up when someone opened the
           rem flasher, since batch cannot see a PowerShell parse failure coming.
           powershell -NoProfile -Command "$e=$null;[void][Management.Automation.Language.Parser]::ParseFile('tools\Show-Menu.ps1',[ref]$null,[ref]$e); if($e.Count){$e|ForEach-Object{Write-Host $_}; exit 1}" || (echo FAILED: Show-Menu.ps1 does not parse & exit /b 1)
           echo PASS: Show-Menu.ps1 parses
-          rem CI has no console to read arrow keys from, which is the fallback
-          rem path: a numbered list and a plain read.
+          rem With no console to read arrow keys from it must write no answer
+          rem at all, so the batch knows to ask in its own way.  It must not
+          rem try to read the pipe: cmd buffers redirected input and hands a
+          rem child process none of it, which is how this went wrong.
           > menu.txt echo Flash firmware onto the 218e
           >> menu.txt echo Erases the chip and writes a new image.
           >> menu.txt echo --
           >> menu.txt echo Get the keyboard out of DFU mode
           >> menu.txt echo Sends START. Flashes nothing, erases nothing.
+          if exist pick.txt del /Q pick.txt
           echo 2| powershell -NoProfile -ExecutionPolicy Bypass -File tools\Show-Menu.ps1 -Path menu.txt -Out pick.txt -Title "What would you like to do?"
-          set /P PICKED=<pick.txt
-          if not "%PICKED%"=="2" (echo FAILED: typed 2, got "%PICKED%" & exit /b 1)
-          echo PASS: the menu answers 2 when 2 is typed
-          rem Junk must choose nothing rather than index into the list.
-          echo banana| powershell -NoProfile -ExecutionPolicy Bypass -File tools\Show-Menu.ps1 -Path menu.txt -Out pick.txt
-          set /P PICKED=<pick.txt
-          if not "%PICKED%"=="0" (echo FAILED: junk chose "%PICKED%" & exit /b 1)
-          echo PASS: junk chooses nothing
-          del /Q menu.txt pick.txt 2>NUL
+          if exist pick.txt (echo FAILED: wrote an answer it could not have read & exit /b 1)
+          echo PASS: stands aside when there is no keyboard
+          del /Q menu.txt 2>NUL
           exit /b 0
 
       - name: More than one image - must list them and ask

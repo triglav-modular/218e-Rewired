@@ -585,18 +585,46 @@ EXIT /B 0
 REM Draws MENU_FILE and leaves the 1-based answer in PICK.  The helper is not
 REM redirected: it writes its answer to a file precisely so that the menu can
 REM go to the console where the arrow keys can be seen to work.
-SET "PICK=0"
+SET "PICK="
 IF NOT EXIST "%PACKAGE_ROOT%tools\Show-Menu.ps1" (
     ECHO   tools\Show-Menu.ps1 is missing.  The flasher needs the whole
     ECHO   package beside it, not just this script.
     GOTO :fail_early
 )
+DEL /Q "%MENU_OUT%" >NUL 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Show-Menu.ps1" -Path "%MENU_FILE%" -Out "%MENU_OUT%" -Title %1
 IF EXIST "%MENU_OUT%" (
     SET /P "PICK="<"%MENU_OUT%"
     DEL /Q "%MENU_OUT%" >NUL 2>&1
 )
+REM No answer means there was no keyboard for the helper to read - piped input,
+REM or a run with no console.  cmd buffers redirected input and hands a child
+REM process none of it, so the batch has to do the asking itself.
+IF NOT DEFINED PICK CALL :menu_typed %1
+IF NOT DEFINED PICK SET "PICK=0"
 DEL /Q "%MENU_FILE%" >NUL 2>&1
+EXIT /B 0
+
+:menu_typed
+IF NOT "%~1"=="" ECHO   %~1
+SET "MENU_N=0"
+SET "MENU_LABEL=1"
+FOR /F "usebackq delims=" %%L IN ("%MENU_FILE%") DO (
+    IF "%%L"=="--" (
+        SET "MENU_LABEL=1"
+    ) ELSE (
+        IF "!MENU_LABEL!"=="1" (
+            SET /A MENU_N+=1
+            ECHO     !MENU_N!^) %%L
+            SET "MENU_LABEL=0"
+        )
+    )
+)
+SET "PICK="
+SET /P "PICK=  Choose [1-!MENU_N!]: "
+IF NOT DEFINED PICK EXIT /B 0
+ECHO !PICK!| FINDSTR /R "^[1-9][0-9]*$" >NUL || SET "PICK=0"
+IF !PICK! GTR !MENU_N! SET "PICK=0"
 EXIT /B 0
 
 :rescue
