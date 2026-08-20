@@ -444,40 +444,40 @@ covering `triglavmodular.hu/mods/218e-Rewired*` names the worker it runs.
 Click that name to open it, then **Edit code**. (The same worker is also under
 **Workers & Pages** at account level.)
 
-**2. Find where it returns.** Somewhere the worker fetches GitHub Pages and
-returns the response - a line like `return fetch(upstream, request)` or
-`const res = await fetch(...)` followed by `return res`.
+**2. Replace the code** with `deploy/worker.js` from this repository, which is
+kept as the source of truth for what is pasted in there.
 
-**3. Wrap that return.** A `Response` from `fetch` has immutable headers, so
-the headers cannot be set on it directly; construct a new one around the same
-body. Replace the return with:
+It differs from the plain proxy in three ways.
 
-```js
-const res = await fetch(upstream, request);
+*The page is marked `no-cache`.* Not `no-store`: the browser still keeps it and
+still revalidates, so an unchanged page costs a 304 rather than a download.
 
-// The page is the one file that cannot carry a version in its URL, so it is
-// the one that has to be revalidated.  Everything else is fetched under a
-// name containing its own hash and can be cached as long as anyone likes.
-if ((res.headers.get('content-type') || '').includes('text/html')) {
-    const out = new Response(res.body, res);
-    out.headers.set('cache-control', 'no-cache');
-    return out;
-}
-return res;
-```
+*Anything with `?v=` is marked `immutable` for a year.* Those URLs carry a hash
+of the file's own contents, so that exact URL can never mean different bytes
+later, and there is nothing to gain by ever checking again.
 
-`no-cache` rather than `no-store`: the browser still keeps the page and still
-revalidates it, so an unchanged page costs a 304 rather than a download.
+*Conditional request headers are forwarded.* Without them the origin cannot
+answer 304, and every revalidation downloads the page in full - which would
+make `no-cache` cost something on each visit instead of nothing. `Host` stays
+out of that list on purpose: GitHub Pages routes on it, and passing
+`triglavmodular.hu` asks it for a site it does not have.
 
-**4. Deploy**, and check it took:
+**3. Deploy**, and check it took:
 
 ```
 curl -sSI https://triglavmodular.hu/mods/218e-Rewired/ | grep -i cache-control
 ```
 
 `cache-control: no-cache` means it is in place. Still `max-age=600` means the
-branch did not match - check that the response really is `text/html` and that
-you edited the return the page actually takes.
+worker did not deploy, or the route is not the one being edited. An asset
+should answer differently:
+
+```
+curl -sSI "https://triglavmodular.hu/mods/218e-Rewired/style.css?v=97d4ff27" \
+  | grep -i cache-control
+```
+
+That one should say `max-age=31536000, immutable`.
 
 ### Why four hours
 
