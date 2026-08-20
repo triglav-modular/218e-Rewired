@@ -503,6 +503,58 @@ until they expire. They are no longer referenced by anything, so they do no
 harm; **Caching - Configuration - Purge Everything** clears them if you would
 rather not wait.
 
+## Giving CI the factory image
+
+Everything that builds firmware needs Buchla's stock image, and it is not in
+this repository. Without it the workflow still runs, but the golden build, the
+reproducibility check, the 192-build option matrix and the browser/Python
+comparison all skip — so a green tick covers the flashers, the validators and
+the packaging, and none of the firmware. The notice in the log says so.
+
+It cannot be a secret directly: the image is 255 KB and a GitHub secret caps at
+48 KB, gzipped and base64-encoded or not. So the secret holds a credential, and
+the image lives somewhere the credential can reach.
+
+**1. Put the image in a private repository.** A new one holding a single file
+is enough — `218eV3_v369_DFU.hex` at the root. Private, because the file is
+Buchla's.
+
+**2. Make a token that can read only that.** github.com → your avatar →
+Settings → Developer settings → Personal access tokens → Fine-grained tokens →
+Generate new token. Resource owner: the account or organisation that owns the
+private repository. Repository access: *Only select repositories*, and pick
+just that one. Permissions → Repository permissions → **Contents: Read-only**,
+which is the only one needed. Set an expiry you are willing to renew; when it
+lapses the workflow fails with `could not fetch the factory image` rather than
+going quiet.
+
+**3. Add two secrets to this repository.** Settings → Secrets and variables →
+Actions → New repository secret.
+
+| Name | Value |
+|---|---|
+| `FACTORY_HEX_URL` | `https://api.github.com/repos/OWNER/REPO/contents/218eV3_v369_DFU.hex?ref=main` |
+| `FACTORY_HEX_TOKEN` | the token from step 2 |
+
+The API is asked for the raw bytes rather than the JSON description of them;
+the workflow sends `Accept: application/vnd.github.raw` for an
+`api.github.com` URL, and `application/octet-stream` if the URL names a release
+asset instead. Any other host — a presigned S3 link, say — is fetched as-is,
+and `FACTORY_HEX_TOKEN` can be left unset if the URL needs no credential.
+
+**4. Re-run the workflow.** The log should say `Factory image fetched and
+verified.` and the skipped steps should run. If something else comes back the
+step says what it was rather than leaving a checksum mismatch to explain a JSON
+error page:
+
+```
+::error::what came back is not an Intel HEX file - it starts with {"message":"Not Found",
+```
+
+The image is checked against `factory_sha256` from `config/218e.toml` before
+anything uses it, so a wrong or truncated file fails there rather than becoming
+the thing every later step verifies against.
+
 ## App Translocation, and finding the firmware
 
 A download is the app with a `firmware` folder beside it, and the app looks in

@@ -49,16 +49,32 @@ jobs:
             exit 0
           fi
           mkdir -p firmware
+          set --
           if [ -n "$FACTORY_HEX_TOKEN" ]; then
             set -- -H "Authorization: Bearer $FACTORY_HEX_TOKEN"
-          else
-            set --
           fi
+          # GitHub's API hands back JSON describing the file unless it is told
+          # otherwise, and which header asks for the bytes depends on which of
+          # its two mechanisms the URL names.  Anything that is not the API
+          # ignores an Accept it does not know.
+          case "$FACTORY_HEX_URL" in
+            *api.github.com*/releases/assets/*)
+              set -- "$@" -H "Accept: application/octet-stream" ;;
+            *api.github.com*)
+              set -- "$@" -H "Accept: application/vnd.github.raw" ;;
+          esac
           # --fail so an HTML error page cannot be mistaken for an image, and
           # no -v anywhere near this: the token is in the request headers.
           curl -sS --fail --location "$@" "$FACTORY_HEX_URL" \
                -o firmware/218eV3_v369_DFU.hex \
-            || { echo "::error::could not fetch the factory image"; exit 1; }
+            || { echo "::error::could not fetch the factory image - check FACTORY_HEX_URL, and that the token can read it"; exit 1; }
+          # Say what actually arrived when it is obviously not an image, rather
+          # than leaving a checksum mismatch to explain a JSON error page.
+          if [ "$(head -c 1 firmware/218eV3_v369_DFU.hex)" != ":" ]; then
+            echo "::error::what came back is not an Intel HEX file - it starts with $(head -c 24 firmware/218eV3_v369_DFU.hex | tr -d '\r\n')"
+            echo "::error::a GitHub API URL needs a token that can read it, and returns JSON if it is not asked for the raw bytes"
+            exit 1
+          fi
           # It is the wrong file if it is not the file the build is pinned to,
           # and every later step would be checking the wrong thing.
           want="$(python3 -c "import tomllib;print(tomllib.load(open('config/218e.toml','rb'))['firmware']['factory_sha256'])")"
