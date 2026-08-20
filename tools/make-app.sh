@@ -97,10 +97,13 @@ PLIST
 # --- icon ------------------------------------------------------------------
 ICONSET="$REPO/build/AppIcon.iconset"
 rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+# Rendered from the vector source at every size.  The favicon it used to
+# scale up is 180 square, so the 512 and 1024 slices were an enlargement of
+# a thumbnail; these are drawn at the size they are used.
 for s in 16 32 128 256 512; do
-    sips -z $s $s "$REPO/web/icons/apple-touch-icon.png" \
+    sips -s format png -z $s $s "$REPO/mac/AppIcon.svg" \
          --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s*2)) $((s*2)) "$REPO/web/icons/apple-touch-icon.png" \
+    sips -s format png -z $((s*2)) $((s*2)) "$REPO/mac/AppIcon.svg" \
          --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
