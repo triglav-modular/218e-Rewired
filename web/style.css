@@ -905,6 +905,9 @@ strong {
 .section-note {
   margin: 0 0 10px;
 }
+.section-note:last-of-type {
+    margin-bottom: 20px;
+}
 .field-label {
   font-weight: 600;
 }
