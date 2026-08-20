@@ -730,13 +730,18 @@
                 // the file that was just uploaded, handed back to the person
                 // who uploaded it - it never left this browser.
                 //
-                // It keeps its own date.  A browser that will not say gets a
-                // minute before this build instead: the list of images is
-                // ordered by date, and two files written in the same second
-                // order arbitrarily, which would sometimes put the stock image
-                // above the build and preselect it.
+                // It keeps its own date - but not if that would put it level
+                // with the build, or ahead of it.  ZIP stores seconds in two-
+                // second steps, so a stock image downloaded moments ago lands
+                // on the same tick as the build; a clock that has since been
+                // set back puts it in front.  Either way the list of images,
+                // which is ordered by date, would offer stock firmware first
+                // and preselected.  Two ticks back is the nearest date that
+                // cannot tie.
                 var stock = built.replace(/[^/]+$/, '218eV3_v369_DFU.hex');
-                var stockDate = state.factoryMtime || new Date(Date.now() - 60000);
+                var floor = new Date(Date.now() - 4000);
+                var stockDate = state.factoryMtime || floor;
+                if (stockDate > floor) stockDate = floor;
                 var files = [{ name: built, data: r.hex },
                              { name: stock, data: state.factoryText,
                                mtime: stockDate }]

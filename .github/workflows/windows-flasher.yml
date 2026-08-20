@@ -102,45 +102,30 @@ jobs:
           echo PASS: validator discriminates
           exit /b 0
 
-      - name: The PowerShell scanner agrees with validate_hex.py
+      - name: The PowerShell scanner refuses what dfu-programmer refuses
         shell: cmd
         run: |
-          mkdir scan_test 2>NUL
-          pwsh -File tools\Make-TestImage.ps1 -Path scan_test\good.hex
-          echo not a hex file> scan_test\bad.hex
-          echo :020000040000FA> scan_test\lowaddr.hex
-          echo :0410000000000000EC>> scan_test\lowaddr.hex
-          echo :00000001FF>> scan_test\lowaddr.hex
-          rem The scanner must list good.hex and nothing else.
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -DirList "%CD%\scan_test" -Explain > scan_out.txt 2> scan_err.txt
-          type scan_out.txt
-          type scan_err.txt
-          findstr /C:"good.hex" scan_out.txt >NUL || (echo FAILED: scanner rejected a valid image & exit /b 1)
-          rem The two shapes that pass a validator which keeps reading after the
-          rem end marker, or ignores type 5 while dfu-programmer offsets by it.
-          python -c "
-          def rec(k,a,d):
-              b=[len(d),(a>>8)&255,a&255,k]+list(d)
-              return ':'+''.join('%%02X'%%x for x in b+[(-sum(b))&255])
-          full=[rec(0,0x2010+16*i,[0xFF]*16) for i in range(1023)]
-          open('scan_test/after_eof.hex','w').write('\n'.join([rec(4,0,[0x80,0]),rec(0,0x2000,[0]*16),rec(1,0,[])]+full)+'\n')
-          body=[rec(0,0x2000+16*i,[0]*16) for i in range(1024)]
-          open('scan_test/type5.hex','w').write('\n'.join([rec(4,0,[0x80,0]),rec(5,0,[0x80,0,0x20,0])]+body+[rec(1,0,[])])+'\n')
-          "
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -DirList "%CD%\scan_test" -Explain > scan2.txt 2> scan2err.txt
-          type scan2.txt
-          findstr /C:"after_eof.hex" scan2.txt >NUL && (echo FAILED: accepted data past the end-of-file record & exit /b 1)
-          findstr /C:"type5.hex" scan2.txt >NUL && (echo FAILED: accepted a type-5 offset before the data & exit /b 1)
-          echo PASS: scanner refuses both
-          findstr /C:"bad.hex" scan_out.txt >NUL && (echo FAILED: scanner accepted junk & exit /b 1)
-          findstr /C:"lowaddr.hex" scan_out.txt >NUL && (echo FAILED: scanner accepted a bootloader-region image & exit /b 1)
-          rem And python must reach the same three verdicts.
-          python tools\validate_hex.py scan_test\good.hex || (echo FAILED: python rejected a valid image & exit /b 1)
-          python tools\validate_hex.py scan_test\bad.hex && (echo FAILED: python accepted junk & exit /b 1)
-          python tools\validate_hex.py scan_test\lowaddr.hex && (echo FAILED: python accepted a bootloader image & exit /b 1)
-          rmdir /S /Q scan_test 2>NUL
-          del /Q scan_out.txt scan_err.txt 2>NUL
+          rem The same fixtures the other two validators are held to, so all
+          rem three are answering the same questions.
+          python tools\hex_fixtures.py fixtures || (echo FAILED: could not write fixtures & exit /b 1)
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -DirList "%CD%\fixtures" -Explain > scan.txt 2> scanerr.txt
+          type scan.txt
+          type scanerr.txt
+          rem The two well-formed ones must be listed, everything else refused.
+          findstr /C:"ok.hex" scan.txt >NUL || (echo FAILED: refused a well-formed image & exit /b 1)
+          findstr /C:"ok_crlf.hex" scan.txt >NUL || (echo FAILED: refused a well-formed CRLF image & exit /b 1)
+          for %%F in (blank colon cronly nonewline t4addr t4count t5addr t5count) do (
+            findstr /C:"%%F.hex" scan.txt >NUL && (echo FAILED: accepted %%F.hex & exit /b 1)
+          )
+          echo PASS: eight malformed images refused, both good ones accepted
+          rem And python must reach the same verdicts on the same files.
+          python tools\validate_hex.py fixtures\ok.hex || (echo FAILED: python refused a good image & exit /b 1)
+          for %%F in (blank colon cronly nonewline t4addr t4count t5addr t5count) do (
+            python tools\validate_hex.py fixtures\%%F.hex && (echo FAILED: python accepted %%F.hex & exit /b 1)
+          )
           echo PASS: both validators agree
+          rmdir /S /Q fixtures 2>NUL
+          del /Q scan.txt scanerr.txt 2>NUL
           exit /b 0
 
       - name: The menu helper parses, and stands aside without a keyboard

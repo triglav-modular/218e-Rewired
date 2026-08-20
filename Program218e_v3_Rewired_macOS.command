@@ -128,10 +128,23 @@ validate_hex() {
         python3 "$VALIDATOR" "$1"
         return
     fi
+    # dfu-programmer wants a newline after every record including the last:
+    # `if ('\n' != c) return -7`.  awk cannot see whether the file ended with
+    # one, so it is checked here.
+    if [ -n "$(tail -c 1 "$1")" ]; then
+        echo "BAD the last record has no newline after it - the flasher refuses that, and it erases before it reads"
+        return 1
+    fi
     awk '
 function h2d(s,   i,v,c){v=0;for(i=1;i<=length(s);i++){c=index("0123456789abcdef",tolower(substr(s,i,1)))-1;if(c<0)return -1;v=v*16+c}return v}
 function fail(m){print "BAD " m;failed=1;exit 1}
 BEGIN{FLASH=2147483648}
+  # A carriage return anywhere but the very end means the line endings are
+  # bare CRs, and the parser reads one character past the \r expecting \n.
+  {cr=index($0,"\r"); if(cr && cr!=length($0))fail("carriage return inside line " NR " - line endings must be LF or CRLF")}
+  # A blank line is read, not skipped: sscanf finds nothing and the parse
+  # fails.  After the end-of-file record nothing is read at all.
+  /^[[:space:]]*$/{if(!eof)fail("blank line at " NR " - every line before the end-of-file record has to be a record");next}
 /^:/{hex=substr($0,2);gsub(/\r/,"",hex)
   if(length(hex)<10||length(hex)%2)fail("malformed record at line " NR)
   sum=0;for(i=1;i<length(hex)+1;i+=2){b=h2d(substr(hex,i,2));if(b<0)fail("non-hex characters at line " NR);sum+=b}
@@ -140,6 +153,9 @@ BEGIN{FLASH=2147483648}
   if(eof)fail("records after the end-of-file record at line " NR " - the flasher stops there and would never write them")
   # dfu-programmer lets type 4 and type 5 both set the address offset, masking
   # bit 31 off.  FLASH puts it back, so everything below is in flash space.
+  # intel_validate_line pins these two exactly.
+  if(type==4&&(addr!=0||len!=2))fail("type 4 record at line " NR " has address " addr " and " len " bytes - it must be address 0 and 2 bytes")
+  if(type==5&&(addr!=0||len!=4))fail("type 5 record at line " NR " has address " addr " and " len " bytes - it must be address 0 and 4 bytes")
   if(type==4)base=(h2d(substr(hex,9,4))*65536)%FLASH
   if(type==5)base=h2d(substr(hex,9,8))%FLASH
   if(type!=0&&type!=1&&type!=4&&type!=5)fail("record type " type " at line " NR " - not an AVR32 firmware image")

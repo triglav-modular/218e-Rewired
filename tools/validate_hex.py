@@ -30,7 +30,20 @@ def main(path):
     lo = hi = None
     saw_eof = False
     try:
-        lines = open(path, "r", errors="replace").read().splitlines()
+        blob = open(path, "rb").read()
+        # dfu-programmer reads each record with fgets and then insists on the
+        # newline itself: `if ('\n' != c) return -7`, after allowing one \r.
+        # A file whose last record has no newline is refused there - after the
+        # erase has already run.
+        if not blob.endswith(b"\n"):
+            print("BAD the last record has no newline after it - the flasher "
+                  "refuses that, and it erases before it reads"); return 1
+        stray = blob.replace(b"\r\n", b"")
+        if b"\r" in stray:
+            print("BAD a carriage return that is not part of a CRLF line "
+                  "ending - the flasher reads one character past the \\r and "
+                  "wants a newline"); return 1
+        lines = blob.decode("utf-8", "replace").splitlines()
     except OSError as e:
         print(f"BAD cannot read the file: {e}"); return 1
     if not lines:
@@ -39,7 +52,13 @@ def main(path):
     for n, line in enumerate(lines, 1):
         line = line.strip()
         if not line:
-            continue
+            # Blank lines are not skipped, they are read: sscanf gets nothing
+            # to match and the parse fails.  After the end-of-file record
+            # nothing is read at all, so those do not matter.
+            if saw_eof:
+                continue
+            print(f"BAD blank line at line {n} - every line before the "
+                  f"end-of-file record has to be a record"); return 1
         if line[0] != ":":
             print(f"BAD line {n} is not an Intel HEX record"); return 1
         body = line[1:]
@@ -64,6 +83,15 @@ def main(path):
         # lands - which is a way to have a file approved and something else
         # written.  The mask only ever clears bit 31, so it is put back for the
         # comparisons and the message below, all of which live in flash space.
+        # intel_validate_line pins the shape of these two exactly, and a
+        # record that does not match is a parse error rather than something to
+        # be interpreted generously.
+        if kind == 4 and (addr != 0 or length != 2):
+            print(f"BAD type 4 record at line {n} has address 0x{addr:X} and "
+                  f"{length} bytes - it must be address 0 and 2 bytes"); return 1
+        if kind == 5 and (addr != 0 or length != 4):
+            print(f"BAD type 5 record at line {n} has address 0x{addr:X} and "
+                  f"{length} bytes - it must be address 0 and 4 bytes"); return 1
         if kind == 4:
             upper = (((raw[4] << 24) | (raw[5] << 16)) & 0x7FFFFFFF) | FLASH_BASE
         elif kind == 5:

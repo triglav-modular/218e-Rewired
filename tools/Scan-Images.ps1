@@ -35,11 +35,33 @@ function Test-IntelHex {
     # an Int32 cannot hold it, so it arrives as -2147483648 and every address
     # computed from it comes out negative.
     $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0; $prevEnd = $null; $FLASH_BASE = 2147483648L
+    # dfu-programmer insists on the newline after every record including the
+    # last - `if ("`n" -ne c) return -7` - and reads exactly one character past
+    # a carriage return expecting it.  Both are properties of the bytes, not of
+    # any parsed line, so they are checked before anything is parsed.
+    try { $blob = [System.IO.File]::ReadAllBytes($Path) } catch { return $false }
+    if ($blob.Length -eq 0) { $script:LastReason = 'empty file'; return $false }
+    if ($blob[$blob.Length - 1] -ne 10) {
+        $script:LastReason = 'the last record has no newline after it - the flasher refuses that, and it erases before it reads'
+        return $false
+    }
+    for ($i = 0; $i -lt $blob.Length; $i++) {
+        if ($blob[$i] -eq 13 -and ($i + 1 -ge $blob.Length -or $blob[$i + 1] -ne 10)) {
+            $script:LastReason = 'a carriage return that is not part of a CRLF line ending'
+            return $false
+        }
+    }
     try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return $false }
     if ($lines.Count -eq 0) { $script:LastReason = 'empty file'; return $false }
     foreach ($line in $lines) {
         $t = $line.Trim()
-        if ($t.Length -eq 0) { continue }
+        # A blank line is read, not skipped: the parse fails on it.  Past the
+        # end-of-file record nothing is read at all.
+        if ($t.Length -eq 0) {
+            if ($sawEof) { continue }
+            $script:LastReason = 'blank line before the end-of-file record'
+            return $false
+        }
         if ($t[0] -ne ':') { $script:LastReason = 'not an Intel HEX record'; return $false }
         $body = $t.Substring(1)
         if ($body.Length -lt 10 -or $body.Length % 2) { $script:LastReason = 'malformed record'; return $false }
@@ -58,6 +80,15 @@ function Test-IntelHex {
         # A record that lies about its own length lies about its coverage.
         if ($raw.Length -ne $len + 5) {
             $script:LastReason = "record declares $len bytes but carries $($raw.Length - 5)"
+            return $false
+        }
+        # intel_validate_line pins the shape of these two exactly.
+        if ($kind -eq 4 -and ($addr -ne 0 -or $len -ne 2)) {
+            $script:LastReason = "type 4 record has address $addr and $len bytes - it must be address 0 and 2 bytes"
+            return $false
+        }
+        if ($kind -eq 5 -and ($addr -ne 0 -or $len -ne 4)) {
+            $script:LastReason = "type 5 record has address $addr and $len bytes - it must be address 0 and 4 bytes"
             return $false
         }
         if ($sawEof) {

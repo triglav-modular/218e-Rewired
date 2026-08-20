@@ -49,11 +49,19 @@ A build takes about 200 ms.
 ## Flashing
 
 Not done here, and deliberately so. The page builds the image; the flasher for
-your platform installs it, because those already verify the checksum, confirm
-`BOOTPROT`, and gate the exit from DFU on read-back validation. Reimplementing
-that over WebUSB would mean rewriting the one part of this project that is
-already proven, in a browser, for no gain.
+your platform installs it, because those already validate the file against
+`dfu-programmer`'s own parser, confirm `BOOTPROT`, and gate the exit from DFU
+on read-back validation. Reimplementing that over WebUSB would mean rewriting
+the one part of this project that is already proven, in a browser, for no gain.
 
-The flashers locate the built image themselves — `firmware/`, their own
-directory, then Downloads — and accept only a file matching the checksum they
-were generated against, so there is nothing for the user to move.
+A download carries two images: the build the page just made, and the stock
+v36.9 image it was made from — the file that was uploaded a moment earlier,
+handed back so that going back to stock does not mean going and finding it
+again. Both sit in `firmware/` beside the flasher, which lists them with what
+each one is and lets the choice be made.
+
+Any structurally valid 218e image is accepted, not only those two. The checksum
+each flasher is built with is a label, so the default build can be named in that
+list rather than shown as a bare hash; it is not a gate. The gate is the
+validator, and what it refuses is whatever `dfu-programmer` would refuse after
+the erase has already run.
