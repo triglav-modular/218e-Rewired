@@ -7,6 +7,12 @@ name: Firmware and flashers
 # Ghidra is not available here, so this runs the JavaScript toolchain.  That
 # is not a gap in coverage: sweep.py proves the two produce identical images,
 # and it needs a machine with Ghidra on it.
+#
+# Anything that builds firmware needs Buchla's stock image, which is theirs
+# and is not in this repository - firmware/*.hex is gitignored.  Those steps
+# run only when a FACTORY_HEX secret supplies it, and are skipped with a
+# notice otherwise.  Everything that does not need the image always runs, so
+# an unconfigured fork still gets the flasher and validator checks.
 
 on:
   push:
@@ -26,16 +32,40 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Supply the factory image, if this repository has one
+        id: factory
+        env:
+          FACTORY_HEX: ${{ secrets.FACTORY_HEX }}
+        run: |
+          if [ -n "$FACTORY_HEX" ]; then
+            mkdir -p firmware
+            printf '%s' "$FACTORY_HEX" > firmware/218eV3_v369_DFU.hex
+            # A real image is not available here, so prove the other direction
+          # with a generated one that is the right shape.
+          pwsh -File tools/Make-TestImage.ps1 -Path full.hex -Bytes 20480
+          python3 tools/validate_hex.py full.hex
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No FACTORY_HEX secret - the build steps are skipped. Buchla's image is not redistributable, so it cannot live in the repository."
+          fi
+
+      - name: Unit tests
+        run: python3 tools/test.py
+
       - name: Unit tests, and the golden image
+        if: steps.factory.outputs.present == 'true'
         run: python3 tools/test.py --golden
 
       - name: The build is reproducible
+        if: steps.factory.outputs.present == 'true'
         run: |
           python3 tools/build.py --no-ghidra
           python3 tools/build.py --no-ghidra --expect-sha \
             "$(python3 -c "import tomllib;print(tomllib.load(open('config/218e.toml','rb'))['firmware']['golden_sha256'])")"
 
       - name: Every option combination builds and is distinct
+        if: steps.factory.outputs.present == 'true'
         run: |
           cd web
           /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc \
@@ -44,6 +74,7 @@ jobs:
             ../calibration/218e-pitch-calibration.csv
 
       - name: The browser build agrees with build.py
+        if: steps.factory.outputs.present == 'true'
         run: python3 web/test_configs.py
 
       - name: generated.js is not stale
@@ -84,7 +115,10 @@ jobs:
             echo "::error::a 16-byte image was accepted - it would erase the application and not replace it"
             exit 1
           fi
-          python3 tools/validate_hex.py firmware/218eV3_v369_DFU.hex
+          # A real image is not available here, so prove the other direction
+          # with a generated one that is the right shape.
+          pwsh -File tools/Make-TestImage.ps1 -Path full.hex -Bytes 20480
+          python3 tools/validate_hex.py full.hex
 
       - name: An image given as an argument is the one used
         run: |
