@@ -493,6 +493,41 @@ until they expire. They are no longer referenced by anything, so they do no
 harm; **Caching - Configuration - Purge Everything** clears them if you would
 rather not wait.
 
+## App Translocation, and finding the firmware
+
+A download is the app with a `firmware` folder beside it, and the app looks in
+that folder. macOS makes that harder than it sounds: a quarantined app is run
+from a read-only copy of itself under `/AppTranslocation/<uuid>/d/`, and from
+inside that copy the folder it was unzipped into cannot be reached. Every path
+the flasher knows about itself points into the copy.
+
+The system knows the mapping and will give it up.
+`SecTranslocateCreateOriginalPathForURL` has been in Security.framework since
+10.12, and `mac/support/resolve-translocation` is a few lines around it:
+
+```
+clang -O2 -target arm64-apple-macos11  -framework CoreFoundation \
+      -o /tmp/rt-arm64 mac/support/ResolveTranslocation.c
+clang -O2 -target x86_64-apple-macos11 -framework CoreFoundation \
+      -o /tmp/rt-x86   mac/support/ResolveTranslocation.c
+lipo -create -output mac/support/resolve-translocation /tmp/rt-arm64 /tmp/rt-x86
+```
+
+It is reached through `dlsym` rather than a header: the symbol has been
+exported for years but `SecTranslocate.h` is not in the SDK, so there is
+nothing to compile against. It prints the original path, or exits non-zero -
+including for a path that was never translocated, which is not an error but has
+no answer either.
+
+`tools/make-app.sh` signs it along with every other Mach-O under `support/`,
+so it needs no special handling there.
+
+If it ever fails to answer, the flasher falls back to a guess: a folder in
+Downloads or on the Desktop holding both this app and a `firmware` folder is a
+download of ours, and the most recent one is the one just opened. A folder of
+loose `.hex` files never matches, which is the point - the search used to take
+in the whole of Downloads and listed every image on the machine.
+
 ## Rebuilding dfu-programmer
 
 The bundled `dfu-programmer` is **1.1.0**, built from

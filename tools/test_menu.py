@@ -49,9 +49,18 @@ def harness(items, details, keys, extra=""):
     tmp.parent.mkdir(exist_ok=True)
     tmp.write_text(script, encoding="utf-8")
 
-    pid, fd = pty.fork()
+    # The menu measures the window before it cuts a line to fit, so the pty
+    # needs a size; pty.fork leaves it at zero and nothing would be cut.
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 80, 0, 0))
+    pid = os.fork()
     if pid == 0:
+        os.setsid()
+        os.dup2(slave, 0); os.dup2(slave, 1); os.dup2(slave, 2)
+        os.close(master); os.close(slave)
         os.execv("/bin/bash", ["/bin/bash", str(tmp)])
+    os.close(slave)
+    fd = master
     out = b""
     for key in keys:
         # Let the menu draw before the next key, or it reads them as a burst.
@@ -233,6 +242,24 @@ def main():
         print("  ok    multi-line details survive the redraw")
     else:
         print(f"  FAIL  multi-line details: chose {got}")
+        failures += 1
+
+    # A detail line longer than the window wraps onto a second row, and the
+    # redraw moves the cursor up by the number of lines it printed - so the
+    # menu walks down the screen leaving a copy behind on every keypress.
+    long_path = ("/Users/somebody/Downloads/Rewired-macOS-7/firmware/"
+                 "218eV3_v369_Rewired_DFU.hex")
+    got, text = harness(["2026-08-19 16:09   ee6ae7dc", "2026-08-19 12:14   0d5b9f21"],
+                        [long_path, long_path], [DOWN, RET])
+    printed = [re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", line).rstrip("\r")
+               for line in text.splitlines()]
+    overlong = [line for line in printed if len(line) > 80]
+    if got == 2 and not overlong:
+        print("  ok    a path too wide for the window is cut, not wrapped")
+    else:
+        print(f"  FAIL  {len(overlong)} line(s) wider than the window, chose {got}")
+        for line in overlong[:2]:
+            print(f"        {len(line)}: {line[:100]}")
         failures += 1
 
     # bash -n does not notice a function called before it is defined: the

@@ -318,6 +318,22 @@ MENU_CHOICE=0
 MENU_SEL=0
 MENU_LINES=0
 
+# Keep a line inside the window.  A line that wraps takes two rows, the redraw
+# moves the cursor up by the number it printed, and the menu walks down the
+# screen leaving a copy of itself behind on every keypress.  Paths are cut from
+# the front: the end of one says which file it is, the start says /Users.
+menu_fit() {
+    local text="$1" width="${MENU_WIDTH:-0}"
+    case "$width" in ''|*[!0-9]*) printf '%s' "$text"; return ;; esac
+    [ "$width" -gt 20 ] || { printf '%s' "$text"; return; }
+    width=$((width - 10))
+    if [ "${#text}" -gt "$width" ]; then
+        printf '...%s' "${text: $(( ${#text} - width + 3 )) }"
+    else
+        printf '%s' "$text"
+    fi
+}
+
 menu_draw() {
     local i=0 label detail line
     MENU_LINES=0
@@ -333,7 +349,8 @@ menu_draw() {
         MENU_LINES=$((MENU_LINES + 1))
         if [ -n "$detail" ]; then
             while IFS= read -r line; do
-                printf '        %s%s%s\033[K\n' "$C_DIM" "$line" "$C_RESET"
+                printf '        %s%s%s\033[K\n' \
+                       "$C_DIM" "$(menu_fit "$line")" "$C_RESET"
                 MENU_LINES=$((MENU_LINES + 1))
             done <<DETAIL
 $detail
@@ -344,7 +361,7 @@ DETAIL
 }
 
 menu() {
-    local n=${#MENU_ITEMS[@]} key rest chosen i
+    local n=${#MENU_ITEMS[@]} key rest chosen i size
     MENU_SEL=0
     MENU_CHOICE=0
     [ "$n" -gt 0 ] || return
@@ -362,6 +379,9 @@ menu() {
         [ "$key" -ge 1 ] && [ "$key" -le "$n" ] && MENU_CHOICE=$key
         return
     fi
+
+    MENU_WIDTH=0
+    size="$(stty size 2>/dev/null)" && MENU_WIDTH="${size##* }"
 
     printf '\033[?25l'
     menu_draw
@@ -533,20 +553,42 @@ APPLESCRIPT
 # the app, and an image unzipped next to it would never be found.  Deduped,
 # because run loose from a folder several of these are the same place.
 search_dirs() {
-    local parent sub
+    local real app parent newest
     {
-        printf '%s\n' "${FIRMWARE_DIR%/}" "${WORK_DIR%/}" "${SCRIPT_DIR%/}" \
-                      "$HOME/Downloads" "$HOME/Desktop"
-        # A download unzips into a folder of its own, and macOS runs a
-        # quarantined app from a read-only copy under /AppTranslocation
-        # instead of where it sits - so the app cannot see the firmware folder
-        # unzipped beside it, because from where it is running there isn't one.
-        # Looking one level down finds the folder the download actually made.
-        for parent in "$HOME/Downloads" "$HOME/Desktop"; do
-            for sub in "$parent"/*/firmware; do
-                [ -d "$sub" ] && printf '%s\n' "$sub"
-            done
-        done
+        printf '%s\n' "${FIRMWARE_DIR%/}"
+
+        # macOS runs a quarantined app from a read-only copy of itself under
+        # /AppTranslocation, and from inside that copy the folder it was
+        # unzipped into cannot be reached at all - which is where the firmware
+        # is.  The system knows the mapping, so ask it.
+        case "$SCRIPT_DIR" in
+            */AppTranslocation/*)
+                real=""
+                if [ -x "$RUNTIME_DIR/support/resolve-translocation" ]; then
+                    # SCRIPT_DIR is Contents/Resources; the bundle is two up.
+                    real="$("$RUNTIME_DIR/support/resolve-translocation" \
+                            "$(dirname "$(dirname "$SCRIPT_DIR")")" 2>/dev/null)"
+                fi
+                if [ -n "$real" ] && [ -d "$(dirname "$real")/firmware" ]; then
+                    printf '%s\n' "$(dirname "$real")/firmware"
+                else
+                    # Nothing answered, so guess: a folder holding this app and
+                    # a firmware folder is a download of ours, which a folder of
+                    # loose files never is.  Only the obvious places, and only
+                    # the most recent - that is the one just opened.
+                    newest=""
+                    for app in "$HOME/Downloads"/*/"218e Rewired Flasher.app" \
+                               "$HOME/Desktop"/*/"218e Rewired Flasher.app"; do
+                        [ -d "$app" ] || continue
+                        parent="$(dirname "$app")"
+                        [ -d "$parent/firmware" ] || continue
+                        if [ -z "$newest" ] || [ "$parent" -nt "$newest" ]; then
+                            newest="$parent"
+                        fi
+                    done
+                    [ -n "$newest" ] && printf '%s\n' "$newest/firmware"
+                fi ;;
+        esac
     } | awk 'NF && !seen[$0]++'
 }
 
@@ -782,8 +824,7 @@ fi
 
 if [ -z "$FIRMWARE" ]; then
     echo
-    echo "  Looked in firmware/, beside the flasher, Downloads and Desktop."
-    echo "  No flashable 218e image is there."
+    echo "  No flashable 218e image is in the firmware folder."
     echo
     echo "  No firmware ships with this package — the patched image is Buchla's"
     echo "  firmware with our changes in it, so it is not ours to redistribute."
