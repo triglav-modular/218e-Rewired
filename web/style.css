@@ -87,11 +87,12 @@
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent);
 }
-/* Wider than the 820px article column, as it is on the site: the nav needs
-   765px on one line and the column leaves 780 for everything including the
-   mark, so at 820 it wrapped to two rows. */
+/* The article column exactly, so the menu starts on the line the page does.
+   It only fits there because the mark left the row: the nav needs 765px on
+   one line and the column leaves 780, which was not enough while the mark
+   and its gap were still spending 54 of them. */
 .sitenav-in {
-  max-width: 1040px;
+  max-width: 820px;
   margin: 0 auto;
   padding: 12px 20px;
   display: flex;
@@ -105,21 +106,35 @@
   transform: translateY(-50%);
   display: block;
   line-height: 0;
+  color: #fffdfb;
+  transition: color .15s;
 }
 /* The mark is a glyph on nothing now, not a badge, so it takes no rounding
-   and no box - only the room it draws in. */
-.brand img {
+   and no box - only the room it draws in.  Masked rather than placed as an
+   image, the way the disclosure chevron is: an <img> carries its own colour
+   and cannot answer the pointer, and its colour is the one thing about it
+   that now has to change.  #fffdfb is the white the file itself draws in. */
+.brand .mark {
+  display: block;
   width: 34px;
   height: 34px;
-  display: block;
+  background: currentColor;
+  -webkit-mask: url("images/triglav-mark.svg") center / contain no-repeat;
+  mask: url("images/triglav-mark.svg") center / contain no-repeat;
+}
+/* White into accent, so it takes the pass like the rest of the row. */
+.brand:hover,
+.brand:focus-visible {
+  color: var(--accent2);
+  animation: sweep-ink .35s .15s ease-out forwards;
 }
 .sitenav nav {
-  margin-left: auto;
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 18px;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 .sitenav nav a {
   color: var(--muted);
@@ -1444,6 +1459,16 @@ section,
 
 /* Narrow screens.  Last in the sheet on purpose: these share specificity
    with the rules they override, so order is what decides. */
+/* One measured from the window, one from the column: the mark and the menu
+   close on each other as the window narrows and would touch at about 888px.
+   Before they do, the mark rejoins the row and the two go back to being laid
+   out by the same box. */
+@media (max-width:900px) {
+  .brand {
+    position: static;
+    transform: none;
+  }
+}
 /* On a narrow screen the absolutely-positioned banana sits on top of the
    title, so it comes back into the flow: the header stacks, the banana takes
    its own line above the heading, and it shrinks to suit the width. */
