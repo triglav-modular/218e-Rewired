@@ -21,7 +21,7 @@ WORK_DIR="${REWIRED_WORKDIR:-$SCRIPT_DIR}"
 mkdir -p "$WORK_DIR" 2>/dev/null
 LOG_FILE="$WORK_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
-trap 'rm -f "$DEADLINE_OUT"' EXIT
+trap 'rm -f "$DEADLINE_OUT"; printf "\033[?25h"' EXIT
 EXPECTED_SHA256="b21c816227644d630c97fc4e2be8f9c37be778be1cb00dea39b4b3677cac058e"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
@@ -305,6 +305,188 @@ fi
 # The banana is shown twice - once over the warning, once over the result -
 # so it lives in one place.  A quoted heredoc keeps every backslash and
 # caret in the art literal.
+# A menu that answers to the arrow keys and to typing, because both are what
+# people reach for.  The caller fills MENU_ITEMS with the lines to choose
+# between and MENU_DETAILS with whatever belongs underneath each one, and gets
+# back MENU_CHOICE: 1-based, or 0 for nothing chosen.
+#
+# Not every run has a terminal to draw on - piped into something, or driven by
+# a test - and there the only thing that works is a numbered list and a read.
+MENU_ITEMS=()
+MENU_DETAILS=()
+MENU_CHOICE=0
+MENU_SEL=0
+MENU_LINES=0
+
+menu_draw() {
+    local i=0 label detail line
+    MENU_LINES=0
+    while [ "$i" -lt "${#MENU_ITEMS[@]}" ]; do
+        label="${MENU_ITEMS[$i]}"
+        detail="${MENU_DETAILS[$i]}"
+        if [ "$i" -eq "$MENU_SEL" ]; then
+            printf '    %s>%s %s%s%s\033[K\n' \
+                   "$C_YELLOW" "$C_RESET" "$C_BOLD" "$label" "$C_RESET"
+        else
+            printf '      %s%s%s\033[K\n' "$C_DIM" "$label" "$C_RESET"
+        fi
+        MENU_LINES=$((MENU_LINES + 1))
+        if [ -n "$detail" ]; then
+            while IFS= read -r line; do
+                printf '        %s%s%s\033[K\n' "$C_DIM" "$line" "$C_RESET"
+                MENU_LINES=$((MENU_LINES + 1))
+            done <<DETAIL
+$detail
+DETAIL
+        fi
+        i=$((i + 1))
+    done
+}
+
+menu() {
+    local n=${#MENU_ITEMS[@]} key rest chosen i
+    MENU_SEL=0
+    MENU_CHOICE=0
+    [ "$n" -gt 0 ] || return
+
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        i=0
+        while [ "$i" -lt "$n" ]; do
+            printf '    %d) %s\n' "$((i + 1))" "${MENU_ITEMS[$i]}"
+            i=$((i + 1))
+        done
+        read -r -p "  Choose [1-$n]: " key
+        case "$key" in
+            ''|*[!0-9]*) return ;;
+        esac
+        [ "$key" -ge 1 ] && [ "$key" -le "$n" ] && MENU_CHOICE=$key
+        return
+    fi
+
+    printf '\033[?25l'
+    menu_draw
+    while :; do
+        IFS= read -rsn1 key || key=''
+        chosen=0
+        case "$key" in
+            $'\033')
+                # An arrow arrives as ESC [ A or ESC [ B.  This bash has no
+                # fractional timeout, so a bare Escape waits a second and then
+                # counts as nothing pressed.
+                IFS= read -rsn2 -t 1 rest || rest=''
+                case "$rest" in
+                    '[A') [ "$MENU_SEL" -gt 0 ] && MENU_SEL=$((MENU_SEL - 1)) ;;
+                    '[B') [ "$MENU_SEL" -lt $((n - 1)) ] && MENU_SEL=$((MENU_SEL + 1)) ;;
+                esac ;;
+            k) [ "$MENU_SEL" -gt 0 ] && MENU_SEL=$((MENU_SEL - 1)) ;;
+            j) [ "$MENU_SEL" -lt $((n - 1)) ] && MENU_SEL=$((MENU_SEL + 1)) ;;
+            [1-9]) [ "$key" -le "$n" ] && { MENU_SEL=$((key - 1)); chosen=1; } ;;
+            '') chosen=1 ;;
+            q|Q) MENU_SEL=-1; chosen=1 ;;
+        esac
+        printf '\033[%dA' "$MENU_LINES"
+        menu_draw
+        [ "$chosen" -eq 1 ] && break
+    done
+    printf '\033[?25h'
+    [ "$MENU_SEL" -ge 0 ] && MENU_CHOICE=$((MENU_SEL + 1))
+}
+
+# The builder page writes an image.txt beside the firmware it built, naming
+# the image and what went into it.  It is bound by checksum, so a manifest
+# left behind by an earlier download cannot describe the wrong file.
+image_options() {
+    local hexfile="$1" sha="$2" manifest key value want=""
+    manifest="$(dirname "$hexfile")/image.txt"
+    [ -f "$manifest" ] || return 0
+    while IFS='=' read -r key value; do
+        case "$key" in
+            EXPECTED_SHA256) [ "$value" = "$sha" ] && want=1 ;;
+        esac
+    done < "$manifest"
+    [ -n "$want" ] || return 0
+    while IFS='=' read -r key value; do
+        case "$key" in
+            OPTION) printf '%s\n' "$value" ;;
+        esac
+    done < "$manifest"
+}
+
+# Folded in from what used to be a separate ExitDFU script.  A 218e lands in
+# DFU when a flash was started and interrupted, and reading the safety fuses
+# sets ISP_FORCE, so a power cycle brings it straight back into DFU.  The one
+# thing that releases it is the START command.  This flashes nothing and
+# erases nothing.
+rescue_unquarantine() {
+    local target answer
+    for target in "$DFU_BUNDLED" "$SENDMIDI"; do
+        if xattr -p com.apple.quarantine "$target" >/dev/null 2>&1; then
+            echo "  These tools are quarantined because the package was downloaded."
+            echo "  macOS will not run them until that is cleared.  It affects only"
+            echo "  the files in this package, on this machine."
+            echo ""
+            read -r -p "  Clear it now? [Y/n] " answer
+            case "$answer" in
+                [nN]*)
+                    echo "  Then clear it yourself and try again:"
+                    echo "    ${C_BOLD}xattr -dr com.apple.quarantine \"$PACKAGE_ROOT\"${C_RESET}"
+                    return 1 ;;
+            esac
+            xattr -dr com.apple.quarantine "$PACKAGE_ROOT" 2>/dev/null
+            xattr -dr com.apple.quarantine "$RUNTIME_DIR" 2>/dev/null
+            if xattr -p com.apple.quarantine "$DFU_BUNDLED" >/dev/null 2>&1; then
+                echo "  Could not clear it.  Approve the tools in System Settings >"
+                echo "  Privacy & Security, then try again."
+                return 1
+            fi
+            ok "Quarantine cleared"
+            break
+        fi
+    done
+    return 0
+}
+
+run_rescue() {
+    local n
+    echo ""
+    step "Getting the 218e out of DFU mode"
+    rescue_unquarantine || return 1
+    [ -x "$DFU_BUNDLED" ] || {
+        echo "  dfu-programmer is missing or not executable:"
+        echo "    $DFU_BUNDLED"
+        return 1
+    }
+    if [ -x "$SENDMIDI" ] && "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
+        ok "The 218e is already running its firmware - it has a MIDI port"
+        echo "  Nothing to do."
+        return 0
+    fi
+    if ! "$DFU_BUNDLED" at32uc3b1256 get bootloader-version >/dev/null 2>&1; then
+        echo "  ${C_RED}No 218e in DFU mode, and no 218e MIDI port.${C_RESET}"
+        echo ""
+        echo "  Check the USB cable and that the instrument is powered on.  If it"
+        echo "  still does not appear, power-cycle it once and try again."
+        return 1
+    fi
+    ok "Found the 218e in DFU mode"
+    echo "  Sending START..."
+    if "$DFU_BUNDLED" at32uc3b1256 start; then
+        echo "  START sent.  Waiting for the instrument to come back..."
+        for n in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 1
+            if [ -x "$SENDMIDI" ] && "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
+                ok "The 218e is back as a MIDI device"
+                return 0
+            fi
+        done
+        echo "  START was sent but the MIDI port has not appeared yet."
+        echo "  Power-cycle the instrument once.  It will come up normally."
+        return 0
+    fi
+    echo "  ${C_RED}Could not send START.${C_RESET}  Power-cycle the instrument and try again."
+    return 1
+}
+
 banana() {
 cat <<'BANANA'
                                   .-==-:
@@ -335,6 +517,30 @@ BANANA
 echo ""
 banana
 echo ""
+
+# What to do comes before the warning, because the warning is about flashing
+# and getting a stuck keyboard out of DFU is not that: it writes nothing.
+MENU_ITEMS=("Flash firmware onto the 218e"
+            "Get the keyboard out of DFU mode")
+MENU_DETAILS=("Erases the chip and writes a new image."
+              "For a keyboard left in DFU by an interrupted flash.
+Sends START. Flashes nothing, erases nothing.")
+echo "  ${C_BOLD}What would you like to do?${C_RESET}"
+echo "  ${C_DIM}Arrow keys and return, or type the number.${C_RESET}"
+echo ""
+menu
+echo ""
+case "$MENU_CHOICE" in
+    2)
+        run_rescue
+        rescue_status=$?
+        echo ""
+        read -r -p "  Press return to close. "
+        exit $rescue_status ;;
+    1) ;;
+    *) fail "Nothing chosen. The instrument was not touched." ;;
+esac
+
 echo "======================================================================"
 echo "  THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3"
 echo ""
@@ -392,20 +598,6 @@ scan_images() {
 # Accept a chosen image.  The flasher installs any valid 218e image; the
 # checksum it was built with is only a label, marking the build that shipped
 # with this package so it can be told apart in the list.  It is not a gate.
-# An interrupted flash leaves the keyboard in DFU, and what that needs is the
-# rescue, not another flash.  As a loose package the rescue is a second file to
-# double-click; inside the app it is sealed in the bundle where nobody will
-# find it, so the way to it is from here.
-rescue_if_asked() {
-    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-        rescue)
-            EXIT_DFU="$SCRIPT_DIR/ExitDFU_218e_v3_macOS.command"
-            [ -f "$EXIT_DFU" ] || fail "The rescue script is not beside this one."
-            echo
-            exec bash "$EXIT_DFU" ;;
-    esac
-}
-
 accept_choice() {
     local path="$1" sha
     sha="$(shasum -a 256 "$path" | cut -d" " -f1)"
@@ -455,35 +647,37 @@ if [ -z "$FIRMWARE" ]; then
         # made explicitly.  Newest first, because that is usually the intent.
         echo
         echo "  ${C_BOLD}$count flashable images found.${C_RESET}  Newest first:"
+        echo "  ${C_DIM}Arrow keys and return, or type the number.${C_RESET}"
         echo
+        MENU_ITEMS=()
+        MENU_DETAILS=()
         i=0
         while IFS= read -r candidate; do
-            i=$((i + 1))
             sha="$(shasum -a 256 "$candidate" | cut -d" " -f1)"
             when="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$candidate" 2>/dev/null)"
             case "$sha" in
                 "$EXPECTED_SHA256")
-                    mark="  ${C_GREEN}<- the default Rewired build${C_RESET}" ;;
+                    mark="   ${C_GREEN}<- the default Rewired build${C_RESET}" ;;
                 "$FACTORY_SHA256")
-                    mark="  ${C_YELLOW}<- FACTORY firmware, back to stock v36.9${C_RESET}" ;;
+                    mark="   ${C_YELLOW}<- FACTORY firmware, back to stock v36.9${C_RESET}" ;;
                 *)  mark="" ;;
             esac
-            printf '    %d) %s   %s\n' "$i" "$when" "${sha:0:8}"
-            printf '       %s%s\n' "$candidate" "$mark"
-            i2=$i
+            MENU_ITEMS[$i]="$when   ${sha:0:8}$mark"
+            # What the image was built with, when the download that carried it
+            # said so.  Two images a minute apart are otherwise told apart only
+            # by a checksum nobody can read.
+            detail="$candidate"
+            opts="$(image_options "$candidate" "$sha")"
+            [ -n "$opts" ] && detail="$detail
+$opts"
+            MENU_DETAILS[$i]="$detail"
+            i=$((i + 1))
         done <<EOF
 $images
 EOF
-        echo
-        read -r -p "  Which one? [1-$count, rescue, or return to stop] " pick
-        [ -n "$pick" ] || fail "Nothing chosen. The instrument was not touched."
-        rescue_if_asked "$pick"
-        case "$pick" in
-            ''|*[!0-9]*) fail "Not a number. The instrument was not touched." ;;
-        esac
-        [ "$pick" -ge 1 ] && [ "$pick" -le "$count" ] || \
-            fail "No image $pick in the list. The instrument was not touched."
-        chosen="$(printf '%s\n' "$images" | sed -n "${pick}p")"
+        menu
+        [ "$MENU_CHOICE" -ge 1 ] || fail "Nothing chosen. The instrument was not touched."
+        chosen="$(printf '%s\n' "$images" | sed -n "${MENU_CHOICE}p")"
         accept_choice "$chosen"
     elif [ "$count" -eq 1 ]; then
         accept_choice "$images"
@@ -504,13 +698,11 @@ if [ -z "$FIRMWARE" ]; then
     echo "  the searched folders, so copy it into firmware/ to flash it."
     echo
     echo "  Or point this at one: drag its .hex into this window, or press"
-    echo "  return to stop. If the keyboard is stuck in DFU from an"
-    echo "  interrupted flash, type ${C_BOLD}rescue${C_RESET} to get it out."
-    read -r -p "  Image to flash, or rescue: " other
+    echo "  return to stop."
+    read -r -p "  Image to flash: " other
     # Terminal drag-and-drop appends a space and may escape spaces in the path.
     other="$(printf '%s' "$other" | sed 's/\\//g; s/[[:space:]]*$//')"
     [ -n "$other" ] || fail "No firmware image found."
-    rescue_if_asked "$other"
     [ -f "$other" ] || fail "No such file: $other"
     case "$(validate_hex "$other")" in
         OK*) ;;
@@ -521,6 +713,16 @@ if [ -z "$FIRMWARE" ]; then
 fi
 ok "Found $(basename "$FIRMWARE")"
 ok "${C_BOLD}$FIRMWARE_VERSION${C_RESET}"
+# With one image in reach there is no menu to read the options off, and this
+# is the last point before the chip is erased at which they can be checked.
+chosen_options="$(image_options "$FIRMWARE" "$actual_sha256")"
+if [ -n "$chosen_options" ]; then
+    while IFS= read -r line; do
+        echo "      ${C_DIM}$line${C_RESET}"
+    done <<EOF
+$chosen_options
+EOF
+fi
 
 # Keep it where it belongs, so the next run finds it first and the log records
 # one canonical location.  A failure here is not fatal: the image was already

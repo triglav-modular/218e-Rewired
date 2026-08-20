@@ -248,9 +248,7 @@ var WEBBUILD = (function () {
                 }
                 return {
                     flasherMac: stamp(GEN.flasherMac),
-                    flasherWin: stamp(GEN.flasherWin),
-                    exitMac: GEN.exitMac,
-                    exitWin: GEN.exitWin
+                    flasherWin: stamp(GEN.flasherWin)
                 };
             })(),
             properties: BUILDLIB.writeProperties('config/218e.toml', flags.blocks,

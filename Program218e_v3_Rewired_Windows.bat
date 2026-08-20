@@ -47,6 +47,34 @@ SET "STEP=0"
 
 ECHO.
 CALL :banana
+
+REM What to do comes before the warning, because the warning is about flashing
+REM and getting a stuck keyboard out of DFU is not that: it writes nothing.
+SET "MENU_FILE=%TEMP%\rewired_menu_%RANDOM%.txt"
+SET "MENU_OUT=%TEMP%\rewired_pick_%RANDOM%.txt"
+> "%MENU_FILE%" (
+    ECHO Flash firmware onto the 218e
+    ECHO Erases the chip and writes a new image.
+    ECHO --
+    ECHO Get the keyboard out of DFU mode
+    ECHO For a keyboard left in DFU by an interrupted flash.
+    ECHO Sends START. Flashes nothing, erases nothing.
+)
+ECHO.
+CALL :show_menu "What would you like to do?"
+IF "!PICK!"=="2" (
+    CALL :rescue
+    SET "RESCUE_RC=!ERRORLEVEL!"
+    ECHO.
+    PAUSE
+    EXIT /B !RESCUE_RC!
+)
+IF NOT "!PICK!"=="1" (
+    ECHO   Nothing chosen.  The instrument was not touched.
+    GOTO :fail_early
+)
+ECHO.
+
 ECHO ======================================================================
 ECHO   THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3
 ECHO.
@@ -104,29 +132,26 @@ SET "PICK=1"
 IF %IMG_COUNT% GTR 1 (
     ECHO.
     ECHO   %IMG_COUNT% flashable images found.  Newest first:
+    ECHO   Arrow keys and Enter, or type the number.
     ECHO.
+    SET "MENU_FILE=%TEMP%\rewired_images_%RANDOM%.txt"
+    SET "MENU_OUT=%TEMP%\rewired_imgpick_%RANDOM%.txt"
+    IF EXIST "!MENU_FILE!" DEL /Q "!MENU_FILE!" >NUL 2>&1
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
         IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- the default Rewired build"
         IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  ^<- FACTORY firmware, back to stock v36.9"
-        ECHO     %%I^) !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!
-        ECHO        !IMG_PATH_%%I!!MARK!
+        IF %%I GTR 1 >>"!MENU_FILE!" ECHO --
+        >>"!MENU_FILE!" ECHO !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!!MARK!
+        >>"!MENU_FILE!" ECHO !IMG_PATH_%%I!
+        REM What the image was built with, when the download that carried it
+        REM said so.  Two images a minute apart are otherwise told apart only
+        REM by a checksum nobody can read.
+        CALL :image_options "!IMG_PATH_%%I!" "!IMG_SHA_%%I!" "!MENU_FILE!"
     )
-    ECHO.
-    SET "PICK="
-    SET /P "PICK=  Which one? [1-%IMG_COUNT%, or Enter to stop] "
-    IF NOT DEFINED PICK (
-        ECHO   Nothing chosen.
-        GOTO :fail_early
-    )
-    REM Reject anything that is not a plain number in range, rather than
-    REM letting SET /A turn junk into 0 and index nothing.
-    ECHO !PICK!| FINDSTR /R "^[1-9][0-9]*$" >NUL || (
-        ECHO   Not a number.
-        GOTO :fail_early
-    )
-    IF !PICK! GTR %IMG_COUNT% (
-        ECHO   No image !PICK! in the list.
+    CALL :show_menu ""
+    IF "!PICK!"=="0" (
+        ECHO   Nothing chosen.  The instrument was not touched.
         GOTO :fail_early
     )
 )
@@ -164,6 +189,9 @@ GOTO :fail_early
 :have_image
 CALL :ok Found !FIRMWARE!
 CALL :ok !FIRMWARE_VERSION!
+REM With one image in reach there is no menu to read the options off, and this
+REM is the last point before the chip is erased at which they can be checked.
+CALL :print_options "!FIRMWARE!" "!CHOSEN_SHA!"
 ECHO     !CHOSEN_SHA!
 
 REM Only the default build is filed under firmware\ as %FIRMWARE_NAME%.  Copying
@@ -518,6 +546,106 @@ ENDLOCAL
 EXIT /B 0
 
 REM --- helpers -----------------------------------------------------------
+:print_options
+REM The console version of :image_options - same checksum binding, printed
+REM instead of written into a menu.
+SET "PO_SHA=%~2"
+SET "PO_MANIFEST=%~dp1image.txt"
+IF NOT EXIST "%PO_MANIFEST%" EXIT /B 0
+SET "PO_WANT="
+FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%PO_MANIFEST%") DO (
+    IF /I "%%K"=="EXPECTED_SHA256" IF /I "%%L"=="%PO_SHA%" SET "PO_WANT=1"
+)
+IF NOT DEFINED PO_WANT EXIT /B 0
+FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%PO_MANIFEST%") DO (
+    IF /I "%%K"=="OPTION" ECHO       %%L
+)
+EXIT /B 0
+
+:image_options
+REM Echo the OPTION lines of the image.txt beside %1 into the file %3, but only
+REM when the manifest names the same checksum: a manifest left behind by an
+REM earlier download must not describe the wrong file.
+SET "IO_SHA=%~2"
+SET "IO_OUT=%~3"
+SET "IO_MANIFEST=%~dp1image.txt"
+IF NOT EXIST "%IO_MANIFEST%" EXIT /B 0
+SET "IO_WANT="
+FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%IO_MANIFEST%") DO (
+    IF /I "%%K"=="EXPECTED_SHA256" IF /I "%%L"=="%IO_SHA%" SET "IO_WANT=1"
+)
+IF NOT DEFINED IO_WANT EXIT /B 0
+FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%IO_MANIFEST%") DO (
+    IF /I "%%K"=="OPTION" >>"%IO_OUT%" ECHO %%L
+)
+EXIT /B 0
+
+:show_menu
+REM Draws MENU_FILE and leaves the 1-based answer in PICK.  The helper is not
+REM redirected: it writes its answer to a file precisely so that the menu can
+REM go to the console where the arrow keys can be seen to work.
+SET "PICK=0"
+IF NOT EXIST "%PACKAGE_ROOT%tools\Show-Menu.ps1" (
+    ECHO   tools\Show-Menu.ps1 is missing.  The flasher needs the whole
+    ECHO   package beside it, not just this script.
+    GOTO :fail_early
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Show-Menu.ps1" -Path "%MENU_FILE%" -Out "%MENU_OUT%" -Title %1
+IF EXIST "%MENU_OUT%" (
+    SET /P "PICK="<"%MENU_OUT%"
+    DEL /Q "%MENU_OUT%" >NUL 2>&1
+)
+DEL /Q "%MENU_FILE%" >NUL 2>&1
+EXIT /B 0
+
+:rescue
+REM Folded in from what used to be a separate ExitDFU script.  A 218e lands in
+REM DFU when a flash was started and interrupted, and reading the safety fuses
+REM sets ISP_FORCE, so a power cycle brings it straight back into DFU.  The one
+REM thing that releases it is the START command.  This flashes nothing and
+REM erases nothing.
+ECHO.
+CALL :step Getting the 218e out of DFU mode
+"%SENDMIDI%" list 2>NUL | FINDSTR /I "218e" >NUL
+IF NOT ERRORLEVEL 1 (
+    CALL :ok The 218e is already running its firmware - it has a MIDI port
+    ECHO   Nothing to do.
+    EXIT /B 0
+)
+"%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
+IF ERRORLEVEL 1 (
+    ECHO   No 218e in DFU mode, and no 218e MIDI port.
+    ECHO.
+    ECHO   Check the USB cable and that the instrument is powered on.  If the
+    ECHO   flasher said the instrument was in DFU but this cannot see it, the
+    ECHO   DFU device may not be bound to WinUSB - choose "Flash firmware",
+    ECHO   which diagnoses that and opens Zadig at the right moment.
+    EXIT /B 1
+)
+CALL :ok Found the 218e in DFU mode
+ECHO   Sending START...
+"%DFU%" at32uc3b1256 start
+IF ERRORLEVEL 1 (
+    ECHO   Could not send START.  Power-cycle the instrument and try again.
+    EXIT /B 1
+)
+ECHO   START sent.  Waiting for the instrument to come back...
+REM A label loop, not FOR /L: %VAR% inside a parenthesised FOR block expands
+REM when the block is parsed, so an in-loop exit guard never fires.
+SET "RESCUE_TRIES=0"
+:rescue_wait
+SET /A RESCUE_TRIES+=1
+PING -n 2 127.0.0.1 >NUL
+"%SENDMIDI%" list 2>NUL | FINDSTR /I "218e" >NUL
+IF NOT ERRORLEVEL 1 (
+    CALL :ok The 218e is back as a MIDI device
+    EXIT /B 0
+)
+IF %RESCUE_TRIES% LSS 10 GOTO :rescue_wait
+ECHO   START was sent but the MIDI port has not appeared yet.
+ECHO   Power-cycle the instrument once.  It will come up normally.
+EXIT /B 0
+
 :banana
 REM Drawn in one place and called twice - over the warning at the start,
 REM and over the result at the end.  The carets are doubled because cmd

@@ -47,14 +47,12 @@ def main() -> None:
         f"  javaSourceBase64: {json.dumps(base64.b64encode(java).decode())},",
     ]
 
-    # Both flashers and both rescue scripts, whole.  The page substitutes the
-    # checksum and version of the image it just built, so a download arrives as
-    # a bundle that flashes that image without asking.  JSON round-trips the
-    # .bat's CRLF endings intact.
+    # Both flashers, whole.  The page substitutes the checksum and version of
+    # the image it just built, so a download arrives as a bundle that flashes
+    # that image without asking.  JSON round-trips the .bat's CRLF endings
+    # intact.
     for key, name in (("flasherMac",  "Program218e_v3_Rewired_macOS.command"),
-                      ("flasherWin",  "Program218e_v3_Rewired_Windows.bat"),
-                      ("exitMac",     "ExitDFU_218e_v3_macOS.command"),
-                      ("exitWin",     "ExitDFU_218e_v3_Windows.bat")):
+                      ("flasherWin",  "Program218e_v3_Rewired_Windows.bat")):
         parts.append(f"  {key}: {json.dumps((REPO / name).read_bytes().decode())},")
 
     # The bundled tunings, preloaded into the page's slots (behind a checkbox

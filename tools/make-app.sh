@@ -53,7 +53,6 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # --- the payload, read-only inside the bundle ------------------------------
 cp -R "$REPO/mac/support" "$APP/Contents/Resources/support"
 cp "$REPO/Program218e_v3_Rewired_macOS.command" "$APP/Contents/Resources/"
-cp "$REPO/ExitDFU_218e_v3_macOS.command"        "$APP/Contents/Resources/"
 find "$APP/Contents/Resources/support" -name .DS_Store -delete
 
 # --- the launcher ----------------------------------------------------------

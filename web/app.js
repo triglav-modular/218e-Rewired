@@ -520,8 +520,10 @@
         setTimeout(function () {
             try {
                 var t0 = Date.now();
-                var r = WEBBUILD.build(options(), state.factoryText);
+                var chosen = options();
+                var r = WEBBUILD.build(chosen, state.factoryText);
                 state.result = r;
+                state.options = chosen;
                 msg($('buildMsg'), 'ok',
                     r.version + '\n' +
                     'Built in ' + (Date.now() - t0) + ' ms.\n\n' +
@@ -558,12 +560,13 @@
             scripts: function (r) { return [
                 { name: 'firmware/image.txt', data: [
                     '# Written by the builder page. The flasher reads this to know',
-                    '# which image this download was made for.',
+                    '# which image this download was made for, and what went into it.',
                     'EXPECTED_SHA256=' + r.sha256,
                     'FIRMWARE_VERSION=Rewired ' + GEN.version +
-                        ' (' + r.sha256.slice(0, 8) + ')',
-                    ''
-                ].join('\n') }
+                        ' (' + r.sha256.slice(0, 8) + ')'
+                ].concat(describe(state.options).map(function (line) {
+                    return 'OPTION=' + line;
+                })).join('\n') + '\n' }
             ]; },
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the app and the firmware folder',
@@ -591,11 +594,11 @@
                 ['kit/windows/support/zadig-2.8.exe', 'windows/support/zadig-2.8.exe', false],
                 ['kit/tools/Scan-Images.ps1', 'tools/Scan-Images.ps1', false],
                 ['kit/tools/Find-DfuDevice.ps1', 'tools/Find-DfuDevice.ps1', false],
+                ['kit/tools/Show-Menu.ps1', 'tools/Show-Menu.ps1', false],
                 ['kit/tools/validate_hex.py', 'tools/validate_hex.py', false]
             ],
             scripts: function (r) { return [
                 { name: 'Program218e_v3_Rewired_Windows.bat', data: r.scripts.flasherWin },
-                { name: 'ExitDFU_218e_v3_Windows.bat', data: r.scripts.exitWin }
             ]; },
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the folders together, and double-click',
@@ -611,6 +614,28 @@
             ], partial); }
         }
     };
+
+    function describe(o) {
+        var lines = [
+            'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
+            'Knobs 1-4: ' + (o.remap_knobs ? 'remapped' : 'factory'),
+            'Pressure response: ' + (o.pressure_fix ? 'fixed' : 'factory') +
+                (o.pressure_portamento ? ', portamento' : ''),
+            'Pitch: ' + o.volts_per_octave + ' V/octave'
+        ];
+        if (o.alternate_tunings && o.alternate_tunings.length) {
+            // No brackets: these lines are echoed inside a batch FOR block,
+            // where an unescaped ) ends the block instead of printing.
+            lines.push('Alternate tunings: ' + o.alternate_tunings.length +
+                       ' - ' + o.alternate_tunings.join(', '));
+        } else {
+            lines.push('Alternate tunings: none');
+        }
+        if (o.pitch_correction) {
+            lines.push('Per-note calibration: ' + o.pitch_correction.length + ' notes');
+        }
+        return lines;
+    }
 
     function readme(r, howto, partial, opts) {
         var missing = partial ? [
@@ -629,8 +654,8 @@
             'without asking which file to use.'];
         var rescue = (opts && opts.rescue) || [
             'The keyboard stays in DFU mode and a power cycle will not',
-            'release it. The ExitDFU script sends the command that does.',
-            'It flashes nothing.'];
+            'release it. Open the flasher again and choose "Get the keyboard',
+            'out of DFU mode". It flashes nothing.'];
         return ['218e V3 Rewired ' + GEN.version, '']
             .concat(['This zip has everything needed to flash:', '',
                      '  ' + where + '   the firmware you built',

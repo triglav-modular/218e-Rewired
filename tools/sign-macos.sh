@@ -122,7 +122,6 @@ mkdir -p "$PKG"
 cp -R "$REPO/mac" "$PKG/"
 cp -R "$REPO/web" "$PKG/"
 cp "$REPO/Program218e_v3_Rewired_macOS.command" "$PKG/"
-cp "$REPO/ExitDFU_218e_v3_macOS.command" "$PKG/"
 cp "$REPO/Read218e_v3_Rewired.command" "$PKG/" 2>/dev/null || true
 cp "$REPO/README.md" "$REPO/UNLICENSE" "$REPO/THIRD-PARTY.md" "$PKG/"
 mkdir -p "$PKG/firmware"

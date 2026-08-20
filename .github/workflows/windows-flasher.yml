@@ -18,6 +18,7 @@ on:
       # can break it without the .bat itself being touched.
       - 'tools/Scan-Images.ps1'
       - 'tools/Find-DfuDevice.ps1'
+      - 'tools/Show-Menu.ps1'
       - 'tools/validate_hex.py'
       - '.github/workflows/windows-flasher.yml'
   workflow_dispatch:
@@ -83,7 +84,7 @@ jobs:
       - name: No image present - must refuse without touching anything
         shell: cmd
         run: |
-          (echo YES)> answers0.txt
+          (echo 1& echo YES)> answers0.txt
           CALL Program218e_v3_Rewired_Windows.bat < answers0.txt > out.txt 2>&1
           type out.txt
           findstr /C:"Looked in firmware" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
@@ -126,6 +127,32 @@ jobs:
           echo PASS: both validators agree
           exit /b 0
 
+      - name: The menu helper parses, and answers without a keyboard
+        shell: cmd
+        run: |
+          rem A syntax error here would only show up when someone opened the
+          rem flasher, since batch cannot see a PowerShell parse failure coming.
+          powershell -NoProfile -Command "$e=$null;[void][Management.Automation.Language.Parser]::ParseFile('tools\Show-Menu.ps1',[ref]$null,[ref]$e); if($e.Count){$e|ForEach-Object{Write-Host $_}; exit 1}" || (echo FAILED: Show-Menu.ps1 does not parse & exit /b 1)
+          echo PASS: Show-Menu.ps1 parses
+          rem CI has no console to read arrow keys from, which is the fallback
+          rem path: a numbered list and a plain read.
+          > menu.txt echo Flash firmware onto the 218e
+          >> menu.txt echo Erases the chip and writes a new image.
+          >> menu.txt echo --
+          >> menu.txt echo Get the keyboard out of DFU mode
+          >> menu.txt echo Sends START. Flashes nothing, erases nothing.
+          echo 2| powershell -NoProfile -ExecutionPolicy Bypass -File tools\Show-Menu.ps1 -Path menu.txt -Out pick.txt -Title "What would you like to do?"
+          set /P PICKED=<pick.txt
+          if not "%PICKED%"=="2" (echo FAILED: typed 2, got "%PICKED%" & exit /b 1)
+          echo PASS: the menu answers 2 when 2 is typed
+          rem Junk must choose nothing rather than index into the list.
+          echo banana| powershell -NoProfile -ExecutionPolicy Bypass -File tools\Show-Menu.ps1 -Path menu.txt -Out pick.txt
+          set /P PICKED=<pick.txt
+          if not "%PICKED%"=="0" (echo FAILED: junk chose "%PICKED%" & exit /b 1)
+          echo PASS: junk chooses nothing
+          del /Q menu.txt pick.txt 2>NUL
+          exit /b 0
+
       - name: More than one image - must list them and ask
         shell: cmd
         run: |
@@ -135,8 +162,8 @@ jobs:
           pwsh -File tools\Make-TestImage.ps1 -Path "%USERPROFILE%\Downloads\custom.hex"
           mkdir firmware 2>NUL
           copy /Y "%USERPROFILE%\Downloads\custom.hex" firmware\second.hex >NUL
-          rem Consent, then pick nothing: it must have listed both and stopped.
-          (echo YES& echo.& echo.)> ans2.txt
+          rem Flash, consent, then pick nothing: it must have listed both and stopped.
+          (echo 1& echo YES& echo.& echo.)> ans2.txt
           CALL Program218e_v3_Rewired_Windows.bat < ans2.txt > out4.txt 2>&1
           type out4.txt
           findstr /C:"flashable images found" out4.txt >NUL || (echo FAILED: did not list the images & exit /b 1)
@@ -160,7 +187,7 @@ jobs:
           del /Q "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
           mkdir "%USERPROFILE%\Downloads" 2>NUL
           pwsh -File tools\Make-TestImage.ps1 -Path "%USERPROFILE%\Downloads\custom.hex"
-          (echo YES& echo.)> ans.txt
+          (echo 1& echo YES& echo.)> ans.txt
           CALL Program218e_v3_Rewired_Windows.bat < ans.txt > out3.txt 2>&1
           type out3.txt
           findstr /C:"Type FLASH" out3.txt >NUL && (echo FAILED: still gating on the checksum & exit /b 1)
@@ -228,7 +255,7 @@ jobs:
           rem the first subshell the script spawns, so SET /P then reads EOF and
           rem the consent gate rejects an empty answer.  Repeated so each prompt
           rem up to the MIDI check has one.
-          (echo YES& echo.& echo.)> answers.txt
+          (echo 1& echo YES& echo.& echo.)> answers.txt
           rem CALL, not a bare invocation: running one .bat from another without
           rem CALL transfers control and never returns, so every assertion below
           rem would be skipped and the step would report the flasher's own exit

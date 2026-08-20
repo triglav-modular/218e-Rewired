@@ -206,7 +206,7 @@
           <li>Power on the 218e.</li>
           <li>Run the flasher and follow their instructions:
             <div>
-              <div><strong>macOS</strong>: double-click <span class="mono">218e Rewired Flasher.app</span>, keeping the <span class="mono">firmware</span> folder beside it.</div>
+              <div><strong>macOS</strong>: double-click <span class="mono">218e Rewired Flasher.app</span></div>
               <div><strong>Windows</strong>: double-click <span class="mono">Program218e_v3_Rewired_Windows.bat</span></div>
             </div>
           </li>
@@ -214,7 +214,7 @@
         <div class="prereq">
           <h3>Windows might warn you about unsigned software</h3>
           <dl>
-            <dd>Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.<br>The macOS app is signed and notarised by Apple, so it opens with nothing to click through.</dd>
+            <dd>Windows Defender may warn about the <span class="mono">.bat</span>: <strong>More info → Run anyway</strong>.</dd>
           </dl>
         </div>
         <div class="winsetup">
@@ -231,7 +231,7 @@
         <details><summary>Oh no… something went wrong</summary>
           <dl class="faq">
             <dt>The keyboard is unresponsive and some LEDs are lit</dt>
-            <dd>The keyboard is probably in DFU mode. Run the flasher again, or bring it back without flashing anything: on macOS open the app and answer <span class="mono">rescue</span> when it asks which image to flash, and on Windows run <span class="mono">ExitDFU_218e_v3_Windows.bat</span>.</dd>
+            <dd>The keyboard is probably in DFU mode. Run the flasher again, or bring it back without flashing anything by choosing <strong>Get the keyboard out of DFU mode</strong> when the flasher opens.</dd>
 
             <dt>Every LED is lit and nothing responds</dt>
             <dd>There is no valid firmware on it: the erase finished and the write did not. Run the flasher again. The instrument stays in DFU for exactly this reason.</dd>

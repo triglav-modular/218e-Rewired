@@ -27,10 +27,9 @@ on:
       - 'tools/validate_hex.py'
       - 'tools/Scan-Images.ps1'
       - 'tools/Find-DfuDevice.ps1'
+      - 'tools/Show-Menu.ps1'
       - 'Program218e_v3_Rewired_macOS.command'
       - 'Program218e_v3_Rewired_Windows.bat'
-      - 'ExitDFU_218e_v3_macOS.command'
-      - 'ExitDFU_218e_v3_Windows.bat'
       - 'mac/support/**'
       - 'windows/support/**'
       - 'THIRD-PARTY.md'
@@ -102,7 +101,8 @@ jobs:
           for f in dfu-programmer.exe sendmidi.exe zadig-2.8.exe; do
             cp "windows/support/$f" _site/kit/windows/support/
           done
-          cp tools/Scan-Images.ps1 tools/Find-DfuDevice.ps1 tools/validate_hex.py _site/kit/tools/
+          cp tools/Scan-Images.ps1 tools/Find-DfuDevice.ps1 tools/Show-Menu.ps1 \
+             tools/validate_hex.py _site/kit/tools/
           du -sh _site/kit/mac _site/kit/windows
           # No Jekyll: filenames here are ordinary, but underscore-prefixed
           # paths would be dropped silently and that is a nasty way to find out.
@@ -133,9 +133,7 @@ jobs:
               sys.exit("mac/Flasher.zip carries no notarisation ticket - "
                        "it was archived before stapling")
           for inside, repo in ((root + "Resources/Program218e_v3_Rewired_macOS.command",
-                                "Program218e_v3_Rewired_macOS.command"),
-                               (root + "Resources/ExitDFU_218e_v3_macOS.command",
-                                "ExitDFU_218e_v3_macOS.command")):
+                                "Program218e_v3_Rewired_macOS.command"),):
               if z.read(inside) != Path(repo).read_bytes():
                   sys.exit(f"{repo} has changed since the app was built - "
                            f"rebuild with tools/make-app.sh --notarize and "

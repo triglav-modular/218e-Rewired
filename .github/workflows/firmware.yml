@@ -96,7 +96,6 @@ jobs:
       - name: The scripts parse
         run: |
           bash -n Program218e_v3_Rewired_macOS.command
-          bash -n ExitDFU_218e_v3_macOS.command
 
       - name: The bundled tools run, and are universal
         run: |
@@ -106,6 +105,9 @@ jobs:
             || { echo "::error::dfu-programmer did not report an absent device"; exit 1; }
           lipo -archs mac/support/dfu/bin/dfu-programmer | grep -q "x86_64 arm64" \
             || { echo "::error::dfu-programmer is not universal"; exit 1; }
+
+      - name: The menu answers to arrow keys
+        run: python3 tools/test_menu.py
 
       - name: A download built by the page still holds a trusted app
         run: python3 tools/test_zip.py
