@@ -73,6 +73,65 @@
   box-sizing: border-box;
   font-variant: tabular-nums;
 }
+/* --- site header ----------------------------------------------------------
+   Matches the navigation on triglavmodular.hu: uppercase, 2px tracking,
+   right-aligned against the mark.  Rebuilt in this sheet rather than pulled
+   from the theme - the page has to stand up on its own on GitHub Pages too,
+   and one stylesheet is easier to keep true than a copy of someone else's. */
+.sitenav {
+  position: relative;
+  z-index: 2;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+/* Wider than the 820px article column, as it is on the site: the nav needs
+   765px on one line and the column leaves 780 for everything including the
+   mark, so at 820 it wrapped to two rows. */
+.sitenav-in {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.brand {
+  flex: 0 0 auto;
+  display: block;
+  line-height: 0;
+}
+.brand img {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: block;
+}
+.sitenav nav {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  justify-content: flex-end;
+}
+.sitenav nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  transition: color .15s;
+}
+.sitenav nav a:hover {
+  color: var(--accent);
+}
+/* Cart and account belong to the shop rather than to this page, so they sit
+   back a step without leaving the row. */
+.sitenav nav a.minor {
+  opacity: .62;
+}
+
 /* No widows or orphans.  text-wrap inherits, so pretty goes on the root and
    reaches every block on the page - including ones added later, which a list
    of selectors would have missed each time the markup changed.  It asks the
