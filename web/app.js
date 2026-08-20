@@ -575,26 +575,17 @@
                 }), [
                     'FACTORY_SHA256=' + GEN.factorySha256,
                     'FACTORY_OPTION=Buchla stock v36.9, exactly as you uploaded it.',
-                    'FACTORY_OPTION=Flashing this puts the instrument back and ' +
-                        'removes every Rewired change.'
+                    'FACTORY_OPTION=Flashing it removes every Rewired change.'
                 ]).join('\n') + '\n' }
             ]; },
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the app and the firmware folder',
                 'together, and double-click',
                 '',
-                '    218e Rewired Flasher.app',
-                '',
-                'It is signed and notarised by Apple, so it opens without any',
-                'warning to click through.'
+                '    218e Rewired Flasher.app'
             ], partial, {
                 firmware: 'firmware/218eV3_v369_Rewired_DFU.hex',
-                knows: ['The firmware folder names that checksum in image.txt, so the',
-                        'app installs this build without asking which file to use.'],
-                rescue: ['The keyboard stays in DFU mode and a power cycle will not',
-                         'release it. Open the app again and answer "rescue" when it',
-                         'asks which image to flash: it sends the command that',
-                         'releases the keyboard and flashes nothing.']
+                knows: []
             }); }
         },
         dlWin: {
@@ -635,10 +626,15 @@
             'Pitch: ' + o.volts_per_octave + ' V/octave'
         ];
         if (o.alternate_tunings && o.alternate_tunings.length) {
-            // No brackets: these lines are echoed inside a batch FOR block,
-            // where an unescaped ) ends the block instead of printing.
+            // A slot is { name, text }, so joining the array gave a row of
+            // [object Object].  No brackets either: these lines are echoed
+            // inside a batch FOR block, where an unescaped ) ends the block
+            // instead of printing.
             lines.push('Alternate tunings: ' + o.alternate_tunings.length +
-                       ' - ' + o.alternate_tunings.join(', '));
+                       ' - ' + o.alternate_tunings.map(function (t) {
+                           var named = (t && t.name) ? t.name : String(t);
+                           return named.replace(/\.scl$/i, '');
+                       }).join(', '));
         } else {
             lines.push('Alternate tunings: none');
         }
@@ -673,11 +669,8 @@
                      '  ' + where + '   the firmware you built',
                      '  SHA-256  ' + r.sha256, '',
                      '  ' + stock + '   the stock image you uploaded',
-                     '  SHA-256  ' + GEN.factorySha256, '',
-                     'The stock image is here so that going back does not mean',
-                     'going and finding it again. The flasher lists both and',
-                     'says which is which.', ''])
-            .concat(knows, ['', 'HOW TO USE IT', ''])
+                     '  SHA-256  ' + GEN.factorySha256, ''])
+            .concat(knows, knows.length ? [''] : [], ['HOW TO USE IT', ''])
             .concat(missing, howto)
             .concat(['', 'IF A FLASH IS INTERRUPTED', ''])
             .concat(rescue, ['',

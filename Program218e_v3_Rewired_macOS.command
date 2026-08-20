@@ -343,18 +343,25 @@ MENU_LINES=0
 
 # Keep a line inside the window.  A line that wraps takes two rows, the redraw
 # moves the cursor up by the number it printed, and the menu walks down the
-# screen leaving a copy of itself behind on every keypress.  Paths are cut from
-# the front: the end of one says which file it is, the start says /Users.
+# screen leaving a copy of itself behind on every keypress.
+#
+# Which end to cut depends on what the line is.  A path is cut from the front,
+# because the end says which file it is and the start says /Users; anything
+# else is a sentence, and cutting the front off a sentence takes away the half
+# that said what it was about.
 menu_fit() {
     local text="$1" width="${MENU_WIDTH:-0}"
     case "$width" in ''|*[!0-9]*) printf '%s' "$text"; return ;; esac
     [ "$width" -gt 20 ] || { printf '%s' "$text"; return; }
     width=$((width - 10))
-    if [ "${#text}" -gt "$width" ]; then
-        printf '...%s' "${text: $(( ${#text} - width + 3 )) }"
-    else
+    if [ "${#text}" -le "$width" ]; then
         printf '%s' "$text"
+        return
     fi
+    case "$text" in
+        /*) printf '...%s' "${text: $(( ${#text} - width + 3 )) }" ;;
+        *)  printf '%s...' "${text:0:$(( width - 3 ))}" ;;
+    esac
 }
 
 menu_draw() {
@@ -936,35 +943,42 @@ step "Checking the DFU tools"
 # not return an error when launched — macOS suspends it behind a modal dialog
 # and it waits indefinitely, so detecting the problem by running the tool means
 # hanging on it.  Reading the attribute costs nothing and never blocks.
+# Signed tools are a different matter.  Inside the app each of these carries
+# the same Developer ID as the app and was notarised with it, so Gatekeeper
+# runs them and the attribute means nothing - while the bundle is read-only,
+# doubly so when macOS is running it from a translocated copy, so trying to
+# clear it fails and the run stops for a problem that was never there.
+tools_are_signed() {
+    local candidate
+    for candidate in "$DFUPATH" "$SENDMIDI"; do
+        codesign -dv --verbose=2 "$candidate" 2>&1 \
+            | grep -q "Authority=Developer ID" || return 1
+    done
+    return 0
+}
+
 quarantined=""
 for candidate in "$DFUPATH" "$SENDMIDI"; do
     if xattr -p com.apple.quarantine "$candidate" >/dev/null 2>&1; then
         quarantined="yes"
     fi
 done
+if [ -n "$quarantined" ] && tools_are_signed; then
+    quarantined=""
+fi
 if [ -n "$quarantined" ]; then
-    echo "  These tools are quarantined because the package was downloaded."
-    echo "  macOS will not run them until that is cleared."
-    echo
-    echo "  It affects only the files in this package, on this machine."
-    echo
-    read -r -p "  Clear it now? [Y/n] " unquarantine
-    case "$unquarantine" in
-        [nN]*)
-            echo "  Then approve each tool in System Settings > Privacy & Security,"
-            echo "  or clear it yourself with:"
-            echo "    ${C_BOLD}xattr -dr com.apple.quarantine \"$PACKAGE_ROOT\"${C_RESET}"
-            fail "The DFU tools are blocked. The instrument was not touched."
-            ;;
-        *)
-            xattr -dr com.apple.quarantine "$PACKAGE_ROOT" 2>/dev/null
-            xattr -dr com.apple.quarantine "$RUNTIME_DIR" 2>/dev/null
-            if xattr -p com.apple.quarantine "$DFUPATH" >/dev/null 2>&1; then
-                fail "Could not clear it. Approve the tools in System Settings > Privacy & Security, then run this again."
-            fi
-            ok "Quarantine cleared"
-            ;;
-    esac
+    # Cleared, not asked about.  It affects only the files in this package, on
+    # this machine, and the only other answer on offer was to stop.
+    xattr -dr com.apple.quarantine "$PACKAGE_ROOT" 2>/dev/null
+    xattr -dr com.apple.quarantine "$RUNTIME_DIR" 2>/dev/null
+    if xattr -p com.apple.quarantine "$DFUPATH" >/dev/null 2>&1; then
+        echo "  The tools are quarantined and it could not be cleared, which"
+        echo "  usually means they are somewhere read-only."
+        echo "  Approve them in System Settings > Privacy & Security, or run:"
+        echo "    ${C_BOLD}xattr -dr com.apple.quarantine \"$PACKAGE_ROOT\"${C_RESET}"
+        fail "The DFU tools are blocked. The instrument was not touched."
+    fi
+    ok "Quarantine cleared"
 fi
 
 # Now it is safe to actually run it.  The deadline is a backstop: if macOS
