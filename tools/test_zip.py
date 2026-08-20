@@ -5,11 +5,14 @@ The page carries the signed bundle's entries across without touching them.
 This runs that code under jsc, writes what it produced, and asks ditto,
 stapler and spctl whether the app inside survived the trip.
 """
+import datetime
+import io as _io
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -42,6 +45,30 @@ def main():
     blob = bytes.fromhex(m.group(1))
     entries = int(re.search(r"^entries (\d+)$", r.stdout, re.M).group(1))
     print(f"  ok    carried {entries} entries out of the signed bundle")
+
+    # Dates come from the two DOS fields, and they are what the flasher sorts
+    # the images it finds by.  A fixed stamp made every file in every download
+    # claim the same instant, so "newest first" was ordering a set of ties.
+    produced = zipfile.ZipFile(_io.BytesIO(blob))
+    source = zipfile.ZipFile(SRC)
+    undated = [i.filename for i in produced.infolist() if i.date_time[1] == 0]
+    if undated:
+        print(f"  FAIL  {len(undated)} entries carry no date, e.g. {undated[0]}")
+        return 1
+    print("  ok    every entry carries a date")
+
+    fresh = produced.getinfo("firmware/218eV3_v369_Rewired_DFU.hex").date_time
+    age = abs(datetime.datetime(*fresh) - datetime.datetime.now())
+    if age > datetime.timedelta(days=1):
+        print(f"  FAIL  the firmware is dated {fresh}, not around now")
+        return 1
+    print(f"  ok    the firmware is dated when it was built ({fresh[0]}-{fresh[1]:02d}-{fresh[2]:02d})")
+
+    inside = "218e Rewired Flasher.app/Contents/MacOS/launcher"
+    if produced.getinfo(inside).date_time != source.getinfo(inside).date_time:
+        print("  FAIL  the app's own files were restamped")
+        return 1
+    print("  ok    the app's files keep the date it was built")
 
     tmp = Path(tempfile.mkdtemp())
     try:

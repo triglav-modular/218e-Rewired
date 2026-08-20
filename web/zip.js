@@ -28,8 +28,18 @@ var ZIP = (function () {
 
     // A fixed timestamp, so the same options always produce the same archive
     // byte for byte — the same property the firmware build has.
-    var DOS_TIME = 0x6000;              // 12:00:00
-    var DOS_DATE = ((2026 - 1980) << 9) | (1 << 5) | 1;   // 2026-01-01
+    // ZIP keeps the modification time in the two DOS fields, which is where
+    // the date on an extracted file comes from.  A fixed one made every file
+    // in every download claim the same instant, and the flasher sorts the
+    // images it finds by date - so "newest first" was ordering a set of ties.
+    function dosStamp(when) {
+        return {
+            time: (when.getHours() << 11) | (when.getMinutes() << 5) |
+                  (when.getSeconds() >> 1),
+            date: ((when.getFullYear() - 1980) << 9) |
+                  ((when.getMonth() + 1) << 5) | when.getDate()
+        };
+    }
 
     // Deflate is an optimisation, never a requirement: every failure path here
     // returns null and the entry is stored instead.  Reading a stream back
@@ -84,10 +94,12 @@ var ZIP = (function () {
     // compressed and already carrying their own permissions.  They are passed
     // through rather than rebuilt, which is the point of them.
     function build(files, carried) {
+        var now = dosStamp(new Date());
         var entries = files.map(function (f) {
             var raw = typeof f.data === 'string' ? utf8(f.data) : f.data;
             return { name: utf8(f.name), raw: raw, crc: crc32(raw),
-                     mode: f.exec ? 0o100755 : 0o100644 };
+                     mode: f.exec ? 0o100755 : 0o100644,
+                     time: now.time, date: now.date };
         });
         return Promise.all(entries.map(function (e) {
             return deflate(e.raw).then(function (packed) {
@@ -137,7 +149,11 @@ var ZIP = (function () {
                 crc: d.getUint32(at + 16, true),
                 body: bytes.subarray(from, from + comp),
                 raw: { length: d.getUint32(at + 24, true) },
-                mode: (d.getUint32(at + 38, true) >>> 16) || 0o100644
+                mode: (d.getUint32(at + 38, true) >>> 16) || 0o100644,
+                // Kept, not restamped: these are the app's own files and the
+                // date they carry is the date it was built.
+                time: d.getUint16(at + 12, true),
+                date: d.getUint16(at + 14, true)
             });
             at += 46 + nameLen + extraLen + commentLen;
         }
@@ -152,20 +168,22 @@ var ZIP = (function () {
             var name = new Uint8Array(p.length + e.name.length);
             name.set(p); name.set(e.name, p.length);
             return { name: name, method: e.method, crc: e.crc, body: e.body,
-                     raw: e.raw, mode: e.mode };
+                     raw: e.raw, mode: e.mode, time: e.time, date: e.date };
         });
     }
 
     function assemble(entries) {
         var parts = [], central = [], offset = 0;
+        var fallback = dosStamp(new Date());
         entries.forEach(function (e) {
+            if (!e.date) { e.time = fallback.time; e.date = fallback.date; }
             var h = new DataView(new ArrayBuffer(30));
             h.setUint32(0, 0x04034b50, true);
             h.setUint16(4, 20, true);
             h.setUint16(6, 0x0800, true);          // names are UTF-8
             h.setUint16(8, e.method, true);
-            h.setUint16(10, DOS_TIME, true);
-            h.setUint16(12, DOS_DATE, true);
+            h.setUint16(10, e.time, true);
+            h.setUint16(12, e.date, true);
             h.setUint32(14, e.crc, true);
             h.setUint32(18, e.body.length, true);
             h.setUint32(22, e.raw.length, true);
@@ -179,8 +197,8 @@ var ZIP = (function () {
             c.setUint16(6, 20, true);
             c.setUint16(8, 0x0800, true);
             c.setUint16(10, e.method, true);
-            c.setUint16(12, DOS_TIME, true);
-            c.setUint16(14, DOS_DATE, true);
+            c.setUint16(12, e.time, true);
+            c.setUint16(14, e.date, true);
             c.setUint32(16, e.crc, true);
             c.setUint32(20, e.body.length, true);
             c.setUint32(24, e.raw.length, true);
