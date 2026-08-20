@@ -118,7 +118,10 @@ function fail(m){print "BAD " m;failed=1;exit 1}
   type=h2d(substr(hex,7,2));len=h2d(substr(hex,1,2));addr=h2d(substr(hex,3,4))
   if(type==4)ela=h2d(substr(hex,9,4))
   if(type!=0&&type!=1&&type!=4&&type!=5)fail("record type " type " at line " NR " - not an AVR32 firmware image")
-  if(type==0){a=ela*65536+addr;if(!seen||a<lo)lo=a;seen=1;if(a+len-1>hi)hi=a+len-1;cov+=len}
+  if(len*2+10!=length(hex))fail("record at line " NR " declares " len " bytes but carries " (length(hex)-10)/2)
+  if(type==0){a=ela*65536+addr
+    if(seen&&a<prevend)fail("record at line " NR " overwrites flash already written - real images do not overlap")
+    if(!seen||a<lo)lo=a;seen=1;if(a+len-1>hi)hi=a+len-1;cov+=len;prevend=a+len}
   if(type==1)eof=1;next}
 NF{fail("line " NR " is not an Intel HEX record")}
 END{if(failed)exit 1

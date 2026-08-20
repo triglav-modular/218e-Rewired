@@ -115,9 +115,19 @@ jobs:
               return ':' + ''.join('%02X' % x for x in b + [(-sum(b)) & 0xFF])
           open('tiny.hex','w').write('\n'.join(
               [rec(4,0,[0x80,0x00]), rec(0,0x2000,[0]*16), rec(1,0,[])]) + '\n')
+          # The same sixteen bytes, written 1,024 times.  A validator that adds
+          # up declared record lengths calls this a 16 KB image; it covers
+          # sixteen bytes, and flashing it leaves the instrument unbootable.
+          open('overlap.hex','w').write('\n'.join(
+              [rec(4,0,[0x80,0x00])] + [rec(0,0x2000,[0]*16)] * 1024
+              + [rec(1,0,[])]) + '\n')
           PY
           if python3 tools/validate_hex.py tiny.hex; then
             echo "::error::a 16-byte image was accepted - it would erase the application and not replace it"
+            exit 1
+          fi
+          if python3 tools/validate_hex.py overlap.hex; then
+            echo "::error::an image that covers 16 bytes 1,024 times was accepted as 16 KB"
             exit 1
           fi
           # A real image is not available here, so prove the other direction

@@ -131,4 +131,16 @@ if [ "$NOTARIZE" = "1" ]; then
     xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait
     xcrun stapler staple "$APP"
     xcrun stapler validate "$APP"
+    # Rebuild the archive AFTER stapling.  The one just submitted holds the
+    # app as it was before the ticket was attached, so shipping it would hand
+    # people an app that has to ask Apple at launch and fails when they are
+    # offline - the exact case stapling exists to cover.
+    rm -f "$ZIP"
+    ditto -c -k --keepParent "$APP" "$ZIP"
+    # Prove the shipped artefact carries the ticket, not just the app on disk.
+    VERIFY="$(mktemp -d)"
+    ditto -x -k "$ZIP" "$VERIFY"
+    xcrun stapler validate "$VERIFY/$(basename "$APP")"
+    spctl -a -vv -t exec "$VERIFY/$(basename "$APP")"
+    rm -rf "$VERIFY"
 fi

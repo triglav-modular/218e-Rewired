@@ -31,7 +31,7 @@ $APP_HIGH = [int64]2147745791   # 0x8003FFFF
 function Test-IntelHex {
     param([string]$Path)
     $reason = 'ok' 
-    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0
+    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0; $prevEnd = $null
     try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return $false }
     if ($lines.Count -eq 0) { $script:LastReason = 'empty file'; return $false }
     foreach ($line in $lines) {
@@ -52,6 +52,11 @@ function Test-IntelHex {
         $len = $raw[0]
         $addr = ([int]$raw[1] -shl 8) -bor [int]$raw[2]
         $kind = $raw[3]
+        # A record that lies about its own length lies about its coverage.
+        if ($raw.Length -ne $len + 5) {
+            $script:LastReason = "record declares $len bytes but carries $($raw.Length - 5)"
+            return $false
+        }
         if ($kind -eq 4) {
             # Multiply rather than -shl 16: shifting 0x8000 left overflows
             # Int32 and lands negative, which put every app-region image
@@ -62,6 +67,14 @@ function Test-IntelHex {
             if ($null -eq $lo -or $a -lt $lo) { $lo = $a }
             $end = $a + $len - 1
             if ($null -eq $hi -or $end -gt $hi) { $hi = $end }
+            # Count real ground, not declared lengths: the same record
+            # repeated would otherwise add up to a plausible image while
+            # covering a few bytes of flash.
+            if ($null -ne $prevEnd -and $a -lt $prevEnd) {
+                $script:LastReason = "record overwrites flash already written - real images do not overlap"
+                return $false
+            }
+            $prevEnd = $a + $len
             $covered += $len
         } elseif ($kind -eq 1) {
             $sawEof = $true

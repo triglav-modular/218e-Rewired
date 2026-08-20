@@ -31,7 +31,7 @@ def main(path):
         print(f"BAD cannot read the file: {e}"); return 1
     if not lines:
         print("BAD empty file"); return 1
-    covered = 0
+    written = set()
     for n, line in enumerate(lines, 1):
         line = line.strip()
         if not line:
@@ -48,11 +48,22 @@ def main(path):
         if sum(raw) & 0xFF:
             print(f"BAD checksum mismatch at line {n} - the file is corrupted"); return 1
         length, addr, kind = raw[0], (raw[1] << 8) | raw[2], raw[3]
+        # The declared length has to match what the record carries, or the
+        # coverage it claims is not the coverage it has.
+        if len(raw) != length + 5:
+            print(f"BAD record at line {n} declares {length} bytes but carries "
+                  f"{len(raw) - 5}"); return 1
         if kind == 4:
             upper = ((raw[4] << 8) | raw[5]) << 16
         elif kind == 0:
-            covered += length
             a = upper + addr
+            # Count addresses, not record lengths.  Summing lengths let the
+            # same sixteen bytes be repeated 1,024 times and pass as a 16 KB
+            # image while covering sixteen bytes of flash.
+            if any(x in written for x in range(a, a + length)):
+                print(f"BAD record at line {n} overwrites flash already written "
+                      f"at 0x{a:X} - real images do not overlap"); return 1
+            written.update(range(a, a + length))
             lo = a if lo is None else min(lo, a)
             hi = a + length - 1 if hi is None else max(hi, a + length - 1)
         elif kind == 1:
@@ -72,6 +83,7 @@ def main(path):
         print(f"BAD starts at 0x{lo:X}, not the reset vector at 0x{APP_LOW:X} - "
               f"a partial image would erase the application and not replace it")
         return 1
+    covered = len(written)
     if covered < MIN_BYTES:
         print(f"BAD only {covered} bytes of firmware - a real image carries tens of "
               f"thousands, and flashing this would leave the instrument unbootable")
