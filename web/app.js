@@ -5,7 +5,8 @@
     'use strict';
 
     var $ = function (id) { return document.getElementById(id); };
-    var state = { factoryText: null, slots: null, calibration: null, result: null };
+    var state = { factoryText: null, factoryMtime: null, slots: null,
+                  calibration: null, result: null };
 
     function download(text, name, type) {
         var a = document.createElement('a');
@@ -93,6 +94,11 @@
                     'altered file is rejected rather than flashed.');
             } else {
                 state.factoryText = text;
+                // The date the file already had.  It goes back into the
+                // download with it, so the stock image keeps saying when it
+                // was made rather than when it was handed back.
+                state.factoryMtime = (file && file.lastModified)
+                    ? new Date(file.lastModified) : null;
                 $('drop').className = 'drop ok';
                 msg($('fileMsg'), 'ok', 'Factory image verified: SHA-256 matches. ' +
                     'It stays on this machine.');
@@ -723,11 +729,17 @@
                 // going back does not mean going and finding it again.  It is
                 // the file that was just uploaded, handed back to the person
                 // who uploaded it - it never left this browser.
+                //
+                // It keeps its own date.  A browser that will not say gets a
+                // minute before this build instead: the list of images is
+                // ordered by date, and two files written in the same second
+                // order arbitrarily, which would sometimes put the stock image
+                // above the build and preselect it.
                 var stock = built.replace(/[^/]+$/, '218eV3_v369_DFU.hex');
-                var older = new Date(Date.now() - 60000);
+                var stockDate = state.factoryMtime || new Date(Date.now() - 60000);
                 var files = [{ name: built, data: r.hex },
                              { name: stock, data: state.factoryText,
-                               mtime: older }]
+                               mtime: stockDate }]
                     .concat(p.scripts(r), tools,
                             [{ name: 'README.txt', data: p.note(r, offline) }]);
                 if (offline) {
