@@ -431,13 +431,33 @@ font inside `style.css` changes `style.css` and its own hash has to be taken
 afterwards. The asset check that follows fails the build if any reference
 lost its stamp, because an unstamped file is one that will go stale silently.
 
-`index.html` itself cannot be versioned - it is the URL people type. GitHub
-Pages serves it with `max-age=600`, so a browser that already has it waits up
-to ten minutes before it sees new asset URLs at all. To remove that wait the
-worker has to say so, since Pages offers no way to set headers:
+### The remaining ten minutes
+
+`index.html` cannot be versioned - it is the URL people type - and GitHub Pages
+serves it with `max-age=600`. A browser that already has the page waits up to
+ten minutes before it sees the new asset URLs at all. Pages offers no way to
+set headers, so the worker has to.
+
+**1. Find the worker.** In the Cloudflare dashboard, pick the
+`triglavmodular.hu` zone, then **Workers Routes** in the sidebar. The route
+covering `triglavmodular.hu/mods/218e-Rewired*` names the worker it runs.
+Click that name to open it, then **Edit code**. (The same worker is also under
+**Workers & Pages** at account level.)
+
+**2. Find where it returns.** Somewhere the worker fetches GitHub Pages and
+returns the response - a line like `return fetch(upstream, request)` or
+`const res = await fetch(...)` followed by `return res`.
+
+**3. Wrap that return.** A `Response` from `fetch` has immutable headers, so
+the headers cannot be set on it directly; construct a new one around the same
+body. Replace the return with:
 
 ```js
 const res = await fetch(upstream, request);
+
+// The page is the one file that cannot carry a version in its URL, so it is
+// the one that has to be revalidated.  Everything else is fetched under a
+// name containing its own hash and can be cached as long as anyone likes.
 if ((res.headers.get('content-type') || '').includes('text/html')) {
     const out = new Response(res.body, res);
     out.headers.set('cache-control', 'no-cache');
@@ -448,6 +468,30 @@ return res;
 
 `no-cache` rather than `no-store`: the browser still keeps the page and still
 revalidates it, so an unchanged page costs a 304 rather than a download.
+
+**4. Deploy**, and check it took:
+
+```
+curl -sSI https://triglavmodular.hu/mods/218e-Rewired/ | grep -i cache-control
+```
+
+`cache-control: no-cache` means it is in place. Still `max-age=600` means the
+branch did not match - check that the response really is `text/html` and that
+you edited the return the page actually takes.
+
+### Why four hours
+
+`max-age=14400` on `style.css` is not from Pages, which sends `max-age=600`.
+It is Cloudflare's **Browser Cache TTL**, which defaults to 4 hours and
+overrides the origin for anything it caches. **Caching - Configuration -
+Browser Cache TTL - Respect Existing Headers** turns that off. The version
+stamps make it moot, since a changed file arrives under a name nothing has
+cached, but it explains why a stylesheet went stale for an afternoon.
+
+Assets already cached under their old unversioned names stay in the edge cache
+until they expire. They are no longer referenced by anything, so they do no
+harm; **Caching - Configuration - Purge Everything** clears them if you would
+rather not wait.
 
 ## Rebuilding dfu-programmer
 
