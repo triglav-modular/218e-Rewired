@@ -487,6 +487,30 @@ run_rescue() {
     return 1
 }
 
+# Terminal opens 80x24, and the banner alone is 22 lines, so by the time the
+# menu is drawn the top of it has scrolled off.  Ask for a window that fits.
+# Only ever grow it: a window someone has sized deliberately stays that size.
+fit_window() {
+    [ -t 1 ] || return 0
+    local size rows cols want_rows=40 want_cols=80
+    # stty, not tput: tput needs TERM, and when it is unset or unknown the
+    # error is silent and the fallback would resize a window that was already
+    # the right size.  Not knowing the size means leaving it alone.
+    size="$(stty size 2>/dev/null)" || return 0
+    rows="${size%% *}"
+    cols="${size##* }"
+    case "$rows" in ''|*[!0-9]*) return 0 ;; esac
+    case "$cols" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$rows" -gt "$want_rows" ] && want_rows="$rows"
+    [ "$cols" -gt "$want_cols" ] && want_cols="$cols"
+    if [ "$rows" -lt 40 ] || [ "$cols" -lt 80 ]; then
+        printf '\033[8;%d;%dt' "$want_rows" "$want_cols"
+        # The resize is asynchronous: without a beat the banner is drawn into
+        # the old window and scrolls anyway.
+        sleep 0.3
+    fi
+}
+
 banana() {
 cat <<'BANANA'
                                   .-==-:
@@ -514,6 +538,7 @@ cat <<'BANANA'
 BANANA
 }
 
+fit_window
 echo ""
 banana
 echo ""
@@ -542,23 +567,21 @@ case "$MENU_CHOICE" in
 esac
 
 echo "======================================================================"
-echo "  THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3"
+echo "  READ THIS BEFORE YOU FLASH ANYTHING"
 echo ""
-echo "  It won't work on the 218, the 218r, the 218e v1 or v2, or any other"
-echo "  touchplate controller."
+echo "  THIS FIRMWARE IS FOR THE BUCHLA 218e V3 ONLY.  It won't work on the"
+echo "  218, the 218r, the 218e V1 or V2, or any other touchplate controller."
 echo ""
-echo "  USING THIS TOOL AND FIRMWARE IS ENTIRELY AT YOUR OWN RISK."
-echo ""
-echo "  This is an experimental, unofficial firmware, not made or supported"
-echo "  by Buchla.  It also probably voids your warranty.  It has been tested"
-echo "  on ONE instrument.  It can brick your keyboard.  Recovering a bricked"
+echo "  USING THIS TOOL AND FIRMWARE IS ENTIRELY AT YOUR OWN RISK.  This is an"
+echo "  experimental, unofficial firmware, not made or supported by Buchla."
+echo "  Flashing it will probably void your warranty.  Recovering a bricked"
 echo "  unit may need JTAG hardware and opening the instrument, or may not be"
 echo "  possible at all."
 echo ""
 echo "  A failed flash usually leaves the keyboard in DFU mode, where the"
-echo "  flasher can try again, but there is no guarantee that it will"
-echo "  succeed.  If losing the use of your 218e would be a problem, stop"
-echo "  here and keep the factory firmware."
+echo "  flasher can try again, but THERE IS NO GUARANTEE THAT IT WILL SUCCEED."
+echo "  If losing the use of your 218e would be a problem, stop here and keep"
+echo "  the factory firmware."
 echo ""
 echo "  No warranty of any kind.  Not the authors, nor Buchla is liable for"
 echo "  damage, loss of use, or a keyboard that no longer works."
@@ -581,7 +604,10 @@ scan_images() {
     # Trailing slashes are stripped so the same file reached through two
     # patterns dedupes as one string.
     {
-        for dir in "${FIRMWARE_DIR%/}" "${SCRIPT_DIR%/}" \
+        # WORK_DIR is the folder the app sits in.  Inside a bundle SCRIPT_DIR
+        # is Contents/Resources, so "beside the script" means inside the app -
+        # an image unzipped next to it would never have been found.
+        for dir in "${FIRMWARE_DIR%/}" "${WORK_DIR%/}" "${SCRIPT_DIR%/}" \
                    "$HOME/Downloads" "$HOME/Desktop"; do
             for candidate in "$dir"/*.hex; do
                 [ -f "$candidate" ] || continue
@@ -686,7 +712,7 @@ fi
 
 if [ -z "$FIRMWARE" ]; then
     echo
-    echo "  Looked in firmware/, beside this script, Downloads and Desktop."
+    echo "  Looked in firmware/, beside the flasher, Downloads and Desktop."
     echo "  No flashable 218e image is there."
     echo
     echo "  No firmware ships with this package — the patched image is Buchla's"

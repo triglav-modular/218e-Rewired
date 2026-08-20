@@ -63,11 +63,12 @@ cat > "$APP/Contents/MacOS/launcher" <<'LAUNCH'
 #!/bin/bash
 RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
 BESIDE="$(cd "$(dirname "$0")/../../.." && pwd)"
-# A download arrives as the app with its firmware folder beside it, so work
-# there: the image is already in reach and the log lands where the person
-# unzipped it.  Dragged to /Applications there is no such folder and nowhere
-# writable next to it, so fall back to one of our own.
-if [ -d "$BESIDE/firmware" ] && [ -w "$BESIDE" ]; then
+# Work in the folder the app was unzipped into: the image is already there,
+# whether in a firmware folder or loose beside the app, and the log lands
+# where the person put things rather than somewhere they have to go looking.
+# Dragged to /Applications that folder is not writable, so fall back to one
+# of our own.
+if [ -w "$BESIDE" ]; then
     WORK="$BESIDE"
 else
     WORK="$HOME/Documents/218e Rewired"

@@ -5,11 +5,14 @@ The menu reads raw keys and redraws by moving the cursor, so a pipe proves
 nothing about it: bash takes the no-terminal path there.  This opens a pty,
 presses actual arrow keys, and checks what came back.
 """
+import fcntl
 import os
 import pty
 import re
 import select
+import struct
 import sys
+import termios
 import time
 from pathlib import Path
 
@@ -75,6 +78,52 @@ def harness(items, details, keys, extra=""):
     return (int(m.group(1)) if m else None), text
 
 
+def window(rows, cols, term="xterm-256color"):
+    """Run fit_window in a terminal of a given size; return what it asked for."""
+    src = FLASHER.read_text(encoding="utf-8")
+    i = src.index("# Terminal opens 80x24")
+    j = src.index("banana() {", i)
+    tmp = REPO / "build" / "_fit_test.sh"
+    tmp.parent.mkdir(exist_ok=True)
+    tmp.write_text(src[i:j] + 'fit_window\nprintf "DONE\\n"\n', encoding="utf-8")
+
+    master, slave = pty.openpty()
+    # The size has to be set before the shell starts, or it reads the old one.
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    pid = os.fork()
+    if pid == 0:
+        os.setsid()
+        os.dup2(slave, 0); os.dup2(slave, 1); os.dup2(slave, 2)
+        os.close(master); os.close(slave)
+        env = dict(os.environ)
+        if term:
+            env["TERM"] = term
+        else:
+            env.pop("TERM", None)
+        os.execve("/bin/bash", ["/bin/bash", str(tmp)], env)
+    os.close(slave)
+    out = b""
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        r, _, _ = select.select([master], [], [], 0.2)
+        if not r:
+            continue
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out += chunk
+        if b"DONE" in out:
+            break
+    os.close(master)
+    os.waitpid(pid, 0)
+    tmp.unlink(missing_ok=True)
+    m = re.search(r"\x1b\[8;(\d+);(\d+)t", out.decode("utf-8", "replace"))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
 def main():
     items = ["Flash firmware onto the 218e", "Get the keyboard out of DFU mode"]
     details = ["Erases the chip.", "Sends START."]
@@ -117,6 +166,22 @@ def main():
     else:
         print(f"  FAIL  multi-line details: chose {got}")
         failures += 1
+
+    # The banner is 22 lines and Terminal opens 24, so the window is grown to
+    # fit - but only grown.  This used to read the size with tput, which needs
+    # TERM; without it tput failed silently and every window got resized,
+    # including ones that were already the right size.
+    for rows, cols, term, want, name in (
+            (24, 80, "xterm-256color", (40, 80), "a default 80x24 window is grown"),
+            (50, 120, "xterm-256color", None, "a window already large is left alone"),
+            (24, 200, "xterm-256color", (40, 200), "a wide short window keeps its width"),
+            (50, 120, None, None, "no TERM does not cause a needless resize")):
+        got = window(rows, cols, term)
+        if got == want:
+            print(f"  ok    {name}")
+        else:
+            print(f"  FAIL  {name}: asked for {got}, expected {want}")
+            failures += 1
 
     print()
     print("  menu is fine" if not failures else f"  {failures} failed")

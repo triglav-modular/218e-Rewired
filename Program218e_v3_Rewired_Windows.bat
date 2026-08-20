@@ -45,6 +45,9 @@ SET "FIRMWARE="
 SET "TOTAL_STEPS=7"
 SET "STEP=0"
 
+REM The console opens shorter than the banner, so its top scrolls away before
+REM anyone sees it.  A no-op under Windows Terminal, which is already taller.
+MODE CON: COLS=80 LINES=40 >NUL 2>&1
 ECHO.
 CALL :banana
 
@@ -76,23 +79,21 @@ IF NOT "!PICK!"=="1" (
 ECHO.
 
 ECHO ======================================================================
-ECHO   THIS FIRMWARE IS ONLY FOR THE BUCHLA 218e V3
+ECHO   READ THIS BEFORE YOU FLASH ANYTHING
 ECHO.
-ECHO   It won't work on the 218, the 218r, the 218e v1 or v2, or any other
-ECHO   touchplate controller.
+ECHO   THIS FIRMWARE IS FOR THE BUCHLA 218e V3 ONLY.  It won't work on the
+ECHO   218, the 218r, the 218e V1 or V2, or any other touchplate controller.
 ECHO.
-ECHO   USING THIS TOOL AND FIRMWARE IS ENTIRELY AT YOUR OWN RISK.
-ECHO.
-ECHO   This is an experimental, unofficial firmware, not made or supported
-ECHO   by Buchla.  It also probably voids your warranty.  It has been tested
-ECHO   on ONE instrument.  It can brick your keyboard.  Recovering a bricked
+ECHO   USING THIS TOOL AND FIRMWARE IS ENTIRELY AT YOUR OWN RISK.  This is an
+ECHO   experimental, unofficial firmware, not made or supported by Buchla.
+ECHO   Flashing it will probably void your warranty.  Recovering a bricked
 ECHO   unit may need JTAG hardware and opening the instrument, or may not be
 ECHO   possible at all.
 ECHO.
 ECHO   A failed flash usually leaves the keyboard in DFU mode, where the
-ECHO   flasher can try again, but there is no guarantee that it will
-ECHO   succeed.  If losing the use of your 218e would be a problem, stop
-ECHO   here and keep the factory firmware.
+ECHO   flasher can try again, but THERE IS NO GUARANTEE THAT IT WILL SUCCEED.
+ECHO   If losing the use of your 218e would be a problem, stop here and keep
+ECHO   the factory firmware.
 ECHO.
 ECHO   No warranty of any kind.  Not the authors, nor Buchla is liable for
 ECHO   damage, loss of use, or a keyboard that no longer works.
