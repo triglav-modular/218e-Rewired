@@ -29,6 +29,7 @@ on:
       - 'tools/Find-DfuDevice.ps1'
       - 'tools/Show-Menu.ps1'
       - 'tools/version-assets.py'
+      - 'tools/sync-menu.py'
       - 'Program218e_v3_Rewired_macOS.command'
       - 'Program218e_v3_Rewired_Windows.bat'
       - 'mac/Flasher.zip'
@@ -37,6 +38,11 @@ on:
       - 'THIRD-PARTY.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
+  # The header menu is mirrored from triglavmodular.hu at build time, and that
+  # site changing is not an event this repository can see.  A weekly rebuild is
+  # what carries such a change onto the page without anyone pushing here.
+  schedule:
+    - cron: '17 4 * * 1'
 
 permissions:
   contents: read
@@ -89,6 +95,11 @@ jobs:
           # added later, which is exactly how images/ and fonts/ came to 404
           # on a page that referenced them.
           rsync -a --exclude '*.py' --exclude '_*' web/ _site/
+          # The header menu belongs to triglavmodular.hu, so it is resolved
+          # here rather than trusted from the copy in the repository.  It
+          # cannot fail the build: unreachable or unrecognisable, it leaves
+          # the committed menu alone and says why.
+          python3 tools/sync-menu.py _site/index.html
           # The flashing tools travel with a download, so the page has to be
           # able to fetch them.  No VC_redist and no msvcp140.dll: our
           # dfu-programmer links its runtime statically, so there is nothing
@@ -115,6 +126,16 @@ jobs:
           # paths would be dropped silently and that is a nasty way to find out.
           touch _site/.nojekyll
           find _site -type f | sort
+
+      - name: The committed menu should be in step with the main site
+        # What deploys is already current - the step above saw to that.  This
+        # only says whether the copy in the repository has fallen behind, which
+        # matters because that is the one a local clone opens with no network,
+        # and the one anybody reads to see what the menu says.
+        run: |
+          if ! python3 tools/sync-menu.py --check web/index.html; then
+            echo "::warning::web/index.html's menu is behind triglavmodular.hu; run tools/sync-menu.py and commit"
+          fi
 
       - name: The committed app must match the sources it was built from
         run: |
