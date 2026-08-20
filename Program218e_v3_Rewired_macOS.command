@@ -46,6 +46,27 @@ fi
 
 FIRMWARE_DIR="${REWIRED_WORKDIR:-$PACKAGE_ROOT}/firmware"
 FIRMWARE_NAME="218eV3_v369_Rewired_DFU.hex"
+
+# The builder page normally stamps this script with the checksum of the image
+# it built.  It cannot stamp the signed app - editing a byte of it breaks the
+# seal and Gatekeeper stops trusting it - so a download that carries the app
+# names its image in a file beside the firmware instead, and we read it here.
+# Anyone can edit that file, but anyone can edit a stamped script too, so this
+# gives up nothing: both catch a download that arrived damaged or got mixed up
+# with another build, which is what the check is for.
+MANIFEST="$FIRMWARE_DIR/image.txt"
+if [ -f "$MANIFEST" ]; then
+    while IFS='=' read -r key value; do
+        case "$key" in
+            EXPECTED_SHA256)
+                case "$value" in
+                    [0-9a-f]*) [ ${#value} -eq 64 ] && EXPECTED_SHA256="$value" ;;
+                esac ;;
+            FIRMWARE_VERSION)
+                [ -n "$value" ] && FIRMWARE_VERSION="$value" ;;
+        esac
+    done < "$MANIFEST"
+fi
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 DFU_BUNDLED="$RUNTIME_DIR/support/dfu/bin/dfu-programmer"
 
@@ -371,6 +392,20 @@ scan_images() {
 # Accept a chosen image.  The flasher installs any valid 218e image; the
 # checksum it was built with is only a label, marking the build that shipped
 # with this package so it can be told apart in the list.  It is not a gate.
+# An interrupted flash leaves the keyboard in DFU, and what that needs is the
+# rescue, not another flash.  As a loose package the rescue is a second file to
+# double-click; inside the app it is sealed in the bundle where nobody will
+# find it, so the way to it is from here.
+rescue_if_asked() {
+    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        rescue)
+            EXIT_DFU="$SCRIPT_DIR/ExitDFU_218e_v3_macOS.command"
+            [ -f "$EXIT_DFU" ] || fail "The rescue script is not beside this one."
+            echo
+            exec bash "$EXIT_DFU" ;;
+    esac
+}
+
 accept_choice() {
     local path="$1" sha
     sha="$(shasum -a 256 "$path" | cut -d" " -f1)"
@@ -440,8 +475,9 @@ if [ -z "$FIRMWARE" ]; then
 $images
 EOF
         echo
-        read -r -p "  Which one? [1-$count, or return to stop] " pick
+        read -r -p "  Which one? [1-$count, rescue, or return to stop] " pick
         [ -n "$pick" ] || fail "Nothing chosen. The instrument was not touched."
+        rescue_if_asked "$pick"
         case "$pick" in
             ''|*[!0-9]*) fail "Not a number. The instrument was not touched." ;;
         esac
@@ -468,11 +504,13 @@ if [ -z "$FIRMWARE" ]; then
     echo "  the searched folders, so copy it into firmware/ to flash it."
     echo
     echo "  Or point this at one: drag its .hex into this window, or press"
-    echo "  return to stop."
-    read -r -p "  Image to flash: " other
+    echo "  return to stop. If the keyboard is stuck in DFU from an"
+    echo "  interrupted flash, type ${C_BOLD}rescue${C_RESET} to get it out."
+    read -r -p "  Image to flash, or rescue: " other
     # Terminal drag-and-drop appends a space and may escape spaces in the path.
     other="$(printf '%s' "$other" | sed 's/\\//g; s/[[:space:]]*$//')"
     [ -n "$other" ] || fail "No firmware image found."
+    rescue_if_asked "$other"
     [ -f "$other" ] || fail "No such file: $other"
     case "$(validate_hex "$other")" in
         OK*) ;;

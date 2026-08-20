@@ -80,10 +80,14 @@ var ZIP = (function () {
     // marks a file that must come out of the archive runnable: without the
     // mode in the external attributes, an extracted dfu-programmer has no
     // execute bit and the flasher cannot run it.
-    function build(files) {
+    // carried: entries taken whole from another archive by unpack(), already
+    // compressed and already carrying their own permissions.  They are passed
+    // through rather than rebuilt, which is the point of them.
+    function build(files, carried) {
         var entries = files.map(function (f) {
             var raw = typeof f.data === 'string' ? utf8(f.data) : f.data;
-            return { name: utf8(f.name), raw: raw, crc: crc32(raw), exec: !!f.exec };
+            return { name: utf8(f.name), raw: raw, crc: crc32(raw),
+                     mode: f.exec ? 0o100755 : 0o100644 };
         });
         return Promise.all(entries.map(function (e) {
             return deflate(e.raw).then(function (packed) {
@@ -95,7 +99,61 @@ var ZIP = (function () {
                 }
                 return e;
             });
-        })).then(assemble);
+        })).then(function (built) {
+            return assemble((carried || []).concat(built));
+        });
+    }
+
+    // Read the entries out of a ZIP without decompressing them.  A signed .app
+    // has to come out of our archive byte for byte or macOS stops trusting it,
+    // and re-deflating it would also mean inflating it first - so the stored
+    // bytes, the CRC and the mode are copied across exactly as they arrived.
+    function unpack(bytes) {
+        var d = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        var end = -1;
+        // The end record is last, after a comment of up to 64K.
+        for (var i = bytes.length - 22; i >= 0 && i > bytes.length - 22 - 65536; i--) {
+            if (d.getUint32(i, true) === 0x06054b50) { end = i; break; }
+        }
+        if (end < 0) throw new Error('not a ZIP');
+        var count = d.getUint16(end + 10, true);
+        var at = d.getUint32(end + 16, true);
+        var out = [];
+        for (var n = 0; n < count; n++) {
+            if (d.getUint32(at, true) !== 0x02014b50) throw new Error('bad ZIP directory');
+            var nameLen = d.getUint16(at + 28, true);
+            var extraLen = d.getUint16(at + 30, true);
+            var commentLen = d.getUint16(at + 32, true);
+            var comp = d.getUint32(at + 20, true);
+            var local = d.getUint32(at + 42, true);
+            // The local header's extra field is free to differ from the one in
+            // the directory, so the data offset is read from the local header.
+            if (d.getUint32(local, true) !== 0x04034b50) throw new Error('bad ZIP entry');
+            var from = local + 30 + d.getUint16(local + 26, true)
+                                 + d.getUint16(local + 28, true);
+            out.push({
+                name: bytes.subarray(at + 46, at + 46 + nameLen),
+                method: d.getUint16(at + 10, true),
+                crc: d.getUint32(at + 16, true),
+                body: bytes.subarray(from, from + comp),
+                raw: { length: d.getUint32(at + 24, true) },
+                mode: (d.getUint32(at + 38, true) >>> 16) || 0o100644
+            });
+            at += 46 + nameLen + extraLen + commentLen;
+        }
+        return out;
+    }
+
+    // Put every entry of an archive under a folder, so a bundle can be dropped
+    // into a download beside the files that go with it.
+    function under(prefix, entries) {
+        var p = utf8(prefix);
+        return entries.map(function (e) {
+            var name = new Uint8Array(p.length + e.name.length);
+            name.set(p); name.set(e.name, p.length);
+            return { name: name, method: e.method, crc: e.crc, body: e.body,
+                     raw: e.raw, mode: e.mode };
+        });
     }
 
     function assemble(entries) {
@@ -128,9 +186,9 @@ var ZIP = (function () {
             c.setUint32(24, e.raw.length, true);
             c.setUint16(28, e.name.length, true);
             // Unix mode in the high half: 0100755 for an executable, 0100644
-            // otherwise.  Bit 0 of the low half is the DOS read-only flag,
-            // left clear.
-            c.setUint32(38, ((e.exec ? 0o100755 : 0o100644) << 16) >>> 0, true);
+            // otherwise, or whatever mode a carried entry arrived with.  Bit 0
+            // of the low half is the DOS read-only flag, left clear.
+            c.setUint32(38, (e.mode << 16) >>> 0, true);
             c.setUint32(42, offset, true);
             central.push(new Uint8Array(c.buffer), e.name);
             offset += 30 + e.name.length + e.body.length;
@@ -146,5 +204,5 @@ var ZIP = (function () {
                         { type: 'application/zip' });
     }
 
-    return { build: build, crc32: crc32 };
+    return { build: build, crc32: crc32, unpack: unpack, under: under };
 })();

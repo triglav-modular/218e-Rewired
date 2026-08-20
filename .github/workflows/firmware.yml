@@ -107,6 +107,9 @@ jobs:
           lipo -archs mac/support/dfu/bin/dfu-programmer | grep -q "x86_64 arm64" \
             || { echo "::error::dfu-programmer is not universal"; exit 1; }
 
+      - name: A download built by the page still holds a trusted app
+        run: python3 tools/test_zip.py
+
       - name: A partial image is refused
         run: |
           python3 - <<'PY'

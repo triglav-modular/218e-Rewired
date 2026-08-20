@@ -54,7 +54,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp -R "$REPO/mac/support" "$APP/Contents/Resources/support"
 cp "$REPO/Program218e_v3_Rewired_macOS.command" "$APP/Contents/Resources/"
 cp "$REPO/ExitDFU_218e_v3_macOS.command"        "$APP/Contents/Resources/"
-rm -f "$APP/Contents/Resources/support/.DS_Store"
+find "$APP/Contents/Resources/support" -name .DS_Store -delete
 
 # --- the launcher ----------------------------------------------------------
 # The flasher is an interactive terminal program, so the app's job is to open
@@ -63,15 +63,26 @@ rm -f "$APP/Contents/Resources/support/.DS_Store"
 cat > "$APP/Contents/MacOS/launcher" <<'LAUNCH'
 #!/bin/bash
 RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
-WORK="$HOME/Documents/218e Rewired"
-mkdir -p "$WORK"
-cat > "$WORK/.run.command" <<RUN
+BESIDE="$(cd "$(dirname "$0")/../../.." && pwd)"
+# A download arrives as the app with its firmware folder beside it, so work
+# there: the image is already in reach and the log lands where the person
+# unzipped it.  Dragged to /Applications there is no such folder and nowhere
+# writable next to it, so fall back to one of our own.
+if [ -d "$BESIDE/firmware" ] && [ -w "$BESIDE" ]; then
+    WORK="$BESIDE"
+else
+    WORK="$HOME/Documents/218e Rewired"
+fi
+# The runner is ours, not the user's, so it does not go in with their files.
+RUNDIR="$HOME/Library/Application Support/218e Rewired"
+mkdir -p "$WORK" "$RUNDIR"
+cat > "$RUNDIR/run.command" <<RUN
 #!/bin/bash
 export REWIRED_WORKDIR="$WORK"
 exec "$RES/Program218e_v3_Rewired_macOS.command"
 RUN
-chmod +x "$WORK/.run.command"
-open -a Terminal "$WORK/.run.command"
+chmod +x "$RUNDIR/run.command"
+open -a Terminal "$RUNDIR/run.command"
 LAUNCH
 chmod +x "$APP/Contents/MacOS/launcher"
 
@@ -138,12 +149,24 @@ if [ "$NOTARIZE" = "1" ]; then
     # app as it was before the ticket was attached, so shipping it would hand
     # people an app that has to ask Apple at launch and fails when they are
     # offline - the exact case stapling exists to cover.
+    #
+    # --norsrc --noextattr drops the ._ AppleDouble twins ditto writes for the
+    # extended attributes.  Here they carry nothing but com.apple.provenance,
+    # and an unzip that does not understand them leaves twenty-five ._ files
+    # scattered through the bundle.  The ticket is an ordinary file, so it
+    # travels either way.
     rm -f "$ZIP"
-    ditto -c -k --keepParent "$APP" "$ZIP"
+    ditto -c -k --keepParent --norsrc --noextattr "$APP" "$ZIP"
     # Prove the shipped artefact carries the ticket, not just the app on disk.
     VERIFY="$(mktemp -d)"
     ditto -x -k "$ZIP" "$VERIFY"
     xcrun stapler validate "$VERIFY/$(basename "$APP")"
     spctl -a -vv -t exec "$VERIFY/$(basename "$APP")"
     rm -rf "$VERIFY"
+
+    # The builder page hands out this exact archive, so it has to be in the
+    # repository: the page is published by CI, and CI has neither the Developer
+    # ID nor the notary credentials - deliberately.
+    cp "$ZIP" "$REPO/mac/Flasher.zip"
+    echo "  updated mac/Flasher.zip - commit it to publish the app"
 fi

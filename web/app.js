@@ -547,37 +547,41 @@
     var KIT = {
         dlMac: {
             zip: 'Rewired-macOS.zip',
-            tools: [
-                ['kit/mac/support/sendmidi', 'mac/support/sendmidi', true],
-                ['kit/mac/support/dfu/bin/dfu-programmer',
-                 'mac/support/dfu/bin/dfu-programmer', true],
-                ['kit/mac/support/dfu/Frameworks/libusb-1.0.0.dylib',
-                 'mac/support/dfu/Frameworks/libusb-1.0.0.dylib', false],
-                ['kit/tools/validate_hex.py', 'tools/validate_hex.py', false]
-            ],
+            // Everything the flasher needs is sealed inside the app, so there
+            // is nothing to collect alongside it.
+            tools: [],
+            bundle: 'kit/mac/Flasher.zip',
+            firmware: 'firmware/218eV3_v369_Rewired_DFU.hex',
+            // The app is signed, so it is the same app for everyone and cannot
+            // be stamped with this build's checksum the way a loose script is.
+            // The image names itself beside the firmware instead.
             scripts: function (r) { return [
-                { name: 'Program218e_v3_Rewired_macOS.command', data: r.scripts.flasherMac, exec: true },
-                { name: 'ExitDFU_218e_v3_macOS.command', data: r.scripts.exitMac, exec: true }
+                { name: 'firmware/image.txt', data: [
+                    '# Written by the builder page. The flasher reads this to know',
+                    '# which image this download was made for.',
+                    'EXPECTED_SHA256=' + r.sha256,
+                    'FIRMWARE_VERSION=Rewired ' + GEN.version +
+                        ' (' + r.sha256.slice(0, 8) + ')',
+                    ''
+                ].join('\n') }
             ]; },
             note: function (r, partial) { return readme(r, [
-                'Unzip it anywhere, keeping the folders together.',
+                'Unzip it anywhere, keeping the app and the firmware folder',
+                'together, and double-click',
                 '',
-                'A download is quarantined and this software is not signed, so',
-                'macOS will block it. Run this once, from inside the folder:',
+                '    218e Rewired Flasher.app',
                 '',
-                '    xattr -dr com.apple.quarantine .',
-                '',
-                'Then double-click',
-                '',
-                '    Program218e_v3_Rewired_macOS.command',
-                '',
-                'If you skip that, go to System Settings > Privacy & Security and',
-                'press Open Anyway. Control-clicking and choosing Open does not work.',
-                '',
-                'Or run it from Terminal, which is never blocked:',
-                '',
-                '    bash Program218e_v3_Rewired_macOS.command'
-            ], partial); }
+                'It is signed and notarised by Apple, so it opens without any',
+                'warning to click through.'
+            ], partial, {
+                firmware: 'firmware/218eV3_v369_Rewired_DFU.hex',
+                knows: ['The firmware folder names that checksum in image.txt, so the',
+                        'app installs this build without asking which file to use.'],
+                rescue: ['The keyboard stays in DFU mode and a power cycle will not',
+                         'release it. Open the app again and answer "rescue" when it',
+                         'asks which image to flash: it sends the command that',
+                         'releases the keyboard and flashes nothing.']
+            }); }
         },
         dlWin: {
             zip: 'Rewired-Windows.zip',
@@ -608,7 +612,7 @@
         }
     };
 
-    function readme(r, howto, partial) {
+    function readme(r, howto, partial, opts) {
         var missing = partial ? [
             'THE FLASHING TOOLS ARE NOT IN THIS ZIP', '',
             'It was built from a page opened as a file rather than served, and a',
@@ -619,17 +623,22 @@
             '  https://triglav-modular.github.io/218e-Rewired/',
             'which packs everything.', ''
         ] : [];
+        var where = (opts && opts.firmware) || '218eV3_v369_Rewired_DFU.hex';
+        var knows = (opts && opts.knows) || [
+            'The flasher carries that checksum, so it installs this build',
+            'without asking which file to use.'];
+        var rescue = (opts && opts.rescue) || [
+            'The keyboard stays in DFU mode and a power cycle will not',
+            'release it. The ExitDFU script sends the command that does.',
+            'It flashes nothing.'];
         return ['218e V3 Rewired ' + GEN.version, '']
             .concat(['This zip has everything needed to flash:', '',
-                     '  218eV3_v369_Rewired_DFU.hex   the firmware you built',
-                     '  SHA-256  ' + r.sha256, '',
-                     'The flasher carries that checksum, so it installs this build',
-                     'without asking which file to use.', '', 'HOW TO USE IT', ''])
+                     '  ' + where + '   the firmware you built',
+                     '  SHA-256  ' + r.sha256, ''])
+            .concat(knows, ['', 'HOW TO USE IT', ''])
             .concat(missing, howto)
-            .concat(['', 'IF A FLASH IS INTERRUPTED', '',
-                     'The keyboard stays in DFU mode and a power cycle will not',
-                     'release it. The ExitDFU script sends the command that does.',
-                     'It flashes nothing.', '',
+            .concat(['', 'IF A FLASH IS INTERRUPTED', ''])
+            .concat(rescue, ['',
                      'READ THE WARNING THE FLASHER PRINTS BEFORE YOU AGREE TO IT.',
                      'This is experimental, unofficial firmware for the Buchla 218e',
                      'V3 only, and it can brick the instrument.', ''])
@@ -649,6 +658,16 @@
             // carries the firmware and the scripts and says where the rest is.
             var offline = location.protocol === 'file:';
             btn.querySelector('span').textContent = offline ? 'Packing…' : 'Fetching tools…';
+            var bundle = (offline || !p.bundle) ? Promise.resolve([]) :
+                fetch(p.bundle).then(function (res) {
+                    if (!res.ok) throw new Error(p.bundle + ' returned ' + res.status);
+                    return res.arrayBuffer();
+                }).then(function (b) {
+                    if (!b || !b.byteLength) throw new Error(p.bundle + ' came back empty');
+                    return ZIP.under('', ZIP.unpack(new Uint8Array(b)));
+                }, function (e) {
+                    throw new Error(p.bundle + ': ' + (e && e.message ? e.message : e));
+                });
             Promise.all(offline ? [] : p.tools.map(function (t) {
                 return fetch(t[0]).then(function (res) {
                     if (!res.ok) throw new Error(t[0] + ' returned ' + res.status);
@@ -663,7 +682,8 @@
                 });
             })).then(function (tools) {
                 btn.querySelector('span').textContent = 'Packing…';
-                var files = [{ name: '218eV3_v369_Rewired_DFU.hex', data: r.hex }]
+                var files = [{ name: p.firmware || '218eV3_v369_Rewired_DFU.hex',
+                               data: r.hex }]
                     .concat(p.scripts(r), tools,
                             [{ name: 'README.txt', data: p.note(r, offline) }]);
                 if (offline) {
@@ -675,7 +695,9 @@
                         'or use the hosted page for a complete one:\n' +
                         'https://triglav-modular.github.io/218e-Rewired/');
                 }
-                return ZIP.build(files);
+                return bundle.then(function (carried) {
+                    return ZIP.build(files, carried);
+                });
             }).then(function (blob) {
                 var a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);

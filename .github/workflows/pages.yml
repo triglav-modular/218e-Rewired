@@ -92,12 +92,13 @@ jobs:
           # able to fetch them.  No VC_redist and no msvcp140.dll: our
           # dfu-programmer links its runtime statically, so there is nothing
           # to install.  Nor the pressure readout, which is not flashing.
-          mkdir -p _site/kit/mac/support/dfu/bin \
-                   _site/kit/mac/support/dfu/Frameworks \
-                   _site/kit/windows/support _site/kit/tools
-          cp mac/support/sendmidi                                _site/kit/mac/support/
-          cp mac/support/dfu/bin/dfu-programmer            _site/kit/mac/support/dfu/bin/
-          cp mac/support/dfu/Frameworks/libusb-1.0.0.dylib _site/kit/mac/support/dfu/Frameworks/
+          # macOS takes the signed app instead, which already has the tools
+          # sealed inside it.  It cannot be built here: signing needs the
+          # Developer ID and notarising needs the notary credentials, and
+          # neither belongs in Actions - so it is committed, built by
+          # tools/make-app.sh on a machine that has them.
+          mkdir -p _site/kit/mac _site/kit/windows/support _site/kit/tools
+          cp mac/Flasher.zip _site/kit/mac/Flasher.zip
           for f in dfu-programmer.exe sendmidi.exe zadig-2.8.exe; do
             cp "windows/support/$f" _site/kit/windows/support/
           done
@@ -107,6 +108,40 @@ jobs:
           # paths would be dropped silently and that is a nasty way to find out.
           touch _site/.nojekyll
           find _site -type f | sort
+
+      - name: The committed app must match the sources it was built from
+        run: |
+          python3 - <<'CHECK'
+          import sys, zipfile
+          from pathlib import Path
+          # The app is built by hand on a machine with the Developer ID, so
+          # nothing here stops it going stale.  This does: if the flasher inside
+          # the bundle is not the flasher in the repository, the app people
+          # download would be a version behind and no one would notice.
+          z = zipfile.ZipFile("mac/Flasher.zip")
+          names = z.namelist()
+          root = "218e Rewired Flasher.app/Contents/"
+          missing = [n for n in (root + "Info.plist", root + "CodeResources",
+                                 root + "_CodeSignature/CodeResources")
+                     if n not in names]
+          if missing:
+              sys.exit("mac/Flasher.zip is not a signed, stapled app: "
+                       + ", ".join(missing))
+          # CodeResources at the top of Contents is the stapled notarisation
+          # ticket, and it starts with its own magic.
+          if z.read(root + "CodeResources")[:4] != b"s8ch":
+              sys.exit("mac/Flasher.zip carries no notarisation ticket - "
+                       "it was archived before stapling")
+          for inside, repo in ((root + "Resources/Program218e_v3_Rewired_macOS.command",
+                                "Program218e_v3_Rewired_macOS.command"),
+                               (root + "Resources/ExitDFU_218e_v3_macOS.command",
+                                "ExitDFU_218e_v3_macOS.command")):
+              if z.read(inside) != Path(repo).read_bytes():
+                  sys.exit(f"{repo} has changed since the app was built - "
+                           f"rebuild with tools/make-app.sh --notarize and "
+                           f"commit mac/Flasher.zip")
+          print(f"the committed app is current ({len(names)} entries)")
+          CHECK
 
       - name: Every asset the page asks for must be present
         run: |
