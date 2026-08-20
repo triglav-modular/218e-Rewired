@@ -629,6 +629,22 @@ def test_migration_and_empty_hand() -> None:
               'emit("MOV R9,0x6090");' in body
               and not re.search(r'emit\("(LD|ST)\.\w+ R\d+,?R?\d*\[0x2\]', body))
 
+    # Pads 2+3 with knob 1 is the factory key-threshold adjustment - the touch
+    # sensitivity a note triggers at, which the manual says not to change often
+    # and which is nothing to do with pressure.  Our wrapper owns that knob to
+    # trim the pressure calibration, so it has to hand the pad combination
+    # straight back: internal mode 6 for knob 1, mode 3 for knob 3, each
+    # calling the handler the factory pointed at.  Lose this and a setting
+    # people are told to leave alone becomes one they cannot reach.
+    for start, name, mode, factory in (
+            ("0x800194c0L", "knob1_pressure_ceiling", "0x6", "0x80004188"),
+            ("0x80014300L", "knob3_pressure_floor",   "0x3", "0x800040c8")):
+        body = cave(start, name)
+        check(f"{name} hands mode {mode} back to the factory handler",
+              f'emit("CP.W R8,{mode}");' in body
+              and 'emit("MCALL PC[' in body
+              and factory.lower() in body.lower())
+
     # The low scratch is cleared with whatever R8 holds, and the latch section
     # loads the switch position into it.  Clearing after that would seed the
     # pulse flag with a 1 and fire a trigger at power-up.
