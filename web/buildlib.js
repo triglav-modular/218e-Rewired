@@ -345,6 +345,10 @@ var BUILDLIB = (function () {
             black_key_scale_32: floorHalf(cfg.pressure.black_key_scale * 32),
             smoothing_taps: cfg.pressure.smoothing_taps,
             curve_default_level: cfg.pressure.curve.default_level,
+            // One more than the top level: the knob maps adc*steps>>10, so the
+            // configured default lands at twelve o'clock.
+            curve_knob_steps: (cfg.pressure.curve.knob_max_level === undefined
+                               ? 31 : cfg.pressure.curve.knob_max_level) + 1,
             resolution_bits: cfg.pressure.resolution_bits,
             multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0
         };
@@ -359,9 +363,13 @@ var BUILDLIB = (function () {
             throw new Error('ceiling must exceed floor by at least 32');
         }
         numbers.latch_match_tolerance = cfg.arp.latch_match_tolerance;
-        var kMin = 0x80;
+        // The bottom of the trim range, as a multiplier in 1/256ths - a
+        // setting, because it decides whether the knob can still reach the
+        // coupling an instrument has when the player's feet leave the floor.
+        var kMin = Math.round((calib.trim_min === undefined ? 0.70 : calib.trim_min) * 256);
         var kMax = Math.min(0x180, Math.floor((0x3FF * 256) / calib.ceiling));
         numbers.trim_scale_span = Math.max(kMax - kMin, 0x10);
+        numbers.trim_scale_base = kMin;
         numbers.gate_settle_scans = cfg.timing.gate_settle_scans;
         numbers.blend_slew_shift = cfg.portamento.blend_slew_shift;
         var smoothing = cfg.pressure.output_smoothing;

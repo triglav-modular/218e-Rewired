@@ -767,7 +767,13 @@ function assembleProgram() {
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x800143ee");
         emit("LD.UH R9,R10[0x310]");
-        emit("LSR R9,0x5");
+        // level = adc * (max + 1) >> 10, so the knob spans 0..max with the
+        // configured default at twelve o'clock.  ADC >> 5 gave 0..31, which
+        // put every useful setting in the first eighth of the travel.
+        emit(StringFormat("MOV R11,0x%x",
+             number("curve_knob_steps", 0x20, 0x2, 0x20)));
+        emit("MUL R9,R9,R11");
+        emit("LSR R9,0xa");
         emit("MOV R11,0xa0");
         emit("OR R9,R11");
         emit("ST.B R10[0x2db],R9");
@@ -872,7 +878,12 @@ function assembleProgram() {
             emit(StringFormat("MOV R9,0x%x", number("trim_scale_span", 0x100, 0x10, 0x100)));
             emit("MUL R8,R8,R9");
             emit("LSR R8,0xa");
-            emit("SUB R8,-0x80");
+            // The bottom of the range, as a multiplier in 1/256ths.  Not a
+            // SUB with a negative immediate any more: that form only reaches
+            // -128, and the base is now wherever the configured range starts.
+            emit(StringFormat("MOV R9,0x%x",
+                 number("trim_scale_base", 0x80, 0x40, 0x100)));
+            emit("ADD R8,R9");
             emit(StringFormat("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
             emit("MUL R9,R9,R8");
             emit("LSR R9,0x8");

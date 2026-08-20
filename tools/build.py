@@ -1027,6 +1027,8 @@ def main() -> None:
         "black_key_scale_32": round(cfg["pressure"].get("black_key_scale", 1.35) * 32),
         "smoothing_taps": cfg["pressure"].get("smoothing_taps", 8),
         "curve_default_level": cfg["pressure"]["curve"].get("default_level", 31),
+        # One more than the top level, because the knob maps adc*steps>>10.
+        "curve_knob_steps": cfg["pressure"]["curve"].get("knob_max_level", 31) + 1,
         "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
         "multi_key_max": 1 if cfg["pressure"].get("multi_key", "max") == "max" else 0,
     }
@@ -1164,13 +1166,23 @@ def main() -> None:
     # keeps the scaled ceiling inside that limit: the knob then stays
     # proportional across its whole travel instead of pinning the ceiling and
     # narrowing the window as it climbs.
-    k_min = 0x80
+    # The bottom of the trim range, as a multiplier in 1/256ths.  It is a
+    # setting rather than a constant because it decides what the knob can still
+    # reach: capacitive coupling falls by about a third when the player's feet
+    # leave the floor, and a range that starts above that cannot get back to it.
+    k_min = int(round(calib.get("trim_min", 0.70) * 256))
     k_max = min(0x180, (0x3FF * 256) // calib["ceiling"])
     if mode == "scale" and k_max <= k_min:
         raise SystemExit(
             f"[pressure.calibration]: ceiling {calib['ceiling']} leaves no room to "
             "scale up (the pressure path rejects a ceiling above 1023)")
     cfg["_numbers"]["trim_scale_span"] = max(k_max - k_min, 0x10)
+    cfg["_numbers"]["trim_scale_base"] = k_min
+    # Where the configured calibration lands on the knob, which is what anyone
+    # setting these numbers actually wants to know.
+    if mode == "scale" and k_max > k_min:
+        at = (256 - k_min) * 10 / (k_max - k_min)
+        summary.append(f"  {'pressure.trim_unity_at':28s} {at:.1f} of 10")
     if mode == "scale":
         summary.append(f"  {'pressure.trim_mode':28s} {mode!r}  "
                        f"({k_min/256:.2f}x..{k_max/256:.2f}x)")

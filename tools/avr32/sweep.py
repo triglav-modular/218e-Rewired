@@ -70,11 +70,10 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # AssemblePressureFix.java moves it.  That is the marker working as intended —
 # a changed build forces a fresh power-up init.  What this pin still buys is a
 # stable anchor for the most complex configuration.
-# Re-pinned after knob 4 was given the pressure curve back.  The handler and
-# its pool word return byte for byte, and the bootstrap no longer forces the
-# level to 0 - the knob owns it again, as it did before.
+# Re-pinned after the calibration defaults moved to the settings that suit the
+# instrument this was measured on, and both trims were centred on them.
 EXPECTED = {
-    "historical_config": "bddaca5e819f26f44acc19a1b21d0e3d2fedf9be85bb714c41cea5e128983d2f",
+    "historical_config": "b0827b659704ac624118a731497ba7ac4fabdf8325272901679488c0ef977ba2",
 }
 
 

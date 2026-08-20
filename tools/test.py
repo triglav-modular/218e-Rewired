@@ -638,8 +638,33 @@ def test_migration_and_empty_hand() -> None:
     knob4 = cave("0x80014380L", "knob4_curve")
     check("knob4_curve reads the knob and writes the curve level",
           'emit("LD.UH R9,R10[0x310]");' in knob4
-          and 'emit("LSR R9,0x5");' in knob4
+          and 'emit("MUL R9,R9,R11");' in knob4
+          and 'emit("LSR R9,0xa");' in knob4
           and 'emit("ST.B R10[0x2db],R9");' in knob4)
+
+    import options as _options
+    with open(REPO / "config" / "218e.toml", "rb") as fh:
+        cfg = _options.expand(tomllib.load(fh).get("options", {}))
+
+    # Both trims are meant to sit on the configured value at twelve o'clock.
+    # A knob whose useful settings are all in the first eighth of its travel is
+    # the thing this replaced, so the arithmetic is checked rather than trusted.
+    calib = cfg["pressure"]["calibration"]
+    curve = cfg["pressure"]["curve"]
+    if calib.get("trim_mode") == "scale":
+        k_min = int(round(calib.get("trim_min", 0.70) * 256))
+        k_max = min(0x180, (0x3FF * 256) // calib["ceiling"])
+        at = (256 - k_min) * 10 / (k_max - k_min)
+        check("the calibration default sits near the middle of knob 1",
+              4.0 <= at <= 6.5, f"{at:.1f} of 10")
+        check("the trim still reaches the feet-up 0.70x case",
+              k_min <= int(0.70 * 256), f"{k_min/256:.2f}x")
+        check("the scaled ceiling cannot pass the 1023 the path rejects",
+              calib["ceiling"] * k_max // 256 <= 1023)
+    steps = curve.get("knob_max_level", 31) + 1
+    mid = (512 * steps) >> 10
+    check("knob 4's middle is the configured curve level",
+          mid == curve.get("default_level", 31), f"middle {mid}")
     check("the knob-4 pool word reaches it",
           'wordPatch("knob4_pool", 0x800043d0L, 0x80014380L' in source)
     check("the bootstrap does not force the curve level back to 0",
