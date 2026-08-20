@@ -106,24 +106,18 @@ jobs:
         shell: cmd
         run: |
           rem The same fixtures the other two validators are held to, so all
-          rem three are answering the same questions.
+          rem three are answering the same questions.  The list is whatever
+          rem hex_fixtures.py wrote - naming them here is how three new ones
+          rem went unchecked on this side once already.
           python tools\hex_fixtures.py fixtures || (echo FAILED: could not write fixtures & exit /b 1)
           powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -DirList "%CD%\fixtures" -Explain > scan.txt 2> scanerr.txt
           type scan.txt
           type scanerr.txt
-          rem The two well-formed ones must be listed, everything else refused.
-          findstr /C:"ok.hex" scan.txt >NUL || (echo FAILED: refused a well-formed image & exit /b 1)
-          findstr /C:"ok_crlf.hex" scan.txt >NUL || (echo FAILED: refused a well-formed CRLF image & exit /b 1)
-          for %%F in (blank colon cronly nonewline t4addr t4count t5addr t5count) do (
-            findstr /C:"%%F.hex" scan.txt >NUL && (echo FAILED: accepted %%F.hex & exit /b 1)
-          )
-          echo PASS: eight malformed images refused, both good ones accepted
+          python -c "import pathlib,sys; listed=pathlib.Path('scan.txt').read_text(errors='replace'); bad=[]; [bad.append(('refused',f.name)) if f.name.startswith('ok') and f.name not in listed else bad.append(('accepted',f.name)) if not f.name.startswith('ok') and f.name in listed else None for f in sorted(pathlib.Path('fixtures').glob('*.hex'))]; print('\n'.join('FAILED: scanner %s %s' % b for b in bad)) or sys.exit(1) if bad else print('PASS: scanner agrees on %d fixtures' % len(list(pathlib.Path('fixtures').glob('*.hex'))))"
+          if errorlevel 1 exit /b 1
           rem And python must reach the same verdicts on the same files.
-          python tools\validate_hex.py fixtures\ok.hex || (echo FAILED: python refused a good image & exit /b 1)
-          for %%F in (blank colon cronly nonewline t4addr t4count t5addr t5count) do (
-            python tools\validate_hex.py fixtures\%%F.hex && (echo FAILED: python accepted %%F.hex & exit /b 1)
-          )
-          echo PASS: both validators agree
+          python -c "import pathlib,subprocess,sys; bad=[]; [bad.append(f.name) for f in sorted(pathlib.Path('fixtures').glob('*.hex')) if (subprocess.run([sys.executable,'tools/validate_hex.py',str(f)],capture_output=True).returncode==0) != f.name.startswith('ok')]; print('\n'.join('FAILED: python disagrees on '+b for b in bad)) or sys.exit(1) if bad else print('PASS: both validators agree')"
+          if errorlevel 1 exit /b 1
           rmdir /S /Q fixtures 2>NUL
           del /Q scan.txt scanerr.txt 2>NUL
           exit /b 0
