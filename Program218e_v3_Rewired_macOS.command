@@ -117,7 +117,8 @@ function fail(m){print "BAD " m;failed=1;exit 1}
   if(sum%256)fail("checksum mismatch at line " NR " - the file is corrupted")
   type=h2d(substr(hex,7,2));len=h2d(substr(hex,1,2));addr=h2d(substr(hex,3,4))
   if(type==4)ela=h2d(substr(hex,9,4))
-  if(type==0){a=ela*65536+addr;if(!seen||a<lo)lo=a;seen=1;if(a+len-1>hi)hi=a+len-1}
+  if(type!=0&&type!=1&&type!=4&&type!=5)fail("record type " type " at line " NR " - not an AVR32 firmware image")
+  if(type==0){a=ela*65536+addr;if(!seen||a<lo)lo=a;seen=1;if(a+len-1>hi)hi=a+len-1;cov+=len}
   if(type==1)eof=1;next}
 NF{fail("line " NR " is not an Intel HEX record")}
 END{if(failed)exit 1
@@ -125,7 +126,9 @@ END{if(failed)exit 1
   if(!seen){print "BAD no data records";exit 1}
   if(lo<2147491840){printf "BAD data at 0x%X - inside the bootloader region, or not AVR32 firmware\n",lo;exit 1}
   if(hi>2147745791){printf "BAD data at 0x%X - beyond the AT32UC3B1256 flash\n",hi;exit 1}
-  printf "OK 0x%X..0x%X\n",lo,hi}' "$1"
+  if(lo!=2147491840){printf "BAD starts at 0x%X, not the reset vector at 0x80002000 - a partial image would erase the application and not replace it\n",lo;exit 1}
+  if(cov<16384){printf "BAD only %d bytes of firmware - a real image carries tens of thousands, and flashing this would leave the instrument unbootable\n",cov;exit 1}
+  printf "OK 0x%X..0x%X (%d bytes)\n",lo,hi,cov}' "$1"
 }
 
 # Run a command with a deadline, because a Gatekeeper-blocked binary does not
@@ -338,15 +341,6 @@ step "Locating the firmware image"
 FIRMWARE=""
 CUSTOM_IMAGE=0
 
-if [ -n "${1:-}" ]; then
-    [ -f "$1" ] || fail "No such file: $1"
-    case "$(validate_hex "$1")" in
-        OK*) ;;
-        *) echo "  ${C_RED}$(validate_hex "$1")${C_RESET}"
-           fail "That file is not a flashable 218e image. The instrument was not touched." ;;
-    esac
-    accept_choice "$1"
-fi
 # Every .hex the flasher can see, newest first, structurally valid, deduped by
 # resolved path.  One list, one ordering, so what is offered and what is chosen
 # can never disagree.
@@ -396,6 +390,20 @@ accept_choice() {
     esac
     echo "    ${C_DIM}$sha${C_RESET}"
 }
+
+# An image named on the command line wins outright.  This has to sit below
+# accept_choice: bash binds a function when it executes the definition, so
+# called from above it the call failed with 127 and - there being no set -e -
+# the script carried on and flashed whatever the scan turned up instead.
+if [ -n "${1:-}" ]; then
+    [ -f "$1" ] || fail "No such file: $1"
+    case "$(validate_hex "$1")" in
+        OK*) ;;
+        *) echo "  ${C_RED}$(validate_hex "$1")${C_RESET}"
+           fail "That file is not a flashable 218e image. The instrument was not touched." ;;
+    esac
+    accept_choice "$1"
+fi
 
 if [ -z "$FIRMWARE" ]; then
     images="$(scan_images)"

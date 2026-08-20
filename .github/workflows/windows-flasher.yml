@@ -93,9 +93,7 @@ jobs:
       - name: The hex validator accepts good images and rejects bad
         shell: cmd
         run: |
-          echo :0200000480007A> good.hex
-          echo :10200000000102030405060708090A0B0C0D0E0F58>> good.hex
-          echo :00000001FF>> good.hex
+          pwsh -File tools\Make-TestImage.ps1 -Path good.hex
           python tools\validate_hex.py good.hex || (echo FAILED: rejected a valid image & exit /b 1)
           echo not a hex file> bad.hex
           python tools\validate_hex.py bad.hex && (echo FAILED: accepted junk & exit /b 1)
@@ -107,9 +105,7 @@ jobs:
         shell: cmd
         run: |
           mkdir scan_test 2>NUL
-          echo :0200000480007A> scan_test\good.hex
-          echo :10200000000102030405060708090A0B0C0D0E0F58>> scan_test\good.hex
-          echo :00000001FF>> scan_test\good.hex
+          pwsh -File tools\Make-TestImage.ps1 -Path scan_test\good.hex
           echo not a hex file> scan_test\bad.hex
           echo :020000040000FA> scan_test\lowaddr.hex
           echo :0410000000000000EC>> scan_test\lowaddr.hex
@@ -136,9 +132,7 @@ jobs:
           del /Q *.hex 2>NUL
           del /Q firmware\*.hex "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
           mkdir "%USERPROFILE%\Downloads" 2>NUL
-          echo :0200000480007A> "%USERPROFILE%\Downloads\custom.hex"
-          echo :10200000000102030405060708090A0B0C0D0E0F58>> "%USERPROFILE%\Downloads\custom.hex"
-          echo :00000001FF>> "%USERPROFILE%\Downloads\custom.hex"
+          pwsh -File tools\Make-TestImage.ps1 -Path "%USERPROFILE%\Downloads\custom.hex"
           mkdir firmware 2>NUL
           copy /Y "%USERPROFILE%\Downloads\custom.hex" firmware\second.hex >NUL
           rem Consent, then pick nothing: it must have listed both and stopped.
@@ -165,9 +159,7 @@ jobs:
           del /Q firmware\*.hex 2>NUL
           del /Q "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
           mkdir "%USERPROFILE%\Downloads" 2>NUL
-          echo :0200000480007A> "%USERPROFILE%\Downloads\custom.hex"
-          echo :10200000000102030405060708090A0B0C0D0E0F58>> "%USERPROFILE%\Downloads\custom.hex"
-          echo :00000001FF>> "%USERPROFILE%\Downloads\custom.hex"
+          pwsh -File tools\Make-TestImage.ps1 -Path "%USERPROFILE%\Downloads\custom.hex"
           (echo YES& echo.)> ans.txt
           CALL Program218e_v3_Rewired_Windows.bat < ans.txt > out3.txt 2>&1
           type out3.txt
@@ -224,9 +216,7 @@ jobs:
           del /Q "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
           mkdir firmware 2>NUL
           del /Q firmware\*.hex 2>NUL
-          echo :0200000480007A> firmware\218eV3_v369_Rewired_DFU.hex
-          echo :10200000000102030405060708090A0B0C0D0E0F58>> firmware\218eV3_v369_Rewired_DFU.hex
-          echo :00000001FF>> firmware\218eV3_v369_Rewired_DFU.hex
+          pwsh -File tools\Make-TestImage.ps1 -Path firmware\218eV3_v369_Rewired_DFU.hex
           for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile firmware\218eV3_v369_Rewired_DFU.hex SHA256 ^| findstr /R "^[0-9a-f ]*$"') do (
             if not defined SHA set "SHA=%%H"
           )

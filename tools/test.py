@@ -684,8 +684,12 @@ def test_golden(cfg: dict) -> None:
     if not expected:
         check("golden_sha256 recorded in config", False, "missing")
         return
+    # --no-ghidra: the JavaScript toolchain reproduces the same image, and
+    # requiring Ghidra made the one check that guards a release unrunnable
+    # anywhere headless.  sweep.py is what proves the two agree.
     result = subprocess.run(
-        [sys.executable, str(REPO / "tools" / "build.py"), "--expect-sha", expected],
+        [sys.executable, str(REPO / "tools" / "build.py"), "--no-ghidra",
+         "--expect-sha", expected],
         capture_output=True, text=True)
     check("build reproduces the golden image", result.returncode == 0,
           result.stdout.strip().splitlines()[-1] if result.stdout else result.stderr.strip())

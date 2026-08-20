@@ -99,14 +99,18 @@
   gap: 20px;
 }
 .brand {
-  flex: 0 0 auto;
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
   display: block;
   line-height: 0;
 }
+/* The mark is a glyph on nothing now, not a badge, so it takes no rounding
+   and no box - only the room it draws in. */
 .brand img {
   width: 34px;
   height: 34px;
-  border-radius: 50%;
   display: block;
 }
 .sitenav nav {
@@ -127,6 +131,9 @@
   transition: color .15s;
 }
 .sitenav nav a:hover {
+  color: var(--accent);
+}
+.sitenav nav a[aria-current=page] {
   color: var(--accent);
 }
 /* Cart and account belong to the shop rather than to this page, so they sit
@@ -319,8 +326,9 @@ input[type=checkbox] {
   position: relative;
   transition: .12s;
 }
-input[type=checkbox]:hover {
-  border-color: var(--accent);
+input[type=checkbox]:hover:not(:checked) {
+  border-color: var(--accent2);
+  animation: sweep-edge .35s .15s ease-out forwards;
 }
 input[type=checkbox]:checked {
   background: var(--accent);
@@ -364,16 +372,19 @@ label.opt input {
 }
 .drop:hover,
 .drop.over {
-  border-color: var(--accent);
+  border-color: var(--accent2);
   color: var(--ink);
+  animation: sweep-edge .35s .15s ease-out forwards;
 }
 .drop.ok {
   border-style: solid;
   border-color: var(--ok);
+  animation: none;
 }
 .drop.err {
   border-style: solid;
   border-color: var(--bad);
+  animation: none;
 }
 button {
   font: inherit;
@@ -851,12 +862,15 @@ strong {
    fill, which is invisible. */
 .vpo button:hover:not([aria-pressed=true]) {
   background: transparent;
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent2);
+  color: var(--accent2);
+  animation: sweep-edge .35s .15s ease-out forwards,
+             sweep-ink .35s .15s ease-out forwards;
 }
 .vpo button:hover:not([aria-pressed=true]) .why {
-  color: var(--accent);
+  color: var(--accent2);
   opacity: .8;
+  animation: sweep-ink .35s .15s ease-out forwards;
 }
 .vpo button[aria-pressed=true],
 .vpo button[aria-pressed=true]:hover {
@@ -1196,7 +1210,8 @@ details[open] > summary::before {
    but on the box, not behind the words.  A tint under a paragraph reads as
    a selection rather than as a control. */
 label.opt:hover input[type=checkbox]:not(:checked) {
-  border-color: var(--accent);
+  border-color: var(--accent2);
+  animation: sweep-edge .35s .15s ease-out forwards;
 }
 label.opt:hover input[type=checkbox]:checked {
   background: color-mix(in srgb, var(--accent) 82%, #fff);
@@ -1235,11 +1250,56 @@ button {
 /* A cell that has been given an offset lights up; worth easing so a row of
    them does not flicker while values are typed. */
 .key input {
-  transition: background .18s, color .18s;
+  transition: background .18s, color .18s, border-color .15s;
 }
 
 /* The accent moves from Build to Download when an image exists.  Both ends
    of that already transition through the button rule above. */
+
+/* --- the same pass, wherever the accent is what arrives -------------------
+   The nav sweep is the house hover now, but only for the half of the page it
+   describes: a control that is grey or white until you point at it, and
+   accent once you do.  Those all take the pink on the way - the unticked
+   checkbox, the drop zone, the offset cells, and a V/oct button whole, ring
+   and type and label together.
+
+   Not the ones already wearing the accent.  A button is a yellow ring with
+   yellow type before the pointer arrives anywhere near it, and a ticked box
+   is a yellow tile; sending those through the pink is not a greeting, it is
+   a colour change, and the two read nothing alike.  Their hovers are left
+   exactly as they were.
+
+   Two legs, and no new machinery for either.  The first is the transition
+   each control already carries: the hover rule names the pink, so what used
+   to ease into the accent now eases into the pink over its own .15s.  The
+   second is these keyframes, delayed by exactly that .15s so they pick the
+   colour up where the transition drops it and carry it home.  Real
+   properties rather than a custom one, so the interpolation is native and
+   none of this needs @property to be smooth; forwards holds the accent for
+   as long as the pointer stays.
+
+   Letting go removes the animation and the same transition carries the
+   colour back, so the return is a plain fade rather than the pass in
+   reverse.  Deliberate - the pass is the greeting.
+
+   Spatial on the nav, where a word is wide enough for a gradient to cross
+   it; in time everywhere else, because a 2px edge has nowhere to cross. */
+@keyframes sweep-edge {
+  from { border-color: var(--accent2); }
+  to { border-color: var(--accent); }
+}
+@keyframes sweep-ink {
+  from { color: var(--accent2); }
+  to { color: var(--accent); }
+}
+/* Two of them had no transition on the property their hover paints, so the
+   first leg had nothing to run on and the pink would have snapped in. */
+td input {
+  transition: border-color .15s;
+}
+.vpo button .why {
+  transition: color .15s;
+}
 
 /* --- hover, including the states that are already on -----------------------
    The generic button hover paints an accent fill, which is what a chosen
@@ -1258,7 +1318,8 @@ a:hover {
    focus. */
 .key input:hover,
 td input:hover {
-  border-color: var(--accent);
+  border-color: var(--accent2);
+  animation: sweep-edge .35s .15s ease-out forwards;
 }
 /* Already destructive on hover; this is the off state answering as well. */
 .slot .ctl button:hover:not(:disabled) {
@@ -1331,8 +1392,8 @@ button.primary:not(:disabled):hover {
     color: transparent;
     background-image: linear-gradient(120deg,
                                       var(--muted) 0 33.334%,
-                                      var(--accent) 50%,
-                                      var(--accent2) 66.666% 100%);
+                                      var(--accent2) 50%,
+                                      var(--accent) 66.666% 100%);
     background-size: 300% 100%;
     background-position: 0 0;
     background-repeat: no-repeat;
@@ -1341,7 +1402,8 @@ button.primary:not(:disabled):hover {
     transition: background-position .5s ease-in-out;
   }
   .sitenav nav a:hover,
-  .sitenav nav a:focus-visible {
+  .sitenav nav a:focus-visible,
+  .sitenav nav a[aria-current=page] {
     color: transparent;
     background-position: 100% 0;
   }
@@ -1419,6 +1481,7 @@ section,
   *::before,
   *::after {
     animation-duration: .001ms !important;
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     transition-duration: .001ms !important;
     scroll-behavior: auto !important;

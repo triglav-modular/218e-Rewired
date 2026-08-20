@@ -12,6 +12,11 @@ name: Builder page
 on:
   push:
     branches: [main]
+    # Everything the job reads, not just the page.  generate.py embeds the
+    # four flasher scripts and the job copies the validators and the tool
+    # binaries into the kit, so a safety fix to any of them has to redeploy.
+    # Left out, they were only ever published when some file under web/
+    # happened to change in the same commit.
     paths:
       - 'web/**'
       - 'src/AssemblePressureFix.java'
@@ -19,6 +24,16 @@ on:
       - 'tunings/**'
       - 'tools/avr32/**'
       - 'tools/factory_control_flow.txt'
+      - 'tools/validate_hex.py'
+      - 'tools/Scan-Images.ps1'
+      - 'tools/Find-DfuDevice.ps1'
+      - 'Program218e_v3_Rewired_macOS.command'
+      - 'Program218e_v3_Rewired_Windows.bat'
+      - 'ExitDFU_218e_v3_macOS.command'
+      - 'ExitDFU_218e_v3_Windows.bat'
+      - 'mac/support/**'
+      - 'windows/support/**'
+      - 'THIRD-PARTY.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 

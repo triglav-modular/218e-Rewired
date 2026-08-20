@@ -31,7 +31,7 @@ $APP_HIGH = [int64]2147745791   # 0x8003FFFF
 function Test-IntelHex {
     param([string]$Path)
     $reason = 'ok' 
-    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false
+    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0
     try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return $false }
     if ($lines.Count -eq 0) { $script:LastReason = 'empty file'; return $false }
     foreach ($line in $lines) {
@@ -62,14 +62,30 @@ function Test-IntelHex {
             if ($null -eq $lo -or $a -lt $lo) { $lo = $a }
             $end = $a + $len - 1
             if ($null -eq $hi -or $end -gt $hi) { $hi = $end }
+            $covered += $len
         } elseif ($kind -eq 1) {
             $sawEof = $true
+        } elseif ($kind -ne 5) {
+            $script:LastReason = "record type $kind is not AVR32 firmware"
+            return $false
         }
     }
     if (-not $sawEof) { $script:LastReason = 'no end-of-file record'; return $false }
     if ($null -eq $lo) { $script:LastReason = 'no data records'; return $false }
     if ($lo -lt $APP_LOW -or $hi -gt $APP_HIGH) {
         $script:LastReason = "outside the application flash (lo=$lo hi=$hi low=$APP_LOW high=$APP_HIGH)"
+        return $false
+    }
+    # Valid records inside the window are not enough.  A four-byte file passed
+    # all of the above, and passing means the flasher erases the application
+    # and writes four bytes over it.  Real images start at the reset vector and
+    # carry tens of thousands of bytes.
+    if ($lo -ne $APP_LOW) {
+        $script:LastReason = "starts at $lo, not the reset vector - a partial image would erase the application and not replace it"
+        return $false
+    }
+    if ($covered -lt 16384) {
+        $script:LastReason = "only $covered bytes of firmware - flashing this would leave the instrument unbootable"
         return $false
     }
     return $true
