@@ -411,6 +411,44 @@ confirmed for the default build and for one custom build (three tunings,
 measured calibration, 1 V/oct); the rest rest on the structure being sound and
 on each option being independent by construction.
 
+## Publishing the page, and caches
+
+The page is on GitHub Pages, behind a Cloudflare worker that maps
+`triglavmodular.hu/mods/218e-Rewired` onto it. Cloudflare caches by file
+extension, and it is generous about it: `style.css` came back
+`cf-cache-status: HIT` with `max-age=14400`, so a change to the stylesheet or
+to `generated.js` stayed invisible for four hours.
+
+`tools/version-assets.py` runs at publish time and rewrites every local asset
+reference to carry a hash of the file it points at:
+
+    <link rel="stylesheet" href="style.css?v=97d4ff27">
+
+A changed file gets a different URL, which no cache has, so it is fetched. The
+same pass rewrites `url()` inside the stylesheet, so the fonts and the
+background follow the same rule; stylesheets are done first, since versioning a
+font inside `style.css` changes `style.css` and its own hash has to be taken
+afterwards. The asset check that follows fails the build if any reference
+lost its stamp, because an unstamped file is one that will go stale silently.
+
+`index.html` itself cannot be versioned - it is the URL people type. GitHub
+Pages serves it with `max-age=600`, so a browser that already has it waits up
+to ten minutes before it sees new asset URLs at all. To remove that wait the
+worker has to say so, since Pages offers no way to set headers:
+
+```js
+const res = await fetch(upstream, request);
+if ((res.headers.get('content-type') || '').includes('text/html')) {
+    const out = new Response(res.body, res);
+    out.headers.set('cache-control', 'no-cache');
+    return out;
+}
+return res;
+```
+
+`no-cache` rather than `no-store`: the browser still keeps the page and still
+revalidates it, so an unchanged page costs a 304 rather than a download.
+
 ## Rebuilding dfu-programmer
 
 The bundled `dfu-programmer` is **1.1.0**, built from

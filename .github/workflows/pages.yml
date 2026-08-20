@@ -104,6 +104,11 @@ jobs:
           cp tools/Scan-Images.ps1 tools/Find-DfuDevice.ps1 tools/Show-Menu.ps1 \
              tools/validate_hex.py _site/kit/tools/
           du -sh _site/kit/mac _site/kit/windows
+          # Every asset URL carries a hash of the file it points at, so an
+          # update cannot be served from a cache that still holds the old one.
+          # Without this a changed style.css keeps its name, and a browser
+          # told it may hold that name for ten minutes does exactly that.
+          python3 tools/version-assets.py _site
           # No Jekyll: filenames here are ordinary, but underscore-prefixed
           # paths would be dropped silently and that is a nasty way to find out.
           touch _site/.nojekyll
@@ -170,8 +175,16 @@ jobs:
               for r in sorted(refs):
                   if r.startswith(("http://", "https://", "//", "#", "data:", "mailto:")):
                       continue
-                  if not (site / r).exists():
+                  # Assets carry a ?v= hash by this point; the file on disk
+                  # does not, and never will.
+                  path = r.split("?", 1)[0]
+                  if not (site / path).exists():
                       print(f"::error::{name} references {r}, which is not in _site")
+                      missing.append(r)
+                  elif "?v=" not in r:
+                      # A reference that missed the stamp would be served from
+                      # a cache after the next change, silently.
+                      print(f"::error::{name} references {r} without a version stamp")
                       missing.append(r)
           print(f"checked {total} references across {len(sources)} files, {len(missing)} missing")
           sys.exit(1 if missing else 0)

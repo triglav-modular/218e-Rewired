@@ -631,8 +631,8 @@ IF ERRORLEVEL 1 (
     EXIT /B 1
 )
 ECHO   START sent.  Waiting for the instrument to come back...
-REM A label loop, not FOR /L: %VAR% inside a parenthesised FOR block expands
-REM when the block is parsed, so an in-loop exit guard never fires.
+REM A label loop, not FOR /L: a plain variable inside a parenthesised FOR block
+REM expands when the block is parsed, so an in-loop exit guard never fires.
 SET "RESCUE_TRIES=0"
 :rescue_wait
 SET /A RESCUE_TRIES+=1
