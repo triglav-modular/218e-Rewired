@@ -68,6 +68,9 @@ if (-not $interactive) {
         Write-Host ("    {0}) {1}" -f ($i + 1), $entries[$i][0])
     }
     $typed = Read-Host ("  Choose [1-{0}]" -f $entries.Count)
+    # Redirected input arrives with CRLF endings and Read-Host keeps the CR,
+    # so "1" reaches here as "1`r" and parses as nothing at all.
+    $typed = "$typed".Trim()
     $n = 0
     if ([int]::TryParse($typed, [ref]$n) -and $n -ge 1 -and $n -le $entries.Count) {
         [IO.File]::WriteAllText($Out, "$n")

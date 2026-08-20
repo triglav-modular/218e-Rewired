@@ -667,6 +667,31 @@ def test_atomic_replace() -> None:
         check("the shipped updater is executable", bool(mode & 0o111), oct(mode))
 
 
+def test_generated_is_current() -> None:
+    """The page carries the flashers inside generated.js.
+
+    Editing a flasher without regenerating leaves the page handing out the
+    previous version, and nothing about the edit says so.  CI catches it, but
+    by then it has been pushed.
+    """
+    print("web bundle")
+    gen = REPO / "web" / "generated.js"
+    if not gen.exists():
+        print("  skip  web/generated.js is not built")
+        return
+    before = gen.read_bytes()
+    r = subprocess.run([sys.executable, "web/generate.py"],
+                       capture_output=True, text=True, cwd=REPO)
+    if r.returncode != 0:
+        check("generate.py runs", False, r.stderr.strip()[:200])
+        return
+    after = gen.read_bytes()
+    if after != before:
+        gen.write_bytes(after)   # leave the fresh one: it is the correct one
+    check("generated.js is current", after == before,
+          "it was stale - regenerated, commit web/generated.js")
+
+
 def test_hex_roundtrip(cfg: dict) -> None:
     print("hex handling")
     factory = REPO / cfg["firmware"]["factory_hex"]
@@ -739,6 +764,7 @@ def main() -> None:
     test_filter_equivalence(cfg)
     test_overlap_and_range()
     test_atomic_replace()
+    test_generated_is_current()
     test_hex_roundtrip(cfg)
     if args.golden:
         test_golden(cfg)
