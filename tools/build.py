@@ -152,12 +152,19 @@ def parse_scala(path: Path) -> list[float]:
         raise ValueError(f"{path.name}: declares {count} degrees, found {len(pitches)}")
 
     cents = [0.0]
-    for token in pitches:
+    for index, token in enumerate(pitches, 1):
         token = token.split()[0]
         if "." in token:
-            cents.append(float(token))
+            value = float(token)
         else:
-            cents.append(1200.0 * math.log2(float(Fraction(token))))
+            value = 1200.0 * math.log2(float(Fraction(token)))
+        # float() takes "1.0e999" as infinity without complaint, and every
+        # check below is a comparison that an infinity or a NaN answers
+        # meaninglessly.
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{path.name}: degree {index} is {token!r}, which is not a number")
+        cents.append(value)
 
     if count != 12:
         raise ValueError(
@@ -317,6 +324,17 @@ def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
     if len(table) != PITCH_TABLE_ENTRIES:
         raise ValueError(
             f"Pitch curve has {len(table)} entries, firmware needs {PITCH_TABLE_ENTRIES}.")
+    # Strictly increasing, not merely non-descending.  Two adjacent entries at
+    # the same DAC count is a semitone that plays the pitch of its neighbour,
+    # and the remap has no way to say so; the real tables step by 25 counts at
+    # the closest, so a repeat is a corrupt table rather than a fine one.
+    flat = [i for i in range(1, len(table)) if table[i] == table[i - 1]]
+    if flat:
+        raise ValueError(
+            f"Pitch curve repeats a DAC count at semitone{'s' if len(flat) > 1 else ''} "
+            f"{', '.join(str(i) for i in flat[:6])}"
+            f"{'...' if len(flat) > 6 else ''} - that semitone would play its "
+            f"neighbour's pitch. Check the calibration table.")
     if table != sorted(table):
         raise ValueError("Pitch curve is not monotonic. Check the calibration table.")
     if table[0] < 0 or table[-1] > 4095:

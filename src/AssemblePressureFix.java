@@ -444,7 +444,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R11,R9");
         emit("SUB R11,R10");
         emit("CP.W R11,0x1f");
-        emit("BR{hi} 0x80019670");
+        // Signed, not BR{hi}.  These two are read back from settings and are
+        // only ever written in order, but nothing in the flash says so: stored
+        // reversed - a floor of 900 against a ceiling of 500 - the subtraction
+        // wraps to 0xfffffe70, which is comfortably "higher" than 31 unsigned,
+        // and the pair is taken as a valid span.  What the instrument does
+        // then is switch between nothing and everything within a few counts.
+        // Read as signed the difference is -400 and the defaults load.
+        emit("BR{gt} 0x80019670");
         padTo(0x80019666L);
         emit(String.format("MOV R10,0x%x", number("pressure_floor_default", 0x244, 0x80, 0x7d0)));
         emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
@@ -640,7 +647,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,R9");
         emit("SUB R8,R11");
         emit("CP.W R8,0x1f");
-        emit("BR{hi} 0x80019834");
+        emit("BR{gt} 0x80019834");   // signed, for the reason above
         padTo(0x80019820L);
         emit(String.format("MOV R11,0x%x", number("curve_default_level", 0x1f, 0x0, 0x1f)));
         emit("ST.B R7[-0xd],R11");

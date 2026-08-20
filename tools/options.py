@@ -80,8 +80,59 @@ def _write_flat_calibration() -> Path:
     return FLAT_CALIBRATION
 
 
+# What each option is allowed to be.  Without this a quoted "false" is a
+# non-empty string and therefore true, so `latching_arp = "false"` turned the
+# arpeggiator on; and `volts_per_octave = true` was accepted as 1.0, because a
+# Python bool is an int and compares equal to one.  A misspelled name was
+# simply not there, and the default quietly took its place.
+OPTION_TYPES = {
+    "latching_arp":        bool,
+    "remap_knobs":         bool,
+    "pressure_fix":        bool,
+    "pressure_portamento": bool,
+    "volts_per_octave":    float,
+    "pitch_correction":    (bool, str),
+    "alternate_tunings":   (bool, list),
+}
+
+
+def check(options: dict) -> None:
+    """Refuse anything that is not one of the seven, as the thing it must be."""
+    unknown = sorted(set(options) - set(OPTION_TYPES))
+    if unknown:
+        known = ", ".join(sorted(OPTION_TYPES))
+        raise SystemExit(
+            f"unknown option{'s' if len(unknown) > 1 else ''}: "
+            f"{', '.join(unknown)}\n  the options are: {known}")
+
+    for name, allowed in OPTION_TYPES.items():
+        if name not in options:
+            continue
+        value = options[name]
+        # bool before float: True is an int in Python and would pass as one.
+        if allowed is float:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise SystemExit(
+                    f"{name} must be a number, not {type(value).__name__}: "
+                    f"{value!r}")
+            continue
+        if allowed is bool:
+            if not isinstance(value, bool):
+                raise SystemExit(
+                    f"{name} must be true or false, not "
+                    f"{type(value).__name__}: {value!r}"
+                    + ('\n  a quoted "false" is a string, and every non-empty '
+                       'string is true' if isinstance(value, str) else ""))
+            continue
+        if not isinstance(value, allowed):
+            names = " or ".join(t.__name__ for t in allowed)
+            raise SystemExit(
+                f"{name} must be {names}, not {type(value).__name__}: {value!r}")
+
+
 def expand(options: dict) -> dict:
     """Seven options in, full internal settings out."""
+    check(options)
     cfg = copy.deepcopy(INTERNAL_DEFAULTS)
 
     def want(name: str, default):

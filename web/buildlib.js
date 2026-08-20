@@ -110,14 +110,24 @@ var BUILDLIB = (function () {
             throw new Error(name + ': declares ' + count + ' degrees, found ' + pitches.length);
         }
         var cents = [0.0];
-        pitches.forEach(function (tok) {
+        pitches.forEach(function (tok, index) {
             tok = tok.split(/\s+/)[0];
-            if (tok.indexOf('.') >= 0) cents.push(parseFloat(tok));
+            var value;
+            if (tok.indexOf('.') >= 0) value = parseFloat(tok);
             else {
                 var p = tok.split('/');
                 var ratio = p.length > 1 ? parseFloat(p[0]) / parseFloat(p[1]) : parseFloat(p[0]);
-                cents.push(1200.0 * Math.log(ratio) / Math.LN2);
+                value = 1200.0 * Math.log(ratio) / Math.LN2;
             }
+            // Every check below this is a comparison, and every comparison
+            // with NaN is false - so an interior NaN is ascending, is an
+            // octave, is anything asked of it.  It reaches the assembler and
+            // becomes a zero halfword, which is a semitone silently retuned.
+            if (!isFinite(value)) {
+                throw new Error(name + ': degree ' + (index + 1) + ' is ' +
+                                JSON.stringify(tok) + ', which is not a number');
+            }
+            cents.push(value);
         });
         if (count !== 12) {
             throw new Error(name + ': ' + count + ': the key table repeats every ' +
@@ -213,7 +223,11 @@ var BUILDLIB = (function () {
                             GEN.pitchTableEntries + '.');
         }
         for (i = 1; i < table.length; i++) {
+            // <=, not <: two adjacent entries at the same DAC count is a
+            // semitone that plays its neighbour's pitch, and nothing further
+            // down can tell.  The real tables step by 25 counts at the closest.
             if (table[i] < table[i - 1]) throw new Error('Pitch curve is not monotonic. Check the calibration table.');
+            if (table[i] === table[i - 1]) throw new Error('Pitch curve repeats a DAC count at semitone ' + i + ' - that semitone would play its neighbour\'s pitch. Check the calibration table.');
         }
         if (table[0] < 0 || table[table.length - 1] > 4095) {
             throw new Error('Pitch curve leaves the 12-bit DAC range.');
