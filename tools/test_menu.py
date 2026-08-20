@@ -15,6 +15,7 @@ import fcntl
 import os
 import shutil
 import signal
+import subprocess
 import pty
 import re
 import select
@@ -141,6 +142,49 @@ def window(rows, cols, term="xterm-256color"):
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
+def launcher_litter():
+    """Run the app's launcher with a HOME of its own, and see what it leaves.
+
+    The launcher is what chose Documents, and it is not reached by running the
+    flasher directly - so testing the flasher proved nothing about it.  Its
+    "open -a Terminal" is stubbed out; nothing appears on screen.
+    """
+    make = (REPO / "tools" / "make-app.sh").read_text(encoding="utf-8")
+    body = make.split("<<'LAUNCH'\n", 1)[1].split("\nLAUNCH\n", 1)[0]
+
+    root = REPO / "build" / "_launcher_test"
+    shutil.rmtree(root, ignore_errors=True)
+    home = root / "home"
+    beside = root / "beside"          # stands in for the folder the app is in
+    macos = beside / "218e Rewired Flasher.app" / "Contents" / "MacOS"
+    resources = beside / "218e Rewired Flasher.app" / "Contents" / "Resources"
+    for d in (home, macos, resources):
+        d.mkdir(parents=True, exist_ok=True)
+    (resources / "Program218e_v3_Rewired_macOS.command").write_text("#!/bin/bash\n")
+    launcher = macos / "launcher"
+    launcher.write_text(body, encoding="utf-8")
+    launcher.chmod(0o755)
+
+    stub = root / "bin"
+    stub.mkdir(parents=True, exist_ok=True)
+    (stub / "open").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    (stub / "open").chmod(0o755)
+
+    # Read-only, as a translocated copy or /Applications would be: this is what
+    # sends the launcher to its fallback, which is the case that went wrong.
+    beside.chmod(0o555)
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env["PATH"] = f"{stub}:{env['PATH']}"
+    subprocess.run(["/bin/bash", str(launcher)], env=env,
+                   capture_output=True, timeout=30)
+    beside.chmod(0o755)
+
+    made = sorted(str(q.relative_to(home)) for q in home.rglob("*"))
+    shutil.rmtree(root, ignore_errors=True)
+    return made
+
+
 def smoke_run():
     """Run the flasher as far as choosing an image, in an empty HOME.
 
@@ -197,8 +241,11 @@ def smoke_run():
         os.waitpid(pid, 0)
     except ChildProcessError:
         pass
+    # What it left in a HOME of its own.  Documents belongs to the user.
+    litter = sorted(str(q.relative_to(home)) for q in home.rglob("*")
+                    if q.is_file())
     shutil.rmtree(home, ignore_errors=True)
-    return out.decode("utf-8", "replace")
+    return out.decode("utf-8", "replace"), litter
 
 
 def main():
@@ -265,7 +312,27 @@ def main():
     # bash -n does not notice a function called before it is defined: the
     # parse is fine, and only running it says "command not found".  That
     # shipped once, in the step that says where the image was looked for.
-    out = smoke_run()
+    made = launcher_litter()
+    in_documents = [f for f in made if f.startswith("Documents")]
+    if in_documents:
+        print("  FAIL  the launcher put files in Documents: "
+              + ", ".join(in_documents))
+        failures += 1
+    else:
+        print("  ok    the launcher leaves Documents alone")
+    if any(f.startswith("Library/Application Support/218e Rewired") for f in made):
+        print("  ok    it works in Application Support instead")
+    else:
+        print(f"  FAIL  no working folder was made at all: {made}")
+        failures += 1
+
+    out, litter = smoke_run()
+    strays = [f for f in litter if f.startswith("Documents")]
+    if strays:
+        print("  FAIL  it wrote into Documents: " + ", ".join(strays))
+        failures += 1
+    else:
+        print("  ok    nothing written into Documents")
     for bad in ("command not found", "unbound variable", "syntax error",
                 "No such file or directory"):
         if bad in out:

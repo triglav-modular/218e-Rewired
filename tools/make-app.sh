@@ -63,18 +63,22 @@ cat > "$APP/Contents/MacOS/launcher" <<'LAUNCH'
 #!/bin/bash
 RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
 BESIDE="$(cd "$(dirname "$0")/../../.." && pwd)"
-# Work in the folder the app was unzipped into: the image is already there,
-# whether in a firmware folder or loose beside the app, and the log lands
-# where the person put things rather than somewhere they have to go looking.
-# Dragged to /Applications that folder is not writable, so fall back to one
-# of our own.
+# Everything this app makes for itself goes here.  Not Documents: that is the
+# user's, and a quarantined app runs from a read-only copy of itself, so the
+# fallback below is not the rare case it looks like - it is every launch of a
+# fresh download.
+OURS="$HOME/Library/Application Support/218e Rewired"
+
+# Work in the folder the app was unzipped into when that is possible: the
+# image is already there, and the log lands where the person put things rather
+# than somewhere they have to go looking.  Translocated, or dragged to
+# /Applications, that folder cannot be written to.
 if [ -w "$BESIDE" ]; then
     WORK="$BESIDE"
 else
-    WORK="$HOME/Documents/218e Rewired"
+    WORK="$OURS"
 fi
-# The runner is ours, not the user's, so it does not go in with their files.
-RUNDIR="$HOME/Library/Application Support/218e Rewired"
+RUNDIR="$OURS"
 mkdir -p "$WORK" "$RUNDIR"
 cat > "$RUNDIR/run.command" <<RUN
 #!/bin/bash
