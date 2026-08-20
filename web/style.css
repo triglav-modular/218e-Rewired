@@ -110,17 +110,26 @@
   transition: color .15s;
 }
 /* The mark is a glyph on nothing now, not a badge, so it takes no rounding
-   and no box - only the room it draws in.  Masked rather than placed as an
-   image, the way the disclosure chevron is: an <img> carries its own colour
-   and cannot answer the pointer, and its colour is the one thing about it
-   that now has to change.  #fffdfb is the white the file itself draws in. */
+   and no box - only the room it draws in.  Inlined rather than referenced,
+   because its colour is the one thing about it that now has to change and an
+   <img> carries its own: this way fill and stroke are currentColor and the
+   mark follows the link it sits in.  It was a mask first, which is how the
+   disclosure chevron does the same trick, and it went invisible - a mask
+   image that does not load masks everything away rather than failing
+   loudly, and it has an origin and an engine to satisfy before it loads.
+   Two paths and no fetch has neither problem.
+
+   The file's own <style> is dropped on the way in: it names .cls-1 and
+   .cls-2, which would leak into the page as the banana's would.  Its two
+   stroke widths are the only thing it carried that the page cannot say, so
+   they come across as attributes; #fffdfb, the white it drew in, is on
+   .brand above. */
 .brand .mark {
   display: block;
   width: 34px;
   height: 34px;
-  background: currentColor;
-  -webkit-mask: url("images/triglav-mark.svg") center / contain no-repeat;
-  mask: url("images/triglav-mark.svg") center / contain no-repeat;
+  fill: currentColor;
+  stroke: currentColor;
 }
 /* White into accent, so it takes the pass like the rest of the row. */
 .brand:hover,

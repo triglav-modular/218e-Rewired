@@ -670,6 +670,16 @@ def test_atomic_replace() -> None:
 def test_hex_roundtrip(cfg: dict) -> None:
     print("hex handling")
     factory = REPO / cfg["firmware"]["factory_hex"]
+    # Buchla's image is not ours to redistribute, so a checkout does not have
+    # one.  Skip the checks that need it rather than failing: everything else
+    # in the suite still runs, which is what makes it useful on a fork and in
+    # CI.  --golden is where its absence is meant to be felt.
+    if not factory.exists():
+        print(f"  skip  factory image checks - {cfg['firmware']['factory_hex']} not present")
+        raises("bad checksum rejected",
+               lambda: B.parse_hex_text(":020000040000FA\n:0400000012345678FF\n", "bad"),
+               "checksum")
+        return
     memory, start = B.parse_hex(factory)
     rendered = B.render_hex(memory, start)
     again, again_start = B.parse_hex_text(rendered, "rendered")
@@ -683,6 +693,10 @@ def test_golden(cfg: dict) -> None:
     expected = cfg["firmware"].get("golden_sha256")
     if not expected:
         check("golden_sha256 recorded in config", False, "missing")
+        return
+    if not (REPO / cfg["firmware"]["factory_hex"]).exists():
+        check("factory image present for the golden build", False,
+              f"{cfg['firmware']['factory_hex']} not present - supply your own copy")
         return
     # --no-ghidra: the JavaScript toolchain reproduces the same image, and
     # requiring Ghidra made the one check that guards a release unrunnable
