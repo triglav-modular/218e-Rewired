@@ -503,12 +503,29 @@ fit_window() {
     case "$cols" in ''|*[!0-9]*) return 0 ;; esac
     [ "$rows" -gt "$want_rows" ] && want_rows="$rows"
     [ "$cols" -gt "$want_cols" ] && want_cols="$cols"
-    if [ "$rows" -lt 40 ] || [ "$cols" -lt 80 ]; then
-        printf '\033[8;%d;%dt' "$want_rows" "$want_cols"
-        # The resize is asynchronous: without a beat the banner is drawn into
-        # the old window and scrolls anyway.
-        sleep 0.3
-    fi
+    [ "$rows" -lt 40 ] || [ "$cols" -lt 80 ] || return 0
+
+    printf '\033[8;%d;%dt' "$want_rows" "$want_cols"
+    # The resize is asynchronous: without a beat the banner is drawn into the
+    # old window and scrolls anyway.
+    sleep 0.3
+
+    # Whether that did anything is not a matter of opinion, so ask.  Terminal
+    # does listen to AppleScript, but only terminals that ignored the sequence
+    # get asked that way - which keeps the automation prompt away from the
+    # ones where it was never needed.
+    size="$(stty size 2>/dev/null)" || return 0
+    case "${size%% *}" in ''|*[!0-9]*) return 0 ;; esac
+    [ "${size%% *}" -eq "$rows" ] || return 0
+    [ "${TERM_PROGRAM:-}" = "Apple_Terminal" ] || return 0
+    command -v osascript >/dev/null 2>&1 || return 0
+    osascript >/dev/null 2>&1 <<APPLESCRIPT
+tell application "Terminal"
+    set number of rows of front window to $want_rows
+    set number of columns of front window to $want_cols
+end tell
+APPLESCRIPT
+    sleep 0.2
 }
 
 banana() {
