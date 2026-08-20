@@ -45,7 +45,6 @@ else
 fi
 
 FIRMWARE_DIR="${REWIRED_WORKDIR:-$PACKAGE_ROOT}/firmware"
-FIRMWARE_NAME="218eV3_v369_Rewired_DFU.hex"
 
 # The builder page normally stamps this script with the checksum of the image
 # it built.  It cannot stamp the signed app - editing a byte of it breaks the
@@ -861,16 +860,11 @@ $chosen_options
 EOF
 fi
 
-# Keep it where it belongs, so the next run finds it first and the log records
-# one canonical location.  A failure here is not fatal: the image was already
-# verified, and flashing it from where it sits is equally correct.
-if [ "$CUSTOM_IMAGE" -eq 0 ] && [ "$FIRMWARE" != "$FIRMWARE_DIR/$FIRMWARE_NAME" ]; then
-    mkdir -p "$FIRMWARE_DIR" 2>/dev/null
-    if cp "$FIRMWARE" "$FIRMWARE_DIR/$FIRMWARE_NAME" 2>/dev/null; then
-        FIRMWARE="$FIRMWARE_DIR/$FIRMWARE_NAME"
-        ok "Copied into firmware/"
-    fi
-fi
+# The image is flashed from where it is.  It used to be copied into the working
+# folder first, which was the package root and therefore somewhere the person
+# could see - now that folder is inside Library, and the copy only turned up
+# again on the next run as a nameless extra entry in the list, checksummed but
+# with nothing to say where it came from.
 log "Using $FIRMWARE"
 
 # The bundled dfu-programmer is universal and carries its own libusb, so it
@@ -1062,7 +1056,14 @@ fi
 
 # Leave a record beside the image.  Without it the only answer to "what is on
 # this instrument" is whatever the person remembers.
-cat > "$PACKAGE_ROOT/firmware/INSTALLED.txt" <<RECORD 2>/dev/null || true
+#
+# Beside the image, not under PACKAGE_ROOT: inside the app that is a folder in
+# the bundle, which is read-only and read-only again for being a translocated
+# copy, so the record was silently going nowhere on every run.  If the image
+# sits somewhere unwritable too, the working folder takes it.
+RECORD_DIR="$(dirname "$FIRMWARE")"
+[ -w "$RECORD_DIR" ] || RECORD_DIR="$WORK_DIR"
+cat > "$RECORD_DIR/INSTALLED.txt" <<RECORD 2>/dev/null || true
 $FIRMWARE_VERSION
 flashed  $(timestamp)
 image    ${actual_sha256:-$EXPECTED_SHA256}
