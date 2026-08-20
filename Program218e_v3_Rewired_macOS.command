@@ -12,7 +12,14 @@ FLASH_VALIDATED=0
 ERASE_STARTED=0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_FILE="$SCRIPT_DIR/218e_v3_Rewired_flash_log.txt"
+# Inside a signed .app everything here is sealed: writing the log or the
+# firmware folder next to the script would break the signature on the first
+# run and Gatekeeper would refuse the app from then on.  The launcher sets
+# REWIRED_WORKDIR to somewhere writable; run loose from a folder, nothing
+# sets it and the script keeps its own directory as before.
+WORK_DIR="${REWIRED_WORKDIR:-$SCRIPT_DIR}"
+mkdir -p "$WORK_DIR" 2>/dev/null
+LOG_FILE="$WORK_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"' EXIT
 EXPECTED_SHA256="b21c816227644d630c97fc4e2be8f9c37be778be1cb00dea39b4b3677cac058e"
@@ -37,7 +44,7 @@ else
     exit 1
 fi
 
-FIRMWARE_DIR="$PACKAGE_ROOT/firmware"
+FIRMWARE_DIR="${REWIRED_WORKDIR:-$PACKAGE_ROOT}/firmware"
 FIRMWARE_NAME="218eV3_v369_Rewired_DFU.hex"
 SENDMIDI="$RUNTIME_DIR/support/sendmidi"
 DFU_BUNDLED="$RUNTIME_DIR/support/dfu/bin/dfu-programmer"
