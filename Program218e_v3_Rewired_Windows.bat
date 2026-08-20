@@ -592,7 +592,10 @@ IF NOT EXIST "%PACKAGE_ROOT%tools\Show-Menu.ps1" (
     GOTO :fail_early
 )
 DEL /Q "%MENU_OUT%" >NUL 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Show-Menu.ps1" -Path "%MENU_FILE%" -Out "%MENU_OUT%" -Title %1
+REM <NUL so the helper gets its own empty input.  It inherits this script's
+REM stdin otherwise, and whatever was piped in for the prompts further down is
+REM gone by the time they ask for it.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Show-Menu.ps1" -Path "%MENU_FILE%" -Out "%MENU_OUT%" -Title %1 <NUL
 IF EXIST "%MENU_OUT%" (
     SET /P "PICK="<"%MENU_OUT%"
     DEL /Q "%MENU_OUT%" >NUL 2>&1

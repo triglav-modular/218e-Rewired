@@ -55,10 +55,9 @@ function Measure-Lines {
     return $n
 }
 
-if ($Title) { Write-Host ('  ' + $Title) }
-
 # A console without a keyboard - piped, or a scheduled run - cannot be driven
-# by arrow keys, so it gets a numbered list and a plain read.
+# by arrow keys.  Decide before printing anything: the caller prints its own
+# heading when it takes over, and two headings is worse than none.
 $interactive = $true
 try { $null = [Console]::CursorTop } catch { $interactive = $false }
 if ([Console]::IsInputRedirected) { $interactive = $false }
@@ -69,6 +68,8 @@ if ([Console]::IsInputRedirected) { $interactive = $false }
 # nothing and write nothing - the caller notices the missing answer and asks
 # in the way that does work under redirection.
 if (-not $interactive) { exit }
+
+if ($Title) { Write-Host ('  ' + $Title) }
 
 $sel = 0
 $top = [Console]::CursorTop
