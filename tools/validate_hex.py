@@ -18,11 +18,15 @@ APP_LOW, APP_HIGH = 0x80002000, 0x8003FFFF
 # bytes and both start at APP_LOW, so an image that does not begin at the
 # reset vector, or that carries a few hundred bytes, is not firmware whatever
 # its checksums say.
+# AVR32 flash is mapped here.  dfu-programmer masks bit 31 off every address
+# it computes; this puts it back, so the numbers below and the ones printed
+# are the addresses people recognise.
+FLASH_BASE = 0x80000000
 MIN_BYTES = 16384
 ALLOWED_TYPES = {0, 1, 4, 5}
 
 def main(path):
-    upper = 0
+    upper = FLASH_BASE
     lo = hi = None
     saw_eof = False
     try:
@@ -53,10 +57,20 @@ def main(path):
         if len(raw) != length + 5:
             print(f"BAD record at line {n} declares {length} bytes but carries "
                   f"{len(raw) - 5}"); return 1
+        # dfu-programmer keeps one address_offset and lets types 4 AND 5 set it,
+        # masking the result with 0x7fffffff.  Type 5 is nominally the entry
+        # point, so a validator that treats it as decoration and a flasher that
+        # treats it as an offset disagree about where every following record
+        # lands - which is a way to have a file approved and something else
+        # written.  The mask only ever clears bit 31, so it is put back for the
+        # comparisons and the message below, all of which live in flash space.
         if kind == 4:
-            upper = ((raw[4] << 8) | raw[5]) << 16
+            upper = (((raw[4] << 24) | (raw[5] << 16)) & 0x7FFFFFFF) | FLASH_BASE
+        elif kind == 5:
+            upper = ((((raw[4] << 24) | (raw[5] << 16) |
+                       (raw[6] << 8) | raw[7]) & 0x7FFFFFFF)) | FLASH_BASE
         elif kind == 0:
-            a = upper + addr
+            a = (((upper - FLASH_BASE) + addr) & 0x7FFFFFFF) | FLASH_BASE
             # Count addresses, not record lengths.  Summing lengths let the
             # same sixteen bytes be repeated 1,024 times and pass as a 16 KB
             # image while covering sixteen bytes of flash.
@@ -68,6 +82,14 @@ def main(path):
             hi = a + length - 1 if hi is None else max(hi, a + length - 1)
         elif kind == 1:
             saw_eof = True
+            # Everything past here would be counted by us and never seen by
+            # the flasher: sixteen bytes before the marker and sixteen
+            # kilobytes after it would have passed as a whole image.
+            rest = [ln for ln in lines[n:] if ln.strip()]
+            if rest:
+                print(f"BAD {len(rest)} records after the end-of-file record at "
+                      f"line {n} - the flasher stops there and would never "
+                      f"write them"); return 1
         if kind not in ALLOWED_TYPES:
             print(f"BAD record type {kind} at line {n} - not an AVR32 firmware image")
             return 1

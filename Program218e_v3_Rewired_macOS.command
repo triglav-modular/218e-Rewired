@@ -131,15 +131,20 @@ validate_hex() {
     awk '
 function h2d(s,   i,v,c){v=0;for(i=1;i<=length(s);i++){c=index("0123456789abcdef",tolower(substr(s,i,1)))-1;if(c<0)return -1;v=v*16+c}return v}
 function fail(m){print "BAD " m;failed=1;exit 1}
+BEGIN{FLASH=2147483648}
 /^:/{hex=substr($0,2);gsub(/\r/,"",hex)
   if(length(hex)<10||length(hex)%2)fail("malformed record at line " NR)
   sum=0;for(i=1;i<length(hex)+1;i+=2){b=h2d(substr(hex,i,2));if(b<0)fail("non-hex characters at line " NR);sum+=b}
   if(sum%256)fail("checksum mismatch at line " NR " - the file is corrupted")
   type=h2d(substr(hex,7,2));len=h2d(substr(hex,1,2));addr=h2d(substr(hex,3,4))
-  if(type==4)ela=h2d(substr(hex,9,4))
+  if(eof)fail("records after the end-of-file record at line " NR " - the flasher stops there and would never write them")
+  # dfu-programmer lets type 4 and type 5 both set the address offset, masking
+  # bit 31 off.  FLASH puts it back, so everything below is in flash space.
+  if(type==4)base=(h2d(substr(hex,9,4))*65536)%FLASH
+  if(type==5)base=h2d(substr(hex,9,8))%FLASH
   if(type!=0&&type!=1&&type!=4&&type!=5)fail("record type " type " at line " NR " - not an AVR32 firmware image")
   if(len*2+10!=length(hex))fail("record at line " NR " declares " len " bytes but carries " (length(hex)-10)/2)
-  if(type==0){a=ela*65536+addr
+  if(type==0){a=(base+addr)%FLASH+FLASH
     if(seen&&a<prevend)fail("record at line " NR " overwrites flash already written - real images do not overlap")
     if(!seen||a<lo)lo=a;seen=1;if(a+len-1>hi)hi=a+len-1;cov+=len;prevend=a+len}
   if(type==1)eof=1;next}

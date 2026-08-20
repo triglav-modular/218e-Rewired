@@ -116,6 +116,22 @@ jobs:
           type scan_out.txt
           type scan_err.txt
           findstr /C:"good.hex" scan_out.txt >NUL || (echo FAILED: scanner rejected a valid image & exit /b 1)
+          rem The two shapes that pass a validator which keeps reading after the
+          rem end marker, or ignores type 5 while dfu-programmer offsets by it.
+          python -c "
+          def rec(k,a,d):
+              b=[len(d),(a>>8)&255,a&255,k]+list(d)
+              return ':'+''.join('%%02X'%%x for x in b+[(-sum(b))&255])
+          full=[rec(0,0x2010+16*i,[0xFF]*16) for i in range(1023)]
+          open('scan_test/after_eof.hex','w').write('\n'.join([rec(4,0,[0x80,0]),rec(0,0x2000,[0]*16),rec(1,0,[])]+full)+'\n')
+          body=[rec(0,0x2000+16*i,[0]*16) for i in range(1024)]
+          open('scan_test/type5.hex','w').write('\n'.join([rec(4,0,[0x80,0]),rec(5,0,[0x80,0,0x20,0])]+body+[rec(1,0,[])])+'\n')
+          "
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Scan-Images.ps1 -DirList "%CD%\scan_test" -Explain > scan2.txt 2> scan2err.txt
+          type scan2.txt
+          findstr /C:"after_eof.hex" scan2.txt >NUL && (echo FAILED: accepted data past the end-of-file record & exit /b 1)
+          findstr /C:"type5.hex" scan2.txt >NUL && (echo FAILED: accepted a type-5 offset before the data & exit /b 1)
+          echo PASS: scanner refuses both
           findstr /C:"bad.hex" scan_out.txt >NUL && (echo FAILED: scanner accepted junk & exit /b 1)
           findstr /C:"lowaddr.hex" scan_out.txt >NUL && (echo FAILED: scanner accepted a bootloader-region image & exit /b 1)
           rem And python must reach the same three verdicts.

@@ -130,13 +130,24 @@ notarisation.
 
 ## Flashing
 
-Run the flasher for your platform — it finds the image itself, searching
-`firmware/`, its own directory, Downloads and the Desktop and accepting only a
-file whose checksum matches the image it was generated for, so a browser
-download works where it landed. `Program218e_v3_Rewired_macOS.command` on macOS and
-`Program218e_v3_Rewired_Windows.bat` on Windows. Both do the same sequence, and the build rewrites the expected
-checksum and printed instructions in each, so neither can describe or install a
-build it was not generated for.
+The flasher opens with a choice — flash firmware, or get a keyboard out of DFU
+mode after an interrupted flash. On macOS the site hands out
+`218e Rewired Flasher.app`, built and signed by `tools/make-app.sh`; from a
+checkout, `Program218e_v3_Rewired_macOS.command` is the same program.
+`Program218e_v3_Rewired_Windows.bat` on Windows.
+
+It finds the image itself. From a checkout that means `firmware/` beside the
+script; from a download it means the `firmware` folder next to the app, which
+takes some finding — see *App Translocation* above.
+
+**Any structurally valid 218e image is accepted**, not only the one the flasher
+shipped with. The checksum the build writes into each script is a label, so the
+default build can be named in a list of candidates rather than shown as a bare
+hash; it is not a gate. What is a gate is `tools/validate_hex.py`, which mirrors
+`dfu-programmer`'s own parser — it stops at the end-of-file record, it lets type
+4 and type 5 both set the address offset, and it counts addresses rather than
+declared record lengths, because each of those is a way for a file to be
+approved and something else to be written.
 
 **Windows needs the DFU device bound to WinUSB**, or `dfu-programmer` cannot
 open it. The flasher deals with this itself, in the only order that works:
@@ -150,11 +161,13 @@ rather than an error. If it still cannot be reached afterwards, the script says
 so, confirms nothing was erased, and points out that the keyboard is in DFU and
 a power cycle brings it back. 
 
-**This software is not code-signed**, on either platform. On macOS that costs
-nothing if the package is obtained with `git clone`: Gatekeeper only refuses
-files carrying `com.apple.quarantine`, which a browser download sets on every
-file and a clone sets on none. A downloaded ZIP does hit it, and the flasher
-clears it before running anything.
+**The macOS app is signed and notarised**; Windows is not. The app the site
+hands out is built by `tools/make-app.sh`, signed with Developer ID, notarised
+and stapled, so it opens with nothing to click through and works offline. A
+checkout is not signed and does not need to be: Gatekeeper only refuses files
+carrying `com.apple.quarantine`, which a browser download sets on every file
+and a clone sets on none. A ZIP taken from a browser does hit it, and the
+flasher clears it before running anything.
 
 That ordering is not fussiness. A quarantined unsigned binary does not fail
 when launched: macOS suspends it behind a modal dialog and it waits
@@ -165,21 +178,18 @@ question instantly and without executing anything, so the flasher checks
 clear it, and only then runs them. A fifteen-second deadline on that first call
 is the backstop if macOS holds them anyway.
 
-`tools/sign-macos.sh` exists and will sign, notarise and staple a disk image
-if a **Developer ID Application** certificate is ever available — that is the
-only certificate type Apple accepts for notarisation, it can only be created
-by the Account Holder of a team, and development certificates (`Mac
-Developer`, `Apple Development`) do not work for it. The script says as much
-if you point it at the wrong one. Windows signing is separate again and needs
-an Authenticode certificate.
+`tools/make-app.sh` is the release path for macOS: it builds the app, signs
+every Mach-O inside it before the bundle around them, notarises, staples, and
+writes `mac/Flasher.zip` for the site to publish. `tools/sign-macos.sh` signs
+and notarises a disk image of the loose package instead, which is the older
+shape and is not what the site ships.
 
-Until then:
-
-**Without that, the first run is blocked on both platforms**: macOS reports the flasher and
-then `dfu-programmer` as being from an unidentified developer, each cleared
-once from System Settings → Privacy & Security → Open Anyway; Windows Defender
-may need More info → Run anyway. A package downloaded through a browser is also
-quarantined, which the macOS flasher detects and offers to clear.
+Both need a **Developer ID Application** certificate — the only type Apple
+accepts for notarisation. It can only be created by the Account Holder of a
+team, and development certificates (`Mac Developer`, `Apple Development`) do
+not work; the scripts say so if pointed at the wrong one. Windows signing is
+separate again and needs an Authenticode certificate, which is why the `.bat`
+is still unsigned and Windows Defender may want **More info → Run anyway**.
 
 **Getting an instrument out of DFU by hand.** If a run stopped before the erase
 the application is intact, but a power cycle will not boot it: reading the fuses

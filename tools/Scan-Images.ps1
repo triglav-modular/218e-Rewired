@@ -31,7 +31,7 @@ $APP_HIGH = [int64]2147745791   # 0x8003FFFF
 function Test-IntelHex {
     param([string]$Path)
     $reason = 'ok' 
-    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0; $prevEnd = $null
+    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0; $prevEnd = $null; $FLASH_BASE = [int64]0x80000000
     try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return $false }
     if ($lines.Count -eq 0) { $script:LastReason = 'empty file'; return $false }
     foreach ($line in $lines) {
@@ -57,13 +57,24 @@ function Test-IntelHex {
             $script:LastReason = "record declares $len bytes but carries $($raw.Length - 5)"
             return $false
         }
+        if ($sawEof) {
+            $script:LastReason = "records after the end-of-file record - the flasher stops there and would never write them"
+            return $false
+        }
+        # dfu-programmer keeps one address offset and lets type 4 AND type 5
+        # set it, masking bit 31 off.  Type 5 is nominally the entry point, so
+        # ignoring it here while the flasher acts on it is a way to approve one
+        # file and write another.  FLASH_BASE puts the masked bit back.
         if ($kind -eq 4) {
             # Multiply rather than -shl 16: shifting 0x8000 left overflows
             # Int32 and lands negative, which put every app-region image
             # "below" 0x80002000 and rejected all of them.
-            $upper = [int64](([int]$raw[4] -shl 8) -bor [int]$raw[5]) * 65536
+            $upper = ([int64](([int]$raw[4] -shl 8) -bor [int]$raw[5]) * 65536) -band 0x7FFFFFFF
+        } elseif ($kind -eq 5) {
+            $upper = ([int64]$raw[4] * 16777216 + [int64]$raw[5] * 65536 +
+                      [int64]$raw[6] * 256 + [int64]$raw[7]) -band 0x7FFFFFFF
         } elseif ($kind -eq 0) {
-            $a = $upper + [int64]$addr
+            $a = (($upper + [int64]$addr) -band 0x7FFFFFFF) + $FLASH_BASE
             if ($null -eq $lo -or $a -lt $lo) { $lo = $a }
             $end = $a + $len - 1
             if ($null -eq $hi -or $end -gt $hi) { $hi = $end }

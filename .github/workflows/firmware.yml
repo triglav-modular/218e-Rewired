@@ -40,20 +40,35 @@ jobs:
       - name: Supply the factory image, if this repository has one
         id: factory
         env:
-          FACTORY_HEX: ${{ secrets.FACTORY_HEX }}
+          FACTORY_HEX_URL: ${{ secrets.FACTORY_HEX_URL }}
+          FACTORY_HEX_TOKEN: ${{ secrets.FACTORY_HEX_TOKEN }}
         run: |
-          if [ -n "$FACTORY_HEX" ]; then
-            mkdir -p firmware
-            printf '%s' "$FACTORY_HEX" > firmware/218eV3_v369_DFU.hex
-            # A real image is not available here, so prove the other direction
-          # with a generated one that is the right shape.
-          pwsh -File tools/Make-TestImage.ps1 -Path full.hex -Bytes 20480
-          python3 tools/validate_hex.py full.hex
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "$FACTORY_HEX_URL" ]; then
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No FACTORY_HEX secret - the build steps are skipped. Buchla's image is not redistributable, so it cannot live in the repository."
+            echo "::notice::No FACTORY_HEX_URL secret - the build steps are skipped. Buchla's image is not redistributable, so it cannot live in the repository."
+            exit 0
           fi
+          mkdir -p firmware
+          if [ -n "$FACTORY_HEX_TOKEN" ]; then
+            set -- -H "Authorization: Bearer $FACTORY_HEX_TOKEN"
+          else
+            set --
+          fi
+          # --fail so an HTML error page cannot be mistaken for an image, and
+          # no -v anywhere near this: the token is in the request headers.
+          curl -sS --fail --location "$@" "$FACTORY_HEX_URL" \
+               -o firmware/218eV3_v369_DFU.hex \
+            || { echo "::error::could not fetch the factory image"; exit 1; }
+          # It is the wrong file if it is not the file the build is pinned to,
+          # and every later step would be checking the wrong thing.
+          want="$(python3 -c "import tomllib;print(tomllib.load(open('config/218e.toml','rb'))['firmware']['factory_sha256'])")"
+          got="$(shasum -a 256 firmware/218eV3_v369_DFU.hex | cut -d' ' -f1)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::factory image checksum is $got, expected $want"
+            exit 1
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Factory image fetched and verified."
 
       - name: Unit tests
         run: python3 tools/test.py
@@ -126,6 +141,18 @@ jobs:
           open('overlap.hex','w').write('\n'.join(
               [rec(4,0,[0x80,0x00])] + [rec(0,0x2000,[0]*16)] * 1024
               + [rec(1,0,[])]) + '\n')
+          # Sixteen bytes, then the end marker, then a whole image nobody
+          # reads: dfu-programmer's loop is `while (1 != record.type)`.
+          full = [rec(0, 0x2010 + 16*i, [0xFF]*16) for i in range(1023)]
+          open('after_eof.hex','w').write('\n'.join(
+              [rec(4,0,[0x80,0x00]), rec(0,0x2000,[0]*16), rec(1,0,[])]
+              + full) + '\n')
+          # Type 5 is nominally the entry point, but dfu-programmer sets its
+          # address offset from it, so everything after this lands 0x2000 high.
+          body = [rec(0, 0x2000 + 16*i, [0]*16) for i in range(1024)]
+          open('type5.hex','w').write('\n'.join(
+              [rec(4,0,[0x80,0x00]), rec(5,0,[0x80,0x00,0x20,0x00])]
+              + body + [rec(1,0,[])]) + '\n')
           PY
           if python3 tools/validate_hex.py tiny.hex; then
             echo "::error::a 16-byte image was accepted - it would erase the application and not replace it"
@@ -133,6 +160,14 @@ jobs:
           fi
           if python3 tools/validate_hex.py overlap.hex; then
             echo "::error::an image that covers 16 bytes 1,024 times was accepted as 16 KB"
+            exit 1
+          fi
+          if python3 tools/validate_hex.py after_eof.hex; then
+            echo "::error::16 bytes before the EOF record and 16 KB after it was accepted - dfu-programmer stops at EOF and would write the 16"
+            exit 1
+          fi
+          if python3 tools/validate_hex.py type5.hex; then
+            echo "::error::a type-5 record before the data was accepted - dfu-programmer uses it as an address offset, so the data lands away from the reset vector"
             exit 1
           fi
           # A real image is not available here, so prove the other direction

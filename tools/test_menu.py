@@ -192,6 +192,47 @@ def launcher_litter():
     return made, temporary
 
 
+def launcher_injection():
+    """Put the app in a folder whose name is a command, and see if it runs.
+
+    The launcher writes a shim carrying the paths, Terminal runs the shim, and
+    bash reads it - so a folder named $(something) inside double quotes was a
+    command, and it executed with the app's signature intact.
+    """
+    make = (REPO / "tools" / "make-app.sh").read_text(encoding="utf-8")
+    body = make.split("<<'LAUNCH'\n", 1)[1].split("\nLAUNCH\n", 1)[0]
+
+    root = REPO / "build" / "_injection_test"
+    shutil.rmtree(root, ignore_errors=True)
+    marker = root / "MARKER"
+    folder = root / f"$(touch '{marker}')"
+    macos = folder / "218e Rewired Flasher.app" / "Contents" / "MacOS"
+    resources = folder / "218e Rewired Flasher.app" / "Contents" / "Resources"
+    tmp, stub, home = root / "tmp", root / "bin", root / "home"
+    for d in (macos, resources, tmp, stub, home):
+        d.mkdir(parents=True, exist_ok=True)
+    (resources / "Program218e_v3_Rewired_macOS.command").write_text(
+        "#!/bin/bash\necho flasher ran\n")
+    launcher = macos / "launcher"
+    launcher.write_text(body, encoding="utf-8")
+    launcher.chmod(0o755)
+    (stub / "open").write_text("#!/bin/bash\nexit 0\n")
+    (stub / "open").chmod(0o755)
+
+    env = dict(os.environ)
+    env.update(HOME=str(home), TMPDIR=str(tmp),
+               PATH=f"{stub}:{os.environ['PATH']}")
+    subprocess.run(["/bin/bash", str(launcher)], env=env,
+                   capture_output=True, timeout=30)
+    shim = tmp / "218e-rewired-run.command"
+    if shim.exists():
+        subprocess.run(["/bin/bash", str(shim)], env=env,
+                       capture_output=True, timeout=30)
+    executed = marker.exists()
+    shutil.rmtree(root, ignore_errors=True)
+    return executed
+
+
 def smoke_run():
     """Run the flasher as far as choosing an image, in an empty HOME.
 
@@ -319,6 +360,12 @@ def main():
     # bash -n does not notice a function called before it is defined: the
     # parse is fine, and only running it says "command not found".  That
     # shipped once, in the step that says where the image was looked for.
+    if launcher_injection():
+        print("  FAIL  a folder named $(...) executed as a command")
+        failures += 1
+    else:
+        print("  ok    a folder name cannot execute as a command")
+
     made, temporary = launcher_litter()
     # Nothing of ours in the home folder at all - not Documents, and no folder
     # in Library either.  When the app cannot write beside itself there is

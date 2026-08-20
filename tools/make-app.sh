@@ -88,12 +88,14 @@ fi
 # Terminal opens a file; it cannot be handed an environment.  This shim carries
 # it, and lives in the temporary directory because it is worth nothing after
 # the run and the system clears it out on its own.
+#
+# printf %q, not a here-document.  These paths come from wherever the app was
+# put, the shim is a shell script, and bash reads it: a folder named
+# $(something) inside double quotes is a command, and it ran.  %q quotes them
+# so they come back out as the strings they are.
 RUNNER="${TMPDIR:-/tmp}/218e-rewired-run.command"
-cat > "$RUNNER" <<RUN
-#!/bin/bash
-export REWIRED_WORKDIR="$WORK"
-exec "$RES/Program218e_v3_Rewired_macOS.command"
-RUN
+printf '#!/bin/bash\nexport REWIRED_WORKDIR=%q\nexec %q\n' \
+       "$WORK" "$RES/Program218e_v3_Rewired_macOS.command" > "$RUNNER"
 chmod +x "$RUNNER"
 open -a Terminal "$RUNNER"
 LAUNCH
