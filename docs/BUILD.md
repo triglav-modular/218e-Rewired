@@ -554,8 +554,8 @@ pass:
 brew install autoconf automake pkg-config
 
 # libusb, per architecture
-curl -LO https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
-tar xf libusb-1.0.27.tar.bz2 && cd libusb-1.0.27
+curl -LO https://github.com/libusb/libusb/releases/download/v1.0.29/libusb-1.0.29.tar.bz2
+tar xf libusb-1.0.29.tar.bz2 && cd libusb-1.0.29
 for A in arm64 x86_64; do
   mkdir -p build-$A && (cd build-$A && ../configure --host=$A-apple-darwin \
     --prefix=$PWD/../out-$A --disable-udev --enable-shared --disable-static \
@@ -565,7 +565,7 @@ done
 
 # dfu-programmer, per architecture, against the matching libusb
 git clone https://github.com/dfu-programmer/dfu-programmer && cd dfu-programmer
-git checkout v1.1.0 && ./bootstrap.sh
+git checkout c204739 && ./bootstrap.sh
 for A in arm64 x86_64; do
   mkdir -p b-$A && cp -r update-bash-completion.sh dfu_completion b-$A/
   (cd b-$A && ../configure --host=$A-apple-darwin \
@@ -595,6 +595,11 @@ Three build notes, each of which stops the build outright:
   directory, not `include/libusb-1.0`.
 - 0.6.2, if you build it instead, needs `-std=gnu99`: it defines `true` and
   `false` as enum members, which are keywords under the C23 default.
+- `dfu-programmer` has to be rebuilt whenever `libusb` is, not just relinked in
+  place. 1.0.29 carries compatibility version 6.0.0 where 1.0.27 carried 5.0.0,
+  and the executable records the version it was built against; dropping the new
+  library under a binary that still asks for 5.0.0 happens to load today and is
+  a coincidence, not an arrangement.
 
 ### What was checked before changing version
 

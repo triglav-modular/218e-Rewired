@@ -13,7 +13,7 @@ Nothing here is legal advice.
 | Tool | Licence | Upstream |
 |---|---|---|
 | `dfu-programmer` 1.1.0 (macOS + Windows) | GPL-2.0-or-later | <https://dfu-programmer.github.io/> · <https://github.com/dfu-programmer/dfu-programmer> |
-| `libusb` — 1.0.29 inside the Windows `dfu-programmer`, 1.0.27 as `libusb-1.0.0.dylib` on macOS | LGPL-2.1-or-later | <https://libusb.info/> · <https://github.com/libusb/libusb> |
+| `libusb` 1.0.29 (inside the Windows `dfu-programmer`; also `libusb-1.0.0.dylib` on macOS) | LGPL-2.1-or-later | <https://libusb.info/> · <https://github.com/libusb/libusb> |
 | `SendMIDI` (macOS + Windows) | GPL-3.0 | <https://github.com/gbevin/SendMIDI> |
 | `Zadig` 2.8 (Windows) | GPL-3.0 | <https://zadig.akeo.ie/> · <https://github.com/pbatard/libwdi> |
 
@@ -44,7 +44,7 @@ from these exact revisions:
 | Binary | Source revision |
 |---|---|
 | `dfu-programmer` | commit `c204739`, one docs-only commit after the `v1.1.0` tag |
-| `libusb` | tag `v1.0.29` (Windows) · tag `v1.0.27` (macOS) |
+| `libusb` | tag `v1.0.29`, `libusb-1.0.29.tar.bz2` sha256 `5977fc950f8d1395ccea9bd48c06b3f808fd3c2c961b44b0c2e6e29fc3a70a85` |
 
 ### How the Windows build is produced
 
