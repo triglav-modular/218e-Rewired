@@ -47,7 +47,10 @@ SET "STEP=0"
 
 REM The console opens shorter than the banner, so its top scrolls away before
 REM anyone sees it.  A no-op under Windows Terminal, which is already taller.
-MODE CON: COLS=80 LINES=40 >NUL 2>&1
+REM <NUL for the same reason the menu helper gets it: anything started here
+REM inherits this script's input, and the answers piped in for the prompts
+REM below must still be there when they ask.
+MODE CON: COLS=80 LINES=40 <NUL >NUL 2>&1
 ECHO.
 CALL :banana
 
