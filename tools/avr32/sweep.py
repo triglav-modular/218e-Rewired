@@ -70,12 +70,11 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # AssemblePressureFix.java moves it.  That is the marker working as intended —
 # a changed build forces a fresh power-up init.  What this pin still buys is a
 # stable anchor for the most complex configuration.
-# Re-pinned after the persisted pressure endpoints were compared signed
-# instead of unsigned.  That is two instructions, but the init marker hashes
-# the assembler source as well as the settings, so every image moves - which
-# is the marker working as intended.
+# Re-pinned after knob 4 was given the pressure curve back.  The handler and
+# its pool word return byte for byte, and the bootstrap no longer forces the
+# level to 0 - the knob owns it again, as it did before.
 EXPECTED = {
-    "historical_config": "130b72286a1c7e4989508688d2efab7e723c2af1fcf566d2aa4636a85cc15fca",
+    "historical_config": "bddaca5e819f26f44acc19a1b21d0e3d2fedf9be85bb714c41cea5e128983d2f",
 }
 
 

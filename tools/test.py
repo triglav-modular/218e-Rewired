@@ -629,6 +629,22 @@ def test_migration_and_empty_hand() -> None:
               'emit("MOV R9,0x6090");' in body
               and not re.search(r'emit\("(LD|ST)\.\w+ R\d+,?R?\d*\[0x2\]', body))
 
+    # Knob 4 sets the pressure curve level, and it does so from wherever the
+    # knob physically is - mode 0 is "no pads held".  Removing this once made
+    # the response linear for every instrument, which is only what one already
+    # sitting at level 0 had; everyone else lost a curve with no control left
+    # to get it back.  It is not a setting anyone chose, so nothing recorded
+    # that it had gone.
+    knob4 = cave("0x80014380L", "knob4_curve")
+    check("knob4_curve reads the knob and writes the curve level",
+          'emit("LD.UH R9,R10[0x310]");' in knob4
+          and 'emit("LSR R9,0x5");' in knob4
+          and 'emit("ST.B R10[0x2db],R9");' in knob4)
+    check("the knob-4 pool word reaches it",
+          'wordPatch("knob4_pool", 0x800043d0L, 0x80014380L' in source)
+    check("the bootstrap does not force the curve level back to 0",
+          'emit("ST.B R10[0x2db],R11");' not in source)
+
     # Pads 2+3 with knob 1 is the factory key-threshold adjustment - the touch
     # sensitivity a note triggers at, which the manual says not to change often
     # and which is nothing to do with pressure.  Our wrapper owns that knob to
