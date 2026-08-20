@@ -556,13 +556,17 @@ REM instead of written into a menu.
 SET "PO_SHA=%~2"
 SET "PO_MANIFEST=%~dp1image.txt"
 IF NOT EXIST "%PO_MANIFEST%" EXIT /B 0
+REM The manifest describes both images a download carries: the build it was
+REM made for, and the stock image it was made from.  Which set of lines to
+REM print is decided by checksum.
 SET "PO_WANT="
 FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%PO_MANIFEST%") DO (
-    IF /I "%%K"=="EXPECTED_SHA256" IF /I "%%L"=="%PO_SHA%" SET "PO_WANT=1"
+    IF /I "%%K"=="EXPECTED_SHA256" IF /I "%%L"=="%PO_SHA%" SET "PO_WANT=OPTION"
+    IF /I "%%K"=="FACTORY_SHA256" IF /I "%%L"=="%PO_SHA%" SET "PO_WANT=FACTORY_OPTION"
 )
 IF NOT DEFINED PO_WANT EXIT /B 0
 FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%PO_MANIFEST%") DO (
-    IF /I "%%K"=="OPTION" ECHO       %%L
+    IF /I "%%K"=="!PO_WANT!" ECHO       %%L
 )
 EXIT /B 0
 
@@ -574,13 +578,17 @@ SET "IO_SHA=%~2"
 SET "IO_OUT=%~3"
 SET "IO_MANIFEST=%~dp1image.txt"
 IF NOT EXIST "%IO_MANIFEST%" EXIT /B 0
+REM The manifest describes both images a download carries: the build it was
+REM made for, and the stock image it was made from.  Which set of lines to
+REM print is decided by checksum.
 SET "IO_WANT="
 FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%IO_MANIFEST%") DO (
-    IF /I "%%K"=="EXPECTED_SHA256" IF /I "%%L"=="%IO_SHA%" SET "IO_WANT=1"
+    IF /I "%%K"=="EXPECTED_SHA256" IF /I "%%L"=="%IO_SHA%" SET "IO_WANT=OPTION"
+    IF /I "%%K"=="FACTORY_SHA256" IF /I "%%L"=="%IO_SHA%" SET "IO_WANT=FACTORY_OPTION"
 )
 IF NOT DEFINED IO_WANT EXIT /B 0
 FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%IO_MANIFEST%") DO (
-    IF /I "%%K"=="OPTION" >>"%IO_OUT%" ECHO %%L
+    IF /I "%%K"=="!IO_WANT!" >>"%IO_OUT%" ECHO %%L
 )
 EXIT /B 0
 

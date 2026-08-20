@@ -423,16 +423,19 @@ image_options() {
     local hexfile="$1" sha="$2" manifest key value want=""
     manifest="$(dirname "$hexfile")/image.txt"
     [ -f "$manifest" ] || return 0
+    # The manifest describes both images a download carries: the build it was
+    # made for, and the stock image it was made from.  Which set of lines to
+    # print is decided by checksum, so a manifest left over from an earlier
+    # download cannot describe the wrong file.
     while IFS='=' read -r key value; do
         case "$key" in
-            EXPECTED_SHA256) [ "$value" = "$sha" ] && want=1 ;;
+            EXPECTED_SHA256) [ "$value" = "$sha" ] && want="OPTION" ;;
+            FACTORY_SHA256)  [ "$value" = "$sha" ] && want="FACTORY_OPTION" ;;
         esac
     done < "$manifest"
     [ -n "$want" ] || return 0
     while IFS='=' read -r key value; do
-        case "$key" in
-            OPTION) printf '%s\n' "$value" ;;
-        esac
+        [ "$key" = "$want" ] && printf '%s\n' "$value"
     done < "$manifest"
 }
 

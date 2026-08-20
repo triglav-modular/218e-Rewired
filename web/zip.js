@@ -97,9 +97,13 @@ var ZIP = (function () {
         var now = dosStamp(new Date());
         var entries = files.map(function (f) {
             var raw = typeof f.data === 'string' ? utf8(f.data) : f.data;
+            // f.mtime lets a file say it is older than the archive: the stock
+            // image is not something this download made, and the flasher
+            // orders what it finds by date.
+            var stamp = f.mtime ? dosStamp(f.mtime) : now;
             return { name: utf8(f.name), raw: raw, crc: crc32(raw),
                      mode: f.exec ? 0o100755 : 0o100644,
-                     time: now.time, date: now.date };
+                     time: stamp.time, date: stamp.date };
         });
         return Promise.all(entries.map(function (e) {
             return deflate(e.raw).then(function (packed) {

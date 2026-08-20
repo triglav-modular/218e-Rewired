@@ -566,7 +566,12 @@
                         ' (' + r.sha256.slice(0, 8) + ')'
                 ].concat(describe(state.options).map(function (line) {
                     return 'OPTION=' + line;
-                })).join('\n') + '\n' }
+                }), [
+                    'FACTORY_SHA256=' + GEN.factorySha256,
+                    'FACTORY_OPTION=Buchla stock v36.9, exactly as you uploaded it.',
+                    'FACTORY_OPTION=Flashing this puts the instrument back and ' +
+                        'removes every Rewired change.'
+                ]).join('\n') + '\n' }
             ]; },
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the app and the firmware folder',
@@ -656,10 +661,16 @@
             'The keyboard stays in DFU mode and a power cycle will not',
             'release it. Open the flasher again and choose "Get the keyboard',
             'out of DFU mode". It flashes nothing.'];
+        var stock = where.replace(/[^/]+$/, '218eV3_v369_DFU.hex');
         return ['218e V3 Rewired ' + GEN.version, '']
             .concat(['This zip has everything needed to flash:', '',
                      '  ' + where + '   the firmware you built',
-                     '  SHA-256  ' + r.sha256, ''])
+                     '  SHA-256  ' + r.sha256, '',
+                     '  ' + stock + '   the stock image you uploaded',
+                     '  SHA-256  ' + GEN.factorySha256, '',
+                     'The stock image is here so that going back does not mean',
+                     'going and finding it again. The flasher lists both and',
+                     'says which is which.', ''])
             .concat(knows, ['', 'HOW TO USE IT', ''])
             .concat(missing, howto)
             .concat(['', 'IF A FLASH IS INTERRUPTED', ''])
@@ -707,8 +718,16 @@
                 });
             })).then(function (tools) {
                 btn.querySelector('span').textContent = 'Packing…';
-                var files = [{ name: p.firmware || '218eV3_v369_Rewired_DFU.hex',
-                               data: r.hex }]
+                var built = p.firmware || '218eV3_v369_Rewired_DFU.hex';
+                // The stock image travels with the build made from it, so
+                // going back does not mean going and finding it again.  It is
+                // the file that was just uploaded, handed back to the person
+                // who uploaded it - it never left this browser.
+                var stock = built.replace(/[^/]+$/, '218eV3_v369_DFU.hex');
+                var older = new Date(Date.now() - 60000);
+                var files = [{ name: built, data: r.hex },
+                             { name: stock, data: state.factoryText,
+                               mtime: older }]
                     .concat(p.scripts(r), tools,
                             [{ name: 'README.txt', data: p.note(r, offline) }]);
                 if (offline) {
