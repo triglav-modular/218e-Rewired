@@ -31,7 +31,10 @@ $APP_HIGH = [int64]2147745791   # 0x8003FFFF
 function Test-IntelHex {
     param([string]$Path)
     $reason = 'ok' 
-    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0; $prevEnd = $null; $FLASH_BASE = [int64]0x80000000
+    # 2147483648L, not 0x80000000: that literal is an Int32 in PowerShell and
+    # an Int32 cannot hold it, so it arrives as -2147483648 and every address
+    # computed from it comes out negative.
+    $upper = 0; $lo = $null; $hi = $null; $sawEof = $false; $covered = 0; $prevEnd = $null; $FLASH_BASE = 2147483648L
     try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return $false }
     if ($lines.Count -eq 0) { $script:LastReason = 'empty file'; return $false }
     foreach ($line in $lines) {
