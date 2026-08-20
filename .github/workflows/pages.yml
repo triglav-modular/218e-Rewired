@@ -28,8 +28,10 @@ on:
       - 'tools/Scan-Images.ps1'
       - 'tools/Find-DfuDevice.ps1'
       - 'tools/Show-Menu.ps1'
+      - 'tools/version-assets.py'
       - 'Program218e_v3_Rewired_macOS.command'
       - 'Program218e_v3_Rewired_Windows.bat'
+      - 'mac/Flasher.zip'
       - 'mac/support/**'
       - 'windows/support/**'
       - 'THIRD-PARTY.md'
@@ -156,7 +158,11 @@ jobs:
           # background are reached through url() from style.css, so a check
           # that only read index.html would have stopped seeing them the
           # moment the CSS moved out of it.
-          sources = ["index.html", "style.css"]
+          # app.js too: the flashing tools are fetched by script, so their URLs
+          # are string literals that neither the markup nor the CSS scan
+          # would ever see.  That is how kit/mac/Flasher.zip went on being
+          # served from cache after the app inside it changed.
+          sources = ["index.html", "style.css", "app.js"]
           missing = []
           total = 0
           for name in sources:
@@ -170,6 +176,8 @@ jobs:
               for m in re.finditer(r'(?:src|href)="([^"]+)"', text):
                   refs.add(m.group(1))
               for m in re.finditer(r'url\(["\']?([^"\')]+)', text):
+                  refs.add(m.group(1))
+              for m in re.finditer(r'["\'](kit/[^"\']+)["\']', text):
                   refs.add(m.group(1))
               total += len(refs)
               for r in sorted(refs):
