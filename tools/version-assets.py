@@ -20,6 +20,11 @@ from pathlib import Path
 # URI, a fragment, or already carrying a query is left alone.
 HTML_REF = re.compile(r'\b(href|src)=(["\'])([^"\']+)\2')
 CSS_REF = re.compile(r'url\((["\']?)([^)"\']+)\1\)')
+# The flashing tools are fetched by script, so their URLs are string literals
+# rather than markup, and nothing above would ever see them.  Only kit/ paths:
+# a sweep of every string in a JavaScript file would eventually stamp something
+# that only looked like a filename.
+JS_REF = re.compile(r'(["\'])(kit/[^"\']+)\1')
 SKIP = re.compile(r'^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|//|#|/)')
 
 
@@ -57,6 +62,14 @@ def main(argv):
         out = stamp(text, CSS_REF, 2, css, site, stamped)
         if out != text:
             css.write_text(out, encoding="utf-8")
+
+    # Then scripts, and only then the page: stamping a kit path rewrites
+    # app.js, and app.js's own hash has to be taken after that.
+    for js in sorted(site.rglob("*.js")):
+        text = js.read_text(encoding="utf-8")
+        out = stamp(text, JS_REF, 2, js, site, stamped)
+        if out != text:
+            js.write_text(out, encoding="utf-8")
 
     for html in sorted(site.rglob("*.html")):
         text = html.read_text(encoding="utf-8")
