@@ -1,0 +1,97 @@
+name: Firmware and flashers
+
+# The core checks had no workflow at all: tools/test.py, the browser build
+# matrix and the macOS flasher were only ever run by hand, which is how a
+# stale assertion and a drifted harness both survived in the repository.
+#
+# Ghidra is not available here, so this runs the JavaScript toolchain.  That
+# is not a gap in coverage: sweep.py proves the two produce identical images,
+# and it needs a machine with Ghidra on it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Unit tests, and the golden image
+        run: python3 tools/test.py --golden
+
+      - name: The build is reproducible
+        run: |
+          python3 tools/build.py --no-ghidra
+          python3 tools/build.py --no-ghidra --expect-sha \
+            "$(python3 -c "import tomllib;print(tomllib.load(open('config/218e.toml','rb'))['firmware']['golden_sha256'])")"
+
+      - name: Every option combination builds and is distinct
+        run: |
+          cd web
+          /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc \
+            generated.js sha256.js buildlib.js assembler.js zip.js build.js \
+            test_matrix.js -- ../firmware/218eV3_v369_DFU.hex \
+            ../calibration/218e-pitch-calibration.csv
+
+      - name: The browser build agrees with build.py
+        run: python3 web/test_configs.py
+
+      - name: generated.js is not stale
+        run: |
+          python3 web/generate.py
+          git diff --exit-code -- web/generated.js web/assembler.js \
+            || { echo "::error::generated.js is out of date - run python3 web/generate.py"; exit 1; }
+
+  flasher-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The scripts parse
+        run: |
+          bash -n Program218e_v3_Rewired_macOS.command
+          bash -n ExitDFU_218e_v3_macOS.command
+
+      - name: The bundled tools run, and are universal
+        run: |
+          mac/support/dfu/bin/dfu-programmer at32uc3b1256 get bootloader-version \
+            2>&1 | tee out.txt || true
+          grep -q "no device present" out.txt \
+            || { echo "::error::dfu-programmer did not report an absent device"; exit 1; }
+          lipo -archs mac/support/dfu/bin/dfu-programmer | grep -q "x86_64 arm64" \
+            || { echo "::error::dfu-programmer is not universal"; exit 1; }
+
+      - name: A partial image is refused
+        run: |
+          python3 - <<'PY'
+          def rec(kind, addr, data):
+              b = [len(data), (addr >> 8) & 0xFF, addr & 0xFF, kind] + list(data)
+              return ':' + ''.join('%02X' % x for x in b + [(-sum(b)) & 0xFF])
+          open('tiny.hex','w').write('\n'.join(
+              [rec(4,0,[0x80,0x00]), rec(0,0x2000,[0]*16), rec(1,0,[])]) + '\n')
+          PY
+          if python3 tools/validate_hex.py tiny.hex; then
+            echo "::error::a 16-byte image was accepted - it would erase the application and not replace it"
+            exit 1
+          fi
+          python3 tools/validate_hex.py firmware/218eV3_v369_DFU.hex
+
+      - name: An image given as an argument is the one used
+        run: |
+          # Regression test for the argument path: accept_choice used to be
+          # called above its own definition, so the named file was validated
+          # and then quietly replaced by whatever the scan found.
+          awk '/^accept_choice\(\) \{/{f=NR} /^if \[ -n "\$\{1:-\}" \]/{c=NR}
+               END{ if (c < f) { print "call at " c " precedes definition at " f; exit 1 }
+                    print "argument block at " c " sits below accept_choice at " f }' \
+              Program218e_v3_Rewired_macOS.command

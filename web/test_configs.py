@@ -101,10 +101,14 @@ def main() -> None:
 
             (TMP / "_opts.json").write_text(json.dumps(options))
             js = subprocess.run(
+                # The whole stack: the harness asks WEBBUILD.build() for the
+                # properties now instead of deriving the flags a second time,
+                # so it needs build.js and the assembler it pulls in.
                 [str(JSC), "web/generated.js", "web/sha256.js", "web/buildlib.js",
+                 "tools/avr32/encoder.js", "tools/avr32/runtime.js",
+                 "tools/avr32/program.js", "web/build.js",
                  "web/test_properties.js", "--", str(TMP / "_opts.json"),
-                 "firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties"),
-                 "config/_web.toml"],
+                 "firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties")],
                 capture_output=True, text=True, cwd=REPO)
             out = (js.stdout + js.stderr).strip()
             props_ok = out.startswith("IDENTICAL")
