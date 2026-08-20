@@ -471,25 +471,25 @@ image_options() {
 # thing that releases it is the START command.  This flashes nothing and
 # erases nothing.
 rescue_unquarantine() {
-    local target answer
+    local target
+    # Inside the app the tools are signed and notarised with it, so the
+    # quarantine attribute is inert and the bundle is read-only anyway.  This
+    # is the same reasoning the flash path uses, decided by the path so it
+    # cannot fail on a read-only translocated copy.
+    case "$RUNTIME_DIR" in
+        *.app/Contents/*) return 0 ;;
+    esac
     for target in "$DFU_BUNDLED" "$SENDMIDI"; do
         if xattr -p com.apple.quarantine "$target" >/dev/null 2>&1; then
-            echo "  These tools are quarantined because the package was downloaded."
-            echo "  macOS will not run them until that is cleared.  It affects only"
-            echo "  the files in this package, on this machine."
-            echo ""
-            read -r -p "  Clear it now? [Y/n] " answer
-            case "$answer" in
-                [nN]*)
-                    echo "  Then clear it yourself and try again:"
-                    echo "    ${C_BOLD}xattr -dr com.apple.quarantine \"$PACKAGE_ROOT\"${C_RESET}"
-                    return 1 ;;
-            esac
+            # Cleared, not asked about, as on the flash path.
             xattr -dr com.apple.quarantine "$PACKAGE_ROOT" 2>/dev/null
             xattr -dr com.apple.quarantine "$RUNTIME_DIR" 2>/dev/null
             if xattr -p com.apple.quarantine "$DFU_BUNDLED" >/dev/null 2>&1; then
-                echo "  Could not clear it.  Approve the tools in System Settings >"
-                echo "  Privacy & Security, then try again."
+                echo "  The tools are quarantined and it could not be cleared,"
+                echo "  which usually means they are somewhere read-only."
+                echo "  Approve them in System Settings > Privacy & Security,"
+                echo "  or run:"
+                echo "    ${C_BOLD}xattr -dr com.apple.quarantine \"$PACKAGE_ROOT\"${C_RESET}"
                 return 1
             fi
             ok "Quarantine cleared"
@@ -949,10 +949,24 @@ step "Checking the DFU tools"
 # doubly so when macOS is running it from a translocated copy, so trying to
 # clear it fails and the run stops for a problem that was never there.
 tools_are_signed() {
-    local candidate
+    local candidate info
+    # Inside the app the answer is not in doubt: make-app.sh signs every tool
+    # in support/ with the same Developer ID as the app and notarises them with
+    # it, so being in the bundle IS being signed.  This is decided by the path,
+    # which cannot misfire the way `codesign | grep` did on a read-only,
+    # translocated copy where a slow codesign lost the race with the pipe.
+    case "$RUNTIME_DIR" in
+        *.app/Contents/*) return 0 ;;
+    esac
+    # A loose checkout is not signed and this returns non-zero, which is the
+    # honest answer.  Output is captured, not piped, so no SIGPIPE can turn a
+    # match into a failure under `set -o pipefail`.
     for candidate in "$DFUPATH" "$SENDMIDI"; do
-        codesign -dv --verbose=2 "$candidate" 2>&1 \
-            | grep -q "Authority=Developer ID" || return 1
+        info="$(codesign -dv --verbose=2 "$candidate" 2>&1)"
+        case "$info" in
+            *"Authority=Developer ID"*) ;;
+            *) return 1 ;;
+        esac
     done
     return 0
 }
