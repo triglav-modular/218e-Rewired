@@ -608,12 +608,45 @@ read -r -p "  Type YES (capitals) to accept and continue: " consent
 [ "$consent" = "YES" ] || fail "Not confirmed. Nothing was changed."
 
 step "Locating the firmware image"
+searched_note
 FIRMWARE=""
 CUSTOM_IMAGE=0
 
 # Every .hex the flasher can see, newest first, structurally valid, deduped by
 # resolved path.  One list, one ordering, so what is offered and what is chosen
 # can never disagree.
+# Where an image can be.  WORK_DIR is the folder the app sits in: inside a
+# bundle SCRIPT_DIR is Contents/Resources, so "beside the script" means inside
+# the app, and an image unzipped next to it would never be found.  Deduped,
+# because run loose from a folder several of these are the same place.
+search_dirs() {
+    printf '%s\n' "${FIRMWARE_DIR%/}" "${WORK_DIR%/}" "${SCRIPT_DIR%/}" \
+                  "$HOME/Downloads" "$HOME/Desktop" | awk 'NF && !seen[$0]++'
+}
+
+# Say where it looked and what was in each place.  Without this, an image that
+# does not appear in the list gives no clue as to why - and the commonest
+# reason is that the app was moved away from the folder it was unzipped into,
+# which nothing on screen would otherwise show.
+searched_note() {
+    local dir count candidate
+    echo "  ${C_DIM}Looked in:${C_RESET}"
+    while IFS= read -r dir; do
+        if [ -d "$dir" ]; then
+            count=0
+            for candidate in "$dir"/*.hex; do
+                [ -f "$candidate" ] && count=$((count + 1))
+            done
+            printf '    %s%2d in %s%s\n' "$C_DIM" "$count" "$dir" "$C_RESET"
+        else
+            printf '    %s -- %s  (no such folder)%s\n' "$C_DIM" "$dir" "$C_RESET"
+        fi
+    done <<DIRS
+$(search_dirs)
+DIRS
+    echo
+}
+
 scan_images() {
     # Sort by mtime here rather than with ls -t: given an unmatched glob among
     # its operands, BSD ls groups the results by directory instead of sorting
@@ -621,17 +654,15 @@ scan_images() {
     # Trailing slashes are stripped so the same file reached through two
     # patterns dedupes as one string.
     {
-        # WORK_DIR is the folder the app sits in.  Inside a bundle SCRIPT_DIR
-        # is Contents/Resources, so "beside the script" means inside the app -
-        # an image unzipped next to it would never have been found.
-        for dir in "${FIRMWARE_DIR%/}" "${WORK_DIR%/}" "${SCRIPT_DIR%/}" \
-                   "$HOME/Downloads" "$HOME/Desktop"; do
+        while IFS= read -r dir; do
             for candidate in "$dir"/*.hex; do
                 [ -f "$candidate" ] || continue
                 printf '%s\t%s\n' "$(stat -f '%m' "$candidate" 2>/dev/null || echo 0)" \
                                    "$candidate"
             done
-        done
+        done <<DIRS
+$(search_dirs)
+DIRS
     } | sort -rn -k1,1 | cut -f2- | awk '!seen[$0]++' |
     while IFS= read -r candidate; do
         case "$(validate_hex "$candidate")" in OK*) printf '%s\n' "$candidate" ;; esac

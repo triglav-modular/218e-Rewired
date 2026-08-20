@@ -619,7 +619,7 @@
         var lines = [
             'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
             'Knobs 1-4: ' + (o.remap_knobs ? 'remapped' : 'factory'),
-            'Pressure response: ' + (o.pressure_fix ? 'fixed' : 'factory') +
+            'Pressure response: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
             'Pitch: ' + o.volts_per_octave + ' V/octave'
         ];
