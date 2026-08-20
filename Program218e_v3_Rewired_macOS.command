@@ -600,11 +600,16 @@ searched_note() {
     # Worth saying out loud, because the paths below otherwise look absurd:
     # macOS runs a quarantined app from a random read-only copy of itself, and
     # from there the folder it was unzipped into does not exist.
+    # Only worth saying when it actually went wrong.  The launcher resolves the
+    # real location before it starts this, so translocation on its own is not
+    # news - the firmware folder is right there and the paths look ordinary.
     case "$SCRIPT_DIR" in
         */AppTranslocation/*)
-            echo "  ${C_DIM}macOS is running this app from a read-only copy, so the folder it${C_RESET}"
-            echo "  ${C_DIM}was unzipped into cannot be seen from here.  Looking for it instead.${C_RESET}"
-            echo ;;
+            if [ ! -d "$FIRMWARE_DIR" ]; then
+                echo "  ${C_DIM}macOS is running this app from a read-only copy, so the folder it${C_RESET}"
+                echo "  ${C_DIM}was unzipped into cannot be seen from here.  Looking for it instead.${C_RESET}"
+                echo
+            fi ;;
     esac
     echo "  ${C_DIM}Looked in:${C_RESET}"
     while IFS= read -r dir; do

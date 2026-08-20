@@ -62,31 +62,40 @@ find "$APP/Contents/Resources/support" -name .DS_Store -delete
 cat > "$APP/Contents/MacOS/launcher" <<'LAUNCH'
 #!/bin/bash
 RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
-BESIDE="$(cd "$(dirname "$0")/../../.." && pwd)"
-# Everything this app makes for itself goes here.  Not Documents: that is the
-# user's, and a quarantined app runs from a read-only copy of itself, so the
-# fallback below is not the rare case it looks like - it is every launch of a
-# fresh download.
-OURS="$HOME/Library/Application Support/218e Rewired"
+BUNDLE="$(cd "$(dirname "$0")/../.." && pwd)"
 
-# Work in the folder the app was unzipped into when that is possible: the
-# image is already there, and the log lands where the person put things rather
-# than somewhere they have to go looking.  Translocated, or dragged to
-# /Applications, that folder cannot be written to.
+# A quarantined app runs from a read-only copy of itself, and that copy is not
+# where the person put anything.  The system will say where the original is, so
+# the log and the record can go where they were always meant to: beside the app,
+# in the folder that was unzipped.
+case "$BUNDLE" in
+    */AppTranslocation/*)
+        REAL="$("$RES/support/resolve-translocation" "$BUNDLE" 2>/dev/null)"
+        [ -n "$REAL" ] && BUNDLE="$REAL" ;;
+esac
+BESIDE="$(dirname "$BUNDLE")"
+
+# Only if that folder can be written to.  Dragged into /Applications, or
+# translocated with nothing willing to resolve it, it cannot be - and then
+# there is nothing worth keeping anyway, so it goes somewhere temporary rather
+# than into a folder of ours that would outlive the run.
 if [ -w "$BESIDE" ]; then
     WORK="$BESIDE"
 else
-    WORK="$OURS"
+    WORK="${TMPDIR:-/tmp}"
 fi
-RUNDIR="$OURS"
-mkdir -p "$WORK" "$RUNDIR"
-cat > "$RUNDIR/run.command" <<RUN
+
+# Terminal opens a file; it cannot be handed an environment.  This shim carries
+# it, and lives in the temporary directory because it is worth nothing after
+# the run and the system clears it out on its own.
+RUNNER="${TMPDIR:-/tmp}/218e-rewired-run.command"
+cat > "$RUNNER" <<RUN
 #!/bin/bash
 export REWIRED_WORKDIR="$WORK"
 exec "$RES/Program218e_v3_Rewired_macOS.command"
 RUN
-chmod +x "$RUNDIR/run.command"
-open -a Terminal "$RUNDIR/run.command"
+chmod +x "$RUNNER"
+open -a Terminal "$RUNNER"
 LAUNCH
 chmod +x "$APP/Contents/MacOS/launcher"
 

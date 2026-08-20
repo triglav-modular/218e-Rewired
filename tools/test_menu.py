@@ -143,11 +143,13 @@ def window(rows, cols, term="xterm-256color"):
 
 
 def launcher_litter():
-    """Run the app's launcher with a HOME of its own, and see what it leaves.
+    """Run the app's launcher with a HOME and TMPDIR of its own.
 
-    The launcher is what chose Documents, and it is not reached by running the
-    flasher directly - so testing the flasher proved nothing about it.  Its
+    The launcher is what chose where to write, and it is not reached by running
+    the flasher directly - so testing the flasher proved nothing about it.  Its
     "open -a Terminal" is stubbed out; nothing appears on screen.
+
+    Returns what it left in HOME, and what it left in TMPDIR.
     """
     make = (REPO / "tools" / "make-app.sh").read_text(encoding="utf-8")
     body = make.split("<<'LAUNCH'\n", 1)[1].split("\nLAUNCH\n", 1)[0]
@@ -172,17 +174,22 @@ def launcher_litter():
 
     # Read-only, as a translocated copy or /Applications would be: this is what
     # sends the launcher to its fallback, which is the case that went wrong.
+    tmp = root / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+
     beside.chmod(0o555)
     env = dict(os.environ)
     env["HOME"] = str(home)
+    env["TMPDIR"] = str(tmp)
     env["PATH"] = f"{stub}:{env['PATH']}"
     subprocess.run(["/bin/bash", str(launcher)], env=env,
                    capture_output=True, timeout=30)
     beside.chmod(0o755)
 
     made = sorted(str(q.relative_to(home)) for q in home.rglob("*"))
+    temporary = sorted(str(q.relative_to(tmp)) for q in tmp.rglob("*"))
     shutil.rmtree(root, ignore_errors=True)
-    return made
+    return made, temporary
 
 
 def smoke_run():
@@ -312,18 +319,21 @@ def main():
     # bash -n does not notice a function called before it is defined: the
     # parse is fine, and only running it says "command not found".  That
     # shipped once, in the step that says where the image was looked for.
-    made = launcher_litter()
-    in_documents = [f for f in made if f.startswith("Documents")]
-    if in_documents:
-        print("  FAIL  the launcher put files in Documents: "
-              + ", ".join(in_documents))
+    made, temporary = launcher_litter()
+    # Nothing of ours in the home folder at all - not Documents, and no folder
+    # in Library either.  When the app cannot write beside itself there is
+    # nothing worth keeping, so it uses the temporary directory the system
+    # already clears out.
+    if made:
+        print("  FAIL  the launcher left files in the home folder: "
+              + ", ".join(made))
         failures += 1
     else:
-        print("  ok    the launcher leaves Documents alone")
-    if any(f.startswith("Library/Application Support/218e Rewired") for f in made):
-        print("  ok    it works in Application Support instead")
+        print("  ok    the launcher leaves the home folder untouched")
+    if temporary == ["218e-rewired-run.command"]:
+        print("  ok    its runner goes in the temporary directory")
     else:
-        print(f"  FAIL  no working folder was made at all: {made}")
+        print(f"  FAIL  unexpected temporary files: {temporary}")
         failures += 1
 
     out, litter = smoke_run()
