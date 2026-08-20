@@ -4,11 +4,12 @@ TITLE Buchla 218e V3 - Rewired firmware
 
 REM Experimental Buchla 218e V3 v36.9 firmware flasher for Windows.
 REM
-REM Mirrors Program218e_v3_Rewired_macOS.command: it verifies the image checksum,
-REM confirms the bootloader region is protected, programs, and validates by
-REM read-back before it lets the instrument leave DFU.  Buchla's own
-REM ProgramLEM218.bat does none of those and flashes whatever .hex it finds
-REM first, which is why this is a separate script.
+REM Mirrors Program218e_v3_Rewired_macOS.command: it validates the image against
+REM what dfu-programmer's own parser accepts, confirms the bootloader region is
+REM protected, programs, and validates by read-back before it lets the
+REM instrument leave DFU.  Buchla's own ProgramLEM218.bat does none of those and
+REM flashes whatever .hex it finds first, which is why this is a separate
+REM script.
 
 SET "EXPECTED_SHA256=b21c816227644d630c97fc4e2be8f9c37be778be1cb00dea39b4b3677cac058e"
 REM Buchla's own v36.9 image.  Recognised so that going back to stock is an

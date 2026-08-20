@@ -2,8 +2,9 @@
 
 # Experimental Buchla 218e V3 v36.9 pressure-curve and touch-filter firmware
 # flasher.
-# This is intentionally separate from ProgramLEM218.command and flashes only
-# 218eV3_v369_Rewired_DFU.hex after verifying its SHA-256 checksum.
+# This is intentionally separate from ProgramLEM218.command.  It flashes any
+# structurally valid 218e image; what the checksum decides is what each one is
+# called in the list, not whether it may be used.
 
 set -o pipefail
 
@@ -154,6 +155,7 @@ BEGIN{FLASH=2147483648}
   # dfu-programmer lets type 4 and type 5 both set the address offset, masking
   # bit 31 off.  FLASH puts it back, so everything below is in flash space.
   # intel_validate_line pins these two exactly.
+  if(type==1&&len!=0)fail("end-of-file record at line " NR " carries " len " bytes - it must carry none")
   if(type==4&&(addr!=0||len!=2))fail("type 4 record at line " NR " has address " addr " and " len " bytes - it must be address 0 and 2 bytes")
   if(type==5&&(addr!=0||len!=4))fail("type 5 record at line " NR " has address " addr " and " len " bytes - it must be address 0 and 4 bytes")
   if(type==4)base=(h2d(substr(hex,9,4))*65536)%FLASH
@@ -318,10 +320,11 @@ fi
 [ -x "$SENDMIDI" ] || fail "sendmidi is missing or not executable: $SENDMIDI"
 
 # --- find the image -----------------------------------------------------
-# Searching several places is safe because the checksum decides: only an image
-# matching the one this flasher was generated for is accepted, so a stray .hex
-# is skipped rather than flashed.  That is what lets a downloaded file be used
-# where it landed, instead of asking anyone to move it.
+# Searching several places is safe because nothing is flashed without being
+# chosen: every candidate is validated against what dfu-programmer's own parser
+# would accept, listed with its date, its checksum and whatever the download
+# said it was, and the choice is made explicitly.  That is what lets a
+# downloaded file be used where it landed, instead of asking anyone to move it.
 # The banana is shown twice - once over the warning, once over the result -
 # so it lives in one place.  A quoted heredoc keeps every backslash and
 # caret in the art literal.

@@ -50,7 +50,15 @@ def main(path):
         print("BAD empty file"); return 1
     written = set()
     for n, line in enumerate(lines, 1):
-        line = line.strip()
+        # Not stripped.  Every field is read with a fixed-width fgets and
+        # nothing skips whitespace: the colon is matched literally, so a space
+        # in front of it is not a record at all, and the byte after the last
+        # data byte has to be the line ending.  Trimming here made this
+        # validator the most permissive of the three, and it disagreed with
+        # the awk one in the same flasher.
+        if line != line.strip():
+            print(f"BAD whitespace around the record at line {n} - the flasher "
+                  f"matches the colon and the line ending exactly"); return 1
         if not line:
             # Blank lines are not skipped, they are read: sscanf gets nothing
             # to match and the parse fails.  After the end-of-file record
@@ -86,6 +94,9 @@ def main(path):
         # intel_validate_line pins the shape of these two exactly, and a
         # record that does not match is a parse error rather than something to
         # be interpreted generously.
+        if kind == 1 and length != 0:
+            print(f"BAD end-of-file record at line {n} carries {length} bytes "
+                  f"- it must carry none"); return 1
         if kind == 4 and (addr != 0 or length != 2):
             print(f"BAD type 4 record at line {n} has address 0x{addr:X} and "
                   f"{length} bytes - it must be address 0 and 2 bytes"); return 1

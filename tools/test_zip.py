@@ -37,6 +37,15 @@ def main():
         print("  FAIL  the page's zip writer errored")
         return 1
 
+    clamped = re.findall(r"^CLAMP (\d+) -> (\d+)$", r.stdout, re.M)
+    for asked, got in clamped:
+        got = int(got)
+        if not (1980 <= got <= 2107):
+            print(f"  FAIL  a {asked} date encoded as {got}, which ZIP cannot mean")
+            return 1
+    if clamped:
+        print(f"  ok    {len(clamped)} out-of-range dates clamped into 1980-2107")
+
     m = re.search(r"^ZIPHEX ([0-9a-f]+)$", r.stdout, re.M)
     if not m:
         print(r.stdout + r.stderr)

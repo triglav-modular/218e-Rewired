@@ -54,7 +54,14 @@ function Test-IntelHex {
     try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return $false }
     if ($lines.Count -eq 0) { $script:LastReason = 'empty file'; return $false }
     foreach ($line in $lines) {
-        $t = $line.Trim()
+        # Not trimmed.  Nothing in the parser skips whitespace: the colon is
+        # matched literally and the byte after the last data byte has to be
+        # the line ending.
+        if ($line -ne $line.Trim()) {
+            $script:LastReason = 'whitespace around a record - the flasher matches the colon and the line ending exactly'
+            return $false
+        }
+        $t = $line
         # A blank line is read, not skipped: the parse fails on it.  Past the
         # end-of-file record nothing is read at all.
         if ($t.Length -eq 0) {
@@ -83,6 +90,10 @@ function Test-IntelHex {
             return $false
         }
         # intel_validate_line pins the shape of these two exactly.
+        if ($kind -eq 1 -and $len -ne 0) {
+            $script:LastReason = "end-of-file record carries $len bytes - it must carry none"
+            return $false
+        }
         if ($kind -eq 4 -and ($addr -ne 0 -or $len -ne 2)) {
             $script:LastReason = "type 4 record has address $addr and $len bytes - it must be address 0 and 2 bytes"
             return $false

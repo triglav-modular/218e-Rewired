@@ -28,6 +28,16 @@ carried.forEach(function (e) {
           String.fromCharCode.apply(null, e.name));
 });
 
+// The year is seven bits counted from 1980, so anything outside 1980..2107
+// wraps silently - a 1971 date came back as 2099, which is newer than
+// anything else in the archive.
+[[1971, 5, 15], [1900, 0, 1], [2108, 0, 1], [2200, 6, 1]].forEach(function (d) {
+    var when = new Date(d[0], d[1], d[2]);
+    var stamp = ZIP.stampFor(when);
+    var year = 1980 + (stamp.date >> 9);
+    print('CLAMP ' + d[0] + ' -> ' + year);
+});
+
 ZIP.build([{ name: 'README.txt', data: 'hello\n' },
            { name: 'firmware/218eV3_v369_Rewired_DFU.hex', data: ':00000001FF\n' }],
           ZIP.under('', carried)).then(function (blob) {

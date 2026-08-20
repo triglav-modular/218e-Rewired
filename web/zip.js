@@ -33,6 +33,17 @@ var ZIP = (function () {
     // in every download claim the same instant, and the flasher sorts the
     // images it finds by date - so "newest first" was ordering a set of ties.
     function dosStamp(when) {
+        // The year is stored as an offset from 1980 in seven bits, so only
+        // 1980 to 2107 can be said at all and anything else wraps quietly: a
+        // file dated 1971 came out as 2099, which in a list ordered by date
+        // makes the stock image the newest thing in the archive and the one
+        // offered first.  Clamped to what the format can hold.
+        var year = when.getFullYear();
+        if (year < 1980) {
+            when = new Date(1980, 0, 1, 0, 0, 0);
+        } else if (year > 2107) {
+            when = new Date(2107, 11, 31, 23, 59, 58);
+        }
         return {
             time: (when.getHours() << 11) | (when.getMinutes() << 5) |
                   (when.getSeconds() >> 1),
@@ -226,5 +237,6 @@ var ZIP = (function () {
                         { type: 'application/zip' });
     }
 
-    return { build: build, crc32: crc32, unpack: unpack, under: under };
+    return { build: build, crc32: crc32, unpack: unpack, under: under,
+             stampFor: dosStamp };
 })();

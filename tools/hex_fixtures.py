@@ -12,8 +12,11 @@ The rules being tested come from src/intel_hex.c at c204739:
                     or a bare colon is a parse error, not something to skip
   intel_read_data   every record must be followed by \\n, optionally preceded
                     by \\r - including the last one
-  intel_validate_line   type 4: address must be 0 and count exactly 2
+  intel_validate_line   type 1: count must be 0
+                        type 4: address must be 0 and count exactly 2
                         type 5: address must be 0 and count exactly 4
+  intel_read_data   each field is read with a fixed-width fgets and nothing
+                    skips whitespace, so a space anywhere in a line is fatal
 
     tools/hex_fixtures.py <directory>
 """
@@ -52,6 +55,17 @@ def build(out):
             good[:-1] + [record(5, 0, [0x80, 0x00]), record(1, 0, [])]) + "\n",
         # One line, carriage returns inside it: fgetc finds no \n after the \r.
         "cronly.hex": "\r".join(good) + "\r",
+
+        # An end-of-file record carrying a byte.  It is still type 1, so a
+        # validator that only looks at the type calls the file complete.
+        "eofpayload.hex": "\n".join(
+            good[:-1] + [record(1, 0, [0x00])]) + "\n",
+        # Nothing skips whitespace: the colon is matched literally, and the
+        # byte after the last data byte has to be the line ending.
+        "leadspace.hex": "\n".join(
+            [" " + good[0]] + good[1:]) + "\n",
+        "trailspace.hex": "\n".join(
+            [good[0] + " "] + good[1:]) + "\n",
     }
     for name, text in files.items():
         (out / name).write_bytes(text.encode())
