@@ -157,7 +157,6 @@ SET "PICK=1"
 IF %IMG_COUNT% GTR 1 (
     ECHO.
     ECHO   %IMG_COUNT% flashable images found.  Newest first:
-    ECHO   Arrow keys and Enter, or type the number.
     ECHO.
     SET "MENU_FILE=%TEMP%\rewired_images_%RANDOM%.txt"
     SET "MENU_OUT=%TEMP%\rewired_imgpick_%RANDOM%.txt"

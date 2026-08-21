@@ -371,15 +371,17 @@ menu_draw() {
         label="${MENU_ITEMS[$i]}"
         detail="${MENU_DETAILS[$i]}"
         if [ "$i" -eq "$MENU_SEL" ]; then
-            printf '    %s>%s %s%s%s\033[K\n' \
-                   "$C_YELLOW" "$C_RESET" "$C_BOLD" "$label" "$C_RESET"
+            printf '  %s>%s %s%d)%s %s%s%s\033[K\n' \
+                   "$C_YELLOW" "$C_RESET" "$C_YELLOW" "$((i + 1))" "$C_RESET" \
+                   "$C_BOLD" "$label" "$C_RESET"
         else
-            printf '      %s%s%s\033[K\n' "$C_DIM" "$label" "$C_RESET"
+            printf '    %s%d)%s %s%s%s\033[K\n' \
+                   "$C_YELLOW" "$((i + 1))" "$C_RESET" "$C_DIM" "$label" "$C_RESET"
         fi
         MENU_LINES=$((MENU_LINES + 1))
         if [ -n "$detail" ]; then
             while IFS= read -r line; do
-                printf '        %s%s%s\033[K\n' \
+                printf '       %s%s%s\033[K\n' \
                        "$C_DIM" "$(menu_fit "$line")" "$C_RESET"
                 MENU_LINES=$((MENU_LINES + 1))
             done <<DETAIL
@@ -388,6 +390,10 @@ DETAIL
         fi
         i=$((i + 1))
     done
+    printf '\033[K\n'
+    printf '  %sType a number, or move with the arrow keys and press return.%s\033[K\n' \
+           "$C_DIM" "$C_RESET"
+    MENU_LINES=$((MENU_LINES + 2))
 }
 
 menu() {
@@ -709,7 +715,6 @@ MENU_DETAILS=("Erases the chip and writes a new image."
               "For a keyboard left in DFU by an interrupted flash.
 Sends START. Flashes nothing, erases nothing.")
 echo "  ${C_BOLD}What would you like to do?${C_RESET}"
-echo "  ${C_DIM}Arrow keys and return, or type the number.${C_RESET}"
 echo ""
 menu
 echo ""
@@ -850,7 +855,6 @@ if [ -z "$FIRMWARE" ]; then
         # made explicitly.  Newest first, because that is usually the intent.
         echo
         echo "  ${C_BOLD}$count flashable images found.${C_RESET}  Newest first:"
-        echo "  ${C_DIM}Arrow keys and return, or type the number.${C_RESET}"
         echo
         MENU_ITEMS=()
         MENU_DETAILS=()

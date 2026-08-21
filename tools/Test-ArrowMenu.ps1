@@ -111,54 +111,70 @@ Set-Content -Path $menu -Value @('first entry', 'about the first', '--',
                                  'second entry', 'about the second', '--',
                                  'third entry')
 
-# Down, down, up, enter: lands on the second entry, and proves the arrows move
-# in both directions rather than the first key happening to be the answer.
-$keys = @((New-Key 40 ([char] 0)), (New-Key 40 ([char] 0)),
-          (New-Key 38 ([char] 0)), (New-Key 13 ([char] 13)))
-$written = [uint32] 0
-if (-not [Rewired.Test]::WriteConsoleInputW($conin, $keys, [uint32] $keys.Count, [ref] $written)) {
-    Finish 1 ('FAILED: could not put key presses into the console, error ' +
-              [Runtime.InteropServices.Marshal]::GetLastWin32Error())
-}
-$said += "wrote $written of $($keys.Count) key events" 
-
 # Stdin from NUL, which is what made .NET refuse to read a key in the first
 # place.  Testing it any other way would test something the flasher never does.
 $empty = Join-Path $dir 'empty.txt'
 Set-Content -Path $empty -Value '' -NoNewline
 $show = Join-Path $PSScriptRoot 'Show-Menu.ps1'
-try {
-    $errs = Join-Path $dir 'stderr.txt'
-    $env:REWIRED_MENU_TRACE = Join-Path $dir 'trace.txt'
-    $p = Start-Process -FilePath 'powershell' -PassThru -Wait -NoNewWindow `
-        -RedirectStandardInput $empty -RedirectStandardError $errs `
-        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $show,
-                        '-Path', $menu, '-Out', $out, '-Title', '"pick one"')
-    $said += "the helper exited $($p.ExitCode)"
-    if (Test-Path $env:REWIRED_MENU_TRACE) {
-        $said += '--- why the helper did what it did ---'
-        $said += (Get-Content $env:REWIRED_MENU_TRACE)
-        $said += '--------------------------------------'
-    } else {
-        $said += 'the helper left no trace at all - it exited before it began'
-    }
-    if (Test-Path $errs) {
-        $text = (Get-Content $errs -Raw)
-        if ($text -and $text.Trim()) {
-            $said += '--- what the helper said on stderr ---'
-            $said += $text.Trim()
-            $said += '--------------------------------------'
-        }
-    }
-} catch {
-    Finish 1 ('FAILED: could not start the helper: ' + $_.Exception.Message)
-}
+$env:REWIRED_MENU_TRACE = Join-Path $dir 'trace.txt'
 
-if (-not (Test-Path $out)) {
-    Finish 1 'FAILED: the menu wrote no answer - it stood aside on a real console'
+$scenarios = @(
+    # Down, down, up, enter: lands on the second entry, and proves the arrows
+    # move in both directions rather than the first key being the answer.
+    @{ Label  = 'arrow keys';
+       Keys   = @((New-Key 40 ([char] 0)), (New-Key 40 ([char] 0)),
+                  (New-Key 38 ([char] 0)), (New-Key 13 ([char] 13)));
+       Expect = '2' },
+    # The path the menu asks for out loud.  One key, no enter.
+    @{ Label  = 'typed number';
+       Keys   = @((New-Key 51 ([char] '3')));
+       Expect = '3' },
+    # An arrow the way a terminal sends one: ESC [ B, one character per
+    # record, no key code on any of them - and enter as a bare carriage
+    # return, which is how it arrives in the same mode.
+    @{ Label  = 'escape-sequence arrows';
+       Keys   = @((New-Key 0 ([char] 27)), (New-Key 0 ([char] '[')),
+                  (New-Key 0 ([char] 'B')), (New-Key 0 ([char] 13)));
+       Expect = '2' }
+)
+
+foreach ($s in $scenarios) {
+    Remove-Item -Force $out, $env:REWIRED_MENU_TRACE -ErrorAction SilentlyContinue
+    $written = [uint32] 0
+    $keys = [Rewired.Test+KeyRecord[]] $s.Keys
+    if (-not [Rewired.Test]::WriteConsoleInputW($conin, $keys, [uint32] $keys.Count, [ref] $written)) {
+        Finish 1 ('FAILED: could not put key presses into the console, error ' +
+                  [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+    $said += "$($s.Label): wrote $written of $($keys.Count) key events"
+    try {
+        $errs = Join-Path $dir 'stderr.txt'
+        $p = Start-Process -FilePath 'powershell' -PassThru -Wait -NoNewWindow `
+            -RedirectStandardInput $empty -RedirectStandardError $errs `
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $show,
+                            '-Path', $menu, '-Out', $out, '-Title', '"pick one"')
+        if (Test-Path $env:REWIRED_MENU_TRACE) {
+            $said += (Get-Content $env:REWIRED_MENU_TRACE | ForEach-Object { '    ' + $_ })
+        } else {
+            $said += '    the helper left no trace at all - it exited before it began'
+        }
+        if (Test-Path $errs) {
+            $text = (Get-Content $errs -Raw)
+            if ($text -and $text.Trim()) {
+                $said += '    --- what the helper said on stderr ---'
+                $said += ($text.Trim() -split "\r?\n" | ForEach-Object { '    ' + $_ })
+            }
+        }
+    } catch {
+        Finish 1 ('FAILED: could not start the helper: ' + $_.Exception.Message)
+    }
+    if (-not (Test-Path $out)) {
+        Finish 1 "FAILED: $($s.Label) got no answer - the menu stood aside on a real console"
+    }
+    $pick = (Get-Content $out -Raw).Trim()
+    if ($pick -ne $s.Expect) {
+        Finish 1 "FAILED: $($s.Label) chose [$pick], expected $($s.Expect)"
+    }
+    $said += "$($s.Label): answered $pick"
 }
-$pick = (Get-Content $out -Raw).Trim()
-if ($pick -ne '2') {
-    Finish 1 "FAILED: arrow keys chose [$pick], expected 2"
-}
-Finish 0 'PASS: the arrow menu reads keys and answers with the right entry'
+Finish 0 'PASS: arrows, typed numbers and escape sequences all drive the menu'

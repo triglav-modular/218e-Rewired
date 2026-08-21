@@ -49,22 +49,31 @@ if ($current.Count) { $entries += , $current }
 if ($entries.Count -eq 0) { [IO.File]::WriteAllText($Out, "0"); exit }
 
 function Write-Menu($sel) {
+    # Numbered, and the number is the loud part.  The arrows are the nicety
+    # here, not the mechanism: typing the number always works, so the menu
+    # has to read as something to type at, not only something to steer.
     for ($i = 0; $i -lt $entries.Count; $i++) {
         $entry = $entries[$i]
         if ($i -eq $sel) {
-            Write-Host '    > ' -NoNewline -ForegroundColor Yellow
+            Write-Host '  > ' -NoNewline -ForegroundColor Yellow
+            Write-Host ('' + ($i + 1) + ') ') -NoNewline -ForegroundColor Yellow
             Write-Host $entry[0] -ForegroundColor White
         } else {
-            Write-Host ('      ' + $entry[0]) -ForegroundColor DarkGray
+            Write-Host '    ' -NoNewline
+            Write-Host ('' + ($i + 1) + ') ') -NoNewline -ForegroundColor Yellow
+            Write-Host $entry[0] -ForegroundColor DarkGray
         }
         for ($j = 1; $j -lt $entry.Count; $j++) {
-            Write-Host ('        ' + $entry[$j]) -ForegroundColor DarkGray
+            Write-Host ('       ' + $entry[$j]) -ForegroundColor DarkGray
         }
     }
+    Write-Host ''
+    Write-Host '  Type a number, or move with the arrow keys and press Enter.' `
+        -ForegroundColor DarkGray
 }
 
 function Measure-Lines {
-    $n = 0
+    $n = 2   # the blank line and the instruction under the entries
     foreach ($entry in $entries) { $n += $entry.Count }
     return $n
 }
@@ -119,6 +128,13 @@ public static extern IntPtr CreateFileW(string name, uint access, uint share,
 [DllImport("kernel32.dll", SetLastError = true)]
 public static extern bool ReadConsoleInputW(IntPtr handle, out KeyRecord record,
     uint count, out uint read);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool PeekConsoleInputW(IntPtr handle,
+    [Out] KeyRecord[] records, uint count, out uint read);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(IntPtr handle, uint mode);
 // INPUT_RECORD.  The union after the event type is four-byte aligned, which
 // is where the gap at offset 2 comes from; the offsets are written out rather
 // than left to the compiler because getting them wrong reads plausible
@@ -146,6 +162,21 @@ public struct KeyRecord {
         exit
     }
     Trace 'CONIN$ is open - reading keys from the console itself'
+    # ENABLE_VIRTUAL_TERMINAL_INPUT (0x200).  With it set, the console hands
+    # an arrow over as the escape sequence a terminal would send - three
+    # characters, no key codes - and the codes this menu matches on never
+    # arrive.  Cleared while the menu runs, put back before the flasher
+    # carries on; and because clearing it is a request rather than a
+    # guarantee, the sequences are understood anyway, below.
+    $mode = [uint32] 0
+    $modeKnown = [Rewired.Conin]::GetConsoleMode($conin, [ref] $mode)
+    if ($modeKnown) {
+        Trace ('console input mode ' + $mode)
+        $null = [Rewired.Conin]::SetConsoleMode($conin,
+            [uint32] ($mode -band 0xFFFFFDFF))
+    } else {
+        Trace 'the console would not say what its input mode is'
+    }
 } catch {
     Trace ('could not reach the console input buffer: ' + $_.Exception.Message)
     exit
@@ -154,7 +185,7 @@ public struct KeyRecord {
 # One key press, as a virtual key code and the character it typed.  Everything
 # that is not a key going down - releases, mouse movement, the window being
 # resized - is read past rather than mistaken for an answer.
-function Read-Key {
+function Read-RawKey {
     $rec = New-Object Rewired.Conin+KeyRecord
     $got = [uint32] 0
     while ($true) {
@@ -163,9 +194,47 @@ function Read-Key {
             return $null
         }
         if ($got -eq 1 -and $rec.EventType -eq 1 -and $rec.KeyDown -ne 0) {
+            Trace ('key: code=' + [int] $rec.VirtualKeyCode +
+                   ' char=' + [int] $rec.UnicodeChar)
             return @{ Code = [int] $rec.VirtualKeyCode; Char = $rec.UnicodeChar }
         }
     }
+}
+
+# Whether the next key already waiting is the [ or O of an escape sequence.
+# Peeked, not read: a lone Escape press must stay a lone Escape press.
+function Test-SequenceFollows {
+    $buf = New-Object 'Rewired.Conin+KeyRecord[]' 16
+    $read = [uint32] 0
+    if (-not [Rewired.Conin]::PeekConsoleInputW($conin, $buf, 16, [ref] $read)) {
+        return $false
+    }
+    for ($i = 0; $i -lt $read; $i++) {
+        if ($buf[$i].EventType -eq 1 -and $buf[$i].KeyDown -ne 0) {
+            return ($buf[$i].UnicodeChar -eq '[' -or $buf[$i].UnicodeChar -eq 'O')
+        }
+    }
+    return $false
+}
+
+function Read-Key {
+    $key = Read-RawKey
+    if ($null -eq $key) { return $null }
+    if ([int] $key.Char -ne 27) { return $key }
+    # An escape character is either the Escape key or the start of ESC [ A,
+    # which is how an arrow arrives when the mode above could not be cleared.
+    # A sequence lands as a burst, so the rest of it is already here - a
+    # moment's wait, then look without taking.
+    Start-Sleep -Milliseconds 40
+    if (-not (Test-SequenceFollows)) { return @{ Code = 27; Char = [char] 27 } }
+    $null = Read-RawKey                     # the [ or O
+    $final = Read-RawKey
+    if ($null -eq $final) { return $null }
+    switch ([string] $final.Char) {
+        'A' { return @{ Code = 38; Char = [char] 0 } }
+        'B' { return @{ Code = 40; Char = [char] 0 } }
+    }
+    return @{ Code = 0; Char = [char] 0 }   # some other sequence: not an answer
 }
 
 $sel = 0
@@ -192,6 +261,9 @@ try {
             default {
                 $c = $key.Char
                 if ($c -eq 'q' -or $c -eq 'Q') { $sel = -1; $chosen = $true }
+                elseif ($c -eq 'k') { if ($sel -gt 0) { $sel-- } }
+                elseif ($c -eq 'j') { if ($sel -lt $entries.Count - 1) { $sel++ } }
+                elseif ([int] $c -eq 13) { $chosen = $true }
                 elseif ($c -ge '1' -and $c -le '9') {
                     $n = [int]::Parse($c)
                     if ($n -le $entries.Count) { $sel = $n - 1; $chosen = $true }
@@ -204,6 +276,7 @@ try {
     }
 } finally {
     [Console]::CursorVisible = $true
+    if ($modeKnown) { $null = [Rewired.Conin]::SetConsoleMode($conin, $mode) }
 }
 
 if ($sel -lt 0) { [IO.File]::WriteAllText($Out, "0") }
