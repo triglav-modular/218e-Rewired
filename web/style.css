@@ -173,6 +173,70 @@
 .sitenav nav a.minor {
   opacity: .62;
 }
+/* Those two are marks rather than words on triglavmodular.hu, and this row is
+   meant to be that row, so they are marks here too - the classes come across
+   with the rest of the menu, from the same block that draws them there.
+   The icons are data rather than fetched: a mask image that fails to load
+   masks its element away instead of failing loudly, which this page has
+   already had once from the brand mark, and data has nothing to fail at. */
+.sitenav {
+  --icon-cart: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1.9 3.1h2.9l2.4 11.1a1.7 1.7 0 0 0 1.7 1.4h8.3a1.7 1.7 0 0 0 1.7-1.4L20.5 6.9H5.7"/><circle cx="9.6" cy="20" r="1.5"/><circle cx="17.4" cy="20" r="1.5"/></svg>');
+  --icon-account: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.9"/><path d="M4.7 20.4a7.3 7.3 0 0 1 14.6 0"/></svg>');
+}
+.sitenav nav a.nav-icon {
+  display: flex;
+  align-items: center;
+}
+/* The word stays for anyone who is not looking at the row. */
+.sitenav nav a.nav-icon span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* The same sweep the words take, on the mark instead of on letters: the
+   gradient is three times the width, the mask cuts the icon out of it, and
+   hovering slides it from the muted end to the accent through the pink. */
+.sitenav nav a.nav-icon::before {
+  content: "";
+  display: block;
+  width: 18px;
+  height: 18px;
+  background-image: linear-gradient(120deg,
+                                    var(--muted) 0 33.334%,
+                                    var(--accent2) 50%,
+                                    var(--accent) 66.666% 100%);
+  background-size: 300% 100%;
+  background-position: 0 0;
+  background-repeat: no-repeat;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+  transition: background-position .5s ease-in-out;
+}
+.sitenav nav a.nav-icon-cart::before {
+  --icon: var(--icon-cart);
+}
+.sitenav nav a.nav-icon-account::before {
+  --icon: var(--icon-account);
+}
+.sitenav nav a.nav-icon:hover::before,
+.sitenav nav a.nav-icon:focus-visible::before {
+  background-position: 100% 0;
+}
+/* A mark at 18px carries less ink than a word at 12, so .minor's .62 would put
+   these further back than the step they are meant to take. */
+.sitenav nav a.nav-icon.minor {
+  opacity: .8;
+}
+.sitenav nav a.nav-icon.minor:hover,
+.sitenav nav a.nav-icon.minor:focus-visible {
+  opacity: 1;
+}
 
 /* No widows or orphans.  text-wrap inherits, so pretty goes on the root and
    reaches every block on the page - including ones added later, which a list

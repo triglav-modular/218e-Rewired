@@ -45,9 +45,15 @@ SOURCE = "https://triglavmodular.hu/"
 # generated wp-container-* class beside it - that one is a hash of the layout
 # and changes whenever the block is edited.
 NAV_LABEL = "Header navigation"
-# Carried across as-is: the site already marks Cart and Account this way, and
-# the stylesheet here already knows what to do with it.
+# The presentational classes carried across, as an allowlist rather than
+# whatever the site happens to put on the item.  A class this stylesheet has no
+# rule for would at best do nothing, and ICON at worst does harm: it hides the
+# word, so an icon we cannot draw would leave an empty square where a link used
+# to be.  Hence ICON only travels with a variant that is in ICONS - an icon we
+# have never heard of arrives as an ordinary text link, which always works.
 MINOR = "minor"
+ICON = "nav-icon"
+ICONS = ("nav-icon-cart", "nav-icon-account")
 # This page is a mod, so this is the entry it should light up.  Matched on the
 # section rather than the exact URL, which lets the site point Mods at whichever
 # mod it likes without the marker going out.
@@ -62,13 +68,13 @@ NAV_BLOCK = re.compile(r"([ \t]*)<nav>\n.*?^[ \t]*</nav>", re.S | re.M)
 
 
 class HeaderNav(HTMLParser):
-    """Collect (href, label, minor) from the site's header navigation."""
+    """Collect (href, label, classes) from the site's header navigation."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.items: list[tuple[str, str, bool]] = []
+        self.items: list[tuple[str, str, tuple[str, ...]]] = []
         self._depth = 0          # nav nesting, so a nav inside ours cannot end it
-        self._minor = False
+        self._classes: tuple[str, ...] = ()
         self._href: str | None = None
         self._text: list[str] = []
 
@@ -81,7 +87,7 @@ class HeaderNav(HTMLParser):
         if not self._depth:
             return
         if tag == "li":
-            self._minor = MINOR in a.get("class", "").split()
+            self._classes = wanted(a.get("class", "").split())
         elif tag == "a" and self._href is None:
             self._href = a.get("href", "").strip()
             self._text = []
@@ -92,12 +98,21 @@ class HeaderNav(HTMLParser):
         elif tag == "a" and self._depth and self._href is not None:
             label = " ".join("".join(self._text).split())
             if label:
-                self.items.append((self._href, label, self._minor))
+                self.items.append((self._href, label, self._classes))
             self._href = None
 
     def handle_data(self, data: str) -> None:
         if self._depth and self._href is not None:
             self._text.append(data)
+
+
+def wanted(classes: list[str]) -> tuple[str, ...]:
+    """The classes worth carrying over, in a fixed order so two menus compare."""
+    out = [MINOR] if MINOR in classes else []
+    variant = next((c for c in ICONS if c in classes), None)
+    if variant and ICON in classes:
+        out += [ICON, variant]
+    return tuple(out)
 
 
 def fetch(url: str, timeout: int) -> str:
@@ -112,35 +127,45 @@ def fetch(url: str, timeout: int) -> str:
         return r.read(4_000_000).decode(charset, "replace")
 
 
-def read_menu(page: str) -> list[tuple[str, str, bool]]:
+def read_menu(page: str) -> list[tuple[str, str, tuple[str, ...]]]:
     """The menu as the page currently has it, in the same shape as the fetch."""
     block = NAV_BLOCK.search(page)
     if not block:
         return []
     items = []
     for tag in re.finditer(r"<a\b([^>]*)>(.*?)</a>", block.group(0), re.S):
-        attrs, label = tag.group(1), " ".join(html.unescape(tag.group(2)).split())
+        attrs, inner = tag.group(1), tag.group(2)
+        # An icon's word is wrapped so the stylesheet can hide it; strip the
+        # wrapper back off, so what is compared is the label either way.
+        label = " ".join(html.unescape(re.sub(r"<[^>]+>", "", inner)).split())
         href = re.search(r'href="([^"]*)"', attrs)
         cls = re.search(r'class="([^"]*)"', attrs)
         items.append((href.group(1) if href else "",
                       label,
-                      bool(cls and MINOR in cls.group(1).split())))
+                      wanted(cls.group(1).split() if cls else [])))
     return items
 
 
-def render(items: list[tuple[str, str, bool]], indent: str) -> str:
+def render(items: list[tuple[str, str, tuple[str, ...]]], indent: str) -> str:
     lines = [f"{indent}<nav>"]
-    for href, label, minor in items:
-        attrs = f' class="{MINOR}"' if minor else ""
+    for href, label, classes in items:
+        attrs = f' class="{" ".join(classes)}"' if classes else ""
         attrs += f' href="{html.escape(href, quote=True)}"'
         if href.startswith(CURRENT_SECTION):
             attrs += ' aria-current="page"'
-        lines.append(f"{indent}  <a{attrs}>{html.escape(label)}</a>")
+        # An icon still says its name to anyone not looking at it, so the word
+        # is kept and wrapped for the stylesheet to hide.  Only there: the text
+        # links carry their sweep on the anchor's own background, clipped to
+        # the letters, and a span between the two would take the letters out
+        # of the box doing the painting.
+        text = (f"<span>{html.escape(label)}</span>" if ICON in classes
+                else html.escape(label))
+        lines.append(f"{indent}  <a{attrs}>{text}</a>")
     lines.append(f"{indent}</nav>")
     return "\n".join(lines)
 
 
-def vet(items: list[tuple[str, str, bool]]) -> str | None:
+def vet(items: list[tuple[str, str, tuple[str, ...]]]) -> str | None:
     """Why this menu should not be used, or None if it is fine."""
     if not MIN_ITEMS <= len(items) <= MAX_ITEMS:
         return f"{len(items)} entries, which is not a menu we recognise"
@@ -200,17 +225,18 @@ def main(argv: list[str]) -> int:
 
 def describe(have: list, live: list) -> list[str]:
     """The difference, as lines, so a warning in a log says what actually moved."""
-    by_label = {label: (href, minor) for href, label, minor in have}
+    by_label = {label: (href, classes) for href, label, classes in have}
     out = []
-    for href, label, minor in live:
+    for href, label, classes in live:
         if label not in by_label:
             out.append(f"+ {label} -> {href}")
-        elif by_label[label] != (href, minor):
-            was, was_minor = by_label[label]
+        elif by_label[label] != (href, classes):
+            was, was_classes = by_label[label]
             if was != href:
                 out.append(f"~ {label}: {was} -> {href}")
-            if was_minor != minor:
-                out.append(f"~ {label}: {'now' if minor else 'no longer'} {MINOR}")
+            if was_classes != classes:
+                out.append(f"~ {label}: {' '.join(was_classes) or 'plain'}"
+                           f" -> {' '.join(classes) or 'plain'}")
     live_labels = {label for _, label, _ in live}
     out += [f"- {label} ({by_label[label][0]})"
             for label in by_label if label not in live_labels]
