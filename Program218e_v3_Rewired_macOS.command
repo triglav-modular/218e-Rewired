@@ -1068,7 +1068,7 @@ if check_dfu_device; then
 else
     midi_ports="$("$SENDMIDI" list 2>&1)"
     midi_list_status=$?
-    printf '%s\n' "$midi_ports" | tee -a "$LOG_FILE"
+    printf '%s\n' "$midi_ports" >> "$LOG_FILE"
     if [ "$midi_list_status" -ne 0 ] || ! printf '%s\n' "$midi_ports" | grep -q "218e"; then
         fail "The 218e V3 CoreMIDI output port is unavailable. Nothing was erased; power-cycle the 218e V3, reconnect USB directly, and retry."
     fi
@@ -1076,7 +1076,7 @@ else
     log "Asking the 218e V3 to enter DFU mode over MIDI."
     sysex_output="$("$SENDMIDI" dev 218e syx 0 2 55 2 1 1 2>&1)"
     sysex_status=$?
-    printf '%s\n' "$sysex_output" | tee -a "$LOG_FILE"
+    printf '%s\n' "$sysex_output" >> "$LOG_FILE"
     if [ "$sysex_status" -ne 0 ] || \
        printf '%s\n' "$sysex_output" | grep -Eq "Couldn't find|No valid MIDI|CoreMIDI error"; then
         fail "SendMIDI could not deliver the DFU request. Nothing was erased; power-cycle the 218e V3 and retry."
