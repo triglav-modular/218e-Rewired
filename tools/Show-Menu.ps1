@@ -48,27 +48,42 @@ if ($current.Count) { $entries += , $current }
 
 if ($entries.Count -eq 0) { [IO.File]::WriteAllText($Out, "0"); exit }
 
+# Cut to the window, never wrapped.  The redraw walks back up by the number
+# of lines it printed, so a line that wraps onto a second row shifts every
+# redraw after it by one and the menu climbs over itself.  The macOS menu has
+# done this from the start; this one found out why the hard way.
+function Fit([string] $text, [int] $used) {
+    $width = 80
+    try { $width = [Console]::WindowWidth } catch { }
+    if ($width -lt 30) { $width = 30 }
+    $room = $width - 1 - $used
+    if ($text.Length -gt $room) { return $text.Substring(0, $room) }
+    return $text
+}
+
 function Write-Menu($sel) {
     # Numbered, and the number is the loud part.  The arrows are the nicety
     # here, not the mechanism: typing the number always works, so the menu
     # has to read as something to type at, not only something to steer.
     for ($i = 0; $i -lt $entries.Count; $i++) {
         $entry = $entries[$i]
+        $num = '' + ($i + 1) + ') '
+        $label = Fit $entry[0] (4 + $num.Length)
         if ($i -eq $sel) {
             Write-Host '  > ' -NoNewline -ForegroundColor Yellow
-            Write-Host ('' + ($i + 1) + ') ') -NoNewline -ForegroundColor Yellow
-            Write-Host $entry[0] -ForegroundColor White
+            Write-Host $num -NoNewline -ForegroundColor Yellow
+            Write-Host $label -ForegroundColor White
         } else {
             Write-Host '    ' -NoNewline
-            Write-Host ('' + ($i + 1) + ') ') -NoNewline -ForegroundColor Yellow
-            Write-Host $entry[0] -ForegroundColor DarkGray
+            Write-Host $num -NoNewline -ForegroundColor Yellow
+            Write-Host $label -ForegroundColor DarkGray
         }
         for ($j = 1; $j -lt $entry.Count; $j++) {
-            Write-Host ('       ' + $entry[$j]) -ForegroundColor DarkGray
+            Write-Host ('       ' + (Fit $entry[$j] 7)) -ForegroundColor DarkGray
         }
     }
     Write-Host ''
-    Write-Host '  Type a number, or move with the arrow keys and press Enter.' `
+    Write-Host ('  ' + (Fit 'Type a number, or move with the arrow keys and press Enter.' 2)) `
         -ForegroundColor DarkGray
 }
 

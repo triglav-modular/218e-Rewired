@@ -163,8 +163,8 @@ IF %IMG_COUNT% GTR 1 (
     IF EXIST "!MENU_FILE!" DEL /Q "!MENU_FILE!" >NUL 2>&1
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
-        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  ^<- the default Rewired build"
-        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  ^<- FACTORY firmware, back to stock v36.9"
+        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  <- the default Rewired build"
+        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  <- FACTORY firmware, back to stock v36.9"
         IF %%I GTR 1 >>"!MENU_FILE!" ECHO --
         >>"!MENU_FILE!" ECHO !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!!MARK!
         REM The name only.  Every image in the list is in the same folder,
@@ -659,15 +659,20 @@ FOR /F "usebackq delims=" %%L IN ("%MENU_FILE%") DO (
     IF "%%L"=="--" (
         SET "MENU_LABEL=1"
     ) ELSE (
+        REM Through a quoted SET, not echoed directly: %%L is substituted
+        REM before the special-character pass, so a bare < in a line - and
+        REM the marks now carry one - would be read as a redirection there.
+        REM Inside quotes it is just a character.
+        SET "MT_LINE=%%L"
         IF "!MENU_LABEL!"=="1" (
             SET /A MENU_N+=1
-            ECHO     !MENU_N!^) %%L
+            ECHO     !MENU_N!^) !MT_LINE!
             SET "MENU_LABEL=0"
         ) ELSE (
             REM The lines under an entry say what the image is.  Printing only
             REM the labels here meant the fallback listed four checksums and
             REM nothing about any of them.
-            ECHO        %%L
+            ECHO        !MT_LINE!
         )
     )
 )

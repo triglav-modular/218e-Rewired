@@ -108,7 +108,8 @@ $null = New-Item -ItemType Directory -Path $dir
 $menu = Join-Path $dir 'menu.txt'
 $out  = Join-Path $dir 'pick.txt'
 Set-Content -Path $menu -Value @('first entry', 'about the first', '--',
-                                 'second entry', 'about the second', '--',
+                                 'second entry', 'about the second',
+                                 ('a detail line far wider than any console, ' * 8), '--',
                                  'third entry')
 
 # Stdin from NUL, which is what made .NET refuse to read a key in the first
