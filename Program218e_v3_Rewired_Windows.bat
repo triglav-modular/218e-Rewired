@@ -163,7 +163,7 @@ IF %IMG_COUNT% GTR 1 (
     IF EXIST "!MENU_FILE!" DEL /Q "!MENU_FILE!" >NUL 2>&1
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
-        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  <- the default Rewired build"
+        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  <- REWIRED firmware, the build in this download"
         IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  <- FACTORY firmware, back to stock v36.9"
         IF %%I GTR 1 >>"!MENU_FILE!" ECHO --
         >>"!MENU_FILE!" ECHO !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!!MARK!

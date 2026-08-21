@@ -864,7 +864,7 @@ if [ -z "$FIRMWARE" ]; then
             when="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$candidate" 2>/dev/null)"
             case "$sha" in
                 "$EXPECTED_SHA256")
-                    mark="   ${C_GREEN}<- the default Rewired build${C_RESET}" ;;
+                    mark="   ${C_GREEN}<- REWIRED firmware, the build in this download${C_RESET}" ;;
                 "$FACTORY_SHA256")
                     mark="   ${C_YELLOW}<- FACTORY firmware, back to stock v36.9${C_RESET}" ;;
                 *)  mark="" ;;
