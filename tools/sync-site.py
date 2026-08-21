@@ -96,6 +96,14 @@ SWEEP = re.compile(
     r"var\(--(?:tm-)?muted\)\s+0\s+(\d*\.?\d+%)\s*,\s*"
     r"var\(--(?:tm-)?accent2\)\s+(\d*\.?\d+%)\s*,\s*"
     r"var\(--(?:tm-)?accent\)\s+(\d*\.?\d+%)\s+100%\s*\)", re.S)
+LEN = r"-?\d*\.?\d+(?:px|rem|em)"
+COMMENT = re.compile(r"/\*.*?\*/", re.S)
+# Where the header puts the two things that sit outside the menu's row.  Each
+# is only believed if the rule it comes from is the absolute one: a length
+# lifted out of a rule that has stopped positioning anything would still look
+# like a length, and would be quietly wrong rather than obviously missing.
+BRAND_LEFT = re.compile(
+    rf"\.sitenav\s+\.brand\s*\{{[^{{}}]*?position:\s*absolute[^{{}}]*?\bleft:\s*({LEN})", re.S)
 SLIDE = re.compile(rf"transition:\s*background-position\s+({TIME})\s+({EASE})\s*;")
 PASS = re.compile(rf"animation:\s*[\w-]*sweep-\w+\s+({TIME})\s+({TIME})\s+({EASE})\s+forwards")
 THEME_CSS = re.compile(r'href=["\']([^"\']*themes/[^"\']+/style\.css[^"\']*)["\']')
@@ -228,8 +236,21 @@ def theme_url(home: str) -> str | None:
     return found[-1] if found else None
 
 
-def read_theme(css: str) -> dict[str, str] | str:
+def icon_right(css: str, cls: str) -> str | None:
+    """How far the theme insets one shop icon from the window's right edge."""
+    if not re.search(rf"\.sitenav[^{{}}]*\.{cls}\b[^{{}}]*\{{[^{{}}]*?position:\s*absolute", css, re.S) \
+       and not re.search(rf"\.sitenav\s+\w*\.nav-icon\s*\{{[^{{}}]*?position:\s*absolute", css, re.S):
+        return None
+    m = re.search(rf"\.sitenav[^{{}}]*\.{cls}\b[^{{}}]*\{{[^{{}}]*?\bright:\s*({LEN})", css, re.S)
+    return m.group(1) if m else None
+
+
+def read_theme(raw: str) -> dict[str, str] | str:
     """The values this page borrows, or a sentence about why it cannot."""
+    # Comments out of the way first: the theme explains itself in prose, and
+    # its prose says things like "8 from the left" that a pattern looking for
+    # a length after "left" would be delighted to find.
+    css = COMMENT.sub(" ", raw)
     out = {}
     for name in PALETTE:
         m = re.search(rf"--tm-{name}\s*:\s*([^;]+);", css)
@@ -260,6 +281,16 @@ def read_theme(css: str) -> dict[str, str] | str:
     if not run:
         return "no sweep animation to take the timing from"
     out["pass"] = f"{run.group(1)} {run.group(2)} {run.group(3)}"
+
+    brand = BRAND_LEFT.search(css)
+    if not brand:
+        return "the brand mark is not positioned off the left edge"
+    out["brand-left"] = brand.group(1)
+    for cls in ICONS:
+        inset = icon_right(css, cls)
+        if not inset:
+            return f"{cls} is not pinned to the right edge"
+        out[cls] = inset
     return out
 
 
@@ -267,7 +298,9 @@ def render_theme(v: dict[str, str]) -> str:
     lines = [f"  --{name}: {v[name]};" for name in PALETTE]
     lines += [f"  --sweep: {v['sweep']};",
               f"  --sweep-slide: {v['slide']};",
-              f"  --sweep-pass: {v['pass']};"]
+              f"  --sweep-pass: {v['pass']};",
+              f"  --brand-left: {v['brand-left']};"]
+    lines += [f"  --{cls}-right: {v[cls]};" for cls in ICONS]
     return ("/* The palette and the hover sweep belong to the theme on\n"
             "   triglavmodular.hu, and are pulled from it so that the two cannot\n"
             "   drift apart by hand - which they had, twice, before this existed.\n"

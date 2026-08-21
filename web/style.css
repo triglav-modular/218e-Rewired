@@ -78,6 +78,9 @@
                         var(--accent) 66.666% 100%);
   --sweep-slide: .5s ease-in-out;
   --sweep-pass: .35s .15s ease-out;
+  --brand-left: 8px;
+  --nav-icon-cart-right: 44px;
+  --nav-icon-account-right: 16px;
 }
 /* sync-site:end */
 /* This page's own, which the theme carries no equivalent of.  --warn reads
@@ -118,7 +121,7 @@
 }
 .brand {
   position: absolute;
-  left: 20px;
+  left: var(--brand-left);
   top: 50%;
   transform: translateY(-50%);
   display: block;
@@ -241,6 +244,25 @@
 .sitenav nav a.nav-icon:hover::before,
 .sitenav nav a.nav-icon:focus-visible::before {
   background-position: 100% 0;
+}
+/* Above the breakpoint the pair leaves the row and pins to the window's right
+   edge, the way it does on the site: the menu reads left from the column and
+   the shop reads right from the corner, and the gap between them is the header
+   rather than a gap between words.  Below it they stay in the row, which is
+   where the mark goes at that width too.  Their offsets are the theme's; the
+   breakpoint cannot be, because a media query cannot read a custom property. */
+@media (min-width: 901px) {
+  .sitenav nav a.nav-icon {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .sitenav nav a.nav-icon-cart {
+    right: var(--nav-icon-cart-right);
+  }
+  .sitenav nav a.nav-icon-account {
+    right: var(--nav-icon-account-right);
+  }
 }
 /* A mark at 18px carries less ink than a word at 12, so .minor's .62 would put
    these further back than the step they are meant to take. */
