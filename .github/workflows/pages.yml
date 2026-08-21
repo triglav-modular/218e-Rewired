@@ -58,7 +58,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The archive is signed and notarised on a Mac and committed; everything
+  # after that runs on Ubuntu, where codesign does not exist, so a stale or
+  # broken archive would deploy with every structural check green.  This job
+  # is the one place in the pipeline that can actually ask Gatekeeper.
+  verify-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The committed app must carry a valid, notarised signature
+        run: |
+          ditto -x -k mac/Flasher.zip extracted
+          APP="extracted/218e Rewired Flasher.app"
+          codesign --verify --deep --strict "$APP"
+          xcrun stapler validate "$APP"
+          # spctl is the closest thing to the verdict a user's Mac gives.
+          spctl -a -t exec -vv "$APP" 2>&1 | tee spctl.txt
+          grep -q "Notarized Developer ID" spctl.txt
+
   build:
+    needs: verify-app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
