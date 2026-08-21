@@ -19,9 +19,10 @@ const FORWARD = ['if-none-match', 'if-modified-since',
                  'accept', 'accept-encoding', 'user-agent', 'range'];
 
 // Where the page reports a download.  Needs an Analytics Engine dataset bound
-// as BUILDS in the dashboard (Settings, Variables, Analytics Engine dataset);
-// without the binding this route answers 204 and writes nothing, which is the
-// right way round - a missing binding must not break the page.
+// as BUILDS - the Bindings tab, not a runtime variable: a text variable named
+// BUILDS is a string, and a string has nothing to write a data point with.
+// Without a usable binding this route answers 204 and writes nothing, which is
+// the right way round - a missing or wrong binding must not break the page.
 const BEACON = PUBLIC + '/beacon';
 
 // Nothing here is trusted: it arrives from anyone who can reach the route.
@@ -39,7 +40,12 @@ async function record(request, env) {
   // No IP, no user-agent, no header of any kind: what is not written cannot
   // later turn an option set into a person.
   if (request.method !== 'POST') return new Response(null, { status: 405 });
-  if (!env || !env.BUILDS) return new Response(null, { status: 204 });
+  // Not just "is it there": a dataset bound as a text variable arrives as the
+  // string "builds", which is truthy and would throw on the write below.  Ask
+  // for the one thing this needs from it instead.
+  if (typeof env?.BUILDS?.writeDataPoint !== 'function') {
+    return new Response(null, { status: 204 });
+  }
   let body;
   try {
     // The page's body is a couple of hundred bytes.  Refused rather than

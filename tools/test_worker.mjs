@@ -114,5 +114,14 @@ const REAL = {
   check('no binding means no error', res.status === 204, `status ${res.status}`);
 }
 
+{
+  // And the way it is actually got wrong: added as a runtime text variable
+  // rather than a dataset binding, so BUILDS is the string "builds".  Truthy,
+  // and with nothing to write a data point with.
+  const res = await post(REAL, { BUILDS: 'builds' });
+  check('a text variable named BUILDS does not throw',
+        res.status === 204, `status ${res.status}`);
+}
+
 console.log(failures ? `\n  ${failures} failure(s)` : '\n  the beacon only records what the page can send');
 process.exit(failures ? 1 : 0);

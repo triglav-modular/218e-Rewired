@@ -529,11 +529,16 @@ the counts are a floor: builds from the `github.io` URL, from a local clone, or
 from anyone blocking beacons are not in them.
 
 **Setting it up.** In the Cloudflare dashboard, on the worker behind
-`/mods/218e-Rewired*`: Settings → Variables and Secrets → Analytics Engine
-datasets → Add binding, variable name `BUILDS`, dataset `builds`. Then paste
-the current `deploy/worker.js` in. Without the binding the route answers 204
-and writes nothing — a missing binding must never break the page, so that
-direction is the safe one.
+`/mods/218e-Rewired*`: the **Bindings** tab → Add binding → Analytics Engine
+dataset, variable name `BUILDS`, dataset `builds`.
+
+It has to be a *binding*, not a runtime variable. Adding `BUILDS` under
+Settings → Runtime variables gives the worker the string `"builds"`, which is
+truthy and has no `writeDataPoint` on it. The worker checks for the method
+rather than for the name, so that mistake reads as "no dataset" and costs
+nothing; without a usable binding the route answers 204 and writes nothing. A
+missing or misconfigured binding must never break the page, so that direction
+is the safe one.
 
 **Reading it back.** The SQL API, with an API token that has Account Analytics
 read:
