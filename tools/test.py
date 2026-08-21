@@ -646,25 +646,30 @@ def test_migration_and_empty_hand() -> None:
     with open(REPO / "config" / "218e.toml", "rb") as fh:
         cfg = _options.expand(tomllib.load(fh).get("options", {}))
 
-    # Both trims are meant to sit on the configured value at twelve o'clock.
-    # A knob whose useful settings are all in the first eighth of its travel is
-    # the thing this replaced, so the arithmetic is checked rather than trusted.
+    # Knob 1 runs reversed - clockwise lowers the multiplier, the way the
+    # owner plays it - and the default is meant to sit near the middle of the
+    # travel.  A knob whose useful settings are all in the first eighth of its
+    # travel is the thing this replaced, so the arithmetic is checked rather
+    # than trusted.
     calib = cfg["pressure"]["calibration"]
     curve = cfg["pressure"]["curve"]
     if calib.get("trim_mode") == "scale":
         k_min = int(round(calib.get("trim_min", 0.70) * 256))
         k_max = min(0x180, (0x3FF * 256) // calib["ceiling"])
-        at = (256 - k_min) * 10 / (k_max - k_min)
+        at = 10 - (256 - k_min) * 10 / (k_max - k_min)
         check("the calibration default sits near the middle of knob 1",
-              4.0 <= at <= 6.5, f"{at:.1f} of 10")
+              3.5 <= at <= 6.0, f"{at:.1f} of 10")
         check("the trim still reaches the feet-up 0.70x case",
               k_min <= int(0.70 * 256), f"{k_min/256:.2f}x")
         check("the scaled ceiling cannot pass the 1023 the path rejects",
               calib["ceiling"] * k_max // 256 <= 1023)
     steps = curve.get("knob_max_level", 31) + 1
-    mid = (512 * steps) >> 10
-    check("knob 4's middle is the configured curve level",
-          mid == curve.get("default_level", 31), f"middle {mid}")
+    # The default is 0 - curve off until the knob raises it - so it sits at
+    # the bottom of the travel rather than the middle; what has to hold is
+    # that the knob can reach it and every level above it.
+    check("knob 4 reaches the configured default level",
+          0 <= curve.get("default_level", 31) <= curve.get("knob_max_level", 31),
+          f"default {curve.get('default_level')}")
     check("the knob-4 pool word reaches it",
           'wordPatch("knob4_pool", 0x800043d0L, 0x80014380L' in source)
     check("the bootstrap does not force the curve level back to 0",

@@ -370,21 +370,26 @@ public class AssemblePressureFix extends GhidraScript {
             // the entire signal — lifting your feet off the floor costs about
             // 30% of it — so the useful control multiplies floor and ceiling
             // together rather than moving either endpoint on its own.
-            // k runs 128..383 with 256 as unity, i.e. 0.5x to ~1.5x.
-            // k = 128 + adc * span / 1024, where the build sizes `span` so the
-            // scaled ceiling can never reach the 1023 validity limit.  A fixed
-            // 0.5x..1.5x range would pin the ceiling partway up the knob while
-            // the floor kept rising, narrowing the window instead of moving it.
+            // k = top - adc * span / 1024, with 256 as unity and the build
+            // sizing `span` so the scaled ceiling can never reach the 1023
+            // validity limit.  Subtracted, not added: the owner plays this
+            // knob the other way round, so clockwise lowers the multiplier
+            // and the 1.00x default sits mirrored at 4 of 10.  A fixed
+            // 0.5x..1.5x range would pin the ceiling partway up the knob
+            // while the floor kept rising, narrowing the window instead of
+            // moving it.
+            int trimSpan = number("trim_scale_span", 0x100, 0x10, 0x100);
+            int trimBase = number("trim_scale_base", 0x80, 0x40, 0x100);
+            // The top of the range: what the bottom-of-travel position now
+            // maps to.  Derived, so base and span stay the two settings.
+            int trimTop = trimBase + ((0x3ff * trimSpan) >> 10);
             emit("LD.UH R8,R10[0x30a]");
-            emit(String.format("MOV R9,0x%x", number("trim_scale_span", 0x100, 0x10, 0x100)));
+            emit(String.format("MOV R9,0x%x", trimSpan));
             emit("MUL R8,R8,R9");
             emit("LSR R8,0xa");
-            // The bottom of the range, as a multiplier in 1/256ths.  Not a
-            // SUB with a negative immediate any more: that form only reaches
-            // -128, and the base is now wherever the configured range starts.
-            emit(String.format("MOV R9,0x%x",
-                 number("trim_scale_base", 0x80, 0x40, 0x100)));
-            emit("ADD R8,R9");
+            emit(String.format("MOV R9,0x%x", trimTop));
+            emit("SUB R9,R8");
+            emit("MOV R8,R9");
             emit(String.format("MOV R9,0x%x", number("pressure_ceiling_default", 0x348, 0x80, 0x7d0)));
             emit("MUL R9,R9,R8");
             emit("LSR R9,0x8");

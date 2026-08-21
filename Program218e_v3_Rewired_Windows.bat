@@ -11,11 +11,11 @@ REM instrument leave DFU.  Buchla's own ProgramLEM218.bat does none of those and
 REM flashes whatever .hex it finds first, which is why this is a separate
 REM script.
 
-SET "EXPECTED_SHA256=6e699744271ea5fb7838ef8b33fc8a373ff0997c0d6e2ab0e26fbff1fab708db"
+SET "EXPECTED_SHA256=8a416aac49b37a0f5cabc597a8da2135587b15812899e738ff843e5fd072238d"
 REM Buchla's own v36.9 image.  Recognised so that going back to stock is an
 REM offered choice rather than something to be identified by hand.
 SET "FACTORY_SHA256=565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-SET "FIRMWARE_VERSION=Rewired 1.0.0 (6e699744)"
+SET "FIRMWARE_VERSION=Rewired 1.1.0 (8a416aac)"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
 SET "ERASE_STARTED=0"
