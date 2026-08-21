@@ -51,6 +51,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--sql", help="run this instead of the usual report")
+    parser.add_argument("--raw", action="store_true",
+                        help="every row, filtered by nothing - use this to "
+                             "find out whether anything is arriving at all")
     args = parser.parse_args()
 
     token = os.environ.get("CF_API_TOKEN")
@@ -62,6 +65,31 @@ def main() -> None:
     if args.sql:
         for row in query(args.sql, token):
             print("  " + json.dumps(row))
+        return
+
+    if args.raw:
+        # No window and no filter: the question here is whether the dataset
+        # has anything in it, not what the numbers say.
+        rows = query("SELECT count() AS n FROM builds", token)
+        n = int(rows[0]["n"]) if rows else 0
+        print(f"\n  {n} row(s) in the dataset, all time, nothing excluded")
+        if not n:
+            print("\n  Nothing has ever been written.  Either no download has")
+            print("  happened since the worker was deployed, or the beacon is")
+            print("  not reaching it.  Check that a GET on")
+            print("  https://triglavmodular.hu/mods/218e-Rewired/beacon")
+            print("  answers 405 - a 404 means the deployed worker is not"
+                  " this one.\n")
+            return
+        print()
+        for row in query("SELECT timestamp, blob1 AS platform, "
+                         "blob2 AS version, blob3 AS volts, double1 AS arp, "
+                         "double2 AS knobs, double3 AS pressure, "
+                         "double4 AS portamento, double5 AS tunings, "
+                         "double6 AS calibration FROM builds "
+                         "ORDER BY timestamp DESC LIMIT 20", token):
+            print("  " + json.dumps(row))
+        print()
         return
 
     rows = query(f"SELECT count() AS builds FROM builds "
