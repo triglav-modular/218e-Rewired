@@ -1,0 +1,40 @@
+# Deploy configuration for the worker in deploy/worker.js.
+#
+# Cloudflare builds this repository and runs `npx wrangler deploy`, so this
+# file is the worker's configuration - not the dashboard.  That is also why
+# adding a binding in the dashboard silently does nothing now: a deploy would
+# overwrite it, so the dashboard stops accepting the edit.  Everything the
+# worker needs is declared here instead, and a fresh deploy cannot come up
+# half-configured.
+#
+# Every setting is written out even where a default would do, because what is
+# not declared is not guaranteed to survive a deploy.
+
+name = "218e-rewired-proxy"
+main = "deploy/worker.js"
+# The worker uses only fetch, Request, Response, URL and JSON, so nothing here
+# turns on this date.  A settled past date avoids a warning from whichever
+# wrangler `npx` happens to fetch.
+compatibility_date = "2025-01-01"
+
+# The page is served from the zone, not from a workers.dev subdomain - serving
+# the same site on two hostnames is a way to have half of it cached under one
+# of them.
+workers_dev = false
+
+routes = [
+  { pattern = "triglavmodular.hu/mods/218e-Rewired*", zone_name = "triglavmodular.hu" }
+]
+
+# Where the beacon writes.  This has to be a binding rather than a runtime
+# variable: a text variable named BUILDS arrives as the string "builds", which
+# has nothing to write a data point with.  See "Counting builds" in
+# docs/BUILD.md.
+[[analytics_engine_datasets]]
+binding = "BUILDS"
+dataset = "builds"
+
+# Logs were on in the dashboard, and an undeclared setting is not promised to
+# survive a deploy, so it is declared.
+[observability]
+enabled = true

@@ -32,6 +32,7 @@ on:
       - 'tools/sync-site.py'
       - 'deploy/worker.js'
       - 'tools/test_worker.mjs'
+      - 'wrangler.toml'
       - 'Program218e_v3_Rewired_macOS.command'
       - 'Program218e_v3_Rewired_Windows.bat'
       - 'mac/Flasher.zip'

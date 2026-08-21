@@ -1,8 +1,9 @@
 // The Cloudflare worker behind triglavmodular.hu/mods/218e-Rewired.
 //
-// This file is the source of truth; Cloudflare holds a copy that is pasted in
-// by hand.  Dashboard: the triglavmodular.hu zone, Workers Routes, the route
-// matching /mods/218e-Rewired*, then Edit code.
+// Cloudflare builds this repository and deploys this file; wrangler.toml at
+// the root carries the name, the route and the bindings.  Nothing is pasted
+// into the dashboard any more, and the dashboard will not accept binding
+// edits while a build connection owns the worker.
 //
 // It maps the public path onto the GitHub Pages site and sets the one cache
 // header that Pages cannot: see "Publishing the page, and caches" in

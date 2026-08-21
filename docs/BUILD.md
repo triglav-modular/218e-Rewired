@@ -528,17 +528,26 @@ from a `file:` URL, reports nowhere rather than reporting to us. That also means
 the counts are a floor: builds from the `github.io` URL, from a local clone, or
 from anyone blocking beacons are not in them.
 
-**Setting it up.** In the Cloudflare dashboard, on the worker behind
-`/mods/218e-Rewired*`: the **Bindings** tab → Add binding → Analytics Engine
-dataset, variable name `BUILDS`, dataset `builds`.
+**Setting it up.** Nothing to click: the dataset is declared in
+[../wrangler.toml](../wrangler.toml) and created by the deploy. The worker
+(`218e-rewired-proxy`) is connected to this repository through Workers Builds,
+which runs `npx wrangler deploy` — so the route, the bindings and the
+observability settings all come from that file rather than from the dashboard.
 
-It has to be a *binding*, not a runtime variable. Adding `BUILDS` under
-Settings → Runtime variables gives the worker the string `"builds"`, which is
-truthy and has no `writeDataPoint` on it. The worker checks for the method
-rather than for the name, so that mistake reads as "no dataset" and costs
-nothing; without a usable binding the route answers 204 and writes nothing. A
-missing or misconfigured binding must never break the page, so that direction
-is the safe one.
+Two consequences worth knowing. **The dashboard will not add a binding any
+more** — with a build connection owning the worker, the Add binding button
+appears to do nothing, because a deploy would overwrite whatever it saved.
+And **whatever is not declared in `wrangler.toml` is not promised to survive a
+deploy**, which is why that file spells out `workers_dev` and `observability`
+even though both would otherwise be defaults.
+
+It also has to be a *binding* rather than a runtime variable. `BUILDS` added
+under Settings → Runtime variables gives the worker the string `"builds"`,
+which is truthy and has no `writeDataPoint` on it. The worker checks for the
+method rather than for the name, so that mistake reads as "no dataset" and
+costs nothing; without a usable binding the route answers 204 and writes
+nothing. A missing or misconfigured binding must never break the page, so that
+direction is the safe one.
 
 **Reading it back.** The SQL API, with an API token that has Account Analytics
 read:

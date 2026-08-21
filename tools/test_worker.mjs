@@ -123,5 +123,27 @@ const REAL = {
         res.status === 204, `status ${res.status}`);
 }
 
-console.log(failures ? `\n  ${failures} failure(s)` : '\n  the beacon only records what the page can send');
+// The deploy is configured by wrangler.toml now, so the two can drift: a
+// route that no longer matches what the worker answers on, or a binding
+// renamed on one side only, would deploy green and record nothing.
+{
+  const toml = readFileSync(join(here, '..', 'wrangler.toml'), 'utf8');
+  const value = (key) => (toml.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm')) || [])[1];
+
+  check('the deploy points at this worker',
+        value('main') === 'deploy/worker.js', value('main'));
+  check('the dataset is bound under the name the worker reads',
+        /binding\s*=\s*"BUILDS"/.test(toml) && /\[\[analytics_engine_datasets\]\]/.test(toml),
+        'no analytics_engine_datasets binding named BUILDS');
+
+  // The route has to cover the path the beacon is posted to, or the request
+  // never reaches the worker at all.
+  const route = (toml.match(/pattern\s*=\s*"([^"]+)"/) || [])[1] || '';
+  const prefix = (source.match(/const PUBLIC = '([^']+)'/) || [])[1];
+  check('the route covers the path the worker serves',
+        prefix && route.includes(prefix) && route.endsWith('*'),
+        `route ${route} vs PUBLIC ${prefix}`);
+}
+
+console.log(failures ? `\n  ${failures} failure(s)` : '\n  the beacon only records what the page can send, and the deploy matches it');
 process.exit(failures ? 1 : 0);
