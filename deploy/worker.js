@@ -1,9 +1,9 @@
 // The Cloudflare worker behind triglavmodular.hu/mods/218e-Rewired.
 //
-// Cloudflare builds this repository and deploys this file; wrangler.toml at
-// the root carries the name, the route and the bindings.  Nothing is pasted
-// into the dashboard any more, and the dashboard will not accept binding
-// edits while a build connection owns the worker.
+// Deployed with `npx wrangler deploy` from the repository root; wrangler.toml
+// there carries the name, the route and the bindings.  Nothing is pasted into
+// the dashboard any more - and the dashboard cannot add the dataset binding
+// itself, so that file is the only way this worker gets one.
 //
 // It maps the public path onto the GitHub Pages site and sets the one cache
 // header that Pages cannot: see "Publishing the page, and caches" in

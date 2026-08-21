@@ -528,26 +528,42 @@ from a `file:` URL, reports nowhere rather than reporting to us. That also means
 the counts are a floor: builds from the `github.io` URL, from a local clone, or
 from anyone blocking beacons are not in them.
 
-**Setting it up.** The dataset is declared in
-[../wrangler.toml](../wrangler.toml). The worker (`218e-rewired-proxy`) is
-connected to this repository through Workers Builds, which runs
-`npx wrangler deploy` — so the route, the bindings and the observability
-settings are meant to come from that file rather than from the dashboard.
+**Deploying it.** From the repository root:
 
-> **The connection took the page down once, and the way it did is worth
-> knowing.** Workers Builds was connected while the repository still had no
-> `wrangler.toml`. The first build ran `npx wrangler deploy` with nothing to
-> read, reported success, and replaced the proxy with a guessed configuration
-> that served the site's files at `/` and 404ed everything else — including
-> `/mods/218e-Rewired`, which is the whole public page. The route was never
-> removed and the dashboard looked healthy; the deployed version simply was
-> not this worker, and it sat at 0% traffic. Fixed by rolling back to the last
-> hand-deployed version in Deployments → Version History → ⋯ → Rollback.
+```bash
+npx wrangler deploy
+```
+
+The dataset, the route, the name and the observability settings all come from
+[../wrangler.toml](../wrangler.toml) — the dashboard cannot add the dataset
+binding at all. It offers the form, accepts `BUILDS` / `builds`, enables Save,
+and the binding is simply not there after a reload. A deploy is the only way.
+
+**Analytics Engine has to be enabled on the account first**, once, at
+Storage & databases → Analytics Engine → Enable. Until it is, `wrangler deploy`
+fails with `code: 10089` and changes nothing — which is the safe direction, but
+it does mean a first deploy can fail for a reason that has nothing to do with
+this repository.
+
+> **A Workers Builds connection took the page down once.** It was connected
+> while the repository still had no `wrangler.toml`. The first build ran
+> `npx wrangler deploy` with nothing to read, reported success, and replaced
+> the proxy with a guessed configuration that served the site's files at `/`
+> and 404ed everything else — including `/mods/218e-Rewired`, the whole public
+> page. The route was never removed and the dashboard looked healthy; the
+> deployed version simply was not this worker, and it sat at 0% traffic.
 >
-> A connection is only safe once `wrangler.toml` exists and names `main`.
-> Check after any deploy that `/mods/218e-Rewired/` still answers 200 and that
-> `GET .../beacon` answers 405 rather than 404 — a 404 there means whatever is
-> deployed is not this worker.
+> Worse, it left the service flagged as *"a Worker that only has static
+> assets"*, which blocks bindings, variables, triggers and metrics — and the
+> flag survives a version rollback. Only deploying a real script clears it.
+>
+> Recovered by rolling back (Deployments → Version History → ⋯ → Rollback) to
+> restore service, then `npx wrangler deploy` to put the script back. The Git
+> connection is not in use now.
+>
+> **After any deploy, check two things:** `/mods/218e-Rewired/` answers 200,
+> and `GET .../beacon` answers 405 rather than 404. A 404 on the beacon means
+> whatever is deployed is not this worker.
 
 Two consequences worth knowing. **The dashboard will not add a binding any
 more** — with a build connection owning the worker, the Add binding button
@@ -588,6 +604,11 @@ The columns, in the order the worker writes them:
 | `double4` | pressure portamento, 1 or 0 |
 | `double5` | alternate tunings, 0–3 slots filled (−1 if the value was not one of those) |
 | `double6` | per-note calibration supplied, 1 or 0 |
+
+`blob1` is `mac` or `win` for a real download. Anything else — `other` — is not
+a build: the endpoint is public, and the deploy was verified by posting one
+marked point through it. Filter with `WHERE blob1 IN ('mac','win')` for counts
+you can trust.
 
 So "how many builds turned each option on, this month" is:
 

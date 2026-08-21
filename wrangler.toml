@@ -1,11 +1,12 @@
 # Deploy configuration for the worker in deploy/worker.js.
 #
-# Cloudflare builds this repository and runs `npx wrangler deploy`, so this
-# file is the worker's configuration - not the dashboard.  That is also why
-# adding a binding in the dashboard silently does nothing now: a deploy would
-# overwrite it, so the dashboard stops accepting the edit.  Everything the
-# worker needs is declared here instead, and a fresh deploy cannot come up
-# half-configured.
+#     npx wrangler deploy        (from the repository root)
+#
+# This file is the worker's configuration, not the dashboard.  The dashboard
+# cannot add the dataset binding at all - it offers the form, takes the
+# values, and the binding is simply not there afterwards - so a deploy from
+# here is the only way this worker gets one.  Everything it needs is declared
+# below, and a fresh deploy cannot come up half-configured.
 #
 # Every setting is written out even where a default would do, because what is
 # not declared is not guaranteed to survive a deploy.
