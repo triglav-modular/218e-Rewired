@@ -29,7 +29,7 @@ on:
       - 'tools/Find-DfuDevice.ps1'
       - 'tools/Show-Menu.ps1'
       - 'tools/version-assets.py'
-      - 'tools/sync-menu.py'
+      - 'tools/sync-site.py'
       - 'Program218e_v3_Rewired_macOS.command'
       - 'Program218e_v3_Rewired_Windows.bat'
       - 'mac/Flasher.zip'
@@ -38,9 +38,10 @@ on:
       - 'THIRD-PARTY.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
-  # The header menu is mirrored from triglavmodular.hu at build time, and that
-  # site changing is not an event this repository can see.  A weekly rebuild is
-  # what carries such a change onto the page without anyone pushing here.
+  # The menu and the palette are mirrored from triglavmodular.hu at build time,
+  # and that site changing is not an event this repository can see.  A weekly
+  # rebuild is what carries such a change onto the page without anyone pushing
+  # here.
   schedule:
     - cron: '17 4 * * 1'
 
@@ -95,11 +96,13 @@ jobs:
           # added later, which is exactly how images/ and fonts/ came to 404
           # on a page that referenced them.
           rsync -a --exclude '*.py' --exclude '_*' web/ _site/
-          # The header menu belongs to triglavmodular.hu, so it is resolved
-          # here rather than trusted from the copy in the repository.  It
-          # cannot fail the build: unreachable or unrecognisable, it leaves
-          # the committed menu alone and says why.
-          python3 tools/sync-menu.py _site/index.html
+          # The header menu and the palette-and-sweep belong to the theme on
+          # triglavmodular.hu, so both are resolved here rather than trusted
+          # from the copies in the repository.  Before the stamping below, as
+          # it rewrites style.css and the stamp is a hash of it.  It cannot
+          # fail the build: unreachable or unrecognisable, it leaves what is
+          # committed alone and says why.
+          python3 tools/sync-site.py _site
           # The flashing tools travel with a download, so the page has to be
           # able to fetch them.  No VC_redist and no msvcp140.dll: our
           # dfu-programmer links its runtime statically, so there is nothing
@@ -127,14 +130,14 @@ jobs:
           touch _site/.nojekyll
           find _site -type f | sort
 
-      - name: The committed menu should be in step with the main site
+      - name: The committed page should be in step with the main site
         # What deploys is already current - the step above saw to that.  This
-        # only says whether the copy in the repository has fallen behind, which
-        # matters because that is the one a local clone opens with no network,
-        # and the one anybody reads to see what the menu says.
+        # only says whether the copies in the repository have fallen behind,
+        # which matters because those are what a local clone opens with no
+        # network, and what anybody reads to see what the page is.
         run: |
-          if ! python3 tools/sync-menu.py --check web/index.html; then
-            echo "::warning::web/index.html's menu is behind triglavmodular.hu; run tools/sync-menu.py and commit"
+          if ! python3 tools/sync-site.py --check web; then
+            echo "::warning::web/ is behind triglavmodular.hu; run tools/sync-site.py and commit"
           fi
 
       - name: The committed app must match the sources it was built from
