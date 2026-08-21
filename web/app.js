@@ -643,9 +643,10 @@
         var lines = [
             'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
             'Knobs 1-4: ' + (o.remap_knobs ? 'remapped' : 'factory'),
-            'Pressure response: ' + (o.pressure_fix ? 'rewired' : 'factory') +
+            'Pressure: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
-            'Pitch: ' + o.volts_per_octave + ' V/octave'
+            'Scaling: ' + o.volts_per_octave + ' V/octave',
+            'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off')
         ];
         if (o.alternate_tunings && o.alternate_tunings.length) {
             // A slot is { name, text }, so joining the array gave a row of
@@ -658,10 +659,7 @@
                            return named.replace(/\.scl$/i, '');
                        }).join(', '));
         } else {
-            lines.push('Alternate tunings: none');
-        }
-        if (o.pitch_correction) {
-            lines.push('Per-note calibration: ' + o.pitch_correction.length + ' notes');
+            lines.push('Alternate tunings: off');
         }
         return lines;
     }

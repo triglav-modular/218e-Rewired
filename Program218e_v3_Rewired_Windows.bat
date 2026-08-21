@@ -163,14 +163,15 @@ IF %IMG_COUNT% GTR 1 (
     IF EXIST "!MENU_FILE!" DEL /Q "!MENU_FILE!" >NUL 2>&1
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
-        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  <- REWIRED firmware, the build in this download"
-        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  <- FACTORY firmware, back to stock v36.9"
+        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  <- REWIRED firmware"
+        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  <- FACTORY firmware"
         IF %%I GTR 1 >>"!MENU_FILE!" ECHO --
-        >>"!MENU_FILE!" ECHO !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!!MARK!
-        REM The name only.  Every image in the list is in the same folder,
-        REM so the path in front of each one was the same long string over
-        REM and over, and pushed the name itself off the edge.
-        FOR %%N IN ("!IMG_PATH_%%I!") DO >>"!MENU_FILE!" ECHO %%~nxN
+        REM The filename is the label - it is the thing a person recognises -
+        REM and the name only: every image in the list is in the same folder,
+        REM so the path in front of each was the same long string over and
+        REM over.  The date and checksum go underneath.
+        FOR %%N IN ("!IMG_PATH_%%I!") DO >>"!MENU_FILE!" ECHO %%~nxN!MARK!
+        >>"!MENU_FILE!" ECHO !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!
         REM What the image was built with, when the download that carried it
         REM said so.  Two images a minute apart are otherwise told apart only
         REM by a checksum nobody can read.

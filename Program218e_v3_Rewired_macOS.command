@@ -864,19 +864,18 @@ if [ -z "$FIRMWARE" ]; then
             when="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$candidate" 2>/dev/null)"
             case "$sha" in
                 "$EXPECTED_SHA256")
-                    mark="   ${C_GREEN}<- REWIRED firmware, the build in this download${C_RESET}" ;;
+                    mark="   ${C_GREEN}<- REWIRED firmware${C_RESET}" ;;
                 "$FACTORY_SHA256")
-                    mark="   ${C_YELLOW}<- FACTORY firmware, back to stock v36.9${C_RESET}" ;;
+                    mark="   ${C_YELLOW}<- FACTORY firmware${C_RESET}" ;;
                 *)  mark="" ;;
             esac
-            MENU_ITEMS[$i]="$when   ${sha:0:8}$mark"
-            # What the image was built with, when the download that carried it
-            # said so.  Two images a minute apart are otherwise told apart only
-            # by a checksum nobody can read.
-            # The name only.  Every image in the list is in the same folder,
-            # so the path in front of each one was the same long string over
-            # and over, and pushed the name itself off the edge.
-            detail="${candidate##*/}"
+            # The filename is the label - it is the thing a person
+            # recognises - and the name only: every image in the list is in
+            # the same folder.  The date and checksum go underneath, with
+            # what the image was built with, when the download that carried
+            # it said so.
+            MENU_ITEMS[$i]="${candidate##*/}$mark"
+            detail="$when   ${sha:0:8}"
             opts="$(image_options "$candidate" "$sha")"
             [ -n "$opts" ] && detail="$detail
 $opts"
