@@ -79,15 +79,19 @@ if (-not [Rewired.Test]::AllocConsole()) {
     Finish 0 'SKIP: no console could be allocated on this machine'
 }
 
-# The child inherits these, and the helper stands aside if its output is
-# captured - so both ends have to be the console itself.
-$conin  = [Rewired.Test]::CreateFileW('CONIN$',  3221225472, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
-$conout = [Rewired.Test]::CreateFileW('CONOUT$', 3221225472, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
-if ($conin -eq [IntPtr](-1) -or $conout -eq [IntPtr](-1)) {
-    Finish 0 'SKIP: the allocated console has no usable handles'
+# AllocConsole has already pointed this process's standard handles at the new
+# console, and those handles are inheritable, which is what the child needs:
+# it decides whether anyone is reading by looking at the stdout it inherits.
+# Opening CONOUT$ by hand and putting that in their place looks equivalent and
+# is not - CreateFile hands back a handle marked not-inheritable, so the child
+# started with it got nothing and stood aside.
+#
+# This one is only for writing key presses from here, so inheritance does not
+# matter and CreateFile is fine.  The child opens its own.
+$conin = [Rewired.Test]::CreateFileW('CONIN$', 3221225472, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
+if ($conin -eq [IntPtr](-1)) {
+    Finish 0 'SKIP: the allocated console has no usable input buffer'
 }
-$null = [Rewired.Test]::SetStdHandle(-11, $conout)   # STD_OUTPUT_HANDLE
-$null = [Rewired.Test]::SetStdHandle(-12, $conout)   # STD_ERROR_HANDLE
 
 function New-Key([int] $code, [char] $ch) {
     $r = New-Object Rewired.Test+KeyRecord
