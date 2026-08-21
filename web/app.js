@@ -704,6 +704,44 @@
             .join('\n');
     }
 
+    // How many people build this, and with what options.  Sent once per
+    // download, and deliberately narrow: which options were chosen, which
+    // platform, which version.  No identifier of any kind, nothing that
+    // could carry one, and never the factory image or the calibration - the
+    // build still happens entirely in this browser and nothing about it
+    // leaves except these nine values.
+    //
+    // The URL is relative on purpose.  Only the deployment behind the worker
+    // has anywhere to put this; a clone served from somewhere else, or the
+    // page opened from a file, reports nowhere rather than reporting to us.
+    function report(id) {
+        try {
+            if (!navigator.sendBeacon) return;
+            var o = state.options || {};
+            var body = JSON.stringify({
+                platform: id === 'dlMac' ? 'mac' : 'win',
+                version: GEN.version,
+                volts_per_octave: o.volts_per_octave,
+                latching_arp: !!o.latching_arp,
+                remap_knobs: !!o.remap_knobs,
+                pressure_fix: !!o.pressure_fix,
+                pressure_portamento: !!o.pressure_portamento,
+                // How many slots were filled, not which.  A slot can hold a
+                // Scala file someone wrote themselves, and its name is
+                // theirs, not ours to collect.
+                alternate_tunings: (o.alternate_tunings || []).length,
+                // Whether a calibration was supplied - never the numbers,
+                // which are measurements of one person's instrument.
+                pitch_correction: !!o.pitch_correction
+            });
+            // text/plain keeps this a simple request, so it needs no
+            // preflight and no CORS reply to be delivered.
+            navigator.sendBeacon('beacon', new Blob([body], { type: 'text/plain' }));
+        } catch (e) {
+            // Counting downloads must never be able to stop one.
+        }
+    }
+
     Object.keys(KIT).forEach(function (id) {
         $(id).addEventListener('click', function () {
             var r = state.result;
@@ -783,6 +821,7 @@
                 document.body.appendChild(a); a.click(); a.remove();
                 setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
                 btn.querySelector('span').textContent = label; btn.disabled = false;
+                report(id);
             }).catch(function (e) {
                 btn.querySelector('span').textContent = label; btn.disabled = false;
                 msg($('buildMsg'), 'bad',

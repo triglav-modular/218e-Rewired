@@ -1,7 +1,7 @@
 # Browser firmware builder
 
-Builds the firmware entirely client-side. There is no server, and the factory
-image never leaves the machine — it is read with `FileReader`, verified by
+Builds the firmware entirely client-side. There is no build server, and the
+factory image never leaves the machine — it is read with `FileReader`, verified by
 SHA-256, patched in memory and handed back as a download.
 
 ```bash
@@ -10,6 +10,13 @@ python3 -m http.server 8123 --directory web
 
 Then open <http://localhost:8123>. Any static host works; nothing is fetched
 from outside the page.
+
+One thing does leave, and only on a download: which options were chosen, which
+platform, and which version, POSTed to `beacon` beside the page. No identifier,
+no header kept, and never the image or the calibration. The URL is relative, so
+it reports only where something is listening for it — a clone served anywhere
+else, or the page opened from a file, reports nowhere. See "Counting builds" in
+[../docs/BUILD.md](../docs/BUILD.md).
 
 ## How it fits together
 

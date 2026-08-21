@@ -509,6 +509,72 @@ until they expire. They are no longer referenced by anything, so they do no
 harm; **Caching - Configuration - Purge Everything** clears them if you would
 rather not wait.
 
+## Counting builds
+
+The page reports one thing, once, when someone downloads: which options were
+chosen, which platform, which version. It is a `POST` to `beacon` beside the
+page, handled by the worker in [../deploy/worker.js](../deploy/worker.js) and
+written to a Cloudflare Analytics Engine dataset.
+
+What is deliberately **not** in it: any identifier, any header (no IP, no
+user-agent), the factory image, the calibration numbers, and the names of any
+Scala files — a slot can hold a tuning someone wrote themselves, so the beacon
+carries how many slots were filled and not which. The build still happens
+entirely in the browser; these nine values are all that leave it.
+
+The URL is relative on purpose. Only the deployment behind the worker has
+anywhere to put this, so a clone served from somewhere else, or the page opened
+from a `file:` URL, reports nowhere rather than reporting to us. That also means
+the counts are a floor: builds from the `github.io` URL, from a local clone, or
+from anyone blocking beacons are not in them.
+
+**Setting it up.** In the Cloudflare dashboard, on the worker behind
+`/mods/218e-Rewired*`: Settings → Variables and Secrets → Analytics Engine
+datasets → Add binding, variable name `BUILDS`, dataset `builds`. Then paste
+the current `deploy/worker.js` in. Without the binding the route answers 204
+and writes nothing — a missing binding must never break the page, so that
+direction is the safe one.
+
+**Reading it back.** The SQL API, with an API token that has Account Analytics
+read:
+
+```bash
+curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/analytics_engine/sql" \
+  -H "Authorization: Bearer $CF_TOKEN" \
+  -d "SELECT blob1 AS platform, count() AS builds
+      FROM builds WHERE timestamp > now() - INTERVAL '30' DAY
+      GROUP BY platform"
+```
+
+The columns, in the order the worker writes them:
+
+| Column | Meaning |
+|---|---|
+| `blob1` | platform — `mac`, `win`, or `other` |
+| `blob2` | firmware version, e.g. `1.1.0` |
+| `blob3` | volts per octave — `1`, `1.2`, or `other` |
+| `double1` | latching arpeggiator, 1 or 0 |
+| `double2` | knobs 1–4 remapped, 1 or 0 |
+| `double3` | pressure fix, 1 or 0 |
+| `double4` | pressure portamento, 1 or 0 |
+| `double5` | alternate tunings, 0–3 slots filled (−1 if the value was not one of those) |
+| `double6` | per-note calibration supplied, 1 or 0 |
+
+So "how many builds turned each option on, this month" is:
+
+```sql
+SELECT count() AS builds, sum(double1) AS latching, sum(double2) AS knobs,
+       sum(double3) AS pressure, sum(double4) AS portamento,
+       sum(double6) AS calibrated
+FROM builds WHERE timestamp > now() - INTERVAL '30' DAY
+```
+
+Nothing on the route is authenticated — it cannot be, since the page is public
+— so anyone who finds it can add to a count. Every field is validated against
+what the page can actually send, so the worst case is noise in the numbers
+rather than arbitrary strings in the dataset.
+
+
 ## Giving CI the factory image
 
 Everything that builds firmware needs Buchla's stock image, and it is not in
