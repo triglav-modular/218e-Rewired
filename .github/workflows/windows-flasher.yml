@@ -14,11 +14,11 @@ on:
     paths:
       - 'Program218e_v3_Rewired_Windows.bat'
       - 'windows/support/**'
-      # The flasher shells out to both of these, so a change to either
-      # can break it without the .bat itself being touched.
-      - 'tools/Scan-Images.ps1'
-      - 'tools/Find-DfuDevice.ps1'
-      - 'tools/Show-Menu.ps1'
+      # The flasher shells out to these, so a change to one can break it
+      # without the .bat itself being touched.  Named as a group rather than
+      # one by one: a new helper was added and not listed, and the run that
+      # would have tested it never started.
+      - 'tools/*.ps1'
       - 'tools/validate_hex.py'
       - '.github/workflows/windows-flasher.yml'
   workflow_dispatch:
