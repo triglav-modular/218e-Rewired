@@ -528,11 +528,26 @@ from a `file:` URL, reports nowhere rather than reporting to us. That also means
 the counts are a floor: builds from the `github.io` URL, from a local clone, or
 from anyone blocking beacons are not in them.
 
-**Setting it up.** Nothing to click: the dataset is declared in
-[../wrangler.toml](../wrangler.toml) and created by the deploy. The worker
-(`218e-rewired-proxy`) is connected to this repository through Workers Builds,
-which runs `npx wrangler deploy` — so the route, the bindings and the
-observability settings all come from that file rather than from the dashboard.
+**Setting it up.** The dataset is declared in
+[../wrangler.toml](../wrangler.toml). The worker (`218e-rewired-proxy`) is
+connected to this repository through Workers Builds, which runs
+`npx wrangler deploy` — so the route, the bindings and the observability
+settings are meant to come from that file rather than from the dashboard.
+
+> **The connection took the page down once, and the way it did is worth
+> knowing.** Workers Builds was connected while the repository still had no
+> `wrangler.toml`. The first build ran `npx wrangler deploy` with nothing to
+> read, reported success, and replaced the proxy with a guessed configuration
+> that served the site's files at `/` and 404ed everything else — including
+> `/mods/218e-Rewired`, which is the whole public page. The route was never
+> removed and the dashboard looked healthy; the deployed version simply was
+> not this worker, and it sat at 0% traffic. Fixed by rolling back to the last
+> hand-deployed version in Deployments → Version History → ⋯ → Rollback.
+>
+> A connection is only safe once `wrangler.toml` exists and names `main`.
+> Check after any deploy that `/mods/218e-Rewired/` still answers 200 and that
+> `GET .../beacon` answers 405 rather than 404 — a 404 there means whatever is
+> deployed is not this worker.
 
 Two consequences worth knowing. **The dashboard will not add a binding any
 more** — with a build connection owning the worker, the Add binding button
