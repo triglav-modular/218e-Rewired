@@ -718,7 +718,7 @@ function assembleProgram() {
         emitTable("pitch_remap");
         finish("tracking_correction_table", 0x80019c5e);
 
-        // Pressure-based portamento (as in the Micro_Easel MonoKeyboard):
+        // Pressure-based portamento:
         // each scan the pitch target becomes
         // X_port = sum(z^3 * X_k) / sum(z^3) over held keys within PInterv
         // (484 units = 12 semitones) of the sounding base, z = per-key sensor
@@ -860,7 +860,7 @@ function assembleProgram() {
         //   knob 2 (0x30c -> 0x60e6 latch): rhythm randomness — the per-step
         //     countdown reload becomes T*((1024-r) + r*E)/1024 with E an
         //     exponential draw (mean ~1, CLZ-geometric approximation, clamp
-        //     4x), the Micro_Easel RANDOM PULSER law; knob low = even pulses;
+        //     4x), a random-pulser spacing law; knob low = even pulses;
         //   knob 3 (0x30e -> 0x60ea latch): random +-octave per arp note.
         // Gate-off timing itself is factory (compare == 3 restored).
         begin(0x80019d38);
@@ -2155,7 +2155,7 @@ function assembleProgram() {
         finish("poly_settings_migration", 0x8001ad00);
 
         // Note-off pointer pools -> latch-gated wrapper.
-        // Global vibrato on knob 4 (Micro_Easel one-knob law: depth and rate
+        // Global vibrato on knob 4 (one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
         // Pressure scales the effective knob from one-half to full value.
         // Runs at 200 Hz from applier_plus. RAM: 0x60f0 knob latch

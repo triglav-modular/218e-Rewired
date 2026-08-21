@@ -1181,11 +1181,14 @@ def main() -> None:
     # Where the configured calibration lands on the knob, which is what anyone
     # setting these numbers actually wants to know.
     if mode == "scale" and k_max > k_min:
-        at = (256 - k_min) * 10 / (k_max - k_min)
+        # The knob is reversed - clockwise lowers the multiplier - so the
+        # position counts down from the top of the range, not up from k_min.
+        at = 10 - (256 - k_min) * 10 / (k_max - k_min)
         summary.append(f"  {'pressure.trim_unity_at':28s} {at:.1f} of 10")
     if mode == "scale":
+        # Printed in the order the knob sweeps them.
         summary.append(f"  {'pressure.trim_mode':28s} {mode!r}  "
-                       f"({k_min/256:.2f}x..{k_max/256:.2f}x)")
+                       f"({k_max/256:.2f}x..{k_min/256:.2f}x clockwise)")
     else:
         summary.append(f"  {'pressure.trim_mode':28s} {mode!r}")
 

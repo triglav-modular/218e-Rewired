@@ -68,9 +68,48 @@ CONFIGS = [
 ]
 
 
+# build.py writes these beside the image it built, and a variant build
+# overwrites them even though its hex is redirected to build/_web.hex.  Left
+# alone, the last variant's metadata sits there describing the default image -
+# build/VERSION naming a checksum no shipped file has.
+METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt")
+
+
+def snapshot() -> dict[str, bytes | None]:
+    return {name: (REPO / "build" / name).read_bytes()
+            if (REPO / "build" / name).exists() else None
+            for name in METADATA}
+
+
+def restore(saved: dict[str, bytes | None]) -> None:
+    for name, content in saved.items():
+        path = REPO / "build" / name
+        if content is None:
+            path.unlink(missing_ok=True)     # nothing was there to begin with
+        else:
+            path.write_bytes(content)
+
+
 def main() -> None:
     base = (REPO / "config" / "218e.toml").read_text()
-    rows, failures = [], 0
+    saved = snapshot()
+    rows: list[tuple[str, str, str, bool]] = []
+    try:
+        run(base, rows)
+    finally:
+        restore(saved)
+
+    width = max(len(r[0]) for r in rows)
+    print(f"\n{'config'.ljust(width)}  {'build.properties':16s}  image")
+    for name, result, image, _failed in rows:
+        print(f"{name.ljust(width)}  {result:16s}  {image}")
+    failures = sum(1 for r in rows if r[3])
+    print(f"\n{len(rows) - failures}/{len(rows)} match")
+    if failures:
+        raise SystemExit(1)
+
+
+def run(base: str, rows: list) -> None:
     for name, edits, options in CONFIGS:
         text = base
         for pattern, replacement in edits:
@@ -96,7 +135,7 @@ def main() -> None:
                 [sys.executable, "tools/build.py", "--no-ghidra", "--config", str(cfg_path)],
                 capture_output=True, text=True, cwd=REPO)
             if built.returncode != 0:
-                rows.append((name, "build.py failed", "-")); failures += 1; continue
+                rows.append((name, "build.py failed", "-", True)); continue
             sha = re.search(r"SHA-256 ([0-9a-f]{64})", built.stdout).group(1)
 
             (TMP / "_opts.json").write_text(json.dumps(options))
@@ -126,20 +165,11 @@ def main() -> None:
             image_ok = web_sha == sha
             rows.append((name,
                          "identical" if props_ok else out.replace("\n", "\n      "),
-                         sha[:12] if image_ok else "MISMATCH " + str(web_sha)[:20]))
-            if not (props_ok and image_ok):
-                failures += 1
+                         sha[:12] if image_ok else "MISMATCH " + str(web_sha)[:20],
+                         not (props_ok and image_ok)))
         finally:
             cfg_path.unlink(missing_ok=True)
             (REPO / "build" / "_web.hex").unlink(missing_ok=True)
-
-    width = max(len(r[0]) for r in rows)
-    print(f"\n{'config'.ljust(width)}  {'build.properties':16s}  image")
-    for name, result, image in rows:
-        print(f"{name.ljust(width)}  {result:16s}  {image}")
-    print(f"\n{len(rows) - failures}/{len(rows)} match")
-    if failures:
-        raise SystemExit(1)
 
 
 if __name__ == "__main__":

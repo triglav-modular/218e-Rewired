@@ -77,3 +77,9 @@ windows/launcher/*
 !windows/launcher/AppIcon.svg
 !windows/launcher/AppIcon.ico
 !windows/launcher/218e Rewired Flasher.exe
+
+# The long firmware write-up is the working reference behind the patches - it
+# names addresses, dead ends and an unreleased project, and it is written for
+# whoever is next in Ghidra, not for an owner.  Kept locally, published as the
+# short docs/FIRMWARE_CHANGES.md instead.
+docs/internals/

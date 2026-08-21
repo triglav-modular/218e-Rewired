@@ -41,8 +41,11 @@ python3 web/test_configs.py
 
 builds ten configurations with `tools/build.py` and again with this pipeline,
 and compares **both** the generated `build.properties` and the final image
-SHA-256. All ten match, including `historical`, which reproduces the image the
-firmware shipped with before the config was reduced to seven options.
+SHA-256. All ten match, including `historical` — the most complex
+configuration, with measured calibration and three tunings. It is an anchor
+for that combination rather than a reproduction of any older image: the
+power-up marker hashes the assembler source, so no build made today can be
+byte-identical to one made before the source changed.
 
 A build takes about 200 ms.
 

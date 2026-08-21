@@ -352,7 +352,7 @@ python3 tools/test.py --golden     # generators, validators, and the golden imag
 python3 tools/avr32/sweep.py       # every option both ways, both toolchains
 ```
 
-`sweep.py` builds fourteen configurations twice — once through Ghidra, once
+`sweep.py` builds thirteen configurations twice — once through Ghidra, once
 through the JavaScript toolchain — and compares the images. It also asserts
 that every configuration produces a *distinct* image, so a variant that
 silently stopped taking effect cannot pass as agreement.
@@ -401,7 +401,7 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 
 | | |
 |---|---|
-| `tools/test.py` | 97 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
+| `tools/test.py` | 107 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
 | `tools/avr32/sweep.py` | 13 representative configurations, built by both toolchains and compared byte for byte |
 | `web/test_configs.py` | the browser build matches `build.py` for 10 configurations |
