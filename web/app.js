@@ -588,6 +588,10 @@
             // - the split said something about where they came from, nothing
             // about what they are.
             tools: [
+                // The double-clickable face: a batch file has no slot for an
+                // icon, so the banana rides on a launcher whose whole job is
+                // to run the .bat beside itself.
+                ['kit/windows/launcher/218e Rewired Flasher.exe', '218e Rewired Flasher.exe', false],
                 ['kit/windows/support/dfu-programmer.exe', 'tools/dfu-programmer.exe', false],
                 ['kit/windows/support/sendmidi.exe', 'tools/sendmidi.exe', false],
                 ['kit/windows/support/zadig-2.8.exe', 'tools/zadig-2.8.exe', false],
@@ -606,7 +610,10 @@
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the folders together, and double-click',
                 '',
-                '    Program218e_v3_Rewired_Windows.bat',
+                '    218e Rewired Flasher.exe',
+                '',
+                'It runs Program218e_v3_Rewired_Windows.bat beside it, which does',
+                'all the work and can also be run directly.',
                 '',
                 'Windows Defender may warn about it: More info, then Run anyway.',
                 '',

@@ -188,8 +188,12 @@ Both need a **Developer ID Application** certificate — the only type Apple
 accepts for notarisation. It can only be created by the Account Holder of a
 team, and development certificates (`Mac Developer`, `Apple Development`) do
 not work; the scripts say so if pointed at the wrong one. Windows signing is
-separate again and needs an Authenticode certificate, which is why the `.bat`
-is still unsigned and Windows Defender may want **More info → Run anyway**.
+separate again and needs an Authenticode certificate.  The download now leads
+with a small launcher — `windows/launcher/`, built by `tools/make-launcher.sh`
+with mingw-w64 — because a batch file has no slot for an icon or a signature;
+the launcher carries the banana today and is the thing an Authenticode
+signature would go on tomorrow.  Until then Windows Defender may want
+**More info → Run anyway**.
 
 **Getting an instrument out of DFU by hand.** If a run stopped before the erase
 the application is intact, but a power cycle will not boot it: reading the fuses

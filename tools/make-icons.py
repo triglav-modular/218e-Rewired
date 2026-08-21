@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Draw the .icns source for the flasher app.
+"""Draw the icon sources for the flashers.
 
-The page's banana on the site's background.  The shape is Apple's: an 824
-square inside 1024, and a superellipse rather than a rounded rect, which is
-visibly the wrong curve beside the system icons in the Dock.
+The page's banana on the site's background, on the plate each platform
+expects.  For the app the shape is Apple's: an 824 square inside 1024, and a
+superellipse rather than a rounded rect, which is visibly the wrong curve
+beside the system icons in the Dock.  For the Windows launcher it is the
+plain rounded rectangle Windows 11 tiles use - the superellipse is as wrong
+there as the rect is in the Dock.
 """
 import math
 import re
@@ -14,8 +17,9 @@ BANANA = REPO / "web" / "images" / "banana.svg"
 GROUND = "#171716"          # the page's background
 
 ICONS = [
-    # file, body fill, peel fill - None keeps the artwork's own colours
-    ("AppIcon.svg", None, None),
+    # file, plate, body fill, peel fill - None keeps the artwork's own colours
+    ("mac/AppIcon.svg", "squircle", None, None),
+    ("windows/launcher/AppIcon.svg", "rounded", None, None),
 ]
 
 
@@ -37,11 +41,17 @@ def main():
     style = re.search(r"<style>(.*?)</style>", art, re.S).group(1)
     inner = art.split("</defs>", 1)[1].rsplit("</svg>", 1)[0].strip()
 
-    shape = squircle()
     size, span = 1024.0, 600.0
     at = (size - span) / 2.0
+    plates = {
+        "squircle": '<path d="%s" fill="%s"/>' % (squircle(), GROUND),
+        # Inset 32 with a 160 radius: near enough to the corners Windows 11
+        # rounds its own tiles to that the icon does not look borrowed.
+        "rounded": '<rect x="32" y="32" width="960" height="960" rx="160" '
+                   'fill="%s"/>' % GROUND,
+    }
 
-    for name, body, peel in ICONS:
+    for name, plate, body, peel in ICONS:
         css = style
         if body:
             # .cls-1 is the fruit, .cls-2 the peel; the outline stays black.
@@ -54,14 +64,14 @@ def main():
   <defs>
     <style>{css}</style>
   </defs>
-  <path d="{shape}" fill="{GROUND}"/>
+  {plates[plate]}
   <svg x="{at:.2f}" y="{at:.2f}" width="{span:.2f}" height="{span:.2f}" viewBox="{view}">
 {inner}
   </svg>
 </svg>
 '''
-        (REPO / "mac" / name).write_text(out, encoding="utf-8")
-        print(f"  wrote mac/{name}")
+        (REPO / name).write_text(out, encoding="utf-8")
+        print(f"  wrote {name}")
 
 
 if __name__ == "__main__":

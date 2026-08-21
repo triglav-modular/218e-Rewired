@@ -35,6 +35,7 @@ on:
       - 'mac/Flasher.zip'
       - 'mac/support/**'
       - 'windows/support/**'
+      - 'windows/launcher/**'
       - 'THIRD-PARTY.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -112,8 +113,10 @@ jobs:
           # Developer ID and notarising needs the notary credentials, and
           # neither belongs in Actions - so it is committed, built by
           # tools/make-app.sh on a machine that has them.
-          mkdir -p _site/kit/mac _site/kit/windows/support _site/kit/tools
+          mkdir -p _site/kit/mac _site/kit/windows/support \
+                   _site/kit/windows/launcher _site/kit/tools
           cp mac/Flasher.zip _site/kit/mac/Flasher.zip
+          cp "windows/launcher/218e Rewired Flasher.exe" _site/kit/windows/launcher/
           for f in dfu-programmer.exe sendmidi.exe zadig-2.8.exe; do
             cp "windows/support/$f" _site/kit/windows/support/
           done
