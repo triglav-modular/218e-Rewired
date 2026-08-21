@@ -126,7 +126,24 @@ jobs:
           rem A syntax error here would only show up when someone opened the
           rem flasher, since batch cannot see a PowerShell parse failure coming.
           powershell -NoProfile -Command "$e=$null;[void][Management.Automation.Language.Parser]::ParseFile('tools\Show-Menu.ps1',[ref]$null,[ref]$e); if($e.Count){$e|ForEach-Object{Write-Host $_}; exit 1}" || (echo FAILED: Show-Menu.ps1 does not parse & exit /b 1)
+          powershell -NoProfile -Command "$e=$null;[void][Management.Automation.Language.Parser]::ParseFile('tools\Test-ArrowMenu.ps1',[ref]$null,[ref]$e); if($e.Count){$e|ForEach-Object{Write-Host $_}; exit 1}" || (echo FAILED: Test-ArrowMenu.ps1 does not parse & exit /b 1)
           echo PASS: Show-Menu.ps1 parses
+
+      - name: The arrow menu is actually driveable
+        shell: cmd
+        run: |
+          rem The one thing no other step here can see.  Every step's output is
+          rem captured, and the helper stands aside when its output is captured,
+          rem so the arrow menu is invisible to ordinary CI - which is how it
+          rem shipped twice unable to read a key at all.  This gives itself a
+          rem console, types into it, and reads the answer out of the file.
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\Test-ArrowMenu.ps1 > menuout.txt 2>&1
+          set RC=%ERRORLEVEL%
+          type menuout.txt
+          if not "%RC%"=="0" (echo FAILED: the arrow menu could not be driven & exit /b 1)
+          findstr /C:"FAILED" menuout.txt >NUL && (echo FAILED: see above & exit /b 1)
+          del menuout.txt 2>NUL
+          exit /b 0
           rem With no console to read arrow keys from it must write no answer
           rem at all, so the batch knows to ask in its own way.  It must not
           rem try to read the pipe: cmd buffers redirected input and hands a

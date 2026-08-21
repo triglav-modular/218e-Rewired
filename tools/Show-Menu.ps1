@@ -78,8 +78,72 @@ if (-not $interactive) { exit }
 
 if ($Title) { Write-Host ('  ' + $Title) }
 
+# .NET refuses to read a key whenever stdin is redirected, and this script's
+# stdin is redirected on purpose - from NUL, so that it cannot drain the
+# answers piped to the flasher itself.  Those two facts together meant the
+# arrow menu had never once run: KeyAvailable threw on every launch and the
+# script quietly exited, leaving the typed list to do the asking.
+#
+# The keyboard is not stdin though.  CONIN$ is the console's own input buffer,
+# and a process can open it whatever its stdin happens to be, so the keys are
+# read from there and .NET is not asked for an opinion.  The macOS flasher
+# needs none of this because its menu is the script doing the asking, not a
+# second process started by one.
+#
+# Anything going wrong here means no arrow menu, which is exactly what this
+# replaces: the caller sees no answer file and asks in its own way.
+try {
+    # No -PassThru: it hands back every type in the assembly, the nested struct
+    # included, and :: on a two-element array is not a static call.
+    Add-Type -Namespace Rewired -Name Conin -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern IntPtr CreateFileW(string name, uint access, uint share,
+    IntPtr security, uint disposition, uint flags, IntPtr template);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool ReadConsoleInputW(IntPtr handle, out KeyRecord record,
+    uint count, out uint read);
+// INPUT_RECORD.  The union after the event type is four-byte aligned, which
+// is where the gap at offset 2 comes from; the offsets are written out rather
+// than left to the compiler because getting them wrong reads plausible
+// rubbish rather than failing.
+[StructLayout(LayoutKind.Explicit)]
+public struct KeyRecord {
+    [FieldOffset(0)]  public ushort EventType;
+    [FieldOffset(4)]  public int    KeyDown;
+    [FieldOffset(8)]  public ushort RepeatCount;
+    [FieldOffset(10)] public ushort VirtualKeyCode;
+    [FieldOffset(12)] public ushort VirtualScanCode;
+    [FieldOffset(14)] public char   UnicodeChar;
+    [FieldOffset(16)] public uint   ControlKeyState;
+}
+'@
+    # GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE,
+    # OPEN_EXISTING.  In decimal, because PowerShell reads a hex literal that
+    # fills 32 bits as a signed int: 0xC0000000 is -1073741824 to it, and
+    # converting that to the uint the call wants throws.
+    $conin = [Rewired.Conin]::CreateFileW('CONIN$', 3221225472, 3,
+                                          [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
+    if ($conin -eq [IntPtr]::Zero -or $conin -eq [IntPtr](-1)) { exit }
+} catch { exit }
+
+# One key press, as a virtual key code and the character it typed.  Everything
+# that is not a key going down - releases, mouse movement, the window being
+# resized - is read past rather than mistaken for an answer.
+function Read-Key {
+    $rec = New-Object Rewired.Conin+KeyRecord
+    $got = [uint32] 0
+    while ($true) {
+        if (-not [Rewired.Conin]::ReadConsoleInputW($conin, [ref] $rec, 1,
+                                                    [ref] $got)) {
+            return $null
+        }
+        if ($got -eq 1 -and $rec.EventType -eq 1 -and $rec.KeyDown -ne 0) {
+            return @{ Code = [int] $rec.VirtualKeyCode; Char = $rec.UnicodeChar }
+        }
+    }
+}
+
 $sel = 0
-try { $null = [Console]::KeyAvailable } catch { exit }   # no console input at all
 $top = [Console]::CursorTop
 $lines = Measure-Lines
 # Drawing the last line of a full screen scrolls it, which would leave the
@@ -91,15 +155,17 @@ if ($top + $lines -ge [Console]::BufferHeight) {
 try {
     Write-Menu $sel
     while ($true) {
-        $key = [Console]::ReadKey($true)
+        $key = Read-Key
+        if ($null -eq $key) { $sel = -1; break }
         $chosen = $false
-        switch ($key.Key) {
-            'UpArrow'   { if ($sel -gt 0) { $sel-- } }
-            'DownArrow' { if ($sel -lt $entries.Count - 1) { $sel++ } }
-            'Enter'     { $chosen = $true }
-            'Escape'    { $sel = -1; $chosen = $true }
+        # VK_UP, VK_DOWN, VK_RETURN, VK_ESCAPE.
+        switch ($key.Code) {
+            38 { if ($sel -gt 0) { $sel-- } }
+            40 { if ($sel -lt $entries.Count - 1) { $sel++ } }
+            13 { $chosen = $true }
+            27 { $sel = -1; $chosen = $true }
             default {
-                $c = $key.KeyChar
+                $c = $key.Char
                 if ($c -eq 'q' -or $c -eq 'Q') { $sel = -1; $chosen = $true }
                 elseif ($c -ge '1' -and $c -le '9') {
                     $n = [int]::Parse($c)
