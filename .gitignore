@@ -63,5 +63,17 @@ otherfirmware/
 web/*.hex
 web/font/
 web/kit/
+# Buchla's windows/ folder is vendor drop except the three tools the flasher
+# runs, which were force-added; the launcher/ sources and its built exe are
+# ours and tracked.  A directory a pattern excludes cannot have files
+# re-included, so the folders come back first, then their junk goes again.
 windows/*
+!windows/support/
 windows/support/*
+!windows/launcher/
+windows/launcher/*
+!windows/launcher/launcher.c
+!windows/launcher/launcher.rc
+!windows/launcher/AppIcon.svg
+!windows/launcher/AppIcon.ico
+!windows/launcher/218e Rewired Flasher.exe
