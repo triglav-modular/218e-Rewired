@@ -87,8 +87,10 @@ jobs:
           (echo 1& echo YES)> answers0.txt
           CALL Program218e_v3_Rewired_Windows.bat < answers0.txt > out.txt 2>&1
           type out.txt
-          findstr /C:"Looked in firmware" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
-          echo PASS: refused with the expected message
+          findstr /C:"Looked in:" out.txt >NUL || (echo FAILED: did not say where it looked & exit /b 1)
+          findstr /C:"No flashable 218e image" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
+          findstr /C:"Erasing the application flash" out.txt >NUL && (echo FAILED: erased with no image & exit /b 1)
+          echo PASS: refused, and said where it looked
           exit /b 0
 
       - name: The hex validator accepts good images and rejects bad
