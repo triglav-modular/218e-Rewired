@@ -20,6 +20,20 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# This helper is silent by design: when it cannot drive a menu it writes
+# nothing and exits, so the caller can ask its own way without two headings
+# appearing.  That same silence is why it shipped twice unable to read a key
+# at all - there was nothing to see.  Point REWIRED_MENU_TRACE at a file and
+# it says why it stood aside.  Never allowed to be the thing that breaks:
+# every failure here is swallowed.
+function Trace([string] $why) {
+    if ($env:REWIRED_MENU_TRACE) {
+        try {
+            Add-Content -Path $env:REWIRED_MENU_TRACE -Value $why
+        } catch { }
+    }
+}
+
 $entries = @()
 $current = @()
 foreach ($line in [IO.File]::ReadAllLines($Path)) {
@@ -65,8 +79,10 @@ function Measure-Lines {
 # back to the typed list.  Output being redirected is the honest signal: it
 # means someone is capturing this rather than reading it.
 $interactive = -not [Console]::IsOutputRedirected
+if (-not $interactive) { Trace 'stdout is redirected - something is capturing this' }
 if ($interactive) {
-    try { $null = [Console]::CursorTop } catch { $interactive = $false }
+    try { $null = [Console]::CursorTop }
+    catch { $interactive = $false; Trace ('no cursor to place: ' + $_.Exception.Message) }
 }
 
 # Without a keyboard there is nothing useful to do here, and reading the
@@ -75,6 +91,7 @@ if ($interactive) {
 # nothing and write nothing - the caller notices the missing answer and asks
 # in the way that does work under redirection.
 if (-not $interactive) { exit }
+Trace 'a console with a cursor, so the menu can be drawn'
 
 if ($Title) { Write-Host ('  ' + $Title) }
 
@@ -123,8 +140,16 @@ public struct KeyRecord {
     # converting that to the uint the call wants throws.
     $conin = [Rewired.Conin]::CreateFileW('CONIN$', 3221225472, 3,
                                           [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
-    if ($conin -eq [IntPtr]::Zero -or $conin -eq [IntPtr](-1)) { exit }
-} catch { exit }
+    if ($conin -eq [IntPtr]::Zero -or $conin -eq [IntPtr](-1)) {
+        Trace ('CONIN$ would not open, error ' +
+               [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+        exit
+    }
+    Trace 'CONIN$ is open - reading keys from the console itself'
+} catch {
+    Trace ('could not reach the console input buffer: ' + $_.Exception.Message)
+    exit
+}
 
 # One key press, as a virtual key code and the character it typed.  Everything
 # that is not a key going down - releases, mouse movement, the window being

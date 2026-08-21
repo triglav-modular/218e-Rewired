@@ -125,11 +125,19 @@ Set-Content -Path $empty -Value '' -NoNewline
 $show = Join-Path $PSScriptRoot 'Show-Menu.ps1'
 try {
     $errs = Join-Path $dir 'stderr.txt'
+    $env:REWIRED_MENU_TRACE = Join-Path $dir 'trace.txt'
     $p = Start-Process -FilePath 'powershell' -PassThru -Wait -NoNewWindow `
         -RedirectStandardInput $empty -RedirectStandardError $errs `
         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $show,
                         '-Path', $menu, '-Out', $out, '-Title', '"pick one"')
     $said += "the helper exited $($p.ExitCode)"
+    if (Test-Path $env:REWIRED_MENU_TRACE) {
+        $said += '--- why the helper did what it did ---'
+        $said += (Get-Content $env:REWIRED_MENU_TRACE)
+        $said += '--------------------------------------'
+    } else {
+        $said += 'the helper left no trace at all - it exited before it began'
+    }
     if (Test-Path $errs) {
         $text = (Get-Content $errs -Raw)
         if ($text -and $text.Trim()) {
