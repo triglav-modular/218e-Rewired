@@ -59,9 +59,15 @@ find "$APP/Contents/Resources/support" -name .DS_Store -delete
 # The flasher is an interactive terminal program, so the app's job is to open
 # it in Terminal.  REWIRED_WORKDIR keeps the log and the firmware folder out
 # of the bundle, which would otherwise break the seal on first run.
-cat > "$APP/Contents/MacOS/launcher" <<'LAUNCH'
+# The shell work lives in Resources; Contents/MacOS/launcher is a native
+# binary that starts it.  A shell script has no architecture, so with one as
+# the bundle executable LaunchServices could not tell whether the app was
+# native, offered "Open using Rosetta" in Get Info with the box already
+# ticked, and counted the app among those whose Intel support is ending -
+# while every binary inside it was universal all along.
+cat > "$APP/Contents/Resources/launch.sh" <<'LAUNCH'
 #!/bin/bash
-RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+RES="$(cd "$(dirname "$0")" && pwd)"
 BUNDLE="$(cd "$(dirname "$0")/../.." && pwd)"
 
 # A quarantined app runs from a read-only copy of itself, and that copy is not
@@ -99,6 +105,16 @@ printf '#!/bin/bash\nexport REWIRED_WORKDIR=%q\nexec %q\n' \
 chmod +x "$RUNNER"
 open -a Terminal "$RUNNER"
 LAUNCH
+chmod +x "$APP/Contents/Resources/launch.sh"
+
+# The entry point itself: universal, so the app is unambiguously native.
+for A in arm64 x86_64; do
+    clang -O2 -target $A-apple-macos11 -o "$REPO/build/_launcher-$A" \
+          "$REPO/mac/support/Launcher.c"
+done
+lipo -create -output "$APP/Contents/MacOS/launcher" \
+     "$REPO/build/_launcher-arm64" "$REPO/build/_launcher-x86_64"
+rm -f "$REPO/build/_launcher-arm64" "$REPO/build/_launcher-x86_64"
 chmod +x "$APP/Contents/MacOS/launcher"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -116,6 +132,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>       <string>APPL</string>
   <key>CFBundleIconFile</key>          <string>AppIcon</string>
   <key>NSHighResolutionCapable</key>   <true/>
+  <key>LSRequiresNativeExecution</key> <true/>
+  <key>LSArchitecturePriority</key>    <array>
+    <string>arm64</string>
+    <string>x86_64</string>
+  </array>
 </dict>
 </plist>
 PLIST

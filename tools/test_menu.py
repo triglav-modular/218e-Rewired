@@ -163,7 +163,9 @@ def launcher_litter():
     for d in (home, macos, resources):
         d.mkdir(parents=True, exist_ok=True)
     (resources / "Program218e_v3_Rewired_macOS.command").write_text("#!/bin/bash\n")
-    launcher = macos / "launcher"
+    # Where it actually lives: Contents/MacOS/launcher is a native binary that
+    # starts this, so the script resolves its paths from Resources.
+    launcher = resources / "launch.sh"
     launcher.write_text(body, encoding="utf-8")
     launcher.chmod(0o755)
 
@@ -213,7 +215,7 @@ def launcher_injection():
         d.mkdir(parents=True, exist_ok=True)
     (resources / "Program218e_v3_Rewired_macOS.command").write_text(
         "#!/bin/bash\necho flasher ran\n")
-    launcher = macos / "launcher"
+    launcher = resources / "launch.sh"
     launcher.write_text(body, encoding="utf-8")
     launcher.chmod(0o755)
     (stub / "open").write_text("#!/bin/bash\nexit 0\n")

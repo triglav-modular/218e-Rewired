@@ -134,8 +134,26 @@ jobs:
             2>&1 | tee out.txt || true
           grep -q "no device present" out.txt \
             || { echo "::error::dfu-programmer did not report an absent device"; exit 1; }
-          lipo -archs mac/support/dfu/bin/dfu-programmer | grep -q "x86_64 arm64" \
-            || { echo "::error::dfu-programmer is not universal"; exit 1; }
+          # Every Mach-O, not just dfu-programmer.  An Intel-only binary needs
+          # Rosetta to run and puts the whole app on the list macOS shows when
+          # it warns that support for Intel apps is ending.
+          python3 tools/check_universal.py mac/support
+
+      - name: The app ships nothing Intel-only, and is native itself
+        run: |
+          rm -rf _appcheck && mkdir _appcheck
+          ditto -x -k mac/Flasher.zip _appcheck
+          APP="_appcheck/218e Rewired Flasher.app"
+          python3 tools/check_universal.py "$APP"
+          # The bundle executable especially.  A shell script has no
+          # architecture, and with one there macOS offered "Open using Rosetta"
+          # in Get Info with the box already ticked.
+          file -b "$APP/Contents/MacOS/launcher" | grep -q "Mach-O universal" \
+            || { echo "::error::the bundle executable is not a universal binary"; exit 1; }
+          plutil -extract LSRequiresNativeExecution raw "$APP/Contents/Info.plist" \
+            | grep -q true \
+            || { echo "::error::LSRequiresNativeExecution is not set"; exit 1; }
+          rm -rf _appcheck
 
       - name: The flasher runs, and answers to arrow keys
         run: python3 tools/test_menu.py
