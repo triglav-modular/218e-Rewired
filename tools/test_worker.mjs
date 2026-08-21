@@ -132,9 +132,14 @@ const REAL = {
 
   check('the deploy points at this worker',
         value('main') === 'deploy/worker.js', value('main'));
-  check('the dataset is bound under the name the worker reads',
-        /binding\s*=\s*"BUILDS"/.test(toml) && /\[\[analytics_engine_datasets\]\]/.test(toml),
-        'no analytics_engine_datasets binding named BUILDS');
+  // The dataset may be commented out - the worker copes, and serving the
+  // page beats counting - but if it is declared it must carry the name the
+  // code reads, or the deploy is green and nothing is ever recorded.
+  const declared = /^\s*\[\[analytics_engine_datasets\]\]/m.test(toml);
+  check('a declared dataset is bound under the name the worker reads',
+        !declared || /^\s*binding\s*=\s*"BUILDS"/m.test(toml),
+        'analytics_engine_datasets is declared but not as BUILDS');
+  if (!declared) console.log('        (dataset commented out - counting is off)');
 
   // The route has to cover the path the beacon is posted to, or the request
   // never reaches the worker at all.

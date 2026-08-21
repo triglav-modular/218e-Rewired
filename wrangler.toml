@@ -26,13 +26,19 @@ routes = [
   { pattern = "triglavmodular.hu/mods/218e-Rewired*", zone_name = "triglavmodular.hu" }
 ]
 
-# Where the beacon writes.  This has to be a binding rather than a runtime
-# variable: a text variable named BUILDS arrives as the string "builds", which
-# has nothing to write a data point with.  See "Counting builds" in
-# docs/BUILD.md.
-[[analytics_engine_datasets]]
-binding = "BUILDS"
-dataset = "builds"
+# Where the beacon would write.  Commented out, not deleted: the page went
+# down when the route stopped being attached, and an Analytics Engine dataset
+# is the one thing in this file that a plan can refuse - a deploy that fails
+# on it takes the route with it.  Serving the page matters more than counting,
+# and the worker already treats a missing dataset as "nothing to write to" and
+# answers 204, so this costs only the counting.
+#
+# Put it back once the build log confirms the deploy is otherwise clean and
+# the account has Analytics Engine.  See "Counting builds" in docs/BUILD.md.
+#
+# [[analytics_engine_datasets]]
+# binding = "BUILDS"
+# dataset = "builds"
 
 # Logs were on in the dashboard, and an undeclared setting is not promised to
 # survive a deploy, so it is declared.
