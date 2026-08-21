@@ -124,11 +124,20 @@ $empty = Join-Path $dir 'empty.txt'
 Set-Content -Path $empty -Value '' -NoNewline
 $show = Join-Path $PSScriptRoot 'Show-Menu.ps1'
 try {
+    $errs = Join-Path $dir 'stderr.txt'
     $p = Start-Process -FilePath 'powershell' -PassThru -Wait -NoNewWindow `
-        -RedirectStandardInput $empty `
+        -RedirectStandardInput $empty -RedirectStandardError $errs `
         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $show,
                         '-Path', $menu, '-Out', $out, '-Title', 'pick one')
     $said += "the helper exited $($p.ExitCode)"
+    if (Test-Path $errs) {
+        $text = (Get-Content $errs -Raw)
+        if ($text -and $text.Trim()) {
+            $said += '--- what the helper said on stderr ---'
+            $said += $text.Trim()
+            $said += '--------------------------------------'
+        }
+    }
 } catch {
     Finish 1 ('FAILED: could not start the helper: ' + $_.Exception.Message)
 }
