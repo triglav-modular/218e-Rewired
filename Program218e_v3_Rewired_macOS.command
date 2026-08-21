@@ -630,7 +630,7 @@ search_dirs() {
 # reason is that the app was moved away from the folder it was unzipped into,
 # which nothing on screen would otherwise show.
 searched_note() {
-    local dir count candidate
+    local dir count candidate shown
     # Worth saying out loud, because the paths below otherwise look absurd:
     # macOS runs a quarantined app from a random read-only copy of itself, and
     # from there the folder it was unzipped into does not exist.
@@ -647,14 +647,21 @@ searched_note() {
     esac
     echo "  ${C_DIM}Looked in:${C_RESET}"
     while IFS= read -r dir; do
+        # The ordinary folder is named the way the README names it.  Spelling
+        # out where the package was unzipped to says nothing anyone needs; a
+        # folder found some other way is a different matter, and keeps its
+        # path, because knowing which one was reached is the whole point.
+        shown="$dir"
+        [ "$dir" = "${PACKAGE_ROOT%/}/firmware" ] &&
+            shown="the firmware folder beside this app"
         if [ -d "$dir" ]; then
             count=0
             for candidate in "$dir"/*.hex; do
                 [ -f "$candidate" ] && count=$((count + 1))
             done
-            printf '    %s%2d in %s%s\n' "$C_DIM" "$count" "$dir" "$C_RESET"
+            printf '    %s%2d in %s%s\n' "$C_DIM" "$count" "$shown" "$C_RESET"
         else
-            printf '    %s -- %s  (no such folder)%s\n' "$C_DIM" "$dir" "$C_RESET"
+            printf '    %s -- %s  (no such folder)%s\n' "$C_DIM" "$shown" "$C_RESET"
         fi
     done <<DIRS
 $(search_dirs)
@@ -862,7 +869,10 @@ if [ -z "$FIRMWARE" ]; then
             # What the image was built with, when the download that carried it
             # said so.  Two images a minute apart are otherwise told apart only
             # by a checksum nobody can read.
-            detail="$candidate"
+            # The name only.  Every image in the list is in the same folder,
+            # so the path in front of each one was the same long string over
+            # and over, and pushed the name itself off the edge.
+            detail="${candidate##*/}"
             opts="$(image_options "$candidate" "$sha")"
             [ -n "$opts" ] && detail="$detail
 $opts"

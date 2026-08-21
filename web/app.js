@@ -578,6 +578,11 @@
         },
         dlWin: {
             zip: 'Rewired-Windows.zip',
+            // In a folder, not loose beside the flasher: the images are the
+            // one thing here anybody adds to or replaces, and a folder that
+            // holds only images is a clearer place to put one than a folder
+            // that also holds the flasher, the tools and the README.
+            firmware: 'firmware/218eV3_v369_Rewired_DFU.hex',
             // One folder for everything the flasher runs, rather than a
             // windows/support for the executables and a tools for the scripts
             // - the split said something about where they came from, nothing
@@ -596,7 +601,7 @@
                 // The manifest was macOS-only, so the Windows flasher had
                 // nothing to read and listed the images with no idea what
                 // either of them was.
-                { name: 'image.txt', data: manifest(r) }
+                { name: 'firmware/image.txt', data: manifest(r) }
             ]; },
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the folders together, and double-click',
@@ -609,7 +614,9 @@
                 'The flasher opens Zadig at the one moment that can be done, and',
                 'tells you what to pick. If Zadig says Replace Driver rather than',
                 'Install Driver, press it anyway.'
-            ], partial); }
+            ], partial, {
+                firmware: 'firmware/218eV3_v369_Rewired_DFU.hex'
+            }); }
         }
     };
 

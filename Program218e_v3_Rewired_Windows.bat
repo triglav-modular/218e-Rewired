@@ -23,9 +23,9 @@ SET "SCRIPT_DIR=%~dp0"
 SET "LOG_FILE=%SCRIPT_DIR%218e_v3_Rewired_flash_log_win.txt"
 
 REM A download puts everything the flasher runs in one tools\ folder beside
-REM this script, and the images beside it too.  A checkout is arranged for the
-REM repository instead - executables under windows\support\, scripts under
-REM tools\, images under firmware\ - so both shapes are looked for.
+REM this script.  A checkout is arranged for the repository instead, with the
+REM executables under windows\support\ and the scripts under tools\, so both
+REM shapes are looked for.  The images are in firmware\ either way.
 IF EXIST "%SCRIPT_DIR%tools\dfu-programmer.exe" (
     SET "TOOLS=%SCRIPT_DIR%tools"
     SET "PACKAGE_ROOT=%SCRIPT_DIR%"
@@ -51,12 +51,10 @@ IF EXIST "%TOOLS%\Scan-Images.ps1" (
     SET "PSTOOLS=%PACKAGE_ROOT%tools"
 )
 
-REM The images: firmware\ in a checkout, beside this script in a download.
-IF EXIST "%PACKAGE_ROOT%firmware" (
-    SET "FIRMWARE_DIR=%PACKAGE_ROOT%firmware"
-) ELSE (
-    SET "FIRMWARE_DIR=%SCRIPT_DIR:~0,-1%"
-)
+REM The images, and nowhere else.  Loose beside the flasher meant every hex
+REM in the same folder was a candidate, including ones that had nothing to do
+REM with this package.
+SET "FIRMWARE_DIR=%PACKAGE_ROOT%firmware"
 
 SET "DFU=%TOOLS%\dfu-programmer.exe"
 SET "SENDMIDI=%TOOLS%\sendmidi.exe"
@@ -170,7 +168,10 @@ IF %IMG_COUNT% GTR 1 (
         IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  ^<- FACTORY firmware, back to stock v36.9"
         IF %%I GTR 1 >>"!MENU_FILE!" ECHO --
         >>"!MENU_FILE!" ECHO !IMG_WHEN_%%I!   !IMG_SHA_%%I:~0,8!!MARK!
-        >>"!MENU_FILE!" ECHO !IMG_PATH_%%I!
+        REM The name only.  Every image in the list is in the same folder,
+        REM so the path in front of each one was the same long string over
+        REM and over, and pushed the name itself off the edge.
+        FOR %%N IN ("!IMG_PATH_%%I!") DO >>"!MENU_FILE!" ECHO %%~nxN
         REM What the image was built with, when the download that carried it
         REM said so.  Two images a minute apart are otherwise told apart only
         REM by a checksum nobody can read.
@@ -213,7 +214,7 @@ ECHO.
 GOTO :fail_early
 
 :have_image
-CALL :ok Found !FIRMWARE!
+FOR %%F IN ("!FIRMWARE!") DO CALL :ok Found %%~nxF
 CALL :ok !FIRMWARE_VERSION!
 REM With one image in reach there is no menu to read the options off, and this
 REM is the last point before the chip is erased at which they can be checked.
@@ -255,7 +256,7 @@ DEL "%TEMP%\rewired_probe.txt" >NUL 2>&1
 IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" (
     ECHO   dfu-programmer.exe would not run.
     ECHO.
-    ECHO   Tried:     %DFU%
+    ECHO   Tried:     "!DFU!"
     ECHO   It exited %PROBE_RC% without reporting "no device present",
     ECHO   which is what a working copy says when no instrument is attached.
     ECHO.
@@ -390,7 +391,7 @@ IF "!FOUND!"=="0" (
     ECHO.
     PAUSE
     IF NOT EXIST "%TOOLS%\zadig-2.8.exe" (
-        ECHO   zadig-2.8.exe is not in %TOOLS%.
+        ECHO   zadig-2.8.exe is not in "!TOOLS!".
         ECHO   Copy Buchla's windows\ folder in beside this script and retry.
         GOTO :dfu_unreachable
     )
@@ -587,12 +588,17 @@ EXIT /B 0
 REM Where it looked, and what was there.  An image that does not appear in the
 REM list gives no clue why otherwise, and macOS prints the same thing.
 SET "NOTE_N=0"
-FOR %%F IN ("%FIRMWARE_DIR%\*.hex") DO SET /A NOTE_N+=1
+FOR %%F IN ("!FIRMWARE_DIR!\*.hex") DO SET /A NOTE_N+=1
+REM Named the way the README names it, rather than by the whole path, which
+REM says only where the package was unzipped.  Delayed expansion throughout:
+REM a path with brackets in it - which is what Windows calls a second download
+REM of the same zip - closes this IF block early when it is substituted at
+REM parse time, and half of it prints.
 ECHO   Looked in:
-IF EXIST "%FIRMWARE_DIR%\" (
-    ECHO      !NOTE_N! in %FIRMWARE_DIR%
+IF EXIST "!FIRMWARE_DIR!\" (
+    ECHO      !NOTE_N! in the firmware folder beside this script
 ) ELSE (
-    ECHO      -- %FIRMWARE_DIR%  ^(no such folder^)
+    ECHO      -- no firmware folder beside this script
 )
 ECHO.
 EXIT /B 0
