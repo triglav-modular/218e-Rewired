@@ -14,6 +14,8 @@
     as the flasher redirects it.  The answer lands in a file, which is how the
     helper reports one, so nothing needs to read the screen.
 #>
+param([string] $Report = '')
+
 $ErrorActionPreference = 'Stop'
 
 Add-Type -Namespace Rewired -Name Test -MemberDefinition @'
@@ -45,10 +47,36 @@ public struct KeyRecord {
 $size = [Runtime.InteropServices.Marshal]::SizeOf([Type] 'Rewired.Test+KeyRecord')
 if ($size -ne 20) { Write-Output "FAILED: INPUT_RECORD is $size bytes, expected 20"; exit 1 }
 
+# What this prints has to outlive the console it is about to attach to, so
+# the real stdout is put aside first and every message is held until it is
+# back.  Without this the step running the test captured an empty file and
+# could report only that something had gone wrong.
+$stdout = [Rewired.Test]::GetStdHandle(-11)
+$stderr = [Rewired.Test]::GetStdHandle(-12)
+$said = @()
+function Finish([int] $code, [string] $what) {
+    $null = [Rewired.Test]::SetStdHandle(-11, $stdout)
+    $null = [Rewired.Test]::SetStdHandle(-12, $stderr)
+    $null = [Rewired.Test]::FreeConsole()
+    if ($script:dir -and (Test-Path $script:dir)) {
+        Remove-Item -Recurse -Force $script:dir -ErrorAction SilentlyContinue
+    }
+    $lines = $script:said + @($what)
+    # To a file as well as to stdout: whether a restored handle carries the
+    # text back to whoever started this is precisely the thing that went wrong
+    # the first time, and a test that cannot say why it failed is not much of
+    # a test.
+    if ($Report) {
+        Set-Content -Path $Report -Value $lines -ErrorAction SilentlyContinue
+    }
+    foreach ($line in $lines) { [Console]::Out.WriteLine($line) }
+    [Console]::Out.Flush()
+    exit $code
+}
+
 $null = [Rewired.Test]::FreeConsole()
 if (-not [Rewired.Test]::AllocConsole()) {
-    Write-Output 'SKIP: no console could be allocated on this machine'
-    exit 0
+    Finish 0 'SKIP: no console could be allocated on this machine'
 }
 
 # The child inherits these, and the helper stands aside if its output is
@@ -56,8 +84,7 @@ if (-not [Rewired.Test]::AllocConsole()) {
 $conin  = [Rewired.Test]::CreateFileW('CONIN$',  3221225472, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
 $conout = [Rewired.Test]::CreateFileW('CONOUT$', 3221225472, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
 if ($conin -eq [IntPtr](-1) -or $conout -eq [IntPtr](-1)) {
-    Write-Output 'SKIP: the allocated console has no usable handles'
-    exit 0
+    Finish 0 'SKIP: the allocated console has no usable handles'
 }
 $null = [Rewired.Test]::SetStdHandle(-11, $conout)   # STD_OUTPUT_HANDLE
 $null = [Rewired.Test]::SetStdHandle(-12, $conout)   # STD_ERROR_HANDLE
@@ -86,31 +113,31 @@ $keys = @((New-Key 40 ([char] 0)), (New-Key 40 ([char] 0)),
           (New-Key 38 ([char] 0)), (New-Key 13 ([char] 13)))
 $written = [uint32] 0
 if (-not [Rewired.Test]::WriteConsoleInputW($conin, $keys, [uint32] $keys.Count, [ref] $written)) {
-    Write-Output 'FAILED: could not put key presses into the console'
-    exit 1
+    Finish 1 ('FAILED: could not put key presses into the console, error ' +
+              [Runtime.InteropServices.Marshal]::GetLastWin32Error())
 }
+$said += "wrote $written of $($keys.Count) key events" 
 
 # Stdin from NUL, which is what made .NET refuse to read a key in the first
 # place.  Testing it any other way would test something the flasher never does.
 $empty = Join-Path $dir 'empty.txt'
 Set-Content -Path $empty -Value '' -NoNewline
 $show = Join-Path $PSScriptRoot 'Show-Menu.ps1'
-$p = Start-Process -FilePath 'powershell' -PassThru -Wait -NoNewWindow `
-    -RedirectStandardInput $empty `
-    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $show,
-                    '-Path', $menu, '-Out', $out, '-Title', 'pick one')
-
-$null = [Rewired.Test]::FreeConsole()
+try {
+    $p = Start-Process -FilePath 'powershell' -PassThru -Wait -NoNewWindow `
+        -RedirectStandardInput $empty `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $show,
+                        '-Path', $menu, '-Out', $out, '-Title', 'pick one')
+    $said += "the helper exited $($p.ExitCode)"
+} catch {
+    Finish 1 ('FAILED: could not start the helper: ' + $_.Exception.Message)
+}
 
 if (-not (Test-Path $out)) {
-    Write-Output 'FAILED: the menu wrote no answer - it stood aside on a real console'
-    exit 1
+    Finish 1 'FAILED: the menu wrote no answer - it stood aside on a real console'
 }
 $pick = (Get-Content $out -Raw).Trim()
-Remove-Item -Recurse -Force $dir
 if ($pick -ne '2') {
-    Write-Output "FAILED: arrow keys chose [$pick], expected 2"
-    exit 1
+    Finish 1 "FAILED: arrow keys chose [$pick], expected 2"
 }
-Write-Output 'PASS: the arrow menu reads keys and answers with the right entry'
-exit 0
+Finish 0 'PASS: the arrow menu reads keys and answers with the right entry'
