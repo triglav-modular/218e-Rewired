@@ -564,19 +564,7 @@
             // be stamped with this build's checksum the way a loose script is.
             // The image names itself beside the firmware instead.
             scripts: function (r) { return [
-                { name: 'firmware/image.txt', data: [
-                    '# Written by the builder page. The flasher reads this to know',
-                    '# which image this download was made for, and what went into it.',
-                    'EXPECTED_SHA256=' + r.sha256,
-                    'FIRMWARE_VERSION=Rewired ' + GEN.version +
-                        ' (' + r.sha256.slice(0, 8) + ')'
-                ].concat(describe(state.options).map(function (line) {
-                    return 'OPTION=' + line;
-                }), [
-                    'FACTORY_SHA256=' + GEN.factorySha256,
-                    'FACTORY_OPTION=Buchla stock v36.9, exactly as you uploaded it.',
-                    'FACTORY_OPTION=Flashing it removes every Rewired change.'
-                ]).join('\n') + '\n' }
+                { name: 'firmware/image.txt', data: manifest(r) }
             ]; },
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the app and the firmware folder',
@@ -590,10 +578,14 @@
         },
         dlWin: {
             zip: 'Rewired-Windows.zip',
+            // One folder for everything the flasher runs, rather than a
+            // windows/support for the executables and a tools for the scripts
+            // - the split said something about where they came from, nothing
+            // about what they are.
             tools: [
-                ['kit/windows/support/dfu-programmer.exe', 'windows/support/dfu-programmer.exe', false],
-                ['kit/windows/support/sendmidi.exe', 'windows/support/sendmidi.exe', false],
-                ['kit/windows/support/zadig-2.8.exe', 'windows/support/zadig-2.8.exe', false],
+                ['kit/windows/support/dfu-programmer.exe', 'tools/dfu-programmer.exe', false],
+                ['kit/windows/support/sendmidi.exe', 'tools/sendmidi.exe', false],
+                ['kit/windows/support/zadig-2.8.exe', 'tools/zadig-2.8.exe', false],
                 ['kit/tools/Scan-Images.ps1', 'tools/Scan-Images.ps1', false],
                 ['kit/tools/Find-DfuDevice.ps1', 'tools/Find-DfuDevice.ps1', false],
                 ['kit/tools/Show-Menu.ps1', 'tools/Show-Menu.ps1', false],
@@ -601,6 +593,10 @@
             ],
             scripts: function (r) { return [
                 { name: 'Program218e_v3_Rewired_Windows.bat', data: r.scripts.flasherWin },
+                // The manifest was macOS-only, so the Windows flasher had
+                // nothing to read and listed the images with no idea what
+                // either of them was.
+                { name: 'image.txt', data: manifest(r) }
             ]; },
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the folders together, and double-click',
@@ -616,6 +612,25 @@
             ], partial); }
         }
     };
+
+    // What a download says about the images it carries: which build it is for,
+    // what went into it, and that the other file is the stock image.  Read by
+    // both flashers, so it is written the same way for both.
+    function manifest(r) {
+        return [
+            '# Written by the builder page. The flasher reads this to know',
+            '# which image this download was made for, and what went into it.',
+            'EXPECTED_SHA256=' + r.sha256,
+            'FIRMWARE_VERSION=Rewired ' + GEN.version +
+                ' (' + r.sha256.slice(0, 8) + ')'
+        ].concat(describe(state.options).map(function (line) {
+            return 'OPTION=' + line;
+        }), [
+            'FACTORY_SHA256=' + GEN.factorySha256,
+            'FACTORY_OPTION=Buchla stock v36.9, exactly as you uploaded it.',
+            'FACTORY_OPTION=Flashing it removes every Rewired change.'
+        ]).join('\n') + '\n';
+    }
 
     function describe(o) {
         var lines = [

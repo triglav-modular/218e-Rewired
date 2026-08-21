@@ -22,26 +22,44 @@ SET "ERASE_STARTED=0"
 SET "SCRIPT_DIR=%~dp0"
 SET "LOG_FILE=%SCRIPT_DIR%218e_v3_Rewired_flash_log_win.txt"
 
-REM The Windows tools come from Buchla's own kit; this repository does not
-REM redistribute them.  Support being run from the package root or windows\.
-IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
+REM A download puts everything the flasher runs in one tools\ folder beside
+REM this script, and the images beside it too.  A checkout is arranged for the
+REM repository instead - executables under windows\support\, scripts under
+REM tools\, images under firmware\ - so both shapes are looked for.
+IF EXIST "%SCRIPT_DIR%tools\dfu-programmer.exe" (
+    SET "TOOLS=%SCRIPT_DIR%tools"
+    SET "PACKAGE_ROOT=%SCRIPT_DIR%"
+) ELSE IF EXIST "%SCRIPT_DIR%windows\support\dfu-programmer.exe" (
     SET "TOOLS=%SCRIPT_DIR%windows\support"
     SET "PACKAGE_ROOT=%SCRIPT_DIR%"
 ) ELSE IF EXIST "%SCRIPT_DIR%support\dfu-programmer.exe" (
     SET "TOOLS=%SCRIPT_DIR%support"
     SET "PACKAGE_ROOT=%SCRIPT_DIR%..\"
 ) ELSE (
-    ECHO Could not find windows\support\dfu-programmer.exe
+    ECHO Could not find dfu-programmer.exe in tools\ beside this script.
     ECHO.
     ECHO That folder ships with this package and holds the flashing tools.
     ECHO Re-download the package rather than assembling it by hand.
     GOTO :fail_early
 )
 
+REM The PowerShell helpers sit with the executables in a download and under
+REM tools\ in a checkout.
+IF EXIST "%TOOLS%\Scan-Images.ps1" (
+    SET "PSTOOLS=%TOOLS%"
+) ELSE (
+    SET "PSTOOLS=%PACKAGE_ROOT%tools"
+)
+
+REM The images: firmware\ in a checkout, beside this script in a download.
+IF EXIST "%PACKAGE_ROOT%firmware" (
+    SET "FIRMWARE_DIR=%PACKAGE_ROOT%firmware"
+) ELSE (
+    SET "FIRMWARE_DIR=%SCRIPT_DIR:~0,-1%"
+)
+
 SET "DFU=%TOOLS%\dfu-programmer.exe"
 SET "SENDMIDI=%TOOLS%\sendmidi.exe"
-SET "FIRMWARE_DIR=%PACKAGE_ROOT%firmware"
-SET "FIRMWARE_NAME=218eV3_v369_Rewired_DFU.hex"
 SET "FIRMWARE="
 SET "TOTAL_STEPS=7"
 SET "STEP=0"
@@ -111,20 +129,24 @@ IF NOT "%CONSENT%"=="YES" (
 )
 
 REM --- find the image ----------------------------------------------------
-REM Every .hex in reach is validated and listed newest first.  When more than
+REM The firmware folder beside this script, and nowhere else.  Searching
+REM Downloads and the Desktop too meant every old image on the machine turned
+REM up in the list - four of them, when the package carries two.
+REM Every .hex there is validated and listed newest first,  When more than
 REM one is flashable the choice is made explicitly: picking silently is how the
 REM wrong firmware gets installed, because a stale build in firmware\ would
 REM always win on checksum alone.
 CALL :step Locating the firmware image
+CALL :searched_note
 
-IF NOT EXIST "%PACKAGE_ROOT%tools\Scan-Images.ps1" (
-    ECHO   tools\Scan-Images.ps1 is missing.  The flasher needs the whole
+IF NOT EXIST "%PSTOOLS%\Scan-Images.ps1" (
+    ECHO   Scan-Images.ps1 is missing.  The flasher needs the whole
     ECHO   repository beside it, not just this script - re-clone or re-download
     ECHO   the package and run it from there.
     GOTO :fail_early
 )
 SET "IMG_COUNT=0"
-FOR /F "tokens=1,2,* delims=|" %%A IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Scan-Images.ps1" -DirList "%FIRMWARE_DIR%;%SCRIPT_DIR%.;%USERPROFILE%\Downloads;%USERPROFILE%\Desktop" 2^>NUL') DO (
+FOR /F "tokens=1,2,* delims=|" %%A IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Scan-Images.ps1" -DirList "%FIRMWARE_DIR%" -Prefer "%EXPECTED_SHA256%" 2^>NUL') DO (
     SET /A IMG_COUNT+=1
     CALL SET "IMG_WHEN_%%IMG_COUNT%%=%%A"
     CALL SET "IMG_SHA_%%IMG_COUNT%%=%%B"
@@ -180,11 +202,10 @@ GOTO :have_image
 
 :no_image
 ECHO.
-ECHO   Looked in firmware\, beside this script, Downloads and Desktop.
-ECHO   No flashable 218e image is there.
+ECHO   No flashable 218e image is in that folder.
 ECHO.
 ECHO   No firmware ships with this package.  Build one from your own
-ECHO   factory image with the page in web\ and save it to Downloads, or
+ECHO   factory image with the page in web\ and put it there, or
 ECHO   build locally:
 ECHO     python tools\build.py --no-ghidra
 ECHO   then copy build\218eV3_v369_Rewired_DFU.hex into firmware\.
@@ -199,20 +220,9 @@ REM is the last point before the chip is erased at which they can be checked.
 CALL :print_options "!FIRMWARE!" "!CHOSEN_SHA!"
 ECHO     !CHOSEN_SHA!
 
-REM Only the default build is filed under firmware\ as %FIRMWARE_NAME%.  Copying
-REM a custom image there leaves a second file with that name and different
-REM contents, and it then shows up twice in the list - once where it was built
-REM and once as the copy.  A failure here is not fatal: the image is verified.
-IF DEFINED CUSTOM GOTO :no_copy
-IF /I NOT "!FIRMWARE!"=="%FIRMWARE_DIR%\%FIRMWARE_NAME%" (
-    IF NOT EXIST "%FIRMWARE_DIR%" MKDIR "%FIRMWARE_DIR%" 2>NUL
-    COPY /Y "!FIRMWARE!" "%FIRMWARE_DIR%\%FIRMWARE_NAME%" >NUL 2>&1
-    IF NOT ERRORLEVEL 1 (
-        SET "FIRMWARE=%FIRMWARE_DIR%\%FIRMWARE_NAME%"
-        CALL :ok Copied into firmware\
-    )
-)
-:no_copy
+REM The image is flashed where it is, as on macOS.  Filing a copy under the
+REM canonical name only made it turn up again on the next run as a second
+REM entry in the list, checksummed but with nothing to say where it came from.
 ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 
 ECHO.
@@ -249,7 +259,7 @@ IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" (
     ECHO   It exited %PROBE_RC% without reporting "no device present",
     ECHO   which is what a working copy says when no instrument is attached.
     ECHO.
-    ECHO   Check that the windows\support folder is beside this script with its
+    ECHO   Check that the tools folder is beside this script with its
     ECHO   DLLs intact, and that the Microsoft C++ runtime is installed.
     GOTO :fail_early
 )
@@ -269,7 +279,7 @@ REM Ask Windows directly before assuming the instrument is still in MIDI mode:
 REM once it is in DFU there is no MIDI port at all, so looking for one and
 REM telling someone to power-cycle is exactly the wrong advice.
 SET "USBSTATE="
-FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
+FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
 
 ECHO %USBSTATE% | FINDSTR /B /C:"PRESENT" >NUL 2>&1
 IF NOT ERRORLEVEL 1 (
@@ -412,7 +422,7 @@ GOTO :in_dfu
 :report_driver
 REM What Windows has bound to the Atmel bootloader, in its own words.
 SET "USBSTATE="
-FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
+FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
 ECHO !USBSTATE! | FINDSTR /B /C:"PRESENT" >NUL 2>&1
 IF ERRORLEVEL 1 (
     ECHO   Windows does not see an Atmel DFU device on USB at all, so the
@@ -531,9 +541,11 @@ IF ERRORLEVEL 1 (
 SET "DFU_SESSION_ACTIVE=0"
 
 REM A record of what is actually on the instrument, beside the image.
-> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO %FIRMWARE_VERSION%
->> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO flashed  %DATE% %TIME%
->> "%FIRMWARE_DIR%\INSTALLED.txt" ECHO image    !CHOSEN_SHA!
+REM Beside the image that was flashed, which is where anyone would look.
+FOR %%F IN ("!FIRMWARE!") DO SET "RECORD_DIR=%%~dpF"
+> "!RECORD_DIR!INSTALLED.txt" ECHO !FIRMWARE_VERSION!
+>> "!RECORD_DIR!INSTALLED.txt" ECHO flashed  %DATE% %TIME%
+>> "!RECORD_DIR!INSTALLED.txt" ECHO image    !CHOSEN_SHA!
 
 REM Clear first so the good news is the first line in the window rather
 REM than the last line of a long scroll.  Success path only, and only
@@ -571,6 +583,20 @@ FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%PO_MANIFEST%") DO (
 )
 EXIT /B 0
 
+:searched_note
+REM Where it looked, and what was there.  An image that does not appear in the
+REM list gives no clue why otherwise, and macOS prints the same thing.
+SET "NOTE_N=0"
+FOR %%F IN ("%FIRMWARE_DIR%\*.hex") DO SET /A NOTE_N+=1
+ECHO   Looked in:
+IF EXIST "%FIRMWARE_DIR%\" (
+    ECHO      !NOTE_N! in %FIRMWARE_DIR%
+) ELSE (
+    ECHO      -- %FIRMWARE_DIR%  ^(no such folder^)
+)
+ECHO.
+EXIT /B 0
+
 :image_options
 REM Echo the OPTION lines of the image.txt beside %1 into the file %3, but only
 REM when the manifest names the same checksum: a manifest left behind by an
@@ -598,8 +624,8 @@ REM Draws MENU_FILE and leaves the 1-based answer in PICK.  The helper is not
 REM redirected: it writes its answer to a file precisely so that the menu can
 REM go to the console where the arrow keys can be seen to work.
 SET "PICK="
-IF NOT EXIST "%PACKAGE_ROOT%tools\Show-Menu.ps1" (
-    ECHO   tools\Show-Menu.ps1 is missing.  The flasher needs the whole
+IF NOT EXIST "%PSTOOLS%\Show-Menu.ps1" (
+    ECHO   Show-Menu.ps1 is missing.  The flasher needs the whole
     ECHO   package beside it, not just this script.
     GOTO :fail_early
 )
@@ -607,7 +633,7 @@ DEL /Q "%MENU_OUT%" >NUL 2>&1
 REM <NUL so the helper gets its own empty input.  It inherits this script's
 REM stdin otherwise, and whatever was piped in for the prompts further down is
 REM gone by the time they ask for it.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_ROOT%tools\Show-Menu.ps1" -Path "%MENU_FILE%" -Out "%MENU_OUT%" -Title %1 <NUL
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Show-Menu.ps1" -Path "%MENU_FILE%" -Out "%MENU_OUT%" -Title %1 <NUL
 IF EXIST "%MENU_OUT%" (
     SET /P "PICK="<"%MENU_OUT%"
     DEL /Q "%MENU_OUT%" >NUL 2>&1
@@ -632,6 +658,11 @@ FOR /F "usebackq delims=" %%L IN ("%MENU_FILE%") DO (
             SET /A MENU_N+=1
             ECHO     !MENU_N!^) %%L
             SET "MENU_LABEL=0"
+        ) ELSE (
+            REM The lines under an entry say what the image is.  Printing only
+            REM the labels here meant the fallback listed four checksums and
+            REM nothing about any of them.
+            ECHO        %%L
         )
     )
 )

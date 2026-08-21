@@ -768,7 +768,27 @@ DIRS
     } | sort -rn -k1,1 | cut -f2- | awk '!seen[$0]++' |
     while IFS= read -r candidate; do
         case "$(validate_hex "$candidate")" in OK*) printf '%s\n' "$candidate" ;; esac
-    done | head -12
+    done | head -12 | prefer_expected
+}
+
+# The build this download was made for goes first, whatever the dates say.
+# Some unzippers stamp every extracted file with the moment of extraction, and
+# then the two images in a download carry the same timestamp - which left the
+# order to fall out of the filenames, putting the factory image on top and
+# preselecting a return to stock.
+prefer_expected() {
+    local line first="" rest=""
+    while IFS= read -r line; do
+        if [ -z "$first" ] && \
+           [ "$(shasum -a 256 "$line" | cut -d' ' -f1)" = "$EXPECTED_SHA256" ]; then
+            first="$line"
+        else
+            rest="$rest$line
+"
+        fi
+    done
+    [ -n "$first" ] && printf '%s\n' "$first"
+    printf '%s' "$rest"
 }
 
 # Accept a chosen image.  The flasher installs any valid 218e image; the

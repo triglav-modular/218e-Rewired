@@ -58,9 +58,16 @@ function Measure-Lines {
 # A console without a keyboard - piped, or a scheduled run - cannot be driven
 # by arrow keys.  Decide before printing anything: the caller prints its own
 # heading when it takes over, and two headings is worse than none.
-$interactive = $true
-try { $null = [Console]::CursorTop } catch { $interactive = $false }
-if ([Console]::IsInputRedirected) { $interactive = $false }
+#
+# Not IsInputRedirected.  The caller redirects this script's stdin from NUL on
+# purpose, so that it cannot swallow answers piped to the flasher itself - which
+# made that test always true, so the arrow menu never ran and every run fell
+# back to the typed list.  Output being redirected is the honest signal: it
+# means someone is capturing this rather than reading it.
+$interactive = -not [Console]::IsOutputRedirected
+if ($interactive) {
+    try { $null = [Console]::CursorTop } catch { $interactive = $false }
+}
 
 # Without a keyboard there is nothing useful to do here, and reading the
 # answer is not an option either: cmd buffers redirected input, so a child
@@ -72,6 +79,7 @@ if (-not $interactive) { exit }
 if ($Title) { Write-Host ('  ' + $Title) }
 
 $sel = 0
+try { $null = [Console]::KeyAvailable } catch { exit }   # no console input at all
 $top = [Console]::CursorTop
 $lines = Measure-Lines
 # Drawing the last line of a full screen scrolls it, which would leave the

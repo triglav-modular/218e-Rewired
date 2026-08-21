@@ -17,6 +17,12 @@ param(
     # passes arguments literally, so -Dirs "a","b" arrives as the single string
     # a,b rather than an array, and every directory is then missed.
     [Parameter(Mandatory=$true)][string]$DirList,
+    # The image this package was built for.  It goes first whatever the dates
+    # say: a download's two files can carry the same timestamp - some unzippers
+    # stamp everything with the moment of extraction - and a stable sort then
+    # breaks the tie alphabetically, which put the factory image above the
+    # build and preselected going back to stock.
+    [string]$Prefer = "",
     # Write a per-file verdict to stderr.  Silence is otherwise indistinguishable
     # from "found nothing", which is exactly the case that needs explaining.
     [switch]$Explain
@@ -184,7 +190,19 @@ $found = foreach ($f in $candidates) {
     }
 }
 
-$found | Sort-Object LastWriteTime -Descending | Select-Object -First 12 | ForEach-Object {
-    $sha = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower()
-    '{0}|{1}|{2}' -f $_.LastWriteTime.ToString('yyyy-MM-dd HH:mm'), $sha, $_.FullName
+# Hash first, so the preferred image can be sorted on rather than spotted
+# afterwards.
+$hashed = foreach ($f in $found) {
+    [pscustomobject]@{
+        File = $f
+        Sha  = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower()
+    }
 }
+$hashed |
+    Sort-Object @{ Expression = { $Prefer -ne "" -and $_.Sha -eq $Prefer.ToLower() }
+                   Descending = $true },
+               @{ Expression = { $_.File.LastWriteTime }; Descending = $true } |
+    Select-Object -First 12 | ForEach-Object {
+        '{0}|{1}|{2}' -f $_.File.LastWriteTime.ToString('yyyy-MM-dd HH:mm'),
+                         $_.Sha, $_.File.FullName
+    }

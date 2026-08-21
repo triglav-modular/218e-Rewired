@@ -145,11 +145,12 @@ jobs:
         shell: cmd
         run: |
           del /Q *.hex 2>NUL
-          del /Q firmware\*.hex "%USERPROFILE%\Downloads\*.hex" "%USERPROFILE%\Desktop\*.hex" 2>NUL
-          mkdir "%USERPROFILE%\Downloads" 2>NUL
-          pwsh -File tools\Make-TestImage.ps1 -Path "%USERPROFILE%\Downloads\custom.hex"
+          del /Q firmware\*.hex 2>NUL
+          rem Both in the firmware folder: the flasher looks there and nowhere
+          rem else now, so an image in Downloads is no longer its business.
           mkdir firmware 2>NUL
-          copy /Y "%USERPROFILE%\Downloads\custom.hex" firmware\second.hex >NUL
+          pwsh -File tools\Make-TestImage.ps1 -Path firmware\custom.hex
+          pwsh -File tools\Make-TestImage.ps1 -Path firmware\second.hex -Bytes 20480
           rem Flash, consent, then pick nothing: it must have listed both and stopped.
           (echo 1& echo YES& echo.& echo.)> ans2.txt
           CALL Program218e_v3_Rewired_Windows.bat < ans2.txt > out4.txt 2>&1
@@ -158,8 +159,25 @@ jobs:
           findstr /C:"Newest first" out4.txt >NUL || (echo FAILED: no ordering shown & exit /b 1)
           findstr /C:"Nothing chosen" out4.txt >NUL || (echo FAILED: did not stop on an empty choice & exit /b 1)
           findstr /C:"Erasing the application flash" out4.txt >NUL && (echo FAILED: erased without a choice & exit /b 1)
-          del firmware\second.hex "%USERPROFILE%\Downloads\custom.hex" 2>NUL
+          del firmware\second.hex firmware\custom.hex 2>NUL
           echo PASS: listed, ordered, stopped without a choice
+          exit /b 0
+
+      - name: An image outside the package is not picked up
+        shell: cmd
+        run: |
+          del /Q firmware\*.hex 2>NUL
+          mkdir "%USERPROFILE%\Downloads" 2>NUL
+          pwsh -File tools\Make-TestImage.ps1 -Path "%USERPROFILE%\Downloads\stray.hex"
+          mkdir firmware 2>NUL
+          pwsh -File tools\Make-TestImage.ps1 -Path firmware\mine.hex
+          (echo 1& echo YES& echo.)> ans5.txt
+          CALL Program218e_v3_Rewired_Windows.bat < ans5.txt > out5.txt 2>&1
+          type out5.txt
+          findstr /C:"stray.hex" out5.txt >NUL && (echo FAILED: listed an image from Downloads & exit /b 1)
+          findstr /C:"mine.hex" out5.txt >NUL || (echo FAILED: did not list the package image & exit /b 1)
+          del "%USERPROFILE%\Downloads\stray.hex" firmware\mine.hex 2>NUL
+          echo PASS: only the package folder is searched
           exit /b 0
 
       - name: A lone custom image flashes without extra ceremony
