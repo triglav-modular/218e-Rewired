@@ -333,7 +333,9 @@ jobs:
           rem code instead.
           CALL ci.bat < answers.txt > out2.txt 2>&1
           type out2.txt
-          findstr /C:"Rewired 1.0.0" out2.txt >NUL || (echo FAILED: version not shown & exit /b 1)
+          rem A pattern, not a literal version: asserting "1.0.0" here meant
+          rem every version bump broke this step and nothing else.
+          findstr /R /C:"Rewired [0-9]*\.[0-9]*\.[0-9]*" out2.txt >NUL || (echo FAILED: version not shown & exit /b 1)
           findstr /C:"No MIDI output port" out2.txt >NUL || (echo FAILED: did not stop at MIDI & exit /b 1)
           rem The runner has no MIDI at all, so the list must be shown and empty.
           findstr /C:"MIDI output ports Windows is offering" out2.txt >NUL || (echo FAILED: did not show the port list & exit /b 1)
