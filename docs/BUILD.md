@@ -580,16 +580,42 @@ costs nothing; without a usable binding the route answers 204 and writes
 nothing. A missing or misconfigured binding must never break the page, so that
 direction is the safe one.
 
-**Reading it back.** The SQL API, with an API token that has Account Analytics
-read:
+**Reading it back.** Analytics Engine has no data browser in the dashboard —
+the Analytics Engine page lists datasets and nothing else — so the counts come
+from the SQL API. [../tools/build-counts.py](../tools/build-counts.py) runs the
+queries worth running:
 
 ```bash
-curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/analytics_engine/sql" \
-  -H "Authorization: Bearer $CF_TOKEN" \
-  -d "SELECT blob1 AS platform, count() AS builds
-      FROM builds WHERE timestamp > now() - INTERVAL '30' DAY
-      GROUP BY platform"
+export CF_API_TOKEN=...
+python3 tools/build-counts.py
 ```
+
+```
+  14 builds in the last 30 days
+
+  by platform
+    win      9
+    mac      5
+
+  options chosen
+    latching arpeggiator     12  (85%)
+    knobs 1-4 remapped       11  (78%)
+    ...
+```
+
+`--days 7` narrows the window; `--sql "..."` runs one query of your own. The
+token is read from the environment and never written anywhere.
+
+**Making the token.** At <https://dash.cloudflare.com/profile/api-tokens> →
+Create Token → *Create Custom Token*. One permission is enough:
+
+| | | |
+|---|---|---|
+| Account | Account Analytics | Read |
+
+Set Account Resources to this account, create it, and copy the token — the
+dashboard shows it once. Anything broader than Account Analytics: Read is more
+access than reading counts needs.
 
 The columns, in the order the worker writes them:
 
