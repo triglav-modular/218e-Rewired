@@ -135,6 +135,13 @@ $scenarios = @(
     @{ Label  = 'escape-sequence arrows';
        Keys   = @((New-Key 0 ([char] 27)), (New-Key 0 ([char] '[')),
                   (New-Key 0 ([char] 'B')), (New-Key 0 ([char] 13)));
+       Expect = '2' },
+    # The same arrows with the front of the sequence gone entirely - only
+    # the final characters arrive.  The menu accepts them bare, the way
+    # the classic bash menus do, so a mangled intro cannot kill the keys.
+    @{ Label  = 'bare final characters';
+       Keys   = @((New-Key 0 ([char] 'B')), (New-Key 0 ([char] 'B')),
+                  (New-Key 0 ([char] 'A')), (New-Key 0 ([char] 13)));
        Expect = '2' }
 )
 

@@ -260,9 +260,15 @@ try {
             27 { $sel = -1; $chosen = $true }
             default {
                 $c = $key.Char
+                # -ceq: case matters here.  A and B are the final characters
+                # of the arrow escape sequences, accepted on their own the
+                # way the classic bash menus do it - whatever mangled the
+                # front of the sequence, the last character still arrives.
+                # A stray shift+A from a person moves the bar one step, which
+                # is harmless; q stays the quit key in either case.
                 if ($c -eq 'q' -or $c -eq 'Q') { $sel = -1; $chosen = $true }
-                elseif ($c -eq 'k') { if ($sel -gt 0) { $sel-- } }
-                elseif ($c -eq 'j') { if ($sel -lt $entries.Count - 1) { $sel++ } }
+                elseif ($c -eq 'k' -or $c -ceq 'A') { if ($sel -gt 0) { $sel-- } }
+                elseif ($c -eq 'j' -or $c -ceq 'B') { if ($sel -lt $entries.Count - 1) { $sel++ } }
                 elseif ([int] $c -eq 13) { $chosen = $true }
                 elseif ($c -ge '1' -and $c -le '9') {
                     $n = [int]::Parse($c)
