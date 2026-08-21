@@ -25,8 +25,15 @@ ACCOUNT = "486d4daefa1b547fc8d9620af5afb0ae"
 URL = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/analytics_engine/sql"
 
 # A real download reports mac or win.  Anything else reached the endpoint some
-# other way - it is public - and is not a build, so every count excludes it.
-REAL = "blob1 IN ('mac','win')"
+# other way - it is public - and is not a build.
+#
+# One row is worse than that: a probe posted from the live page on 2026-08-21
+# to prove the beacon reached the worker, which had to look like a real
+# download to prove anything, so it reports mac.  It carries a version no
+# build will ever have.  Analytics Engine has no delete, so the row is
+# permanent and the only place it can be dropped is here.
+PROBE_VERSION = "9.9.9"
+REAL = f"blob1 IN ('mac','win') AND blob2 != '{PROBE_VERSION}'"
 
 
 def query(sql: str, token: str) -> list[dict]:
@@ -99,7 +106,8 @@ def main() -> None:
           f"{args.days} days\n")
     if not total:
         print("  Nothing yet.  A build only counts when someone downloads,")
-        print("  and only from the page served at triglavmodular.hu.\n")
+        print("  and only from the page served at triglavmodular.hu.")
+        print("  --raw shows every row, probes included.\n")
         return
 
     print("  by platform")

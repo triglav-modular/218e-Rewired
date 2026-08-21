@@ -632,9 +632,18 @@ The columns, in the order the worker writes them:
 | `double6` | per-note calibration supplied, 1 or 0 |
 
 `blob1` is `mac` or `win` for a real download. Anything else — `other` — is not
-a build: the endpoint is public, and the deploy was verified by posting one
-marked point through it. Filter with `WHERE blob1 IN ('mac','win')` for counts
-you can trust.
+a build: the endpoint is public, and two points were posted through it while
+proving the path worked. One of those reports `mac`, because a probe that
+proves a real download would arrive has to look like one; it carries version
+`9.9.9`, which no build will have. `build-counts.py` drops both. Querying by
+hand, the filter is:
+
+```sql
+WHERE blob1 IN ('mac','win') AND blob2 != '9.9.9'
+```
+
+Analytics Engine has no delete, so that row is permanent — one phantom Mac
+build, which matters only while the numbers are small.
 
 So "how many builds turned each option on, this month" is:
 
