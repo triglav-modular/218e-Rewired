@@ -128,7 +128,7 @@ try {
     $p = Start-Process -FilePath 'powershell' -PassThru -Wait -NoNewWindow `
         -RedirectStandardInput $empty -RedirectStandardError $errs `
         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $show,
-                        '-Path', $menu, '-Out', $out, '-Title', 'pick one')
+                        '-Path', $menu, '-Out', $out, '-Title', '"pick one"')
     $said += "the helper exited $($p.ExitCode)"
     if (Test-Path $errs) {
         $text = (Get-Content $errs -Raw)
