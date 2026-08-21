@@ -368,6 +368,12 @@ menu_draw() {
     local i=0 label detail line
     MENU_LINES=0
     while [ "$i" -lt "${#MENU_ITEMS[@]}" ]; do
+        # Air between the entries: two blocks of detail lines with nothing
+        # separating them read as one list.
+        if [ "$i" -gt 0 ]; then
+            printf '\033[K\n'
+            MENU_LINES=$((MENU_LINES + 1))
+        fi
         label="${MENU_ITEMS[$i]}"
         detail="${MENU_DETAILS[$i]}"
         if [ "$i" -eq "$MENU_SEL" ]; then

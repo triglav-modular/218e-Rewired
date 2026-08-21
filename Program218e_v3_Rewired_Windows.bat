@@ -666,6 +666,9 @@ FOR /F "usebackq delims=" %%L IN ("%MENU_FILE%") DO (
         REM Inside quotes it is just a character.
         SET "MT_LINE=%%L"
         IF "!MENU_LABEL!"=="1" (
+            REM Air between the entries here too, so the typed fallback reads
+            REM the same as the arrow menu.
+            IF NOT "!MENU_N!"=="0" ECHO.
             SET /A MENU_N+=1
             ECHO     !MENU_N!^) !MT_LINE!
             SET "MENU_LABEL=0"

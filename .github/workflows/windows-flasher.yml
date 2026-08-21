@@ -97,10 +97,12 @@ jobs:
       - name: The launcher runs the flasher and carries the banana
         shell: cmd
         run: |
-          rem The launcher looks for the .bat beside itself, so a copy at the
-          rem repository root sits exactly where a download puts it.  With no
-          rem image present the flasher refuses - reaching that message proves
-          rem the whole chain: exe, cmd, script.
+          rem Not shipped yet - unsigned it trips Defender's dropper
+          rem heuristics - but kept working for the day it is signed.  The
+          rem launcher looks for the .bat beside itself, so a copy at the
+          rem repository root sits exactly where a download would put it.
+          rem With no image present the flasher refuses - reaching that
+          rem message proves the whole chain: exe, cmd, script.
           copy "windows\launcher\218e Rewired Flasher.exe" launcher_copy.exe >NUL
           (echo 1& echo YES)> ansl.txt
           launcher_copy.exe < ansl.txt > outl.txt 2>&1

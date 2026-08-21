@@ -66,6 +66,9 @@ function Write-Menu($sel) {
     # here, not the mechanism: typing the number always works, so the menu
     # has to read as something to type at, not only something to steer.
     for ($i = 0; $i -lt $entries.Count; $i++) {
+        # Air between the entries: two blocks of detail lines with nothing
+        # separating them read as one list of nine lines.
+        if ($i -gt 0) { Write-Host '' }
         $entry = $entries[$i]
         $num = '' + ($i + 1) + ') '
         $label = Fit $entry[0] (4 + $num.Length)
@@ -89,6 +92,7 @@ function Write-Menu($sel) {
 
 function Measure-Lines {
     $n = 2   # the blank line and the instruction under the entries
+    $n += $entries.Count - 1   # the blank line between entries
     foreach ($entry in $entries) { $n += $entry.Count }
     return $n
 }
