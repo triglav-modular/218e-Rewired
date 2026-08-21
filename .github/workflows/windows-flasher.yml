@@ -89,7 +89,7 @@ jobs:
           CALL Program218e_v3_Rewired_Windows.bat < answers0.txt > out.txt 2>&1
           type out.txt
           findstr /C:"Looked in:" out.txt >NUL || (echo FAILED: did not say where it looked & exit /b 1)
-          findstr /C:"No flashable 218e image" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
+          findstr /C:"No flashable 218e V3 image" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
           findstr /C:"Erasing the application flash" out.txt >NUL && (echo FAILED: erased with no image & exit /b 1)
           echo PASS: refused, and said where it looked
           exit /b 0
@@ -107,7 +107,7 @@ jobs:
           (echo 1& echo YES)> ansl.txt
           launcher_copy.exe < ansl.txt > outl.txt 2>&1
           type outl.txt
-          findstr /C:"No flashable 218e image" outl.txt >NUL || (echo FAILED: the launcher did not reach the flasher & exit /b 1)
+          findstr /C:"No flashable 218e V3 image" outl.txt >NUL || (echo FAILED: the launcher did not reach the flasher & exit /b 1)
           rem The icon has to be the launcher's own.  ExtractAssociatedIcon
           rem falls back to the stock exe icon, so ask the resource table
           rem instead: a group-icon resource with id 1.

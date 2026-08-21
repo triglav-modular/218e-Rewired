@@ -638,7 +638,7 @@
             return 'OPTION=' + line;
         }), [
             'FACTORY_SHA256=' + GEN.factorySha256,
-            'FACTORY_OPTION=Buchla stock v36.9, exactly as you uploaded it.',
+            'FACTORY_OPTION=Buchla stock firmware, exactly as you uploaded it.',
             'FACTORY_OPTION=Flashing it removes every Rewired change.'
         ]).join('\n') + '\n';
     }

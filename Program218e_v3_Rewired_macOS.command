@@ -3,7 +3,7 @@
 # Experimental Buchla 218e V3 v36.9 pressure-curve and touch-filter firmware
 # flasher.
 # This is intentionally separate from ProgramLEM218.command.  It flashes any
-# structurally valid 218e image; what the checksum decides is what each one is
+# structurally valid 218e V3 image; what the checksum decides is what each one is
 # called in the list, not whether it may be used.
 
 set -o pipefail
@@ -40,7 +40,7 @@ elif [ -d "$SCRIPT_DIR/support" ]; then
     PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 else
     echo "Could not find the mac/support directory next to this script."
-    echo "Keep this command inside the 218ev3-Firmware-Flashing package."
+    echo "Keep this command inside the 218e V3v3-Firmware-Flashing package."
     read -r -p "Press return to close. "
     exit 1
 fi
@@ -223,7 +223,7 @@ fail() {
     if [ "$DFU_SESSION_ACTIVE" -eq 1 ] && [ "$FLASH_VALIDATED" -eq 0 ]; then
         echo
         echo "  ${C_BOLD}RECOVERY-SAFE STOP${C_RESET}"
-        echo "  No START command was sent, so the 218e is still in DFU."
+        echo "  No START command was sent, so the 218e V3 is still in DFU."
         echo
         if [ "$ERASE_STARTED" -eq 0 ]; then
             # Nothing was erased: the original application is intact, and the
@@ -236,7 +236,7 @@ fail() {
             echo "    ${C_BOLD}"$DFUPATH" at32uc3b1256 start${C_RESET}"
             echo
             echo "  Power-cycling alone will not do it: reading the fuses set"
-            echo "  ISP_FORCE, so the 218e returns to DFU until START is sent."
+            echo "  ISP_FORCE, so the 218e V3 returns to DFU until START is sent."
             echo "  Or just run this command again to try the flash."
             log "Stopped before erase; application intact; START not sent."
         else
@@ -257,7 +257,7 @@ interrupted() {
     echo
     if [ "$DFU_SESSION_ACTIVE" -eq 1 ] && [ "$FLASH_VALIDATED" -eq 0 ]; then
         log "Interrupted before validated flashing completed. No START command will be sent."
-        echo "Leave the 218e connected and rerun this command; it should remain in DFU mode."
+        echo "Leave the 218e V3 connected and rerun this command; it should remain in DFU mode."
     else
         log "Interrupted; exiting."
     fi
@@ -477,7 +477,7 @@ image_options() {
     done < "$manifest"
 }
 
-# Folded in from what used to be a separate ExitDFU script.  A 218e lands in
+# Folded in from what used to be a separate ExitDFU script.  A 218e V3 lands in
 # DFU when a flash was started and interrupted, and reading the safety fuses
 # sets ISP_FORCE, so a power cycle brings it straight back into DFU.  The one
 # thing that releases it is the START command.  This flashes nothing and
@@ -514,7 +514,7 @@ rescue_unquarantine() {
 run_rescue() {
     local n
     echo ""
-    step "Getting the 218e out of DFU mode"
+    step "Getting the 218e V3 out of DFU mode"
     rescue_unquarantine || return 1
     [ -x "$DFU_BUNDLED" ] || {
         echo "  dfu-programmer is missing or not executable:"
@@ -522,25 +522,25 @@ run_rescue() {
         return 1
     }
     if [ -x "$SENDMIDI" ] && "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
-        ok "The 218e is already running its firmware - it has a MIDI port"
+        ok "The 218e V3 is already running its firmware - it has a MIDI port"
         echo "  Nothing to do."
         return 0
     fi
     if ! "$DFU_BUNDLED" at32uc3b1256 get bootloader-version >/dev/null 2>&1; then
-        echo "  ${C_RED}No 218e in DFU mode, and no 218e MIDI port.${C_RESET}"
+        echo "  ${C_RED}No 218e V3 in DFU mode, and no 218e V3 MIDI port.${C_RESET}"
         echo ""
         echo "  Check the USB cable and that the instrument is powered on.  If it"
         echo "  still does not appear, power-cycle it once and try again."
         return 1
     fi
-    ok "Found the 218e in DFU mode"
+    ok "Found the 218e V3 in DFU mode"
     echo "  Sending START..."
     if "$DFU_BUNDLED" at32uc3b1256 start; then
         echo "  START sent.  Waiting for the instrument to come back..."
         for n in 1 2 3 4 5 6 7 8 9 10; do
             sleep 1
             if [ -x "$SENDMIDI" ] && "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
-                ok "The 218e is back as a MIDI device"
+                ok "The 218e V3 is back as a MIDI device"
                 return 0
             fi
         done
@@ -715,7 +715,7 @@ echo ""
 
 # What to do comes before the warning, because the warning is about flashing
 # and getting a stuck keyboard out of DFU is not that: it writes nothing.
-MENU_ITEMS=("Flash firmware onto the 218e"
+MENU_ITEMS=("Flash firmware onto the 218e V3"
             "Get the keyboard out of DFU mode")
 MENU_DETAILS=("Erases the chip and writes a new image."
               "For a keyboard left in DFU by an interrupted flash.
@@ -749,11 +749,8 @@ echo "  possible at all."
 echo ""
 echo "  A failed flash usually leaves the keyboard in DFU mode, where the"
 echo "  flasher can try again, but THERE IS NO GUARANTEE THAT IT WILL SUCCEED."
-echo "  If losing the use of your 218e would be a problem, stop here and keep"
+echo "  If losing the use of your 218e V3 would be a problem, stop here and keep"
 echo "  the factory firmware."
-echo ""
-echo "  No warranty of any kind.  Not the authors, nor Buchla is liable for"
-echo "  damage, loss of use, or a keyboard that no longer works."
 echo "======================================================================"
 echo ""
 read -r -p "  Type YES (capitals) to accept and continue: " consent
@@ -809,7 +806,7 @@ prefer_expected() {
     printf '%s' "$rest"
 }
 
-# Accept a chosen image.  The flasher installs any valid 218e image; the
+# Accept a chosen image.  The flasher installs any valid 218e V3 image; the
 # checksum it was built with is only a label, marking the build that shipped
 # with this package so it can be told apart in the list.  It is not a gate.
 accept_choice() {
@@ -844,7 +841,7 @@ if [ -n "${1:-}" ]; then
     case "$(validate_hex "$1")" in
         OK*) ;;
         *) echo "  ${C_RED}$(validate_hex "$1")${C_RESET}"
-           fail "That file is not a flashable 218e image. The instrument was not touched." ;;
+           fail "That file is not a flashable 218e V3 image. The instrument was not touched." ;;
     esac
     accept_choice "$1"
 fi
@@ -864,15 +861,19 @@ if [ -z "$FIRMWARE" ]; then
         echo
         MENU_ITEMS=()
         MENU_DETAILS=()
+        # "Rewired 1.0.0 (sha)" -> "1.0", the way the page shows it.
+        rewired_mmv="${FIRMWARE_VERSION#Rewired }"
+        rewired_mmv="${rewired_mmv%% *}"
+        rewired_mmv="$(printf '%s' "$rewired_mmv" | cut -d. -f1-2)"
         i=0
         while IFS= read -r candidate; do
             sha="$(shasum -a 256 "$candidate" | cut -d" " -f1)"
             when="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$candidate" 2>/dev/null)"
             case "$sha" in
                 "$EXPECTED_SHA256")
-                    mark="   ${C_GREEN}<- REWIRED firmware${C_RESET}" ;;
+                    mark="   ${C_GREEN}<- REWIRED firmware v${rewired_mmv}${C_RESET}" ;;
                 "$FACTORY_SHA256")
-                    mark="   ${C_YELLOW}<- FACTORY firmware${C_RESET}" ;;
+                    mark="   ${C_YELLOW}<- FACTORY firmware v36.9${C_RESET}" ;;
                 *)  mark="" ;;
             esac
             # The filename is the label - it is the thing a person
@@ -901,7 +902,7 @@ fi
 
 if [ -z "$FIRMWARE" ]; then
     echo
-    echo "  No flashable 218e image is in the firmware folder."
+    echo "  No flashable 218e V3 image is in the firmware folder."
     echo
     echo "  No firmware ships with this package — the patched image is Buchla's"
     echo "  firmware with our changes in it, so it is not ours to redistribute."
@@ -921,7 +922,7 @@ if [ -z "$FIRMWARE" ]; then
     case "$(validate_hex "$other")" in
         OK*) ;;
         *) echo "  ${C_RED}$(validate_hex "$other")${C_RESET}"
-           fail "That file is not a flashable 218e image. The instrument was not touched." ;;
+           fail "That file is not a flashable 218e V3 image. The instrument was not touched." ;;
     esac
     accept_choice "$other"
 fi
@@ -963,16 +964,16 @@ echo "Before continuing:"
 echo "  - use stable instrument power; do not switch off the boat"
 echo "  - connect USB directly if possible; avoid a loose cable or unpowered hub"
 echo "  - do not unplug anything until the script reports verified success"
-echo "  - if any operation fails, leave the 218e in DFU and rerun this command"
+echo "  - if any operation fails, leave the 218e V3 in DFU and rerun this command"
 echo
-read -r -p "Press return to continue with the connected 218e. "
+read -r -p "Press return to continue with the connected 218e V3. "
 
 # Prove the DFU toolchain actually runs BEFORE asking the instrument to leave
 # MIDI.  Otherwise a broken toolchain is discovered only after the keyboard has
 # rebooted into a bootloader nothing here can reach — recoverable by a power
 # cycle, but alarming and entirely avoidable.
 #
-# "no device present" is the expected answer while the 218e is still in
+# "no device present" is the expected answer while the 218e V3 is still in
 # application mode, and it proves the binary launched and libusb loaded.  A
 # success is fine too: the instrument is already in DFU.  Anything else means
 # the tool cannot run at all.
@@ -1063,35 +1064,35 @@ ok "dfu-programmer runs"
 
 step "Putting the instrument into DFU"
 if check_dfu_device; then
-    log "MIDI port was unavailable, but the 218e is already in DFU mode."
+    log "MIDI port was unavailable, but the 218e V3 is already in DFU mode."
 else
     midi_ports="$("$SENDMIDI" list 2>&1)"
     midi_list_status=$?
     printf '%s\n' "$midi_ports" | tee -a "$LOG_FILE"
     if [ "$midi_list_status" -ne 0 ] || ! printf '%s\n' "$midi_ports" | grep -q "218e"; then
-        fail "The 218e CoreMIDI output port is unavailable. Nothing was erased; power-cycle the 218e, reconnect USB directly, and retry."
+        fail "The 218e V3 CoreMIDI output port is unavailable. Nothing was erased; power-cycle the 218e V3, reconnect USB directly, and retry."
     fi
 
-    log "Asking the 218e to enter DFU mode over MIDI."
+    log "Asking the 218e V3 to enter DFU mode over MIDI."
     sysex_output="$("$SENDMIDI" dev 218e syx 0 2 55 2 1 1 2>&1)"
     sysex_status=$?
     printf '%s\n' "$sysex_output" | tee -a "$LOG_FILE"
     if [ "$sysex_status" -ne 0 ] || \
        printf '%s\n' "$sysex_output" | grep -Eq "Couldn't find|No valid MIDI|CoreMIDI error"; then
-        fail "SendMIDI could not deliver the DFU request. Nothing was erased; power-cycle the 218e and retry."
+        fail "SendMIDI could not deliver the DFU request. Nothing was erased; power-cycle the 218e V3 and retry."
     fi
     log "DFU SysEx delivered; waiting up to 60 seconds for USB re-enumeration."
 fi
 
 if ! wait_for_dfu_device; then
     if check_218_usb_device; then
-        fail "The 218e stayed in application mode after the DFU request. Nothing was erased; power-cycle it and retry."
+        fail "The 218e V3 stayed in application mode after the DFU request. Nothing was erased; power-cycle it and retry."
     else
         # The SysEx was delivered, so the instrument has almost certainly left
         # application mode even though the DFU device never appeared.  Say so:
         # a silent keyboard with no MIDI port looks far worse than it is.
         echo
-        echo "  The 218e accepted the request and is most likely sitting in DFU"
+        echo "  The 218e V3 accepted the request and is most likely sitting in DFU"
         echo "  mode now, which is why it has disappeared from MIDI."
         echo
         echo "  Nothing was erased, and nothing was written."
@@ -1142,15 +1143,15 @@ step "Restarting the instrument"
 echo "  ${C_GREEN}The patched application has passed read-back validation.${C_RESET}"
 echo "  Only now is it safe to leave DFU mode."
 echo
-read -r -p "  Press return to send START and restart the 218e. "
+read -r -p "  Press return to send START and restart the 218e V3. "
 spin "restarting…" "$DFUPATH" at32uc3b1256 start || fail "The DFU start command failed."
 DFU_SESSION_ACTIVE=0
 
 sleep 4
 if "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
-    ok "The 218e returned as a MIDI device"
+    ok "The 218e V3 returned as a MIDI device"
 else
-    warn "The 218e MIDI port is not visible yet — power-cycle the instrument if needed"
+    warn "The 218e V3 MIDI port is not visible yet — power-cycle the instrument if needed"
 fi
 
 # Leave a record beside the image.  Without it the only answer to "what is on

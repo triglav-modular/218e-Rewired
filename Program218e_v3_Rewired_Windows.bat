@@ -76,7 +76,7 @@ REM and getting a stuck keyboard out of DFU is not that: it writes nothing.
 SET "MENU_FILE=%TEMP%\rewired_menu_%RANDOM%.txt"
 SET "MENU_OUT=%TEMP%\rewired_pick_%RANDOM%.txt"
 > "%MENU_FILE%" (
-    ECHO Flash firmware onto the 218e
+    ECHO Flash firmware onto the 218e V3
     ECHO Erases the chip and writes a new image.
     ECHO --
     ECHO Get the keyboard out of DFU mode
@@ -112,11 +112,8 @@ ECHO   possible at all.
 ECHO.
 ECHO   A failed flash usually leaves the keyboard in DFU mode, where the
 ECHO   flasher can try again, but THERE IS NO GUARANTEE THAT IT WILL SUCCEED.
-ECHO   If losing the use of your 218e would be a problem, stop here and keep
+ECHO   If losing the use of your 218e V3 would be a problem, stop here and keep
 ECHO   the factory firmware.
-ECHO.
-ECHO   No warranty of any kind.  Not the authors, nor Buchla is liable for
-ECHO   damage, loss of use, or a keyboard that no longer works.
 ECHO ======================================================================
 ECHO.
 SET "CONSENT="
@@ -158,13 +155,19 @@ IF %IMG_COUNT% GTR 1 (
     ECHO.
     ECHO   %IMG_COUNT% flashable images found.  Newest first:
     ECHO.
+    REM "Rewired 1.0.0 (sha)" -> "1.0", the way the page shows it.
+    FOR /F "tokens=2" %%V IN ("%FIRMWARE_VERSION%") DO SET "REWIRED_VER=%%V"
+    FOR /F "tokens=1,2 delims=." %%a IN ("!REWIRED_VER!") DO (
+        SET "REWIRED_MMV=%%a.%%b"
+        IF "%%b"=="" SET "REWIRED_MMV=%%a"
+    )
     SET "MENU_FILE=%TEMP%\rewired_images_%RANDOM%.txt"
     SET "MENU_OUT=%TEMP%\rewired_imgpick_%RANDOM%.txt"
     IF EXIST "!MENU_FILE!" DEL /Q "!MENU_FILE!" >NUL 2>&1
     FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
         SET "MARK="
-        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  <- REWIRED firmware"
-        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  <- FACTORY firmware"
+        IF /I "!IMG_SHA_%%I!"=="%EXPECTED_SHA256%" SET "MARK=  <- REWIRED firmware v!REWIRED_MMV!"
+        IF /I "!IMG_SHA_%%I!"=="%FACTORY_SHA256%"  SET "MARK=  <- FACTORY firmware v36.9"
         IF %%I GTR 1 >>"!MENU_FILE!" ECHO --
         REM The filename is the label - it is the thing a person recognises -
         REM and the name only: every image in the list is in the same folder,
@@ -187,7 +190,7 @@ IF %IMG_COUNT% GTR 1 (
 CALL SET "FIRMWARE=%%IMG_PATH_!PICK!%%"
 CALL SET "CHOSEN_SHA=%%IMG_SHA_!PICK!%%"
 
-REM Any valid 218e image can be flashed.  The checksum this flasher was built
+REM Any valid 218e V3 image can be flashed.  The checksum this flasher was built
 REM with is only a label for the build that shipped with the package, so it can
 REM be told apart in the list above.  It is not a gate.
 IF /I NOT "!CHOSEN_SHA!"=="%EXPECTED_SHA256%" (
@@ -203,7 +206,7 @@ GOTO :have_image
 
 :no_image
 ECHO.
-ECHO   No flashable 218e image is in that folder.
+ECHO   No flashable 218e V3 image is in that folder.
 ECHO.
 ECHO   No firmware ships with this package.  Build one from your own
 ECHO   factory image with the page in web\ and put it there, or
@@ -271,7 +274,7 @@ REM --- into DFU ----------------------------------------------------------
 CALL :step Putting the instrument into DFU
 "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
 IF NOT ERRORLEVEL 1 (
-    ECHO The 218e is already in DFU mode.
+    ECHO The 218e V3 is already in DFU mode.
     GOTO :in_dfu
 )
 
@@ -299,7 +302,7 @@ IF NOT ERRORLEVEL 1 (
         ) ELSE (
             ECHO   That driver is not WinUSB, so the flashing tool cannot open the
             ECHO   device.  Zadig can rebind it: pick the AT32UC3B DFU device -
-            ECHO   not the 218e's MIDI entry - choose WinUSB, and Install Driver.
+            ECHO   not the 218e V3's MIDI entry - choose WinUSB, and Install Driver.
         )
         ECHO.
         ECHO   Nothing was erased.  No MIDI request is needed: it is already in DFU.
@@ -320,17 +323,17 @@ IF ERRORLEVEL 1 (
     REM match.
     TYPE "%TEMP%\rewired_midi.txt"
     ECHO.
-    ECHO   If nothing is listed at all, the 218e is not connected as a MIDI
+    ECHO   If nothing is listed at all, the 218e V3 is not connected as a MIDI
     ECHO   device: check the cable, use a directly connected port, and make sure
     ECHO   the instrument is powered on.
     ECHO.
-    ECHO   If the 218e is listed above under some other name, tell us the name -
+    ECHO   If the 218e V3 is listed above under some other name, tell us the name -
     ECHO   this looks for "218e" and Windows may be presenting it differently.
     ECHO.
     ECHO   If it used to work and stopped after running Zadig, Zadig was very
-    ECHO   likely pointed at the 218e's own MIDI interface instead of the
+    ECHO   likely pointed at the 218e V3's own MIDI interface instead of the
     ECHO   AT32UC3B DFU device.  That replaces the MIDI driver with WinUSB and
-    ECHO   the port disappears.  To undo it: Device Manager, find the 218e,
+    ECHO   the port disappears.  To undo it: Device Manager, find the 218e V3,
     ECHO   Uninstall device with "delete the driver" ticked, then unplug and
     ECHO   replug so Windows reinstalls its own driver.
     ECHO.
@@ -339,7 +342,7 @@ IF ERRORLEVEL 1 (
     GOTO :fail_early
 )
 DEL "%TEMP%\rewired_midi.txt" >NUL 2>&1
-ECHO Asking the 218e to enter DFU mode over MIDI.
+ECHO Asking the 218e V3 to enter DFU mode over MIDI.
 REM SendMIDI can report a failure in its output while still exiting zero, so
 REM the text is checked as well as the status - the macOS flasher has always
 REM done this and the Windows one did not.
@@ -359,7 +362,7 @@ ECHO   SendMIDI could not deliver the DFU request.
 TYPE "%TEMP%\rewired_syx.txt" 2>NUL
 DEL "%TEMP%\rewired_syx.txt" >NUL 2>&1
 ECHO.
-ECHO   Nothing was erased; power-cycle the 218e and retry.
+ECHO   Nothing was erased; power-cycle the 218e V3 and retry.
 GOTO :fail_early
 
 :syx_sent
@@ -558,7 +561,7 @@ CALL :banana
 ECHO.
 ECHO   %FIRMWARE_VERSION% is now on the instrument.
 ECHO   Log: %LOG_FILE%
-ECHO   If the 218e does not reappear, power-cycle the instrument.
+ECHO   If the 218e V3 does not reappear, power-cycle the instrument.
 PAUSE
 ENDLOCAL
 EXIT /B 0
@@ -688,22 +691,22 @@ IF !PICK! GTR !MENU_N! SET "PICK=0"
 EXIT /B 0
 
 :rescue
-REM Folded in from what used to be a separate ExitDFU script.  A 218e lands in
+REM Folded in from what used to be a separate ExitDFU script.  A 218e V3 lands in
 REM DFU when a flash was started and interrupted, and reading the safety fuses
 REM sets ISP_FORCE, so a power cycle brings it straight back into DFU.  The one
 REM thing that releases it is the START command.  This flashes nothing and
 REM erases nothing.
 ECHO.
-CALL :step Getting the 218e out of DFU mode
+CALL :step Getting the 218e V3 out of DFU mode
 "%SENDMIDI%" list 2>NUL | FINDSTR /I "218e" >NUL
 IF NOT ERRORLEVEL 1 (
-    CALL :ok The 218e is already running its firmware - it has a MIDI port
+    CALL :ok The 218e V3 is already running its firmware - it has a MIDI port
     ECHO   Nothing to do.
     EXIT /B 0
 )
 "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
 IF ERRORLEVEL 1 (
-    ECHO   No 218e in DFU mode, and no 218e MIDI port.
+    ECHO   No 218e V3 in DFU mode, and no 218e V3 MIDI port.
     ECHO.
     ECHO   Check the USB cable and that the instrument is powered on.  If the
     ECHO   flasher said the instrument was in DFU but this cannot see it, the
@@ -711,7 +714,7 @@ IF ERRORLEVEL 1 (
     ECHO   which diagnoses that and opens Zadig at the right moment.
     EXIT /B 1
 )
-CALL :ok Found the 218e in DFU mode
+CALL :ok Found the 218e V3 in DFU mode
 ECHO   Sending START...
 "%DFU%" at32uc3b1256 start
 IF ERRORLEVEL 1 (
@@ -727,7 +730,7 @@ SET /A RESCUE_TRIES+=1
 PING -n 2 127.0.0.1 >NUL
 "%SENDMIDI%" list 2>NUL | FINDSTR /I "218e" >NUL
 IF NOT ERRORLEVEL 1 (
-    CALL :ok The 218e is back as a MIDI device
+    CALL :ok The 218e V3 is back as a MIDI device
     EXIT /B 0
 )
 IF %RESCUE_TRIES% LSS 10 GOTO :rescue_wait
@@ -793,7 +796,7 @@ IF "!FLASH_VALIDATED!"=="1" GOTO :started_but_not_launched
 ECHO.
 ECHO ======================================================================
 ECHO   RECOVERY-SAFE STOP
-ECHO   No START command was sent, so the 218e is still in DFU.
+ECHO   No START command was sent, so the 218e V3 is still in DFU.
 ECHO.
 IF "!ERASE_STARTED!"=="0" (
     REM Nothing erased: the application is intact.  A power cycle will NOT
@@ -804,7 +807,7 @@ IF "!ERASE_STARTED!"=="0" (
     ECHO     "%DFU%" at32uc3b1256 start
     ECHO.
     ECHO   Power-cycling alone will not do it: reading the fuses set ISP_FORCE,
-    ECHO   so the 218e returns to DFU until START is sent.  Or just run this
+    ECHO   so the 218e V3 returns to DFU until START is sent.  Or just run this
     ECHO   script again to try the flash.
     ECHO Stopped before erase; application intact; START not sent.>> "%LOG_FILE%"
 ) ELSE (
@@ -826,7 +829,7 @@ REM The image is written and read-back validated; only the launch failed, so
 REM there is nothing to recover - the instrument just has not left DFU yet.
 ECHO.
 ECHO   The firmware IS written and has passed read-back validation.
-ECHO   Only the restart command failed.  Power-cycle the 218e and it should
+ECHO   Only the restart command failed.  Power-cycle the 218e V3 and it should
 ECHO   come up on the new firmware; if it returns to DFU instead, run this
 ECHO   script again.
 ECHO Flash validated; START failed.>> "%LOG_FILE%"
