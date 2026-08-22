@@ -6,7 +6,10 @@ REM is the folder's name.  Checked here, where %~dp0 is still literal.
 SET "RAW_DIR=%~dp0"
 ECHO "%RAW_DIR%" | FINDSTR /C:"!" >NUL && (
     ECHO   This folder's path contains an exclamation mark:
-    ECHO     %RAW_DIR%
+    REM Quoted, because this line sits inside a parenthesised block and a
+    REM bracket in the unquoted path would close the block at parse time -
+    REM the very bug class this guard exists for.
+    ECHO     "%RAW_DIR%"
     ECHO   cmd cannot carry that through this script.  Rename the folder -
     ECHO   plain letters, digits, dots and dashes - and run it again.
     PAUSE
