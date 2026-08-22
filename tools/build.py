@@ -281,7 +281,12 @@ def read_calibration(path: Path) -> dict[int, float]:
         raw = (row.get("Offset_Cents") or "").strip()
         if not raw:
             raise ValueError(f"{path.name}: semitone {row.get('Semitone')} has no Offset_Cents")
-        offsets[int(row["Semitone"])] = float(raw)
+        semitone = int(row["Semitone"])
+        if semitone in offsets:
+            raise ValueError(
+                f"{path.name}: semitone {semitone} appears twice - a stale row "
+                "from a hand edit would silently win")
+        offsets[semitone] = float(raw)
     if not offsets:
         raise ValueError(f"{path.name}: no rows")
     missing = set(range(max(offsets) + 1)) - set(offsets)
@@ -406,24 +411,38 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     tail_delta = -updates[highest] * octave_width_volts(offsets, highest)
 
     text = calibration.read_text().splitlines()
+    # The reader detects the delimiter and reads columns by header name; the
+    # rewrite used to hard-code ';' and columns 3/4, so a comma-delimited
+    # table that every build path accepts crashed the fold with a traceback.
+    header_line = next(ln for ln in text
+                       if not ln.lstrip().startswith("#") and ln.strip())
+    cal_delim = ";" if header_line.count(";") else ","
+    columns = [c.strip() for c in header_line.split(cal_delim)]
+    try:
+        cents_col = columns.index("Offset_Cents")
+        source_col = columns.index("Source")
+    except ValueError:
+        raise SystemExit(
+            f"{calibration.name}: the fold needs Offset_Cents and Source "
+            "columns to rewrite") from None
     out, applied, trailing = [], 0, 0
     for line in text:
         if line.lstrip().startswith("#") or line.startswith("Semitone"):
             out.append(line)
             continue
-        parts = line.split(";")
+        parts = line.split(cal_delim)
         semitone = int(parts[0])
         if semitone in updates:
             error = updates[semitone]
             # a sharp note needs less voltage, scaled by the local octave width
             delta = -error * octave_width_volts(offsets, semitone)
-            parts[3] = f"{offsets[semitone] + delta:.6f}"
-            parts[4] = "measured"
+            parts[cents_col] = f"{offsets[semitone] + delta:.6f}"
+            parts[source_col] = "measured"
             applied += 1
-        elif semitone > highest and parts[4] == "extrapolated":
-            parts[3] = f"{offsets[semitone] + tail_delta:.6f}"
+        elif semitone > highest and parts[source_col] == "extrapolated":
+            parts[cents_col] = f"{offsets[semitone] + tail_delta:.6f}"
             trailing += 1
-        out.append(";".join(parts))
+        out.append(cal_delim.join(parts))
     calibration.write_text("\n".join(out) + "\n")
     print(f"folded {applied} reading(s) into {calibration.relative_to(REPO)}")
     if trailing:
@@ -449,6 +468,13 @@ def parse_hex_text(text: str, name: str) -> tuple[dict[int, int], int]:
         if sum(record) & 0xFF:
             raise ValueError(f"{name} line {number}: bad checksum")
         length, kind = record[0], record[3]
+        # The checksum cannot catch a wrong partition - the byte sum is zero
+        # however the bytes are split - so the declared length is held to the
+        # bytes actually present: 4 of header, the payload, 1 of checksum.
+        if len(record) != 5 + length:
+            raise ValueError(
+                f"{name} line {number}: declares {length} data bytes, "
+                f"carries {len(record) - 5}")
         address = (record[1] << 8) | record[2]
         data = record[4 : 4 + length]
         if kind == 0:
@@ -699,7 +725,11 @@ RAM_REGIONS = [
 # the factory already does — but listed so that a new cell of our own cannot
 # be placed on top of one without the coverage check noticing.
 FACTORY_CELLS = [
-    (0x0854, 0x088E, "key pitch table"),
+    # 32 halfwords - the tuning applier loop counts MOV R9,0x20 - so the
+    # cell ends at 0x894.  It was declared 6 bytes short, which left the
+    # last three entries outside the overlap protection this map exists
+    # to provide.
+    (0x0854, 0x0894, "key pitch table"),
     (0x2EEE, 0x2EF0, "glide rate"),
     (0x3212, 0x3214, "pitch mirror"),
     # Live again whenever pressure_fix is off: the clamp skips are gated now,
@@ -737,7 +767,9 @@ def check_ram_coverage() -> None:
     movi = re.compile(r"^MOV (R\d+|LR),0x([0-9a-f]+)$")
     addx = re.compile(r"^ADD (R\d+),(R\d+),(R\d+) << 0x\d$")
     # Stores carry no signedness, so ST.H must be accepted alongside LD.SH.
-    mem = re.compile(r"^(LD|ST)\.(?:UB|SB|UH|SH|W|D|B|H) (?:(R\d+|LR),)?(R\d+|LR)\[")
+    mem = re.compile(
+        r"^(LD|ST)\.(?:UB|SB|UH|SH|W|D|B|H) (?:(R\d+|LR),)?(R\d+|LR)"
+        r"\[(?:(-?0x[0-9a-fA-F]+)\])?")
 
     known: dict[str, int] = {}
     used: dict[int, str] = {}
@@ -755,9 +787,13 @@ def check_ram_coverage() -> None:
             continue
         match = mem.match(text)
         if match:
-            kind, dst, base = match.groups()
+            kind, dst, base, disp = match.groups()
             if base in known:
-                value = known[base]
+                # The cell actually touched is base plus the literal
+                # displacement; recording only the base let a store through a
+                # declared base land in undeclared RAM unnoticed.  Indexed
+                # accesses keep the base, the only static fact about them.
+                value = known[base] + (int(disp, 16) if disp else 0)
                 if 0x800 <= value < 0x10000 and value not in NON_ADDRESS_IMMEDIATES:
                     used.setdefault(value, text)
             if kind == "LD" and dst:
@@ -934,10 +970,20 @@ def main() -> None:
 
     config_path = (REPO / args.config) if not Path(args.config).is_absolute() else Path(args.config)
     raw = tomllib.loads(config_path.read_text())
+    # A misspelled table name - [option], [Options] - or an option line that
+    # drifted below a later section header used to vanish without a word,
+    # and the build proceeded on defaults.
+    import options
+    stray = sorted(set(raw) - {"options", "firmware", "tools"})
+    if stray:
+        hints = [k for k in stray if k in options.OPTION_TYPES]
+        raise SystemExit(
+            f"{config_path.name}: unknown table(s) {', '.join(stray)}"
+            + (f" - {', '.join(hints)} belong(s) under [options]" if hints
+               else " - only [options], [firmware] and [tools] are read"))
     # The config holds seven user options plus [firmware]/[tools] paths.
     # options.expand() turns those into the full internal settings this script
     # has always consumed, so everything below is unchanged.
-    import options
     cfg = options.expand(raw.get("options", {}))
     cfg["firmware"] = raw["firmware"]
     if "tools" in raw:
@@ -1214,6 +1260,11 @@ def main() -> None:
         raise SystemExit(
             f"[pressure.calibration]: ceiling {calib['ceiling']} leaves no room to "
             "scale up (the pressure path rejects a ceiling above 1023)")
+    if mode == "scale" and k_max - k_min < 0x10:
+        raise SystemExit(
+            f"[pressure.calibration]: trim_min {calib.get('trim_min', 0.70)} "
+            f"leaves only {k_max - k_min} of the 16 steps the knob encoding "
+            "needs below the ceiling cap - lower trim_min or the ceiling")
     cfg["_numbers"]["trim_scale_span"] = max(k_max - k_min, 0x10)
     cfg["_numbers"]["trim_scale_base"] = k_min
     # Where the configured calibration lands on the knob, which is what anyone
@@ -1374,9 +1425,10 @@ def main() -> None:
             lambda m: m.group(1) + version_string, patched)
         if count != 1:
             raise SystemExit(f"{updater_name}: expected exactly one declared FIRMWARE_VERSION line")
-        # The generated block is assembled with \n; a cmd script is CRLF and
-        # mixing the two breaks GOTO across some cmd versions.  Normalise the
-        # whole file to whatever it already used.
+        # The .bat is committed LF-only and cmd runs it fine; this branch
+        # normalised to CRLF only when CRLF was already present, so for the
+        # whole life of the LF file it never fired.  Kept for the day the
+        # file is converted, with its trigger stated honestly.
         if "\r\n" in raw:
             patched = patched.replace("\r\n", "\n").replace("\n", "\r\n")
         staged_updaters.append((updater, patched, raw))

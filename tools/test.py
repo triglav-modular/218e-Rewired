@@ -751,21 +751,23 @@ def test_generated_is_current() -> None:
     by then it has been pushed.
     """
     print("web bundle")
-    gen = REPO / "web" / "generated.js"
-    if not gen.exists():
-        print("  skip  web/generated.js is not built")
+    # Both outputs: generate.py rewrites generated.js AND assembler.js, and
+    # only the first was compared - so an encoder or runtime edit left a
+    # stale assembler.js shipping while this check stayed green.
+    outputs = [REPO / "web" / "generated.js", REPO / "web" / "assembler.js"]
+    if not all(p.exists() for p in outputs):
+        print("  skip  web bundle is not built")
         return
-    before = gen.read_bytes()
+    before = {p: p.read_bytes() for p in outputs}
     r = subprocess.run([sys.executable, "web/generate.py"],
                        capture_output=True, text=True, cwd=REPO)
     if r.returncode != 0:
         check("generate.py runs", False, r.stderr.strip()[:200])
         return
-    after = gen.read_bytes()
-    if after != before:
-        gen.write_bytes(after)   # leave the fresh one: it is the correct one
-    check("generated.js is current", after == before,
-          "it was stale - regenerated, commit web/generated.js")
+    for p in outputs:
+        after = p.read_bytes()
+        check(f"{p.name} is current", after == before[p],
+              f"it was stale - regenerated, commit web/{p.name}")
 
 
 def test_hex_roundtrip(cfg: dict) -> None:

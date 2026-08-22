@@ -230,6 +230,14 @@ var WEBBUILD = (function () {
                 throw new Error('round-trip check failed at 0x' + Number(keys[i]).toString(16));
             }
         }
+        // And nothing beyond them: tools/build.py compares both directions,
+        // and one-way containment would let a renderHex defect flash stray
+        // bytes with the page vouching for the image.
+        var rekeys = Object.keys(reread.memory);
+        if (rekeys.length !== keys.length) {
+            throw new Error('round-trip check failed: the rendered hex holds ' +
+                            rekeys.length + ' bytes, the build ' + keys.length);
+        }
         var stray = 0;
         Object.keys(original).forEach(function (a) {
             if (original[a] !== factory.memory[a] && !(a in applied.claimed)) stray++;

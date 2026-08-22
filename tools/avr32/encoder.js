@@ -104,7 +104,16 @@ var AVR32 = (function () {
                 var rd = reg(m[1]), v = imm(m[2]);
                 if (rd === null || v === null) return null;
                 if (fits(v, 6)) return half(0x5800 | ((v & 0x3F) << 4) | rd);
-                if (v >= -0x8000 && v <= 0xFFFF) return extended(0xE04, rd, v);
+                // Positive only.  The imm21 format scatters imm[20:17] into
+                // bits 28..25 and imm[16] into bit 20 - SUB's negative prefix
+                // 0xFE3 is exactly 0xE02 with those bits folded in - and this
+                // rule used to hand negatives to extended() bare, which
+                // encodes them as large POSITIVE comparisons.  Nothing in the
+                // program emits one, so per the corpus-is-the-oracle rule the
+                // unproven encoding (it would be 0xFE5) is refused loudly
+                // rather than guessed: an unimplemented error at build time,
+                // never silent wrong bytes.
+                if (v >= 0 && v <= 0xFFFF) return extended(0xE04, rd, v);
                 return null;
             }
         },

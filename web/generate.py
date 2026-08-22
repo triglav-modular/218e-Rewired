@@ -49,8 +49,8 @@ def main() -> None:
 
     # Both flashers, whole.  The page substitutes the checksum and version of
     # the image it just built, so a download arrives as a bundle that flashes
-    # that image without asking.  JSON round-trips the .bat's CRLF endings
-    # intact.
+    # that image without asking.  Both files are LF - the .bat too, which cmd
+    # accepts - and JSON round-trips whatever the bytes are.
     for key, name in (("flasherMac",  "Program218e_v3_Rewired_macOS.command"),
                       ("flasherWin",  "Program218e_v3_Rewired_Windows.bat")):
         parts.append(f"  {key}: {json.dumps((REPO / name).read_bytes().decode())},")

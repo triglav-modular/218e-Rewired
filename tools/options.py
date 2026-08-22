@@ -133,6 +133,20 @@ def check(options: dict) -> None:
             names = " or ".join(t.__name__ for t in allowed)
             raise SystemExit(
                 f"{name} must be {names}, not {type(value).__name__}: {value!r}")
+        # bool passed the tuple check above, but only False means anything:
+        # "true" carries no path and no files, and expand() used to die on it
+        # with a raw TypeError instead of a sentence.
+        if value is True:
+            raise SystemExit(
+                f"{name} = true says nothing to build from - give it "
+                + ("a CSV path" if name == "pitch_correction"
+                   else "a list of Scala files") + ", or false")
+        if name == "alternate_tunings" and isinstance(value, list):
+            for i, entry in enumerate(value):
+                if not isinstance(entry, (str, dict)):
+                    raise SystemExit(
+                        f"alternate_tunings[{i}] must be a filename (or "
+                        f"'factory'), not {type(entry).__name__}: {entry!r}")
 
 
 def expand(options: dict) -> dict:

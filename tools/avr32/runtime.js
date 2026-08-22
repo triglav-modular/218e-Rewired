@@ -47,6 +47,13 @@ var RT = (function () {
 
     function number(key, fallback, low, high) {
         var raw = (cfg['number.' + key] || '').trim();
+        // Strict decimal, matching Java's Integer.parseInt: parseInt takes
+        // any numeric prefix and NaN slips every range check (both
+        // comparisons are false), so a malformed setting assembled as
+        // MOV Rd,0x0 here while the Ghidra build aborted.
+        if (raw !== '' && !/^-?\d+$/.test(raw)) {
+            throw new Error('Setting ' + key + ' is not a number: ' + raw);
+        }
         var value = raw === '' ? fallback : parseInt(raw, 10);
         if (value < low || value > high) {
             throw new Error(fmt('Setting %s must be %d..%d to keep the encoding width: %d',
@@ -98,6 +105,11 @@ var RT = (function () {
             throw new Error(fmt('Code crossed target: pc=%08x target=%08x', pc, address));
         }
         while (pc < address) emit('NOP');
+        // The Java throws 'Cannot align target' here; an odd gap would leave
+        // pc one past the address and the patch a byte outside its extent.
+        if (pc !== address) {
+            throw new Error(fmt('Cannot align target: pc=%08x target=%08x', pc, address));
+        }
     }
 
     // EXTENT is printed before the enable check, so the build can spot two

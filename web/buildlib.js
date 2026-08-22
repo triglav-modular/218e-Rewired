@@ -272,6 +272,12 @@ var BUILDLIB = (function () {
             for (i = 0; i < rec.length; i++) sum += rec[i];
             if (sum & 0xFF) throw new Error(name + ' line ' + (n + 1) + ': bad checksum');
             var length = rec[0], kind = rec[3];
+            // Same rule as tools/build.py: the checksum cannot catch a wrong
+            // partition, so the declared length is held to the bytes present.
+            if (rec.length !== 5 + length) {
+                throw new Error(name + ' line ' + (n + 1) + ': declares ' +
+                                length + ' data bytes, carries ' + (rec.length - 5));
+            }
             var address = (rec[1] << 8) | rec[2];
             var data = rec.slice(4, 4 + length);
             if (kind === 0) {
@@ -388,6 +394,12 @@ var BUILDLIB = (function () {
         // coupling an instrument has when the player's feet leave the floor.
         var kMin = Math.round((calib.trim_min === undefined ? 0.70 : calib.trim_min) * 256);
         var kMax = Math.min(0x180, Math.floor((0x3FF * 256) / calib.ceiling));
+        // Same rule as tools/build.py: a range that cannot fit is refused,
+        // not floored past the cap that keeps the scaled ceiling under 1023.
+        if (kMax - kMin < 0x10) {
+            throw new Error('trim_min leaves fewer than the 16 steps the ' +
+                            'knob encoding needs below the ceiling cap');
+        }
         numbers.trim_scale_span = Math.max(kMax - kMin, 0x10);
         numbers.trim_scale_base = kMin;
         numbers.gate_settle_scans = cfg.timing.gate_settle_scans;

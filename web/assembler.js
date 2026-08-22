@@ -121,7 +121,16 @@ var AVR32 = (function () {
                 var rd = reg(m[1]), v = imm(m[2]);
                 if (rd === null || v === null) return null;
                 if (fits(v, 6)) return half(0x5800 | ((v & 0x3F) << 4) | rd);
-                if (v >= -0x8000 && v <= 0xFFFF) return extended(0xE04, rd, v);
+                // Positive only.  The imm21 format scatters imm[20:17] into
+                // bits 28..25 and imm[16] into bit 20 - SUB's negative prefix
+                // 0xFE3 is exactly 0xE02 with those bits folded in - and this
+                // rule used to hand negatives to extended() bare, which
+                // encodes them as large POSITIVE comparisons.  Nothing in the
+                // program emits one, so per the corpus-is-the-oracle rule the
+                // unproven encoding (it would be 0xFE5) is refused loudly
+                // rather than guessed: an unimplemented error at build time,
+                // never silent wrong bytes.
+                if (v >= 0 && v <= 0xFFFF) return extended(0xE04, rd, v);
                 return null;
             }
         },
@@ -569,6 +578,13 @@ var RT = (function () {
 
     function number(key, fallback, low, high) {
         var raw = (cfg['number.' + key] || '').trim();
+        // Strict decimal, matching Java's Integer.parseInt: parseInt takes
+        // any numeric prefix and NaN slips every range check (both
+        // comparisons are false), so a malformed setting assembled as
+        // MOV Rd,0x0 here while the Ghidra build aborted.
+        if (raw !== '' && !/^-?\d+$/.test(raw)) {
+            throw new Error('Setting ' + key + ' is not a number: ' + raw);
+        }
         var value = raw === '' ? fallback : parseInt(raw, 10);
         if (value < low || value > high) {
             throw new Error(fmt('Setting %s must be %d..%d to keep the encoding width: %d',
@@ -620,6 +636,11 @@ var RT = (function () {
             throw new Error(fmt('Code crossed target: pc=%08x target=%08x', pc, address));
         }
         while (pc < address) emit('NOP');
+        // The Java throws 'Cannot align target' here; an odd gap would leave
+        // pc one past the address and the patch a byte outside its extent.
+        if (pc !== address) {
+            throw new Error(fmt('Cannot align target: pc=%08x target=%08x', pc, address));
+        }
     }
 
     // EXTENT is printed before the enable check, so the build can spot two
