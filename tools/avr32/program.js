@@ -549,9 +549,11 @@ function assembleProgram() {
         } else if (feature("latch_probe")) {
 
             // Diagnostic: what the latch toggle saw on its last press.
-            // CC 114/115 is the live transpose it built the pressed pitch
-            // from (RAM 0x609A), CC 116/117 the pressed pitch itself
-            // (0x609C).  Press the same key repeatedly with the arp running:
+            // CC 114/115 is the transpose AS OF that press (the snapshot at
+            // RAM 0x609A - power-up noise until the first press), CC 116/117
+            // the live transpose now (RAM 0x60A0).  The old text promised a
+            // pressed-pitch cell at 0x609C that nothing ever wrote.
+            // Press the same key repeatedly with the arp running:
             // if the transpose moves while the key does not, the shared term
             // is drifting; if it holds and the press still fails to match, a
             // stamp is wrong instead.
@@ -1557,24 +1559,20 @@ function assembleProgram() {
         emit("MCALL PC[0x8001a7f4]");
         if (false) {
         } else if (!feature("multi_key_pressure")) {
+            // The single key's value comes out of the cache the MCALL above
+            // just filled - floor-subtracted and colour-corrected, the same
+            // number the multi-key path averages.  The old code colour-scaled
+            // R12 instead, as if it still held the caller's raw pressure;
+            // with common_mode on, the combiner had already left the LAST
+            // key's proximity result there.  Unreachable through the seven
+            // options (multi_key is always on), but the corpus builds carry
+            // this branch, and one correction lives in one place.
             emit("LDDPC R10,0x8001a7f0");
             emit("LD.UB R8,R10[0x256]");
-            // 0x1d with BR{ge}, not 0x1c with BR{hi}: the key arrives
-            // zero-extended from LD.UB, so the signed test is the same test,
-            // and {ge} has a two-byte encoding where {hi} does not.  Those two
-            // bytes are what let this branch fit its cave — with BR{hi} it ran
-            // to 0x8001a7c2 and the build failed on the padTo below.
             emit("CP.W R8,0x1d");
             emit("BR{ge} 0x8001a7c0");
-            emit("MOV R9,0xa54a");
-            emit("ORH R9,0xa54");
-            emit("LSR R9,R9,R8");
-            emit("BFEXTU R9,R9,0x0,0x1");
-            emit("CP.W R9,0x0");
-            emit("BR{eq} 0x8001a7c0");
-            emit(StringFormat("MOV R9,0x%x", number("black_key_scale_32", 43, 32, 96)));
-            emit("MUL R12,R12,R9");
-            emit("LSR R12,0x5");
+            emit("MOV R12,0x6100");
+            emit("LD.UH R12,R12[R8 << 0x1]");
         }
         padTo(0x8001a7c0);
         if (feature("pressure_ab_switch")) {
@@ -1599,7 +1597,12 @@ function assembleProgram() {
         word(0x00003560); // global state base
         word(0x8001aa10); // multi-key pressure combiner
         word(0x80013350); // signed-int-to-float helper (same as the epilogue)
-        word(0x8001aa90); // per-key corrected-pressure cache fill
+        // Empty slot.  It used to hold 0x8001aa90 labelled "cache fill",
+        // but nothing reads this word and that address is the middle of the
+        // cache loop, not an entry - an MCALL through it would have run the
+        // loop tail frameless and popped the caller's stack into PC.  Zero,
+        // so any future use faults on the first fetch instead.
+        word(0x00000000);
         finish("pressure_prep", 0x8001a800);
 
         // Variable-depth growing average.  Depth N (8..24 taps = 40..120 ms

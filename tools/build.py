@@ -717,7 +717,9 @@ RAM_REGIONS = [
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
     (0x6098, 0x609A, "vibrato error accumulator"),
-    (0x609A, 0x609E, "latch probe snapshot"),
+    # Two bytes, not four: the second halfword was reserved for a pressed-
+    # pitch snapshot that was never implemented.
+    (0x609A, 0x609C, "latch probe snapshot"),
     (0x6100, 0x613A, "corrected-pressure cache"),
 ]
 
