@@ -70,6 +70,13 @@ def build(out):
         # these; text-mode readers strip them silently; dfu-programmer reads
         # bytes and fails on the 0xEF - after the erase.
         "bom.hex": "\ufeff" + "\n".join(good) + "\n",
+        # Two non-overlapping records swapped.  dfu-programmer takes records
+        # in any order, so this WOULD flash - but no real image is disordered,
+        # and all three validators refuse it with the same rule.  The python
+        # one used to accept it while the other two refused: the exact
+        # divergence the shared fixtures exist to rule out.
+        "disorder.hex": "\n".join(
+            good[:1] + [data[1], data[0]] + data[2:] + [record(1, 0, [])]) + "\n",
     }
     for name, text in files.items():
         (out / name).write_bytes(text.encode())

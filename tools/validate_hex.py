@@ -48,7 +48,8 @@ def main(path):
         print(f"BAD cannot read the file: {e}"); return 1
     if not lines:
         print("BAD empty file"); return 1
-    written = set()
+    prev_end = None
+    covered = 0
     for n, line in enumerate(lines, 1):
         # Not stripped.  Every field is read with a fixed-width fgets and
         # nothing skips whitespace: the colon is matched literally, so a space
@@ -110,13 +111,21 @@ def main(path):
                        (raw[6] << 8) | raw[7]) & 0x7FFFFFFF)) | FLASH_BASE
         elif kind == 0:
             a = (((upper - FLASH_BASE) + addr) & 0x7FFFFFFF) | FLASH_BASE
-            # Count addresses, not record lengths.  Summing lengths let the
-            # same sixteen bytes be repeated 1,024 times and pass as a 16 KB
-            # image while covering sixteen bytes of flash.
-            if any(x in written for x in range(a, a + length)):
-                print(f"BAD record at line {n} overwrites flash already written "
-                      f"at 0x{a:X} - real images do not overlap"); return 1
-            written.update(range(a, a + length))
+            # Strictly non-descending, the same rule as the other two
+            # validators.  This validator used to track a written-set and so
+            # accepted out-of-order records the others refused - a divergence
+            # among the very tools whose agreement is the point.  Monotonic
+            # order also subsumes overlap: any overlap in an ordered stream
+            # shows as a record starting before the previous one ended.
+            # dfu-programmer itself takes records in any order, so refusing
+            # disorder is stricter than the flasher - the safe direction,
+            # and no real image is disordered.
+            if prev_end is not None and a < prev_end:
+                print(f"BAD record at line {n} runs backwards or overlaps "
+                      f"flash already written at 0x{a:X} - no real image "
+                      "is disordered"); return 1
+            prev_end = a + length
+            covered += length
             lo = a if lo is None else min(lo, a)
             hi = a + length - 1 if hi is None else max(hi, a + length - 1)
         elif kind == 1:
@@ -144,7 +153,8 @@ def main(path):
         print(f"BAD starts at 0x{lo:X}, not the reset vector at 0x{APP_LOW:X} - "
               f"a partial image would erase the application and not replace it")
         return 1
-    covered = len(written)
+    # covered sums record lengths; with monotonic order enforced above, no
+    # byte can be counted twice.
     if covered < MIN_BYTES:
         print(f"BAD only {covered} bytes of firmware - a real image carries tens of "
               f"thousands, and flashing this would leave the instrument unbootable")

@@ -163,7 +163,7 @@ BEGIN{FLASH=2147483648}
   if(type!=0&&type!=1&&type!=4&&type!=5)fail("record type " type " at line " NR " - not an AVR32 firmware image")
   if(len*2+10!=length(hex))fail("record at line " NR " declares " len " bytes but carries " (length(hex)-10)/2)
   if(type==0){a=(base+addr)%FLASH+FLASH
-    if(seen&&a<prevend)fail("record at line " NR " overwrites flash already written - real images do not overlap")
+    if(seen&&a<prevend)fail("record at line " NR " runs backwards or overlaps flash already written - no real image is disordered")
     if(!seen||a<lo)lo=a;seen=1;if(a+len-1>hi)hi=a+len-1;cov+=len;prevend=a+len}
   if(type==1)eof=1;next}
 NF{fail("line " NR " is not an Intel HEX record")}
@@ -233,7 +233,10 @@ fail() {
             echo "  ${C_GREEN}Your firmware was not touched.${C_RESET}  Nothing was erased."
             echo
             echo "  To put the instrument back to normal right now:"
-            echo "    ${C_BOLD}"$DFUPATH" at32uc3b1256 start${C_RESET}"
+            # Escaped quotes, so they appear IN the printed command: the
+            # app's own path has spaces, and the unquoted form this used to
+            # print failed word-split when pasted back.
+            echo "    ${C_BOLD}\"$DFUPATH\" at32uc3b1256 start${C_RESET}"
             echo
             echo "  Power-cycling alone will not do it: reading the fuses set"
             echo "  ISP_FORCE, so the 218e V3 returns to DFU until START is sent."

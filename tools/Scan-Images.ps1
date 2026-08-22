@@ -142,7 +142,7 @@ function Test-IntelHex {
             # repeated would otherwise add up to a plausible image while
             # covering a few bytes of flash.
             if ($null -ne $prevEnd -and $a -lt $prevEnd) {
-                $script:LastReason = "record overwrites flash already written - real images do not overlap"
+                $script:LastReason = "record runs backwards or overlaps flash already written - no real image is disordered"
                 return $false
             }
             $prevEnd = $a + $len

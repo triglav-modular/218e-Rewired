@@ -1,4 +1,17 @@
 @ECHO OFF
+REM Before delayed expansion exists to eat it: a folder with an exclamation
+REM mark in its name corrupts every percent-expanded path below, and the
+REM flasher used to blame the download ("re-download the package") for what
+REM is the folder's name.  Checked here, where %~dp0 is still literal.
+SET "RAW_DIR=%~dp0"
+ECHO "%RAW_DIR%" | FINDSTR /C:"!" >NUL && (
+    ECHO   This folder's path contains an exclamation mark:
+    ECHO     %RAW_DIR%
+    ECHO   cmd cannot carry that through this script.  Rename the folder -
+    ECHO   plain letters, digits, dots and dashes - and run it again.
+    PAUSE
+    EXIT /B 1
+)
 SETLOCAL EnableDelayedExpansion
 TITLE Buchla 218e V3 - Rewired firmware
 
@@ -603,7 +616,13 @@ FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%PO_MANIFEST%") DO (
 )
 IF NOT DEFINED PO_WANT EXIT /B 0
 FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%PO_MANIFEST%") DO (
-    IF /I "%%K"=="!PO_WANT!" ECHO       %%L
+    REM Through a quoted SET, like the typed menu: %%L is substituted
+    REM before the special-character pass, so a & or > in a line would
+    REM execute or redirect instead of printing.
+    IF /I "%%K"=="!PO_WANT!" (
+        SET "PO_LINE=%%L"
+        ECHO(      !PO_LINE!
+    )
 )
 EXIT /B 0
 
@@ -644,7 +663,11 @@ FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%IO_MANIFEST%") DO (
 )
 IF NOT DEFINED IO_WANT EXIT /B 0
 FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%IO_MANIFEST%") DO (
-    IF /I "%%K"=="!IO_WANT!" >>"%IO_OUT%" ECHO %%L
+    REM Same quoted-SET idiom as :print_options, and for the same reason.
+    IF /I "%%K"=="!IO_WANT!" (
+        SET "IO_LINE=%%L"
+        >>"%IO_OUT%" ECHO(!IO_LINE!
+    )
 )
 EXIT /B 0
 
