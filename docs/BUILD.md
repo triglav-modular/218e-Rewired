@@ -582,68 +582,25 @@ direction is the safe one.
 
 **Reading it back.** Analytics Engine has no data browser in the dashboard —
 the Analytics Engine page lists datasets and nothing else — so the counts come
-from the SQL API. [../tools/build-counts.py](../tools/build-counts.py) runs the
-queries worth running:
+from the SQL API, with a token that has **Account Analytics: Read** and nothing
+else, made at <https://dash.cloudflare.com/profile/api-tokens>.
 
-```bash
-export CF_API_TOKEN=...
-python3 tools/build-counts.py
-```
+What reads them is not in this repository. The counts say how many people run
+this firmware and which parts they use, which is the owner's business rather
+than the repository's, so the reader and the dashboard live outside it. What
+stays here is the half that has to: the beacon in `web/app.js` and the route in
+`deploy/worker.js`, both of which anyone can read to see exactly what is
+collected — which is the only part of this that owes anyone an explanation.
 
-```
-  14 builds in the last 30 days
-
-  by platform
-    win      9
-    mac      5
-
-  options chosen
-    latching arpeggiator     12  (85%)
-    knobs 1-4 remapped       11  (78%)
-    ...
-```
-
-`--days 7` narrows the window; `--sql "..."` runs one query of your own. The
-token is read from the environment and never written anywhere.
-
-**Making the token.** At <https://dash.cloudflare.com/profile/api-tokens> →
-Create Token → *Create Custom Token*. One permission is enough:
-
-| | | |
-|---|---|---|
-| Account | Account Analytics | Read |
-
-Set Account Resources to this account, create it, and copy the token — the
-dashboard shows it once. Anything broader than Account Analytics: Read is more
-access than reading counts needs.
-
-The columns, in the order the worker writes them:
-
-| Column | Meaning |
-|---|---|
-| `blob1` | platform — `mac`, `win`, or `other` |
-| `blob2` | firmware version, e.g. `1.1.0` |
-| `blob3` | volts per octave — `1`, `1.2`, or `other` |
-| `double1` | latching arpeggiator, 1 or 0 |
-| `double2` | knobs 1–4 remapped, 1 or 0 |
-| `double3` | pressure fix, 1 or 0 |
-| `double4` | pressure portamento, 1 or 0 |
-| `double5` | alternate tunings, 0–3 slots filled (−1 if the value was not one of those) |
-| `double6` | per-note calibration supplied, 1 or 0 |
-
-`blob1` is `mac` or `win` for a real download. Anything else — `other` — is not
-a build: the endpoint is public, and two points were posted through it while
+A build is `blob1` of `mac` or `win`. Anything else — `other` — is not a
+download: the endpoint is public, and two points were posted through it while
 proving the path worked. One of those reports `mac`, because a probe that
 proves a real download would arrive has to look like one; it carries version
-`9.9.9`, which no build will have. `build-counts.py` drops both. Querying by
-hand, the filter is:
+`9.9.9`, which no build will have. So:
 
 ```sql
 WHERE blob1 IN ('mac','win') AND blob2 != '9.9.9'
 ```
-
-Analytics Engine has no delete, so that row is permanent — one phantom Mac
-build, which matters only while the numbers are small.
 
 So "how many builds turned each option on, this month" is:
 
@@ -651,7 +608,9 @@ So "how many builds turned each option on, this month" is:
 SELECT count() AS builds, sum(double1) AS latching, sum(double2) AS knobs,
        sum(double3) AS pressure, sum(double4) AS portamento,
        sum(double6) AS calibrated
-FROM builds WHERE timestamp > now() - INTERVAL '30' DAY
+FROM builds
+WHERE timestamp > now() - INTERVAL '30' DAY
+  AND blob1 IN ('mac','win') AND blob2 != '9.9.9'
 ```
 
 Nothing on the route is authenticated — it cannot be, since the page is public
