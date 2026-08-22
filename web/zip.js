@@ -145,6 +145,13 @@ var ZIP = (function () {
         if (end < 0) throw new Error('not a ZIP');
         var count = d.getUint16(end + 10, true);
         var at = d.getUint32(end + 16, true);
+        // The 16/32-bit fields saturate at these sentinels when a writer used
+        // zip64; reading on would either truncate the listing or chase an
+        // offset that is not there and die on a bare RangeError.
+        if (count === 0xFFFF || at === 0xFFFFFFFF) {
+            throw new Error('zip64 archive - the kit bundle must be packed ' +
+                            'without zip64');
+        }
         var out = [];
         for (var n = 0; n < count; n++) {
             if (d.getUint32(at, true) !== 0x02014b50) throw new Error('bad ZIP directory');
@@ -165,8 +172,15 @@ var ZIP = (function () {
                 body: bytes.subarray(from, from + comp),
                 raw: { length: d.getUint32(at + 24, true) },
                 mode: (d.getUint32(at + 38, true) >>> 16) || 0o100644,
+                // The entry's own general-purpose flags travel with it, so a
+                // name written as CP437 by an old tool is not re-labelled
+                // UTF-8 on the way through.
+                flags: d.getUint16(at + 8, true),
                 // Kept, not restamped: these are the app's own files and the
-                // date they carry is the date it was built.
+                // date they carry is the date it was built.  carried marks
+                // them so a legitimate all-zero DOS date (reproducible-build
+                // strippers emit those) survives assemble()'s fallback.
+                carried: true,
                 time: d.getUint16(at + 12, true),
                 date: d.getUint16(at + 14, true)
             });
@@ -183,7 +197,8 @@ var ZIP = (function () {
             var name = new Uint8Array(p.length + e.name.length);
             name.set(p); name.set(e.name, p.length);
             return { name: name, method: e.method, crc: e.crc, body: e.body,
-                     raw: e.raw, mode: e.mode, time: e.time, date: e.date };
+                     raw: e.raw, mode: e.mode, time: e.time, date: e.date,
+                     flags: e.flags, carried: e.carried };
         });
     }
 
@@ -191,11 +206,19 @@ var ZIP = (function () {
         var parts = [], central = [], offset = 0;
         var fallback = dosStamp(new Date());
         entries.forEach(function (e) {
-            if (!e.date) { e.time = fallback.time; e.date = fallback.date; }
+            // Only the page's own entries fall back to pack time; a carried
+            // entry keeps whatever it has, zero included.
+            if (!e.carried && !e.date) { e.time = fallback.time; e.date = fallback.date; }
+            // The page writes ASCII names, declared UTF-8; a carried entry
+            // keeps only its name-encoding bit - the rest of its flags
+            // describe framing (data descriptors, encryption) that this
+            // writer does not reproduce, and copying bit 3 with no
+            // descriptor behind it corrupts the archive for strict readers.
+            var flags = e.carried ? ((e.flags || 0) & 0x0800) : 0x0800;
             var h = new DataView(new ArrayBuffer(30));
             h.setUint32(0, 0x04034b50, true);
             h.setUint16(4, 20, true);
-            h.setUint16(6, 0x0800, true);          // names are UTF-8
+            h.setUint16(6, flags, true);
             h.setUint16(8, e.method, true);
             h.setUint16(10, e.time, true);
             h.setUint16(12, e.date, true);
@@ -210,7 +233,7 @@ var ZIP = (function () {
             c.setUint32(0, 0x02014b50, true);
             c.setUint16(4, (3 << 8) | 20, true);   // made by: Unix
             c.setUint16(6, 20, true);
-            c.setUint16(8, 0x0800, true);
+            c.setUint16(8, flags, true);
             c.setUint16(10, e.method, true);
             c.setUint16(12, e.time, true);
             c.setUint16(14, e.date, true);

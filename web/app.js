@@ -145,6 +145,9 @@
     Array.prototype.forEach.call($('vpo').children, function (b) {
         b.addEventListener('click', function () {
             vpo = parseFloat(b.dataset.v);
+            // The DAC-range check depends on the scaling, so a green verdict
+            // given at 1 V/oct must not survive a switch to 1.2 unexamined.
+            validateCal();
             invalidate();
             Array.prototype.forEach.call($('vpo').children, function (o) {
                 o.setAttribute('aria-pressed', String(o === b));
@@ -293,6 +296,14 @@
                 } catch (err) {
                     problems.push(err.message);
                 }
+            };
+            r.onerror = function () {
+                problems.push(f.name + ': could not be read');
+            };
+            // loadend fires after load AND after error, so the countdown
+            // reaches zero either way - an unreadable file used to freeze
+            // the whole listing while the readable ones were already in.
+            r.onloadend = function () {
                 if (--pending === 0) {
                     renderSlots(); invalidate();
                     msg($('sclMsg'), problems.length ? 'bad' : '', problems.join('\n'));
@@ -471,6 +482,7 @@
     $('calPick').addEventListener('click', function () { $('calFile').click(); });
     $('calFile').addEventListener('change', function (e) {
         var f = e.target.files[0];
+        e.target.value = '';   // so the same file can be picked again
         if (!f) return;
         var r = new FileReader();
         r.onload = function () {
@@ -804,7 +816,8 @@
                 // How many slots were filled, not which.  A slot can hold a
                 // Scala file someone wrote themselves, and its name is
                 // theirs, not ours to collect.
-                alternate_tunings: (o.alternate_tunings || []).length,
+                alternate_tunings: (o.alternate_tunings || [])
+                    .filter(function (t) { return t !== 'factory'; }).length,
                 // Whether a calibration was supplied - never the numbers,
                 // which are measurements of one person's instrument.
                 pitch_correction: !!o.pitch_correction
@@ -829,6 +842,15 @@
             // own origin.  The tools simply cannot be collected, so the zip
             // carries the firmware and the scripts and says where the rest is.
             var offline = location.protocol === 'file:';
+            // Only the real deployments carry kit/.  A clone served with
+            // python -m http.server - the setup web/README.md itself
+            // documents - has no kit and used to fail both downloads with a
+            // packaging error; it degrades to the partial zip instead.  On
+            // the canonical hosts a missing kit file is a deploy defect and
+            // stays a loud failure.
+            var canonical = ['triglavmodular.hu', 'www.triglavmodular.hu',
+                             'triglav-modular.github.io']
+                .indexOf(location.hostname) >= 0;
             btn.querySelector('span').textContent = offline ? 'Packing…' : 'Fetching tools…';
             var bundle = (offline || !p.bundle) ? Promise.resolve([]) :
                 fetch(p.bundle).then(function (res) {
@@ -898,6 +920,41 @@
                 btn.querySelector('span').textContent = label; btn.disabled = false;
                 report(id, r);
             }).catch(function (e) {
+                if (!offline && !canonical) {
+                    // The kit is not beside this copy of the page.  Pack what
+                    // exists locally, exactly as the file: path does.
+                    btn.querySelector('span').textContent = 'Packing…';
+                    var built2 = p.firmware || '218eV3_v369_Rewired_DFU.hex';
+                    var stock2 = built2.replace(/[^/]+$/, '218eV3_v369_DFU.hex');
+                    var floor2 = new Date(Date.now() - 4000);
+                    var stockDate2 = state.factoryMtime || floor2;
+                    if (stockDate2 > floor2) stockDate2 = floor2;
+                    var files2 = [{ name: built2, data: r.hex },
+                                  { name: stock2, data: state.factoryText,
+                                    mtime: stockDate2 }]
+                        .concat(p.scripts(r),
+                                [{ name: 'README.txt', data: p.note(r, true) }]);
+                    msg($('buildMsg'), 'warn',
+                        'This copy of the page has no flashing tools beside it (' +
+                        e.message + ').\n\nThe download has the firmware and the ' +
+                        'scripts. Take the tools from the repository, or use the ' +
+                        'hosted page for a complete one:\n' +
+                        'https://triglav-modular.github.io/218e-Rewired/');
+                    return ZIP.build(files2, []).then(function (blob) {
+                        var a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = p.zip;
+                        document.body.appendChild(a); a.click(); a.remove();
+                        setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+                        btn.querySelector('span').textContent = label;
+                        btn.disabled = false;
+                    }).catch(function (e2) {
+                        btn.querySelector('span').textContent = label;
+                        btn.disabled = false;
+                        msg($('buildMsg'), 'bad',
+                            'Could not assemble the download: ' + e2.message);
+                    });
+                }
                 btn.querySelector('span').textContent = label; btn.disabled = false;
                 msg($('buildMsg'), 'bad',
                     'Could not assemble the download: ' + e.message +
