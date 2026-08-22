@@ -4,11 +4,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
     <style>
+      /* The colour shapes are stroked in the outline's own black even though
+         the outline is a shape of its own drawn on top: the fills run all the
+         way out to the silhouette, and an antialiased fill edge that
+         coincides with the outline's edge blends the fill into the page - a
+         yellow fringe on the site's dark background.  The stroke buries that
+         seam under black; everywhere else it hides under the outline shape.
+         Dropping these is how the fringe came back once already. */
       .cls-1 {
+        stroke: #04070b;
+        stroke-width: 1;
+        stroke-linejoin: round;
         fill: #FFDA6C;
       }
 
       .cls-2 {
+        stroke: #04070b;
+        stroke-width: 1;
+        stroke-linejoin: round;
         fill: #fff;
       }
 
