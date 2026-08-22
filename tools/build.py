@@ -139,15 +139,22 @@ def parse_scala(path: Path) -> list[float]:
     Scala format: '!' comments, then description, then the degree count, then
     that many pitches as either a ratio (a/b) or a cents value (contains '.').
     """
-    lines = [
-        ln.strip()
-        for ln in path.read_text().splitlines()
-        if ln.strip() and not ln.lstrip().startswith("!")
-    ]
-    if len(lines) < 2:
+    raw = [ln for ln in path.read_text().splitlines()
+           if not ln.lstrip().startswith("!")]
+    # The first non-comment line is the description, which the format allows
+    # to be blank - so it is consumed by position, never filtered.  Dropping
+    # blank lines first shifted the count into the description and the first
+    # pitch into the count for every legal file with an empty description.
+    body = [ln.strip() for ln in raw[1:] if ln.strip()]
+    if not raw or not body:
         raise ValueError(f"{path.name}: not a Scala file")
-    count = int(lines[1].split()[0])
-    pitches = lines[2 : 2 + count]
+    head = body[0].split()[0]
+    try:
+        count = int(head)
+    except ValueError:
+        raise ValueError(
+            f"{path.name}: degree count {head!r} is not a number") from None
+    pitches = body[1 : 1 + count]
     if len(pitches) != count:
         raise ValueError(f"{path.name}: declares {count} degrees, found {len(pitches)}")
 
@@ -1022,7 +1029,7 @@ def main() -> None:
     # branchless at every use site and lets the same numbers serve the
     # pressure aggregate and the portamento weighting.
     black_mask = 0x0A54A54A
-    excess = round(cfg["pressure"].get("black_key_scale", 1.0) * 256) - 256
+    excess = round(cfg["pressure"]["black_key_scale"] * 256) - 256
     if not 0 <= excess <= 0x400:
         raise SystemExit("[pressure].black_key_scale must be between 1.0 and 5.0")
     tables["black_key_excess"] = [excess if (black_mask >> k) & 1 else 0 for k in range(32)]
@@ -1040,7 +1047,11 @@ def main() -> None:
         "scan_period_ms": cfg["timing"]["scan_period_ms"],
         "proximity_reference": cfg["pressure"].get("proximity_reference", 300),
         "factory_gain_shift": cfg["diagnostics"].get("factory_gain_shift", 3),
-        "black_key_scale_32": round(cfg["pressure"].get("black_key_scale", 1.35) * 32),
+        # Direct indexing, as above at the excess table: the two dead
+        # fallbacks here used to disagree (1.0 vs 1.35), which would have
+        # split one correction across its two consumers had the key ever
+        # gone missing from the frozen defaults.
+        "black_key_scale_32": round(cfg["pressure"]["black_key_scale"] * 32),
         "smoothing_taps": cfg["pressure"].get("smoothing_taps", 8),
         "curve_default_level": cfg["pressure"]["curve"].get("default_level", 31),
         # One more than the top level, because the knob maps adc*steps>>10.

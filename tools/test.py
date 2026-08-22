@@ -95,6 +95,18 @@ def test_scala() -> None:
            lambda: B.parse_scala(tmp("! t\nt\n 3\n!\n 100.0\n 200.0\n 2/1\n", "_n.scl")),
            "12-note")
 
+    # The format allows a blank description, and the parser used to filter
+    # blank lines before indexing - shifting the count into the description
+    # and the first pitch into the count, so every such legal file died with
+    # a raw ValueError.
+    twelve = (" 100.0\n 200.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n"
+              " 800.0\n 900.0\n 1000.0\n 1100.0\n 2/1\n")
+    blank = B.parse_scala(tmp("! made elsewhere\n\n 12\n" + twelve, "_blank.scl"))
+    check("blank description line accepted", len(blank) == 12 and blank[0] == 0)
+    raises("degree count that is not a number is refused cleanly",
+           lambda: B.parse_scala(tmp("! t\nt\n 12x\n" + twelve, "_cnt.scl")),
+           "not a number")
+
 
 def test_tables(cfg: dict) -> None:
     print("generated tables")

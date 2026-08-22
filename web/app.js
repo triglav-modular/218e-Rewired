@@ -315,6 +315,13 @@
     // correction is simply minus the reading.  Which is also why nothing
     // accumulates here: each entry stands alone.
     var measured = [];
+    // Rows a loaded CSV supplied OUTSIDE the playable keys, kept verbatim so
+    // the same file builds the same image here and in tools/build.py - the
+    // loader used to regenerate the tails, so a full 79-row calibration
+    // built one image on the page and another on the CLI, silently.  Cleared
+    // the moment any key is edited: the tail belonged to the measurements it
+    // arrived with.
+    var loadedTail = null;
     for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);
 
     function drawPlot() {
@@ -368,6 +375,7 @@
                 input.addEventListener('change', function () {
                     measured[n] = parseFloat(input.value) || 0;
                     input.className = measured[n] !== 0 ? 'set' : '';
+                    loadedTail = null;
                     drawPlot(); validateCal();
                     if ($('useCal').checked) invalidate();
                 });
@@ -417,6 +425,13 @@
         for (n = PLAYABLE_HIGH + 1; n < TABLE_ENTRIES; n++) {
             full[n] = full[n - 1] + slope;
         }
+        // A loaded file's own out-of-range rows win over the derivation, so
+        // the CSV builds byte-identically to the CLI reading the same file.
+        if (loadedTail) {
+            for (n = 0; n < TABLE_ENTRIES; n++) {
+                if (n in loadedTail) full[n] = -loadedTail[n];
+            }
+        }
         return full.map(function (v, i) { return { semitone: i, cents: v }; });
     }
 
@@ -427,6 +442,7 @@
         syncCalBody(); validateCal(); invalidate();
     });
     $('calZero').addEventListener('click', function () {
+        loadedTail = null;
         measured = measured.map(function () { return 0; });
         buildTable(); drawPlot(); validateCal();
         msg($('calMsg'), '', '');
@@ -459,6 +475,7 @@
         var r = new FileReader();
         r.onload = function () {
             var found = 0;
+            var tail = {}, tailCount = 0;
             // A file of Offset_Cents holds corrections, the opposite sign to a
             // measurement, so it is flipped on the way in.
             var isCorrection = /Offset_Cents/i.test(r.result);
@@ -468,21 +485,35 @@
             // CR-only file arrives as one long line and yields nothing.
             r.result.split(/\r\n|\r|\n/).forEach(function (line) {
                 if (!line.trim() || line.charAt(0) === '#' || /^Semitone/i.test(line)) return;
-                var p = line.split(line.indexOf(';') >= 0 ? ';' : ',');
-                var n = parseInt(p[0], 10), c = parseFloat(p[3]);
+                var semi = line.indexOf(';') >= 0;
+                var p = line.split(semi ? ';' : ',');
+                var cRaw = p[3] || '';
+                // Excel in a comma-decimal locale re-saves a semicolon file
+                // with '12,5' where this wrote '12.5'; parseFloat stops at
+                // the comma and every fraction was silently dropped.
+                if (semi && /^\s*-?\d+,\d+\s*$/.test(cRaw)) {
+                    cRaw = cRaw.replace(',', '.');
+                }
+                var n = parseInt(p[0], 10), c = parseFloat(cRaw);
                 if (isCorrection) c = -c;
-                // Only the playable rows are taken; anything outside is
-                // regenerated from them, so a CSV with filled-in tails cannot
-                // disagree with what the editor shows.
-                if (!isNaN(n) && n >= PLAYABLE_LOW && n <= PLAYABLE_HIGH && !isNaN(c)) {
-                    measured[n] = c; found++;
+                if (!isNaN(n) && !isNaN(c)) {
+                    if (n >= PLAYABLE_LOW && n <= PLAYABLE_HIGH) {
+                        measured[n] = c; found++;
+                    } else if (n >= 0 && n < TABLE_ENTRIES) {
+                        // The keys cannot edit these, but the file said what
+                        // they are, and the build honours the file.
+                        tail[n] = c; tailCount++;
+                    }
                 }
             });
+            loadedTail = (found && tailCount) ? tail : null;
             $('useCal').checked = found > 0;
             syncCalBody();
             buildTable(); drawPlot(); validateCal(); invalidate();
             msg($('calMsg'), found ? 'ok' : 'bad',
-                found ? 'Loaded ' + found + ' rows from ' + f.name
+                found ? 'Loaded ' + found + ' playable rows' +
+                        (tailCount ? ' and ' + tailCount + ' beyond the keys'
+                                   : '') + ' from ' + f.name
                       : 'No usable rows in ' + f.name +
                         ': expected Semitone;Note;Key;Offset_Cents;Source');
         };

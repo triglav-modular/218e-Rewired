@@ -101,11 +101,26 @@ var BUILDLIB = (function () {
 
     // --- generators (tools/build.py) ------------------------------------
     function parseScala(text, name) {
-        var lines = text.split('\n').map(function (l) { return l.trim(); })
-            .filter(function (l) { return l && l.charAt(0) !== '!'; });
-        if (lines.length < 2) throw new Error(name + ': not a Scala file');
-        var count = parseInt(lines[1].split(/\s+/)[0], 10);
-        var pitches = lines.slice(2, 2 + count);
+        // Same shape as tools/build.py parse_scala: comments out first,
+        // then the first remaining line is the description BY POSITION -
+        // the format allows it to be blank, so it must never be filtered.
+        var raw = text.split('\n').filter(function (l) {
+            return l.replace(/^\s+/, '').charAt(0) !== '!';
+        });
+        var body = raw.slice(1).map(function (l) { return l.trim(); })
+            .filter(function (l) { return l; });
+        if (!raw.length || !body.length) {
+            throw new Error(name + ': not a Scala file');
+        }
+        var head = body[0].split(/\s+/)[0];
+        // Number(), not parseInt: '12x' must be refused, not read as 12,
+        // or the page accepts files the CLI build rejects.
+        var count = Number(head);
+        if (!isFinite(count) || count !== Math.floor(count)) {
+            throw new Error(name + ': degree count ' + JSON.stringify(head) +
+                            ' is not a number');
+        }
+        var pitches = body.slice(1, 1 + count);
         if (pitches.length !== count) {
             throw new Error(name + ': declares ' + count + ' degrees, found ' + pitches.length);
         }
@@ -113,10 +128,15 @@ var BUILDLIB = (function () {
         pitches.forEach(function (tok, index) {
             tok = tok.split(/\s+/)[0];
             var value;
-            if (tok.indexOf('.') >= 0) value = parseFloat(tok);
+            // Number(), not parseFloat: parseFloat takes any numeric prefix,
+            // so '700.0!fifth' built an image here that tools/build.py
+            // refuses.  Number() returns NaN for trailing text, and the
+            // finiteness check below turns that into the same refusal the
+            // CLI gives.
+            if (tok.indexOf('.') >= 0) value = Number(tok);
             else {
                 var p = tok.split('/');
-                var ratio = p.length > 1 ? parseFloat(p[0]) / parseFloat(p[1]) : parseFloat(p[0]);
+                var ratio = p.length > 1 ? Number(p[0]) / Number(p[1]) : Number(p[0]);
                 value = 1200.0 * Math.log(ratio) / Math.LN2;
             }
             // Every check below this is a comparison, and every comparison
