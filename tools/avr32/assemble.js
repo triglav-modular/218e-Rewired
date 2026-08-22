@@ -8,10 +8,13 @@
 
 // jsc exposes script arguments as a GLOBAL `arguments` object, which a
 // wrapping function would shadow — so capture it out here, before the IIFE.
-// Node has no such global and puts them in process.argv instead.
-var ARGV = (typeof arguments !== 'undefined')
-    ? Array.prototype.slice.call(arguments)
-    : (typeof process !== 'undefined' && process.argv ? process.argv.slice(2) : []);
+// Node is checked FIRST: its CommonJS wrapper gives every module a local
+// `arguments` too (holding exports/require/module, not the CLI), so testing
+// for `arguments` alone made the Node fallback read garbage and crash.
+var ARGV = (typeof process !== 'undefined' && process.argv)
+    ? process.argv.slice(2)
+    : (typeof arguments !== 'undefined'
+        ? Array.prototype.slice.call(arguments) : []);
 
 (function () {
     'use strict';

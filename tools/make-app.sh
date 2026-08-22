@@ -55,6 +55,18 @@ cp -R "$REPO/mac/support" "$APP/Contents/Resources/support"
 cp "$REPO/Program218e_v3_Rewired_macOS.command" "$APP/Contents/Resources/"
 find "$APP/Contents/Resources/support" -name .DS_Store -delete
 
+# A manifest of what the payload was built FROM.  Signing rewrites every
+# Mach-O below, so the bundle's own bytes cannot be compared with the repo's
+# - but the source hashes can, and CI does: a rebuilt tool in mac/support
+# would otherwise ship stale inside this zip with every workflow green.
+(
+  cd "$REPO"
+  { shasum -a 256 "Program218e_v3_Rewired_macOS.command"
+    find mac/support -type f ! -name .DS_Store -print0 | sort -z | \
+      xargs -0 shasum -a 256
+  } > "$APP/Contents/Resources/SOURCES.sha256"
+)
+
 # --- the launcher ----------------------------------------------------------
 # The flasher is an interactive terminal program, so the app's job is to open
 # it in Terminal.  REWIRED_WORKDIR keeps the log and the firmware folder out

@@ -198,6 +198,38 @@ jobs:
                   sys.exit(f"{repo} has changed since the app was built - "
                            f"rebuild with tools/make-app.sh --notarize and "
                            f"commit mac/Flasher.zip")
+          # The rest of the payload, via the source manifest the build wrote:
+          # signing rewrites the Mach-O bytes inside the bundle, so the bundle
+          # cannot be byte-compared with the repo - but what it was built FROM
+          # can.  Without this, only the .command was checked and a rebuilt
+          # dfu-programmer or launcher shipped stale with every workflow green.
+          import hashlib
+          manifest = root + "Resources/SOURCES.sha256"
+          if manifest not in names:
+              sys.exit("mac/Flasher.zip carries no SOURCES.sha256 - rebuild "
+                       "with tools/make-app.sh --notarize and commit it")
+          stale = []
+          for line in z.read(manifest).decode().splitlines():
+              digest, _, path = line.partition("  ")
+              path = path.strip()
+              if not path:
+                  continue
+              p = Path(path)
+              if not p.exists():
+                  stale.append(f"{path} (in the app, gone from the repo)")
+              elif hashlib.sha256(p.read_bytes()).hexdigest() != digest:
+                  stale.append(path)
+          # And the other direction: a source added since the app was built.
+          listed = {l.partition("  ")[2].strip()
+                    for l in z.read(manifest).decode().splitlines() if l.strip()}
+          for p in sorted(Path("mac/support").rglob("*")):
+              if p.is_file() and p.name != ".DS_Store" and str(p) not in listed:
+                  stale.append(f"{p} (in the repo, not in the app)")
+          if stale:
+              sys.exit("the app was built from different sources than the "
+                       "repository holds:\n  " + "\n  ".join(stale)
+                       + "\nrebuild with tools/make-app.sh --notarize and "
+                       "commit mac/Flasher.zip")
           print(f"the committed app is current ({len(names)} entries)")
           CHECK
 

@@ -946,6 +946,17 @@ def main() -> None:
     calibration = REPO / cfg["pitch"]["calibration_csv"]
 
     if args.fold_measurement:
+        # With pitch_correction off, the calibration target is the generated
+        # all-zero file that options.expand() rewrites on every run - this
+        # very invocation regenerated it a few lines up.  Folding readings
+        # into it would print success and lose them on the next build.
+        if calibration.resolve() == options.FLAT_CALIBRATION.resolve():
+            raise SystemExit(
+                "pitch_correction is false, so the pitch table is built from a generated\n"
+                "all-zero calibration that every build rewrites - readings folded into it\n"
+                "would be lost.  Set pitch_correction to your calibration CSV (for example\n"
+                "pitch_correction = \"calibration/218e-pitch-calibration.csv\") and run\n"
+                "this again.")
         fold_measurement(cfg, calibration, Path(args.fold_measurement))
         return
 

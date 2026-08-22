@@ -15,6 +15,8 @@ change in the assembly, the tables or the patch set:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import re
 import subprocess
@@ -796,6 +798,30 @@ def test_golden(cfg: dict) -> None:
           result.stdout.strip().splitlines()[-1] if result.stdout else result.stderr.strip())
 
 
+def test_corpus_current() -> None:
+    """The encoder corpus must match the assembler it vouches for.
+
+    The corpus is Ghidra's answer sheet for the JS encoder, and it can only
+    fail on entries it has: an assembler edit without a regeneration leaves
+    the test passing while covering the previous program.  That happened -
+    two functional changes shipped against an answer sheet from before them.
+    The corpus carries the sha256 of the program.js it was extracted from,
+    and this refuses a mismatch.
+    """
+    print("encoder corpus")
+    corpus_path = REPO / "tools" / "avr32" / "corpus.json"
+    if not corpus_path.exists():
+        check("corpus present", False, "tools/avr32/corpus.json is missing")
+        return
+    corpus = json.loads(corpus_path.read_text())
+    stamp = corpus.get("program_sha256")
+    current = hashlib.sha256(
+        (REPO / "tools" / "avr32" / "program.js").read_bytes()).hexdigest()
+    check("corpus matches the current assembler", stamp == current,
+          "program.js changed since the corpus was extracted - regenerate "
+          "with tools/avr32/make_corpus.py (needs Ghidra)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden", action="store_true",
@@ -827,6 +853,7 @@ def main() -> None:
     test_overlap_and_range()
     test_atomic_replace()
     test_generated_is_current()
+    test_corpus_current()
     test_hex_roundtrip(cfg)
     if args.golden:
         test_golden(cfg)

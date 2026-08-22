@@ -165,11 +165,12 @@ jobs:
           if exist menuout.txt type menuout.txt
           if not "%RC%"=="0" (echo FAILED: the arrow menu could not be driven & exit /b 1)
           del menuout.txt 2>NUL
-          exit /b 0
           rem With no console to read arrow keys from it must write no answer
           rem at all, so the batch knows to ask in its own way.  It must not
           rem try to read the pipe: cmd buffers redirected input and hands a
-          rem child process none of it, which is how this went wrong.
+          rem child process none of it, which is how this went wrong.  This
+          rem check sat below an exit /b 0 for a while, silently dead - keep
+          rem it above the exit.
           > menu.txt echo Flash firmware onto the 218e
           >> menu.txt echo Erases the chip and writes a new image.
           >> menu.txt echo --

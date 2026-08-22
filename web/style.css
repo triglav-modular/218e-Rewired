@@ -501,6 +501,10 @@ label.opt input {
   cursor: pointer;
   transition: .15s;
 }
+.drop:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .drop:hover,
 .drop.over {
   border-color: var(--accent2);

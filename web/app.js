@@ -119,6 +119,15 @@
 
     var drop = $('drop');
     drop.addEventListener('click', function () { $('file').click(); });
+    // The real input is hidden and unfocusable, so the drop zone is the
+    // keyboard's way in: without this, no keyboard or switch user could
+    // supply the factory image, and everything downstream is gated on it.
+    drop.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            $('file').click();
+        }
+    });
     drop.addEventListener('dragover', function (e) {
         e.preventDefault(); drop.classList.add('over');
     });
