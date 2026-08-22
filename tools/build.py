@@ -652,6 +652,11 @@ RAM_REGIONS = [
     (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
     (0x60EF, 0x60F0, "previous switch position"),
     (0x60F0, 0x60F2, "vibrato knob latch"),
+    # Our own cell, not the factory's state+0x38c: that byte is the factory
+    # weighted-random selector's bias parameter, and borrowing it meant a
+    # factory-knobs build still had knob 1 writing over a live factory
+    # setting.
+    (0x60F2, 0x60F3, "arp knob 1 latch"),
     (0x6000, 0x6021, "arp press-order list"),
     (0x6024, 0x6026, "vibrato LFO phase"),
     (0x6026, 0x6028, "vibrato smoothed depth"),
@@ -1081,9 +1086,20 @@ def main() -> None:
     # note_on_pool / active_key_pool are deliberately NOT gated here: those
     # wrappers also carry the arp latch toggle and the press-order append, and
     # their filter-reset stores land on a cell the factory path never reads.
+    # The arp gate hook exists to latch knobs 1-3 for the replacement arp
+    # behaviours.  With all three left factory nothing consumes the latches,
+    # and a hook that only feeds our own RAM would still replace factory
+    # code the config promised to keep - so it stays out entirely.
+    blocks["arp_gate_hook"] = any(
+        get(cfg, f"knobs.knob{i}") != "factory" for i in (1, 2, 3))
+
     if cfg.get("_pressure_factory"):
+        # knob4_pool goes back too: edit-mode knob 4 is the curve selector,
+        # which is pressure work - left routed, a pressure-off build's knob-4
+        # sweep wrote curve-marked values into the factory velocity-min byte,
+        # which the factory persists.
         for name in ("pressure_fn_pool", "pressure_float_helper_pool",
-                     "knob1_pool", "pressure_gain_nop"):
+                     "knob1_pool", "knob4_pool", "pressure_gain_nop"):
             blocks[name] = False
         # The clamp skips jump over the factory's own 16-tap pressure filter.
         # They used to be unconditional, so "pressure off" still ran without

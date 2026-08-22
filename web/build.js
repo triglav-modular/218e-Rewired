@@ -33,8 +33,16 @@ var WEBBUILD = (function () {
     function flagsFor(cfg) {
         var flags = BUILDLIB.resolveFlags(cfg);
         var blocks = flags.blocks, features = flags.features;
+        // Same rule as tools/build.py: the arp gate hook latches knobs 1-3
+        // for the replacement behaviours, so with all three factory it goes.
+        blocks.arp_gate_hook = ['knob1', 'knob2', 'knob3'].some(function (k) {
+            return cfg.knobs[k] !== 'factory';
+        });
         if (cfg._pressure_factory) {
             ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
+             // Same rule as tools/build.py: the edit-mode curve knob is
+             // pressure work, so it reverts with the rest.
+             'knob4_pool',
              'pressure_gain_nop',
              // The clamp skips jump the factory's own pressure filter; the
              // cells that made them load-bearing have moved out of its array.

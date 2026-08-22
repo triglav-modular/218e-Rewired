@@ -1035,8 +1035,11 @@ public class AssemblePressureFix extends GhidraScript {
         finish("pressure_blend", 0x80019d38L);
 
         // Arpeggiator randomness on the preset-voltage knobs (outside edit):
-        //   knob 1 (0x30a) -> state+0x38c, the factory weighted-random key
-        //     selector's bias/randomness parameter (works with edit key 25 on);
+        //   knob 1 (0x30a) -> 0x60f2 latch, read by the replacement key
+        //     selector below.  Not state+0x38c: that is the factory
+        //     weighted-random selector's own bias parameter, and the factory
+        //     selector still runs when knob 1 is left factory - an earlier
+        //     design borrowed the cell and quietly overwrote it;
         //   knob 2 (0x30c) -> random gate shortening: the countdown's gate-off
         //     compare (was == 3) becomes == R, R redrawn per step in
         //     [3, 3 + (interval-4)*knob/1024] via the factory PRNG (0x80013e04);
@@ -1044,9 +1047,10 @@ public class AssemblePressureFix extends GhidraScript {
         //     probability knob/1024 (bottom deadzone = off, factory-exact).
         // Knob values latch only outside edit mode so edit-mode knob use
         // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60e8 last
-        // countdown, 0x60ea knob3 latch, 0x60ec gate threshold.
+        // countdown, 0x60ea knob3 latch, 0x60ec gate threshold, 0x60f2
+        // knob1 latch.
         // Arp controls on the preset knobs (outside edit; latches edit-gated):
-        //   knob 1 (0x30a>>3 -> state+0x38c latch): press-order vs random key
+        //   knob 1 (0x30a>>3 -> 0x60f2 latch): press-order vs random key
         //     selection, applied by the replacement selector below;
         //   knob 2 (0x30c -> 0x60e6 latch): rhythm randomness — the per-step
         //     countdown reload becomes T*((1024-r) + r*E)/1024 with E an
@@ -1071,7 +1075,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x80019d98");
         emit("LD.SH R8,R10[0x30a]");
         emit("LSR R8,0x3");
-        emit("ST.B R10[0x38c],R8");
+        emit("MOV R11,0x60f2");
+        emit("ST.B R11[0x0],R8");
         emit("LD.SH R8,R10[0x30c]");
         emit("MOV R11,0x60e6");
         emit("ST.H R11[0x0],R8");
@@ -1219,7 +1224,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x8001a1f0");
         padTo(0x8001a0c8L);
-        emit("LD.UB R2,R1[0x38c]");
+        emit("MOV R2,0x60f2");
+        emit("LD.UB R2,R2[0x0]");
         emit("CP.W R2,0x6");
         emit("BR{lt} 0x8001a150");
         emit("MCALL PC[0x8001a224]");
@@ -2263,12 +2269,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R9[0x6],R8");        // 0x60ea arp knob 3 latch
         emit("ST.B R9[0xa],R8");        // 0x60ee deferred-pulse countdown
         emit("ST.H R9[0xc],R8");        // 0x60f0 vibrato knob latch
+        emit("ST.B R9[0xe],R8");        // 0x60f2 arp knob 1 latch
         if (feature("arp_latch")) {
             emit("LD.UB R8,R10[0x340]");
             emit("MOV R9,0x608e");
             emit("ST.B R9[0x0],R8");
-            emit("MOV R9,0x60ef");
-            emit("ST.B R9[0x0],R8");
+            // 0x60ef, as a displacement off the base already in R9: the two
+            // bytes the second MOV cost went to the knob-1 latch init above.
+            emit("ST.B R9[0x61],R8");
         }
         // Commit the marker only after all dependent state is coherent.
         emit("MOV R9,0x602a");
