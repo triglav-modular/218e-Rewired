@@ -25,7 +25,7 @@ Then run the flasher for your platform from this repository:
 | Platform | Flasher |
 |---|---|
 | macOS | `Program218e_v3_Rewired_macOS.command` |
-| Windows | `Program218e_v3_Rewired_Windows.bat` |
+| Windows | `218e_Rewired_Flasher.bat` |
 
 It opens with a choice: flash firmware, or get a keyboard out of DFU mode
 after an interrupted flash. The second writes nothing.

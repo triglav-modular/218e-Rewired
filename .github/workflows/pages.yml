@@ -39,7 +39,7 @@ on:
       - 'tools/test_worker.mjs'
       - 'wrangler.toml'
       - 'Program218e_v3_Rewired_macOS.command'
-      - 'Program218e_v3_Rewired_Windows.bat'
+      - '218e_Rewired_Flasher.bat'
       - 'mac/Flasher.zip'
       - 'mac/support/**'
       - 'windows/support/**'

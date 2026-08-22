@@ -52,7 +52,7 @@ def main() -> None:
     # that image without asking.  Both files are LF - the .bat too, which cmd
     # accepts - and JSON round-trips whatever the bytes are.
     for key, name in (("flasherMac",  "Program218e_v3_Rewired_macOS.command"),
-                      ("flasherWin",  "Program218e_v3_Rewired_Windows.bat")):
+                      ("flasherWin",  "218e_Rewired_Flasher.bat")):
         parts.append(f"  {key}: {json.dumps((REPO / name).read_bytes().decode())},")
 
     # The bundled tunings, preloaded into the page's slots (behind a checkbox

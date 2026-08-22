@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the Windows launcher: the banana-faced .exe whose whole job is to run
-# Program218e_v3_Rewired_Windows.bat beside itself.  A batch file has no slot
+# 218e_Rewired_Flasher.bat beside itself.  A batch file has no slot
 # for an icon or a signature; this carries both on its behalf.
 #
 # Cross-compiled from macOS with mingw-w64 (brew install mingw-w64) and

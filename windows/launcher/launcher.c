@@ -2,7 +2,7 @@
  *
  * The flasher is a batch file, and a batch file has nowhere to put an icon
  * or a signature - the format has no slot for either.  This launcher exists
- * to carry both: it finds Program218e_v3_Rewired_Windows.bat beside itself,
+ * to carry both: it finds 218e_Rewired_Flasher.bat beside itself,
  * runs it in the console this process was given, waits, and hands back the
  * script's exit code.  Nothing else.  Running the .bat directly stays
  * exactly equivalent.
@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include <wchar.h>
 
-static const wchar_t SCRIPT[] = L"Program218e_v3_Rewired_Windows.bat";
+static const wchar_t SCRIPT[] = L"218e_Rewired_Flasher.bat";
 
 int wmain(void)
 {

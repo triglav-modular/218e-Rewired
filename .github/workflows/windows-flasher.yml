@@ -12,7 +12,7 @@ name: Windows flasher
 on:
   push:
     paths:
-      - 'Program218e_v3_Rewired_Windows.bat'
+      - '218e_Rewired_Flasher.bat'
       - 'windows/support/**'
       - 'windows/launcher/**'
       # The flasher shells out to these, so a change to one can break it
@@ -58,7 +58,7 @@ jobs:
           # cmd treats ^ as an escape, so "^ " prints a bare space and single
           # carets would leave the banana blind.  Run the real :banana block
           # through cmd and check the eyes survive to stdout.
-          $src   = Get-Content Program218e_v3_Rewired_Windows.bat
+          $src   = Get-Content 218e_Rewired_Flasher.bat
           $start = ($src | Select-String -Pattern '^:banana$').LineNumber
           if (-not $start) { throw ":banana label not found" }
           $body = @()
@@ -91,7 +91,7 @@ jobs:
         shell: cmd
         run: |
           (echo 1& echo YES)> answers0.txt
-          CALL Program218e_v3_Rewired_Windows.bat < answers0.txt > out.txt 2>&1
+          CALL 218e_Rewired_Flasher.bat < answers0.txt > out.txt 2>&1
           type out.txt
           findstr /C:"Looked in:" out.txt >NUL || (echo FAILED: did not say where it looked & exit /b 1)
           findstr /C:"No flashable 218e V3 image" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
@@ -200,7 +200,7 @@ jobs:
           pwsh -File tools\Make-TestImage.ps1 -Path firmware\second.hex -Bytes 20480
           rem Flash, consent, then pick nothing: it must have listed both and stopped.
           (echo 1& echo YES& echo.& echo.)> ans2.txt
-          CALL Program218e_v3_Rewired_Windows.bat < ans2.txt > out4.txt 2>&1
+          CALL 218e_Rewired_Flasher.bat < ans2.txt > out4.txt 2>&1
           type out4.txt
           findstr /C:"flashable images found" out4.txt >NUL || (echo FAILED: did not list the images & exit /b 1)
           findstr /C:"Newest first" out4.txt >NUL || (echo FAILED: no ordering shown & exit /b 1)
@@ -219,7 +219,7 @@ jobs:
           mkdir firmware 2>NUL
           pwsh -File tools\Make-TestImage.ps1 -Path firmware\mine.hex
           (echo 1& echo YES& echo.)> ans5.txt
-          CALL Program218e_v3_Rewired_Windows.bat < ans5.txt > out5.txt 2>&1
+          CALL 218e_Rewired_Flasher.bat < ans5.txt > out5.txt 2>&1
           type out5.txt
           findstr /C:"stray.hex" out5.txt >NUL && (echo FAILED: listed an image from Downloads & exit /b 1)
           findstr /C:"mine.hex" out5.txt >NUL || (echo FAILED: did not list the package image & exit /b 1)
@@ -237,13 +237,13 @@ jobs:
           set "PKG=%TEMP%\Rewired-Windows (1)"
           rmdir /S /Q "%PKG%" 2>NUL
           mkdir "%PKG%\firmware" "%PKG%\tools" 2>NUL
-          copy /Y Program218e_v3_Rewired_Windows.bat "%PKG%\" >NUL
+          copy /Y 218e_Rewired_Flasher.bat "%PKG%\" >NUL
           copy /Y tools\*.ps1 "%PKG%\tools\" >NUL
           copy /Y tools\validate_hex.py "%PKG%\tools\" >NUL
           copy /Y windows\support\*.exe "%PKG%\tools\" >NUL
           pwsh -File tools\Make-TestImage.ps1 -Path "%PKG%\firmware\one.hex"
           (echo 1& echo YES& echo.)> ansb.txt
-          CALL "%PKG%\Program218e_v3_Rewired_Windows.bat" < ansb.txt > out6.txt 2>&1
+          CALL "%PKG%\218e_Rewired_Flasher.bat" < ansb.txt > out6.txt 2>&1
           type out6.txt
           findstr /C:"no such folder" out6.txt >NUL && (echo FAILED: block ended at the bracket & exit /b 1)
           findstr /C:"no firmware folder" out6.txt >NUL && (echo FAILED: did not see its own firmware folder & exit /b 1)
@@ -265,7 +265,7 @@ jobs:
           mkdir firmware 2>NUL
           pwsh -File tools\Make-TestImage.ps1 -Path firmware\custom.hex
           (echo 1& echo YES& echo.)> ans.txt
-          CALL Program218e_v3_Rewired_Windows.bat < ans.txt > out3.txt 2>&1
+          CALL 218e_Rewired_Flasher.bat < ans.txt > out3.txt 2>&1
           type out3.txt
           findstr /C:"Type FLASH" out3.txt >NUL && (echo FAILED: still gating on the checksum & exit /b 1)
           findstr /C:"is not the image this flasher" out3.txt >NUL && (echo FAILED: pairing language remains & exit /b 1)
@@ -326,7 +326,7 @@ jobs:
           )
           setlocal EnableDelayedExpansion
           set "SHA=!SHA: =!"
-          powershell -Command "(Get-Content 'Program218e_v3_Rewired_Windows.bat' -Raw) -replace '(?<=EXPECTED_SHA256=)[0-9a-f]{64}', '!SHA!' | Set-Content 'ci.bat'"
+          powershell -Command "(Get-Content '218e_Rewired_Flasher.bat' -Raw) -replace '(?<=EXPECTED_SHA256=)[0-9a-f]{64}', '!SHA!' | Set-Content 'ci.bat'"
           endlocal
           rem Answers come from a file, not a pipe: a piped line is consumed by
           rem the first subshell the script spawns, so SET /P then reads EOF and

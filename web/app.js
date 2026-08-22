@@ -679,7 +679,7 @@
                 ['kit/tools/validate_hex.py', 'tools/validate_hex.py', false]
             ],
             scripts: function (r) { return [
-                { name: 'Program218e_v3_Rewired_Windows.bat', data: r.scripts.flasherWin },
+                { name: '218e_Rewired_Flasher.bat', data: r.scripts.flasherWin },
                 // The manifest was macOS-only, so the Windows flasher had
                 // nothing to read and listed the images with no idea what
                 // either of them was.
@@ -688,7 +688,7 @@
             note: function (r, partial) { return readme(r, [
                 'Unzip it anywhere, keeping the folders together, and double-click',
                 '',
-                '    Program218e_v3_Rewired_Windows.bat',
+                '    218e_Rewired_Flasher.bat',
                 '',
                 'Windows Defender may warn about it: More info, then Run anyway.',
                 '',
