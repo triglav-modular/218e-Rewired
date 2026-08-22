@@ -157,7 +157,6 @@
   margin: 0;
   overflow: hidden;
   fill: currentColor;
-  stroke: currentColor;
 }
 /* White into accent, so it takes the pass like the rest of the row. */
 .brand:hover,

@@ -107,6 +107,18 @@ BRAND_LEFT = re.compile(
 SLIDE = re.compile(rf"transition:\s*background-position\s+({TIME})\s+({EASE})\s*;")
 PASS = re.compile(rf"animation:\s*[\w-]*sweep-\w+\s+({TIME})\s+({TIME})\s+({EASE})\s+forwards")
 THEME_CSS = re.compile(r'href=["\']([^"\']*themes/[^"\']+/style\.css[^"\']*)["\']')
+# The header mark, inline in the site's markup.  Pulled rather than pasted
+# because it has now been redrawn three times - restroked, recropped, and
+# flattened to outlines - and each time the copy here went quietly stale.
+MARK = re.compile(r'<svg class="mark"[^>]*>(.*?)</svg>', re.S)
+MARK_VIEWBOX = re.compile(r'viewBox="([\d.\s-]+)"')
+MARK_PATH = re.compile(r'<path\b([^>]*)/>', re.S)
+# Path data is numbers and command letters and nothing else.  Narrow enough
+# that no attribute, tag or entity can ride in on it.
+PATH_D = re.compile(r'^[MmLlHhVvCcSsQqTtAaZz0-9eE ,.+-]+$')
+FILL_RULE = ("nonzero", "evenodd")
+MAX_PATHS, MAX_D = 8, 20000
+MARK_BLOCK = re.compile(r'([ \t]*)<svg class="mark".*?</svg>', re.S)
 
 
 class HeaderNav(HTMLParser):
@@ -219,6 +231,98 @@ def vet(items: list[tuple[str, str, tuple[str, ...]]]) -> str | None:
     if not any(href.startswith(CURRENT_SECTION) for href, _, _ in items):
         return f"nothing under {CURRENT_SECTION}, so this page has no section"
     return None
+
+
+def read_mark(home: str) -> list[dict] | str:
+    """The header mark's geometry, or a sentence about why it cannot be had."""
+    block = MARK.search(home)
+    if not block:
+        return "no <svg class=\"mark\"> in the header"
+    vb = MARK_VIEWBOX.search(block.group(0))
+    if not vb or len(vb.group(1).split()) != 4:
+        return "the mark has no four-number viewBox"
+    paths = MARK_PATH.findall(block.group(1))
+    if not 1 <= len(paths) <= MAX_PATHS:
+        return f"the mark has {len(paths)} paths"
+    out = []
+    for attrs in paths:
+        d = re.search(r'\bd="([^"]*)"', attrs)
+        if not d or not d.group(1) or len(d.group(1)) > MAX_D:
+            return "a path in the mark has no usable d"
+        if not PATH_D.match(d.group(1)):
+            return "a path in the mark carries something that is not path data"
+        one = {"d": d.group(1)}
+        rule = re.search(r'\bfill-rule="([^"]*)"', attrs)
+        if rule:
+            if rule.group(1) not in FILL_RULE:
+                return f"fill-rule {rule.group(1)!r} is not one this page knows"
+            one["fill-rule"] = rule.group(1)
+        width = re.search(r'\bstroke-width="(\d*\.?\d+)"', attrs)
+        if width:
+            one["stroke-width"] = width.group(1)
+        out.append(one)
+    return [{"viewBox": " ".join(vb.group(1).split())}] + out
+
+
+def render_mark(mark: list[dict], indent: str) -> str:
+    """The mark as this page carries it, written out from the parts.
+
+    Whether it is stroked is read off the artwork rather than decided here:
+    the mark was two stroked paths and is now two filled outlines, and a
+    stroke left on by hand would have fattened every edge of the new one by a
+    unit.  So stroke rides on the element only while a width says it should.
+    """
+    head, paths = mark[0], mark[1:]
+    stroked = any("stroke-width" in p for p in paths)
+    attrs = f'class="mark" viewBox="{head["viewBox"]}"'
+    if stroked:
+        attrs += ' stroke="currentColor" stroke-miterlimit="10"'
+    lines = [f'{indent}<svg {attrs} aria-hidden="true" focusable="false">']
+    for p in paths:
+        bits = "".join(f' {k}="{v}"' for k, v in p.items() if k != "d")
+        lines.append(f'{indent}  <path{bits} d="{p["d"]}"/>')
+    lines.append(f"{indent}</svg>")
+    return "\n".join(lines)
+
+
+def sync_mark(page_path: Path, icon_path: Path, home: str, check: bool) -> int:
+    page = page_path.read_text(encoding="utf-8")
+    block = MARK_BLOCK.search(page)
+    if not block:
+        print(f"{page_path}: no mark to sync", file=sys.stderr)
+        return 0
+    mark = read_mark(home)
+    if isinstance(mark, str):
+        return keep("mark", mark)
+
+    want = render_mark(mark, block.group(1))
+    if block.group(0) == want:
+        print(f"{page_path}: the mark is in step with {SOURCE}")
+        return 0
+    if check:
+        print(f"{page_path}: the mark has drifted from {SOURCE}")
+        return 1
+    page_path.write_text(page[:block.start()] + want + page[block.end():],
+                         encoding="utf-8")
+    # Safari fills whatever shape it is handed with the colour on the <link>,
+    # so the pinned tab is the same artwork in black on nothing.  Written from
+    # the same pull, so it cannot be the weight the mark used to be.
+    head, paths = mark[0], mark[1:]
+    body = "\n".join(
+        "  <path" + "".join(f' {k}="{v}"' for k, v in p.items() if k != "d")
+        + f' d="{p["d"]}"/>' for p in paths)
+    stroke = (' stroke="#000000" stroke-miterlimit="10"'
+              if any("stroke-width" in p for p in paths) else "")
+    icon_path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<!-- The mark alone, black on nothing: Safari fills this shape with the\n"
+        "     colour named on the <link>, so a plate traced in with it would come\n"
+        "     out as a solid block.  Written by tools/sync-site.py. -->\n"
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{head["viewBox"]}"\n'
+        f'     fill="#000000"{stroke}>\n{body}\n</svg>\n', encoding="utf-8")
+    print(f"{page_path}: the mark updated from {SOURCE} "
+          f"({len(paths)} paths, {'stroked' if stroke else 'outlines'})")
+    return 0
 
 
 def theme_url(home: str) -> str | None:
@@ -366,6 +470,9 @@ def main(argv: list[str]) -> int:
         return keep("menu and sweep", f"{SOURCE} not read ({e})")
 
     drifted = sync_menu(args.root / "index.html", home, args.check)
+    drifted |= sync_mark(args.root / "index.html",
+                         args.root / "icons" / "safari-pinned-tab.svg",
+                         home, args.check)
     drifted |= sync_theme(args.root / "style.css", home, args.timeout, args.check)
     return drifted
 
