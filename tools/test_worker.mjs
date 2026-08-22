@@ -22,17 +22,30 @@ function check(name, ok, detail) {
   if (!ok) failures++;
 }
 
-// A dataset that remembers what it was told, standing in for the binding.
+// Bindings that remember what they were told: the dataset, and the namespace
+// the dashboard reads back without a credential.
 function fakeEnv() {
   const written = [];
-  return { written, BUILDS: { writeDataPoint: (p) => written.push(p) } };
+  const keys = [];
+  return {
+    written, keys,
+    BUILDS: { writeDataPoint: (p) => written.push(p) },
+    COUNTS: { put: async (name, value, opts) => keys.push({ name, value, opts }) },
+  };
 }
 
+// waitUntil is the runtime's, not ours - awaited here so the test sees the
+// write the runtime would have finished after the response went out.
+const pending = [];
+const ctx = { waitUntil: (p) => pending.push(p) };
+
 async function post(body, env) {
-  return worker.fetch(new Request(BEACON, {
+  const res = await worker.fetch(new Request(BEACON, {
     method: 'POST',
     body: typeof body === 'string' ? body : JSON.stringify(body)
-  }), env);
+  }), env, ctx);
+  await Promise.all(pending.splice(0));
+  return res;
 }
 
 const REAL = {
@@ -51,6 +64,40 @@ const REAL = {
         p && p.blobs.join(',') === 'win,1.1.0,1.2'
         && p.doubles.join(',') === '1,1,1,0,3,1',
         p && `${p.blobs} / ${p.doubles}`);
+
+  // The same download, in the form the dashboard can read without a token.
+  const k = env.keys[0];
+  check('it is also written where it can be read back', env.keys.length === 1);
+  check('keyed by the time it happened, so a window is a string compare',
+        k && /^b:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z:[a-z0-9]{4,8}$/.test(k.name),
+        k && k.name);
+  check('the whole point rides in the metadata, so listing is enough',
+        k && k.opts.metadata.platform === 'win'
+        && k.opts.metadata.tunings === 3
+        && k.opts.metadata.calibration === 1,
+        k && JSON.stringify(k.opts.metadata));
+  check('and it ages out rather than accumulating forever',
+        k && k.opts.expirationTtl > 86400, k && String(k.opts.expirationTtl));
+}
+
+{
+  // The namespace is the newer half; a worker deployed before it existed, or
+  // one whose binding went missing, must still record what it can.
+  const env = fakeEnv();
+  delete env.COUNTS;
+  const res = await post(REAL, env);
+  check('no namespace still writes the dataset',
+        res.status === 204 && env.written.length === 1);
+}
+
+{
+  // KV is a network call.  A namespace having a bad day must not turn a
+  // download into an error.
+  const env = fakeEnv();
+  env.COUNTS = { put: async () => { throw new Error('KV is unhappy'); } };
+  const res = await post(REAL, env);
+  check('a namespace that refuses does not fail the download',
+        res.status === 204 && env.written.length === 1);
 }
 
 {

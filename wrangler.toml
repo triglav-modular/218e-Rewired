@@ -37,6 +37,18 @@ routes = [
 binding = "BUILDS"
 dataset = "builds"
 
+# The same counts again, as one key per download, so they can be read back
+# without an API token: an Analytics Engine binding can only write, and
+# reading it means the SQL API and a credential to go with it.  A namespace
+# can be bound to the reader directly.
+#
+# Not a replacement for the dataset - both are written, because the dataset is
+# the durable record with real queries behind it, and this is the half that
+# can be read by a page.
+[[kv_namespaces]]
+binding = "COUNTS"
+id = "3a37ad22a6a64dfcb8a3a5469b414728"
+
 # Logs were on in the dashboard, and an undeclared setting is not promised to
 # survive a deploy, so it is declared.
 [observability]

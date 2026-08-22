@@ -580,17 +580,23 @@ costs nothing; without a usable binding the route answers 204 and writes
 nothing. A missing or misconfigured binding must never break the page, so that
 direction is the safe one.
 
-**Reading it back.** Analytics Engine has no data browser in the dashboard —
-the Analytics Engine page lists datasets and nothing else — so the counts come
-from the SQL API, with a token that has **Account Analytics: Read** and nothing
-else, made at <https://dash.cloudflare.com/profile/api-tokens>.
+Each download is written twice: to the Analytics Engine dataset, and as one
+key in the `COUNTS` KV namespace whose metadata carries the same nine values.
+The second exists because an Analytics Engine binding can only write — reading
+one back means the SQL API and an API token to go with it, while a namespace
+can simply be bound to whatever reads it. One key per download rather than a
+counter, because KV has no atomic increment and two downloads at once would
+read the same number and write it back twice. Keys age out after 400 days.
 
-What reads them is not in this repository. The counts say how many people run
-this firmware and which parts they use, which is the owner's business rather
-than the repository's, so the reader and the dashboard live outside it. What
-stays here is the half that has to: the beacon in `web/app.js` and the route in
-`deploy/worker.js`, both of which anyone can read to see exactly what is
-collected — which is the only part of this that owes anyone an explanation.
+**Reading it back.** Not from here. What reads the counts is not in this
+repository.
+
+The counts say how many people run this firmware and which parts they use,
+which is the owner's business rather than the repository's, so the reader lives
+outside it. What stays here is the half that has to: the beacon in
+`web/app.js` and the route in `deploy/worker.js`, both of which anyone can read
+to see exactly what is collected — which is the only part of this that owes
+anyone an explanation.
 
 A build is `blob1` of `mac` or `win`. Anything else — `other` — is not a
 download: the endpoint is public, and two points were posted through it while

@@ -37,7 +37,7 @@ function flag(value) {
   return value === true ? 1 : 0;
 }
 
-async function record(request, env) {
+async function record(request, env, context) {
   // No IP, no user-agent, no header of any kind: what is not written cannot
   // later turn an option set into a person.
   if (request.method !== 'POST') return new Response(null, { status: 405 });
@@ -71,22 +71,46 @@ async function record(request, env) {
     && body.alternate_tunings >= 0 && body.alternate_tunings <= 3
     ? body.alternate_tunings : -1;
 
+  const point = {
+    platform, version, volts,
+    arp: flag(body.latching_arp),
+    knobs: flag(body.remap_knobs),
+    pressure: flag(body.pressure_fix),
+    portamento: flag(body.pressure_portamento),
+    tunings,
+    calibration: flag(body.pitch_correction),
+  };
+
   env.BUILDS.writeDataPoint({
     // One index, which Analytics Engine samples on.
     indexes: [platform],
     blobs: [platform, version, volts],
-    doubles: [flag(body.latching_arp), flag(body.remap_knobs),
-              flag(body.pressure_fix), flag(body.pressure_portamento),
-              tunings, flag(body.pitch_correction)]
+    doubles: [point.arp, point.knobs, point.pressure, point.portamento,
+              tunings, point.calibration],
   });
+
+  // And the same thing where it can be read back without a credential.  One
+  // key per download rather than a counter: KV has no atomic increment, so
+  // two downloads at once would read the same number and write it back twice.
+  // The whole point rides in the key's metadata, which `list` returns - so
+  // reading a month costs one operation, not one per download.
+  if (env.COUNTS) {
+    const at = new Date().toISOString();
+    const key = `b:${at}:${Math.random().toString(36).slice(2, 10)}`;
+    const write = env.COUNTS.put(key, '', {
+      metadata: point,
+      expirationTtl: 400 * 24 * 60 * 60,   // a year and a bit, then it ages out
+    }).catch(() => {});                    // counting must never fail a download
+    if (context && context.waitUntil) context.waitUntil(write);
+  }
   return new Response(null, { status: 204 });
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, context) {
     const url = new URL(request.url);
 
-    if (url.pathname === BEACON) return record(request, env);
+    if (url.pathname === BEACON) return record(request, env, context);
 
     // Without the trailing slash every relative asset resolves into /mods/.
     if (url.pathname === PUBLIC) {
