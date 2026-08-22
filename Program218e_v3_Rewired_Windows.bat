@@ -190,6 +190,19 @@ IF %IMG_COUNT% GTR 1 (
 CALL SET "FIRMWARE=%%IMG_PATH_!PICK!%%"
 CALL SET "CHOSEN_SHA=%%IMG_SHA_!PICK!%%"
 
+REM The path travelled through CALL SET under delayed expansion, which eats
+REM any ! (and can mangle ^) in a filename the scanner itself handled fine.
+REM A path that no longer resolves must stop here, while nothing has been
+REM erased - carried further it would fail at the flash step, after the
+REM erase.
+IF NOT EXIST "!FIRMWARE!" (
+    ECHO   The chosen file's name could not be carried through cmd - a
+    ECHO   character in it, likely an exclamation mark or caret, was eaten
+    ECHO   on the way.  Rename the file to plain letters, digits, dots and
+    ECHO   dashes, and run this again.
+    GOTO :fail_early
+)
+
 REM Any valid 218e V3 image can be flashed.  The checksum this flasher was built
 REM with is only a label for the build that shipped with the package, so it can
 REM be told apart in the list above.  It is not a gate.
@@ -285,9 +298,11 @@ REM telling someone to power-cycle is exactly the wrong advice.
 SET "USBSTATE="
 FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
 
-ECHO %USBSTATE% | FINDSTR /B /C:"PRESENT" >NUL 2>&1
-IF NOT ERRORLEVEL 1 (
-    FOR /F "tokens=2,3,* delims=|" %%A IN ("%USBSTATE%") DO (
+REM Not ECHO'd through FINDSTR: the reply is pipe-delimited by design, and
+REM %USBSTATE% expands before cmd parses pipes, turning the diagnostic into a
+REM five-stage pipeline that never matches.  A substring test needs no pipe.
+IF "!USBSTATE:~0,7!"=="PRESENT" (
+    FOR /F "tokens=2,3,* delims=|" %%A IN ("!USBSTATE!") DO (
         ECHO.
         ECHO   The instrument IS in DFU mode - Windows can see it:
         ECHO     %%C
@@ -513,6 +528,11 @@ ECHO   have to, then run this script again.
 ECHO.
 PAUSE
 
+IF NOT EXIST "!FIRMWARE!" (
+    ECHO   The firmware file disappeared between selection and erase.
+    ECHO   Nothing has been erased.
+    GOTO :fail_early
+)
 CALL :step Erasing the application flash
 SET "ERASE_STARTED=1"
 "%DFU%" at32uc3b1256 erase >> "%LOG_FILE%" 2>&1
@@ -785,10 +805,17 @@ REM Take the decimal from between the brackets by splitting on ( and ) - the
 REM last whitespace-delimited token is "(3)", brackets included, which then
 REM fails every numeric comparison and refuses to erase a perfectly good chip.
 REM Lines without brackets yield no second token, so they set nothing.
-FOR /F "tokens=* delims=" %%L IN ('"%DFU%" at32uc3b1256 getfuse %1 2^>^&1') DO (
+REM Through a file, not FOR /F's in-line command: FOR /F hands the command
+REM to a child cmd /c, whose quote rule strips the outer quotes when any of
+REM &<>()@^| appears between them - and a package unzipped into Windows'
+REM default "folder (2)" duplicate name puts parentheses in %DFU%.  A plain
+REM command line keeps its quotes whatever the path holds.
+"%DFU%" at32uc3b1256 getfuse %1 > "%TEMP%\rewired_fuse.txt" 2>&1
+FOR /F "usebackq tokens=* delims=" %%L IN ("%TEMP%\rewired_fuse.txt") DO (
     ECHO %%L>> "%LOG_FILE%"
     FOR /F "tokens=2 delims=()" %%V IN ("%%L") DO SET "FUSE_VALUE=%%V"
 )
+DEL "%TEMP%\rewired_fuse.txt" >NUL 2>&1
 EXIT /B 0
 
 :recovery_safe_stop

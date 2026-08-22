@@ -686,7 +686,14 @@
             lines.push('Alternate tunings: ' + o.alternate_tunings.length +
                        ' - ' + o.alternate_tunings.map(function (t) {
                            var named = (t && t.name) ? t.name : String(t);
-                           return named.replace(/\.scl$/i, '');
+                           // The name is echoed by both flashers - cmd FOR
+                           // blocks re-parse & | < > ! ^ % and quotes, the
+                           // shell has its own set - so anything outside a
+                           // plain allowlist becomes a space.  Display only;
+                           // the file itself is untouched.
+                           return named.replace(/\.scl$/i, '')
+                               .replace(/[^\w .,+'\/:()\-]/g, ' ')
+                               .replace(/\s+/g, ' ').trim();
                        }).join(', '));
         } else {
             lines.push('Alternate tunings: off');

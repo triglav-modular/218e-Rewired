@@ -66,6 +66,10 @@ def build(out):
             [" " + good[0]] + good[1:]) + "\n",
         "trailspace.hex": "\n".join(
             [good[0] + " "] + good[1:]) + "\n",
+        # A UTF-8 BOM in front of an otherwise perfect image.  Editors add
+        # these; text-mode readers strip them silently; dfu-programmer reads
+        # bytes and fails on the 0xEF - after the erase.
+        "bom.hex": "\ufeff" + "\n".join(good) + "\n",
     }
     for name, text in files.items():
         (out / name).write_bytes(text.encode())

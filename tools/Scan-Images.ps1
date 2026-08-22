@@ -47,6 +47,15 @@ function Test-IntelHex {
     # any parsed line, so they are checked before anything is parsed.
     try { $blob = [System.IO.File]::ReadAllBytes($Path) } catch { return $false }
     if ($blob.Length -eq 0) { $script:LastReason = 'empty file'; return $false }
+    # A UTF-8 byte-order mark.  ReadAllLines below strips it silently, so
+    # every text-level check would pass - but dfu-programmer reads the raw
+    # bytes, its sscanf(":%02x...") fails on 0xEF, and by then the erase has
+    # run.  This is exactly the divergence class this validator exists to
+    # close, so the bytes are checked before any line is.
+    if ($blob.Length -ge 3 -and $blob[0] -eq 0xEF -and $blob[1] -eq 0xBB -and $blob[2] -eq 0xBF) {
+        $script:LastReason = 'a UTF-8 byte-order mark before the first record - the flasher reads bytes, not text, and refuses it after the erase'
+        return $false
+    }
     if ($blob[$blob.Length - 1] -ne 10) {
         $script:LastReason = 'the last record has no newline after it - the flasher refuses that, and it erases before it reads'
         return $false
