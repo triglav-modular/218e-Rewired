@@ -132,12 +132,26 @@ export default {
     // A 304 carries no body, and constructing a Response with one throws.
     const out = new Response(res.status === 304 ? null : res.body, res);
     const type = out.headers.get('content-type') || '';
+    // A 304 is a success too: it renews whatever the browser has cached, so
+    // it needs the same cache-control as the 200 it stands in for.  It also
+    // carries no content-type, which is why the page rule below matches on
+    // the path rather than the type - matching on type let the origin's
+    // max-age=600 ride through every revalidation and overwrite no-cache.
+    const ok = res.ok || res.status === 304;
+    const isPage = rest === '/' || rest === '' || rest.endsWith('/') ||
+                   rest.endsWith('.html');
 
     if (url.searchParams.has('v')) {
       // Everything the page asks for carries a hash of its own contents in
       // the URL, so this exact URL can never mean different bytes later.
-      out.headers.set('cache-control', 'public, max-age=31536000, immutable');
-    } else if (type.includes('text/html')) {
+      // Only when it worked: an origin 404 or 5xx stamped immutable would sit
+      // in browsers for a year under the exact URL the page keeps asking for.
+      if (ok) {
+        out.headers.set('cache-control', 'public, max-age=31536000, immutable');
+      } else {
+        out.headers.set('cache-control', 'no-store');
+      }
+    } else if (isPage || type.includes('text/html')) {
       // The page is the one file that cannot carry a version - it is the URL
       // people type - so it is the one that has to be checked every time.
       // no-cache, not no-store: it is still kept and still revalidated, so an

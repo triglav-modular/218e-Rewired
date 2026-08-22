@@ -170,6 +170,52 @@ const REAL = {
         res.status === 204, `status ${res.status}`);
 }
 
+// The proxy's cache rules.  Wrong ones do not fail - they quietly serve the
+// wrong bytes for a very long time - so each is pinned.
+{
+  const realFetch = globalThis.fetch
+  let origin = () => new Response('body', { status: 200 })
+  globalThis.fetch = async () => origin()
+  const get = (path) => worker.fetch(
+    new Request('https://triglavmodular.hu/mods/218e-Rewired' + path), {})
+
+  origin = () => new Response('ok', { status: 200 })
+  let res = await get('/style.css?v=abc12345')
+  check('a versioned asset that worked is immutable',
+        (res.headers.get('cache-control') || '').includes('immutable'))
+
+  origin = () => new Response('not here', { status: 404 })
+  res = await get('/style.css?v=abc12345')
+  check('a versioned 404 is never cached',
+        res.headers.get('cache-control') === 'no-store',
+        res.headers.get('cache-control'))
+  origin = () => new Response('broken', { status: 502 })
+  res = await get('/style.css?v=abc12345')
+  check('a versioned 5xx is never cached',
+        res.headers.get('cache-control') === 'no-store')
+
+  origin = () => new Response('<html>', { status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8',
+               'cache-control': 'max-age=600' } })
+  res = await get('/')
+  check('the page revalidates every time',
+        res.headers.get('cache-control') === 'no-cache')
+
+  // GitHub Pages 304s carry no content-type but do carry max-age=600; the
+  // rule has to hold by path or the browser overwrites no-cache with it.
+  origin = () => new Response(null, { status: 304,
+    headers: { 'cache-control': 'max-age=600', etag: '"x"' } })
+  res = await get('/')
+  check('a page 304 keeps no-cache rather than the origin max-age',
+        res.headers.get('cache-control') === 'no-cache',
+        res.headers.get('cache-control'))
+  res = await get('/style.css?v=abc12345')
+  check('a versioned 304 renews the immutable lifetime',
+        (res.headers.get('cache-control') || '').includes('immutable'))
+
+  globalThis.fetch = realFetch
+}
+
 // The deploy is configured by wrangler.toml now, so the two can drift: a
 // route that no longer matches what the worker answers on, or a binding
 // renamed on one side only, would deploy green and record nothing.
