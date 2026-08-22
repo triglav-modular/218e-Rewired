@@ -86,3 +86,4 @@ docs/internals/
 
 # Not everything that runs against this project belongs in it.
 private/
+/deploy/.wrangler/cache
