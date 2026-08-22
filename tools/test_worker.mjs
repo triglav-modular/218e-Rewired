@@ -184,6 +184,22 @@ const REAL = {
   check('a versioned asset that worked is immutable',
         (res.headers.get('cache-control') || '').includes('immutable'))
 
+  // A resumed download's if-range must reach the origin, or a changed file
+  // is stitched from halves of two versions.
+  let sawHeaders = null
+  globalThis.fetch = async (url, init) => {
+    sawHeaders = init && init.headers
+    return new Response('ok', { status: 200 })
+  }
+  await worker.fetch(new Request(
+    'https://triglavmodular.hu/mods/218e-Rewired/kit/mac/Flasher.zip',
+    { headers: { range: 'bytes=100-', 'if-range': '"etag123"' } }), {})
+  check('range and if-range travel together',
+        sawHeaders && sawHeaders.get('range') === 'bytes=100-'
+        && sawHeaders.get('if-range') === '"etag123"',
+        sawHeaders && JSON.stringify([...sawHeaders]))
+  globalThis.fetch = async () => origin()
+
   origin = () => new Response('not here', { status: 404 })
   res = await get('/style.css?v=abc12345')
   check('a versioned 404 is never cached',

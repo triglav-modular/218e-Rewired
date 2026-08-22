@@ -372,8 +372,17 @@ def test_blend(cfg: dict) -> None:
     check("light-pressure cubic weights retain useful resolution",
           ((4 ** 3) >> 3, (5 ** 3) >> 3, (6 ** 3) >> 3) == (8, 15, 27))
 
-    # Slots the cache and the stamps do not cover must never be read.
-    check("the loop stops at the last real key", 28 == max(table), str(max(table)))
+    # Slots the cache and the stamps do not cover must never be read.  The
+    # fixture above cannot say anything about the firmware's loop bound - it
+    # was built by this test - so the source is held to it directly: every
+    # walk over the key array counts from 0x1c (key 28), and the one 0x20 is
+    # the tuning applier's 32-halfword table copy, a different array.  The
+    # three bytes past key 28 sometimes hold live state, which is how phantom
+    # keys got into the arp once.
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    walkers = sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', source))
+    check("every key walk starts at the last real key",
+          walkers == ["1c"] * 5 + ["20"], str(walkers))
 
 
 def test_output_interpolation(cfg: dict) -> None:

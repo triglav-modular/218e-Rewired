@@ -17,7 +17,12 @@ const ORIGIN = 'https://triglav-modular.github.io/218e-Rewired';
 // have.  The conditional headers are what turn a revalidation into a 304
 // instead of downloading the page again.
 const FORWARD = ['if-none-match', 'if-modified-since',
-                 'accept', 'accept-encoding', 'user-agent', 'range'];
+                 'accept', 'accept-encoding', 'user-agent', 'range',
+                 // With range but not if-range, a resumed download whose file
+                 // changed at the origin got a 206 of the NEW file appended
+                 // to the old half.  If-range makes the origin answer 200
+                 // with the whole new file instead.
+                 'if-range'];
 
 // Where the page reports a download.  Needs an Analytics Engine dataset bound
 // as BUILDS - the Bindings tab, not a runtime variable: a text variable named

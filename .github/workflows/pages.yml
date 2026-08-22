@@ -20,6 +20,11 @@ on:
     paths:
       - 'web/**'
       - 'src/AssemblePressureFix.java'
+      # generate.py imports both and embeds what they hold; a change to
+      # either with nothing else touched is exactly the safety-fix case this
+      # filter's comment says it exists to catch.
+      - 'tools/build.py'
+      - 'tools/options.py'
       - 'config/218e.toml'
       - 'tunings/**'
       - 'tools/avr32/**'
@@ -124,7 +129,8 @@ jobs:
           # than naming each file: a hardcoded list silently drops any asset
           # added later, which is exactly how images/ and fonts/ came to 404
           # on a page that referenced them.
-          rsync -a --exclude '*.py' --exclude '_*' web/ _site/
+          rsync -a --exclude '*.py' --exclude '_*' \
+                   --exclude 'test_*' --exclude 'README.md' web/ _site/
           # The header menu and the palette-and-sweep belong to the theme on
           # triglavmodular.hu, so both are resolved here rather than trusted
           # from the copies in the repository.  Before the stamping below, as

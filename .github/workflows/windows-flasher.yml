@@ -21,6 +21,11 @@ on:
       # would have tested it never started.
       - 'tools/*.ps1'
       - 'tools/validate_hex.py'
+      # The workflow runs these too; a fixture added without a run against
+      # the PowerShell validator is the documented drift hole reopened.
+      - 'tools/hex_fixtures.py'
+      - 'tools/check_scan_output.py'
+      - 'tools/check-bat-vars.py'
       - '.github/workflows/windows-flasher.yml'
   workflow_dispatch:
 
