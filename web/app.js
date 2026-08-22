@@ -86,6 +86,7 @@
             catch (e) { return fail('Could not read that file.'); }
             if (sha !== GEN.factorySha256) {
                 state.factoryText = null;
+                state.result = null;
                 $('drop').className = 'drop err';
                 msg($('fileMsg'), 'bad',
                     'That is not the stock v36.9 image.\n\nexpected  ' + GEN.factorySha256 +
@@ -107,7 +108,13 @@
         };
         reader.onerror = function () { fail('Could not read that file.'); };
         reader.readAsText(file);
-        function fail(t) { $('drop').className = 'drop err'; msg($('fileMsg'), 'bad', t); }
+        function fail(t) {
+            state.factoryText = null;
+            state.result = null;
+            $('drop').className = 'drop err';
+            msg($('fileMsg'), 'bad', t);
+            refresh();
+        }
     }
 
     var drop = $('drop');
@@ -129,6 +136,7 @@
     Array.prototype.forEach.call($('vpo').children, function (b) {
         b.addEventListener('click', function () {
             vpo = parseFloat(b.dataset.v);
+            invalidate();
             Array.prototype.forEach.call($('vpo').children, function (o) {
                 o.setAttribute('aria-pressed', String(o === b));
             });
@@ -231,7 +239,7 @@
                     var to = pair[1], tmp = state.slots[to];
                     state.slots[to] = state.slots[i];
                     state.slots[i] = tmp;
-                    renderSlots(); refresh();
+                    renderSlots(); invalidate();
                 });
                 ctl.appendChild(b);
             });
@@ -240,7 +248,7 @@
             x.appendChild(icon('clear')); x.title = 'clear this slot';
             x.disabled = !entry;
             x.addEventListener('click', function () {
-                state.slots[i] = null; renderSlots(); refresh();
+                state.slots[i] = null; renderSlots(); invalidate();
             });
             ctl.appendChild(x);
 
@@ -277,7 +285,7 @@
                     problems.push(err.message);
                 }
                 if (--pending === 0) {
-                    renderSlots(); refresh();
+                    renderSlots(); invalidate();
                     msg($('sclMsg'), problems.length ? 'bad' : '', problems.join('\n'));
                 }
             };
@@ -352,6 +360,7 @@
                     measured[n] = parseFloat(input.value) || 0;
                     input.className = measured[n] !== 0 ? 'set' : '';
                     drawPlot(); validateCal();
+                    if ($('useCal').checked) invalidate();
                 });
                 key.appendChild(nm);
                 key.appendChild(input);
@@ -406,7 +415,7 @@
         $('calBody').classList.toggle('hidden', !$('useCal').checked);
     }
     $('useCal').addEventListener('change', function () {
-        syncCalBody(); validateCal(); refresh();
+        syncCalBody(); validateCal(); invalidate();
     });
     $('calZero').addEventListener('click', function () {
         measured = measured.map(function () { return 0; });
@@ -462,7 +471,7 @@
             });
             $('useCal').checked = found > 0;
             syncCalBody();
-            buildTable(); drawPlot(); validateCal(); refresh();
+            buildTable(); drawPlot(); validateCal(); invalidate();
             msg($('calMsg'), found ? 'ok' : 'bad',
                 found ? 'Loaded ' + found + ' rows from ' + f.name
                       : 'No usable rows in ' + f.name +
@@ -505,6 +514,19 @@
         if (!fix.checked) porta.checked = false;
     }
     $('pressure_fix').addEventListener('change', syncPortamento);
+    ['latching_arp', 'remap_knobs', 'pressure_fix', 'pressure_portamento']
+        .forEach(function (id) {
+            $(id).addEventListener('change', invalidate);
+        });
+
+    // Any change to what would be built makes the built image a lie, so the
+    // one thing every option handler does is drop it.  The download buttons
+    // go dark and Build takes the accent back through refresh().
+    function invalidate() {
+        state.result = null;
+        state.options = null;
+        refresh();
+    }
 
     function refresh() {
         $('build').disabled = !state.factoryText;
@@ -528,6 +550,10 @@
                 var t0 = Date.now();
                 var chosen = options();
                 var r = WEBBUILD.build(chosen, state.factoryText);
+                // The options ride with the result: image.txt and the beacon
+                // must describe the build they accompany, not whatever the
+                // controls say by the time an async download assembles.
+                r.options = chosen;
                 state.result = r;
                 state.options = chosen;
                 msg($('buildMsg'), 'ok',
@@ -634,7 +660,7 @@
             'EXPECTED_SHA256=' + r.sha256,
             'FIRMWARE_VERSION=Rewired ' + GEN.version +
                 ' (' + r.sha256.slice(0, 8) + ')'
-        ].concat(describe(state.options).map(function (line) {
+        ].concat(describe(r.options).map(function (line) {
             return 'OPTION=' + line;
         }), [
             'FACTORY_SHA256=' + GEN.factorySha256,
@@ -714,10 +740,12 @@
     // The URL is relative on purpose.  Only the deployment behind the worker
     // has anywhere to put this; a clone served from somewhere else, or the
     // page opened from a file, reports nowhere rather than reporting to us.
-    function report(id) {
+    function report(id, r) {
         try {
             if (!navigator.sendBeacon) return;
-            var o = state.options || {};
+            // The build's own options, so the count describes the download
+            // even if the controls have moved since.
+            var o = (r && r.options) || state.options || {};
             var body = JSON.stringify({
                 platform: id === 'dlMac' ? 'mac' : 'win',
                 version: GEN.version,
@@ -821,7 +849,7 @@
                 document.body.appendChild(a); a.click(); a.remove();
                 setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
                 btn.querySelector('span').textContent = label; btn.disabled = false;
-                report(id);
+                report(id, r);
             }).catch(function (e) {
                 btn.querySelector('span').textContent = label; btn.disabled = false;
                 msg($('buildMsg'), 'bad',
@@ -834,7 +862,7 @@
 
     $('useTunings').addEventListener('change', function () {
         $('tuningsBody').classList.toggle('hidden', !$('useTunings').checked);
-        refresh();
+        invalidate();
     });
 
     // Major.minor only, from the same GEN.version the flashers are stamped
