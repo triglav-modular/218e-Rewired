@@ -87,3 +87,6 @@ docs/internals/
 # Not everything that runs against this project belongs in it.
 private/
 /deploy/.wrangler/cache
+
+# The FCP video kit lives in its own private repo (fcp/ is a nested checkout).
+fcp/
