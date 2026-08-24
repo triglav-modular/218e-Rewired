@@ -713,6 +713,7 @@ RAM_REGIONS = [
     (0x60A2, 0x60DC, "latch pitch stamps"),
     (0x60E0, 0x60E2, "blend offset target"),
     (0x60E2, 0x60E4, "blend applied offset"),
+    (0x60F4, 0x60F6, "blend previous base"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),

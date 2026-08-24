@@ -1741,7 +1741,7 @@ function assembleProgram() {
         emit("MCALL PC[0x8001a8ec]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001a8ec);
-        word(0x80019c64); // the real blend cave entry
+        word(0x8001ad20); // the blend re-base shim, which chains to the cave
         finish("transpose_capture", 0x8001a8f0);
 
         // Post-glide blend apply, with smoothing.  The blend cave publishes a
@@ -2119,10 +2119,11 @@ function assembleProgram() {
             // bytes the second MOV cost went to the knob-1 latch init above.
             emit("ST.B R9[0x61],R8");
         }
-        // Commit the marker only after all dependent state is coherent.
-        emit("MOV R9,0x602a");
-        emit(StringFormat("MOV R11,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
-        emit("ST.H R9[0x0],R11");
+        // The seed for the blend re-base history and the marker commit live in
+        // a continuation cave: this cave is packed to the byte.  A plain
+        // branch keeps the STM frame, and the continuation ends with the same
+        // LDM this cave's early exit uses.
+        emit("RJMP 0x8001ad00");
         padTo(0x8001ac74);
         emit("LDM SP++,R7,R8,R9,R10,R11,R12,PC");
         padTo(0x8001ac7c);
@@ -2193,6 +2194,68 @@ function assembleProgram() {
         word(0x00000968); // pointer to the persisted settings record
         word(0x80009fb8); // factory persistent-settings saver
         finish("poly_settings_migration", 0x8001ad00);
+
+        // Continuation of first_use_initializer, reached by RJMP with the STM
+        // frame intact; R10 still holds the state base and nothing here needs
+        // R8.  The re-base history starts at -1, "nothing has sounded under
+        // the blend yet": the first blend scan must record a base without
+        // re-basing against it, because the applied offset is still zero.
+        begin(0x8001ad00);
+        emit("MOV R9,0x60f4");
+        emit("MOV R11,0x0");
+        emit("SUB R11,0x1");
+        emit("ST.H R9[0x0],R11");
+        // Commit the marker only after all dependent state is coherent.
+        emit("MOV R9,0x602a");
+        emit(StringFormat("MOV R11,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("ST.H R9[0x0],R11");
+        emit("LDM SP++,R7,R8,R9,R10,R11,R12,PC");
+        finish("first_use_initializer_tail", 0x8001ad20);
+
+        // Blend re-base, between transpose_capture and the blend cave.  The
+        // blend publishes X_port - base and the apply shim slews the applied
+        // offset toward it, but the base itself snaps on note-on: at a
+        // handover the output visits the new note for the tens of
+        // milliseconds the slew needs to rebuild the offset, then walks back
+        // to the old one - an audible stutter ahead of the glide.  So when
+        // the sounding base moves while the blend is engaged, the step is
+        // folded into the applied offset in the same scan:
+        // new_base + (applied + old - new) is exactly the pitch that was
+        // already sounding, and the slew proceeds from there, driven only by
+        // the pressure handover.
+        //
+        // transpose_capture has already MCALLed the initializer this scan, so
+        // 0x60f4 is seeded before the first read here.  R12 carries the pitch
+        // into the blend cave and is not touched.
+        begin(0x8001ad20);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R9,0x8001ad74");
+        emit("LD.SH R11,R9[0x350]");
+        emit("MOV R8,0x60f4");
+        emit("LD.SH R10,R8[0x0]");
+        emit("ST.H R8[0x0],R11");
+        emit("CP.W R10,0x0");
+        emit("BR{lt} 0x8001ad68");
+        emit("CP.W R10,R11");
+        emit("BR{eq} 0x8001ad68");
+        // The cave's own engagement gate, mirrored: with the knob in the
+        // deadzone the blend is off and notes snap by design.
+        emit("LD.SH R9,R9[0x306]");
+        emit("CP.W R9,0x30");
+        emit("BR{lt} 0x8001ad68");
+        emit("MOV R8,0x60e2");
+        emit("LD.SH R9,R8[0x0]");
+        emit("ADD R9,R10");
+        emit("SUB R9,R9,R11 << 0x0");
+        emit("ST.H R8[0x0],R9");
+        padTo(0x8001ad68);
+        emit("MCALL PC[0x8001ad70]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001ad70);
+        word(0x80019c64); // the real blend cave entry
+        word(0x00003560); // global state base
+        finish("blend_rebase", 0x8001ad78);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
