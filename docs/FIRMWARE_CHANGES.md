@@ -53,6 +53,19 @@ Pressure-controlled glide: press harder and the glide shortens.
 
 ---
 
+## After flashing
+
+**Press the reset button before you play.** Flashing replaces the firmware but
+does not clear the instrument's own memory, so a held note or a stuck gate from
+before the update survives it — the keyboard can come up sounding latched when
+nothing is being held. Reset clears that, and recalibrates the keys as well, so
+it is worth doing before any session. Keep your hands off the keyboard for the
+few seconds the pad LEDs stay lit.
+
+The latch on **pads 2 & 3** is the instrument's own and still works. One
+interaction worth knowing: leaving the arpeggiator's latch position releases
+everything held, including a latch those pads set up.
+
 ## Going back
 
 The download that built your firmware also carries the stock v36.9 image you

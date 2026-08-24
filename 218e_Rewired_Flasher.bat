@@ -596,6 +596,13 @@ ECHO.
 CALL :banana
 ECHO.
 ECHO   %FIRMWARE_VERSION% is now on the instrument.
+ECHO.
+ECHO   Press the reset button before you play.
+ECHO   Flashing does not clear the instrument's own memory, so a held note
+ECHO   or a stuck gate from before the update can survive it.  Reset clears
+ECHO   that and recalibrates the keys - keep your hands away for the few
+ECHO   seconds the pad LEDs are lit.
+ECHO.
 ECHO   Log: %LOG_FILE%
 ECHO   If the 218e V3 does not reappear, power-cycle the instrument.
 PAUSE

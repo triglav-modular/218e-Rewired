@@ -1181,6 +1181,13 @@ echo
 banana
 echo
 echo "  ${C_BOLD}$FIRMWARE_VERSION${C_RESET} is now on the instrument."
+echo
+echo "  ${C_BOLD}Press the reset button before you play.${C_RESET}"
+echo "  ${C_DIM}Flashing does not clear the instrument's own memory, so a held${C_RESET}"
+echo "  ${C_DIM}note or a stuck gate from before the update can survive it.  Reset${C_RESET}"
+echo "  ${C_DIM}clears that and recalibrates the keys - keep your hands away for${C_RESET}"
+echo "  ${C_DIM}the few seconds the pad LEDs are lit.${C_RESET}"
+echo
 echo "  ${C_DIM}Log: $LOG_FILE${C_RESET}"
 echo
 read -r -p "  Press return to close. "
