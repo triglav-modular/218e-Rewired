@@ -362,10 +362,12 @@
             'stroke-width="1" vector-effect="non-scaling-stroke"/>' : '';
         svg.innerHTML = zero +
             '<polyline points="' + pts + '" fill="none" stroke="var(--accent)" ' +
-            'stroke-width="2" vector-effect="non-scaling-stroke"/>' +
-            '<text x="2" y="12" fill="var(--muted)" font-size="11">' + hi.toFixed(1) +
-            ' cents</text><text x="2" y="118" fill="var(--muted)" font-size="11">' +
-            lo.toFixed(1) + '</text>';
+            'stroke-width="2" vector-effect="non-scaling-stroke"/>';
+        // The labels are HTML beside the svg, not <text> inside it: the plot
+        // stretches to its column (preserveAspectRatio none), and type drawn
+        // inside would stretch with it.  Lines may distort; letters may not.
+        $('calHi').textContent = hi.toFixed(1) + ' cents';
+        $('calLo').textContent = lo.toFixed(1);
     }
 
     // The offsets are laid out as the keyboard they describe: naturals along

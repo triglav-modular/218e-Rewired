@@ -973,6 +973,9 @@ strong {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  /* flex-start places the boxes; this places the lines.  The label wraps at
+     narrow widths, and a button's own stylesheet centres wrapped text. */
+  text-align: left;
   gap: 4px;
   padding: 14px 20px;
   border-radius: 12px;
@@ -1380,6 +1383,35 @@ button {
 }
 .drop.over {
   transform: scale(1.006);
+}
+
+/* The plot's frame.  The svg stretches its drawing to the column; the labels
+   sit on top in ordinary HTML so the type is never scaled with it.  The curve
+   already keeps out of y 16-104, which under a 120px-tall plot is exactly the
+   band these occupy. */
+.plotwrap {
+  position: relative;
+  /* The 10px the diagram rule further up puts above every svg, moved onto
+     the frame so the labels and the drawing share an origin. */
+  margin-top: 10px;
+}
+.plotwrap svg {
+  display: block;
+  margin-top: 0;
+}
+/* 11px type at 2px in from each edge spans y 2-13 and 107-118, which is why
+   the curve keeps to 16-104. */
+.plotlabel {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+}
+.plotlabel.lo {
+  top: auto;
+  bottom: 2px;
 }
 
 /* A cell that has been given an offset lights up; worth easing so a row of
