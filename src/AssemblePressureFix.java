@@ -2254,6 +2254,35 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R9,-0x2");
         emit("SUB R12,0x1");
         emit("BR{ge} 0x8001ac00");
+        // The factory's own held-key bookkeeping, cleared once per flash.
+        //
+        // Flashing does not power-cycle anything the way a cold start does,
+        // and SRAM survives a DFU update, so a key that was registered as
+        // held before the update is still held after it: the gate stays
+        // asserted and the arpeggiator keeps playing a note nobody is
+        // touching.  A reporter hit exactly that - "the gate output was also
+        // always latched" - and the instrument's own reset button cleared it.
+        //
+        // Both pairs go: the note pair at state+0x21a/0x21b (count and 29
+        // flags) and the touch-scan pair at state+0x238/0x239.  The second
+        // matters most, because release_count_guard makes a stuck count
+        // permanent by design - it refuses to decrement a count whose flag is
+        // already clear, which is what stops the factory's underflow to 255,
+        // and also what stops a stale count from ever walking back down.
+        //
+        // Zeroing both together keeps them consistent: a release arriving
+        // afterwards finds its flag clear, takes the guard's early exit, and
+        // leaves the count at zero.
+        emit("MOV R9,0x1c");
+        padTo(0x8001ac20L);
+        emit("ADD R12,R10,R9 << 0x0");
+        emit("ST.B R12[0x21b],R8");
+        emit("ST.B R12[0x239],R8");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001ac20");
+        emit("ST.B R10[0x21a],R8");
+        emit("ST.B R10[0x238],R8");
+
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");

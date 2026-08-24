@@ -380,9 +380,13 @@ def test_blend(cfg: dict) -> None:
     # three bytes past key 28 sometimes hold live state, which is how phantom
     # keys got into the arp once.
     source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    # The property, not a headcount: adding a legitimate walk should not
+    # fail this, but a walk that starts past key 28 must.
     walkers = sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', source))
+    stray = [w for w in walkers if w != "1c" and w != "20"]
     check("every key walk starts at the last real key",
-          walkers == ["1c"] * 5 + ["20"], str(walkers))
+          not stray and walkers.count("20") == 1,
+          f"unexpected loop bounds {stray or walkers}")
 
 
 def test_output_interpolation(cfg: dict) -> None:
