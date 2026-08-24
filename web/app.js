@@ -341,11 +341,26 @@
             hi = Math.max.apply(null, play);
         if (hi - lo < 1) { lo -= 1; hi += 1; }
         var span = PLAYABLE_HIGH - PLAYABLE_LOW;
+        // The labels own the top and bottom 16 units: an 11px label on a
+        // 12/118 baseline spans roughly y 4-12 and 110-118, and the curve's
+        // extreme lands at the left edge whenever the table is flat there,
+        // which is exactly where the labels are.  So the curve keeps out of
+        // those bands rather than crossing them.
+        function y(v) { return 104 - (v - lo) / (hi - lo) * 88; }
         var pts = play.map(function (v, i) {
-            return (i / span * 700).toFixed(1) + ',' +
-                   (110 - (v - lo) / (hi - lo) * 100).toFixed(1);
+            return (i / span * 700).toFixed(1) + ',' + y(v).toFixed(1);
         }).join(' ');
-        svg.innerHTML =
+        // In tune is a place on this plot, so it is drawn: a hairline at
+        // zero, under the curve, and only when zero is inside the range -
+        // pinned to an edge it would read as a frame, not a datum.  Muted
+        // ink at low opacity rather than var(--line): the plot sits on
+        // panel2, which is lighter than the panel that hairline was mixed
+        // against, and there the line all but vanished.
+        var zero = lo < 0 && hi > 0 ?
+            '<line x1="0" x2="700" y1="' + y(0).toFixed(1) + '" y2="' +
+            y(0).toFixed(1) + '" stroke="var(--muted)" stroke-opacity=".4" ' +
+            'stroke-width="1" vector-effect="non-scaling-stroke"/>' : '';
+        svg.innerHTML = zero +
             '<polyline points="' + pts + '" fill="none" stroke="var(--accent)" ' +
             'stroke-width="2" vector-effect="non-scaling-stroke"/>' +
             '<text x="2" y="12" fill="var(--muted)" font-size="11">' + hi.toFixed(1) +
