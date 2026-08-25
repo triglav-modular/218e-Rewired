@@ -55,6 +55,11 @@ ProgramLEM218_LatchProbe.command
 __pycache__/
 build/
 changelog.txt
+# The rule above is for stray copies out of downloaded packages; the
+# repository CHANGELOG.txt is a source file (the page embeds it and the
+# packages ship it), and on a case-insensitive filesystem the rule
+# would swallow it silently.
+!/CHANGELOG.txt
 config/local.toml
 firmware/*.hex
 firmware/INSTALLED.txt
