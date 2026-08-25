@@ -23,11 +23,11 @@ mkdir -p "$WORK_DIR" 2>/dev/null
 LOG_FILE="$WORK_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"; printf "\033[?25h"' EXIT
-EXPECTED_SHA256="8a83395a450e7cbeb52dc6068b9d161523ceb901e20f6083b291bdcea24303f6"
+EXPECTED_SHA256="5ea2ba82dcf9403a8b4e10faa88dc957c5e597ad61fc5feb3879ae745faf64cd"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 1.1.0 (8a83395a)"
+FIRMWARE_VERSION="Rewired 1.2.0 (5ea2ba82)"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
@@ -1150,11 +1150,27 @@ read -r -p "  Press return to send START and restart the 218e V3. "
 spin "restarting…" "$DFUPATH" at32uc3b1256 start || fail "The DFU start command failed."
 DFU_SESSION_ACTIVE=0
 
-sleep 4
-if "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
+# Poll rather than glance: USB re-enumeration plus CoreMIDI registration
+# often takes longer than a fixed nap, and each `sendmidi list` is a fresh
+# CoreMIDI client whose first device snapshot can also trail reality.  A
+# single early look raced both, and sometimes reported a missing port on an
+# instrument that was already back.
+waited=0
+while [ "$waited" -lt 30 ]; do
+    if "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
+        break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+done
+if [ "$waited" -lt 30 ]; then
     ok "The 218e V3 returned as a MIDI device"
+    log "MIDI port reappeared after ${waited}s."
 else
-    warn "The 218e V3 MIDI port is not visible yet — power-cycle the instrument if needed"
+    "$SENDMIDI" list >> "$LOG_FILE" 2>&1
+    warn "No 218e V3 MIDI port after 30 seconds — power-cycle the instrument"
+    echo "  ${C_DIM}Audio MIDI Setup can keep showing a greyed-out entry from before the${C_RESET}"
+    echo "  ${C_DIM}flash; only a non-greyed one means the port is really back.${C_RESET}"
 fi
 
 # Leave a record beside the image.  Without it the only answer to "what is on

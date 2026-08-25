@@ -45,6 +45,7 @@ def main() -> None:
         f"  featureMap: {json.dumps({k: list(v) for k, v in B.FEATURE_MAP.items()}, sort_keys=True)},",
         f"  enabledWhen: {json.dumps(B.ENABLED_WHEN, sort_keys=True)},",
         f"  javaSourceBase64: {json.dumps(base64.b64encode(java).decode())},",
+        f"  changelog: {json.dumps((REPO / 'CHANGELOG.txt').read_text())},",
     ]
 
     # Both flashers, whole.  The page substitutes the checksum and version of

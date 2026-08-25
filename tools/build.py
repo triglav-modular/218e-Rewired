@@ -714,6 +714,8 @@ RAM_REGIONS = [
     (0x60E0, 0x60E2, "blend offset target"),
     (0x60E2, 0x60E4, "blend applied offset"),
     (0x60F4, 0x60F6, "blend previous base"),
+    (0x60F6, 0x60F8, "blend target filter"),
+    (0x60F8, 0x60FA, "blend hysteresis hold"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1315,6 +1317,39 @@ def main() -> None:
     cfg["_numbers"]["blend_slew_shift"] = slew
     summary.append(f"  {'portamento.blend_slew_shift':28s} "
                    f"{slew}  ({'no smoothing' if slew == 0 else f'1/{1 << slew} of the gap per scan'})")
+    # Vibrato output rounding.  Diffusion keeps the average exact at the cost
+    # of ~100 Hz toggling between adjacent pitch units; truncation is coarser
+    # and silent.
+    dither = cfg.get("vibrato", {}).get("dither", 1)
+    if isinstance(dither, bool) or not isinstance(dither, int) or dither not in (0, 1):
+        raise SystemExit("[vibrato].dither must be 0 or 1")
+    cfg["_numbers"]["vibrato_dither"] = dither
+    summary.append(f"  {'vibrato.dither':28s} "
+                   f"{dither}  ({'error diffusion' if dither else 'truncate'})")
+    # Blend target conditioning: an EMA (1/2^n per scan) and a backlash band
+    # (in pitch units, 2.48 cents each) between the published offset target
+    # and the slew that chases it.  0/0 reproduces the unconditioned chain.
+    filt = cfg["portamento"].get("blend_filter_shift", 2)
+    if isinstance(filt, bool) or not isinstance(filt, int) or not 0 <= filt <= 4:
+        raise SystemExit("[portamento].blend_filter_shift must be an integer from 0 to 4")
+    cfg["_numbers"]["blend_filter_shift"] = filt
+    hyst = cfg["portamento"].get("blend_hysteresis", 3)
+    if isinstance(hyst, bool) or not isinstance(hyst, int) or not 0 <= hyst <= 8:
+        raise SystemExit("[portamento].blend_hysteresis must be an integer from 0 to 8")
+    cfg["_numbers"]["blend_hysteresis"] = hyst
+    summary.append(f"  {'portamento.blend_filter_shift':28s} "
+                   f"{filt}  ({'off' if filt == 0 else f'1/{1 << filt} of the gap per scan'})")
+    summary.append(f"  {'portamento.blend_hysteresis':28s} "
+                   f"{hyst}  ({'off' if hyst == 0 else f'+-{hyst * 2.48:.1f} cents of backlash'})")
+    # Knob-scaled slew: the portamento knob picks the glide's smoothing rate
+    # (1/2..1/16 of the gap per scan across the travel).  0 keeps the fixed
+    # blend_slew_shift rate at every knob position.
+    staper = cfg["portamento"].get("blend_slew_taper", 1)
+    if isinstance(staper, bool) or not isinstance(staper, int) or staper not in (0, 1):
+        raise SystemExit("[portamento].blend_slew_taper must be 0 or 1")
+    cfg["_numbers"]["blend_slew_taper"] = staper
+    summary.append(f"  {'portamento.blend_slew_taper':28s} "
+                   f"{staper}  ({'knob picks the rate' if staper else 'fixed rate'})")
     for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "

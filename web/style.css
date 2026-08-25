@@ -380,6 +380,33 @@ h1 {
 }
 /* The version comes from the same GEN.version the flashers are stamped with,
    so the page can never advertise a release the build does not produce. */
+.chlog { position: relative; display: inline-block; }
+.chlog-pill {
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--muted);
+}
+.chlog-pill[aria-expanded="true"], .chlog-pill:hover { color: var(--accent); }
+.chlog-body {
+  display: block;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  min-width: 300px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-line;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.chlog-body strong { color: var(--accent); }
+.chlog-body.hidden { display: none; }
 .ver {
   display: inline-block;
   margin-left: 10px;

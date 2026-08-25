@@ -915,7 +915,8 @@
                              { name: stock, data: state.factoryText,
                                mtime: stockDate }]
                     .concat(p.scripts(r), tools,
-                            [{ name: 'README.txt', data: p.note(r, offline) }]);
+                            [{ name: 'README.txt', data: p.note(r, offline) },
+                             { name: 'changelog.txt', data: GEN.changelog }]);
                 if (offline) {
                     msg($('buildMsg'), 'warn',
                         'This page is open from a file rather than a web server, so the ' +
@@ -950,7 +951,8 @@
                                   { name: stock2, data: state.factoryText,
                                     mtime: stockDate2 }]
                         .concat(p.scripts(r),
-                                [{ name: 'README.txt', data: p.note(r, true) }]);
+                                [{ name: 'README.txt', data: p.note(r, true) },
+                                 { name: 'changelog.txt', data: GEN.changelog }]);
                     msg($('buildMsg'), 'warn',
                         'This copy of the page has no flashing tools beside it (' +
                         e.message + ').\n\nThe download has the firmware and the ' +
@@ -990,6 +992,31 @@
     // with.  The patch number and the build's own fingerprint belong on the
     // build result, not in the masthead.
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
+
+    // The changelog, from the same generated data the package's
+    // changelog.txt ships - version lines become headings.
+    (function () {
+        var body = $('chlogBody'), btn = $('chlogBtn');
+        GEN.changelog.split('\n').forEach(function (line) {
+            if (!line.trim()) return;
+            var el = /^\d+\.\d+/.test(line)
+                ? document.createElement('strong')
+                : document.createElement('span');
+            el.textContent = line;
+            body.appendChild(el);
+            body.appendChild(document.createTextNode('\n'));
+        });
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var open = body.classList.toggle('hidden');
+            btn.setAttribute('aria-expanded', String(!open));
+        });
+        document.addEventListener('click', function () {
+            body.classList.add('hidden');
+            btn.setAttribute('aria-expanded', 'false');
+        });
+        body.addEventListener('click', function (e) { e.stopPropagation(); });
+    })();
 
     renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
     bindDashes(document.body);

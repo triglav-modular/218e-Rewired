@@ -1958,7 +1958,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.SH R10,R9[0x0]");
         emit("LD.SH R8,R9[0x2]");
         emit("SUB R11,R10,R8 << 0x0");
-        emit(String.format("ASR R11,0x%x", number("blend_slew_shift", 2, 0, 4)));
+        // With the knob-scaled slew the conditioner does the smoothing and
+        // this shim must copy its output exactly: shift 0 makes the step the
+        // whole gap, and the nudge can never trigger.
+        emit(String.format("ASR R11,0x%x",
+            number("blend_slew_taper", 1, 0, 1) == 1
+                ? 0 : number("blend_slew_shift", 2, 0, 4)));
         emit("CP.W R11,0x0");
         emit("BR{ne} 0x8001a914");
         emit("CP.W R10,R8");
@@ -2397,6 +2402,8 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001ad00L);
         emit("MOV R9,0x60f4");
         emit("MOV R11,0x0");
+        emit("ST.H R9[0x2],R11");       // 0x60f6 blend target filter
+        emit("ST.H R9[0x4],R11");       // 0x60f8 blend hysteresis hold
         emit("SUB R11,0x1");
         emit("ST.H R9[0x0],R11");
         // Commit the marker only after all dependent state is coherent.
@@ -2439,10 +2446,22 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R9,0x30");
         emit("BR{lt} 0x8001ad68");
         emit("MOV R8,0x60e2");
+        // The base step goes into everything that remembers a pitch: the
+        // applied offset, and the conditioner's filter and hold cells.  The
+        // conditioner lags the published target by design; left un-rebased,
+        // its memory of the pre-handover target dragged the corrected offset
+        // back toward the new note - the note-on jump this shim exists to
+        // remove, reintroduced one stage downstream.
+        emit("SUB R10,R10,R11 << 0x0");
         emit("LD.SH R9,R8[0x0]");
         emit("ADD R9,R10");
-        emit("SUB R9,R9,R11 << 0x0");
         emit("ST.H R8[0x0],R9");
+        emit("LD.SH R9,R8[0x14]");
+        emit("ADD R9,R10");
+        emit("ST.H R8[0x14],R9");
+        emit("LD.SH R9,R8[0x16]");
+        emit("ADD R9,R10");
+        emit("ST.H R8[0x16],R9");
         padTo(0x8001ad68L);
         emit("MCALL PC[0x8001ad70]");
         emit("LDM SP++,R7,PC");
@@ -2450,6 +2469,127 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019c64L); // the real blend cave entry
         word(0x00003560L); // global state base
         finish("blend_rebase", 0x8001ad78L);
+
+        // Blend target conditioner: an EMA filter and a backlash band between
+        // the published offset target and the slew that chases it.
+        //
+        // The published target is recomputed each scan from raw sensor
+        // deltas, and holding a bend steady leaves it jittering by a unit or
+        // two - largely mains hum through the player's body, which capacitive
+        // sensing receives by design.  The apply shim's anti-stall nudge
+        // faithfully chases every flip, so a held bend chatters by ~a unit at
+        // up to scan rate: audible crackle on the pitch line.
+        //
+        // The filter shaves the noise; the backlash refuses what remains.
+        // Backlash, not a deadband: the target drags the held value through
+        // an H-wide window, so a monotonic bend tracks continuously with no
+        // stepping - only direction reversals and jitter pay H.  An exactly
+        // zero target snaps everything to rest, so a released note still
+        // lands dead on pitch; the blend publishes exact zero whenever it is
+        // disengaged, which is precisely when cleanliness is owed.
+        //
+        // transpose_capture has already MCALLed the initializer this scan,
+        // so both cells are seeded before the first read.  R12 carries the
+        // pitch into the apply shim and is not touched.
+        begin(0x8001ad78L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x60e0");
+        emit("LD.SH R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001ad94");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x16],R9");
+        emit("ST.H R8[0x18],R9");
+        emit("RJMP 0x8001adcc");
+        padTo(0x8001ad94L);
+        emit("LD.SH R10,R8[0x16]");
+        emit("SUB R11,R9,R10 << 0x0");
+        if (number("blend_filter_shift", 2, 0, 4) > 0) {
+            emit(String.format("SUB R11,-0x%x",
+                1 << (number("blend_filter_shift", 2, 0, 4) - 1)));
+        }
+        emit(String.format("ASR R11,0x%x", number("blend_filter_shift", 2, 0, 4)));
+        emit("ADD R10,R11");
+        emit("ST.H R8[0x16],R10");
+        emit("LD.SH R9,R8[0x18]");
+        emit("SUB R11,R10,R9 << 0x0");
+        emit(String.format("CP.W R11,0x%x", number("blend_hysteresis", 3, 0, 8)));
+        emit("BR{le} 0x8001adbc");
+        emit("MOV R9,R10");
+        if (number("blend_hysteresis", 3, 0, 8) > 1) {
+            emit(String.format("SUB R9,0x%x", number("blend_hysteresis", 3, 0, 8) - 1));
+        }
+        emit("RJMP 0x8001adc8");
+        padTo(0x8001adbcL);
+        if (number("blend_hysteresis", 3, 0, 8) > 0) {
+            emit(String.format("CP.W R11,-0x%x", number("blend_hysteresis", 3, 0, 8)));
+        } else {
+            emit("CP.W R11,0x0");
+        }
+        emit("BR{ge} 0x8001adc8");
+        emit("MOV R9,R10");
+        if (number("blend_hysteresis", 3, 0, 8) > 1) {
+            emit(String.format("SUB R9,-0x%x", number("blend_hysteresis", 3, 0, 8) - 1));
+        }
+        padTo(0x8001adc8L);
+        emit("ST.H R8[0x18],R9");
+        padTo(0x8001adccL);
+        if (number("blend_slew_taper", 1, 0, 1) == 1) {
+            // The slew, with the portamento knob choosing its rate: the low
+            // quarter of the dial closes half the remaining gap per scan and
+            // the top quarter a sixteenth, so the same handover takes ~60 ms
+            // at the bottom of the travel and ~220 ms at the top.  Until now
+            // the rate was one build-time constant, and the knob changed how
+            // far a bend went but never how fast it moved - the floor a
+            // player feels on a quick handover was fixed at every position.
+            emit("LD.SH R10,R8[0x2]");
+            emit("SUB R11,R9,R10 << 0x0");
+            emit("MOV R7,R11");
+            emit("LDDPC R9,0x8001ae14");
+            emit("LD.SH R9,R9[0x306]");
+            emit("CP.W R9,0x100");
+            emit("BR{lt} 0x8001adf8");
+            emit("CP.W R9,0x200");
+            emit("BR{lt} 0x8001adf4");
+            emit("CP.W R9,0x300");
+            emit("BR{lt} 0x8001adf0");
+            // Rates 0/1/2/2, topping out at ~45 ms: the bottom quarter is a
+            // single-scan snap - the hysteresis, not the slew, is what keeps
+            // a held bend frozen, so pass-through is safe - the next quarter
+            // ~20 ms, and the whole upper half ~45 ms.
+            emit("ASR R11,0x2");
+            emit("RJMP 0x8001adfa");
+            padTo(0x8001adf0L);
+            emit("ASR R11,0x2");
+            emit("RJMP 0x8001adfa");
+            padTo(0x8001adf4L);
+            emit("ASR R11,0x1");
+            emit("RJMP 0x8001adfa");
+            padTo(0x8001adf8L);
+            emit("ASR R11,0x0");
+            padTo(0x8001adfaL);
+            // The anti-stall nudge, as the old shim had it: a positive gap
+            // whose shift rounds to zero still moves one unit; negative gaps
+            // round toward minus infinity and move on their own.
+            emit("CP.W R11,0x0");
+            emit("BR{ne} 0x8001ae06");
+            emit("CP.W R7,0x0");
+            emit("BR{le} 0x8001ae06");
+            emit("MOV R11,0x1");
+            padTo(0x8001ae06L);
+            emit("ADD R10,R11");
+            emit("ST.H R8[0x0],R10");
+        } else {
+            emit("ST.H R8[0x0],R9");
+        }
+        padTo(0x8001ae0cL);
+        emit("MCALL PC[0x8001ae18]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001ae14L);
+        word(0x00003560L); // global state base
+        word(0x8001a8f0L); // the blend-offset apply shim
+        finish("blend_target_conditioner", 0x8001ae1cL);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
@@ -2535,16 +2675,30 @@ public class AssemblePressureFix extends GhidraScript {
         // plain truncation quantises the modulation into audible steps.
         // Diffusing it lets the average land between them.
         emit("MUL R8,R8,R12");          // Q7 sine * Q4 depth = Q11
-        emit("MOV R9,0x6098");
-        emit("LD.SH R10,R9[0x0]");
-        emit("ADD R8,R10");
-        emit("MOV R10,R8");
-        emit("ASR R10,0xb");            // floor: the remainder stays positive
-        emit("LSL R1,R10,0xb");
-        emit("SUB R8,R1");
-        emit("ST.H R9[0x0],R8");        // carry the remainder
-        emit("MOV R9,0x6028");
-        emit("ST.H R9[0x0],R10");
+        if (number("vibrato_dither", 1, 0, 1) == 1) {
+            emit("MOV R9,0x6098");
+            emit("LD.SH R10,R9[0x0]");
+            emit("ADD R8,R10");
+            emit("MOV R10,R8");
+            emit("ASR R10,0xb");        // floor: the remainder stays positive
+            emit("LSL R1,R10,0xb");
+            emit("SUB R8,R1");
+            emit("ST.H R9[0x0],R8");    // carry the remainder
+            emit("MOV R9,0x6028");
+            emit("ST.H R9[0x0],R10");
+        } else {
+            // Truncate instead.  Diffusing the remainder gets the AVERAGE
+            // right, but it pays for that by moving the output between two
+            // adjacent pitch units at whatever rate the remainder happens to
+            // overflow - about 100 times a second at shallow depth, where the
+            // LFO itself only asks for ten.  Those are 2.48-cent steps in the
+            // audio band, heard as a buzz riding on the note rather than as
+            // the vibrato they encode.  Truncation gives a coarser LFO and a
+            // quiet one.
+            emit("ASR R8,0xb");
+            emit("MOV R9,0x6028");
+            emit("ST.H R9[0x0],R8");
+        }
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001a470L);
         word(0x00003560L); // global state base
@@ -2858,7 +3012,7 @@ public class AssemblePressureFix extends GhidraScript {
         // now the remap entry point read by the MCALL above.
         begin(0x8000336cL);
         if (feature("pressure_blend")) {
-            word(0x8001a8f0L); // blend-offset shim, chains to the remap
+            word(0x8001ad78L); // target conditioner -> blend-offset shim -> remap
         } else {
             word(0x80019980L);
         }

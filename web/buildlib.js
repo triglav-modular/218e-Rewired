@@ -404,6 +404,10 @@ var BUILDLIB = (function () {
         numbers.trim_scale_base = kMin;
         numbers.gate_settle_scans = cfg.timing.gate_settle_scans;
         numbers.blend_slew_shift = cfg.portamento.blend_slew_shift;
+        numbers.blend_filter_shift = cfg.portamento.blend_filter_shift;
+        numbers.blend_hysteresis = cfg.portamento.blend_hysteresis;
+        numbers.blend_slew_taper = cfg.portamento.blend_slew_taper;
+        numbers.vibrato_dither = cfg.vibrato.dither;
         var smoothing = cfg.pressure.output_smoothing;
         if (smoothing) numbers.output_interpolation_steps = smoothing;
         return numbers;
