@@ -20,6 +20,10 @@ on:
     paths:
       - 'web/**'
       - 'src/AssemblePressureFix.java'
+      # generate.py embeds the changelog into the page and the packages.
+      - 'CHANGELOG.txt'
+      # And the filter itself: a paths fix must be able to deploy itself.
+      - '.github/workflows/pages.yml'
       # generate.py imports both and embeds what they hold; a change to
       # either with nothing else touched is exactly the safety-fix case this
       # filter's comment says it exists to catch.
