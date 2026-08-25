@@ -291,6 +291,15 @@ summary,
 th {
   text-wrap: balance;
 }
+/* text-size-adjust is the off switch for Safari's own idea of how big body
+   copy should be on a phone.  Left alone it inflates the text of blocks it
+   judges to be the main content, block by block and by a ratio of its own
+   choosing - which is why two option descriptions, the same element with
+   the same 16px rule, rendered at visibly different sizes: the longer one
+   wrapped enough lines to look like an article and was boosted, its
+   neighbour was not.  100% means "the size I asked for", and it has to be
+   set here rather than on a narrow rule, because the algorithm reads the
+   block that carries the text. */
 body {
   margin: 0;
   background: var(--bg);
@@ -298,6 +307,8 @@ body {
   text-wrap: pretty;
   font: 400 16px/1.62 var(--sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 /* The art is white strokes on transparency - 97% of the image has zero alpha -
    so it simply lies over the background at reduced opacity.  No blend mode:
@@ -1622,6 +1633,30 @@ section,
    title, so it comes back into the flow: the header stacks, the banana takes
    its own line above the heading, and it shrinks to suit the width. */
 @media (max-width:640px) {
+  /* Leading is set for a measure, and the measure changes here.  1.62 holds
+     a line together across an 820px column, where a description is one line
+     or two; on a phone the same description wraps to four, and at that width
+     the gaps stop reading as breathing room and start reading as space
+     between separate things.  Everything that carries its own looser leading
+     - the numbered steps, the Zadig list, the how-to - comes down with it,
+     because those were opened up against the same wide column. */
+  body {
+    line-height: 1.45;
+  }
+  .steps,
+  .winsetup ol {
+    line-height: 1.6;
+  }
+  .howto {
+    line-height: 1.5;
+  }
+  .prereq dl,
+  .faq {
+    line-height: 1.45;
+  }
+  .slot .note {
+    line-height: 1.4;
+  }
   .hdr {
     display: block;
     margin: 0 0 12px;
