@@ -44,10 +44,16 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   press-order zones rather than reimplementing them.  Mirror turns at the
   outermost HELD key, not the end of the keyboard, and its direction lives
   at RAM 0x614e.
-- Knob 2: swing | randomness (1.x) | patterns.  Pattern engine: gate mask
-  + length (1..32), stepped at the arp clock.  Preload: 22 CLIX fills from
-  ~/SDIY/208_Clockwork_Card/Clockwork_Code/clix.h.  Page: grid editor,
-  settable length, plain-text x.x.. import/export.
+- Knob 2: randomness (1.x) | patterns.  PATTERNS BUILT, off by default;
+  [knob2].mode = "patterns".  The 22 CLIX fills are in tools/clix.py, taken
+  from the Clockwork Card, and are the bank when the config names none.
+  The gate at 0x8001b050 takes the selector's pool word and calls the real
+  selector through, so it composes with knob 1: a rest answers -1, which is
+  what the caller already reads as "nothing to play", and the note sequence
+  does not advance on a rest.  Bank and lengths live in the gap the
+  relocated sine left at 0x80019f20; the step is RAM 0x6150.
+  STILL TO DO: swing, and the page's grid editor with plain-text
+  x.x.. import/export.  Neither is started.
 - Knob 3: stays arp octave span, untouched.
 - Knob 4: vibrato (1.x) | octave switching.  BUILT, off by default;
   [knob4].octaves = 1.  It drives the factory's OWN trn transpose rather

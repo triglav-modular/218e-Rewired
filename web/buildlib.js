@@ -488,6 +488,31 @@ var BUILDLIB = (function () {
     // octave build already has.
     function baseUnits(cfg) { return octaveUnits(cfg) + 1; }
 
+    // Knob 2's bank, the same choice tools/build.py makes: whatever the config
+    // names, or the CLIX fills when it names nothing.
+    function patternBank(cfg) {
+        if (cfg.knob2.mode !== 'patterns') return { masks: [0], lengths: [32] };
+        var masks = (cfg.knob2.patterns && cfg.knob2.patterns.length)
+            ? cfg.knob2.patterns.slice() : GEN.clix.slice();
+        var lengths = (cfg.knob2.lengths && cfg.knob2.lengths.length)
+            ? cfg.knob2.lengths.slice() : masks.map(function () { return 32; });
+        if (lengths.length !== masks.length) {
+            throw new Error('knob2.lengths must have one entry per pattern');
+        }
+        masks.forEach(function (m, i) {
+            if (!(m >= 0 && m <= 0xFFFFFFFF)) {
+                throw new Error('knob2.patterns[' + i + '] must be a 32-bit mask');
+            }
+            if (m === 0) {
+                throw new Error('knob2.patterns[' + i + '] is empty — it would never sound');
+            }
+            if (!(lengths[i] >= 1 && lengths[i] <= 32)) {
+                throw new Error('knob2.lengths[' + i + '] must be 1..32');
+            }
+        });
+        return { masks: masks, lengths: lengths };
+    }
+
     function computeNumbers(cfg) {
         var calib = cfg.pressure.calibration;
         var numbers = {
@@ -509,7 +534,9 @@ var BUILDLIB = (function () {
             knob1_orders: cfg.arp_order.knob1_orders,
             knob4_octaves: cfg.knob4.octaves,
             knob4_zones: 3 + Math.max(1, Math.floor(
-                (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg)))
+                (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg))),
+            knob2_patterns: cfg.knob2.mode === 'patterns' ? 1 : 0,
+            pattern_count: patternBank(cfg).masks.length
         };
         var span = calib.trim_span;
         if (span !== 128 && span !== 256 && span !== 512) {
@@ -601,7 +628,7 @@ var BUILDLIB = (function () {
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
-        baseUnits: baseUnits,
+        baseUnits: baseUnits, patternBank: patternBank,
         initMarker: initMarker, writeProperties: writeProperties, get: get
     };
 })();

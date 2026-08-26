@@ -845,6 +845,8 @@ RAM_REGIONS = [
     (0x614A, 0x614E, "preset following flags"),
     # Which way the mirror order is travelling; it turns at the ends.
     (0x614E, 0x614F, "arp mirror direction"),
+    # Where knob 2's pattern has got to, wrapped at that pattern's length.
+    (0x6150, 0x6152, "arp pattern step"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1625,6 +1627,46 @@ def main() -> None:
             blocks[name] = False
     summary.append(f"  {'knob4.octaves':28s} "
                    f"{k4}  ({'octave switch' if blocks['knob4_octave_switch'] else 'vibrato'})")
+    # Knob 2: randomness as in 1.x, or a bank of step patterns the knob
+    # selects from.  A pattern says whether a step sounds at all, which is a
+    # different question from how long the step is, so it is gated at the note
+    # selector rather than in the rhythm randomiser.
+    k2 = cfg.get("knob2", {}).get("mode", "randomness")
+    if k2 not in ("randomness", "patterns"):
+        raise SystemExit("[knob2].mode must be 'randomness' or 'patterns'")
+    bank = list(cfg.get("knob2", {}).get("patterns") or [])
+    lens = list(cfg.get("knob2", {}).get("lengths") or [])
+    if k2 == "patterns":
+        if not bank:
+            import clix
+            bank, lens = list(clix.CLIX), [32] * len(clix.CLIX)
+        if not lens:
+            lens = [32] * len(bank)
+        if len(lens) != len(bank):
+            raise SystemExit("[knob2].lengths must have one entry per pattern")
+        if not 1 <= len(bank) <= 32:
+            raise SystemExit("[knob2].patterns: give one to 32 patterns")
+        for i, (m, n) in enumerate(zip(bank, lens)):
+            if not isinstance(m, int) or isinstance(m, bool) or not 0 <= m <= 0xFFFFFFFF:
+                raise SystemExit(f"[knob2].patterns[{i}] must be a 32-bit mask")
+            if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 32:
+                raise SystemExit(f"[knob2].lengths[{i}] must be 1..32")
+            if m == 0:
+                raise SystemExit(f"[knob2].patterns[{i}] is empty — it would "
+                                 "never sound a note")
+        tables["arp_pattern_bank"] = [h for m in bank
+                                      for h in (m & 0xFFFF, (m >> 16) & 0xFFFF)]
+        tables["arp_pattern_len"] = list(lens)
+        cfg["_numbers"]["pattern_count"] = len(bank)
+    else:
+        tables["arp_pattern_bank"] = [0, 0]
+        tables["arp_pattern_len"] = [32]
+        cfg["_numbers"]["pattern_count"] = 1
+    blocks["arp_pattern_gate"] = k2 == "patterns"
+    blocks["arp_pattern_tables"] = k2 == "patterns"
+    cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
+    summary.append(f"  {'knob2.mode':28s} {k2!r}"
+                   + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
     for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "

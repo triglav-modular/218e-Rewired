@@ -35,6 +35,13 @@ var WEBBUILD = (function () {
                     degrees, period);
             }
         });
+        var bank = BUILDLIB.patternBank(cfg);
+        tables.arp_pattern_bank = [];
+        bank.masks.forEach(function (m) {
+            tables.arp_pattern_bank.push(m & 0xFFFF, Math.floor(m / 65536) & 0xFFFF);
+        });
+        tables.arp_pattern_len = bank.lengths.slice();
+
         var mask = 0x0A54A54A;
         var excess = BUILDLIB.floorHalf(cfg.pressure.black_key_scale * 256) - 256;
         var bk = [];
@@ -107,6 +114,8 @@ var WEBBUILD = (function () {
             blocks[n] = octave !== cfg.tuning.units_per_octave;
         });
         blocks.arp_order_zones = cfg.arp_order.knob1_orders === 1;
+        blocks.arp_pattern_gate = cfg.knob2.mode === 'patterns';
+        blocks.arp_pattern_tables = blocks.arp_pattern_gate;
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
         if (blocks.knob4_octave_switch) {

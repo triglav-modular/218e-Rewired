@@ -720,6 +720,15 @@ function assembleProgram() {
         emitTable("pitch_remap");
         finish("tracking_correction_table", 0x80019c5e);
 
+        // Knob 2's pattern bank: one 32-bit mask per pattern as two halfwords,
+        // low first, then one length each.  In the gap the relocated sine
+        // left behind.
+        begin(0x80019f20);
+        emitTable("arp_pattern_bank");
+        padTo(0x80019f78);
+        emitTable("arp_pattern_len");
+        finish("arp_pattern_tables", 0x80019fa4);
+
         // Pressure-based portamento:
         // each scan the pitch target becomes
         // X_port = sum(z^3 * X_k) / sum(z^3) over held keys within PInterv
@@ -2666,6 +2675,90 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("knob4_octave_switch", 0x8001b050);
 
+        // Knob 2 as a bank of step patterns.  A pattern says whether a step
+        // sounds, which is not a question about how long the step is, so this
+        // sits at the note selector rather than in the rhythm randomiser: it
+        // takes the selector's pool word and calls the real selector through.
+        //
+        // A rest returns -1, the same answer the selector gives when nothing
+        // is held, and the caller already knows to stay quiet for it.  The
+        // note sequence does not advance on a rest - only hits move it on -
+        // so a sparse fill plays the arpeggio slowly rather than skipping
+        // through it.
+        //
+        // Knob 2 picks the pattern; RAM 0x6150 is the step, wrapped at that
+        // pattern's own length.
+        begin(0x8001b050);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");             // hold the caller's argument
+        emit("LDDPC R1,0x8001b0f0");    // state base
+        // Which pattern: knob 2's latch across the bank.
+        emit("MOV R8,0x60e6");
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ge} 0x8001b06c");
+        emit("MOV R8,0x0");
+        padTo(0x8001b06c);
+        emit(StringFormat("MOV R9,0x%x", number("pattern_count", 1, 1, 32)));
+        emit("MUL R8,R8,R9");
+        emit("LSR R8,0xa");
+        emit("CP.W R8,R9");
+        emit("BR{lt} 0x8001b07c");
+        emit("MOV R8,R9");
+        emit("SUB R8,0x1");
+        padTo(0x8001b07c);
+        // That pattern's mask (two halfwords, low first) and its length.
+        emit("LDDPC R10,0x8001b0f4");   // bank
+        emit("ADD R10,R10,R8 << 0x2");
+        emit("LD.UH R11,R10[0x0]");
+        emit("LD.UH R12,R10[0x2]");
+        emit("LSL R12,0x10");
+        emit("OR R11,R12");             // the 32 steps
+        emit("LDDPC R10,0x8001b0f8");   // lengths
+        emit("ADD R10,R10,R8 << 0x1");
+        emit("LD.UH R9,R10[0x0]");
+        // Where we are in it, and where we go next.
+        emit("MOV R10,0x6150");
+        emit("LD.UH R8,R10[0x0]");
+        emit("CP.W R8,R9");
+        emit("BR{lt} 0x8001b0a0");
+        emit("MOV R8,0x0");
+        padTo(0x8001b0a0);
+        emit("MOV R12,R8");
+        emit("SUB R12,-0x1");
+        emit("CP.W R12,R9");
+        emit("BR{lt} 0x8001b0ac");
+        emit("MOV R12,0x0");
+        padTo(0x8001b0ac);
+        emit("ST.H R10[0x0],R12");
+        // Does this step sound?  There is no shift-by-register here, so the
+        // mask walks down to bit zero instead - at most 31 passes, once per
+        // arpeggiator step, which is nothing.
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b0bc");
+        padTo(0x8001b0b4);
+        emit("LSR R11,0x1");
+        emit("SUB R8,0x1");
+        emit("BR{gt} 0x8001b0b4");
+        padTo(0x8001b0bc);
+        emit("BFEXTU R11,R11,0x0,0x1");
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001b0d8");
+        emit("MOV R12,R0");             // a hit: the real selector answers
+        emit("MCALL PC[0x8001b0fc]");
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(0x8001b0d8);
+        emit("MOV R12,0x0");
+        emit("SUB R12,0x1");            // a rest
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(0x8001b0f0);
+        word(0x00003560); // global state base
+        word(0x80019f20); // pattern bank
+        word(0x80019f78); // pattern lengths
+        word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0 : 0x8001a0a0);
+        finish("arp_pattern_gate", 0x8001b100);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -2922,7 +3015,8 @@ function assembleProgram() {
         // Factory selector pointer -> whichever replacement this build wants:
         // the 1.x blend from press order into randomness, or the six zones.
         begin(0x80002420);
-        word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0 : 0x8001a0a0);
+        word(number("knob2_patterns", 0, 0, 1) == 1 ? 0x8001b050
+             : number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0 : 0x8001a0a0);
         finish("arp_selector_pool", 0x80002424);
 
         // Hook: the transpose adder's target store now routes through the

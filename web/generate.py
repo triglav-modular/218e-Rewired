@@ -46,6 +46,7 @@ def main() -> None:
         f"  enabledWhen: {json.dumps(B.ENABLED_WHEN, sort_keys=True)},",
         f"  javaSourceBase64: {json.dumps(base64.b64encode(java).decode())},",
         f"  changelog: {json.dumps((REPO / 'CHANGELOG.txt').read_text())},",
+        f"  clix: {json.dumps(__import__('clix').CLIX)},",
     ]
 
     # Both flashers, whole.  The page substitutes the checksum and version of

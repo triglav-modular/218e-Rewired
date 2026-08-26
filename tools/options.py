@@ -71,6 +71,9 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'vibrato': {'dither': 0},
     'arp_order': {'knob1_orders': 0},
     'knob4': {'octaves': 0},
+    # Knob 2: 'randomness' is what 1.x does, 'patterns' turns the knob into a
+    # bank selector over step masks, 'swing' delays every other step.
+    'knob2': {'mode': 'randomness', 'patterns': [], 'lengths': []},
     'timing': {'gate_settle_scans': 1, 'scan_period_ms': 5},
     'tuning': {   'base_units': 485,
                   'reference_key': 9,
