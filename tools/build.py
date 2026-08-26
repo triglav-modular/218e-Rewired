@@ -1184,6 +1184,29 @@ def main() -> None:
     # What one step of the octave controls should be, in DAC units.  The
     # factory temperament and every 2/1 scale make this 484.
     periods = set()
+    for relative in tuning["slots"]:
+        if relative == "factory":
+            periods.add(tuning["units_per_octave"])
+            continue
+        name, map_name = relative if isinstance(relative, (list, tuple)) else (relative, None)
+        probe = parse_scala(REPO / name, mapped=True)
+        if map_name is None:
+            span = probe[12] if len(probe) > 12 else 1200.0
+        else:
+            span = probe[parse_kbm(REPO / map_name, probe)[1]]
+        periods.add(int(math.floor(span * tuning["units_per_octave"] / 1200 + 0.5)))
+    if len(periods) > 1:
+        raise SystemExit(
+            "[tuning].slots disagree about the period: "
+            + ", ".join(f"{p} units" for p in sorted(periods))
+            + " — the octave controls step one period, and there is one set of "
+              "them for the whole instrument, so every slot must repeat at the "
+              "same interval (the factory temperament repeats at 484)")
+    # The bottom key sits one period above nothing, so the switch's lowest
+    # position still lands above zero.  485 for a 2/1, which is what every
+    # octave build already has.
+    tuning["base_units"] = max(periods) + 1
+    periods = set()
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             periods.add(tuning["units_per_octave"])
@@ -1212,13 +1235,22 @@ def main() -> None:
             offset = anchor_offset(cents, reference_key, degrees, period or 1200.0)
         except ValueError as error:
             raise SystemExit(str(error))
+        # The anchor keeps one key where equal temperament puts it, so one trim
+        # on the 208 serves every slot.  That is a statement about a 12-TET
+        # grid, and a scale that does not repeat at the octave has no place on
+        # one: pinning its ninth key to A's pitch only transposes the whole
+        # scale by whatever the difference happens to be, and spends the
+        # headroom the octave switch needs.  Degree 0 keeps the bottom key.
+        if abs((period or 1200.0) - 1200.0) > 0.001:
+            offset = 0.0
         tables[f"tuning_slot{index}"] = tuning_table(
             cents, tuning["base_units"], tuning["units_per_octave"], offset,
             degrees, period or 1200.0
         )
         periods.add(int(math.floor(
             (period or 1200.0) * tuning["units_per_octave"] / 1200 + 0.5)))
-        anchor = NOTE_NAMES[reference_key]
+        anchor = (NOTE_NAMES[reference_key] if abs((period or 1200.0) - 1200.0) <= 0.001
+                  else "bottom key")
         shape = ("" if degrees is None else
                  f", {Path(map_name).name}: {len(degrees)} keys per octave")
         print(f"  tuning slot {index}: {path.name}"

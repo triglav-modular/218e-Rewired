@@ -26,8 +26,12 @@ var WEBBUILD = (function () {
                 }
                 var offset = BUILDLIB.anchorOffset(
                     cents, cfg.tuning.reference_key, degrees, period);
+                // Same rule as tools/build.py: pinning a key to its 12-TET
+                // pitch says nothing about a scale that has no octave, and
+                // spends the headroom the octave switch needs.
+                if (Math.abs((period || 1200.0) - 1200.0) > 0.001) offset = 0.0;
                 tables['tuning_slot' + index] = BUILDLIB.tuningTable(
-                    cents, cfg.tuning.base_units, cfg.tuning.units_per_octave, offset,
+                    cents, BUILDLIB.baseUnits(cfg), cfg.tuning.units_per_octave, offset,
                     degrees, period);
             }
         });

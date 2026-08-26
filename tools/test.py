@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import math
+import math
 import re
 import subprocess
 import sys
@@ -171,6 +172,20 @@ def test_keyboard_maps() -> None:
     check("a non-2/1 scale repeats at its own period",
           len(bpmap) == 13 and abs(period - 1901.955) < 0.01
           and table[13] - table[0] == 767, table[13] - table[0])
+
+    # Found on hardware: a tritave build put the bottom eight keys below zero
+    # once the octave switch went down, and the DAC clamped them all to one
+    # pitch.  The table has to clear one period, not one octave, and a scale
+    # with no 2/1 must not be shifted onto the 12-TET grid by the anchor.
+    bpcents = B.parse_scala(REPO / "tunings" / "BohlenPierce.scl", mapped=True)
+    bpdeg, bpformal = B.parse_kbm(REPO / "tunings" / "BohlenPierce.kbm", bpcents)
+    bpperiod = bpcents[bpformal]
+    step = int(math.floor(bpperiod * 484 / 1200 + 0.5))
+    bptable = B.tuning_table(bpcents, step + 1, 484, 0.0, bpdeg, bpperiod)[:29]
+    check("a non-octave table clears its own period at the bottom",
+          min(bptable) - step >= 0, min(bptable) - step)
+    check("and still fits the DAC two positions up",
+          max(bptable) + 2 * step <= 4095, max(bptable) + 2 * step)
 
     raises("a truncated header is refused",
            lambda: B.parse_kbm(tmp("! t\n 12\n 0\n", "_short.kbm"), twelve),

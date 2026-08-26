@@ -483,6 +483,11 @@ var BUILDLIB = (function () {
         return keys.length ? Number(keys[0]) : per;
     }
 
+    // The bottom key sits one period above nothing, so the switch's lowest
+    // position still lands above zero.  485 for a 2/1, which is what every
+    // octave build already has.
+    function baseUnits(cfg) { return octaveUnits(cfg) + 1; }
+
     function computeNumbers(cfg) {
         var calib = cfg.pressure.calibration;
         var numbers = {
@@ -592,6 +597,7 @@ var BUILDLIB = (function () {
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
+        baseUnits: baseUnits,
         initMarker: initMarker, writeProperties: writeProperties, get: get
     };
 })();
