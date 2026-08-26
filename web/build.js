@@ -116,6 +116,9 @@ var WEBBUILD = (function () {
         blocks.arp_order_zones = cfg.arp_order.knob1_orders === 1;
         blocks.arp_pattern_gate = cfg.knob2.mode === 'patterns';
         blocks.arp_pattern_tables = blocks.arp_pattern_gate;
+        // Same rule as tools/build.py: the rhythm randomiser reads the same
+        // knob, and even spacing is what makes a pattern legible.
+        if (blocks.arp_pattern_gate) blocks.arp_rhythm_hook = false;
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
         if (blocks.knob4_octave_switch) {

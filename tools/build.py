@@ -1664,6 +1664,14 @@ def main() -> None:
         cfg["_numbers"]["pattern_count"] = 1
     blocks["arp_pattern_gate"] = k2 == "patterns"
     blocks["arp_pattern_tables"] = k2 == "patterns"
+    if k2 == "patterns":
+        # The rhythm randomiser reads the SAME knob latch, so leaving it in
+        # would mean a denser pattern also bought more jitter in the step
+        # interval - the hits land unevenly and the pattern is unreadable.
+        # A pattern is about which steps sound, and the steps have to be
+        # evenly spaced for that to mean anything, so the randomiser goes and
+        # the factory's own reload stands.
+        blocks["arp_rhythm_hook"] = False
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
