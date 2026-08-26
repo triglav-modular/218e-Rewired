@@ -70,6 +70,15 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   (map(1023-pot, 0, 1023, 1, 8)).  No multiplication — predicting edges
   is out of scope (card has none either).  Falls back when the clock stops.
 
+## Noted for later
+
+- **Oscillator ceiling, not a firmware limit.** On a Bohlen-Pierce build the
+  top octave sounds nothing: the 208p tops out around 2670 Hz and the table
+  runs past it.  Later 208 revisions go higher, so this is per-instrument.
+  Worth a builder-side warning naming the highest key's frequency for the
+  configured volts/octave, and possibly an option to cap the table at a
+  stated ceiling.  Confirmed on the owner's instrument 2026-08-26.
+
 ## Archaeology (all in the factory binary)
 - Add-to-pitch toggle: state address + how the source selection is applied
   (forcing point for octave mode).
