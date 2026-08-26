@@ -467,15 +467,69 @@ def test_blend(cfg: dict) -> None:
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
     walkers = sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', source))
-    # 0x1c is a walk over the keys, 0x20 the tuning applier's 32-halfword table
-    # copy, and 0x25 the first-use clear of the pressure cache and the preset
-    # block that follows it - all three are counts over arrays that are not the
-    # key array, and only a walk over the KEYS starting past 28 is the bug this
-    # guards.  Each exception is named so a new bound has to be justified here.
-    stray = [w for w in walkers if w not in ("1c", "20", "25")]
+    # 0x1c is a walk over the keys and 0x20 the tuning applier's 32-halfword
+    # table copy - counts over arrays that are not the key array, and only a
+    # walk over the KEYS starting past 28 is the bug this guards.  The
+    # first-use clear used to need naming here too, at 0x25; it now runs to
+    # 0x76 and is out of this range entirely, which is why it is gone.
+    stray = [w for w in walkers if w not in ("1c", "20")]
     check("every key walk starts at the last real key",
-          not stray and walkers.count("20") == 1 and walkers.count("25") == 1,
+          not stray and walkers.count("20") == 1,
           f"unexpected loop bounds {stray or walkers}")
+
+
+def test_call_pools(cfg: dict) -> None:
+    """Every MCALL must name a word that holds a code address, not code.
+
+    MCALL is memory-indirect: `MCALL PC[x]` calls whatever the WORD at x
+    says, so pointing it straight at a routine calls that routine's first
+    instruction *as an address*.  The clock divider shipped exactly that bug -
+    it read back 0xebcd4080, the encoding of its own STM - and neither the
+    emulation nor the browser-parity matrix could see it, because the one
+    called the cave directly and the other compares two toolchains that were
+    both told the same wrong thing.
+    """
+    print("call pools")
+    out = REPO / cfg["firmware"]["output_hex"]
+    if not out.exists():
+        check("an image to check", False, f"{out} missing - run tools/build.py")
+        return
+    flash, _ = B.parse_hex(out)
+    factory, _ = B.parse_hex(REPO / cfg["firmware"]["factory_hex"])
+    word = lambda a: int.from_bytes(bytes(flash.get(a + i, 0) for i in range(4)), "big")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    targets = sorted({int(m, 16) for m in
+                      re.findall(r'emit\("MCALL PC\[(0x[0-9a-f]+)\]"\);', source)})
+    def called(target: int) -> bool:
+        """Is there an MCALL in this image that actually reads that word?
+
+        A pool word only matters if the call naming it was emitted; with the
+        block off, the address is whatever else lives there.  MCALL is
+        f0 1f <signed word displacement from pc & ~3>.
+        """
+        for pc in range(0x80002000, 0x80020000, 2):
+            if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
+                continue
+            d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
+            if d & 0x8000:
+                d -= 0x10000
+            if (pc & ~3) + d * 4 == target:
+                return True
+        return False
+
+    bad = []
+    for t in targets:
+        if t not in flash:
+            continue                      # outside the image entirely
+        v = word(t)
+        if not called(t):
+            continue                      # a block this build did not emit
+
+        # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
+        if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
+            bad.append(f"{t:#x} holds {v:#010x}")
+    check("every MCALL names a pool word, not code",
+          not bad, "; ".join(bad))
 
 
 def test_output_interpolation(cfg: dict) -> None:
@@ -972,6 +1026,7 @@ def main() -> None:
     test_generated_is_current()
     test_corpus_current()
     test_hex_roundtrip(cfg)
+    test_call_pools(cfg)
     if args.golden:
         test_golden(cfg)
 

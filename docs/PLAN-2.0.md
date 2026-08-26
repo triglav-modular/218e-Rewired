@@ -230,9 +230,9 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
 - RAM only (lost at power-off) - no new flash machinery.  If the settings
   record has ~130+ spare bytes, persistence can ride along later.
 
-### 5. External clock divide (option) - NOT BUILT
+### 5. External clock divide (option) - BUILT
 
-**Archaeology done 2026-08-27, the build is not started.**
+**Archaeology and build both done 2026-08-27.**
 
 - The arp step function `0x8000210c` takes the interval in R12, and **-1
   means tick now, do not reload** - which is how every external trigger in

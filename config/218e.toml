@@ -1,7 +1,7 @@
 # ===========================================================================
 # Buchla 218e V3 — custom firmware
 # ===========================================================================
-# Seven options.  Everything else is fixed at the value the firmware was built
+# The options.  Everything else is fixed at the value the firmware was built
 # and tested with; see tools/options.py for those constants and docs/BUILD.md
 # for what they are.
 #
@@ -123,7 +123,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "91ab8e2d7661893bbe5abbbb34aed834cb0e130b4dcf685dca132fa0d127c8ed"
+golden_sha256  = "34a292d1a1fea57abda2ed95fd3edd42274835b59330dba48508f5364a119b97"
 
 
 [tools]

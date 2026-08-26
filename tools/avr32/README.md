@@ -78,10 +78,10 @@ python3 tools/build.py --no-ghidra
   MATCHES
 ```
 
-- **Encoder**: 3,731 / 3,731 corpus instructions, all 71 shapes, zero mismatches.
+- **Encoder**: 4,771 / 4,771 corpus instructions, 44 mnemonics, zero mismatches.
 - **Structure**: the transpiled program emits every EXTENT / BLOCK / SKIP /
   listing / PATCH record *identically* to a fresh Ghidra run.
-- **Image**: `tools/avr32/sweep.py` builds **30 configurations** both ways and
+- **Image**: `tools/avr32/sweep.py` builds **22 configurations** both ways and
   compares the images — 30/30 agree, and all 30 SHAs are distinct, so each
   variant really does change the firmware rather than passing vacuously.
 

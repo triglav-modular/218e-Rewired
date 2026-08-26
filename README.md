@@ -51,7 +51,7 @@ after an interrupted flash. The second writes nothing.
 
 | Control | What it does |
 |---|---|
-| Knob 1 | Scales the whole pressure window, 0.50x–1.14x. Lower reaches full output sooner. |
+| Knob 1 | Scales the whole pressure window, 1.21x–0.70x clockwise, unity at 4.1 of 10. |
 | Key 28 / Key 27 | Tuning slot select. LEDs: *rem-en* = slot 0, *trn* = slot 1, both dark = slot 2. |
 
 
@@ -69,7 +69,7 @@ python3 tools/build.py --no-ghidra          # writes build/
 python3 tools/test.py --golden              # rebuild and compare
 ```
 
-Python 3.11+; Ghidra 12.x only if you drop `--no-ghidra`. The seven options
+Python 3.11+; Ghidra 12.x only if you drop `--no-ghidra`. The options
 live in [`config/218e.toml`](config/218e.toml), and `tools/avr32/` holds a
 second, Ghidra-free toolchain that assembles the same firmware in JavaScript —
 `tools/avr32/sweep.py` builds every option both ways and checks the images
@@ -80,7 +80,7 @@ match. See [`docs/BUILD.md`](docs/BUILD.md).
 ## Layout
 
 ```
-config/       the seven options — the only file you normally edit
+config/       the options — the only file you normally edit
 tunings/      Scala files (12 degrees, 2/1 octave)
 calibration/  measured per-key tracking error — instrument-specific
 src/          Ghidra scripts: the AVR32 assembler and verification tools

@@ -51,6 +51,34 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                (r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]'),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    # The 2.0 features.  They were missing from this sweep, which is how a
+    # clock hook that jumped to an invalid address reached a release build:
+    # the browser-parity matrix compares two toolchains against each other and
+    # both were told the same wrong thing, and the emulations called each cave
+    # directly rather than through its hook.  This sweep is the only check
+    # that builds every one of them through Ghidra.
+    ("sequencer",             [(r"^remap_knobs = true", "remap_knobs = true\nsequencer = true")]),
+    ("clock_divide",          [(r"^remap_knobs = true", "remap_knobs = true\nclock_divide = true")]),
+    ("sequencer_and_clock",   [(r"^remap_knobs = true",
+                               "remap_knobs = true\nsequencer = true\nclock_divide = true")]),
+    ("knob_roles",            [(r"^remap_knobs = true",
+                               'remap_knobs = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
+    ("knob2_swing",           [(r"^remap_knobs = true", 'remap_knobs = true\nknob2 = "swing"')]),
+    ("arp_patterns",          [(r"^remap_knobs = true",
+                               'remap_knobs = true\nknob2 = "patterns"\n'
+                               'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')]),
+    ("tuning_maps",           [(r"^alternate_tunings = false",
+                               'alternate_tunings = [["tunings/24TET.scl", "tunings/24TET-full.kbm"]]')]),
+    ("non_octave",            [(r"^alternate_tunings = false",
+                               'alternate_tunings = [' + ', '.join(
+                                   ['["tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm"]'] * 3)
+                               + ']')]),
+    ("everything_on",         [(r"^remap_knobs = true",
+                               "remap_knobs = true\nsequencer = true\nclock_divide = true"),
+                               (r"^pitch_correction = false",
+                                'pitch_correction = "calibration/218e-pitch-calibration.csv"'),
+                               (r"^alternate_tunings = false",
+                                'alternate_tunings = ["tunings/12TET.scl"]')]),
     ("everything_off",        [(r"^latching_arp = true", "latching_arp = false"),
                                (r"^remap_knobs = true", "remap_knobs = false"),
                                (r"^pressure_fix = true", "pressure_fix = false"),
@@ -71,9 +99,10 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # a changed build forces a fresh power-up init.  What this pin still buys is a
 # stable anchor for the most complex configuration.
 # Re-pinned after the calibration defaults moved to the settings that suit the
-# instrument this was measured on, and both trims were centred on them.
+# instrument this was measured on, and both trims were centred on them; and
+# again for 2.0, which added caves and moved the first-use clear.
 EXPECTED = {
-    "historical_config": "b0827b659704ac624118a731497ba7ac4fabdf8325272901679488c0ef977ba2",
+    "historical_config": "7e975061dabfed2b28618f654a80fecfb7611c952ba18fc60b5a8b2fcfb3766d",
 }
 
 

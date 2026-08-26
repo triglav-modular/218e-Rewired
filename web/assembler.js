@@ -1640,7 +1640,7 @@ function assembleProgram() {
         if (block("seq_gate")) {
             // LR is still on the stack here, so a call is safe; two lines
             // later it would not be.  R8 comes back as the threshold.
-            emit("MCALL PC[0x8001b538]");
+            emit("MCALL PC[0x8001b548]");
         }
         padTo(0x80019d98);
         emit("LDM SP++,R7,R9,R10,R11,R12,LR");
@@ -2853,10 +2853,15 @@ function assembleProgram() {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0x25, not 0x1c: the run now reaches past the pressure cache over
-        // the preset store, its knob snapshots and its flags, so a flash
-        // cannot leave four preset voltages reading whatever RAM held.
-        emit("MOV R12,0x25");
+        // 0x76, not 0x1c: the run reaches from the pressure cache all the way
+        // over the preset block, the arp's own cells, the sequencer and the
+        // clock divider - everything we keep in this gap.  SRAM survives a
+        // DFU, so anything left out here starts as whatever the last image
+        // happened to leave: a sequencer that resumes an old mode mid-flash,
+        // a divider that thinks it is still locked, or - the one that was
+        // already wrong at 0x25 - two of the four preset following flags,
+        // which would have stopped the pad-4 chord arming at all.
+        emit("MOV R12,0x76");
         padTo(0x8001ac40);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3733,27 +3738,27 @@ function assembleProgram() {
         word(0x800068cc); // led_clear(ch)
         word(0x8000673c); // led_flush()
         word(0x8001b290); // write_channel(R11, R9)
-        word(0x8001b540); // seq_enter(R9 = mode)
+        word(0x8001b660); // seq_enter(R9 = mode)
         finish("seq_chord", 0x8001b31c);
 
         // Entering a mode clears what that mode is about to write: record
         // starts from an empty sequence, play starts from its first step.
         // R9 = the mode being entered.
-        begin(0x8001b540);
+        begin(0x8001b660);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x61e0");
         emit("MOV R10,0x0");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b556");
+        emit("BR{ne} 0x8001b676");
         emit("ST.B R8[0x0],R10");       // record: no steps yet
-        padTo(0x8001b556);
+        padTo(0x8001b676);
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b560");
+        emit("BR{ne} 0x8001b680");
         emit("ST.B R8[0x1],R10");       // play: from the top
-        padTo(0x8001b560);
+        padTo(0x8001b680);
         emit("LDM SP++,R7,PC");
-        finish("seq_enter", 0x8001b568);
+        finish("seq_enter", 0x8001b688);
 
         // The bend strip, while recording.  One hook does both jobs the plan
         // asks of it: it reads how far the strip has been pushed, and it
@@ -3976,7 +3981,12 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x8001b7e0);
         word(0x8000210c); // the arp step
-        finish("clock_pulse", 0x8001b7e4);
+        // MCALL is memory-indirect, so the dispatcher's call needs a word
+        // holding this cave's address - not the address itself.  Pointing it
+        // straight here made event 10 read back 0xebcd4080, this cave's own
+        // STM, and jump to it.
+        word(0x8001b740);
+        finish("clock_pulse", 0x8001b7e8);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
@@ -3991,28 +4001,40 @@ function assembleProgram() {
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b530");
+        emit("BR{ne} 0x8001b540");      // not playing: the factory's own
+        // A tie has to hold the gate through its OWN step as well as into
+        // it.  By the time it is sounding the index has already moved on to
+        // the note it slides into, so a test that only looked at the step
+        // about to play let the gate fall exactly where it had to stay up,
+        // and the destination retriggered instead of being slid into.  The
+        // slide count says which step this is: 2 while the tie sounds, 1
+        // while the note it slid into does.
+        emit("MOV R11,0x61e5");
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x2");
+        emit("BR{eq} 0x8001b53c");      // a tie is sounding now: hold
         emit("MOV R10,0x61e0");
         emit("LD.UB R11,R10[0x0]");
         emit("CP.W R11,0x0");
-        emit("BR{eq} 0x8001b530");
+        emit("BR{eq} 0x8001b540");
         emit("LD.UB R9,R10[0x1]");      // the step about to play
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b51a");
+        emit("BR{lt} 0x8001b522");
         emit("MOV R9,0x0");
-        padTo(0x8001b51a);
+        padTo(0x8001b522);
         emit("MOV R10,0x6160");
         emit("ADD R10,R10,R9 << 0x1");
         emit("LD.SH R10,R10[0x0]");
         emit("MOV R11,0x7fff");
         emit("CP.W R10,R11");
-        emit("BR{ne} 0x8001b530");
+        emit("BR{ne} 0x8001b540");      // the next step is not a tie
+        padTo(0x8001b53c);
         emit("MOV R8,-0x8000");         // a count the countdown never reaches
-        padTo(0x8001b530);
+        padTo(0x8001b540);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b538);
+        padTo(0x8001b548);
         word(0x8001b4f0); // this cave, for the caller too far away to pool it
-        finish("seq_gate", 0x8001b53c);
+        finish("seq_gate", 0x8001b54c);
 
         // Record.  Called from the note-on wrapper with R12 = the key, which
         // it must leave alone - the wrapper still needs it.  What goes in the
@@ -4403,7 +4425,7 @@ function assembleProgram() {
         // letting this one through.  The arp-switch test above is untouched.
         if (block("clock_pulse")) {
             begin(0x80004e72);
-            emit("MCALL PC[0x8001b740]");
+            emit("MCALL PC[0x8001b7e4]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7a);
         }

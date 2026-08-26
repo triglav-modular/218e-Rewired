@@ -222,12 +222,12 @@ bootloader region is protected), programs, and validates by read-back. If the
 keyboard does not enumerate in DFU, it aborts **before erasing anything** — a
 failed attempt leaves the instrument as it was.
 
-## The seven options
+## The options
 
 Everything that is a choice lives in [`config/218e.toml`](../config/218e.toml)
 under `[options]`. Every other setting is fixed at the value this firmware was
 built and tested with; those constants are in `tools/options.py`, which expands
-the seven options into the full internal settings the build has always used.
+the options into the full internal settings the build has always used.
 
 | Option | Default | What it does |
 | --- | --- | --- |
