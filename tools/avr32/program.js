@@ -2626,18 +2626,26 @@ function assembleProgram() {
         word(0x8001a150); // press order
         finish("arp_order_zones", 0x8001b00c);
 
-        // Knob 4 as an octave switch instead of vibrato.  The pitch remap
-        // already adds a signed offset from RAM 0x6028 - that is where the
-        // vibrato engine leaves its output - and in this mode the vibrato
-        // engine is not built, so the cell is free and the pitch path needs
-        // no new patch at all.
+        // Knob 4 as an octave switch instead of vibrato.
         //
-        // The travel is four zones, -1 to +2, the same reach the panel switch
-        // has.  It stops at -1 because the remap divides unsigned: the bottom
-        // key sits one period above nothing, so one period down still leaves
-        // 121, while two would go negative and wrap enormous.
+        // Not by inventing a transpose: the instrument already has one.  The
+        // factory's trn mode transposes by ([state+0x6b] - 2) octaves, nine
+        // steps from -2 to +6, and knob 4 is the knob that sets it - which is
+        // exactly why remap_knobs retires trn, and what this hands back.  So
+        // this writes the factory's own two bytes and lets the factory's own
+        // code apply them, range checks included.  Those checks are the reason
+        // it is done this way: the remap divides unsigned and has no room for
+        // a low clamp, so -2 octaves through any shortcut of ours would go
+        // negative at the bottom key and wrap enormous.
         //
-        // Edit-gated, because knob 4 in edit mode is the pressure curve.
+        // Our octave_scale_mul/bias patches sit on that arithmetic already, so
+        // trn steps the scale's period rather than a hardcoded 2/1.
+        //
+        // Written after the tuning applier in the per-scan chain, which is
+        // what makes it stick: with a tuning installed the applier zeroes the
+        // transpose-mode byte every scan, and this runs later.
+        //
+        // Edit-gated, since knob 4 in edit mode is the pressure curve.
         begin(0x8001b010);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -2646,14 +2654,12 @@ function assembleProgram() {
         emit("CP.W R8,0x1");
         emit("BR{eq} 0x8001b048");
         emit("LD.SH R8,R9[0x310]");
-        emit("MOV R10,0x4");
+        emit(StringFormat("MOV R10,0x%x", number("knob4_zones", 9, 3, 16)));
         emit("MUL R8,R8,R10");
-        emit("LSR R8,0xa");
-        emit("SUB R8,0x1");
-        emit(StringFormat("MOV R10,0x%x", number("octave_units", 484, 1, 2000)));
-        emit("MUL R8,R8,R10");
-        emit("MOV R10,0x6028");
-        emit("ST.H R10[0x0],R8");
+        emit("LSR R8,0xa");             // the factory's own steps, or fewer
+        emit("ST.B R9[0x6b],R8");
+        emit("MOV R8,0x1");
+        emit("ST.B R9[0x6a],R8");       // and trn on, every scan
         padTo(0x8001b048);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b04c);

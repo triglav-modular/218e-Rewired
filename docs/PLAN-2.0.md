@@ -50,11 +50,18 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   settable length, plain-text x.x.. import/export.
 - Knob 3: stays arp octave span, untouched.
 - Knob 4: vibrato (1.x) | octave switching.  BUILT, off by default;
-  [knob4].octaves = 1.  No new patch on the pitch path: the remap already
-  adds a signed offset from RAM 0x6028, which is where the vibrato engine
-  writes, and that engine is not built in this mode.  Four zones, -1..+2,
-  the panel switch's own reach; -2 is excluded because the remap divides
-  unsigned and the bottom key sits only one period above nothing.
+  [knob4].octaves = 1.  It drives the factory's OWN trn transpose rather
+  than inventing one: knob 4 is the knob trn was always on, which is why
+  remap_knobs retires it.  The cave writes state+0x6b (the amount) and
+  state+0x6a (the mode) once per scan, after the tuning applier, which is
+  what makes it stick - with a tuning installed the applier zeroes 0x6a
+  every scan.
+  The factory reads that as: value <= 2 means no transpose, then (v-2)
+  periods UP - never negative, which is why no clamp is needed.  Nine
+  positions on a 2/1, and fewer on a wider period so the reach stays about
+  six octaves' worth rather than the knob's top half pushing everything
+  past the DAC.  The arithmetic is the octave_scale_mul/bias pair, already
+  period-aware, so trn steps tritaves on a tritave build.
 
 ### 4. SH-101-style sequencer (option)
 - Takes the add-to-pitch toggle: top=record, middle=play, bottom=off.

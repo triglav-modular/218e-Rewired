@@ -1605,6 +1605,18 @@ def main() -> None:
     if isinstance(k4, bool) or not isinstance(k4, int) or k4 not in (0, 1):
         raise SystemExit("[knob4].octaves must be 0 or 1")
     cfg["_numbers"]["knob4_octaves"] = k4
+    # How many positions knob 4 gets.  The factory has nine: three that mean
+    # no transpose, then six steps up.  Six OCTAVES is the reach, so a scale
+    # whose period is wider gets proportionally fewer steps rather than a
+    # knob whose top half pushes everything past the DAC and the oscillator.
+    # An octave build comes out at nine, which is the factory's own count.
+    step = cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
+    cfg["_numbers"]["knob4_zones"] = 3 + max(
+        1, (6 * cfg["tuning"]["units_per_octave"]) // step)
+    if blocks.get("knob4_octave_switch"):
+        summary.append(f"  {'knob4.zones':28s} "
+                       f"{cfg['_numbers']['knob4_zones']}  "
+                       f"(3 silent, then {cfg['_numbers']['knob4_zones'] - 3} up)")
     blocks["knob4_octave_switch"] = k4 == 1 and get(cfg, "knobs.knob4") == "vibrato"
     if blocks["knob4_octave_switch"]:
         features["knob4_vibrato"] = False
