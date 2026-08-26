@@ -87,10 +87,15 @@ def test_scala() -> None:
            lambda: B.parse_scala(tmp(scale(
                " 100.0\n 90.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n 800.0\n"
                " 900.0\n 1000.0\n 1100.0\n 2/1\n"), "_desc.scl")), "ascending")
-    raises("non-octave scale rejected",
-           lambda: B.parse_scala(tmp(scale(
-               " 100.0\n 200.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n 800.0\n"
-               " 900.0\n 1000.0\n 1100.0\n 1250.0\n"), "_oct.scl")), "2/1 octave")
+    # A scale is free to repeat somewhere other than the octave: the table
+    # steps the period the file declares, and the octave controls are rebuilt
+    # from it.  Twelve degrees to a 1250-cent period is a legal instrument.
+    stretched = B.parse_scala(tmp(scale(
+        " 100.0\n 200.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n 800.0\n"
+        " 900.0\n 1000.0\n 1100.0\n 1250.0\n"), "_oct.scl"), mapped=True)
+    check("a scale may repeat off the octave",
+          abs(stretched[12] - 1250.0) < 1e-9
+          and B.tuning_table(stretched, 485, 484)[12] - 485 == 504)
     raises("wrong degree count rejected",
            lambda: B.parse_scala(tmp("! t\nt\n 3\n!\n 100.0\n 200.0\n 2/1\n", "_n.scl")),
            "12-note")
@@ -153,8 +158,19 @@ def test_keyboard_maps() -> None:
     # A map can be structurally fine and still belong to another scale: the
     # degree it calls the octave has to BE an octave in this one.
     quarter = B.parse_scala(REPO / "tunings" / "24TET.scl", mapped=True)
-    raises("a map whose period is not a 2/1 is refused",
-           lambda: B.parse_kbm(kbm(" 0\n" * 12, formal=7), quarter), "not a 2/1")
+    check("a map may call any degree the period",
+          B.parse_kbm(kbm(" 0\n" * 12, formal=7), quarter)[1] == 7)
+
+    # A scale that repeats somewhere other than the octave is legal now: the
+    # table uses the period the file declares, and the octave controls are
+    # rebuilt to match it.
+    bp = B.parse_scala(REPO / "tunings" / "BohlenPierce.scl", mapped=True)
+    bpmap, formal = B.parse_kbm(REPO / "tunings" / "BohlenPierce.kbm", bp)
+    period = bp[formal]
+    table = B.tuning_table(bp, 485, 484, 0.0, bpmap, period)
+    check("a non-2/1 scale repeats at its own period",
+          len(bpmap) == 13 and abs(period - 1901.955) < 0.01
+          and table[13] - table[0] == 767, table[13] - table[0])
 
     raises("a truncated header is refused",
            lambda: B.parse_kbm(tmp("! t\n 12\n 0\n", "_short.kbm"), twelve),

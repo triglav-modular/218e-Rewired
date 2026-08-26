@@ -916,13 +916,13 @@ function assembleProgram() {
         emit("BFEXTU R9,R12,0x14,0x1");
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x80019de0");
-        emit("SUB R8,-0x1e4");
+        emit(StringFormat("SUB R8,-0x%x", number("octave_units", 484, 1, 2000)));
         emit("RJMP 0x80019df0");
         padTo(0x80019de0);
-        emit("SUB R8,0x1e4");
+        emit(StringFormat("SUB R8,0x%x", number("octave_units", 484, 1, 2000)));
         emit("CP.W R8,0x1");
         emit("BR{ge} 0x80019df0");
-        emit("SUB R8,-0x3c8");
+        emit(StringFormat("SUB R8,-0x%x", 2 * number("octave_units", 484, 1, 2000)));
         padTo(0x80019df0);
         emit("LDM SP++,R0,R7,R9,R10,R11,R12,PC");
         padTo(0x80019df8);
@@ -2865,6 +2865,26 @@ function assembleProgram() {
         fixedPatch("transpose_force_3", 0x80005392, 2, "MOV R8,0x1");
         wordPatch("pressure_float_helper_pool", 0x8000357c, 0x80013434,
             "restore original post-gain float-to-int helper");
+        // An octave is a 2/1 everywhere in the factory: the panel switch adds
+        // -484, 0, +484 or +968 DAC units by position, and the stored octave
+        // setting multiplies by 484 with a two-octave bias.  With a scale that
+        // repeats somewhere else those move the keyboard off its own scale, so
+        // each constant becomes one period.  All are plain immediates of the
+        // same width, so nothing after them moves; at 484 the patches are not
+        // emitted at all.
+        fixedPatch("octave_step_down", 0x80003776, 4,
+            StringFormat("MOV R8,-0x%x", number("octave_units", 484, 1, 2000)));
+        fixedPatch("octave_step_up", 0x80003788, 4,
+            StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
+        fixedPatch("octave_step_up2", 0x80003792, 4,
+            StringFormat("MOV R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
+        fixedPatch("octave_scale_mul", 0x800035e4, 4,
+            StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
+        // The factory writes this one as the three-operand SUB R8,R8,0x3c8;
+        // the two-operand form is the same operation and the same width.
+        fixedPatch("octave_scale_bias", 0x800035fa, 4,
+            StringFormat("SUB R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
+
         wordPatch("knob1_pool", 0x800043c4, 0x800194c0,
             "knob-1 pointer -> pressure-ceiling wrapper");
         wordPatch("knob3_pool", 0x800043cc, 0x80014300,

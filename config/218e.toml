@@ -60,8 +60,14 @@ pitch_correction = false
 # firmware has no way to make a key silent.  The mapping's own reference note
 # and frequency are read and ignored: this instrument has no MIDI note
 # numbers, and its absolute pitch comes from the 208's trimmer, so which key
-# stays put across slots remains [tuning].reference_key.  The formal octave
-# must still be a 2/1, because the octave switches add one.
+# stays put across slots remains [tuning].reference_key.
+#
+# A scale need not repeat at the octave.  The key table steps whatever period
+# the file declares, and the octave controls - the panel switch, the
+# arpeggiator's random octave, knob 3's span - are rebuilt to step that same
+# period, so a Bohlen-Pierce tritave moves the keyboard by a tritave.  There
+# is one set of those controls, so every slot must repeat at the same
+# interval; the factory temperament repeats at the octave.
 #
 # Slots you do not fill keep the instrument's own temperament.  false gives
 # all three slots the factory temperament, i.e. no retuning at all.
@@ -117,7 +123,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "5ea2ba82dcf9403a8b4e10faa88dc957c5e597ad61fc5feb3879ae745faf64cd"
+golden_sha256  = "3813c1ec106b294785c9d5cc984e47d599f38427c7389a6b50bcbeb5587cbbc7"
 
 
 [tools]

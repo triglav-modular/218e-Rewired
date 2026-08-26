@@ -13,6 +13,11 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
 - Unmapped keys → nearest degree.  Reference NOTE honoured (maps to
   reference_key); reference FREQUENCY ignored (CV instrument — absolute
   pitch belongs to the 208's trimmer).
+- DONE, and the 2/1 requirement went with it: the table steps the period
+  the file declares, and the factory's own octave arithmetic (panel switch
+  at 0x80003776/88/92, stored octave at 0x800035e4/fa) plus our arp octave
+  are rebuilt to that period.  One period per build - the slots must agree,
+  because there is one set of octave controls.
 - Latch match tolerance guard scaled to the smallest degree spacing
   (24-tet needs <= 10 units; config allows 30 today).
 - Page UI: one optional .kbm beside each .scl slot.

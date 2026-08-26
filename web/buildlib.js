@@ -161,10 +161,6 @@ var BUILDLIB = (function () {
                 throw new Error(name + ': degrees are not strictly ascending');
             }
         }
-        if (!mapped && Math.abs(cents[cents.length - 1] - 1200.0) > 0.001) {
-            throw new Error(name + ': last degree is ' + cents[cents.length - 1].toFixed(3) +
-                            ' cents, not a 2/1 octave');
-        }
         if (mapped) return cents;
         return cents.slice(0, 12);
     }
@@ -229,13 +225,6 @@ var BUILDLIB = (function () {
             throw new Error(name + ': formal octave degree is ' + formal +
                             ', but the scale has ' + degreeCount +
                             ' degrees — it must name one of them');
-        }
-        // A mapping only means anything against the scale it is for, and this
-        // is where the two meet.  The octave features move by a 2/1.
-        if (Math.abs(cents[formal] - 1200.0) > 0.001) {
-            throw new Error(name + ': formal octave degree ' + formal + ' is ' +
-                            cents[formal].toFixed(3) + ' cents, not a 2/1 — the ' +
-                            'octave switches add a 2/1 and would go out of tune');
         }
         if (size === 0) {
             var linear = [];
@@ -303,8 +292,11 @@ var BUILDLIB = (function () {
         offset = offset || 0.0;
         var out = [];
         for (var k = 0; k < 32; k++) {
+            // cents[12] is the scale's own octave; every scale that was legal
+            // before declares 1200 there, so unmapped tables do not move.
+            var span = cents.length > 12 ? cents[12] : 1200.0;
             var pitch = degrees ? keyPitch(cents, degrees, period, k)
-                                : 1200 * Math.floor(k / 12) + cents[k % 12];
+                                : span * Math.floor(k / 12) + cents[k % 12];
             out.push(base + Math.floor((pitch + offset) * perOctave / 1200 + 0.5));
         }
         return out;
@@ -467,6 +459,30 @@ var BUILDLIB = (function () {
         return { blocks: blocks, features: features };
     }
 
+    // How big one step of the octave controls is, in DAC units: the period
+    // every slot repeats at.  Mirrors tools/build.py, including the refusal
+    // when the slots disagree - there is one set of octave controls.
+    function octaveUnits(cfg) {
+        var per = cfg.tuning.units_per_octave, seen = {};
+        (cfg._tunings || []).forEach(function (slot) {
+            if (slot === 'factory') { seen[per] = true; return; }
+            var mapped = !!slot.kbmText;
+            var cents = parseScala(slot.text, slot.name, mapped);
+            var period = cents.length > 12 ? cents[12] : 1200.0;
+            if (mapped) {
+                period = cents[parseKbm(slot.kbmText, slot.kbmName, cents).formal];
+            }
+            seen[floorHalf(period * per / 1200)] = true;
+        });
+        var keys = Object.keys(seen);
+        if (keys.length > 1) {
+            throw new Error('the tuning slots disagree about the period: ' +
+                keys.join(' and ') + ' units — the octave controls step one ' +
+                'period, and there is one set of them for the whole instrument');
+        }
+        return keys.length ? Number(keys[0]) : per;
+    }
+
     function computeNumbers(cfg) {
         var calib = cfg.pressure.calibration;
         var numbers = {
@@ -483,7 +499,8 @@ var BUILDLIB = (function () {
             curve_knob_steps: (cfg.pressure.curve.knob_max_level === undefined
                                ? 31 : cfg.pressure.curve.knob_max_level) + 1,
             resolution_bits: cfg.pressure.resolution_bits,
-            multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0
+            multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0,
+            octave_units: octaveUnits(cfg)
         };
         var span = calib.trim_span;
         if (span !== 128 && span !== 256 && span !== 512) {

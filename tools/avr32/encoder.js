@@ -78,9 +78,15 @@ var AVR32 = (function () {
                 // every 16-bit-immediate MOV shows is just this form with the
                 // upper five bits zero.
                 //
-                // Only non-negative values are accepted: every extended MOV in
-                // the corpus is positive, negatives all fitting the compact
-                // signed imm8, so a negative imm21 would be an unproven guess.
+                // Negatives are accepted as imm21 too, two's complement in the
+                // same scattered field.  This was refused while nothing proved
+                // it: the corpus held no negative extended MOV, every negative
+                // in it fitting the compact signed imm8.  The base image
+                // settles it - the factory's own octave-down offset at
+                // 0x80003776 is MOV R8,-0x1e4 encoded fe78fe1c, and the
+                // formula below reproduces those four bytes exactly - and a
+                // build now emits one, so the corpus covers it from here on.
+                if (v < 0 && v >= -0x200000) v += 0x200000;
                 if (v >= 0 && v <= 0x1FFFFF) {
                     var up = (v >> 16) & 0x1F;
                     var hi = 0xE0600000 + ((up >> 1) * 0x02000000) +

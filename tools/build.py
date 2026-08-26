@@ -190,11 +190,6 @@ def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
             "descend or repeat")
     if cents[1] <= 0.0:
         raise ValueError(f"{path.name}: first degree must be above the tonic")
-    if not mapped and abs(cents[-1] - 1200.0) > 0.001:
-        raise ValueError(
-            f"{path.name}: last degree is {cents[-1]:.3f} cents, not a 2/1 octave — "
-            "the octave switches would go out of tune"
-        )
     if mapped:
         return cents  # the .kbm names the period; every degree stays reachable
     return cents[:12]  # degree 12 is the octave, supplied by the octave term
@@ -249,15 +244,6 @@ def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
         raise ValueError(
             f"{path.name}: formal octave degree is {formal}, but the scale has "
             f"{degree_count} degrees — it must name one of them")
-    # Checked here rather than at build time: a mapping only means anything
-    # against the scale it is for, and this is where the two meet.  The octave
-    # switches add a hardcoded 2/1, so a period that is not one would put every
-    # switch position out of tune with the keys.
-    if abs(cents[formal] - 1200.0) > 0.001:
-        raise ValueError(
-            f"{path.name}: formal octave degree {formal} is {cents[formal]:.3f} "
-            "cents, not a 2/1 — the octave switches add a 2/1 and would go out "
-            "of tune")
     # Size zero is the format's "no mapping": every degree in order.
     if size == 0:
         return list(range(degree_count)), formal
@@ -337,6 +323,8 @@ def anchor_offset(cents: list[float], reference_key: int,
             "bottom key (a C), so it must be 0..11 — 0 = C, 9 = A"
         )
     if degrees is None:
+        # reference_key is 0..11, inside the first period, so the period does
+        # not enter here.
         return 100.0 * reference_key - cents[reference_key]
     # With a map the reference key's degree is whatever the map gives it, so
     # the pitch has to be looked up rather than indexed.  The target stays the
@@ -355,9 +343,13 @@ def tuning_table(cents: list[float], base: int, per_octave: int,
     the table's own step is 1200/`per_octave` cents either way.
     """
     if degrees is None:
+        # cents[12] is the scale's own octave.  Every scale that was legal
+        # before declares 1200 there, so this is the same table it always
+        # produced - but a scale that repeats somewhere else now says so.
+        span = cents[12] if len(cents) > 12 else 1200.0
         return [
             base + math.floor(
-                (1200 * (k // 12) + cents[k % 12] + offset) * per_octave / 1200 + 0.5)
+                (span * (k // 12) + cents[k % 12] + offset) * per_octave / 1200 + 0.5)
             for k in range(32)
         ]
     return [
@@ -1189,8 +1181,12 @@ def main() -> None:
     # up sit at zero apart and are the same note on purpose, so they are not
     # counted.
     closest = None
+    # What one step of the octave controls should be, in DAC units.  The
+    # factory temperament and every 2/1 scale make this 484.
+    periods = set()
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
+            periods.add(tuning["units_per_octave"])
             tables[f"tuning_slot{index}"] = factory_tuning(memory)
             print(f"  tuning slot {index}: factory temperament (from the base image, "
                   "copied bit-exact, so the anchor does not apply)")
@@ -1202,7 +1198,13 @@ def main() -> None:
         degrees = period = None
         try:
             if map_name is None:
-                cents = parse_scala(path)
+                cents = parse_scala(path, mapped=True)
+                if len(cents) - 1 != 12:
+                    raise ValueError(
+                        f"{path.name}: {len(cents) - 1} degrees — the key table "
+                        "gives one entry per key, so without a .kbm to map them "
+                        "a 12-note scale is required")
+                period = cents[12]
             else:
                 cents = parse_scala(path, mapped=True)
                 degrees, formal = parse_kbm(REPO / map_name, cents)
@@ -1214,6 +1216,8 @@ def main() -> None:
             cents, tuning["base_units"], tuning["units_per_octave"], offset,
             degrees, period or 1200.0
         )
+        periods.add(int(math.floor(
+            (period or 1200.0) * tuning["units_per_octave"] / 1200 + 0.5)))
         anchor = NOTE_NAMES[reference_key]
         shape = ("" if degrees is None else
                  f", {Path(map_name).name}: {len(degrees)} keys per octave")
@@ -1227,6 +1231,19 @@ def main() -> None:
             if gap and (closest is None or gap < closest):
                 closest = gap
     cfg["_min_key_spacing"] = closest
+    # The octave controls - the panel switch, the arpeggiator's random octave,
+    # knob 3's span - are one setting for the whole build, so every slot has to
+    # agree about how big an octave is.  Mixing a 2/1 scale with one that
+    # repeats somewhere else would leave the controls right for one slot and
+    # wrong for the others; the factory temperament counts as a 2/1.
+    if len(periods) > 1:
+        raise SystemExit(
+            "[tuning].slots disagree about the period: "
+            + ", ".join(f"{p} units" for p in sorted(periods))
+            + " — the octave controls step one period, and there is one set of "
+              "them for the whole instrument, so every slot must repeat at the "
+              "same interval (the factory temperament repeats at 484)")
+    cfg["_octave_units"] = periods.pop() if periods else tuning["units_per_octave"]
     if len(tuning["slots"]) != 3:
         raise SystemExit("[tuning].slots must list exactly three scales")
 
@@ -1252,6 +1269,7 @@ def main() -> None:
         "pressure_ceiling_default": calib["ceiling"],
         "scan_period_ms": cfg["timing"]["scan_period_ms"],
         "proximity_reference": cfg["pressure"].get("proximity_reference", 300),
+        "octave_units": cfg.get("_octave_units", cfg["tuning"]["units_per_octave"]),
         "factory_gain_shift": cfg["diagnostics"].get("factory_gain_shift", 3),
         # Direct indexing, as above at the excess table: the two dead
         # fallbacks here used to disagree (1.0 vs 1.35), which would have
@@ -1294,6 +1312,13 @@ def main() -> None:
     check_ram_regions()
     check_ram_coverage()
     blocks, features, summary = resolve_flags(cfg)
+    # The factory's own octave arithmetic only needs rewriting when an octave
+    # has stopped being a 2/1; at 484 these patches would write back the bytes
+    # that are already there.
+    for name in ("octave_step_down", "octave_step_up", "octave_step_up2",
+                 "octave_scale_mul", "octave_scale_bias"):
+        blocks[name] = (cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
+                        != cfg["tuning"]["units_per_octave"])
     claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe")
               if features.get(n)]
     if len(claims) > 1:

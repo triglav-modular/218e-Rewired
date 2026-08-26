@@ -95,6 +95,13 @@ var WEBBUILD = (function () {
             blocks.knob3_pressure_floor = false;
             blocks.knob3_pool = false;
         }
+        // Same rule as tools/build.py: the factory's octave arithmetic is only
+        // rewritten when an octave has stopped being a 2/1.
+        var octave = BUILDLIB.computeNumbers(cfg).octave_units;
+        ['octave_step_down', 'octave_step_up', 'octave_step_up2',
+         'octave_scale_mul', 'octave_scale_bias'].forEach(function (n) {
+            blocks[n] = octave !== cfg.tuning.units_per_octave;
+        });
         var smoothing = cfg.pressure.output_smoothing;
         ['dac_interpolator', 'dac_flush_pool', 'pressure_target_redirect']
             .forEach(function (n) { blocks[n] = !!smoothing; });

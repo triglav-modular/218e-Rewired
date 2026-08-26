@@ -78,6 +78,16 @@ CONFIGS = [
                               ("tunings/24TET.scl", "tunings/24TET-full.kbm"),
                               ("tunings/24TET.scl", "tunings/24TET-neutral.kbm"),
                               ("tunings/diatonic7.scl", "tunings/diatonic7.kbm")])}),
+    # A scale that repeats at a 3/1 rewrites the factory's own octave
+    # arithmetic, so the two builders have to agree about five patch sites as
+    # well as the table.  All three slots, because the period is one setting.
+    ("non_octave",        [(r"^alternate_tunings = false",
+                            'alternate_tunings = ['
+                            + ", ".join(['["tunings/BohlenPierce.scl", '
+                                         '"tunings/BohlenPierce.kbm"]'] * 3)
+                            + ']')],
+                          {"alternate_tunings": mapped([
+                              ("tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm")] * 3)}),
     ("historical",        [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"'),
                            (r"^alternate_tunings = false",
                             "alternate_tunings = [" + ", ".join(
