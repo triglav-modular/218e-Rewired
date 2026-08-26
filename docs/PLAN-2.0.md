@@ -230,7 +230,29 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
 - RAM only (lost at power-off) - no new flash machinery.  If the settings
   record has ~130+ spare bytes, persistence can ride along later.
 
-### 5. External clock divide (option)
+### 5. External clock divide (option) - NOT BUILT
+
+**Archaeology done 2026-08-27, the build is not started.**
+
+- The arp step function `0x8000210c` takes the interval in R12, and **-1
+  means tick now, do not reload** - which is how every external trigger in
+  the factory already advances it.  A divider therefore does not need to
+  invent a tick path; it needs to drop N-1 of the ticks that already arrive.
+- `state+0x34a` is the internal tempo.  It is written at `0x80002c06` from
+  the ARP RATE knob: `0x3ff - knob` indexes a table at pool `0x80002d00`.
+  That is the site the knob's second meaning would take over.
+- Two sites already call the step with -1:
+  `0x80005c4e`, from the key handler `0x80005b6c` and gated on `state+0x2da`
+  (a key in 11..24 advances the arp), and `0x80004e72`, inside the event
+  dispatcher and gated on `state+0x341` (the arp switch).
+- STILL UNKNOWN, and the one thing the feature waits on: WHICH dispatcher
+  event `0x80004e72` serves, i.e. where a pulse from the clock input
+  actually arrives.  The dispatcher is a jump table and its case index was
+  not chased down.  Everything else is in hand: with the pulse site known,
+  the divider is a counter on that path and a knob read, and the steadiness
+  test is interval variance measured across the same site.
+
+Original sketch:
 - On the ARP RATE knob (not knob 2): internal clock -> rate as today;
   steady external clock detected (interval variance under threshold over
   N pulses) -> knob becomes divider /1../8, the Clockwork Card's own law
