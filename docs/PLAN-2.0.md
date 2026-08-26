@@ -110,8 +110,22 @@ The persisted settings record, end to end:
 
 So four 16-bit preset voltages want bytes 0x1f..0x26 and length 0x27.
 
-OPEN, and the reason phase 2 is not yet built: what follows the record in
-flash.  The record's address is only known at run time (RAM 0x0968, whose
+SETTLED - use the User Page instead.  The AT32's separate 512-byte User Page
+at 0x80800000 is untouched by the application: the only real references to it
+in the whole image are eight instructions between 0x800109b8 and 0x80010e1e,
+all inside the flash driver itself, alongside MOV Rn,0x200 for the page size.
+(A byte scan appears to find 119 references; every one is a false positive -
+the LDM SP++,R7,PC epilogue encodes as e3cd8080, and a word-aligned read of
+its tail plus two zero bytes looks exactly like 0x80800000.  Check the
+instruction boundary before believing any of them.)
+
+So our own storage goes in the User Page, written through Buchla's driver at
+0x800108fc, and their 31-byte record is left alone - no length patch, no
+wear on their structure, and room for the sequence later if it ever wants
+persisting.
+
+The old option, for the record: extending their record would have meant
+knowing what follows it in flash.  The record's address is only known at run time (RAM 0x0968, whose
 writer is not any of the obvious constant-loads), so writing eight bytes past
 it could land on something else.  Options, cheapest first:
 
@@ -120,6 +134,27 @@ it could land on something else.  Options, cheapest first:
    instrument, or find its initialiser) and extend if there is room.
 3. Use the AT32's separate 512-byte User Page, which exists for exactly this -
    needs checking whether the factory already uses it.
+
+## Phase 2, still open: the pad gesture
+
+Decoupling itself is ready to write - four RAM cells, the four getters at
+0x80003624/366e/36b8/3702 repointed off the knob mirrors, seeded at first
+use.  What is missing is the gesture.
+
+- state+0x2ef holds which of the four pads is SELECTED (0..3).  It is what
+  the octave switch reads at 0x8000375a, and what the add-to-pitch middle
+  mode means by "the currently active pad".
+- The press handler is at 0x800069b0: a switch on a pad index that writes
+  0x2ef and calls 0x80006a18 (LED, most likely).
+- That is a latch, not a hold.  "Hold pad N, turn knob N, release to store"
+  needs the momentary touch state, which is not located yet.  Best guess:
+  the touch array the keys use extends past its 29 entries to cover the
+  pads, so a pad would read state 2 there the same way a held key does.
+  Not confirmed - the array's base is never formed as a bare MOV, so it
+  needs finding through the scan loop instead.
+
+Implementing the latched form instead would be a different instrument from
+the one specified, so it waits.
 
 ## Infrastructure
 - Branch 2.0 (pushed).  Add it to firmware.yml + windows workflow
