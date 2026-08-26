@@ -82,18 +82,33 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
 ### 4. SH-101-style sequencer (option)
 - Takes the add-to-pitch toggle: top=record, middle=play, bottom=off.
   Factory toggle: top=octaves (4 pads select), middle=active pad's preset
-  voltage, bottom=none.  With the option on, the pitch
-  adder is hard-stuck to octave mode, so pads transpose live during play.
-  Only the adder's preset-voltage SOURCE is forfeited: the preset
+  voltage, bottom=none.  With the option on, the adder DEFAULTS to octave
+  mode, so pads transpose live during play - but the three factory
+  sources stay reachable by chord: hold pad 4 and press pad 1 (octaves),
+  pad 2 (active pad's preset voltage) or pad 3 (none), the switch's own
+  top-to-bottom order.  (Revised 2026-08-27 from hard-stuck octaves.)
+  Feasible with what is already in hand: the pad touch array at RAM
+  0x46f0 is read every scan by the preset editor cave, so the chord is an
+  edge test - pad 4 at 2 while pad 1/2/3 goes 0->2 - plus one mode byte,
+  applied at the same forcing point the hard-stick would have used.
+  Chord rules: the second pad's press is EATEN - it must not also select
+  an octave or a pad; pad 4's own press is a real octave selection in
+  octave mode (accept the transient - suppressing it would mean delaying
+  every pad-4 press to see if a chord follows); pad 4 held with still
+  knobs edits no preset (the editor's pickup guard wants movement > 8);
+  none of these chords is the factory pads-2+3 latch, which our-latch
+  builds remove anyway.  Mode byte resets to octaves wherever the
+  sequencer's own state resets.
+  Only the adder's DEFAULT source changes with the option on: the preset
   voltages themselves stay live at their own banana output, pad-selected
   and pad+knob-editable as ever (document the distinction).
-  Bottom = factory none.
 - Precedence over the arp switch, including latch-exit clearing.
 - Record: entering wipes; note-ons append PITCHES (like latch stamps, so
   tuning-slot switches do not shift recorded notes); pitch-bend strip
   ends enter rest (left) / tie (right); strip's normal role suspended in
   record.  64 steps.  Play: entering resets to step 0; clocked by the
-  same source as the arp; keyboard silent; pads = live octave transpose.
+  same source as the arp; keyboard silent; pads follow the adder mode
+  above (live octave transpose in the octave default).
 - RAM only (lost at power-off) — no new flash machinery.  If the settings
   record has ~130+ spare bytes, persistence can ride along later.
 
