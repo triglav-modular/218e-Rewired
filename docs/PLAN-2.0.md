@@ -84,21 +84,34 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   Factory toggle: top=octaves (4 pads select), middle=active pad's preset
   voltage, bottom=none.  With the option on, the adder DEFAULTS to octave
   mode, so pads transpose live during play - but the three factory
-  sources stay reachable by chord: hold pad 4 and press pad 1 (octaves),
-  pad 2 (active pad's preset voltage) or pad 3 (none), the switch's own
-  top-to-bottom order.  (Revised 2026-08-27 from hard-stuck octaves.)
+  sources stay reachable behind a deliberate hold: hold pad 4 for THREE
+  SECONDS to arm, then - still holding it - press pad 1 (octaves), pad 2
+  (active pad's preset voltage) or pad 3 (none), the switch's own
+  top-to-bottom order.  (Revised 2026-08-27 from hard-stuck octaves, and
+  again the same day: a bare pad-4 chord was too easy to hit by accident,
+  since pad 4 with another pad is an ordinary thing to do.)
   Feasible with what is already in hand: the pad touch array at RAM
-  0x46f0 is read every scan by the preset editor cave, so the chord is an
-  edge test - pad 4 at 2 while pad 1/2/3 goes 0->2 - plus one mode byte,
-  applied at the same forcing point the hard-stick would have used.
-  Chord rules: the second pad's press is EATEN - it must not also select
-  an octave or a pad; pad 4's own press is a real octave selection in
-  octave mode (accept the transient - suppressing it would mean delaying
-  every pad-4 press to see if a chord follows); pad 4 held with still
-  knobs edits no preset (the editor's pickup guard wants movement > 8);
-  none of these chords is the factory pads-2+3 latch, which our-latch
-  builds remove anyway.  Mode byte resets to octaves wherever the
-  sequencer's own state resets.
+  0x46f0 is read every scan by the preset editor cave, so this is a hold
+  counter plus an edge test - pad 1/2/3 going 0->2 while pad 4 has been
+  at 2 for 600 scans - plus one mode byte, applied at the same forcing
+  point the hard-stick would have used.  Scans are ~5 ms, so three
+  seconds is ~600 of them: a HALFWORD counter, not a byte.
+  Rules: the arm lives only while pad 4 stays held - releasing it disarms
+  and zeroes the counter, so an arm can never outlive the gesture that
+  made it.  The selecting press is EATEN: it must not also select an
+  octave or a pad.  Pad 4's own press is an ordinary selection
+  throughout, with nothing armed for the first three seconds, so the
+  earlier transient goes away.  A pad-4 hold that has MOVED ITS KNOB does
+  not arm - the editor already flags that pad as following, and a careful
+  preset edit is exactly what a long hold looks like; without this guard,
+  editing preset 4 and then tapping pad 1 to compare would silently
+  change the adder source.  None of these is the factory pads-2+3 latch,
+  which our-latch builds remove anyway.  Mode byte resets to octaves
+  wherever the sequencer's own state resets.
+  OPEN: whether anything can acknowledge the arm.  Three seconds with no
+  feedback is a long time to trust; if the pad lighting is reachable and
+  writable, a blink at the arm point would earn its cost.  To be answered
+  in archaeology before this is built, not assumed.
   Only the adder's DEFAULT source changes with the option on: the preset
   voltages themselves stay live at their own banana output, pad-selected
   and pad+knob-editable as ever (document the distinction).
@@ -135,6 +148,8 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   pitch path (to suspend in record and read ends for rest/tie).
 - Arp rate knob: mirror address + rate handler (for the divider takeover).
 - External clock input: where pulses arrive (interval measurement site).
+- Pad lighting: whether the pads can be lit under program control, and where
+  from - the only candidate for acknowledging the three-second arm.
 - Settings record at 0x0968: SETTLED, see below.  What remains is what sits
   next to it in flash.
 - Stack low-water mark vs RAM plan (sequence buffer past 0x613a).
