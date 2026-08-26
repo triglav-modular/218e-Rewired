@@ -467,9 +467,14 @@ def test_blend(cfg: dict) -> None:
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
     walkers = sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', source))
-    stray = [w for w in walkers if w != "1c" and w != "20"]
+    # 0x1c is a walk over the keys, 0x20 the tuning applier's 32-halfword table
+    # copy, and 0x25 the first-use clear of the pressure cache and the preset
+    # block that follows it - all three are counts over arrays that are not the
+    # key array, and only a walk over the KEYS starting past 28 is the bug this
+    # guards.  Each exception is named so a new bound has to be justified here.
+    stray = [w for w in walkers if w not in ("1c", "20", "25")]
     check("every key walk starts at the last real key",
-          not stray and walkers.count("20") == 1,
+          not stray and walkers.count("20") == 1 and walkers.count("25") == 1,
           f"unexpected loop bounds {stray or walkers}")
 
 

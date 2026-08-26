@@ -836,6 +836,13 @@ RAM_REGIONS = [
     (0x60F4, 0x60F6, "blend previous base"),
     (0x60F6, 0x60F8, "blend target filter"),
     (0x60F8, 0x60FA, "blend hysteresis hold"),
+    # Decoupled preset voltages.  The stored value is what the preset output
+    # and the pitch adder both read; the snapshot and the flag are what stop a
+    # pad hold from snatching the stored value to wherever the knob happens to
+    # be standing.
+    (0x613A, 0x6142, "preset voltage store"),
+    (0x6142, 0x614A, "preset knob snapshot"),
+    (0x614A, 0x614B, "preset following flags"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -857,6 +864,9 @@ FACTORY_CELLS = [
     (0x0854, 0x0894, "key pitch table"),
     (0x2EEE, 0x2EF0, "glide rate"),
     (0x3212, 0x3214, "pitch mirror"),
+    # The pads' own touch states, the same shape as the keys' array: one byte
+    # each, 2 meaning held.  Read only - the factory owns the writing.
+    (0x46F0, 0x46F4, "pad touch state"),
     # Live again whenever pressure_fix is off: the clamp skips are gated now,
     # so the factory 16-tap pressure history shifts through here in that
     # build.  Declared so no region of ours can ever move back in.

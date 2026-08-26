@@ -2291,7 +2291,10 @@ public class AssemblePressureFix extends GhidraScript {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        emit("MOV R12,0x1c");
+        // 0x25, not 0x1c: the run now reaches past the pressure cache over
+        // the preset store, its knob snapshots and its flags, so a flash
+        // cannot leave four preset voltages reading whatever RAM held.
+        emit("MOV R12,0x25");
         padTo(0x8001ac40L);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -2591,6 +2594,69 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001a8f0L); // the blend-offset apply shim
         finish("blend_target_conditioner", 0x8001ae1cL);
 
+        // Preset voltage editing.  The four getters read our store now, so
+        // something has to put values into it: hold the pad under a knob and
+        // turn that knob, and the store follows until the pad is released.
+        //
+        // Following does not begin until the knob has actually MOVED, or a pad
+        // touched with the knob standing anywhere would snatch the stored
+        // voltage to that position - the pickup problem every stored-value
+        // control has.  While a pad is up its snapshot tracks the knob, so the
+        // movement is always measured from where the knob stood when the pad
+        // went down.
+        //
+        // Pads read like keys: RAM 0x46f0, a byte each, 2 meaning held.  Ours
+        // are 0x613a store, 0x6142 snapshots, 0x614a flags, one base reaching
+        // all three.
+        begin(0x8001ae1cL);
+        emit("STM --SP,R0,R1,R2,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R9,0x8001aebc");
+        emit("MOV R11,0x46f0");
+        emit("MOV R1,0x613a");
+        emit("MOV R0,0x0");
+        emit("MOV R2,0x0");
+        padTo(0x8001ae30L);
+        emit("ADD R8,R11,R0 << 0x0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("ADD R12,R9,R2 << 0x0");
+        emit("LD.SH R12,R12[0x30a]");
+        emit("ADD R10,R1,R0 << 0x0");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001ae80");
+        emit("LD.UB R8,R10[0x10]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001ae70");
+        emit("ADD R8,R1,R2 << 0x0");
+        emit("LD.SH R8,R8[0x8]");
+        emit("SUB R8,R12,R8 << 0x0");
+        emit("CP.W R8,0x8");
+        emit("BR{gt} 0x8001ae68");
+        emit("CP.W R8,-0x8");
+        emit("BR{lt} 0x8001ae68");
+        emit("RJMP 0x8001ae90");
+        padTo(0x8001ae68L);
+        emit("MOV R8,0x1");
+        emit("ST.B R10[0x10],R8");
+        padTo(0x8001ae70L);
+        emit("ADD R8,R1,R2 << 0x0");
+        emit("ST.H R8[0x0],R12");
+        emit("RJMP 0x8001ae90");
+        padTo(0x8001ae80L);
+        emit("ADD R8,R1,R2 << 0x0");
+        emit("ST.H R8[0x8],R12");
+        emit("MOV R8,0x0");
+        emit("ST.B R10[0x10],R8");
+        padTo(0x8001ae90L);
+        emit("SUB R0,-0x1");
+        emit("SUB R2,-0x2");
+        emit("CP.W R0,0x4");
+        emit("BR{lt} 0x8001ae30");
+        emit("LDM SP++,R0,R1,R2,R7,PC");
+        padTo(0x8001aebcL);
+        word(0x00003560L); // global state base
+        finish("preset_editor", 0x8001aec0L);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -2752,7 +2818,10 @@ public class AssemblePressureFix extends GhidraScript {
             emit("BR{ge} 0x8001a500");
         }
         padTo(0x8001a510L);
+        emit("MCALL PC[0x8001a518]");   // preset voltage editing
         emit("LDM SP++,R7,PC");
+        padTo(0x8001a518L);
+        word(0x8001ae1cL);              // the preset editor
         padTo(0x8001a534L);
         word(0x00003560L); // global state base
         finish("scan_housekeeping", 0x8001a53cL);
@@ -3058,6 +3127,21 @@ public class AssemblePressureFix extends GhidraScript {
         fixedPatch("transpose_force_3", 0x80005392L, 2, "MOV R8,0x1");
         wordPatch("pressure_float_helper_pool", 0x8000357cL, 0x80013434L,
             "restore original post-gain float-to-int helper");
+        // Decoupled preset voltages.  The factory reads the knob mirror at the
+        // moment it wants a preset voltage, so the voltage IS wherever the knob
+        // is standing - which is why the same four knobs cannot also be the
+        // arpeggiator's controls.  These four reads move to our own store, and
+        // the knobs are freed.  Both consumers go with them: the preset output
+        // and the pitch adder's middle position read the same four bytes.
+        //
+        // The displacement is sixteen bits and the base is the state block, so
+        // our RAM is reachable from it - same instruction, same four bytes,
+        // just a longer reach.  0x613a - 0x3560 = 0x2bda.
+        fixedPatch("preset_read_1", 0x80003628L, 4, "LD.SH R8,R8[0x2bda]");
+        fixedPatch("preset_read_2", 0x80003672L, 4, "LD.SH R8,R8[0x2bdc]");
+        fixedPatch("preset_read_3", 0x800036bcL, 4, "LD.SH R8,R8[0x2bde]");
+        fixedPatch("preset_read_4", 0x80003706L, 4, "LD.SH R8,R8[0x2be0]");
+
         // An octave is a 2/1 everywhere in the factory: the panel switch adds
         // -484, 0, +484 or +968 DAC units by position, and the stored octave
         // setting multiplies by 484 with a two-octave bias.  With a scale that

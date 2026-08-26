@@ -22,7 +22,7 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   (24-tet needs <= 10 units; config allows 30 today).
 - Page UI: one optional .kbm beside each .scl slot.
 
-### 2. Decoupled preset voltages
+### 2. Decoupled preset voltages  [BUILT, except persistence]
 - Factory: preset OUTPUT (single jack, active pad selects) and the
   add-to-pitch MIDDLE mode both read the live knob mirrors
   (getters at 0x80003624/366e/36b8/3702 switch on knob index).
@@ -163,7 +163,28 @@ use.  What is missing is the gesture.
   So the gesture is now buildable: hold = 0x46f0[n] == 2, release = the
   transition back to 0, knob moved = the mirror against a remembered value.
 
-## Phase 2, the wrinkle in the getter repoint
+## Phase 2, as built (2026-08-26)
+
+- The four getter reads become `LD.SH R8,R8[0x2bda]` and neighbours: the
+  displacement is sixteen bits and the base is the state block, so our RAM at
+  0x613a is reachable from it.  Same instruction, same four bytes, no pool
+  word needed - which sidesteps the shared-pool problem below entirely.
+- RAM: 0x613a store, 0x6142 knob snapshots, 0x614a flags.  The first-use
+  clear of the pressure cache runs to 0x25 instead of 0x1c so it covers them,
+  which is why a flash cannot leave the presets reading old RAM.
+- The editor is a cave at 0x8001ae1c, called once per scan from the
+  housekeeping cave's own slack.  Hold a pad, turn its knob, the store
+  follows until release.  Following waits for real movement (more than 8
+  counts) so touching a pad with the knob parked elsewhere does not snatch
+  the stored voltage - and while a pad is up its snapshot tracks the knob, so
+  movement is always measured from where the knob stood when the pad went
+  down.
+- Verified by emulating the shipped bytes: eight cases including the pickup
+  problem and jitter under a held pad.
+
+Still to come: persistence to the User Page, so the store survives power-off.
+
+## Phase 2, the wrinkle in the getter repoint (avoided in the end)
 
 The four preset getters read the mirror as `LD.SH R8,R8[0x30a]` (and 0x30c,
 0x30e, 0x310), four bytes each, off a state base loaded from the pool at
