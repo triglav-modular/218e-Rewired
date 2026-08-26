@@ -110,8 +110,8 @@
               <div class="patctl">
                 <button id="patAdd" type="button">Add a pattern</button>
                 <button id="patClix" type="button">Load the 22 CLIX fills</button>
-                <button id="patCopy" type="button">Copy as text</button>
-                <button id="patPaste" type="button">Paste from text</button>
+                <button id="patCopy" type="button">Download as .txt</button>
+                <button id="patPaste" type="button">Upload a .txt</button>
               </div>
               <p class="d muted section-note">A dot is a rest, anything else a hit.
                 Up to 32 patterns of up to 32 steps; the knob spreads across them in
@@ -227,6 +227,7 @@
               <span class="muted" id="sclCount">all three slots factory</span></div>
             <input type="file" id="scl" accept=".scl" multiple hidden>
             <input type="file" id="kbm" accept=".kbm" hidden>
+            <input type="file" id="patFile" accept=".txt,text/plain" hidden>
             <div id="slots"></div>
             <div id="sclMsg"></div>
           </div>

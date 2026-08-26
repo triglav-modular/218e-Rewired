@@ -209,6 +209,17 @@
     function patternText(p) {
         return p.text.slice(0, p.length);
     }
+    // How many steps to a group.  The largest divisor of the length that is
+    // still a group worth reading - up to eight, and never so small that the
+    // pattern becomes a row of pairs - or the whole length when nothing
+    // divides it evenly.
+    function barSize(length) {
+        for (var n = Math.min(8, length); n >= 3; n--) {
+            if (length % n === 0) return n;
+        }
+        return length;
+    }
+
     function renderPatterns() {
         var list = $('patList');
         list.textContent = '';
@@ -221,14 +232,16 @@
             n.textContent = (i + 1);
             row.appendChild(n);
 
-            // Eight to a bar, two bars to a line, so step 9 sits under step 9
-            // of every other pattern and a bar is countable at a glance.
+            // Grouped so the groups come out even: 16 as 8 and 8, 10 as 5 and
+            // 5, 9 as three 3s.  A length with no such division - 11, 13, 22 -
+            // is left as one run rather than broken up unevenly.
             var grid = document.createElement('span');
             grid.className = 'patgrid';
+            var bars = barSize(p.length);
             var bar = null;
             for (var k = 0; k < p.length; k++) {
                 (function (step) {
-                    if (step % 8 === 0) {
+                    if (step % bars === 0) {
                         bar = document.createElement('span');
                         bar.className = 'patbar';
                         grid.appendChild(bar);
@@ -442,21 +455,21 @@
         renderPatterns(); invalidate();
     });
     $('patCopy').addEventListener('click', function () {
-        var text = state.patterns.map(patternText).join('\n');
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(function () {
-                msg($('buildMsg'), '', state.patterns.length + ' patterns copied.');
-            }, function () { download(text, 'patterns.txt', 'text/plain'); });
-        } else {
-            download(text, 'patterns.txt', 'text/plain');
-        }
+        download(state.patterns.map(patternText).join('\n') + '\n',
+                 'patterns.txt', 'text/plain');
     });
-    $('patPaste').addEventListener('click', function () {
-        // One pattern per line; a dot is a rest and anything else a hit, which
-        // is how these get written down and passed around.
-        var text = window.prompt('One pattern per line. A dot is a rest, '
-                                 + 'anything else a hit.', '');
-        if (text === null) return;
+    $('patPaste').addEventListener('click', function () { $('patFile').click(); });
+    $('patFile').addEventListener('change', function (e) {
+        var file = e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        var r = new FileReader();
+        r.onload = function () { readPatterns(String(r.result)); };
+        r.readAsText(file);
+    });
+    // One pattern per line; a dot is a rest and anything else a hit, which is
+    // how these get written down and passed around.
+    function readPatterns(text) {
         var rows = text.split(/[\r\n]+/).map(function (l) {
             return l.replace(/\s+/g, '');
         }).filter(function (l) { return l.length; });
@@ -480,7 +493,7 @@
         });
         msg($('buildMsg'), '', state.patterns.length + ' patterns read.');
         renderPatterns(); invalidate();
-    });
+    }
 
     $('sclPick').addEventListener('click', function () { $('scl').click(); });
     $('scl').addEventListener('change', function (e) {

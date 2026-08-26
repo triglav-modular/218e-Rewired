@@ -908,12 +908,12 @@ td input {
   font-size: 12px;
   color: var(--muted);
 }
-/* Two bars of eight to a line, however long the pattern is, so step 9 of one
-   pattern sits under step 9 of the next. */
+/* Groups are as long as the pattern's own length divides evenly, so they are
+   not all the same width and cannot be laid on fixed columns: they run along
+   the line and wrap when the next one will not fit. */
 .patgrid {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  justify-content: start;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px 12px;
   flex: 1;
   min-width: 0;
@@ -943,8 +943,9 @@ td input {
   box-sizing: border-box;
   padding: 0 6px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--panel2);
+  /* The same edge the steps carry - against the panel, --line is no edge. */
+  border: 1px solid var(--muted);
+  background: transparent;
   color: var(--fg);
   font: inherit;
   font-size: 13px;
@@ -961,13 +962,18 @@ td input {
   text-transform: none;
   letter-spacing: .04em;
 }
+/* line-height alone left the cross sitting on the baseline near the bottom of
+   the pill; centring it is the flex container's job. */
 .pat .clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 22px;
   box-sizing: border-box;
   padding: 0 9px;
   line-height: 0;
 }
-.pat .clear svg { width: 15px; height: 15px; }
+.pat .clear svg { width: 15px; height: 15px; margin: 0; }
 
 /* A slot's keyboard mapping, and the way to take it off again. */
 .kbmchip {
@@ -1911,7 +1917,6 @@ section,
   .patgrid {
     order: 3;
     flex: 0 0 100%;
-    grid-template-columns: max-content;
   }
   .patlen {
     margin-left: auto;
