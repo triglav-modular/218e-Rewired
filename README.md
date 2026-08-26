@@ -11,7 +11,12 @@ keyboard.
 - **Arpeggiator controls** (random octave walk, random tempo, random note order)
 - **Global pressure-responsive vibrato**
 
-- **Alternate tunings** switched from edit mode. 
+- **Step sequencer**, 64 steps with rests, ties and 303-style slides,
+  recorded and played from the preset pads.
+- **External clock divide** — the arpeggiator rate knob divides a patched-in
+  clock, /1 to /8.
+- **Alternate tunings** switched from edit mode, including **Scala keyboard
+  maps** and scales that repeat at something other than the octave.
 - **Per-note pitch calibration.**
 - **Selectable volts per octave**
 

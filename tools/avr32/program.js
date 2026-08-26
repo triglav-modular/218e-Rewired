@@ -923,7 +923,7 @@ function assembleProgram() {
         if (block("seq_gate")) {
             // LR is still on the stack here, so a call is safe; two lines
             // later it would not be.  R8 comes back as the threshold.
-            emit("MCALL PC[0x8001b548]");
+            emit("MCALL PC[0x8001b54c]");
         }
         padTo(0x80019d98);
         emit("LDM SP++,R7,R9,R10,R11,R12,LR");
@@ -3032,6 +3032,13 @@ function assembleProgram() {
         emit("MOV R7,SP");
         emit("MOV R8,0x61e0");
         emit("MOV R10,0x0");
+        // Whatever mode is being entered, nothing transient carries into it.
+        // Stopping mid-tie used to leave the slide armed, so the first note
+        // after restarting held its gate and slid in from nowhere; and
+        // leaving record with the strip still at an end left that end
+        // latched, so the first rest or tie of the next take was swallowed.
+        emit("ST.B R8[0x4],R10");       // 0x61e4, the strip's edge latch
+        emit("ST.B R8[0x5],R10");       // 0x61e5, the tie's slide count
         emit("CP.W R9,0x1");
         emit("BR{ne} 0x8001b676");
         emit("ST.B R8[0x0],R10");       // record: no steps yet
@@ -3284,40 +3291,42 @@ function assembleProgram() {
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b540");      // not playing: the factory's own
-        // A tie has to hold the gate through its OWN step as well as into
-        // it.  By the time it is sounding the index has already moved on to
-        // the note it slides into, so a test that only looked at the step
-        // about to play let the gate fall exactly where it had to stay up,
-        // and the destination retriggered instead of being slid into.  The
-        // slide count says which step this is: 2 while the tie sounds, 1
-        // while the note it slid into does.
-        emit("MOV R11,0x61e5");
-        emit("LD.UB R11,R11[0x0]");
-        emit("CP.W R11,0x2");
-        emit("BR{eq} 0x8001b53c");      // a tie is sounding now: hold
+        emit("BR{ne} 0x8001b544");      // not playing: the factory's own
         emit("MOV R10,0x61e0");
         emit("LD.UB R11,R10[0x0]");
         emit("CP.W R11,0x0");
-        emit("BR{eq} 0x8001b540");
+        emit("BR{eq} 0x8001b544");
         emit("LD.UB R9,R10[0x1]");      // the step about to play
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b522");
+        emit("BR{lt} 0x8001b51a");
         emit("MOV R9,0x0");
-        padTo(0x8001b522);
+        padTo(0x8001b51a);
         emit("MOV R10,0x6160");
         emit("ADD R10,R10,R9 << 0x1");
         emit("LD.SH R10,R10[0x0]");
+        // A REST is silent whatever else is going on, and it is tested first
+        // for exactly that reason: a tie that runs into a rest used to keep
+        // the gate up through it, because the tie's own hold was checked
+        // before anyone asked what the next step was.
+        emit("MOV R11,0x7ffe");
+        emit("CP.W R10,R11");
+        emit("BR{eq} 0x8001b544");
         emit("MOV R11,0x7fff");
         emit("CP.W R10,R11");
-        emit("BR{ne} 0x8001b540");      // the next step is not a tie
-        padTo(0x8001b53c);
-        emit("MOV R8,-0x8000");         // a count the countdown never reaches
+        emit("BR{eq} 0x8001b540");      // a tie next: carry the gate into it
+        // Otherwise a real note - and it is held only if a tie is sounding
+        // right now, which is the slide the tie armed.
+        emit("MOV R11,0x61e5");
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x2");
+        emit("BR{ne} 0x8001b544");
         padTo(0x8001b540);
+        emit("MOV R8,-0x8000");         // a count the countdown never reaches
+        padTo(0x8001b544);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b548);
+        padTo(0x8001b54c);
         word(0x8001b4f0); // this cave, for the caller too far away to pool it
-        finish("seq_gate", 0x8001b54c);
+        finish("seq_gate", 0x8001b550);
 
         // Record.  Called from the note-on wrapper with R12 = the key, which
         // it must leave alone - the wrapper still needs it.  What goes in the
@@ -3400,14 +3409,18 @@ function assembleProgram() {
         emit("MOV R12,0x0");            // any real key; the pitch is swapped
         emit("LDM SP++,R7,PC");
         padTo(0x8001b3c4);
-        // A rest or a tie: step past it, sound nothing new.  A tie also arms
-        // the slide into whatever follows - two steps, so it survives the
-        // tie's own step and is spent by the one that moves the pitch.
+        // A rest or a tie: step past it, sound nothing new.  A tie arms the
+        // slide into whatever follows - two steps, so it survives the tie's
+        // own step and is spent by the one that moves the pitch.  A rest ENDS
+        // one, so the note after a rest attacks cleanly rather than sliding
+        // in from a note two steps back that the rest already silenced.
         emit("MOV R12,0x7fff");
         emit("CP.W R8,R12");
-        emit("BR{ne} 0x8001b3d8");
+        emit("MOV R8,0x0");             // a rest: the slide ends here
+        emit("BR{ne} 0x8001b3d0");
+        emit("MOV R8,0x2");             // a tie: it arms one
+        padTo(0x8001b3d0);
         emit("MOV R12,0x61e5");
-        emit("MOV R8,0x2");
         emit("ST.B R12[0x0],R8");
         padTo(0x8001b3d8);
         emit("SUB R9,-0x1");

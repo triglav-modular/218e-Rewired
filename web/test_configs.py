@@ -96,11 +96,11 @@ CONFIGS = [
                           {"knob2": "swing"}),
     # The sequencer adds a cave and a per-scan call, so both builders have to
     # agree about the housekeeping chain as well as the cave itself.
-    ("sequencer",         [(r"^remap_knobs = true", 'remap_knobs = true\nsequencer = true')],
+    ("sequencer",         [(r"^sequencer = false", "sequencer = true")],
                           {"sequencer": True}),
     # The divider takes a factory dispatcher case and adds a per-scan call, so
     # both builders have to agree about the housekeeping chain too.
-    ("clock_divide",      [(r"^remap_knobs = true", 'remap_knobs = true\nclock_divide = true')],
+    ("clock_divide",      [(r"^clock_divide = false", "clock_divide = true")],
                           {"clock_divide": True}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['

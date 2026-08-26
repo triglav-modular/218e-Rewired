@@ -238,6 +238,10 @@ the options into the full internal settings the build has always used.
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
+| `knob1` … `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
+| `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
+| `sequencer` | `false` | A 64-step sequencer on the preset pads: hold pad 4 three seconds, then pad 1 records, pad 2 plays, pad 3 stops. The pitch strip enters rests and ties while recording. Playback runs on the arpeggiator's clock. |
+| `clock_divide` | `false` | With a steady external clock, the arp RATE knob becomes a divider — every pulse to one in eight. Locks on two evenly spaced pulses 20 ms–2 s apart, releases two seconds after the clock stops. |
 
 The options combine freely, with one exception the build enforces:
 **pressure-based portamento needs the pressure response fix**. The blend
@@ -403,17 +407,17 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 
 | | |
 |---|---|
-| `tools/test.py` | 107 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
+| `tools/test.py` | 126 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
 | `tools/avr32/sweep.py` | 13 representative configurations, built by both toolchains and compared byte for byte |
-| `web/test_configs.py` | the browser build matches `build.py` for 10 configurations |
+| `web/test_configs.py` | the browser build matches `build.py` for 16 configurations |
 | `web/test_matrix.js` | **all 192 option combinations** built through the guarded path |
 
 Every build, in either toolchain, has to pass four structural checks before it
 produces an image: no two patches overlap, no patch lands on a factory entry
 point (2,665 control transfers are traced), every byte differing from the
 factory image lies inside a declared patch, and the rendered hex re-parses to
-the same bytes. `web/test_matrix.js` runs all 192 combinations through those
+the same bytes. `web/test_matrix.js` runs all 768 combinations through those
 checks in about 40 seconds:
 
 ```bash

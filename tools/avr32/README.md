@@ -82,7 +82,7 @@ python3 tools/build.py --no-ghidra
 - **Structure**: the transpiled program emits every EXTENT / BLOCK / SKIP /
   listing / PATCH record *identically* to a fresh Ghidra run.
 - **Image**: `tools/avr32/sweep.py` builds **22 configurations** both ways and
-  compares the images — 30/30 agree, and all 30 SHAs are distinct, so each
+  compares the images — 22/22 agree, and all 22 SHAs are distinct, so each
   variant really does change the firmware rather than passing vacuously.
 
 Corpus coverage is now complete: every mnemonic in

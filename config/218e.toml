@@ -100,6 +100,43 @@ pressure_fix = true
 pressure_portamento = true
 
 
+# 8. WHAT EACH PRESET KNOB DOES
+# With remap_knobs on, each knob can be named individually instead of taking
+# the default role.  Leave a knob out and it keeps that default.
+#   knob1  "order"   press-order-into-random blend (default) | "orders" six
+#          fixed orders: up, down, random, as played, backwards, up-down
+#   knob2  "spacing" trigger randomness (default) | "swing" | "patterns"
+#   knob3  "octaves" random octave per note (default)
+#   knob4  "vibrato" depth and rate (default) | "trn" the factory octave switch
+# Any knob may also be "factory" to hand that one back to its preset voltage.
+# knob1 = "orders"
+# knob2 = "swing"
+# knob4 = "trn"
+
+# 9. ARPEGGIATOR STEP PATTERNS
+# Only read when knob2 = "patterns".  Each entry is a string of steps - a dot
+# is a rest, anything else a hit - or a [pattern, length] pair to make it
+# repeat sooner than it is written.  Up to 32 patterns of up to 32 steps.
+# Left out, the bank is the 22 CLIX fills from the Clockwork Card.
+# arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]
+
+# 10. STEP SEQUENCER
+# Sixty-four steps, recorded and played from the preset pads.  Hold pad 4 for
+# three seconds until it blinks, then - still holding it - press pad 1 to
+# record, pad 2 to play, pad 3 to stop.  While recording, push the pitch strip
+# hard one way for a rest and the other for a tie; a tie slides into the note
+# after it.  Playback runs on the arpeggiator's clock, so the arpeggiator has
+# to be running for the sequence to advance.
+sequencer = false
+
+# 11. EXTERNAL CLOCK DIVIDE
+# With a steady clock patched in, the arpeggiator RATE knob becomes a divider
+# instead: every pulse at the fast end, one in eight at the slow end.  It
+# locks after two evenly spaced pulses (20 ms to 2 s apart) and lets go two
+# seconds after the clock stops, when the knob goes back to setting the tempo.
+clock_divide = false
+
+
 # ---------------------------------------------------------------------------
 # Paths and checksums (not behaviour)
 # ---------------------------------------------------------------------------
@@ -123,7 +160,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "78184fb79663f8897ef5ef91f2f7592e1dfeb531b720e695a13780e074aef053"
+golden_sha256  = "eb8b69e4a1b74ffb3642d5c691e2a24ff61970276407012a104821c3b1176bf6"
 
 
 [tools]

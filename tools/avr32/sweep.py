@@ -59,10 +59,10 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     # both were told the same wrong thing, and the emulations called each cave
     # directly rather than through its hook.  This sweep is the only check
     # that builds every one of them through Ghidra.
-    ("sequencer",             [(r"^remap_knobs = true", "remap_knobs = true\nsequencer = true")]),
-    ("clock_divide",          [(r"^remap_knobs = true", "remap_knobs = true\nclock_divide = true")]),
-    ("sequencer_and_clock",   [(r"^remap_knobs = true",
-                               "remap_knobs = true\nsequencer = true\nclock_divide = true")]),
+    ("sequencer",             [(r"^sequencer = false", "sequencer = true")]),
+    ("clock_divide",          [(r"^clock_divide = false", "clock_divide = true")]),
+    ("sequencer_and_clock",   [(r"^sequencer = false", "sequencer = true"),
+                               (r"^clock_divide = false", "clock_divide = true")]),
     ("knob_roles",            [(r"^remap_knobs = true",
                                'remap_knobs = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
     ("knob2_swing",           [(r"^remap_knobs = true", 'remap_knobs = true\nknob2 = "swing"')]),
@@ -75,8 +75,8 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                'alternate_tunings = [' + ', '.join(
                                    ['["tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm"]'] * 3)
                                + ']')]),
-    ("everything_on",         [(r"^remap_knobs = true",
-                               "remap_knobs = true\nsequencer = true\nclock_divide = true"),
+    ("everything_on",         [(r"^sequencer = false", "sequencer = true"),
+                               (r"^clock_divide = false", "clock_divide = true"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"'),
                                (r"^alternate_tunings = false",
@@ -139,7 +139,7 @@ def audit_call_pools(image_path) -> list[str]:
 # instrument this was measured on, and both trims were centred on them; and
 # again for 2.0, which added caves and moved the first-use clear.
 EXPECTED = {
-    "historical_config": "b333c436eda47e91847d39311efea0fc896862dc7458f1a95dc5e5ea3ed996ab",
+    "historical_config": "3736b24b7cf623c23c54cd6dfaa68a55dd58a7abe73968cca07f57b8a5dca49b",
 }
 
 
