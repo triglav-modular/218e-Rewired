@@ -831,6 +831,17 @@ td input {
   font-family: var(--mono);
   font-size: 15px;
   min-width: 0;
+  /* A slot can carry a scale, a keyboard mapping and the anchor note at
+     once, which is more than one line holds: they wrap instead of being
+     clipped, and only the filename itself still ellipses. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.slot .what .fname {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -851,7 +862,6 @@ td input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 10px;
   padding: 2px 4px 2px 9px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -859,22 +869,36 @@ td input {
   font-size: 12px;
   vertical-align: 1px;
 }
-.kbmchip button {
-  padding: 0 5px;
+.slot .what .kbmchip button {
+  padding: 0 4px;
   border: 0;
+  border-radius: 0;
   background: none;
   color: var(--muted);
+  font: inherit;
   font-size: 14px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
   line-height: 1;
   cursor: pointer;
 }
+.slot .what .kbmchip button:hover { background: none; }
 .kbmchip button:hover { color: var(--accent2); }
 /* A scale whose degree count is not twelve does nothing until it is mapped. */
 .kbmneed {
-  margin-left: 10px;
   font-family: inherit;
   font-size: 11px;
   color: var(--accent2);
+}
+/* The mapping button says what it takes; the icon buttons beside it are
+   square, so it sets its own padding and gets its line-height back. */
+.slot .ctl button.kbmbtn {
+  padding: 8px 14px;
+  font-size: 13px;
+  line-height: 1.1;
+  text-transform: none;
+  letter-spacing: .04em;
 }
 /* The mapping button reads as set once a mapping is on the slot. */
 .slot .ctl button.mapped {

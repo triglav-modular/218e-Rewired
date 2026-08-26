@@ -179,8 +179,7 @@
     var ICONS = {
         up:    'M12 19V5M5 12l7-7 7 7',
         down:  'M12 5v14M19 12l-7 7-7-7',
-        clear: 'M6 6l12 12M18 6L6 18',
-        map:   'M3 8h18M3 16h18M9 8v8M15 8v8'
+        clear: 'M6 6l12 12M18 6L6 18'
     };
     function icon(name) {
         var ns = 'http://www.w3.org/2000/svg';
@@ -239,7 +238,10 @@
                     var off = BUILDLIB.anchorOffset(cents, 9, degrees, period);
                     shift = '  ' + (off >= 0 ? '+' : '') + off.toFixed(2) + 'c';
                 } catch (e) { /* already reported on load */ }
-                what.textContent = entry.name;
+                var fname = document.createElement('span');
+                fname.className = 'fname';
+                fname.textContent = entry.name;
+                what.appendChild(fname);
                 what.title = entry.name + (entry.kbmName ? ' mapped by ' + entry.kbmName : '') +
                     (shift ? ': anchored on A by' + shift : '');
                 if (entry.kbmName) {
@@ -292,9 +294,9 @@
             // Each scale carries its own mapping button, because a .kbm
             // belongs to one scale and nothing about the file says which.
             var m = document.createElement('button');
-            m.appendChild(icon('map'));
+            m.textContent = '.kbm';
             m.disabled = !entry;
-            m.className = entry && entry.kbmText ? 'mapped' : '';
+            m.className = 'kbmbtn' + (entry && entry.kbmText ? ' mapped' : '');
             m.title = !entry ? 'no scale in this slot'
                 : entry.kbmText ? 'replace ' + entry.kbmName + ' — the keyboard mapping'
                 : 'add a keyboard mapping (.kbm) for ' + entry.name;
