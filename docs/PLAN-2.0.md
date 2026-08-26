@@ -44,16 +44,26 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   press-order zones rather than reimplementing them.  Mirror turns at the
   outermost HELD key, not the end of the keyboard, and its direction lives
   at RAM 0x614e.
-- Knob 2: randomness (1.x) | patterns.  PATTERNS BUILT, off by default;
-  [knob2].mode = "patterns".  The 22 CLIX fills are in tools/clix.py, taken
-  from the Clockwork Card, and are the bank when the config names none.
-  The gate at 0x8001b050 takes the selector's pool word and calls the real
-  selector through, so it composes with knob 1: a rest answers -1, which is
-  what the caller already reads as "nothing to play", and the note sequence
-  does not advance on a rest.  Bank and lengths live in the gap the
-  relocated sine left at 0x80019f20; the step is RAM 0x6150.
-  STILL TO DO: swing, and the page's grid editor with plain-text
-  x.x.. import/export.  Neither is started.
+- Knob 2: randomness (1.x) | swing | patterns.  ALL THREE BUILT, randomness
+  by default; [knob2].mode = "swing" or "patterns".
+  Patterns: the 22 CLIX fills are in tools/clix.py, taken from the Clockwork
+  Card, and are the bank when the config names none.  The gate at 0x8001b050
+  takes the selector's pool word and calls the real selector through, so it
+  composes with knob 1: a rest answers -1, which is what the caller already
+  reads as "nothing to play", and the note sequence does not advance on a
+  rest.  Bank and lengths live in the gap the relocated sine left at
+  0x80019f20; the step is RAM 0x6150.  The rhythm randomiser comes out in
+  this mode - it reads the same knob latch, and a pattern is unreadable if
+  its hits are also unevenly spaced.
+  Swing: the cave at 0x8001b100 takes the randomiser's own hook and output
+  cell, because both answer the same question - how long is this step.  It
+  lengthens one step of each pair by as much as it shortens the next, so the
+  pair keeps its total and the arpeggio does not drift in tempo; up to a
+  third either way, which is 1.97:1 at full travel.  Parity is RAM 0x6152,
+  and the same deadzone (knob < 0x30) and clamps (0x8..0xfff) as the
+  randomiser.  Verified by emulating the shipped bytes.
+  The page has a grid editor for the pattern bank, with plain-text x.x..
+  import/export and the CLIX fills one click away.
 - Knob 3: stays arp octave span, untouched.
 - Knob 4: vibrato (1.x) | octave switching.  BUILT, off by default;
   [knob4].octaves = 1.  It drives the factory's OWN trn transpose rather

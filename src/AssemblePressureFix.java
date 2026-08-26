@@ -1072,10 +1072,13 @@ public class AssemblePressureFix extends GhidraScript {
         //     4x), a random-pulser spacing law; knob low = even pulses;
         //   knob 3 (0x30e -> 0x60ea latch): random +-octave per arp note.
         // Gate-off timing itself is factory (compare == 3 restored).
+        // Knob 2's latch has two other readers, one at a time: swing, which
+        // takes this same pool word, and the pattern gate, which sits at the
+        // note selector instead and turns the randomiser off.
         begin(0x80019d38L);
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
         word(0x80019da8L); // octave entry (hook at 0x22f6)
-        word(0x80019df8L); // rhythm entry (hook at 0x21fa)
+        word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100L : 0x80019df8L);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
         // return (LDM with PC would execute return-and-test-R12, destroying
@@ -2952,6 +2955,55 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019f78L); // pattern lengths
         word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0L : 0x8001a0a0L);
         finish("arp_pattern_gate", 0x8001b100L);
+
+        // Knob 2 as swing.  The randomiser it replaces answers the same
+        // question - how long is this step - so this takes the same hook and
+        // the same output cell, and simply lengthens every other step by as
+        // much as it shortens the one after.  The pair keeps its total, so
+        // the arpeggio does not drift in tempo, it only stops being square.
+        //
+        // Up to a third either way, which is a triplet feel at full travel.
+        begin(0x8001b100L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,R12");             // the step this would have been
+        emit("MOV R8,0x60e6");
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x30");
+        emit("BR{lt} 0x8001b154");      // deadzone: square, exactly as shipped
+        emit("MOV R10,0x55");
+        emit("MUL R8,R8,R10");
+        emit("LSR R8,0xa");             // 0..85 out of 256: a third of a step
+        emit("MUL R10,R9,R8");
+        emit("LSR R10,0x8");            // how far this step moves
+        emit("MOV R11,0x6152");
+        emit("LD.UB R12,R11[0x0]");
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x8001b134");
+        emit("MOV R12,0x1");            // long now, short next
+        emit("ST.B R11[0x0],R12");
+        emit("ADD R9,R10");
+        emit("RJMP 0x8001b13c");
+        padTo(0x8001b134L);
+        emit("MOV R12,0x0");
+        emit("ST.B R11[0x0],R12");
+        emit("SUB R9,R9,R10 << 0x0");
+        padTo(0x8001b13cL);
+        emit("CP.W R9,0x8");            // the randomiser's own limits
+        emit("BR{ge} 0x8001b146");
+        emit("MOV R9,0x8");
+        padTo(0x8001b146L);
+        emit("MOV R8,0xfff");
+        emit("CP.W R9,R8");
+        emit("BR{le} 0x8001b154");
+        emit("MOV R9,R8");
+        padTo(0x8001b154L);
+        emit("LDDPC R8,0x8001b160");
+        emit("ST.H R8[0x38e],R9");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b160L);
+        word(0x00003560L); // global state base
+        finish("arp_swing", 0x8001b164L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate

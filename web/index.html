@@ -81,15 +81,57 @@
             <span><span class="t">Latching arpeggiator</span><br>
               <span class="d">Arpeggiator switch remapped to <strong>latch</strong> — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
           <label class="opt"><input type="checkbox" id="remap_knobs" checked>
-            <span><span class="t">Remap the preset knobs to arpeggiator and vibrato controls</span><br>
-              <span class="d">
-                <table class="knobs">
-                  <tr><td>1</td><th>Arp note order randomness</th></tr>
-                  <tr><td>2</td><th>Arp trigger spacing randomness</th></tr>
-                  <tr><td>3</td><th>Arp octave randomness</th></tr>
-                  <tr><td>4</td><th>Vibrato depth and frequency</th></tr>
-                </table>
-              </span></span></label>
+            <span><span class="t">Remap the preset knobs</span><br>
+              <span class="d">Take knobs 1&ndash;4 away from the preset voltages and
+                give them arpeggiator and vibrato controls. With the preset voltages
+                decoupled, they are set by holding a pad and turning its knob, so
+                nothing is lost.</span></span></label>
+
+          <div class="knobsel" id="knobsel">
+            <span class="t field-label">What each knob does</span>
+
+            <div class="knobrow"><span class="knobname">Knob 1</span>
+              <div class="vpo knobpick" id="knob1">
+                <button data-v="order" aria-pressed="true">Note order<span class="why">random blend</span></button>
+                <button data-v="orders" aria-pressed="false">Note order<span class="why">six orders</span></button>
+              </div>
+            </div>
+
+            <div class="knobrow"><span class="knobname">Knob 2</span>
+              <div class="vpo knobpick" id="knob2">
+                <button data-v="spacing" aria-pressed="true">Trigger spacing<span class="why">randomness</span></button>
+                <button data-v="swing" aria-pressed="false">Swing<span class="why">up to a triplet</span></button>
+                <button data-v="patterns" aria-pressed="false">Step patterns<span class="why">from a bank</span></button>
+              </div>
+            </div>
+
+            <div class="knobrow"><span class="knobname">Knob 3</span>
+              <div class="vpo knobpick" id="knob3">
+                <button data-v="octaves" aria-pressed="true">Octave randomness<span class="why">per note</span></button>
+              </div>
+            </div>
+
+            <div class="knobrow"><span class="knobname">Knob 4</span>
+              <div class="vpo knobpick" id="knob4">
+                <button data-v="vibrato" aria-pressed="true">Vibrato<span class="why">depth and rate</span></button>
+                <button data-v="trn" aria-pressed="false">Octave switcher<span class="why">the factory trn</span></button>
+              </div>
+            </div>
+          </div>
+
+            <div id="patternBody" class="hidden">
+              <div class="patrow" id="patList"></div>
+              <div class="patctl">
+                <button id="patAdd" type="button">Add a pattern</button>
+                <button id="patClix" type="button">Load the 22 CLIX fills</button>
+                <button id="patCopy" type="button">Copy as text</button>
+                <button id="patPaste" type="button">Paste from text</button>
+              </div>
+              <p class="d muted section-note">A dot is a rest, anything else a hit.
+                Up to 32 patterns of up to 32 steps; the knob spreads across them in
+                the order shown.</p>
+            </div>
+          </div>
 
         </div>
 

@@ -109,6 +109,21 @@ OPTION_TYPES = {
     "volts_per_octave":    float,
     "pitch_correction":    (bool, str),
     "alternate_tunings":   (bool, list),
+    "knob1":               str,
+    "knob2":               str,
+    "knob3":               str,
+    "knob4":               str,
+    "arp_patterns":        list,
+}
+
+# What each preset knob may be set to.  The first entry of each is what
+# remap_knobs = true has always meant, so a config that never mentions a knob
+# keeps the behaviour it had.
+KNOB_ROLES = {
+    "knob1": ("order", "orders", "factory"),
+    "knob2": ("spacing", "swing", "patterns", "factory"),
+    "knob3": ("octaves", "factory"),
+    "knob4": ("vibrato", "trn", "factory"),
 }
 
 
@@ -147,7 +162,9 @@ def check(options: dict) -> None:
         # bool passed the tuple check above, but only False means anything:
         # "true" carries no path and no files, and expand() used to die on it
         # with a raw TypeError instead of a sentence.
-        if value is True:
+        # arp_patterns is the exception: true means the CLIX bank, which is a
+        # real answer, where a tuning or a calibration cannot be conjured.
+        if value is True and name != "arp_patterns":
             raise SystemExit(
                 f"{name} = true says nothing to build from - give it "
                 + ("a CSV path" if name == "pitch_correction"
@@ -180,11 +197,30 @@ def expand(options: dict) -> dict:
     # 1. Latching arpeggiator ------------------------------------------------
     cfg["arp"]["switch"] = "latch" if want("latching_arp", True) else "factory"
 
-    # 2. Remap knobs 1-4 ----------------------------------------------------
+    # 2. What each preset knob does -----------------------------------------
+    # remap_knobs still sets them all at once, and each knob can then be named
+    # individually - which is the only way to say "arpeggiator octaves on knob
+    # 3, preset voltage on the rest", and the only way to reach the roles that
+    # did not exist in 1.x.
     remap = want("remap_knobs", True)
     live = {"knob1": "arp_order", "knob2": "arp_rhythm",
             "knob3": "arp_octaves", "knob4": "vibrato"}
     cfg["knobs"] = {k: (v if remap else "factory") for k, v in live.items()}
+    roles = {}
+    for knob, allowed in KNOB_ROLES.items():
+        role = want(knob, None)
+        if role is None:
+            role = allowed[0] if remap else "factory"
+        if role not in allowed:
+            raise SystemExit(
+                f"{knob} = {role!r} is not one of "
+                + ", ".join(repr(a) for a in allowed))
+        roles[knob] = role
+        cfg["knobs"][knob] = "factory" if role == "factory" else live[knob]
+    cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
+    cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
+    cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing")
+                            else "randomness")
 
     # 3. Per-key pitch correction -------------------------------------------
     correction = want("pitch_correction", False)
@@ -215,6 +251,46 @@ def expand(options: dict) -> dict:
         ] + ["factory"] * (3 - len(tunings))
     else:
         cfg["tuning"]["slots"] = ["factory"] * 3
+
+    # 8. Knob 2's bank, when knob 2 is set to patterns ----------------------
+    # Each entry is a string of steps - a dot is a rest, anything else a hit -
+    # or a [pattern, length] pair to make it repeat sooner than it is written.
+    # Left out, the bank is the CLIX fills.
+    patterns = want("arp_patterns", None)
+    if patterns:
+        masks, lengths = [], []
+        for i, entry in enumerate(patterns):
+            if isinstance(entry, (list, tuple)):
+                if len(entry) != 2:
+                    raise SystemExit(
+                        f"arp_patterns[{i}] as a pair must be "
+                        '["x.x.x...", length]')
+                text, length = entry
+            else:
+                text, length = entry, None
+            if not isinstance(text, str):
+                raise SystemExit(
+                    f"arp_patterns[{i}] must be a string of steps, "
+                    f"not {type(text).__name__}: {text!r}")
+            steps = [c for c in text if not c.isspace()]
+            if not 1 <= len(steps) <= 32:
+                raise SystemExit(
+                    f"arp_patterns[{i}] has {len(steps)} steps; "
+                    "it must have 1 to 32")
+            mask = sum(1 << k for k, c in enumerate(steps) if c != ".")
+            if mask == 0:
+                raise SystemExit(
+                    f"arp_patterns[{i}] is all rests — it would never sound")
+            if length is None:
+                length = len(steps)
+            if not isinstance(length, int) or isinstance(length, bool) \
+                    or not 1 <= length <= 32:
+                raise SystemExit(
+                    f"arp_patterns[{i}] length must be a whole number 1..32")
+            masks.append(mask)
+            lengths.append(length)
+        cfg["knob2"]["patterns"] = masks
+        cfg["knob2"]["lengths"] = lengths
 
     # 5. Volts per octave ----------------------------------------------------
     # The pair is a hardware limit, not a shortlist.  The keyboard spans 6.5

@@ -847,6 +847,8 @@ RAM_REGIONS = [
     (0x614E, 0x614F, "arp mirror direction"),
     # Where knob 2's pattern has got to, wrapped at that pattern's length.
     (0x6150, 0x6152, "arp pattern step"),
+    # Which half of the swung pair the next step is.
+    (0x6152, 0x6153, "arp swing parity"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1632,8 +1634,8 @@ def main() -> None:
     # different question from how long the step is, so it is gated at the note
     # selector rather than in the rhythm randomiser.
     k2 = cfg.get("knob2", {}).get("mode", "randomness")
-    if k2 not in ("randomness", "patterns"):
-        raise SystemExit("[knob2].mode must be 'randomness' or 'patterns'")
+    if k2 not in ("randomness", "patterns", "swing"):
+        raise SystemExit("[knob2].mode must be 'randomness', 'swing' or 'patterns'")
     bank = list(cfg.get("knob2", {}).get("patterns") or [])
     lens = list(cfg.get("knob2", {}).get("lengths") or [])
     if k2 == "patterns":
@@ -1673,6 +1675,8 @@ def main() -> None:
         # the factory's own reload stands.
         blocks["arp_rhythm_hook"] = False
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
+    cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
+    blocks["arp_swing"] = k2 == "swing"
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
     for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):

@@ -96,6 +96,67 @@ var BUILDLIB = (function () {
         }
         cfg.portamento.pressure_blend = blend;
         cfg.portamento.zero_snap = blend;
+
+        // Each knob's role, expanded the same way tools/options.py does.
+        var ROLES = { knob1: ['order', 'orders', 'factory'],
+                      knob2: ['spacing', 'swing', 'patterns', 'factory'],
+                      knob3: ['octaves', 'factory'],
+                      knob4: ['vibrato', 'trn', 'factory'] };
+        var roles = {};
+        Object.keys(ROLES).forEach(function (k) {
+            var role = want(k, null);
+            if (role === null) role = remap ? ROLES[k][0] : 'factory';
+            if (ROLES[k].indexOf(role) < 0) {
+                throw new Error(k + ' = ' + JSON.stringify(role) + ' is not one of '
+                                + ROLES[k].join(', '));
+            }
+            roles[k] = role;
+            cfg.knobs[k] = role === 'factory' ? 'factory' : live[k];
+        });
+        cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
+        cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
+        cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing')
+            ? roles.knob2 : 'randomness';
+        var patterns = want('arp_patterns', null);
+        if (patterns) {
+            if (patterns.length) {
+                var masks = [], lengths = [];
+                patterns.forEach(function (entry, i) {
+                    var text = entry, length = null;
+                    if (Object.prototype.toString.call(entry) === '[object Array]') {
+                        if (entry.length !== 2) {
+                            throw new Error('arp_patterns[' + i + '] as a pair must be '
+                                            + '["x.x.x...", length]');
+                        }
+                        text = entry[0]; length = entry[1];
+                    }
+                    if (typeof text !== 'string') {
+                        throw new Error('arp_patterns[' + i + '] must be a string of steps');
+                    }
+                    var steps = text.replace(/\s+/g, '');
+                    if (!(steps.length >= 1 && steps.length <= 32)) {
+                        throw new Error('arp_patterns[' + i + '] has ' + steps.length
+                                        + ' steps; it must have 1 to 32');
+                    }
+                    var mask = 0;
+                    for (var k = 0; k < steps.length; k++) {
+                        if (steps[k] !== '.') mask += Math.pow(2, k);
+                    }
+                    if (mask === 0) {
+                        throw new Error('arp_patterns[' + i + '] is all rests — '
+                                        + 'it would never sound');
+                    }
+                    if (length === null) length = steps.length;
+                    if (!(length >= 1 && length <= 32 && length === Math.floor(length))) {
+                        throw new Error('arp_patterns[' + i
+                                        + '] length must be a whole number 1..32');
+                    }
+                    masks.push(mask); lengths.push(length);
+                });
+                cfg.knob2.patterns = masks;
+                cfg.knob2.lengths = lengths;
+            }
+        }
         return cfg;
     }
 
@@ -536,6 +597,7 @@ var BUILDLIB = (function () {
             knob4_zones: 3 + Math.max(1, Math.floor(
                 (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg))),
             knob2_patterns: cfg.knob2.mode === 'patterns' ? 1 : 0,
+            knob2_swing: cfg.knob2.mode === 'swing' ? 1 : 0,
             pattern_count: patternBank(cfg).masks.length
         };
         var span = calib.trim_span;

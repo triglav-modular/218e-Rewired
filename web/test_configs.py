@@ -81,6 +81,19 @@ CONFIGS = [
     # A scale that repeats at a 3/1 rewrites the factory's own octave
     # arithmetic, so the two builders have to agree about five patch sites as
     # well as the table.  All three slots, because the period is one setting.
+    # The three knob options together: knob 2's gate wraps knob 1's selector,
+    # so both builders have to agree about the chain as well as the bank.
+    ("knob_options",      [(r"^remap_knobs = true",
+                            'remap_knobs = true\nknob1 = "orders"\n'
+                            'knob2 = "patterns"\nknob4 = "trn"\n'
+                            'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')],
+                          {"knob1": "orders", "knob2": "patterns", "knob4": "trn",
+                           "arp_patterns": ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]}),
+    # Swing takes the rhythm randomiser's own hook, so the two builders have to
+    # agree about which of the two the pool word names.
+    ("knob2_swing",       [(r"^remap_knobs = true",
+                            'remap_knobs = true\nknob2 = "swing"')],
+                          {"knob2": "swing"}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
                             + ", ".join(['["tunings/BohlenPierce.scl", '

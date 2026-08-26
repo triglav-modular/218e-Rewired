@@ -6,7 +6,9 @@
 
     var $ = function (id) { return document.getElementById(id); };
     var state = { factoryText: null, factoryMtime: null, slots: null,
-                  calibration: null, result: null };
+                  calibration: null, result: null, patterns: [] };
+    // What each preset knob is set to; the buttons below drive it.
+    var knobRole = { knob1: 'order', knob2: 'spacing', knob3: 'octaves', knob4: 'vibrato' };
 
     function download(text, name, type) {
         var a = document.createElement('a');
@@ -201,6 +203,70 @@
     // The .kbm picker is shared; this says whose button opened it.
     var mapTarget = -1;
 
+    // Knob 2's pattern bank.  A row per pattern, a cell per step: the grid is
+    // the honest shape for something whose meaning is which steps sound, and
+    // the text form beside it is what people paste to each other.
+    function patternText(p) {
+        return p.text.slice(0, p.length);
+    }
+    function renderPatterns() {
+        var list = $('patList');
+        list.textContent = '';
+        state.patterns.forEach(function (p, i) {
+            var row = document.createElement('div');
+            row.className = 'pat';
+
+            var n = document.createElement('span');
+            n.className = 'patnum';
+            n.textContent = (i + 1);
+            row.appendChild(n);
+
+            var grid = document.createElement('span');
+            grid.className = 'patgrid';
+            for (var k = 0; k < p.length; k++) {
+                (function (step) {
+                    var cell = document.createElement('button');
+                    cell.type = 'button';
+                    cell.className = 'step' + (p.text[step] !== '.' ? ' on' : '')
+                        + (step % 4 === 0 ? ' beat' : '');
+                    cell.title = 'step ' + (step + 1);
+                    cell.addEventListener('click', function () {
+                        var t = p.text.split('');
+                        t[step] = t[step] === '.' ? 'x' : '.';
+                        p.text = t.join('');
+                        renderPatterns(); invalidate();
+                    });
+                    grid.appendChild(cell);
+                })(k);
+            }
+            row.appendChild(grid);
+
+            var len = document.createElement('input');
+            len.type = 'number'; len.min = 1; len.max = 32; len.value = p.length;
+            len.className = 'patlen'; len.title = 'steps before it repeats';
+            len.addEventListener('change', function () {
+                var v = Math.max(1, Math.min(32, parseInt(len.value, 10) || 1));
+                while (p.text.length < v) p.text += '.';
+                p.length = v;
+                renderPatterns(); invalidate();
+            });
+            row.appendChild(len);
+
+            var x = document.createElement('button');
+            x.type = 'button'; x.className = 'clear'; x.title = 'remove this pattern';
+            x.appendChild(icon('clear'));
+            x.addEventListener('click', function () {
+                state.patterns.splice(i, 1);
+                renderPatterns(); invalidate();
+            });
+            row.appendChild(x);
+            list.appendChild(row);
+        });
+        $('patternBody').classList.toggle(
+            'hidden', !$('remap_knobs').checked || knobRole.knob2 !== 'patterns');
+        $('patAdd').disabled = state.patterns.length >= 32;
+    }
+
     function renderSlots() {
         var host = $('slots');
         host.innerHTML = '';
@@ -351,6 +417,61 @@
         };
         r.onerror = function () { msg($('sclMsg'), 'bad', f.name + ': could not be read'); };
         r.readAsText(f);
+    });
+
+    // The pattern bank's own controls.
+    $('patAdd').addEventListener('click', function () {
+        if (state.patterns.length >= 32) return;
+        state.patterns.push({ text: 'x...x...x...x...', length: 16 });
+        renderPatterns(); invalidate();
+    });
+    $('patClix').addEventListener('click', function () {
+        state.patterns = GEN.clix.map(function (mask) {
+            var t = '';
+            for (var i = 0; i < 32; i++) t += (mask >>> i) & 1 ? 'x' : '.';
+            return { text: t, length: 32 };
+        });
+        renderPatterns(); invalidate();
+    });
+    $('patCopy').addEventListener('click', function () {
+        var text = state.patterns.map(patternText).join('\n');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function () {
+                msg($('buildMsg'), '', state.patterns.length + ' patterns copied.');
+            }, function () { download(text, 'patterns.txt', 'text/plain'); });
+        } else {
+            download(text, 'patterns.txt', 'text/plain');
+        }
+    });
+    $('patPaste').addEventListener('click', function () {
+        // One pattern per line; a dot is a rest and anything else a hit, which
+        // is how these get written down and passed around.
+        var text = window.prompt('One pattern per line. A dot is a rest, '
+                                 + 'anything else a hit.', '');
+        if (text === null) return;
+        var rows = text.split(/[\r\n]+/).map(function (l) {
+            return l.replace(/\s+/g, '');
+        }).filter(function (l) { return l.length; });
+        var bad = rows.filter(function (l) {
+            return l.length > 32 || !/[^.]/.test(l);
+        });
+        if (!rows.length || bad.length) {
+            msg($('buildMsg'), 'bad', !rows.length
+                ? 'Nothing to read there.'
+                : 'Each line needs 1 to 32 steps and at least one hit: '
+                  + JSON.stringify(bad[0]));
+            return;
+        }
+        if (rows.length > 32) {
+            msg($('buildMsg'), 'bad', rows.length + ' patterns; the bank holds 32.');
+            return;
+        }
+        state.patterns = rows.map(function (l) {
+            var t = l.replace(/[^.]/g, 'x');
+            return { text: t + '.'.repeat(32 - t.length), length: t.length };
+        });
+        msg($('buildMsg'), '', state.patterns.length + ' patterns read.');
+        renderPatterns(); invalidate();
     });
 
     $('sclPick').addEventListener('click', function () { $('scl').click(); });
@@ -644,6 +765,13 @@
         var o = {
             latching_arp: $('latching_arp').checked,
             remap_knobs: $('remap_knobs').checked,
+            knob1: $('remap_knobs').checked ? knobRole.knob1 : 'factory',
+            knob2: $('remap_knobs').checked ? knobRole.knob2 : 'factory',
+            knob3: $('remap_knobs').checked ? knobRole.knob3 : 'factory',
+            knob4: $('remap_knobs').checked ? knobRole.knob4 : 'factory',
+            arp_patterns: ($('remap_knobs').checked && knobRole.knob2 === 'patterns')
+                ? state.patterns.map(function (p) { return [p.text, p.length]; })
+                : null,
             pressure_fix: $('pressure_fix').checked,
             pressure_portamento: $('pressure_portamento').checked,
             volts_per_octave: vpo
@@ -831,7 +959,7 @@
     function describe(o) {
         var lines = [
             'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
-            'Knobs 1-4: ' + (o.remap_knobs ? 'remapped' : 'factory'),
+            'Knobs 1-4: ' + [o.knob1, o.knob2, o.knob3, o.knob4].join(', '),
             'Pressure: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
             'Scaling: ' + o.volts_per_octave + ' V/octave',
@@ -1083,6 +1211,31 @@
     // build result, not in the masthead.
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
 
+    // Each preset knob picks its own role, the same control the volts-per-
+    // octave choice uses.  The pattern editor belongs to knob 2 and only
+    // appears when that knob is set to patterns.
+    $('remap_knobs').addEventListener('change', function () {
+        $('knobsel').classList.toggle('hidden', !$('remap_knobs').checked);
+        renderPatterns();
+    });
+    $('knobsel').classList.toggle('hidden', !$('remap_knobs').checked);
+    ['knob1', 'knob2', 'knob3', 'knob4'].forEach(function (id) {
+        Array.prototype.forEach.call($(id).children, function (b) {
+            b.addEventListener('click', function () {
+                knobRole[id] = b.dataset.v;
+                Array.prototype.forEach.call($(id).children, function (o) {
+                    o.setAttribute('aria-pressed', String(o === b));
+                });
+                if (id === 'knob2' && b.dataset.v === 'patterns'
+                        && !state.patterns.length) {
+                    state.patterns = [{ text: 'x...x...x...x...', length: 16 }];
+                }
+                renderPatterns();
+                invalidate();
+            });
+        });
+    });
+
     // The changelog, from the same generated data the package's
     // changelog.txt ships - version lines become headings.
     (function () {
@@ -1108,6 +1261,7 @@
         body.addEventListener('click', function (e) { e.stopPropagation(); });
     })();
 
+    renderPatterns();
     renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
     bindDashes(document.body);
 })();
