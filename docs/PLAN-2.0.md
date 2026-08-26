@@ -132,8 +132,32 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
     - Never the factory's own blink at 0x80003b1c: it busy-waits 4x150 ms and
       would stall the scan for six tenths of a second.  Ours is a bit test and
       a set/clear, and led_flush is free when nothing changed.
-  OPEN: whether the running mode wants a light of its own once the hold ends.
-  Four channels are unidentified (4, 6, 7, 9) and one of them may be free.
+- **The running mode flashes its own pad, for as long as it runs.**  Pad 1
+  flashes while recording, pad 2 flashes while playing; off is dark.  Same
+  law as the arm blink - bit 6 of a free-running scan counter, about 1.6 Hz -
+  so every light this firmware adds blinks at one rate and means "something
+  is engaged".  The arm blink is on pad 4 and can run at the same time as a
+  mode flash on pad 1 or 2; different channels, no interaction.
+  This one needs re-asserting EVERY SCAN, which the arm blink does not.  The
+  arm blink lives inside a pad hold, and nothing else writes the lights
+  during it; a mode flash outlives the gesture and has to survive
+  `select_pad` (`0x8000698c`), which clears channels 0-3 and lights one on
+  every single pad press.  So: each scan, if the mode is not off, write the
+  mode's channel to the flash phase.  That is the same thing the tuning
+  applier already does for rem-en and trn, and for the same reason.
+  The cost, stated plainly: **while a mode runs, its pad's light stops
+  reporting pad selection.**  Recording with pad 1 selected as the octave,
+  pad 1's light means "recording", not "pad 1 is the active preset".  Every
+  other pad still reports selection normally - select pad 3 while recording
+  and channel 2 lights steady while channel 0 flashes, which reads correctly.
+  The lost indication comes back the moment the mode ends: on leaving, the
+  channel is restored from `state+0x2ef` the same way the arm blink restores
+  pad 4.
+  OPEN: whether play's flash should follow the STEP instead of free-running,
+  which would make it a tempo indicator as well as a running light.  Nicer,
+  and free - we already have the tick - but it blurs at fast tempos, and the
+  owner asked for flashing rather than for a tempo light.  Free-running
+  unless told otherwise.
 - Precedence over the arp switch, including latch-exit clearing.
 - Record: entering wipes; note-ons append PITCHES (like latch stamps, so
   tuning-slot switches do not shift recorded notes); pitch-bend strip ends
