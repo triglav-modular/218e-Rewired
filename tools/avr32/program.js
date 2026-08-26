@@ -3119,21 +3119,41 @@ function assembleProgram() {
         begin(0x8001b610);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MOV R9,0x6154");
-        emit("LD.UB R9,R9[0x4]");
-        emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b62c");
-        emit("MOV R9,0x61e5");
-        emit("LD.UB R9,R9[0x0]");
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b62c");
+        emit("MOV R10,0x6154");
+        emit("LD.UB R10,R10[0x4]");
+        emit("CP.W R10,0x2");
+        emit("BR{ne} 0x8001b64c");      // not playing: whatever the clamp said
+        emit("MOV R10,0x61e5");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001b632");
         emit(StringFormat("MOV R8,0x%x",
              number("tie_glide_rate", 60, 1, 1024)));
-        padTo(0x8001b62c);
+        emit("RJMP 0x8001b64c");
+        padTo(0x8001b632);
+        // Playing, no tie in hand: the portamento knob means TIME here, the
+        // way it does on a build without the pressure blend.  A blend build
+        // otherwise forces the rate to zero, because pressure is the
+        // portamento - but the sequencer's keyboard is silent, so there is no
+        // pressure to blend and the knob would mean nothing at all.  R9 still
+        // holds the table index the caller worked out.
+        emit("MOV R8,0x3866");
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x30");
+        emit("BR{lt} 0x8001b648");      // the knob's own deadzone: no glide
+        emit("LDDPC R8,0x8001b658");
+        emit("LD.SH R8,R8[R9 << 0x1]");
+        emit("CASTS.H R8");
+        emit("RJMP 0x8001b64c");
+        padTo(0x8001b648);
+        emit("MOV R8,0x0");
+        padTo(0x8001b64c);
         emit("MOV R9,0x2eee");
         emit("ST.H R9[0x0],R8");
         emit("LDM SP++,R7,PC");
-        finish("seq_glide", 0x8001b63c);
+        padTo(0x8001b658);
+        word(0x80015150); // the factory glide-rate table
+        finish("seq_glide", 0x8001b65c);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,

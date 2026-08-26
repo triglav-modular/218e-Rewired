@@ -192,6 +192,12 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   never reach - when the step about to play is a tie, so the gate never falls
   and the note carries across.  That reuses the knob-2 machinery that already
   owned that compare rather than adding any.
+  THE PORTAMENTO KNOB MEANS TIME WHILE PLAYING.  Everywhere else on a
+  pressure-blend build it means pressure-needed-to-bend and the glide rate is
+  forced to zero - but the sequencer's keyboard is silent, so there is no
+  pressure to blend and the knob would otherwise mean nothing at all.  In
+  play it reads the factory's own glide table, exactly as a build without the
+  blend does.
   A tie SLIDES into the note after it, 303 fashion, rather than stepping to
   it.  The tie arms a two-step count; the step that actually moves the pitch
   spends it, and while it is unspent the glide rate handed to the factory
