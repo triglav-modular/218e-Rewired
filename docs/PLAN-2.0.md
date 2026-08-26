@@ -159,12 +159,25 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   owner asked for flashing rather than for a tempo light.  Free-running
   unless told otherwise.
 - Precedence over the arp switch, including latch-exit clearing.
-- Record: entering wipes; note-ons append PITCHES (like latch stamps, so
-  tuning-slot switches do not shift recorded notes); pitch-bend strip ends
-  enter rest (left) / tie (right); strip's normal role suspended in record.
-  64 steps.  Play: entering resets to step 0; clocked by the same source as
-  the arp; keyboard silent; pads keep their factory jobs, so the octave pads
-  transpose live during play whenever the toggle is in its octave position.
+- Record: BUILT.  Entering wipes; note-ons append PITCHES - the halfword the
+  key table holds for that key, the same value the arp would have sounded -
+  so a later change of tuning slot moves the keyboard without moving anything
+  already recorded.  64 steps, then it stops taking them.  Hangs off the
+  existing note-on wrapper, where the key is still in R12.
+- Play: BUILT.  Entering resets to step 0.  It is not a note engine of its
+  own: it answers the arp's own note selection, so the arp's clock, gate,
+  MIDI and the pad octave transpose all carry it.  An empty sequence answers
+  -1, which the arp already reads as nothing this step.  The pitch is swapped
+  in at the value hook, after the octave randomiser, so what plays is what was
+  recorded plus whatever the pads transpose.
+  CONSEQUENCE, and it needs saying in the page copy: play rides the ARP
+  CLOCK, so the arpeggiator has to be running for the sequence to advance.
+  Forcing the arp engine on from our side was considered and rejected - the
+  factory sets state+0x34c inside a start/stop sequence with its own setup
+  calls, and skipping that setup is not something to do blind.
+- STILL TO DO: rest and tie from the pitch-bend strip ends, which needs the
+  strip archaeology (touch/position state, and where its bend enters the
+  pitch path).  Nothing else in the sequencer depends on it.
 - Entering and leaving are our own chord handler now, not the toggle's change
   callback - simpler, and entirely under our control.
 - RAM: the hold counter (halfword), one byte for armed/selected, one byte for

@@ -853,6 +853,9 @@ RAM_REGIONS = [
     # the selection is frozen at, last scan's touch levels, and the blink
     # counter every light this firmware adds shares.
     (0x6154, 0x6160, "sequencer chord and mode"),
+    # 64 recorded pitches, then how many there are, where play has got to,
+    # and the pitch the step about to sound carries.
+    (0x6160, 0x61E4, "sequencer steps"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1682,6 +1685,8 @@ def main() -> None:
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
     seq = bool(cfg.get("sequencer", {}).get("on"))
     blocks["seq_chord"] = seq
+    for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch"):
+        blocks[name] = seq
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"
     summary.append(f"  {'knob2.mode':28s} {k2!r}"

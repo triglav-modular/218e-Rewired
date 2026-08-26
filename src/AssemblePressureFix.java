@@ -196,6 +196,13 @@ public class AssemblePressureFix extends GhidraScript {
         }
         assembler = Assemblers.getAssembler(currentProgram);
 
+        // Whichever key selector this build installed.  The sequencer calls
+        // the same one when it is not playing, so the two can never disagree
+        // about which selector is actually in the image.
+        long arpSelector = number("knob2_patterns", 0, 0, 1) == 1 ? 0x8001b050L
+                         : number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0L
+                         : 0x8001a0a0L;
+
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
         // at the center of travel.  The
@@ -297,24 +304,30 @@ public class AssemblePressureFix extends GhidraScript {
         if (feature("arp_latch")) {
             // A press of an already-latched key returns -1 and the note-on is
             // skipped, which is what makes the keys behave as toggles.
-            emit("MCALL PC[0x80018d3c]");
+            emit("MCALL PC[0x80018d38]");
             emit("CP.W R12,-0x1");
-            emit("BR{eq} 0x80018d2a");
+            emit("BR{eq} 0x80018d28");
+        }
+        if (block("seq_record")) {
+            // R12 is still the key here, and the cave leaves it alone.  The
+            // pool below starts one word earlier to make room for its entry;
+            // extending the block instead would run into its neighbour.
+            emit("MCALL PC[0x80018d3c]");
         }
         emit("ST.W --SP,R12");
-        emit("MCALL PC[0x80018d30]");
-        emit("LDDPC R9,0x80018d34");
+        emit("MCALL PC[0x80018d2c]");
+        emit("LDDPC R9,0x80018d30");
         emit("MOV R8,0x0");
         emit("ST.H R9[0x0],R8");
         emit("LD.W R12,SP++");
-        emit("MCALL PC[0x80018d38]");
-        padTo(0x80018d2aL);
+        emit("MCALL PC[0x80018d34]");
+        padTo(0x80018d28L);
         emit("LDM SP++,R7,PC");
-        padTo(0x80018d30L);
         word(0x80005a04L); // original note-on initialization
         word(0x00006080L); // raw-filter sample count
         word(0x8001a020L); // press-order list append
         word(0x8001a930L); // pitch-aware latch toggle (stamps on proceed)
+        word(0x8001b320L); // the sequencer's recorder
         finish("note_on_reset_raw_filter", 0x80018d40L);
 
         // Release/source-selection wrapper. Preserve the selected-key return
@@ -1077,7 +1090,7 @@ public class AssemblePressureFix extends GhidraScript {
         // note selector instead and turns the randomiser off.
         begin(0x80019d38L);
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
-        word(0x80019da8L); // octave entry (hook at 0x22f6)
+        word(block("seq_pitch") ? 0x8001b3e0L : 0x80019da8L);
         word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100L : 0x80019df8L);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
@@ -3124,6 +3137,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x0");
         padTo(0x8001b238L);
         emit("ST.B R1[0x4],R9");        // the mode
+        emit("MCALL PC[0x8001b318]");   // and clear what it is about to write
         emit("MOV R10,0x1");
         emit("ST.B R1[0x3],R10");       // selected
         // Repaint from the frozen pad: that is both the freeze and the clean
@@ -3182,7 +3196,130 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x800068ccL); // led_clear(ch)
         word(0x8000673cL); // led_flush()
         word(0x8001b290L); // write_channel(R11, R9)
-        finish("seq_chord", 0x8001b318L);
+        word(0x8001b420L); // seq_enter(R9 = mode)
+        finish("seq_chord", 0x8001b31cL);
+
+        // Entering a mode clears what that mode is about to write: record
+        // starts from an empty sequence, play starts from its first step.
+        // R9 = the mode being entered.
+        begin(0x8001b420L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x61e0");
+        emit("MOV R10,0x0");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x8001b436");
+        emit("ST.B R8[0x0],R10");       // record: no steps yet
+        padTo(0x8001b436L);
+        emit("CP.W R9,0x2");
+        emit("BR{ne} 0x8001b440");
+        emit("ST.B R8[0x1],R10");       // play: from the top
+        padTo(0x8001b440L);
+        emit("LDM SP++,R7,PC");
+        finish("seq_enter", 0x8001b448L);
+
+        // Record.  Called from the note-on wrapper with R12 = the key, which
+        // it must leave alone - the wrapper still needs it.  What goes in the
+        // store is the PITCH, the same halfword the arp would have played for
+        // that key, so a later change of tuning slot moves the keyboard
+        // without moving anything already recorded.
+        begin(0x8001b320L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x6154");
+        emit("LD.UB R9,R8[0x4]");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x8001b354");
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R9,R10[0x0]");
+        emit("CP.W R9,0x40");           // 64 steps and no more
+        emit("BR{ge} 0x8001b354");
+        emit("MOV R11,0x854");          // the live key table
+        emit("ADD R11,R11,R12 << 0x1");
+        emit("LD.SH R11,R11[0x0]");
+        emit("MOV R8,0x6160");
+        emit("ADD R8,R8,R9 << 0x1");
+        emit("ST.H R8[0x0],R11");
+        emit("SUB R9,-0x1");
+        emit("ST.B R10[0x0],R9");
+        padTo(0x8001b354L);
+        emit("LDM SP++,R7,PC");
+        finish("seq_record", 0x8001b35cL);
+
+        // Play, at the arp's own note selection.  The arp asks which key to
+        // sound; while playing we answer with a valid one so the step is not
+        // skipped, and put the step's pitch where the value hook below will
+        // swap it in.  An empty sequence answers -1, which the arp already
+        // reads as nothing this step.
+        //
+        // Not playing, this is the factory's own question, asked the factory's
+        // way: no key held means no note.
+        begin(0x8001b360L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x6154");
+        emit("LD.UB R9,R8[0x4]");
+        emit("CP.W R9,0x2");
+        emit("BR{ne} 0x8001b3b0");
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R11,R10[0x0]");     // how many steps there are
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001b3a4");
+        emit("LD.UB R9,R10[0x1]");      // where we are in them
+        emit("CP.W R9,R11");
+        emit("BR{lt} 0x8001b382");
+        emit("MOV R9,0x0");
+        padTo(0x8001b382L);
+        emit("MOV R8,0x6160");
+        emit("ADD R8,R8,R9 << 0x1");
+        emit("LD.SH R8,R8[0x0]");
+        emit("MOV R12,0x61e2");
+        emit("ST.H R12[0x0],R8");       // the pitch this step sounds
+        emit("SUB R9,-0x1");
+        emit("CP.W R9,R11");
+        emit("BR{lt} 0x8001b39c");
+        emit("MOV R9,0x0");
+        padTo(0x8001b39cL);
+        emit("ST.B R10[0x1],R9");
+        emit("MOV R12,0x0");            // any real key; the pitch is swapped
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b3a4L);
+        emit("MOV R12,0x0");
+        emit("SUB R12,0x1");            // nothing recorded: silence
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b3b0L);
+        emit("LDDPC R9,0x8001b3d0");
+        emit("LD.UB R8,R9[0x21a]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b3a4");
+        emit("MOV R12,0x21b");
+        emit("ADD R12,R9");             // &state[0x21b], the held-key flags
+        emit("MCALL PC[0x8001b3d4]");   // the selector this build installed
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b3d0L);
+        word(0x00003560L); // global state base
+        word(arpSelector);
+        finish("seq_select", 0x8001b3d8L);
+
+        // The pitch the arp is about to sound.  The octave randomiser runs
+        // first and its answer stands for keyboard playing; while the
+        // sequencer plays, the step's own pitch replaces it.  The pad octave
+        // transpose is applied further downstream and so still applies.
+        begin(0x8001b3e0L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001b400]");   // the factory octave path
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x2");
+        emit("BR{ne} 0x8001b3fa");
+        emit("MOV R9,0x61e2");
+        emit("LD.SH R8,R9[0x0]");
+        padTo(0x8001b3faL);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b400L);
+        word(0x80019da8L); // the octave entry this replaces
+        finish("seq_pitch", 0x8001b404L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
@@ -3425,6 +3562,21 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x800021a6L);
         finish("arp_gate_hook", 0x800021a6L);
 
+        // Hook: the arp's note selection.  The factory asked "is anything held,
+        // and if so which key next"; the sequencer answers the same question
+        // with a step of its own while it plays.  The pool word rides in the
+        // space the replaced code frees.
+        if (block("seq_select")) {
+            begin(0x800022c2L);
+            emit("MCALL PC[0x800022d8]");
+            emit("MOV R8,R12");
+            emit("ST.B R7[-0x5],R8");
+            emit("RJMP 0x800022de");
+            padTo(0x800022d8L);
+            word(0x8001b360L);
+            finish("arp_select_hook", 0x800022deL);
+        }
+
         // Hook 2: arp note value routed through the octave randomizer.
         begin(0x800022f6L);
         emit("MCALL PC[0x80019d3c]");
@@ -3443,8 +3595,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Factory selector pointer -> whichever replacement this build wants:
         // the 1.x blend from press order into randomness, or the six zones.
         begin(0x80002420L);
-        word(number("knob2_patterns", 0, 0, 1) == 1 ? 0x8001b050L
-             : number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0L : 0x8001a0a0L);
+        word(arpSelector);
         finish("arp_selector_pool", 0x80002424L);
 
         // Hook: the transpose adder's target store now routes through the
