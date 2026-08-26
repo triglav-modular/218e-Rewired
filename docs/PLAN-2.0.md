@@ -146,15 +146,36 @@ use.  What is missing is the gesture.
   mode means by "the currently active pad".
 - The press handler is at 0x800069b0: a switch on a pad index that writes
   0x2ef and calls 0x80006a18 (LED, most likely).
-- That is a latch, not a hold.  "Hold pad N, turn knob N, release to store"
-  needs the momentary touch state, which is not located yet.  Best guess:
-  the touch array the keys use extends past its 29 entries to cover the
-  pads, so a pad would read state 2 there the same way a held key does.
-  Not confirmed - the array's base is never formed as a bare MOV, so it
-  needs finding through the scan loop instead.
+- That is a latch, not a hold.  The momentary state is a SEPARATE array:
 
-Implementing the latched form instead would be a different instrument from
-the one specified, so it waits.
+    **RAM 0x46f0, one byte per pad** - 0 released, 1 touched, 2 held.
+
+  Written at 0x8000a5be (0), 0x8000a574 (1) and 0x8000a598 (2); the 2 path
+  also sets state+0x2eb+pad and calls the press handler at 0x8000a784, which
+  is what writes 0x2ef and moves the LED.  Found by walking backwards from
+  the pad-select function at 0x8000698c through its only non-restoring
+  caller.  Same shape as the keys' array at 0x3490, so "held" is the same
+  test our pressure pass already makes: CP.W ...,0x2.
+
+  Clear of everything we use: the settings payload ends at 0x46e7 and our
+  own RAM starts at 0x6000.
+
+  So the gesture is now buildable: hold = 0x46f0[n] == 2, release = the
+  transition back to 0, knob moved = the mirror against a remembered value.
+
+## Phase 2, the wrinkle in the getter repoint
+
+The four preset getters read the mirror as `LD.SH R8,R8[0x30a]` (and 0x30c,
+0x30e, 0x310), four bytes each, off a state base loaded from the pool at
+0x80003900.  Repointing that pool would move all four at once - but the same
+pool word is also read at 0x80003758 for the octave selection at state+0x2ef,
+so it cannot simply be aimed somewhere else.
+
+Options: replace each load with `LDDPC R8,<pool>` + `LD.SH R8,R8[0x0]`, which
+is the same four bytes but needs a free aligned pool word in range of each
+site; or take over the getter wholesale by repointing whatever pool reaches
+it, the pattern used everywhere else here.  The second is more in keeping and
+avoids hunting for pool space.
 
 ## Infrastructure
 - Branch 2.0 (pushed).  Add it to firmware.yml + windows workflow
