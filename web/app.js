@@ -244,6 +244,12 @@
             // wherever they run out of line.
             var grouped = bars <= 8;
             if (!grouped) grid.className += ' ungrouped';
+            // The marked step counts the group, not a fixed four: at groups of
+            // five, every fourth step cuts across them.  It marks each group's
+            // first step, which is what a wrapped line loses - the gap that
+            // separates groups is not there at the start of a line.  Ungrouped
+            // lengths have no group to count, so the mark is a plain ruler.
+            var beat = grouped ? bars : 4;
             var bar = grid;
             for (var k = 0; k < p.length; k++) {
                 (function (step) {
@@ -255,7 +261,7 @@
                     var cell = document.createElement('button');
                     cell.type = 'button';
                     cell.className = 'step' + (p.text[step] !== '.' ? ' on' : '')
-                        + (step % 4 === 0 ? ' beat' : '');
+                        + (step % beat === 0 ? ' beat' : '');
                     cell.title = 'step ' + (step + 1);
                     cell.addEventListener('click', function () {
                         var t = p.text.split('');
