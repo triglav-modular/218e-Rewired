@@ -96,6 +96,8 @@ var WEBBUILD = (function () {
         if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {
             blocks.pitch_target_blend_hook = true;
             blocks.blend_offset_apply = true;
+            // The conditioner calls the apply shim; they exist together.
+            blocks.blend_target_conditioner = true;
         } else {
             // Same rule as tools/build.py: the factory long-hold on the arp
             // switch comes back when the factory switch does.

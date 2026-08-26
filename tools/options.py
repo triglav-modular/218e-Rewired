@@ -219,8 +219,10 @@ def expand(options: dict) -> dict:
                 + ", ".join(repr(a) for a in allowed))
         roles[knob] = role
         cfg["knobs"][knob] = "factory" if role == "factory" else live[knob]
-    # The sequencer's controls live on a pad chord, so it needs the pads -
-    # which means it needs the preset voltages decoupled from the knobs.
+    # The sequencer's controls live on a pad chord.  It does NOT require
+    # remap_knobs: with factory knobs the chord still works - the arm freezes
+    # the active pad so the selecting press cannot change a preset, and the
+    # knob-moved refusal reads the editor cave, which every build carries.
     # How far the bend strip has to be pushed before it enters a rest or a
     # tie, in DAC units - the same units the bend itself is added to the pitch
     # in.  48 is roughly a semitone; it wants confirming against a real strip.

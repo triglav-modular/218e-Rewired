@@ -91,7 +91,7 @@ FEATURE_MAP = {
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "pressure.multi_key":     ([], ["multi_key_pressure"]),
     "pressure.error_diffusion": ([], ["error_diffusion"]),
-    "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply"], ["pressure_blend"]),
+    "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -1458,6 +1458,12 @@ def main() -> None:
     if get(cfg, "arp.switch") == "latch":
         blocks["pitch_target_blend_hook"] = True
         blocks["blend_offset_apply"] = True
+        # The conditioner ends in a call to the apply shim, so the two exist
+        # together - with neither the blend nor the latch, that call would
+        # name erased flash.  Dead today (the pitch pool routes around the
+        # conditioner when the blend is off), but not something to leave
+        # where a future route could reach it.
+        blocks["blend_target_conditioner"] = True
     else:
         # The factory's long-hold on the arp switch toggles polyphonic MIDI.
         # We suppress it so the edit-mode setting has one owner, but that is

@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO / "tools"))
+import build as build_mod  # noqa: E402
 BASE = REPO / "config" / "218e.toml"
 TEMP = REPO / "config" / "_sweep.toml"
 
@@ -87,6 +89,41 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
 
 SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 
+
+def audit_call_pools(image_path) -> list[str]:
+    """Every MCALL in this image must read a word naming emitted code.
+
+    Per-variant, because the bug class is per-variant: a pool that is right
+    with everything on can name erased flash once the callee's block is off.
+    """
+    flash, _ = build_mod.parse_hex(image_path)
+    word = lambda a: int.from_bytes(bytes(flash.get(a + i, 0xFF) for i in range(4)), "big")
+
+    def called(target: int) -> bool:
+        for pc in range(0x80002000, 0x80020000, 2):
+            if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
+                continue
+            d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
+            if d & 0x8000:
+                d -= 0x10000
+            if (pc & ~3) + d * 4 == target:
+                return True
+        return False
+
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    targets = sorted({int(m, 16) for m in
+                      re.findall(r'emit\("MCALL PC\[(0x[0-9a-f]+)\]"\);', source)})
+    bad = []
+    for t in targets:
+        if t not in flash or not called(t):
+            continue
+        v = word(t)
+        if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
+            bad.append(f"{t:#x} holds {v:#010x}")
+        elif flash.get(v, 0xFF) == 0xFF:
+            bad.append(f"{t:#x} -> {v:#x} (erased flash)")
+    return bad
+
 # Configurations whose image is pinned, so an unintended change shows up here
 # rather than in someone's instrument.
 #
@@ -102,7 +139,7 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # instrument this was measured on, and both trims were centred on them; and
 # again for 2.0, which added caves and moved the first-use clear.
 EXPECTED = {
-    "historical_config": "7e975061dabfed2b28618f654a80fecfb7611c952ba18fc60b5a8b2fcfb3766d",
+    "historical_config": "b333c436eda47e91847d39311efea0fc896862dc7458f1a95dc5e5ea3ed996ab",
 }
 
 
@@ -152,6 +189,11 @@ def main() -> None:
                 failures += 1
                 continue
             sha = match.group(1)
+            pool_bad = audit_call_pools(REPO / "build" / "_sweep.hex")
+            if pool_bad:
+                rows.append((name, sha[:12], "BAD CALL POOL: " + "; ".join(pool_bad)))
+                failures += 1
+                continue
             js = run([sys.executable, "tools/build.py", "--no-ghidra",
                       "--config", str(TEMP), "--expect-sha", sha])
             ok = js.returncode == 0

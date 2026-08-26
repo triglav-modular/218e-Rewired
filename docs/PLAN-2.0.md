@@ -175,6 +175,14 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   Forcing the arp engine on from our side was considered and rejected - the
   factory sets state+0x34c inside a start/stop sequence with its own setup
   calls, and skipping that setup is not something to do blind.
+  THE KEYBOARD IS NOT SILENCED, which an earlier draft of this section
+  claimed it would be.  What actually holds: while playing, held keys no
+  longer choose the arp's notes - the sequence's pitches replace the
+  selector's answer - but note-ons still run their bookkeeping (MIDI note
+  messages, the latch, pressure).  Audit note 2026-08-27: silencing was
+  never built, and the sections below that leaned on "silent" have been
+  reworded to lean on "the keys no longer choose the notes", which is the
+  true statement.
 - Rest and tie: BUILT.  Push the bend strip hard one way for a REST, the
   other way for a TIE, while recording.  Both are edge-triggered, so a held
   push enters one step and letting the strip back towards the middle re-arms
@@ -194,8 +202,9 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   owned that compare rather than adding any.
   THE PORTAMENTO KNOB MEANS TIME WHILE PLAYING.  Everywhere else on a
   pressure-blend build it means pressure-needed-to-bend and the glide rate is
-  forced to zero - but the sequencer's keyboard is silent, so there is no
-  pressure to blend and the knob would otherwise mean nothing at all.  In
+  forced to zero - but while the sequencer plays, the keys no longer choose
+  the notes, so the pressure blend has nothing to steer and the knob would
+  otherwise mean nothing at all.  In
   play it reads the factory's own glide table, exactly as a build without the
   blend does.
   A tie SLIDES into the note after it, 303 fashion, rather than stepping to
@@ -306,6 +315,10 @@ two hundred counts on /1.
 - RAM: last stamp (halfword), previous interval (halfword), lock count,
   divide count.  The scan counter has to exist whenever this option does,
   so it moves out of the sequencer's cave into a shared per-scan one.
+  (As built, this did not happen: the divider keeps its OWN counter at
+  0x61e6 in clock_scan, gated on clock_divide, and the sequencer's blink
+  counter stays at 0x615e.  Two counters, each owned by its option -
+  simpler than sharing, at the cost of two bytes of RAM.)
 
 Original sketch:
 - On the ARP RATE knob (not knob 2): internal clock -> rate as today;

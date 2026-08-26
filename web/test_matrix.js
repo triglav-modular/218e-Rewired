@@ -20,6 +20,10 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
     var T = GEN.bundledTunings, built = 0, failed = [], shas = {}, dupes = [];
     [true, false].forEach(function (arp) {
     [true, false].forEach(function (kn) {
+    // The 2.0 features, as a joint dimension rather than two independent
+    // ones: what matters is each alone and both together, not their cross
+    // with every other flag twice over.
+    [[false, false], [true, false], [false, true], [true, true]].forEach(function (sq) {
     [true, false].forEach(function (fx) {
     [true, false].forEach(function (po) {
         if (po && !fx) return;   // options.py refuses this pairing
@@ -27,10 +31,12 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
     [null, rows].forEach(function (cal) {
     [0, 1, 2, 3].forEach(function (nt) {
         var o = { latching_arp: arp, remap_knobs: kn, pressure_fix: fx,
-                  pressure_portamento: po, volts_per_octave: v };
+                  pressure_portamento: po, volts_per_octave: v,
+                  sequencer: sq[0], clock_divide: sq[1] };
         if (cal) o.pitch_correction = cal;
         if (nt) o.alternate_tunings = T.slice(0, nt);
         var label = 'arp=' + (arp ? 1 : 0) + ' knobs=' + (kn ? 1 : 0) +
+                    ' seq=' + (sq[0] ? 1 : 0) + ' clk=' + (sq[1] ? 1 : 0) +
                     ' fix=' + (fx ? 1 : 0) + ' porta=' + (po ? 1 : 0) +
                     ' v=' + v + ' cal=' + (cal ? 1 : 0) + ' tun=' + nt;
         try {
@@ -41,7 +47,7 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
         } catch (e) {
             failed.push(label + '  ->  ' + e.message);
         }
-    }); }); }); }); }); }); });
+    }); }); }); }); }); }); }); });
 
     var distinct = Object.keys(shas).length;
     print(built + ' combinations built, ' + distinct + ' distinct images');

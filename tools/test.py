@@ -528,6 +528,12 @@ def test_call_pools(cfg: dict) -> None:
         # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
         if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
             bad.append(f"{t:#x} holds {v:#010x}")
+            continue
+        # The address must land on emitted code, not erased flash: a cave
+        # whose callee's block is off ships an MCALL into 0xff.  The audit
+        # found exactly that in a portamento-off build.
+        if flash.get(v, 0xFF) == 0xFF:
+            bad.append(f"{t:#x} -> {v:#x}, which is erased flash")
     check("every MCALL names a pool word, not code",
           not bad, "; ".join(bad))
 
