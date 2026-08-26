@@ -887,43 +887,61 @@ td input {
   grid-auto-columns: minmax(0, 210px);
 }
 /* One row per pattern: a number, the steps, how many before it repeats. */
+/* Patterns can be one line of steps or four, so the number, the length and
+   the remove button line up with the FIRST line rather than floating to the
+   middle of however many a pattern happens to have. */
 .pat {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 5px 0;
 }
+/* The number, the length and the remove button are all one step-row tall, so
+   top-aligning the row puts all three on the centre line of the first row of
+   steps whether the pattern runs to one line or four. */
 .patnum {
   width: 22px;
+  height: 22px;
+  line-height: 22px;
   text-align: right;
   font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
 }
+/* Two bars of eight to a line, however long the pattern is, so step 9 of one
+   pattern sits under step 9 of the next. */
 .patgrid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: start;
+  gap: 6px 12px;
   flex: 1;
   min-width: 0;
 }
-/* Steps are square and clickable; every fourth is marked so the bar is
-   countable without counting. */
+.patbar {
+  display: flex;
+  gap: 3px;
+}
+/* A rest is an empty step, not an absent one: it needs an edge you can see
+   against the panel, or the pattern reads as ending wherever its last hit
+   was.  Every fourth carries a brighter one, so the bar is countable. */
 .patgrid .step {
-  width: 17px;
+  width: 20px;
   height: 22px;
   padding: 0;
   border-radius: 3px;
-  border: 1px solid var(--line);
-  background: var(--panel2);
+  border: 1px solid var(--muted);
+  background: transparent;
   cursor: pointer;
 }
-.patgrid .step.beat { border-color: var(--muted); }
+.patgrid .step.beat { border-color: var(--ink); }
 .patgrid .step.on { background: var(--accent); border-color: var(--accent); }
 .patgrid .step:hover { border-color: var(--accent2); }
 .patlen {
   width: 52px;
-  padding: 5px 6px;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 0 6px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--panel2);
@@ -943,7 +961,12 @@ td input {
   text-transform: none;
   letter-spacing: .04em;
 }
-.pat .clear { padding: 6px 10px; line-height: 0; }
+.pat .clear {
+  height: 22px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  line-height: 0;
+}
 .pat .clear svg { width: 15px; height: 15px; }
 
 /* A slot's keyboard mapping, and the way to take it off again. */
@@ -1877,6 +1900,21 @@ section,
     grid-auto-flow: row;
     grid-auto-columns: auto;
     grid-template-columns: minmax(0, 1fr);
+  }
+  /* Sixteen steps beside the number, the length and the remove button leave
+     about 100px for the steps here.  The steps take a line of their own, one
+     bar of eight to a line, and the two controls sit at the right of the line
+     above them. */
+  .pat {
+    flex-wrap: wrap;
+  }
+  .patgrid {
+    order: 3;
+    flex: 0 0 100%;
+    grid-template-columns: max-content;
+  }
+  .patlen {
+    margin-left: auto;
   }
 }
 

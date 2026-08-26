@@ -221,10 +221,18 @@
             n.textContent = (i + 1);
             row.appendChild(n);
 
+            // Eight to a bar, two bars to a line, so step 9 sits under step 9
+            // of every other pattern and a bar is countable at a glance.
             var grid = document.createElement('span');
             grid.className = 'patgrid';
+            var bar = null;
             for (var k = 0; k < p.length; k++) {
                 (function (step) {
+                    if (step % 8 === 0) {
+                        bar = document.createElement('span');
+                        bar.className = 'patbar';
+                        grid.appendChild(bar);
+                    }
                     var cell = document.createElement('button');
                     cell.type = 'button';
                     cell.className = 'step' + (p.text[step] !== '.' ? ' on' : '')
@@ -236,7 +244,7 @@
                         p.text = t.join('');
                         renderPatterns(); invalidate();
                     });
-                    grid.appendChild(cell);
+                    bar.appendChild(cell);
                 })(k);
             }
             row.appendChild(grid);
