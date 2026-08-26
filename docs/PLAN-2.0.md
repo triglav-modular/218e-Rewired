@@ -192,11 +192,21 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   never reach - when the step about to play is a tie, so the gate never falls
   and the note carries across.  That reuses the knob-2 machinery that already
   owned that compare rather than adding any.
+  A tie SLIDES into the note after it, 303 fashion, rather than stepping to
+  it.  The tie arms a two-step count; the step that actually moves the pitch
+  spends it, and while it is unspent the glide rate handed to the factory
+  slew is ours rather than the knob's - which matters most on a
+  pressure-blend build, where the knob's answer is zero and notes otherwise
+  snap.  The store went out of line into its own cave to make room for the
+  test: the clamp's block ends where pulse_defer_set begins.
   THRESHOLD NOT CONFIRMED ON HARDWARE: strip_end_units is 48, in the DAC
   units the bend is added to the pitch in (~1.2 semitones at 484/octave).
   The strip's absolute range depends on the factory's bend-depth setting at
   state+0x1f8, which was not chased down.  It is a build number so it can be
-  moved once a real strip has been pushed.
+  moved once a real strip has been pushed.  tie_glide_rate is 60 on the
+  factory's own 0..1024 glide scale - the same scale its knob table runs on,
+  where 0 snaps and 1024 is the longest glide.  How long 60 actually is was
+  not measured; it is a build number for the same reason.
 
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at

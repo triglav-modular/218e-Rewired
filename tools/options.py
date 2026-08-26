@@ -224,7 +224,11 @@ def expand(options: dict) -> dict:
     # tie, in DAC units - the same units the bend itself is added to the pitch
     # in.  48 is roughly a semitone; it wants confirming against a real strip.
     cfg["sequencer"] = {"on": bool(want("sequencer", False)),
-                        "strip_end_units": 48}
+                        "strip_end_units": 48,
+                        # How far a tie slides into the note after it, on the
+                        # factory's own 0..1024 glide scale.  Another number
+                        # that wants a real instrument to settle.
+                        "tie_glide_rate": 60}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
     cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
     cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing")

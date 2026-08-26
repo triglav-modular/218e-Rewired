@@ -1684,10 +1684,11 @@ def main() -> None:
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
     cfg["_numbers"]["strip_end_units"] = int(cfg.get("sequencer", {}).get("strip_end_units", 48))
+    cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
-                 "seq_strip", "seq_gate", "strip_pool"):
+                 "seq_strip", "seq_gate", "seq_glide", "strip_pool"):
         blocks[name] = seq
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"

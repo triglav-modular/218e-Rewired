@@ -896,7 +896,7 @@ function assembleProgram() {
         // note selector instead and turns the randomiser off.
         begin(0x80019d38);
         word(0x80019d44); // gate/housekeeping entry (hook at 0x21a0)
-        word(block("seq_pitch") ? 0x8001b3f0 : 0x80019da8);
+        word(block("seq_pitch") ? 0x8001b430 : 0x80019da8);
         word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100 : 0x80019df8);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
@@ -1192,19 +1192,14 @@ function assembleProgram() {
         // the rate variable (RAM 0x2eee) exactly as the factory code did.
         begin(0x8001a230);
         word(0x8001a234);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
         if (feature("pressure_blend")) {
             // No time-based glide: the pressure-based blend is the only
             // portamento.  Notes snap; the knob means pressure-needed-to-bend.
-            emit("STM --SP,R7,LR");
-            emit("MOV R7,SP");
             emit("MOV R8,0x0");
-            emit("MOV R9,0x2eee");
-            emit("ST.H R9[0x0],R8");
-            emit("LDM SP++,R7,PC");
         } else {
             // Blend-off builds keep classic portamento with the zero-snap.
-            emit("STM --SP,R7,LR");
-            emit("MOV R7,SP");
             emit("MOV R8,0x3866");
             emit("LD.SH R8,R8[0x0]");
             emit("CP.W R8,0x30");
@@ -1215,13 +1210,24 @@ function assembleProgram() {
             emit("LDDPC R8,0x8001a260");
             emit("LD.SH R8,R8[R9 << 0x1]");
             emit("CASTS.H R8");
-            padTo(0x8001a254);
+        }
+        padTo(0x8001a254);
+        if (block("seq_gate")) {
+            // The store goes out of line so a tie can override the rate on
+            // its way past.  There is no room for the test here - the block
+            // ends where pulse_defer_set begins.
+            emit("MCALL PC[0x8001a25c]");
+        } else {
             emit("MOV R9,0x2eee");
             emit("ST.H R9[0x0],R8");
-            emit("LDM SP++,R7,PC");
+        }
+        emit("LDM SP++,R7,PC");
+        if (block("seq_gate")) {
+            padTo(0x8001a25c);
+            word(0x8001b610); // store_glide_rate, with the tie's override
         }
         padTo(0x8001a260);
-        word(0x80015150); // factory glide rate-curve table
+        word(0x80015150); // the factory glide-rate table
         finish("glide_rate_clamp", 0x8001a264);
 
         // Pulse defer: the four factory pool words that pointed at the
@@ -3010,27 +3016,27 @@ function assembleProgram() {
         word(0x800068cc); // led_clear(ch)
         word(0x8000673c); // led_flush()
         word(0x8001b290); // write_channel(R11, R9)
-        word(0x8001b420); // seq_enter(R9 = mode)
+        word(0x8001b540); // seq_enter(R9 = mode)
         finish("seq_chord", 0x8001b31c);
 
         // Entering a mode clears what that mode is about to write: record
         // starts from an empty sequence, play starts from its first step.
         // R9 = the mode being entered.
-        begin(0x8001b420);
+        begin(0x8001b540);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x61e0");
         emit("MOV R10,0x0");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b436");
+        emit("BR{ne} 0x8001b556");
         emit("ST.B R8[0x0],R10");       // record: no steps yet
-        padTo(0x8001b436);
+        padTo(0x8001b556);
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b440");
+        emit("BR{ne} 0x8001b560");
         emit("ST.B R8[0x1],R10");       // play: from the top
-        padTo(0x8001b440);
+        padTo(0x8001b560);
         emit("LDM SP++,R7,PC");
-        finish("seq_enter", 0x8001b448);
+        finish("seq_enter", 0x8001b568);
 
         // The bend strip, while recording.  One hook does both jobs the plan
         // asks of it: it reads how far the strip has been pushed, and it
@@ -3042,14 +3048,14 @@ function assembleProgram() {
         // Push it hard one way for a REST, the other way for a TIE.  Both are
         // edge-triggered off 0x61e4, so a held push enters one step, not
         // hundreds; letting the strip back towards the middle re-arms it.
-        begin(0x8001b450);
+        begin(0x8001b570);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b4d8");      // only record listens to the ends
+        emit("BR{ne} 0x8001b5f8");      // only record listens to the ends
         emit("LSL R9,R0,0x10");
         emit("ASR R9,0x10");            // the strip, signed
         emit(StringFormat("MOV R10,0x%x",
@@ -3057,53 +3063,77 @@ function assembleProgram() {
         emit("MOV R11,0x61e4");
         emit("LD.UB R12,R11[0x0]");     // which end is already entered
         emit("CP.W R9,R10");
-        emit("BR{gt} 0x8001b486");
+        emit("BR{gt} 0x8001b5a6");
         emit("MOV R8,0x0");
         emit("SUB R8,R8,R10 << 0x0");   // the far end, the other way
         emit("CP.W R9,R8");
-        emit("BR{lt} 0x8001b490");
+        emit("BR{lt} 0x8001b5b0");
         emit("MOV R8,0x0");
         emit("ST.B R11[0x0],R8");       // back near the middle: re-armed
-        emit("RJMP 0x8001b498");
-        padTo(0x8001b486);
+        emit("RJMP 0x8001b5b8");
+        padTo(0x8001b5a6);
         emit("MOV R8,0x2");             // one end: a tie
         emit("ST.B R11[0x0],R8");
-        emit("RJMP 0x8001b498");
-        padTo(0x8001b490);
+        emit("RJMP 0x8001b5b8");
+        padTo(0x8001b5b0);
         emit("MOV R8,0x1");             // the other: a rest
         emit("ST.B R11[0x0],R8");
-        padTo(0x8001b498);
+        padTo(0x8001b5b8);
         emit("MOV R9,0x61e4");
         emit("LD.UB R9,R9[0x0]");
         emit("CP.W R9,R12");
-        emit("BR{eq} 0x8001b4d0");      // no crossing, nothing to enter
+        emit("BR{eq} 0x8001b5f0");      // no crossing, nothing to enter
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b4d0");      // crossing back to the middle
+        emit("BR{eq} 0x8001b5f0");      // crossing back to the middle
         emit("MOV R10,0x61e0");
         emit("LD.UB R11,R10[0x0]");
         emit("CP.W R11,0x40");
-        emit("BR{ge} 0x8001b4d0");      // the store is full
+        emit("BR{ge} 0x8001b5f0");      // the store is full
         emit("MOV R8,0x7ffe");          // a rest, as a pitch can never be
         emit("CP.W R9,0x1");
-        emit("BR{eq} 0x8001b4c0");
+        emit("BR{eq} 0x8001b5e0");
         emit("MOV R8,0x7fff");          // and a tie
-        padTo(0x8001b4c0);
+        padTo(0x8001b5e0);
         emit("MOV R12,0x6160");
         emit("ADD R12,R12,R11 << 0x1");
         emit("ST.H R12[0x0],R8");
         emit("SUB R11,-0x1");
         emit("ST.B R10[0x0],R11");
-        padTo(0x8001b4d0);
+        padTo(0x8001b5f0);
         emit("MOV R12,0x0");            // and no bend while recording
-        emit("RJMP 0x8001b4dc");
-        padTo(0x8001b4d8);
+        emit("RJMP 0x8001b5fc");
+        padTo(0x8001b5f8);
         emit("MOV R12,R0");             // not recording: the strip is itself
-        padTo(0x8001b4dc);
-        emit("MCALL PC[0x8001b4e8]");   // the factory's own bend
+        padTo(0x8001b5fc);
+        emit("MCALL PC[0x8001b608]");   // the factory's own bend
         emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001b4e8);
+        padTo(0x8001b608);
         word(0x80002e30); // bend(position)
-        finish("seq_strip", 0x8001b4ec);
+        finish("seq_strip", 0x8001b60c);
+
+        // The glide rate, stored.  Normally whatever the clamp worked out -
+        // for a pressure-blend build that is zero, meaning notes snap.  But
+        // for the one step where a tie moves the pitch, a rate of our own, so
+        // the note slides into the next rather than stepping to it.  303
+        // fashion: the tie is the slide.
+        begin(0x8001b610);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x2");
+        emit("BR{ne} 0x8001b62c");
+        emit("MOV R9,0x61e5");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b62c");
+        emit(StringFormat("MOV R8,0x%x",
+             number("tie_glide_rate", 60, 1, 1024)));
+        padTo(0x8001b62c);
+        emit("MOV R9,0x2eee");
+        emit("ST.H R9[0x0],R8");
+        emit("LDM SP++,R7,PC");
+        finish("seq_glide", 0x8001b63c);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
@@ -3183,11 +3213,11 @@ function assembleProgram() {
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b3c8");      // not playing: the factory's question
+        emit("BR{ne} 0x8001b400");      // not playing: the factory's question
         emit("MOV R10,0x61e0");
         emit("LD.UB R11,R10[0x0]");     // how many steps there are
         emit("CP.W R11,0x0");
-        emit("BR{eq} 0x8001b3c0");      // none: silence
+        emit("BR{eq} 0x8001b3f0");      // none: silence
         emit("LD.UB R9,R10[0x1]");      // where we are in them
         emit("CP.W R9,R11");
         emit("BR{lt} 0x8001b382");
@@ -3201,7 +3231,7 @@ function assembleProgram() {
         // which seq_gate holds up across a tie and lets fall on a rest.
         emit("MOV R12,0x7ffe");
         emit("CP.W R8,R12");
-        emit("BR{ge} 0x8001b3ac");
+        emit("BR{ge} 0x8001b3c4");
         emit("MOV R12,0x61e2");
         emit("ST.H R12[0x0],R8");       // the pitch this step sounds
         emit("SUB R9,-0x1");
@@ -3210,56 +3240,74 @@ function assembleProgram() {
         emit("MOV R9,0x0");
         padTo(0x8001b3a2);
         emit("ST.B R10[0x1],R9");
+        // This step moves the pitch, so it is the one that spends the slide a
+        // tie armed.  The glide clamp reads the same cell every scan.
+        emit("MOV R12,0x61e5");
+        emit("LD.UB R8,R12[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b3b4");
+        emit("SUB R8,0x1");
+        emit("ST.B R12[0x0],R8");
+        padTo(0x8001b3b4);
         emit("MOV R12,0x0");            // any real key; the pitch is swapped
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b3ac);
-        // A rest or a tie: step past it, sound nothing new.
+        padTo(0x8001b3c4);
+        // A rest or a tie: step past it, sound nothing new.  A tie also arms
+        // the slide into whatever follows - two steps, so it survives the
+        // tie's own step and is spent by the one that moves the pitch.
+        emit("MOV R12,0x7fff");
+        emit("CP.W R8,R12");
+        emit("BR{ne} 0x8001b3d8");
+        emit("MOV R12,0x61e5");
+        emit("MOV R8,0x2");
+        emit("ST.B R12[0x0],R8");
+        padTo(0x8001b3d8);
         emit("SUB R9,-0x1");
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b3b4");
+        emit("BR{lt} 0x8001b3e4");
         emit("MOV R9,0x0");
-        padTo(0x8001b3b4);
+        padTo(0x8001b3e4);
         emit("ST.B R10[0x1],R9");
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b3c0);
+        padTo(0x8001b3f0);
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");            // nothing recorded: silence
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b3c8);
-        emit("LDDPC R9,0x8001b3e0");
+        padTo(0x8001b400);
+        emit("LDDPC R9,0x8001b418");
         emit("LD.UB R8,R9[0x21a]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b3c0");
+        emit("BR{eq} 0x8001b3f0");
         emit("MOV R12,0x21b");
         emit("ADD R12,R9");             // &state[0x21b], the held-key flags
-        emit("MCALL PC[0x8001b3e4]");   // the selector this build installed
+        emit("MCALL PC[0x8001b41c]");   // the selector this build installed
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b3e0);
+        padTo(0x8001b418);
         word(0x00003560); // global state base
         word(arpSelector);
-        finish("seq_select", 0x8001b3e8);
+        finish("seq_select", 0x8001b420);
 
         // The pitch the arp is about to sound.  The octave randomiser runs
         // first and its answer stands for keyboard playing; while the
         // sequencer plays, the step's own pitch replaces it.  The pad octave
         // transpose is applied further downstream and so still applies.
-        begin(0x8001b3f0);
+        begin(0x8001b430);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001b410]");   // the factory octave path
+        emit("MCALL PC[0x8001b450]");   // the factory octave path
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b40a");
+        emit("BR{ne} 0x8001b44a");
         emit("MOV R9,0x61e2");
         emit("LD.SH R8,R9[0x0]");
-        padTo(0x8001b40a);
+        padTo(0x8001b44a);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b410);
+        padTo(0x8001b450);
         word(0x80019da8); // the octave entry this replaces
-        finish("seq_pitch", 0x8001b414);
+        finish("seq_pitch", 0x8001b454);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
@@ -3707,7 +3755,7 @@ function assembleProgram() {
         // silences the bend while recording.
         if (block("seq_strip")) {
             begin(0x8000335c);
-            word(0x8001b450);
+            word(0x8001b570);
             finish("strip_pool", 0x80003360);
         }
 
