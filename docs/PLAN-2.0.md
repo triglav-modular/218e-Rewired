@@ -196,11 +196,53 @@ dirty flag at `0x2ef6`:
   the state R11 claims.  It is BLOCKING: four `delay(150 ms)` calls, 600 ms
   of busy-wait.  Fine where the factory uses it; unusable from the scan loop.
 
-## Archaeology (all in the factory binary)
-- Add-to-pitch toggle: state address + how the source selection is applied
-  (forcing point for octave mode).
+## Sequencer archaeology (read out of the binary 2026-08-27)
+
+**The add-to-pitch toggle.**  Scanned at `0x80003980` off panel inputs 0xc and
+0xd (`read_panel(ch)` `0x8001105a`), and published three ways:
+
+| cell | kind | meaning |
+|------|------|---------|
+| `state+0x342` | byte | top position: octaves |
+| `state+0x343` | byte | middle position: active pad's preset voltage |
+| `state+0x344` | word | the position itself: 0 bottom, 1 middle, 2 top |
+
+`0x344` is the one to read - one cell, three values, no decoding.  The scanner
+calls `0x800098c8(R12 = new position)` ONLY when it changes; the factory body
+just emits MIDI CC 18 on channel 16.  That is the entering-record-wipes and
+entering-play-resets hook, already isolated and already only firing on edges.
+The toggle is applied inside the pitch adder `0x80003590`: `0x8000379a` reads
+`0x342` for the octave branch, `0x800037ba` reads `0x343` for the preset
+branch, both adding to the base pitch at `state+0x350`.  Forcing our own
+source means overriding those two reads, not the scanner.
+
+**The arp step engine** `0x8000210c`, R12 = the step interval:
+
+- `state+0x34c` gates the whole engine (1 = running).
+- `state+0x38e` is the countdown; the rhythm randomiser already writes it, and
+  the gate-off compare at `0x800021a0` (== 3) is our existing hook.
+- At zero it fires a step.  **`state+0x21a` (held count) must be non-zero or
+  no note is chosen at all** - `0x800022ca` skips the selection outright.
+  This is the one thing standing between play mode and a silent keyboard.
+- The selector is called at `0x800022d4` through pool `0x80002420` - the pool
+  we already repoint - with R12 = `&state+0x21b`, the held-flags array, and
+  returns a key index or -1.  **-1 means no note this step**, which is exactly
+  what a rest needs, and what the pattern gate already returns.
+- The chosen key becomes a pitch at `0x800022f2` (`table[key]`, the table
+  being RAM `0x854` that the tuning applier fills), stored at `0x800022f6` -
+  **our `arp_octave_hook` already intercepts precisely this value** - and from
+  there into `state+0x352` and `state+0x350`, the base the pitch adder reads.
+
+So play mode does not need a note engine of its own.  Force the held count,
+answer the selector with any valid index, and substitute the step's stored
+pitch at the value hook: clock, gate, MIDI, the pad octave transpose and the
+calibration remap all come along unchanged.  Rest is a -1 from the selector.
+
+## Archaeology still to do
 - Pitch-bend strip: touch/position state, and where its bend enters the
   pitch path (to suspend in record and read ends for rest/tie).
+- Tie: how to hold the gate across a step, given gate-off is the `== 3`
+  compare on the countdown.
 - Arp rate knob: mirror address + rate handler (for the divider takeover).
 - External clock input: where pulses arrive (interval measurement site).
 - ~~Pad lighting~~ DONE, see below.
