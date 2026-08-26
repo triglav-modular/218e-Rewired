@@ -245,12 +245,53 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   `0x80005c4e`, from the key handler `0x80005b6c` and gated on `state+0x2da`
   (a key in 11..24 advances the arp), and `0x80004e72`, inside the event
   dispatcher and gated on `state+0x341` (the arp switch).
-- STILL UNKNOWN, and the one thing the feature waits on: WHICH dispatcher
-  event `0x80004e72` serves, i.e. where a pulse from the clock input
-  actually arrives.  The dispatcher is a jump table and its case index was
-  not chased down.  Everything else is in hand: with the pulse site known,
-  the divider is a counter on that path and a knob read, and the steadiness
-  test is interval variance measured across the same site.
+- **The clock pulse is dispatcher EVENT 10.**  The dispatcher is
+  `0x80004c64`: it pulls an event, refuses anything above 0x27, and jumps
+  through the table at `0x80014818` (pointer at `0x800051d0`).  Entry 10
+  lands at `0x80004e58`, which checks the arp switch (`state+0x340` or
+  `+0x341`) and ticks the arp with -1.  That body is 34 bytes,
+  `0x80004e58..0x80004e7a`, and is the whole hook: a divider does not need
+  to find the pin, only to decide whether each event 10 gets through.
+- **The rate knob reads at RAM `0x2ee6`**, 0..0x3ff, written by the rate
+  handler `0x80002b28` as `state+0x308` (the CV input) plus half of
+  `state+0x2f2` (the pot), clamped.  Taking it over needs no patch there at
+  all: the divider just reads the mirror, and the value it also writes to
+  the internal tempo does no harm while an external clock is running.
+
+### How MARF does it, and what we take (read 2026-08-27)
+
+MARF locks when pulses arrive with "steady, plausible spacing", roughly
+**20 ms to 2 s** apart (0.5-50 Hz), and locks after **two** consistent
+pulses.  Its Time Multiply knob then becomes a clock ratio centred on 1:
+clockwise multiplies up to x8 by subdividing, counter-clockwise divides to
+one stage every 2-8 clocks, with hysteresis at the boundaries.  Stop the
+clock and after **2 s** it returns to free-running.
+
+Taken as-is: the 20 ms - 2 s window, the two-pulse lock, the 2 s release.
+At a 5 ms scan those are 4..400 scans and a 400-scan timeout, so the
+existing free-running scan counter measures all of it - no new timer.
+
+NOT taken, at least first: **multiplication**.  MARF subdivides between
+pulses, which means predicting where the next edge will fall; the original
+sketch here ruled that out for the same reason and the Clockwork Card has
+none either.  So the knob divides only, /1../8 across its travel by the
+Clockwork law - fast end /1, slow end /8 - rather than centring on 1.
+That is the one place this will feel different from MARF, and the obvious
+thing to improve later once locking has proved itself on hardware.
+Also not taken: MARF's humanize.  The arp's own rhythm knob already owns
+that ground with swing and randomness.
+
+### Shape of the build (not started)
+
+- Hook event 10's body at `0x80004e58`; our cave decides pass or swallow.
+- Per pulse: dt = scan counter - last stamp.  In 4..400 and close to the
+  previous dt -> lock count up to 2; otherwise back to 0.
+- Locked: N = 1 + 7*(1023 - `0x2ee6`)/1023; pass one pulse in N.
+- Per scan: no pulse for 400 scans -> unlock, and the arp is free-running
+  again on its own countdown, which never stopped.
+- RAM: last stamp (halfword), previous interval (halfword), lock count,
+  divide count.  The scan counter has to exist whenever this option does,
+  so it moves out of the sequencer's cave into a shared per-scan one.
 
 Original sketch:
 - On the ARP RATE knob (not knob 2): internal clock -> rate as today;
