@@ -846,6 +846,41 @@ td input {
   display: flex;
   gap: 6px;
 }
+/* A slot's keyboard mapping, and the way to take it off again. */
+.kbmchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  padding: 2px 4px 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  font-size: 12px;
+  vertical-align: 1px;
+}
+.kbmchip button {
+  padding: 0 5px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.kbmchip button:hover { color: var(--accent2); }
+/* A scale whose degree count is not twelve does nothing until it is mapped. */
+.kbmneed {
+  margin-left: 10px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--accent2);
+}
+/* The mapping button reads as set once a mapping is on the slot. */
+.slot .ctl button.mapped {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .slot .ctl button {
   padding: 8px 16px;
   line-height: 0;

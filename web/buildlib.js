@@ -191,7 +191,8 @@ var BUILDLIB = (function () {
     // to prove the file is well formed and then ignored - this instrument has
     // no note numbers and takes its absolute pitch from the 208's trimmer.
     // Unmapped positions take the nearest mapped position's degree, ties low.
-    function parseKbm(text, name, degreeCount) {
+    function parseKbm(text, name, cents) {
+        var degreeCount = cents.length - 1;
         var raw = text.split('\n').filter(function (l) {
             return l.replace(/^\s+/, '').charAt(0) !== '!';
         });
@@ -228,6 +229,13 @@ var BUILDLIB = (function () {
             throw new Error(name + ': formal octave degree is ' + formal +
                             ', but the scale has ' + degreeCount +
                             ' degrees — it must name one of them');
+        }
+        // A mapping only means anything against the scale it is for, and this
+        // is where the two meet.  The octave features move by a 2/1.
+        if (Math.abs(cents[formal] - 1200.0) > 0.001) {
+            throw new Error(name + ': formal octave degree ' + formal + ' is ' +
+                            cents[formal].toFixed(3) + ' cents, not a 2/1 — the ' +
+                            'octave switches add a 2/1 and would go out of tune');
         }
         if (size === 0) {
             var linear = [];

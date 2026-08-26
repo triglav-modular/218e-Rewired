@@ -122,7 +122,7 @@ def test_keyboard_maps() -> None:
     # The identity map has to reproduce the unmapped table exactly, or every
     # existing build would move the moment .kbm support shipped.
     plain = B.parse_scala(REPO / "tunings" / "12TET.scl")
-    degrees, formal = B.parse_kbm(kbm("".join(f" {d}\n" for d in range(12))), 12)
+    degrees, formal = B.parse_kbm(kbm("".join(f" {d}\n" for d in range(12))), twelve)
     check("identity map reproduces the unmapped table",
           degrees == list(range(12)) and formal == 12
           and B.tuning_table(twelve, 485, 484,
@@ -132,26 +132,32 @@ def test_keyboard_maps() -> None:
 
     # Size zero is the format's "no mapping at all".
     check("size zero maps every degree in order",
-          B.parse_kbm(kbm("", size=0), 12)[0] == list(range(12)))
+          B.parse_kbm(kbm("", size=0), twelve)[0] == list(range(12)))
 
     # Unmapped positions take the nearest mapped one, ties to the lower.
-    filled, _ = B.parse_kbm(kbm(" 0\n x\n 1\n x\n x\n 2\n" + " x\n" * 6), 12)
+    filled, _ = B.parse_kbm(kbm(" 0\n x\n 1\n x\n x\n 2\n" + " x\n" * 6), twelve)
     check("unmapped positions take the nearest degree",
           filled == [0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2], filled)
 
     raises("formal octave outside the scale is refused",
-           lambda: B.parse_kbm(kbm(" 0\n" * 12, formal=99), 12), "must name one")
+           lambda: B.parse_kbm(kbm(" 0\n" * 12, formal=99), twelve), "must name one")
     raises("a short map is refused",
-           lambda: B.parse_kbm(kbm(" 0\n 1\n"), 12), "found 2 entries")
+           lambda: B.parse_kbm(kbm(" 0\n 1\n"), twelve), "found 2 entries")
     raises("an all-unmapped map is refused",
-           lambda: B.parse_kbm(kbm(" x\n" * 12), 12), "every position is unmapped")
+           lambda: B.parse_kbm(kbm(" x\n" * 12), twelve), "every position is unmapped")
     raises("a degree outside the scale is refused",
-           lambda: B.parse_kbm(kbm(" 0\n 99\n" + " 0\n" * 10), 12), "degrees 0..12")
+           lambda: B.parse_kbm(kbm(" 0\n 99\n" + " 0\n" * 10), twelve), "degrees 0..12")
     raises("a header that is not a number is refused",
            lambda: B.parse_kbm(tmp("! t\n twelve\n 0\n 127\n 60\n 69\n 440.0\n 12\n",
-                                   "_bad.kbm"), 12), "not a number")
+                                   "_bad.kbm"), twelve), "not a number")
+    # A map can be structurally fine and still belong to another scale: the
+    # degree it calls the octave has to BE an octave in this one.
+    quarter = B.parse_scala(REPO / "tunings" / "24TET.scl", mapped=True)
+    raises("a map whose period is not a 2/1 is refused",
+           lambda: B.parse_kbm(kbm(" 0\n" * 12, formal=7), quarter), "not a 2/1")
+
     raises("a truncated header is refused",
-           lambda: B.parse_kbm(tmp("! t\n 12\n 0\n", "_short.kbm"), 12),
+           lambda: B.parse_kbm(tmp("! t\n 12\n 0\n", "_short.kbm"), twelve),
            "seven header values")
 
 

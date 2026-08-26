@@ -200,7 +200,7 @@ def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
     return cents[:12]  # degree 12 is the octave, supplied by the octave term
 
 
-def parse_kbm(path: Path, degree_count: int) -> tuple[list[int], int]:
+def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
     """Return (degree per map position, formal-octave degree) from a .kbm.
 
     Scala keyboard mapping: '!' comments, then seven header values - map size,
@@ -219,6 +219,7 @@ def parse_kbm(path: Path, degree_count: int) -> tuple[list[int], int]:
     the lower - the key sounds like the key beside it rather than falling
     silent, which the firmware has no way to do.
     """
+    degree_count = len(cents) - 1
     raw = [ln for ln in path.read_text().splitlines()
            if not ln.lstrip().startswith("!")]
     header, index = [], 0
@@ -248,6 +249,15 @@ def parse_kbm(path: Path, degree_count: int) -> tuple[list[int], int]:
         raise ValueError(
             f"{path.name}: formal octave degree is {formal}, but the scale has "
             f"{degree_count} degrees — it must name one of them")
+    # Checked here rather than at build time: a mapping only means anything
+    # against the scale it is for, and this is where the two meet.  The octave
+    # switches add a hardcoded 2/1, so a period that is not one would put every
+    # switch position out of tune with the keys.
+    if abs(cents[formal] - 1200.0) > 0.001:
+        raise ValueError(
+            f"{path.name}: formal octave degree {formal} is {cents[formal]:.3f} "
+            "cents, not a 2/1 — the octave switches add a 2/1 and would go out "
+            "of tune")
     # Size zero is the format's "no mapping": every degree in order.
     if size == 0:
         return list(range(degree_count)), formal
@@ -1195,16 +1205,8 @@ def main() -> None:
                 cents = parse_scala(path)
             else:
                 cents = parse_scala(path, mapped=True)
-                degrees, formal = parse_kbm(REPO / map_name, len(cents) - 1)
+                degrees, formal = parse_kbm(REPO / map_name, cents)
                 period = cents[formal]
-                # The octave switch adds a hardcoded 2/1, so a period that is
-                # not one would put every switch position out of tune with the
-                # keys.  Refused rather than shipped subtly wrong.
-                if abs(period - 1200.0) > 0.001:
-                    raise ValueError(
-                        f"{Path(map_name).name}: formal octave degree {formal} is "
-                        f"{period:.3f} cents, not a 2/1 — the octave switches add "
-                        "a 2/1 and would go out of tune")
             offset = anchor_offset(cents, reference_key, degrees, period or 1200.0)
         except ValueError as error:
             raise SystemExit(str(error))

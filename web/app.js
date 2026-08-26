@@ -179,7 +179,8 @@
     var ICONS = {
         up:    'M12 19V5M5 12l7-7 7 7',
         down:  'M12 5v14M19 12l-7 7-7-7',
-        clear: 'M6 6l12 12M18 6L6 18'
+        clear: 'M6 6l12 12M18 6L6 18',
+        map:   'M3 8h18M3 16h18M9 8v8M15 8v8'
     };
     function icon(name) {
         var ns = 'http://www.w3.org/2000/svg';
@@ -197,6 +198,9 @@
         svg.appendChild(path);
         return svg;
     }
+
+    // The .kbm picker is shared; this says whose button opened it.
+    var mapTarget = -1;
 
     function renderSlots() {
         var host = $('slots');
@@ -227,7 +231,7 @@
                     var degrees = null, period = 1200.0;
                     if (entry.kbmText) {
                         var map = BUILDLIB.parseKbm(entry.kbmText, entry.kbmName,
-                                                    cents.length - 1);
+                                                    cents);
                         degrees = map.degrees;
                         period = cents[map.formal];
                         mapShape = degrees.length + ' keys/oct';
@@ -235,10 +239,23 @@
                     var off = BUILDLIB.anchorOffset(cents, 9, degrees, period);
                     shift = '  ' + (off >= 0 ? '+' : '') + off.toFixed(2) + 'c';
                 } catch (e) { /* already reported on load */ }
-                what.textContent = entry.name +
-                    (entry.kbmName ? '  +  ' + entry.kbmName : '');
+                what.textContent = entry.name;
                 what.title = entry.name + (entry.kbmName ? ' mapped by ' + entry.kbmName : '') +
                     (shift ? ': anchored on A by' + shift : '');
+                if (entry.kbmName) {
+                    var chip = document.createElement('span');
+                    chip.className = 'kbmchip';
+                    chip.textContent = entry.kbmName;
+                    var off = document.createElement('button');
+                    off.textContent = '\u00d7';
+                    off.title = 'remove this keyboard mapping';
+                    off.addEventListener('click', function () {
+                        delete entry.kbmName; delete entry.kbmText;
+                        renderSlots(); invalidate();
+                    });
+                    chip.appendChild(off);
+                    what.appendChild(chip);
+                }
                 if (shift) {
                     var tag = document.createElement('span');
                     tag.className = 'muted';
@@ -246,6 +263,12 @@
                     tag.textContent = 'A anchored' + shift +
                         (mapShape ? ' · ' + mapShape : '');
                     what.appendChild(tag);
+                }
+                if (entry.needsMap && !entry.kbmText) {
+                    var warn = document.createElement('span');
+                    warn.className = 'kbmneed';
+                    warn.textContent = 'needs a keyboard mapping';
+                    what.appendChild(warn);
                 }
             } else {
                 what.textContent = 'factory temperament';
@@ -266,6 +289,22 @@
                 });
                 ctl.appendChild(b);
             });
+            // Each scale carries its own mapping button, because a .kbm
+            // belongs to one scale and nothing about the file says which.
+            var m = document.createElement('button');
+            m.appendChild(icon('map'));
+            m.disabled = !entry;
+            m.className = entry && entry.kbmText ? 'mapped' : '';
+            m.title = !entry ? 'no scale in this slot'
+                : entry.kbmText ? 'replace ' + entry.kbmName + ' — the keyboard mapping'
+                : 'add a keyboard mapping (.kbm) for ' + entry.name;
+            m.addEventListener('click', function () {
+                mapTarget = i;
+                $('kbm').value = '';   // re-picking the same file must still fire
+                $('kbm').click();
+            });
+            ctl.appendChild(m);
+
             var x = document.createElement('button');
             x.className = 'clear';
             x.appendChild(icon('clear')); x.title = 'clear this slot';
@@ -287,6 +326,31 @@
             : 'all three slots factory';
     }
 
+    // A mapping is validated against the scale it is being attached to: the
+    // degree it names has to exist in THAT scale, so the file alone cannot
+    // say whether it is good.
+    $('kbm').addEventListener('change', function (e) {
+        var f = e.target.files && e.target.files[0];
+        var slot = state.slots[mapTarget];
+        if (!f || !slot) return;
+        var r = new FileReader();
+        r.onload = function () {
+            try {
+                var cents = BUILDLIB.parseScala(slot.text, slot.name, true);
+                BUILDLIB.parseKbm(r.result, f.name, cents);
+            } catch (err) {
+                msg($('sclMsg'), 'bad', err.message);
+                return;
+            }
+            slot.kbmName = f.name;
+            slot.kbmText = r.result;
+            msg($('sclMsg'), '', '');
+            renderSlots(); invalidate();
+        };
+        r.onerror = function () { msg($('sclMsg'), 'bad', f.name + ': could not be read'); };
+        r.readAsText(f);
+    });
+
     $('sclPick').addEventListener('click', function () { $('scl').click(); });
     $('scl').addEventListener('change', function (e) {
         var files = Array.prototype.slice.call(e.target.files);
@@ -297,75 +361,29 @@
         // scale, and a multi-select hands them over in whatever order the
         // browser likes.  Scales take slots first, then each map is paired
         // with the scale of the same name, or with the first mapless slot.
-        var loaded = [];
-        function place() {
-            var stem = function (n) { return n.replace(/\.[^.]*$/, ''); };
-            var isMap = function (f) { return /\.kbm$/i.test(f.name); };
-            var scales = loaded.filter(function (f) { return !isMap(f); });
-            var maps = loaded.filter(isMap);
-            var taken = [];
-            // A map belongs to the scale it arrived with: same name, or the
-            // same name with something appended ("24TET.scl" and
-            // "24TET-neutral.kbm"), or - failing both - by position, since a
-            // person selecting one scale and one map means those two.
-            function mapFor(scale) {
-                var exact = null, prefix = null, spare = null;
-                maps.forEach(function (m) {
-                    if (taken.indexOf(m) >= 0) return;
-                    if (stem(m.name) === stem(scale.name)) exact = exact || m;
-                    else if (stem(m.name).indexOf(stem(scale.name)) === 0) prefix = prefix || m;
-                    else spare = spare || m;
-                });
-                var pick = exact || prefix ||
-                    (scales.length === 1 && maps.length === 1 ? spare : null);
-                if (pick) taken.push(pick);
-                return pick;
-            }
-            scales.forEach(function (f) {
-                var map = mapFor(f);
-                try {
-                    var cents = BUILDLIB.parseScala(f.text, f.name, !!map);
-                    if (map) BUILDLIB.parseKbm(map.text, map.name, cents.length - 1);
-                } catch (err) { problems.push(err.message); return; }
-                var free = state.slots.indexOf(null);
-                if (free < 0) { problems.push(f.name + ': all three slots are full'); return; }
-                var entry = { name: f.name, text: f.text };
-                if (map) { entry.kbmName = map.name; entry.kbmText = map.text; }
-                state.slots[free] = entry;
-            });
-            // Maps with no scale in the same selection are being added to a
-            // scale that is already loaded.  Only an unambiguous target is
-            // accepted: guessing put a map on the wrong scale.
-            maps.forEach(function (m) {
-                if (taken.indexOf(m) >= 0) return;
-                var candidates = [];
-                state.slots.forEach(function (slot, i) {
-                    if (slot && !slot.kbmText) candidates.push(i);
-                });
-                var named = candidates.filter(function (i) {
-                    return stem(m.name).indexOf(stem(state.slots[i].name)) === 0;
-                });
-                var to = named.length === 1 ? named[0]
-                       : (candidates.length === 1 ? candidates[0] : -1);
-                if (to < 0) {
-                    problems.push(m.name + (candidates.length
-                        ? ': which scale is it for? load it together with its .scl'
-                        : ': no tuning slot without a mapping'));
-                    return;
-                }
-                var slot = state.slots[to];
-                try {
-                    var cents = BUILDLIB.parseScala(slot.text, slot.name, true);
-                    BUILDLIB.parseKbm(m.text, m.name, cents.length - 1);
-                } catch (err) { problems.push(err.message); return; }
-                slot.kbmName = m.name;
-                slot.kbmText = m.text;
-            });
-        }
         files.forEach(function (f) {
             var r = new FileReader();
             r.onload = function () {
-                loaded.push({ name: f.name, text: r.result });
+                var entry = { name: f.name, text: r.result };
+                try {
+                    // Validate now, so a bad scale is caught while it is still
+                    // obvious which file it was.
+                    BUILDLIB.parseScala(entry.text, entry.name);
+                } catch (err) {
+                    // A count other than twelve is not wrong, only unfinished:
+                    // a keyboard mapping decides what the keys do with it.  Any
+                    // other complaint is a real one.
+                    try {
+                        BUILDLIB.parseScala(entry.text, entry.name, true);
+                        entry.needsMap = true;
+                    } catch (fatal) {
+                        problems.push(fatal.message);
+                        return;
+                    }
+                }
+                var free = state.slots.indexOf(null);
+                if (free < 0) { problems.push(f.name + ': all three slots are full'); return; }
+                state.slots[free] = entry;
             };
             r.onerror = function () {
                 problems.push(f.name + ': could not be read');
@@ -375,7 +393,6 @@
             // the whole listing while the readable ones were already in.
             r.onloadend = function () {
                 if (--pending === 0) {
-                    place();
                     renderSlots(); invalidate();
                     msg($('sclMsg'), problems.length ? 'bad' : '', problems.join('\n'));
                 }
