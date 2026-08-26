@@ -238,10 +238,16 @@
             var grid = document.createElement('span');
             grid.className = 'patgrid';
             var bars = barSize(p.length);
-            var bar = null;
+            // A length nothing divides - 26, say - has no groups to draw, and
+            // a single group that long cannot wrap: it would run out under the
+            // length field.  Those steps go straight into the row and wrap
+            // wherever they run out of line.
+            var grouped = bars <= 8;
+            if (!grouped) grid.className += ' ungrouped';
+            var bar = grid;
             for (var k = 0; k < p.length; k++) {
                 (function (step) {
-                    if (step % bars === 0) {
+                    if (grouped && step % bars === 0) {
                         bar = document.createElement('span');
                         bar.className = 'patbar';
                         grid.appendChild(bar);
@@ -262,16 +268,41 @@
             }
             row.appendChild(grid);
 
+            // The number keeps its field, but not the browser's own up and
+            // down arrows: those are drawn in the platform's colours and are
+            // all but invisible on this background.  Ours are the same
+            // chevrons the rest of the page uses.
+            var lenbox = document.createElement('span');
+            lenbox.className = 'patlenbox';
             var len = document.createElement('input');
             len.type = 'number'; len.min = 1; len.max = 32; len.value = p.length;
             len.className = 'patlen'; len.title = 'steps before it repeats';
-            len.addEventListener('change', function () {
-                var v = Math.max(1, Math.min(32, parseInt(len.value, 10) || 1));
+            function setLength(v) {
+                v = Math.max(1, Math.min(32, v || 1));
                 while (p.text.length < v) p.text += '.';
                 p.length = v;
                 renderPatterns(); invalidate();
+            }
+            len.addEventListener('change', function () {
+                setLength(parseInt(len.value, 10));
             });
-            row.appendChild(len);
+            lenbox.appendChild(len);
+
+            var steppers = document.createElement('span');
+            steppers.className = 'patsteps';
+            [['up', 1], ['down', -1]].forEach(function (pair) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'patstep';
+                b.title = pair[1] > 0 ? 'one step longer' : 'one step shorter';
+                b.appendChild(icon(pair[0]));
+                b.addEventListener('click', function () {
+                    setLength(p.length + pair[1]);
+                });
+                steppers.appendChild(b);
+            });
+            lenbox.appendChild(steppers);
+            row.appendChild(lenbox);
 
             var x = document.createElement('button');
             x.type = 'button'; x.className = 'clear'; x.title = 'remove this pattern';

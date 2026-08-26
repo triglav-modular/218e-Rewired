@@ -894,7 +894,13 @@ td input {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 5px 0;
+  padding: 12px 0;
+}
+/* A long pattern is several lines of steps, and those lines sit 4px apart.
+   Without more than that between one pattern and the next, twenty-two of them
+   read as one field of squares rather than twenty-two patterns. */
+.pat + .pat {
+  border-top: 1px solid rgba(157, 154, 147, .2);
 }
 /* The number, the length and the remove button are all one step-row tall, so
    top-aligning the row puts all three on the centre line of the first row of
@@ -914,9 +920,13 @@ td input {
 .patgrid {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: 4px 12px;
   flex: 1;
   min-width: 0;
+}
+/* Ungrouped, the steps are the row's own items and take the step spacing. */
+.patgrid.ungrouped {
+  gap: 4px 3px;
 }
 .patbar {
   display: flex;
@@ -937,8 +947,15 @@ td input {
 .patgrid .step.beat { border-color: var(--ink); }
 .patgrid .step.on { background: var(--accent); border-color: var(--accent); }
 .patgrid .step:hover { border-color: var(--accent2); }
+/* The field and its arrows read as one control. */
+.patlenbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+}
 .patlen {
-  width: 52px;
+  width: 34px;
   height: 22px;
   box-sizing: border-box;
   padding: 0 6px;
@@ -949,6 +966,44 @@ td input {
   color: var(--fg);
   font: inherit;
   font-size: 13px;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+/* The browser's own arrows are drawn in the platform's colours, which on this
+   background is no colour at all.  Ours replace them. */
+.patlen::-webkit-outer-spin-button,
+.patlen::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.patsteps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.patstep {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 10px;
+  padding: 0;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+}
+.patstep svg {
+  width: 9px;
+  height: 9px;
+  margin: 0;
+}
+.patstep:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .patctl {
   display: flex;
