@@ -80,72 +80,72 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   period-aware, so trn steps tritaves on a tritave build.
 
 ### 4. SH-101-style sequencer (option)
-- Takes the add-to-pitch toggle: top=record, middle=play, bottom=off.
-  Factory toggle: top=octaves (4 pads select), middle=active pad's preset
-  voltage, bottom=none.  With the option on, the adder DEFAULTS to octave
-  mode, so pads transpose live during play - but the three factory
-  sources stay reachable behind a deliberate hold: hold pad 4 for THREE
-  SECONDS to arm, then - still holding it - press pad 1 (octaves), pad 2
-  (active pad's preset voltage) or pad 3 (none), the switch's own
-  top-to-bottom order.  (Revised 2026-08-27 from hard-stuck octaves, and
-  again the same day: a bare pad-4 chord was too easy to hit by accident,
-  since pad 4 with another pad is an ordinary thing to do.)
-  Feasible with what is already in hand: the pad touch array at RAM
-  0x46f0 is read every scan by the preset editor cave, so this is a hold
-  counter plus an edge test - pad 1/2/3 going 0->2 while pad 4 has been
-  at 2 for 600 scans - plus one mode byte, applied at the same forcing
-  point the hard-stick would have used.  Scans are ~5 ms, so three
-  seconds is ~600 of them: a HALFWORD counter, not a byte.
-  Rules: the arm lives only while pad 4 stays held - releasing it disarms
-  and zeroes the counter, so an arm can never outlive the gesture that
-  made it.  The selecting press is EATEN: it must not also select an
-  octave or a pad.  Pad 4's own press is an ordinary selection
-  throughout, with nothing armed for the first three seconds, so the
-  earlier transient goes away.  A pad-4 hold that has MOVED ITS KNOB does
-  not arm - the editor already flags that pad as following, and a careful
-  preset edit is exactly what a long hold looks like; without this guard,
-  editing preset 4 and then tapping pad 1 to compare would silently
-  change the adder source.  None of these is the factory pads-2+3 latch,
-  which our-latch builds remove anyway.  Mode byte resets to octaves
-  wherever the sequencer's own state resets.
-  Acknowledgement (the pads are lit, one channel each - see LEDs below):
-  pad 4's own light says what the hold is doing.
+- **The add-to-pitch toggle is left alone.**  It keeps selecting octaves /
+  preset voltage / none exactly as the factory does.  (Revised 2026-08-27,
+  third time: it was going to become record/play/off, which is what forced
+  the adder-source chord that replaced it, which is what needed a forcing
+  point in the pitch adder.  None of that exists now.  The pitch adder is
+  untouched, and so is every preset behaviour built in phase 2.)
+- **The sequencer lives on the pad 4 hold.**  Hold pad 4 for three seconds
+  to arm - pad 4's light blinks - then, still holding it, press:
+    - pad 1: RECORD
+    - pad 2: PLAY
+    - pad 3: OFF (stop)
+  Pad 3 is not something the owner named; it is here because a sequencer
+  needs a way to stop that is not "wait for a power cycle", and 1/2/3 in
+  panel order is the reading that needs no explaining.  Say so if it should
+  be something else.
+- The chord machinery is unchanged from the adder-source version it
+  replaces, only the meaning of the three pads is different: the pad touch
+  array at RAM 0x46f0 is read every scan by the preset editor cave, so this
+  is a hold counter plus an edge test - pad 1/2/3 going 0->2 while pad 4 has
+  been at 2 for 600 scans.  Scans are ~5 ms, so three seconds is ~600 of
+  them: a HALFWORD counter, not a byte.
+  Rules: the arm lives only while pad 4 stays held - releasing it disarms and
+  zeroes the counter, so an arm can never outlive the gesture that made it.
+  The selecting press is EATEN: it must not also select an octave or a pad.
+  Pad 4's own press is an ordinary selection throughout, with nothing armed
+  for the first three seconds.  A pad-4 hold that has MOVED ITS KNOB does not
+  arm - the editor already flags that pad as following, and a careful preset
+  edit is exactly what a long hold looks like.  None of these is the factory
+  pads-2+3 latch, which our-latch builds remove anyway.
+  Acknowledgement, on pad 4's own light (the pads are lit, one channel each -
+  see LEDs above):
     - Held, under three seconds: nothing.  The light is simply on, the way
       any selected pad's is, and nothing has been promised yet.
-    - Armed at three seconds: pad 4's light BLINKS - LED channel 3, bit 6
-      of the same scan counter that timed the hold, so it toggles every
-      64 scans and reads as roughly 1.6 Hz.  The counter free-runs and is
-      allowed to wrap: 65536 is a whole multiple of 64, so the phase
-      survives the wrap, and the armed flag is latched separately rather
-      than re-derived from the count - which is what stops a five-minute
-      hold from disarming itself.
-    - Selected: the blink stops and the light goes steady for the rest of
-      the hold, so the press is seen to have been taken.
-    - RELEASED: the blink clears at once.  Counter zeroed, armed and
-      selected cleared, and the light put back to what the radio group
-      says - lit if state+0x2ef is still pad 4, dark otherwise.  Derived,
-      not snapshotted, so an eaten pad press cannot leave it wrong.
-      Nothing repaints the pad lights per scan (unlike rem-en/trn, which
-      the tuning applier re-asserts), so this restore is the only thing
-      that puts the light right: it has to happen on every exit from the
-      hold, the knob-moved refusal included.
-    - Never the factory's own blink at 0x80003b1c: it busy-waits 4x150 ms
-      and would stall the scan for six tenths of a second.  Ours is a bit
-      test and a set/clear, and led_flush is free when nothing changed.
-  Only the adder's DEFAULT source changes with the option on: the preset
-  voltages themselves stay live at their own banana output, pad-selected
-  and pad+knob-editable as ever (document the distinction).
-  RAM for all of this: the hold counter (halfword), and one byte carrying
-  armed/selected plus the adder mode.  Declared in RAM_REGIONS with the
-  rest when it is built.
+    - Armed at three seconds: pad 4's light BLINKS - LED channel 3, bit 6 of
+      the same scan counter that timed the hold, so it toggles every 64 scans
+      and reads as roughly 1.6 Hz.  The counter free-runs and is allowed to
+      wrap: 65536 is a whole multiple of 64, so the phase survives the wrap,
+      and the armed flag is latched separately rather than re-derived from the
+      count - which is what stops a five-minute hold from disarming itself.
+    - Selected: the blink stops and the light goes steady for the rest of the
+      hold, so the press is seen to have been taken.
+    - RELEASED: the blink clears at once.  Counter zeroed, armed and selected
+      cleared, and the light put back to what the radio group says - lit if
+      state+0x2ef is still pad 4, dark otherwise.  Derived, not snapshotted,
+      so an eaten pad press cannot leave it wrong.  Nothing repaints the pad
+      lights per scan (unlike rem-en/trn, which the tuning applier
+      re-asserts), so this restore is the only thing that puts the light
+      right: it has to happen on every exit from the hold, the knob-moved
+      refusal included.
+    - Never the factory's own blink at 0x80003b1c: it busy-waits 4x150 ms and
+      would stall the scan for six tenths of a second.  Ours is a bit test and
+      a set/clear, and led_flush is free when nothing changed.
+  OPEN: whether the running mode wants a light of its own once the hold ends.
+  Four channels are unidentified (4, 6, 7, 9) and one of them may be free.
 - Precedence over the arp switch, including latch-exit clearing.
 - Record: entering wipes; note-ons append PITCHES (like latch stamps, so
-  tuning-slot switches do not shift recorded notes); pitch-bend strip
-  ends enter rest (left) / tie (right); strip's normal role suspended in
-  record.  64 steps.  Play: entering resets to step 0; clocked by the
-  same source as the arp; keyboard silent; pads follow the adder mode
-  above (live octave transpose in the octave default).
-- RAM only (lost at power-off) — no new flash machinery.  If the settings
+  tuning-slot switches do not shift recorded notes); pitch-bend strip ends
+  enter rest (left) / tie (right); strip's normal role suspended in record.
+  64 steps.  Play: entering resets to step 0; clocked by the same source as
+  the arp; keyboard silent; pads keep their factory jobs, so the octave pads
+  transpose live during play whenever the toggle is in its octave position.
+- Entering and leaving are our own chord handler now, not the toggle's change
+  callback - simpler, and entirely under our control.
+- RAM: the hold counter (halfword), one byte for armed/selected, one byte for
+  the sequencer mode, and the step store.  Declared in RAM_REGIONS when built.
+- RAM only (lost at power-off) - no new flash machinery.  If the settings
   record has ~130+ spare bytes, persistence can ride along later.
 
 ### 5. External clock divide (option)
@@ -198,8 +198,11 @@ dirty flag at `0x2ef6`:
 
 ## Sequencer archaeology (read out of the binary 2026-08-27)
 
-**The add-to-pitch toggle.**  Scanned at `0x80003980` off panel inputs 0xc and
-0xd (`read_panel(ch)` `0x8001105a`), and published three ways:
+**The add-to-pitch toggle** - NOT used by the sequencer any more, kept
+because it is the only clean three-position input on the panel and the next
+option that wants one should not have to find it again.  Scanned at
+`0x80003980` off panel inputs 0xc and 0xd (`read_panel(ch)` `0x8001105a`),
+and published three ways:
 
 | cell | kind | meaning |
 |------|------|---------|
@@ -213,8 +216,8 @@ just emits MIDI CC 18 on channel 16.  That is the entering-record-wipes and
 entering-play-resets hook, already isolated and already only firing on edges.
 The toggle is applied inside the pitch adder `0x80003590`: `0x8000379a` reads
 `0x342` for the octave branch, `0x800037ba` reads `0x343` for the preset
-branch, both adding to the base pitch at `state+0x350`.  Forcing our own
-source means overriding those two reads, not the scanner.
+branch, both adding to the base pitch at `state+0x350`.  Nothing of ours
+touches either one.
 
 **The arp step engine** `0x8000210c`, R12 = the step interval:
 
