@@ -2463,6 +2463,164 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("preset_editor", 0x8001aec0);
 
+        // Knob 1 as six note orders instead of one blend.  The knob's travel
+        // is cut into zones - ascending, descending, random, press order,
+        // reverse press order, mirror - and the zone picks how the next key is
+        // chosen.  The 1.x behaviour, a continuous blend from press order into
+        // randomness, is the other setting; neither is a subset of the other,
+        // so the build chooses.
+        //
+        // The frame here is deliberately the same as the selector this
+        // replaces, because two of the six ARE that selector: random and press
+        // order jump straight into its existing code, and its epilogue pops
+        // this frame correctly because the two match.  Reached by the same
+        // pool word, so only one of the two is ever installed.
+        begin(0x8001aec0);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("LDDPC R1,0x8001b000");
+        emit("LD.UB R8,R1[0x340]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001aee0");
+        emit("LD.UB R8,R1[0x341]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001aff0");
+        padTo(0x8001aee0);
+        emit("MOV R2,0x60f2");
+        emit("LD.UB R2,R2[0x0]");
+        emit("MOV R8,0x6");
+        emit("MUL R2,R2,R8");
+        emit("LSR R2,0x7");             // zone, 0..5
+        emit("CP.W R2,0x2");
+        emit("BR{eq} 0x8001afd0");      // random: the old code
+        emit("CP.W R2,0x3");
+        emit("BR{eq} 0x8001afd8");      // press order: the old code
+        emit("CP.W R2,0x4");
+        emit("BR{eq} 0x8001af90");      // reverse press order
+        emit("MOV R3,0x1");             // ascending
+        emit("CP.W R2,0x0");
+        emit("BR{eq} 0x8001af20");
+        emit("MOV R3,-0x1");            // descending
+        emit("CP.W R2,0x1");
+        emit("BR{eq} 0x8001af20");
+        // Mirror keeps its direction between notes and turns at the ends.  It
+        // is held as 0 or 1 rather than a signed byte, so an unsigned load
+        // reads it.
+        emit("MOV R8,0x614e");
+        emit("LD.UB R8,R8[0x0]");
+        emit("MOV R3,0x1");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001af20");
+        emit("MOV R3,-0x1");
+        padTo(0x8001af20);
+        // Walk out from the last key in R3's direction, wrapping the ends.  29
+        // tries covers every key once, so an empty keyboard falls out rather
+        // than spinning.
+        emit("LD.UB R9,R1[0x34d]");
+        // 0x1c and BR{ge}, not 0x1d and BR{gt}: the same 29 passes, but 0x1d
+        // never appears as a MOV.  It is the off-by-one that puts a key walk
+        // one past the end, and the guard in tools/test.py refuses it on
+        // sight rather than trying to tell a counter from an index.
+        emit("MOV R10,0x1c");
+        padTo(0x8001af30);
+        emit("ADD R9,R3");
+        emit("CP.W R9,0x1d");
+        emit("BR{lt} 0x8001af3c");
+        emit("MOV R9,0x0");
+        padTo(0x8001af3c);
+        emit("CP.W R9,0x0");
+        emit("BR{ge} 0x8001af44");
+        emit("MOV R9,0x1c");
+        padTo(0x8001af44);
+        emit("ADD R8,R0,R9 << 0x0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit("BR{eq} 0x8001af58");
+        emit("SUB R10,0x1");
+        emit("BR{ge} 0x8001af30");
+        emit("RJMP 0x8001aff0");
+        padTo(0x8001af58);
+        // Mirror turns at the outermost HELD key, not at the end of the
+        // keyboard: with three keys down the run has to come back from the
+        // top one, and the ends of the board are nowhere near it.  So look
+        // past where we landed for another held key in the same direction,
+        // and turn only when there is none.
+        emit("CP.W R2,0x5");
+        emit("BR{ne} 0x8001afe0");
+        emit("MOV R11,R9");
+        padTo(0x8001af60);
+        emit("ADD R11,R3");
+        emit("CP.W R11,0x0");
+        emit("BR{lt} 0x8001af78");
+        emit("CP.W R11,0x1d");
+        emit("BR{ge} 0x8001af78");
+        emit("ADD R8,R0,R11 << 0x0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit("BR{eq} 0x8001afe0");
+        emit("RJMP 0x8001af60");
+        padTo(0x8001af78);
+        emit("MOV R8,0x1");
+        emit("CP.W R3,0x0");
+        emit("BR{lt} 0x8001af84");
+        emit("MOV R8,0x0");
+        padTo(0x8001af84);
+        emit("MOV R11,0x614e");
+        emit("ST.B R11[0x0],R8");
+        emit("RJMP 0x8001afe0");
+        padTo(0x8001af90);
+        // Reverse press order: the press list read backwards.  Same list and
+        // the same wrap as the forward walk, stepping the other way.
+        emit("MOV R10,0x6000");
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0x20");
+        emit("BR{ls} 0x8001afa0");
+        emit("MOV R8,0x0");
+        padTo(0x8001afa0);
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001aff0");
+        emit("LD.UB R9,R1[0x34d]");
+        emit("MOV R3,0x0");
+        padTo(0x8001afaa);
+        emit("CP.W R3,R8");
+        emit("BR{ge} 0x8001afbc");
+        emit("ADD R11,R10,R3 << 0x0");
+        emit("LD.UB R11,R11[0x1]");
+        emit("CP.W R11,R9");
+        emit("BR{eq} 0x8001afbc");
+        emit("SUB R3,-0x1");
+        emit("RJMP 0x8001afaa");
+        padTo(0x8001afbc);
+        emit("SUB R3,0x1");
+        emit("CP.W R3,0x0");
+        emit("BR{ge} 0x8001afc8");
+        emit("MOV R3,R8");
+        emit("SUB R3,0x1");
+        padTo(0x8001afc8);
+        emit("ADD R11,R10,R3 << 0x0");
+        emit("LD.UB R12,R11[0x1]");
+        emit("RJMP 0x8001afe8");
+        padTo(0x8001afd0);
+        emit("LDDPC R12,0x8001b004");   // the old random path
+        emit("MOV PC,R12");
+        padTo(0x8001afd8);
+        emit("LDDPC R12,0x8001b008");   // the old press-order path
+        emit("MOV PC,R12");
+        padTo(0x8001afe0);
+        emit("MOV R12,R9");
+        padTo(0x8001afe8);
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001aff0);
+        emit("MOV R12,0x0");
+        emit("SUB R12,0x1");            // nothing held: -1
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001b000);
+        word(0x00003560); // global state base
+        word(0x8001a0de); // random, past the blend test
+        word(0x8001a150); // press order
+        finish("arp_order_zones", 0x8001b00c);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -2716,9 +2874,10 @@ function assembleProgram() {
         padTo(0x80002204);
         finish("arp_rhythm_hook", 0x80002204);
 
-        // Factory selector pointer -> replacement press-order/random selector.
+        // Factory selector pointer -> whichever replacement this build wants:
+        // the 1.x blend from press order into randomness, or the six zones.
         begin(0x80002420);
-        word(0x8001a0a0);
+        word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0 : 0x8001a0a0);
         finish("arp_selector_pool", 0x80002424);
 
         // Hook: the transpose adder's target store now routes through the

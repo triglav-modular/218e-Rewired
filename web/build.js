@@ -106,6 +106,7 @@ var WEBBUILD = (function () {
          'octave_scale_mul', 'octave_scale_bias'].forEach(function (n) {
             blocks[n] = octave !== cfg.tuning.units_per_octave;
         });
+        blocks.arp_order_zones = cfg.arp_order.knob1_orders === 1;
         var smoothing = cfg.pressure.output_smoothing;
         ['dac_interpolator', 'dac_flush_pool', 'pressure_target_redirect']
             .forEach(function (n) { blocks[n] = !!smoothing; });

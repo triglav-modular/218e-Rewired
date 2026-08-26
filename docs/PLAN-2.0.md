@@ -37,7 +37,13 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
 
 ### 3. Configurable knobs (page options)
 - Knob 1: [six-order zones: asc, desc, random, press, reverse-press,
-  mirror] OR [1.x continuous press->random blend].
+  mirror] OR [1.x continuous press->random blend].  BUILT, off by default.
+  [arp_order].knob1_orders = 1 turns the zones on.  The cave at 0x8001aec0
+  takes the selector's pool word, keeps the same stack frame as the selector
+  it replaces, and jumps into that selector's own code for the random and
+  press-order zones rather than reimplementing them.  Mirror turns at the
+  outermost HELD key, not the end of the keyboard, and its direction lives
+  at RAM 0x614e.
 - Knob 2: swing | randomness (1.x) | patterns.  Pattern engine: gate mask
   + length (1..32), stepped at the arp clock.  Preload: 22 CLIX fills from
   ~/SDIY/208_Clockwork_Card/Clockwork_Code/clix.h.  Page: grid editor,

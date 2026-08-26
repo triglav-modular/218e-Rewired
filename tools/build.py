@@ -842,7 +842,9 @@ RAM_REGIONS = [
     # be standing.
     (0x613A, 0x6142, "preset voltage store"),
     (0x6142, 0x614A, "preset knob snapshot"),
-    (0x614A, 0x614B, "preset following flags"),
+    (0x614A, 0x614E, "preset following flags"),
+    # Which way the mirror order is travelling; it turns at the ends.
+    (0x614E, 0x614F, "arp mirror direction"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1586,6 +1588,16 @@ def main() -> None:
     cfg["_numbers"]["blend_slew_taper"] = staper
     summary.append(f"  {'portamento.blend_slew_taper':28s} "
                    f"{staper}  ({'knob picks the rate' if staper else 'fixed rate'})")
+    # Knob 1: 0 keeps the 1.x blend from press order into randomness, 1 cuts
+    # the travel into six zones - ascending, descending, random, press order,
+    # reverse press order, mirror.
+    orders = cfg.get("arp_order", {}).get("knob1_orders", 0)
+    if isinstance(orders, bool) or not isinstance(orders, int) or orders not in (0, 1):
+        raise SystemExit("[arp_order].knob1_orders must be 0 or 1")
+    cfg["_numbers"]["knob1_orders"] = orders
+    blocks["arp_order_zones"] = orders == 1
+    summary.append(f"  {'arp.knob1_orders':28s} "
+                   f"{orders}  ({'six zones' if orders else 'press-to-random blend'})")
     for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "
