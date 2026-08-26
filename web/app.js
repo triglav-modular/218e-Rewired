@@ -480,7 +480,13 @@
     // The pattern bank's own controls.
     $('patAdd').addEventListener('click', function () {
         if (state.patterns.length >= 32) return;
-        state.patterns.push({ text: 'x...x...x...x...', length: 16 });
+        // A copy of the last row: a bank is usually variations on something,
+        // and a variation starts from what it varies.  The first one has
+        // nothing to copy, so it gets a plain four-to-the-floor.
+        var last = state.patterns[state.patterns.length - 1];
+        state.patterns.push(last
+            ? { text: last.text, length: last.length }
+            : { text: 'x...x...x...x...', length: 16 });
         renderPatterns(); invalidate();
     });
     $('patClix').addEventListener('click', function () {
