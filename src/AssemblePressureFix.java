@@ -1090,7 +1090,7 @@ public class AssemblePressureFix extends GhidraScript {
         // note selector instead and turns the randomiser off.
         begin(0x80019d38L);
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
-        word(block("seq_pitch") ? 0x8001b3e0L : 0x80019da8L);
+        word(block("seq_pitch") ? 0x8001b3f0L : 0x80019da8L);
         word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100L : 0x80019df8L);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
@@ -1102,7 +1102,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDDPC R10,0x80019e90");
         emit("LD.UB R8,R10[0x39]");
         emit("CP.W R8,0x1");
-        emit("BR{eq} 0x80019d98");
+        emit("BR{eq} 0x80019d94");
         emit("LD.SH R8,R10[0x30a]");
         emit("LSR R8,0x3");
         emit("MOV R11,0x60f2");
@@ -1113,9 +1113,17 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.SH R8,R10[0x30e]");
         emit("MOV R11,0x60ea");
         emit("ST.H R11[0x0],R8");
+        padTo(0x80019d94L);
+        if (block("seq_gate")) {
+            // LR is still on the stack here, so a call is safe; two lines
+            // later it would not be.  R8 comes back as the threshold.
+            emit("MCALL PC[0x8001b538]");
+        }
         padTo(0x80019d98L);
         emit("LDM SP++,R7,R9,R10,R11,R12,LR");
-        emit("MOV R8,0x3");
+        if (!block("seq_gate")) {
+            emit("MOV R8,0x3");
+        }
         emit("CP.H R9,R8");
         emit("MOV PC,LR");
         padTo(0x80019da8L);
@@ -3218,6 +3226,115 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R7,PC");
         finish("seq_enter", 0x8001b448L);
 
+        // The bend strip, while recording.  One hook does both jobs the plan
+        // asks of it: it reads how far the strip has been pushed, and it
+        // passes zero on to the factory so the strip does not also bend the
+        // pitch while you are entering rests.  Called with R12 = the strip's
+        // value, and only when that value CHANGES - the factory's own bend
+        // function already early-exits on an unchanged one.
+        //
+        // Push it hard one way for a REST, the other way for a TIE.  Both are
+        // edge-triggered off 0x61e4, so a held push enters one step, not
+        // hundreds; letting the strip back towards the middle re-arms it.
+        begin(0x8001b450L);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R8,0x6154");
+        emit("LD.UB R8,R8[0x4]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001b4d8");      // only record listens to the ends
+        emit("LSL R9,R0,0x10");
+        emit("ASR R9,0x10");            // the strip, signed
+        emit(String.format("MOV R10,0x%x",
+             number("strip_end_units", 48, 4, 2000)));
+        emit("MOV R11,0x61e4");
+        emit("LD.UB R12,R11[0x0]");     // which end is already entered
+        emit("CP.W R9,R10");
+        emit("BR{gt} 0x8001b486");
+        emit("MOV R8,0x0");
+        emit("SUB R8,R8,R10 << 0x0");   // the far end, the other way
+        emit("CP.W R9,R8");
+        emit("BR{lt} 0x8001b490");
+        emit("MOV R8,0x0");
+        emit("ST.B R11[0x0],R8");       // back near the middle: re-armed
+        emit("RJMP 0x8001b498");
+        padTo(0x8001b486L);
+        emit("MOV R8,0x2");             // one end: a tie
+        emit("ST.B R11[0x0],R8");
+        emit("RJMP 0x8001b498");
+        padTo(0x8001b490L);
+        emit("MOV R8,0x1");             // the other: a rest
+        emit("ST.B R11[0x0],R8");
+        padTo(0x8001b498L);
+        emit("MOV R9,0x61e4");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,R12");
+        emit("BR{eq} 0x8001b4d0");      // no crossing, nothing to enter
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b4d0");      // crossing back to the middle
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R11,R10[0x0]");
+        emit("CP.W R11,0x40");
+        emit("BR{ge} 0x8001b4d0");      // the store is full
+        emit("MOV R8,0x7ffe");          // a rest, as a pitch can never be
+        emit("CP.W R9,0x1");
+        emit("BR{eq} 0x8001b4c0");
+        emit("MOV R8,0x7fff");          // and a tie
+        padTo(0x8001b4c0L);
+        emit("MOV R12,0x6160");
+        emit("ADD R12,R12,R11 << 0x1");
+        emit("ST.H R12[0x0],R8");
+        emit("SUB R11,-0x1");
+        emit("ST.B R10[0x0],R11");
+        padTo(0x8001b4d0L);
+        emit("MOV R12,0x0");            // and no bend while recording
+        emit("RJMP 0x8001b4dc");
+        padTo(0x8001b4d8L);
+        emit("MOV R12,R0");             // not recording: the strip is itself
+        padTo(0x8001b4dcL);
+        emit("MCALL PC[0x8001b4e8]");   // the factory's own bend
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b4e8L);
+        word(0x80002e30L); // bend(position)
+        finish("seq_strip", 0x8001b4ecL);
+
+        // How long the arp holds its gate.  Three counts from the end of the
+        // step, as the factory does - unless the step about to play is a tie,
+        // and then a threshold the countdown can never reach, so the gate
+        // never falls and the note carries across.  The tie's own step
+        // answers the selector with -1, so nothing retriggers and the pitch
+        // it is carrying stays put.  R8 = the threshold.
+        begin(0x8001b4f0L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x3");
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x2");
+        emit("BR{ne} 0x8001b530");
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R11,R10[0x0]");
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001b530");
+        emit("LD.UB R9,R10[0x1]");      // the step about to play
+        emit("CP.W R9,R11");
+        emit("BR{lt} 0x8001b51a");
+        emit("MOV R9,0x0");
+        padTo(0x8001b51aL);
+        emit("MOV R10,0x6160");
+        emit("ADD R10,R10,R9 << 0x1");
+        emit("LD.SH R10,R10[0x0]");
+        emit("MOV R11,0x7fff");
+        emit("CP.W R10,R11");
+        emit("BR{ne} 0x8001b530");
+        emit("MOV R8,-0x8000");         // a count the countdown never reaches
+        padTo(0x8001b530L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b538L);
+        word(0x8001b4f0L); // this cave, for the caller too far away to pool it
+        finish("seq_gate", 0x8001b53cL);
+
         // Record.  Called from the note-on wrapper with R12 = the key, which
         // it must leave alone - the wrapper still needs it.  What goes in the
         // store is the PITCH, the same halfword the arp would have played for
@@ -3260,11 +3377,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b3b0");
+        emit("BR{ne} 0x8001b3c8");      // not playing: the factory's question
         emit("MOV R10,0x61e0");
         emit("LD.UB R11,R10[0x0]");     // how many steps there are
         emit("CP.W R11,0x0");
-        emit("BR{eq} 0x8001b3a4");
+        emit("BR{eq} 0x8001b3c0");      // none: silence
         emit("LD.UB R9,R10[0x1]");      // where we are in them
         emit("CP.W R9,R11");
         emit("BR{lt} 0x8001b382");
@@ -3273,53 +3390,70 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R9 << 0x1");
         emit("LD.SH R8,R8[0x0]");
+        // A rest and a tie are kept where a pitch cannot reach.  Both answer
+        // -1, so nothing is retriggered; what separates them is the gate,
+        // which seq_gate holds up across a tie and lets fall on a rest.
+        emit("MOV R12,0x7ffe");
+        emit("CP.W R8,R12");
+        emit("BR{ge} 0x8001b3ac");
         emit("MOV R12,0x61e2");
         emit("ST.H R12[0x0],R8");       // the pitch this step sounds
         emit("SUB R9,-0x1");
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b39c");
+        emit("BR{lt} 0x8001b3a2");
         emit("MOV R9,0x0");
-        padTo(0x8001b39cL);
+        padTo(0x8001b3a2L);
         emit("ST.B R10[0x1],R9");
         emit("MOV R12,0x0");            // any real key; the pitch is swapped
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b3a4L);
+        padTo(0x8001b3acL);
+        // A rest or a tie: step past it, sound nothing new.
+        emit("SUB R9,-0x1");
+        emit("CP.W R9,R11");
+        emit("BR{lt} 0x8001b3b4");
+        emit("MOV R9,0x0");
+        padTo(0x8001b3b4L);
+        emit("ST.B R10[0x1],R9");
+        emit("MOV R12,0x0");
+        emit("SUB R12,0x1");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b3c0L);
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");            // nothing recorded: silence
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b3b0L);
-        emit("LDDPC R9,0x8001b3d0");
+        padTo(0x8001b3c8L);
+        emit("LDDPC R9,0x8001b3e0");
         emit("LD.UB R8,R9[0x21a]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b3a4");
+        emit("BR{eq} 0x8001b3c0");
         emit("MOV R12,0x21b");
         emit("ADD R12,R9");             // &state[0x21b], the held-key flags
-        emit("MCALL PC[0x8001b3d4]");   // the selector this build installed
+        emit("MCALL PC[0x8001b3e4]");   // the selector this build installed
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b3d0L);
+        padTo(0x8001b3e0L);
         word(0x00003560L); // global state base
         word(arpSelector);
-        finish("seq_select", 0x8001b3d8L);
+        finish("seq_select", 0x8001b3e8L);
 
         // The pitch the arp is about to sound.  The octave randomiser runs
         // first and its answer stands for keyboard playing; while the
         // sequencer plays, the step's own pitch replaces it.  The pad octave
         // transpose is applied further downstream and so still applies.
-        begin(0x8001b3e0L);
+        begin(0x8001b3f0L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001b400]");   // the factory octave path
+        emit("MCALL PC[0x8001b410]");   // the factory octave path
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b3fa");
+        emit("BR{ne} 0x8001b40a");
         emit("MOV R9,0x61e2");
         emit("LD.SH R8,R9[0x0]");
-        padTo(0x8001b3faL);
+        padTo(0x8001b40aL);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b400L);
+        padTo(0x8001b410L);
         word(0x80019da8L); // the octave entry this replaces
-        finish("seq_pitch", 0x8001b404L);
+        finish("seq_pitch", 0x8001b414L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
@@ -3760,6 +3894,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ne} 0x80003256");      // between it and the branch
         emit("MCALL PC[0x8001a268]");
         finish("pitch_store_hook", 0x80003256L);
+
+        // The bend strip's own pool word.  With the sequencer on it goes
+        // through our cave, which reads the ends for rests and ties and
+        // silences the bend while recording.
+        if (block("seq_strip")) {
+            begin(0x8000335cL);
+            word(0x8001b450L);
+            finish("strip_pool", 0x80003360L);
+        }
 
         // Repurposed pool word: was the last-sent mirror address (0x3212),
         // now the remap entry point read by the MCALL above.

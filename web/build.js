@@ -121,7 +121,8 @@ var WEBBUILD = (function () {
         if (blocks.arp_pattern_gate) blocks.arp_rhythm_hook = false;
         blocks.arp_swing = cfg.knob2.mode === 'swing';
         var seq = !!(cfg.sequencer && cfg.sequencer.on);
-        ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch']
+        ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
+         'seq_strip', 'seq_gate', 'strip_pool']
             .forEach(function (n) { blocks[n] = seq; });
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';

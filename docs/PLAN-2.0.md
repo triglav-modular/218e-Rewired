@@ -175,9 +175,38 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   Forcing the arp engine on from our side was considered and rejected - the
   factory sets state+0x34c inside a start/stop sequence with its own setup
   calls, and skipping that setup is not something to do blind.
-- STILL TO DO: rest and tie from the pitch-bend strip ends, which needs the
-  strip archaeology (touch/position state, and where its bend enters the
-  pitch path).  Nothing else in the sequencer depends on it.
+- Rest and tie: BUILT.  Push the bend strip hard one way for a REST, the
+  other way for a TIE, while recording.  Both are edge-triggered, so a held
+  push enters one step and letting the strip back towards the middle re-arms
+  it; a small push is still just a bend.
+  One hook does both jobs the plan asked for.  The strip's own pool word at
+  0x8000335c goes through our cave, which reads how far it has been pushed
+  AND passes zero on to the factory while recording - so the strip does not
+  bend the pitch while you are entering rests.  Outside record it passes the
+  value through untouched.
+  Rest and tie are kept in the step store where a pitch cannot reach - 0x7ffe
+  and 0x7fff against a 12-bit pitch.  Both answer the selector with -1, so
+  neither retriggers and the pitch already sounding stays put.  What
+  separates them is the GATE: seq_gate answers the arp's gate-off compare
+  with 3 as the factory does, or with -0x8000 - a count the countdown can
+  never reach - when the step about to play is a tie, so the gate never falls
+  and the note carries across.  That reuses the knob-2 machinery that already
+  owned that compare rather than adding any.
+  THRESHOLD NOT CONFIRMED ON HARDWARE: strip_end_units is 48, in the DAC
+  units the bend is added to the pitch in (~1.2 semitones at 484/octave).
+  The strip's absolute range depends on the factory's bend-depth setting at
+  state+0x1f8, which was not chased down.  It is a build number so it can be
+  moved once a real strip has been pushed.
+
+## Strip archaeology (2026-08-27)
+- `bend(R12 = value)` `0x80002e30`, reached through the pool word at
+  `0x8000335c`.  Early-exits when the value has not changed, so hooking it
+  gives every change and nothing else.
+- It writes `state+0x216`, which the pitch update adds to the pitch at
+  `0x800031f4`; the strip's own computed value is mirrored at `state+0x35e`.
+- The raw halves are `state+0x202` / `state+0x204`, scaled against
+  `state+0x1f8` (the bend depth) by `0x8000c150`, with `state+0x206` and
+  `state+0x20c` choosing between them.  Not needed once `bend()` is hooked.
 - Entering and leaving are our own chord handler now, not the toggle's change
   callback - simpler, and entirely under our control.
 - RAM: the hold counter (halfword), one byte for armed/selected, one byte for

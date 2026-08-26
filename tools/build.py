@@ -855,7 +855,7 @@ RAM_REGIONS = [
     (0x6154, 0x6160, "sequencer chord and mode"),
     # 64 recorded pitches, then how many there are, where play has got to,
     # and the pitch the step about to sound carries.
-    (0x6160, 0x61E4, "sequencer steps"),
+    (0x6160, 0x61E6, "sequencer steps"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1683,9 +1683,11 @@ def main() -> None:
         blocks["arp_rhythm_hook"] = False
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
+    cfg["_numbers"]["strip_end_units"] = int(cfg.get("sequencer", {}).get("strip_end_units", 48))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     blocks["seq_chord"] = seq
-    for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch"):
+    for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
+                 "seq_strip", "seq_gate", "strip_pool"):
         blocks[name] = seq
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"

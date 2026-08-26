@@ -220,7 +220,11 @@ def expand(options: dict) -> dict:
         cfg["knobs"][knob] = "factory" if role == "factory" else live[knob]
     # The sequencer's controls live on a pad chord, so it needs the pads -
     # which means it needs the preset voltages decoupled from the knobs.
-    cfg["sequencer"] = {"on": bool(want("sequencer", False))}
+    # How far the bend strip has to be pushed before it enters a rest or a
+    # tie, in DAC units - the same units the bend itself is added to the pitch
+    # in.  48 is roughly a semitone; it wants confirming against a real strip.
+    cfg["sequencer"] = {"on": bool(want("sequencer", False)),
+                        "strip_end_units": 48}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
     cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
     cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing")
