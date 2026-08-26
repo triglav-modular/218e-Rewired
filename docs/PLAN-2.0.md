@@ -108,16 +108,36 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   change the adder source.  None of these is the factory pads-2+3 latch,
   which our-latch builds remove anyway.  Mode byte resets to octaves
   wherever the sequencer's own state resets.
-  ANSWERED 2026-08-27, see LEDs below: the pads are lit, one channel
-  each, and the arm can blink pad 4.  Do NOT use the factory's own blink
-  (0x80003b1c) - it busy-waits 4x150 ms, which would stall the scan for
-  six tenths of a second.  Ours toggles the bit on the scan counter and
-  costs nothing.  One thing to honour: the pad lights are a radio group
-  the factory re-asserts only when a pad is selected, so whatever the
-  blink borrows it has to put back when the arm ends.
+  Acknowledgement (the pads are lit, one channel each - see LEDs below):
+  pad 4's own light says what the hold is doing.
+    - Held, under three seconds: nothing.  The light is simply on, the way
+      any selected pad's is, and nothing has been promised yet.
+    - Armed at three seconds: pad 4's light BLINKS - LED channel 3, bit 6
+      of the same scan counter that timed the hold, so it toggles every
+      64 scans and reads as roughly 1.6 Hz.  The counter free-runs and is
+      allowed to wrap: 65536 is a whole multiple of 64, so the phase
+      survives the wrap, and the armed flag is latched separately rather
+      than re-derived from the count - which is what stops a five-minute
+      hold from disarming itself.
+    - Selected: the blink stops and the light goes steady for the rest of
+      the hold, so the press is seen to have been taken.
+    - RELEASED: the blink clears at once.  Counter zeroed, armed and
+      selected cleared, and the light put back to what the radio group
+      says - lit if state+0x2ef is still pad 4, dark otherwise.  Derived,
+      not snapshotted, so an eaten pad press cannot leave it wrong.
+      Nothing repaints the pad lights per scan (unlike rem-en/trn, which
+      the tuning applier re-asserts), so this restore is the only thing
+      that puts the light right: it has to happen on every exit from the
+      hold, the knob-moved refusal included.
+    - Never the factory's own blink at 0x80003b1c: it busy-waits 4x150 ms
+      and would stall the scan for six tenths of a second.  Ours is a bit
+      test and a set/clear, and led_flush is free when nothing changed.
   Only the adder's DEFAULT source changes with the option on: the preset
   voltages themselves stay live at their own banana output, pad-selected
   and pad+knob-editable as ever (document the distinction).
+  RAM for all of this: the hold counter (halfword), and one byte carrying
+  armed/selected plus the adder mode.  Declared in RAM_REGIONS with the
+  rest when it is built.
 - Precedence over the arp switch, including latch-exit clearing.
 - Record: entering wipes; note-ons append PITCHES (like latch stamps, so
   tuning-slot switches do not shift recorded notes); pitch-bend strip
