@@ -49,7 +49,12 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   ~/SDIY/208_Clockwork_Card/Clockwork_Code/clix.h.  Page: grid editor,
   settable length, plain-text x.x.. import/export.
 - Knob 3: stays arp octave span, untouched.
-- Knob 4: vibrato (1.x) | octave switching.
+- Knob 4: vibrato (1.x) | octave switching.  BUILT, off by default;
+  [knob4].octaves = 1.  No new patch on the pitch path: the remap already
+  adds a signed offset from RAM 0x6028, which is where the vibrato engine
+  writes, and that engine is not built in this mode.  Four zones, -1..+2,
+  the panel switch's own reach; -2 is excluded because the remap divides
+  unsigned and the bottom key sits only one period above nothing.
 
 ### 4. SH-101-style sequencer (option)
 - Takes the add-to-pitch toggle: top=record, middle=play, bottom=off.

@@ -1598,6 +1598,21 @@ def main() -> None:
     blocks["arp_order_zones"] = orders == 1
     summary.append(f"  {'arp.knob1_orders':28s} "
                    f"{orders}  ({'six zones' if orders else 'press-to-random blend'})")
+    # Knob 4: vibrato as in 1.x, or an octave switch.  Both cannot run - they
+    # would each want RAM 0x6028, which is the offset the pitch remap adds -
+    # so choosing the octave switch takes the vibrato engine out of the build.
+    k4 = cfg.get("knob4", {}).get("octaves", 0)
+    if isinstance(k4, bool) or not isinstance(k4, int) or k4 not in (0, 1):
+        raise SystemExit("[knob4].octaves must be 0 or 1")
+    cfg["_numbers"]["knob4_octaves"] = k4
+    blocks["knob4_octave_switch"] = k4 == 1 and get(cfg, "knobs.knob4") == "vibrato"
+    if blocks["knob4_octave_switch"]:
+        features["knob4_vibrato"] = False
+        for name in ("vibrato_engine", "vibrato_sine",
+                     "pressure_vibrato_scale", "pressure_vibrato_pool"):
+            blocks[name] = False
+    summary.append(f"  {'knob4.octaves':28s} "
+                   f"{k4}  ({'octave switch' if blocks['knob4_octave_switch'] else 'vibrato'})")
     for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "

@@ -277,9 +277,11 @@ alternate_tunings = ["tunings/Sabat II (C-rooted).scl",
                      "tunings/12TET.scl"]
 ```
 
-Each must have 12 degrees and a true 2/1 octave — the key table repeats every
-octave across the 32 keys, so anything else puts the octave switches out of
-tune, and the build rejects it. Slot 0 is the power-on default; in edit mode
+Each must have 12 degrees unless a `.kbm` says otherwise, and may repeat at
+whatever interval it declares — the table steps that period and the octave
+controls are rebuilt to match it, so a scale that never reaches a 2/1 still
+plays in tune with its own switches. All three slots must agree about the
+period, because there is one set of octave controls. Slot 0 is the power-on default; in edit mode
 key 28 toggles slot 0 against slot 2 and key 27 toggles slot 1 against slot 2.
 Slots you do not fill keep the factory temperament, and a slot left empty
 between two filled ones stays empty rather than collapsing.

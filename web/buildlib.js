@@ -506,7 +506,8 @@ var BUILDLIB = (function () {
             resolution_bits: cfg.pressure.resolution_bits,
             multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0,
             octave_units: octaveUnits(cfg),
-            knob1_orders: cfg.arp_order.knob1_orders
+            knob1_orders: cfg.arp_order.knob1_orders,
+            knob4_octaves: cfg.knob4.octaves
         };
         var span = calib.trim_span;
         if (span !== 128 && span !== 256 && span !== 512) {

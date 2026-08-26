@@ -107,6 +107,13 @@ var WEBBUILD = (function () {
             blocks[n] = octave !== cfg.tuning.units_per_octave;
         });
         blocks.arp_order_zones = cfg.arp_order.knob1_orders === 1;
+        blocks.knob4_octave_switch =
+            cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
+        if (blocks.knob4_octave_switch) {
+            features.knob4_vibrato = false;
+            ['vibrato_engine', 'vibrato_sine', 'pressure_vibrato_scale',
+             'pressure_vibrato_pool'].forEach(function (n) { blocks[n] = false; });
+        }
         var smoothing = cfg.pressure.output_smoothing;
         ['dac_interpolator', 'dac_flush_pool', 'pressure_target_redirect']
             .forEach(function (n) { blocks[n] = !!smoothing; });
