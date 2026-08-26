@@ -100,7 +100,10 @@ var BUILDLIB = (function () {
     }
 
     // --- generators (tools/build.py) ------------------------------------
-    function parseScala(text, name) {
+    // mapped: any degree count, and the whole list including the final degree,
+    // because a .kbm then says which degree each key takes and which one is
+    // the period.  Mirrors parse_scala(mapped=) in tools/build.py.
+    function parseScala(text, name, mapped) {
         // Same shape as tools/build.py parse_scala: comments out first,
         // then the first remaining line is the description BY POSITION -
         // the format allows it to be blank, so it must never be filtered.
@@ -149,19 +152,20 @@ var BUILDLIB = (function () {
             }
             cents.push(value);
         });
-        if (count !== 12) {
+        if (count !== 12 && !mapped) {
             throw new Error(name + ': ' + count + ': the key table repeats every ' +
-                            'octave, so a 12-note scale is required');
+                            'octave, so a 12-note scale is required, or a .kbm to map it');
         }
         for (var i = 1; i < cents.length; i++) {
             if (cents[i] <= cents[i - 1]) {
                 throw new Error(name + ': degrees are not strictly ascending');
             }
         }
-        if (Math.abs(cents[cents.length - 1] - 1200.0) > 0.001) {
+        if (!mapped && Math.abs(cents[cents.length - 1] - 1200.0) > 0.001) {
             throw new Error(name + ': last degree is ' + cents[cents.length - 1].toFixed(3) +
                             ' cents, not a 2/1 octave');
         }
+        if (mapped) return cents;
         return cents.slice(0, 12);
     }
 
@@ -181,24 +185,119 @@ var BUILDLIB = (function () {
         return out;
     }
 
+    // Scala keyboard mapping.  Same contract as parse_kbm in tools/build.py:
+    // seven header values then one line per map position, 'x' or blank for a
+    // position that sounds nothing.  The four MIDI-keyboard fields are read
+    // to prove the file is well formed and then ignored - this instrument has
+    // no note numbers and takes its absolute pitch from the 208's trimmer.
+    // Unmapped positions take the nearest mapped position's degree, ties low.
+    function parseKbm(text, name, degreeCount) {
+        var raw = text.split('\n').filter(function (l) {
+            return l.replace(/^\s+/, '').charAt(0) !== '!';
+        });
+        var header = [], index = 0;
+        while (index < raw.length && header.length < 7) {
+            var token = raw[index].trim();
+            index += 1;
+            if (token) header.push(token.split(/\s+/)[0]);
+        }
+        if (header.length < 7) {
+            throw new Error(name + ': not a Scala keyboard mapping — needs seven ' +
+                            'header values, found ' + header.length);
+        }
+        var names = ['map size', 'first MIDI note', 'last MIDI note', 'middle note',
+                     'reference note', 'reference frequency', 'formal octave degree'];
+        var values = [];
+        for (var h = 0; h < 7; h++) {
+            var value = Number(header[h]);
+            var wantsInt = h !== 5;
+            if (!isFinite(value) || (wantsInt && value !== Math.floor(value))) {
+                throw new Error(name + ': ' + names[h] + ' is ' +
+                                JSON.stringify(header[h]) + ', which is not a number');
+            }
+            values.push(value);
+        }
+        var size = values[0], refHz = values[5], formal = values[6];
+        if (!(refHz > 0)) {
+            throw new Error(name + ': reference frequency must be above zero');
+        }
+        if (size < 0) {
+            throw new Error(name + ': map size is ' + size + ', which is negative');
+        }
+        if (!(formal >= 1 && formal <= degreeCount)) {
+            throw new Error(name + ': formal octave degree is ' + formal +
+                            ', but the scale has ' + degreeCount +
+                            ' degrees — it must name one of them');
+        }
+        if (size === 0) {
+            var linear = [];
+            for (var d = 0; d < degreeCount; d++) linear.push(d);
+            return { degrees: linear, formal: formal };
+        }
+        var entries = raw.slice(index);
+        if (entries.length < size) {
+            throw new Error(name + ': map size is ' + size + ', found ' +
+                            entries.length + ' entries');
+        }
+        var degrees = [];
+        for (var position = 0; position < size; position++) {
+            var line = entries[position].trim();
+            if (!line || line.charAt(0) === 'x' || line.charAt(0) === 'X') {
+                degrees.push(null);
+                continue;
+            }
+            var degree = Number(line.split(/\s+/)[0]);
+            if (!isFinite(degree) || degree !== Math.floor(degree)) {
+                throw new Error(name + ': position ' + position + ' is ' +
+                                JSON.stringify(line) +
+                                " — a scale degree or 'x' for unmapped");
+            }
+            if (!(degree >= 0 && degree <= degreeCount)) {
+                throw new Error(name + ': position ' + position + ' names degree ' +
+                                degree + ', but the scale has degrees 0..' + degreeCount);
+            }
+            degrees.push(degree);
+        }
+        var mappedAt = [];
+        degrees.forEach(function (d, i) { if (d !== null) mappedAt.push(i); });
+        if (!mappedAt.length) throw new Error(name + ': every position is unmapped');
+        var filled = degrees.map(function (d, position) {
+            if (d !== null) return d;
+            var best = mappedAt[0];
+            mappedAt.forEach(function (i) {
+                if (Math.abs(i - position) < Math.abs(best - position)) best = i;
+            });
+            return degrees[best];
+        });
+        return { degrees: filled, formal: formal };
+    }
+
+    // Where a key sounds, in cents above the bottom key.
+    function keyPitch(cents, degrees, period, key) {
+        return period * Math.floor(key / degrees.length) +
+               cents[degrees[key % degrees.length]];
+    }
+
     // Cents to shift a scale so reference_key lands on the 12-TET grid, so the
     // note the 208 is tuned to sits in the same place in every slot.
-    function anchorOffset(cents, referenceKey) {
+    function anchorOffset(cents, referenceKey, degrees, period) {
         if (!(referenceKey >= 0 && referenceKey <= 11)) {
             throw new Error('reference_key must be 0..11 (0 = C, 9 = A)');
         }
-        return 100.0 * referenceKey - cents[referenceKey];
+        if (!degrees) return 100.0 * referenceKey - cents[referenceKey];
+        return 100.0 * referenceKey - keyPitch(cents, degrees, period, referenceKey);
     }
 
     // offset is added inside the expression, in the same position as build.py:
     // floating-point addition is not associative, so shifting the cents array
     // beforehand could differ in the last bit and move a quantised entry.
-    function tuningTable(cents, base, perOctave, offset) {
+    function tuningTable(cents, base, perOctave, offset, degrees, period) {
         offset = offset || 0.0;
         var out = [];
         for (var k = 0; k < 32; k++) {
-            out.push(base + Math.floor(
-                (1200 * Math.floor(k / 12) + cents[k % 12] + offset) * perOctave / 1200 + 0.5));
+            var pitch = degrees ? keyPitch(cents, degrees, period, k)
+                                : 1200 * Math.floor(k / 12) + cents[k % 12];
+            out.push(base + Math.floor((pitch + offset) * perOctave / 1200 + 0.5));
         }
         return out;
     }
@@ -462,7 +561,8 @@ var BUILDLIB = (function () {
 
     return {
         pyRepr: pyRepr, reprSortedItems: reprSortedItems, expand: expand,
-        parseScala: parseScala, factoryTuning: factoryTuning,
+        parseScala: parseScala, parseKbm: parseKbm, keyPitch: keyPitch,
+        factoryTuning: factoryTuning,
         tuningTable: tuningTable, anchorOffset: anchorOffset, pressureCurve: pressureCurve,
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,

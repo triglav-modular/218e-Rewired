@@ -149,10 +149,19 @@ def check(options: dict) -> None:
                    else "a list of Scala files") + ", or false")
         if name == "alternate_tunings" and isinstance(value, list):
             for i, entry in enumerate(value):
-                if not isinstance(entry, (str, dict)):
+                # A slot is a Scala file, or that file paired with a .kbm
+                # keyboard mapping: ["scale.scl", "scale.kbm"].
+                if isinstance(entry, (list, tuple)):
+                    if not 1 <= len(entry) <= 2 or not all(
+                            isinstance(part, str) for part in entry):
+                        raise SystemExit(
+                            f"alternate_tunings[{i}] as a pair must be "
+                            f'["scale.scl", "map.kbm"]: {entry!r}')
+                elif not isinstance(entry, (str, dict)):
                     raise SystemExit(
-                        f"alternate_tunings[{i}] must be a filename (or "
-                        f"'factory'), not {type(entry).__name__}: {entry!r}")
+                        f"alternate_tunings[{i}] must be a filename, a "
+                        f'["scale.scl", "map.kbm"] pair, or \'factory\', '
+                        f"not {type(entry).__name__}: {entry!r}")
 
 
 def expand(options: dict) -> dict:
@@ -190,12 +199,15 @@ def expand(options: dict) -> dict:
             tunings = [tunings]
         if not 1 <= len(tunings) <= 3:
             raise SystemExit("alternate_tunings: give one to three Scala files")
-        for name in tunings:
-            if not (REPO / name).exists():
-                raise SystemExit(f"alternate_tunings: no such file: {name}")
+        for entry in tunings:
+            for name in ([entry] if isinstance(entry, str) else list(entry)):
+                if not (REPO / name).exists():
+                    raise SystemExit(f"alternate_tunings: no such file: {name}")
         # Unused slots fall back to the instrument's own temperament, so the
         # edit-mode selector always has three valid tables to switch between.
-        cfg["tuning"]["slots"] = list(tunings) + ["factory"] * (3 - len(tunings))
+        cfg["tuning"]["slots"] = [
+            entry if isinstance(entry, str) else list(entry) for entry in tunings
+        ] + ["factory"] * (3 - len(tunings))
     else:
         cfg["tuning"]["slots"] = ["factory"] * 3
 

@@ -221,19 +221,30 @@
                 // grid in every slot, which is why switching tuning never
                 // moves the note the 208 was trimmed to.  Worth showing: it is
                 // computed here, not baked into the file.
-                var shift = '';
+                var shift = '', mapShape = '';
                 try {
-                    var cents = BUILDLIB.parseScala(entry.text, entry.name);
-                    var off = BUILDLIB.anchorOffset(cents, 9);
+                    var cents = BUILDLIB.parseScala(entry.text, entry.name, !!entry.kbmText);
+                    var degrees = null, period = 1200.0;
+                    if (entry.kbmText) {
+                        var map = BUILDLIB.parseKbm(entry.kbmText, entry.kbmName,
+                                                    cents.length - 1);
+                        degrees = map.degrees;
+                        period = cents[map.formal];
+                        mapShape = degrees.length + ' keys/oct';
+                    }
+                    var off = BUILDLIB.anchorOffset(cents, 9, degrees, period);
                     shift = '  ' + (off >= 0 ? '+' : '') + off.toFixed(2) + 'c';
                 } catch (e) { /* already reported on load */ }
-                what.textContent = entry.name;
-                what.title = entry.name + (shift ? ': anchored on A by' + shift : '');
+                what.textContent = entry.name +
+                    (entry.kbmName ? '  +  ' + entry.kbmName : '');
+                what.title = entry.name + (entry.kbmName ? ' mapped by ' + entry.kbmName : '') +
+                    (shift ? ': anchored on A by' + shift : '');
                 if (shift) {
                     var tag = document.createElement('span');
                     tag.className = 'muted';
                     tag.style.cssText = 'font-family:inherit;font-size:11px;margin-left:8px';
-                    tag.textContent = 'A anchored' + shift;
+                    tag.textContent = 'A anchored' + shift +
+                        (mapShape ? ' · ' + mapShape : '');
                     what.appendChild(tag);
                 }
             } else {
@@ -282,20 +293,79 @@
         var problems = [];
         var pending = files.length;
         if (!pending) return;
+        // Every file is read before any is placed: a .kbm has to find its
+        // scale, and a multi-select hands them over in whatever order the
+        // browser likes.  Scales take slots first, then each map is paired
+        // with the scale of the same name, or with the first mapless slot.
+        var loaded = [];
+        function place() {
+            var stem = function (n) { return n.replace(/\.[^.]*$/, ''); };
+            var isMap = function (f) { return /\.kbm$/i.test(f.name); };
+            var scales = loaded.filter(function (f) { return !isMap(f); });
+            var maps = loaded.filter(isMap);
+            var taken = [];
+            // A map belongs to the scale it arrived with: same name, or the
+            // same name with something appended ("24TET.scl" and
+            // "24TET-neutral.kbm"), or - failing both - by position, since a
+            // person selecting one scale and one map means those two.
+            function mapFor(scale) {
+                var exact = null, prefix = null, spare = null;
+                maps.forEach(function (m) {
+                    if (taken.indexOf(m) >= 0) return;
+                    if (stem(m.name) === stem(scale.name)) exact = exact || m;
+                    else if (stem(m.name).indexOf(stem(scale.name)) === 0) prefix = prefix || m;
+                    else spare = spare || m;
+                });
+                var pick = exact || prefix ||
+                    (scales.length === 1 && maps.length === 1 ? spare : null);
+                if (pick) taken.push(pick);
+                return pick;
+            }
+            scales.forEach(function (f) {
+                var map = mapFor(f);
+                try {
+                    var cents = BUILDLIB.parseScala(f.text, f.name, !!map);
+                    if (map) BUILDLIB.parseKbm(map.text, map.name, cents.length - 1);
+                } catch (err) { problems.push(err.message); return; }
+                var free = state.slots.indexOf(null);
+                if (free < 0) { problems.push(f.name + ': all three slots are full'); return; }
+                var entry = { name: f.name, text: f.text };
+                if (map) { entry.kbmName = map.name; entry.kbmText = map.text; }
+                state.slots[free] = entry;
+            });
+            // Maps with no scale in the same selection are being added to a
+            // scale that is already loaded.  Only an unambiguous target is
+            // accepted: guessing put a map on the wrong scale.
+            maps.forEach(function (m) {
+                if (taken.indexOf(m) >= 0) return;
+                var candidates = [];
+                state.slots.forEach(function (slot, i) {
+                    if (slot && !slot.kbmText) candidates.push(i);
+                });
+                var named = candidates.filter(function (i) {
+                    return stem(m.name).indexOf(stem(state.slots[i].name)) === 0;
+                });
+                var to = named.length === 1 ? named[0]
+                       : (candidates.length === 1 ? candidates[0] : -1);
+                if (to < 0) {
+                    problems.push(m.name + (candidates.length
+                        ? ': which scale is it for? load it together with its .scl'
+                        : ': no tuning slot without a mapping'));
+                    return;
+                }
+                var slot = state.slots[to];
+                try {
+                    var cents = BUILDLIB.parseScala(slot.text, slot.name, true);
+                    BUILDLIB.parseKbm(m.text, m.name, cents.length - 1);
+                } catch (err) { problems.push(err.message); return; }
+                slot.kbmName = m.name;
+                slot.kbmText = m.text;
+            });
+        }
         files.forEach(function (f) {
             var r = new FileReader();
             r.onload = function () {
-                var entry = { name: f.name, text: r.result };
-                try {
-                    // Validate now, so a bad scale is caught while it is still
-                    // obvious which file it was.
-                    BUILDLIB.parseScala(entry.text, entry.name);
-                    var free = state.slots.indexOf(null);
-                    if (free < 0) problems.push(f.name + ': all three slots are full');
-                    else state.slots[free] = entry;
-                } catch (err) {
-                    problems.push(err.message);
-                }
+                loaded.push({ name: f.name, text: r.result });
             };
             r.onerror = function () {
                 problems.push(f.name + ': could not be read');
@@ -305,6 +375,7 @@
             // the whole listing while the readable ones were already in.
             r.onloadend = function () {
                 if (--pending === 0) {
+                    place();
                     renderSlots(); invalidate();
                     msg($('sclMsg'), problems.length ? 'bad' : '', problems.join('\n'));
                 }

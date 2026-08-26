@@ -36,6 +36,13 @@ def scala(paths: list[str]) -> list[dict]:
     return [{"name": Path(p).name, "text": (REPO / p).read_text()} for p in paths]
 
 
+def mapped(pairs: list[tuple[str, str]]) -> list[dict]:
+    """Scale-and-.kbm slots, in the shape the page keeps them."""
+    return [{"name": Path(s).name, "text": (REPO / s).read_text(),
+             "kbmName": Path(k).name, "kbmText": (REPO / k).read_text()}
+            for s, k in pairs]
+
+
 # name -> (toml edits, browser options)
 CONFIGS = [
     ("defaults",          [], {}),
@@ -59,6 +66,18 @@ CONFIGS = [
                             "alternate_tunings = [" + ", ".join(
                                 f'"{s}"' for s in SCALES) + "]")],
                           {"alternate_tunings": scala(SCALES)}),
+    # A .kbm changes the key table without touching the firmware, so the two
+    # builders have to agree on the mapping as exactly as on the scale.  Three
+    # shapes at once: more degrees than keys, fewer, and unmapped positions.
+    ("tuning_maps",       [(r"^alternate_tunings = false",
+                            'alternate_tunings = ['
+                            '["tunings/24TET.scl", "tunings/24TET-full.kbm"], '
+                            '["tunings/24TET.scl", "tunings/24TET-neutral.kbm"], '
+                            '["tunings/diatonic7.scl", "tunings/diatonic7.kbm"]]')],
+                          {"alternate_tunings": mapped([
+                              ("tunings/24TET.scl", "tunings/24TET-full.kbm"),
+                              ("tunings/24TET.scl", "tunings/24TET-neutral.kbm"),
+                              ("tunings/diatonic7.scl", "tunings/diatonic7.kbm")])}),
     ("historical",        [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"'),
                            (r"^alternate_tunings = false",
                             "alternate_tunings = [" + ", ".join(

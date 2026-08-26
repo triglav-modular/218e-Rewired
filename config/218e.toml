@@ -49,6 +49,20 @@ pitch_correction = false
 #                        "tunings/5-Limit JI with Septimal 7th.scl",
 #                        "tunings/12TET.scl"]
 #
+# A slot may instead be a scale paired with a Scala keyboard mapping, which
+# lifts the twelve-degree rule: the .kbm says which degree each key takes, so
+# a scale of any size can be laid out however you like.
+#
+#   alternate_tunings = [["tunings/24TET.scl", "tunings/24TET-neutral.kbm"],
+#                        "tunings/12TET.scl"]
+#
+# Keys the mapping leaves out sound their nearest mapped neighbour - the
+# firmware has no way to make a key silent.  The mapping's own reference note
+# and frequency are read and ignored: this instrument has no MIDI note
+# numbers, and its absolute pitch comes from the 208's trimmer, so which key
+# stays put across slots remains [tuning].reference_key.  The formal octave
+# must still be a 2/1, because the octave switches add one.
+#
 # Slots you do not fill keep the instrument's own temperament.  false gives
 # all three slots the factory temperament, i.e. no retuning at all.
 alternate_tunings = false
@@ -98,7 +112,7 @@ updaters       = ["Program218e_v3_Rewired_macOS.command",
 # SHA-256, which is derived and cannot drift; this is the part people can say
 # out loud.  The build reports them together as "Rewired <version> (<sha8>)"
 # and writes that into both flashers.
-version        = "1.2.0"
+version        = "2.0.0"
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,

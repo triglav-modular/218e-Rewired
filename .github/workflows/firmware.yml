@@ -21,7 +21,10 @@ name: Firmware and flashers
 
 on:
   push:
-    branches: [main]
+    # 2.0 is a long-lived development branch, so it gets the same checks as
+    # main.  The page workflow deliberately does NOT: the live site deploys
+    # from main only, or an unfinished 2.0 would publish itself.
+    branches: [main, '2.0']
   pull_request:
   workflow_dispatch:
 

@@ -133,11 +133,17 @@ def get(cfg: dict, dotted: str):
 # ---------------------------------------------------------------------------
 # Scala parsing and table generation
 # ---------------------------------------------------------------------------
-def parse_scala(path: Path) -> list[float]:
-    """Return the 12 scale degrees in cents, starting at 0 for the tonic.
+def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
+    """Return the scale degrees in cents, starting at 0 for the tonic.
 
     Scala format: '!' comments, then description, then the degree count, then
     that many pitches as either a ratio (a/b) or a cents value (contains '.').
+
+    Without a keyboard mapping the scale must have twelve degrees, because one
+    key table entry per semitone is all the instrument has: 12 degrees are
+    returned, the octave implied.  With `mapped` the count is free and the
+    whole list is returned, the final degree included - a .kbm then says which
+    degree each key takes and which one is the period.
     """
     raw = [ln for ln in path.read_text().splitlines()
            if not ln.lstrip().startswith("!")]
@@ -173,10 +179,10 @@ def parse_scala(path: Path) -> list[float]:
                 f"{path.name}: degree {index} is {token!r}, which is not a number")
         cents.append(value)
 
-    if count != 12:
+    if count != 12 and not mapped:
         raise ValueError(
             f"{path.name}: {count} degrees — the key table repeats every octave, "
-            "so a 12-note scale is required"
+            "so a 12-note scale is required, or a .kbm to map it"
         )
     if any(b <= a for a, b in zip(cents, cents[1:])):
         raise ValueError(
@@ -184,12 +190,109 @@ def parse_scala(path: Path) -> list[float]:
             "descend or repeat")
     if cents[1] <= 0.0:
         raise ValueError(f"{path.name}: first degree must be above the tonic")
-    if abs(cents[-1] - 1200.0) > 0.001:
+    if not mapped and abs(cents[-1] - 1200.0) > 0.001:
         raise ValueError(
             f"{path.name}: last degree is {cents[-1]:.3f} cents, not a 2/1 octave — "
             "the octave switches would go out of tune"
         )
+    if mapped:
+        return cents  # the .kbm names the period; every degree stays reachable
     return cents[:12]  # degree 12 is the octave, supplied by the octave term
+
+
+def parse_kbm(path: Path, degree_count: int) -> tuple[list[int], int]:
+    """Return (degree per map position, formal-octave degree) from a .kbm.
+
+    Scala keyboard mapping: '!' comments, then seven header values - map size,
+    first and last MIDI note, middle note, reference note, reference frequency,
+    formal octave degree - then one line per map position naming a scale
+    degree, or 'x' for a position that sounds nothing.
+
+    Four of those seven describe a MIDI keyboard tuned in Hz, and this
+    instrument is neither: it has 29 keys with no note numbers, and its
+    absolute pitch comes from the 208's trimmer rather than from the firmware.
+    So first, last, middle and the reference are read to prove the file is
+    well formed and then ignored, map position 0 falling on the bottom key.
+    Which key is pinned across slots stays [tuning].reference_key.
+
+    Unmapped positions take the degree of the nearest mapped position, ties to
+    the lower - the key sounds like the key beside it rather than falling
+    silent, which the firmware has no way to do.
+    """
+    raw = [ln for ln in path.read_text().splitlines()
+           if not ln.lstrip().startswith("!")]
+    header, index = [], 0
+    while index < len(raw) and len(header) < 7:
+        token = raw[index].strip()
+        index += 1
+        if token:
+            header.append(token.split()[0])
+    if len(header) < 7:
+        raise ValueError(f"{path.name}: not a Scala keyboard mapping — "
+                         f"needs seven header values, found {len(header)}")
+    names = ("map size", "first MIDI note", "last MIDI note", "middle note",
+             "reference note", "reference frequency", "formal octave degree")
+    values = []
+    for name, token in zip(names, header):
+        try:
+            values.append(float(token) if "frequency" in name else int(token))
+        except ValueError:
+            raise ValueError(
+                f"{path.name}: {name} is {token!r}, which is not a number") from None
+    size, _first, _last, _middle, _reference, ref_hz, formal = values
+    if not math.isfinite(ref_hz) or ref_hz <= 0:
+        raise ValueError(f"{path.name}: reference frequency must be above zero")
+    if size < 0:
+        raise ValueError(f"{path.name}: map size is {size}, which is negative")
+    if not 1 <= formal <= degree_count:
+        raise ValueError(
+            f"{path.name}: formal octave degree is {formal}, but the scale has "
+            f"{degree_count} degrees — it must name one of them")
+    # Size zero is the format's "no mapping": every degree in order.
+    if size == 0:
+        return list(range(degree_count)), formal
+
+    # Blank entries mean unmapped, so the mapping is read WITH its blank lines
+    # - only the header skipped them.
+    entries = raw[index:]
+    if len(entries) < size:
+        raise ValueError(
+            f"{path.name}: map size is {size}, found {len(entries)} entries")
+    degrees: list[int | None] = []
+    for position, line in enumerate(entries[:size]):
+        token = line.strip()
+        if not token or token[0] in "xX":
+            degrees.append(None)
+            continue
+        try:
+            degree = int(token.split()[0])
+        except ValueError:
+            raise ValueError(
+                f"{path.name}: position {position} is {token!r} — a scale "
+                "degree or 'x' for unmapped") from None
+        if not 0 <= degree <= degree_count:
+            raise ValueError(
+                f"{path.name}: position {position} names degree {degree}, but "
+                f"the scale has degrees 0..{degree_count}")
+        degrees.append(degree)
+
+    mapped = [i for i, d in enumerate(degrees) if d is not None]
+    if not mapped:
+        raise ValueError(f"{path.name}: every position is unmapped")
+    filled = []
+    for position, degree in enumerate(degrees):
+        if degree is not None:
+            filled.append(degree)
+            continue
+        nearest = min(mapped, key=lambda i: (abs(i - position), i))
+        filled.append(degrees[nearest])
+    return filled, formal
+
+
+def key_pitch(cents: list[float], degrees: list[int], period: float, key: int) -> float:
+    """Where a key sounds, in cents above the bottom key."""
+    size = len(degrees)
+    return period * (key // size) + cents[degrees[key % size]]
 
 
 def factory_tuning(memory: dict[int, int]) -> list[int]:
@@ -205,7 +308,9 @@ def factory_tuning(memory: dict[int, int]) -> list[int]:
         )
 
 
-def anchor_offset(cents: list[float], reference_key: int) -> float:
+def anchor_offset(cents: list[float], reference_key: int,
+                  degrees: list[int] | None = None,
+                  period: float = 1200.0) -> float:
     """Cents to shift a scale so `reference_key` lands on the 12-TET grid.
 
     A scale's degree 0 sits on the bottom key, but its degrees do not otherwise
@@ -221,20 +326,33 @@ def anchor_offset(cents: list[float], reference_key: int) -> float:
             f"[tuning].reference_key is {reference_key}; it is a semitone above the "
             "bottom key (a C), so it must be 0..11 — 0 = C, 9 = A"
         )
-    return 100.0 * reference_key - cents[reference_key]
+    if degrees is None:
+        return 100.0 * reference_key - cents[reference_key]
+    # With a map the reference key's degree is whatever the map gives it, so
+    # the pitch has to be looked up rather than indexed.  The target stays the
+    # 12-TET grid: that is where the factory table puts the key, and it is
+    # what the 208 was trimmed against.
+    return 100.0 * reference_key - key_pitch(cents, degrees, period, reference_key)
 
 
 def tuning_table(cents: list[float], base: int, per_octave: int,
-                 offset: float = 0.0) -> list[int]:
+                 offset: float = 0.0, degrees: list[int] | None = None,
+                 period: float = 1200.0) -> list[int]:
     """32 key-table entries: octave-periodic, `per_octave` units per octave.
 
     `offset` shifts the whole table by a number of cents, for the anchoring
     above.  It is applied before quantising, so it costs no extra resolution:
     the table's own step is 1200/`per_octave` cents either way.
     """
+    if degrees is None:
+        return [
+            base + math.floor(
+                (1200 * (k // 12) + cents[k % 12] + offset) * per_octave / 1200 + 0.5)
+            for k in range(32)
+        ]
     return [
         base + math.floor(
-            (1200 * (k // 12) + cents[k % 12] + offset) * per_octave / 1200 + 0.5)
+            (key_pitch(cents, degrees, period, k) + offset) * per_octave / 1200 + 0.5)
         for k in range(32)
     ]
 
@@ -1054,24 +1172,59 @@ def main() -> None:
         "pitch_remap": pitch_table(cfg, read_calibration(calibration)),
     }
     reference_key = tuning.get("reference_key", 9)
+    # How close two DIFFERENT pitches ever get, over the 29 real keys of every
+    # slot.  The latch calls two pitches the same note when they are within
+    # its tolerance, so a map finer than semitones has to tighten it or two
+    # neighbours would toggle each other.  Keys the map deliberately doubles
+    # up sit at zero apart and are the same note on purpose, so they are not
+    # counted.
+    closest = None
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             tables[f"tuning_slot{index}"] = factory_tuning(memory)
             print(f"  tuning slot {index}: factory temperament (from the base image, "
                   "copied bit-exact, so the anchor does not apply)")
             continue
-        path = REPO / relative
-        cents = parse_scala(path)
+        scale_name, map_name = (
+            (relative, None) if isinstance(relative, str)
+            else (relative[0], relative[1] if len(relative) > 1 else None))
+        path = REPO / scale_name
+        degrees = period = None
         try:
-            offset = anchor_offset(cents, reference_key)
+            if map_name is None:
+                cents = parse_scala(path)
+            else:
+                cents = parse_scala(path, mapped=True)
+                degrees, formal = parse_kbm(REPO / map_name, len(cents) - 1)
+                period = cents[formal]
+                # The octave switch adds a hardcoded 2/1, so a period that is
+                # not one would put every switch position out of tune with the
+                # keys.  Refused rather than shipped subtly wrong.
+                if abs(period - 1200.0) > 0.001:
+                    raise ValueError(
+                        f"{Path(map_name).name}: formal octave degree {formal} is "
+                        f"{period:.3f} cents, not a 2/1 — the octave switches add "
+                        "a 2/1 and would go out of tune")
+            offset = anchor_offset(cents, reference_key, degrees, period or 1200.0)
         except ValueError as error:
             raise SystemExit(str(error))
         tables[f"tuning_slot{index}"] = tuning_table(
-            cents, tuning["base_units"], tuning["units_per_octave"], offset
+            cents, tuning["base_units"], tuning["units_per_octave"], offset,
+            degrees, period or 1200.0
         )
         anchor = NOTE_NAMES[reference_key]
+        shape = ("" if degrees is None else
+                 f", {Path(map_name).name}: {len(degrees)} keys per octave")
         print(f"  tuning slot {index}: {path.name}"
-              f"  ({anchor} anchored, {offset:+.2f} cents)")
+              f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
+    for name, table in tables.items():
+        if not name.startswith("tuning_slot"):
+            continue
+        for a, b in zip(table[:29], table[1:29]):
+            gap = abs(b - a)
+            if gap and (closest is None or gap < closest):
+                closest = gap
+    cfg["_min_key_spacing"] = closest
     if len(tuning["slots"]) != 3:
         raise SystemExit("[tuning].slots must list exactly three scales")
 
@@ -1235,11 +1388,25 @@ def main() -> None:
     tolerance = cfg["arp"].get("latch_match_tolerance", 8)
     if isinstance(tolerance, bool) or not isinstance(tolerance, int) or not 0 <= tolerance <= 30:
         raise SystemExit("[arp].latch_match_tolerance must be an integer from 0 to 30")
+    closest = cfg.get("_min_key_spacing")
+    if closest is not None and get(cfg, "arp.switch") == "latch":
+        if tolerance >= closest:
+            raise SystemExit(
+                f"[arp].latch_match_tolerance is {tolerance}, but the closest two "
+                f"different keys get in this build is {closest} units "
+                f"({closest * 2.48:.0f} cents) — the latch would treat them as one "
+                f"note.  Use less than {closest}.")
+        if tolerance * 2 > closest:
+            print(f"  note: latch_match_tolerance {tolerance} is over half the "
+                  f"{closest}-unit gap between the closest keys; {closest // 2 - 1} "
+                  "or less keeps the margin the semitone default has")
     cfg["_numbers"]["latch_match_tolerance"] = tolerance
     if get(cfg, "arp.switch") == "latch":
+        gap = ("semitone is ~40 units" if closest is None
+               else f"closest keys are {closest} units apart")
         summary.append(f"  {'arp.latch_match_tolerance':28s} "
                        f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
-                       f"{'exact match' if tolerance == 0 else 'semitone is ~40 units'})")
+                       f"{'exact match' if tolerance == 0 else gap})")
 
     mode = calib.get("trim_mode", "independent")
     if mode not in ("independent", "scale"):

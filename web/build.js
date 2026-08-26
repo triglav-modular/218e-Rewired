@@ -16,10 +16,26 @@ var WEBBUILD = (function () {
             if (slot === 'factory') {
                 tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
             } else {
-                var cents = BUILDLIB.parseScala(slot.text, slot.name);
-                var offset = BUILDLIB.anchorOffset(cents, cfg.tuning.reference_key);
+                var mapped = !!slot.kbmText;
+                var cents = BUILDLIB.parseScala(slot.text, slot.name, mapped);
+                var degrees = null, period = 1200.0;
+                if (mapped) {
+                    var map = BUILDLIB.parseKbm(slot.kbmText, slot.kbmName, cents.length - 1);
+                    degrees = map.degrees;
+                    period = cents[map.formal];
+                    // The octave switch adds a hardcoded 2/1; a period that is
+                    // not one would put every switch position out of tune.
+                    if (Math.abs(period - 1200.0) > 0.001) {
+                        throw new Error(slot.kbmName + ': formal octave degree ' +
+                            map.formal + ' is ' + period.toFixed(3) + ' cents, not a ' +
+                            '2/1 — the octave switches add a 2/1 and would go out of tune');
+                    }
+                }
+                var offset = BUILDLIB.anchorOffset(
+                    cents, cfg.tuning.reference_key, degrees, period);
                 tables['tuning_slot' + index] = BUILDLIB.tuningTable(
-                    cents, cfg.tuning.base_units, cfg.tuning.units_per_octave, offset);
+                    cents, cfg.tuning.base_units, cfg.tuning.units_per_octave, offset,
+                    degrees, period);
             }
         });
         var mask = 0x0A54A54A;
