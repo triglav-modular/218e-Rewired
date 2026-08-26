@@ -43,9 +43,12 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
 ### 4. SH-101-style sequencer (option)
 - Takes the add-to-pitch toggle: top=record, middle=play, bottom=off.
   Factory toggle: top=octaves (4 pads select), middle=active pad's preset
-  voltage, bottom=none.  With the option on, the SOURCE is forced to
-  octave mode, so pads transpose live during play; the preset-to-pitch
-  mode is lost (document).  Bottom = factory none.
+  voltage, bottom=none.  With the option on, the pitch
+  adder is hard-stuck to octave mode, so pads transpose live during play.
+  Only the adder's preset-voltage SOURCE is forfeited: the preset
+  voltages themselves stay live at their own banana output, pad-selected
+  and pad+knob-editable as ever (document the distinction).
+  Bottom = factory none.
 - Precedence over the arp switch, including latch-exit clearing.
 - Record: entering wipes; note-ons append PITCHES (like latch stamps, so
   tuning-slot switches do not shift recorded notes); pitch-bend strip
