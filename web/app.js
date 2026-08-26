@@ -830,6 +830,7 @@
             latching_arp: $('latching_arp').checked,
             remap_knobs: $('remap_knobs').checked,
             sequencer: $('sequencer').checked,
+            clock_divide: $('clock_divide').checked,
             knob1: $('remap_knobs').checked ? knobRole.knob1 : 'factory',
             knob2: $('remap_knobs').checked ? knobRole.knob2 : 'factory',
             knob3: $('remap_knobs').checked ? knobRole.knob3 : 'factory',
@@ -866,7 +867,8 @@
         if (!fix.checked) porta.checked = false;
     }
     $('pressure_fix').addEventListener('change', syncPortamento);
-    ['latching_arp', 'remap_knobs', 'sequencer', 'pressure_fix', 'pressure_portamento']
+    ['latching_arp', 'remap_knobs', 'sequencer', 'clock_divide',
+     'pressure_fix', 'pressure_portamento']
         .forEach(function (id) {
             $(id).addEventListener('change', invalidate);
         });

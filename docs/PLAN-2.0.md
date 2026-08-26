@@ -281,7 +281,21 @@ thing to improve later once locking has proved itself on hardware.
 Also not taken: MARF's humanize.  The arp's own rhythm knob already owns
 that ground with swing and randomness.
 
-### Shape of the build (not started)
+### BUILT 2026-08-27
+
+Verified out of the built image: a 20-scan clock locks on the second
+interval; the knob then divides by 1, 2, 3, 5 and 8 at the positions the
+law says; an unevenly spaced clock never reaches lock and every pulse
+plays; 2-scan and 500-scan spacings are refused as clocks; and the lock
+releases between 399 and 404 scans of silence, which is the two seconds
+MARF gives itself.
+
+The knob law is `1 + ((1023 - rate) * 8 >> 10)`.  The multiplier is 8
+rather than the card's 7 because the shift divides by 1024 and not 1023;
+with 7 the eighth division was unreachable and the top of the travel spent
+two hundred counts on /1.
+
+### Shape of the build (as built)
 
 - Hook event 10's body at `0x80004e58`; our cave decides pass or swallow.
 - Per pulse: dt = scan counter - last stamp.  In 4..400 and close to the

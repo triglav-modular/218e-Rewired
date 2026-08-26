@@ -98,6 +98,10 @@ CONFIGS = [
     # agree about the housekeeping chain as well as the cave itself.
     ("sequencer",         [(r"^remap_knobs = true", 'remap_knobs = true\nsequencer = true')],
                           {"sequencer": True}),
+    # The divider takes a factory dispatcher case and adds a per-scan call, so
+    # both builders have to agree about the housekeeping chain too.
+    ("clock_divide",      [(r"^remap_knobs = true", 'remap_knobs = true\nclock_divide = true')],
+                          {"clock_divide": True}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
                             + ", ".join(['["tunings/BohlenPierce.scl", '

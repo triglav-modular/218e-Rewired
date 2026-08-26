@@ -115,6 +115,7 @@ OPTION_TYPES = {
     "knob4":               str,
     "arp_patterns":        list,
     "sequencer":           bool,
+    "clock_divide":        bool,
 }
 
 # What each preset knob may be set to.  The first entry of each is what
@@ -229,6 +230,8 @@ def expand(options: dict) -> dict:
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
                         "tie_glide_rate": 60}
+    # The arp rate knob divides an external clock once one is locked.
+    cfg["clock"] = {"divide": bool(want("clock_divide", False))}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
     cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
     cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing")

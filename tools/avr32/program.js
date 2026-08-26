@@ -3155,6 +3155,112 @@ function assembleProgram() {
         word(0x80015150); // the factory glide-rate table
         finish("seq_glide", 0x8001b65c);
 
+        // The external clock, per scan: the counter every interval here is
+        // measured against, and the release when the clock stops.  MARF gives
+        // itself two seconds; at a 5 ms scan that is 400 of these.
+        begin(0x8001b700);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R10,0x61e6");
+        emit("LD.UH R8,R10[0x0]");
+        emit("SUB R8,-0x1");
+        emit("ST.H R10[0x0],R8");
+        emit("LD.UB R9,R10[0x6]");      // locked?
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b730");
+        emit("LD.UH R9,R10[0x2]");      // when the last pulse arrived
+        emit("SUB R8,R9");
+        emit("CASTU.H R8");
+        emit("MOV R9,0x190");           // 400 scans, two seconds
+        emit("CP.W R8,R9");
+        emit("BR{le} 0x8001b730");
+        emit("MOV R9,0x0");
+        emit("ST.B R10[0x6],R9");       // released: free-running again
+        emit("ST.H R10[0x4],R9");
+        padTo(0x8001b730);
+        emit("LDM SP++,R7,PC");
+        finish("clock_scan", 0x8001b738);
+
+        // A clock pulse, reached where the factory ticked the arp outright.
+        // Its arp-switch test still stands above us, so by here the arp is
+        // running and the only question left is whether this pulse gets
+        // through.
+        //
+        // Locking is MARF's: pulses have to be plausibly spaced - 20 ms to
+        // 2 s, which is 4 to 400 scans - and the second one has to agree with
+        // the first before the knob starts dividing.  Until then every pulse
+        // goes through, which is what an unlocked clock should do.
+        begin(0x8001b740);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R10,0x61e6");
+        emit("LD.UH R8,R10[0x0]");      // now
+        emit("LD.UH R9,R10[0x2]");      // the last pulse
+        emit("ST.H R10[0x2],R8");
+        emit("SUB R8,R9");
+        emit("CASTU.H R8");             // the interval, wrapping cleanly
+        emit("CP.W R8,0x4");
+        emit("BR{lt} 0x8001b790");      // too fast to be a clock
+        emit("MOV R11,0x190");
+        emit("CP.W R8,R11");
+        emit("BR{gt} 0x8001b790");      // too slow
+        emit("LD.UH R9,R10[0x4]");      // the interval before this one
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b788");      // nothing to agree with yet
+        // Agreement: within an eighth of the last interval, plus a scan or
+        // two so a slow clock is not held to an impossible tolerance.
+        emit("MOV R11,R8");
+        emit("SUB R11,R11,R9 << 0x0");
+        emit("ABS R11");
+        emit("MOV R12,R9");
+        emit("LSR R12,0x3");
+        emit("SUB R12,-0x2");
+        emit("CP.W R11,R12");
+        emit("BR{gt} 0x8001b788");
+        emit("MOV R11,0x2");            // locked
+        emit("ST.B R10[0x6],R11");
+        emit("RJMP 0x8001b78c");
+        padTo(0x8001b788);
+        emit("MOV R11,0x1");            // one plausible interval, not two
+        emit("ST.B R10[0x6],R11");
+        padTo(0x8001b78c);
+        emit("ST.H R10[0x4],R8");
+        emit("RJMP 0x8001b798");
+        padTo(0x8001b790);
+        emit("MOV R11,0x0");
+        emit("ST.B R10[0x6],R11");
+        emit("ST.H R10[0x4],R11");
+        padTo(0x8001b798);
+        emit("LD.UB R11,R10[0x6]");
+        emit("CP.W R11,0x2");
+        emit("BR{ne} 0x8001b7c8");      // not locked: every pulse plays
+        // Locked, so the rate knob divides instead.  Its mirror at 0x2ee6 is
+        // the pot and the CV input together, 0..0x3ff; fast end passes every
+        // pulse, slow end one in eight.  The Clockwork Card's own law.
+        emit("MOV R11,0x2ee6");
+        emit("LD.SH R11,R11[0x0]");
+        emit("MOV R12,0x3ff");
+        emit("SUB R12,R12,R11 << 0x0");
+        emit("MOV R11,0x8");
+        emit("MUL R12,R12,R11");
+        emit("LSR R12,0xa");            // /1024, so the 8 makes up the 1023
+        emit("SUB R12,-0x1");           // 1..8 across the knob
+        emit("LD.UB R11,R10[0x7]");
+        emit("SUB R11,-0x1");
+        emit("CP.W R11,R12");
+        emit("BR{ge} 0x8001b7c8");
+        emit("ST.B R10[0x7],R11");      // swallowed
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b7c8);
+        emit("MOV R11,0x0");
+        emit("ST.B R10[0x7],R11");
+        emit("MOV R12,0xffff");         // -1: step now, do not reload
+        emit("MCALL PC[0x8001b7e0]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b7e0);
+        word(0x8000210c); // the arp step
+        finish("clock_pulse", 0x8001b7e4);
+
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
         // and then a threshold the countdown can never reach, so the gate
@@ -3495,10 +3601,14 @@ function assembleProgram() {
         if (block("seq_chord")) {
             emit("MCALL PC[0x8001a524]"); // the sequencer's pad chord
         }
+        if (block("clock_scan")) {
+            emit("MCALL PC[0x8001a528]"); // the external clock's own counter
+        }
         emit("LDM SP++,R7,PC");
         padTo(0x8001a520);
         word(0x8001ae1c);              // the preset editor
         word(0x8001b180);              // the sequencer chord
+        word(0x8001b700);              // the external clock, per scan
         padTo(0x8001a534);
         word(0x00003560); // global state base
         finish("scan_housekeeping", 0x8001a53c);
@@ -3570,6 +3680,16 @@ function assembleProgram() {
         emit("MCALL PC[0x80019d38]");
         padTo(0x800021a6);
         finish("arp_gate_hook", 0x800021a6);
+
+        // Event 10 is the external clock pulse.  The factory ticked the arp
+        // outright here; now the divider decides, and ticks itself if it is
+        // letting this one through.  The arp-switch test above is untouched.
+        if (block("clock_pulse")) {
+            begin(0x80004e72);
+            emit("MCALL PC[0x8001b740]");
+            emit("RJMP 0x800051b0");
+            finish("clock_hook", 0x80004e7a);
+        }
 
         // Hook: the arp's note selection.  The factory asked "is anything held,
         // and if so which key next"; the sequencer answers the same question

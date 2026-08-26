@@ -856,6 +856,9 @@ RAM_REGIONS = [
     # 64 recorded pitches, then how many there are, where play has got to,
     # and the pitch the step about to sound carries.
     (0x6160, 0x61E6, "sequencer steps"),
+    # The external clock: its own scan counter, the last pulse's stamp, the
+    # interval before this one, whether it is locked, and the divide count.
+    (0x61E6, 0x61EE, "external clock divider"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -875,6 +878,7 @@ FACTORY_CELLS = [
     # last three entries outside the overlap protection this map exists
     # to provide.
     (0x0854, 0x0894, "key pitch table"),
+    (0x2EE6, 0x2EE8, "arp rate knob and CV, combined"),
     (0x2EEE, 0x2EF0, "glide rate"),
     (0x3212, 0x3214, "pitch mirror"),
     # The pads' own touch states, the same shape as the keys' array: one byte
@@ -1686,6 +1690,10 @@ def main() -> None:
     cfg["_numbers"]["strip_end_units"] = int(cfg.get("sequencer", {}).get("strip_end_units", 48))
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
     seq = bool(cfg.get("sequencer", {}).get("on"))
+    div = bool(cfg.get("clock", {}).get("divide"))
+    for name in ("clock_scan", "clock_pulse", "clock_hook"):
+        blocks[name] = div
+    summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
                  "seq_strip", "seq_gate", "seq_glide", "strip_pool"):

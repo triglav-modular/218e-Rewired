@@ -124,6 +124,9 @@ var WEBBUILD = (function () {
         ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
          'seq_strip', 'seq_gate', 'seq_glide', 'strip_pool']
             .forEach(function (n) { blocks[n] = seq; });
+        var div = !!(cfg.clock && cfg.clock.divide);
+        ['clock_scan', 'clock_pulse', 'clock_hook']
+            .forEach(function (n) { blocks[n] = div; });
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
         if (blocks.knob4_octave_switch) {
