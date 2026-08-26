@@ -113,6 +113,8 @@ var BUILDLIB = (function () {
             roles[k] = role;
             cfg.knobs[k] = role === 'factory' ? 'factory' : live[k];
         });
+        // The sequencer's controls live on a pad chord, so it needs the pads.
+        cfg.sequencer = { on: !!want('sequencer', false) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
         cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing')

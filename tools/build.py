@@ -849,6 +849,10 @@ RAM_REGIONS = [
     (0x6150, 0x6152, "arp pattern step"),
     # Which half of the swung pair the next step is.
     (0x6152, 0x6153, "arp swing parity"),
+    # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
+    # the selection is frozen at, last scan's touch levels, and the blink
+    # counter every light this firmware adds shares.
+    (0x6154, 0x6160, "sequencer chord and mode"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1676,6 +1680,9 @@ def main() -> None:
         blocks["arp_rhythm_hook"] = False
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
+    seq = bool(cfg.get("sequencer", {}).get("on"))
+    blocks["seq_chord"] = seq
+    summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))

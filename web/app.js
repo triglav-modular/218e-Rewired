@@ -829,6 +829,7 @@
         var o = {
             latching_arp: $('latching_arp').checked,
             remap_knobs: $('remap_knobs').checked,
+            sequencer: $('sequencer').checked,
             knob1: $('remap_knobs').checked ? knobRole.knob1 : 'factory',
             knob2: $('remap_knobs').checked ? knobRole.knob2 : 'factory',
             knob3: $('remap_knobs').checked ? knobRole.knob3 : 'factory',
@@ -865,7 +866,7 @@
         if (!fix.checked) porta.checked = false;
     }
     $('pressure_fix').addEventListener('change', syncPortamento);
-    ['latching_arp', 'remap_knobs', 'pressure_fix', 'pressure_portamento']
+    ['latching_arp', 'remap_knobs', 'sequencer', 'pressure_fix', 'pressure_portamento']
         .forEach(function (id) {
             $(id).addEventListener('change', invalidate);
         });
@@ -1024,6 +1025,7 @@
         var lines = [
             'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
             'Knobs 1-4: ' + [o.knob1, o.knob2, o.knob3, o.knob4].join(', '),
+            'Sequencer: ' + (o.sequencer ? 'on' : 'off'),
             'Pressure: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
             'Scaling: ' + o.volts_per_octave + ' V/octave',

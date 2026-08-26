@@ -3005,6 +3005,185 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         finish("arp_swing", 0x8001b164L);
 
+        // The sequencer's controls, on a pad chord.  Hold pad 4 for three
+        // seconds to arm - its light blinks - then, still holding it, press
+        // pad 1 to record, pad 2 to play, pad 3 to stop.  The add-to-pitch
+        // toggle is not involved: it keeps selecting octaves, preset voltage
+        // or none exactly as the factory does.
+        //
+        // Three seconds because pad 4 with another pad is an ordinary thing
+        // to do, and a bare chord would fire by accident.  The arm dies with
+        // the hold, so it can never outlive the gesture that made it.
+        //
+        // RAM off one base at 0x6154: +0 hold counter (halfword; scans are
+        // ~5 ms, so three seconds is 600 of them), +2 armed, +3 selected,
+        // +4 mode, +5 the pad to hold the selection at, +6..8 last scan's
+        // touch levels for pads 1-3, +0xa a free-running blink counter.
+        // One counter drives every blink this firmware adds, so they share a
+        // rate and a phase; bit 6 of it toggles every 64 scans, ~1.6 Hz.
+        begin(0x8001b180L);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R0,0x8001b300");    // global state base
+        emit("MOV R1,0x6154");
+        emit("MOV R2,0x46f0");          // the pad touch array, 2 = held
+        emit("LD.UH R8,R1[0xa]");
+        emit("SUB R8,-0x1");
+        emit("ST.H R1[0xa],R8");
+        emit("BFEXTU R3,R8,0x6,0x1");   // R3 = the blink phase, for all of it
+
+        emit("LD.UB R8,R2[0x3]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001b1e0");      // pad 4 up: the release path
+
+        // Held.  Count towards the arm, saturating rather than wrapping -
+        // wrapping would disarm a long hold when the count passed zero.
+        emit("LD.UH R8,R1[0x0]");
+        emit("MOV R9,0x258");           // 600 scans, ~3 s at a 5 ms scan
+        emit("CP.W R8,R9");
+        emit("BR{ge} 0x8001b1ae");
+        emit("SUB R8,-0x1");
+        emit("ST.H R1[0x0],R8");
+        padTo(0x8001b1aeL);
+        emit("LD.UB R10,R1[0x2]");      // armed?
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001b1cc");
+        emit("CP.W R8,R9");
+        emit("BR{lt} 0x8001b200");      // not three seconds yet
+        // A hold whose knob has moved is a preset edit, not a chord.  The
+        // editor flags that pad as following at 0x614a + pad.
+        emit("MOV R10,0x614d");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001b200");
+        emit("MOV R10,0x1");
+        emit("ST.B R1[0x2],R10");       // armed
+        emit("LD.UB R10,R0[0x2ef]");
+        emit("ST.B R1[0x5],R10");       // hold the selection where it stands
+
+        padTo(0x8001b1ccL);
+        // The selecting press must not also pick a preset, so the active pad
+        // is frozen for as long as the arm lasts.  Freezing beats undoing
+        // each press: it cannot race the factory's own pad handler.
+        emit("LD.UB R10,R1[0x5]");
+        emit("LD.UB R11,R0[0x2ef]");
+        emit("CP.W R11,R10");
+        emit("BR{eq} 0x8001b200");
+        emit("MOV R12,R10");
+        emit("MCALL PC[0x8001b304]");   // select_pad
+        emit("RJMP 0x8001b200");
+
+        padTo(0x8001b1e0L);
+        // Pad 4 up.  Everything the hold set goes, and the lights are
+        // repainted from the truth underneath rather than from anything
+        // remembered, so an eaten press cannot leave them wrong.  Runs on
+        // every exit, the hold that refused to arm included.
+        emit("LD.UH R8,R1[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001b1f0");
+        emit("LD.UB R8,R1[0x2]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b200");
+        padTo(0x8001b1f0L);
+        emit("MOV R9,0x0");
+        emit("ST.H R1[0x0],R9");
+        emit("ST.B R1[0x2],R9");
+        emit("ST.B R1[0x3],R9");
+        emit("LD.UB R12,R0[0x2ef]");
+        emit("MCALL PC[0x8001b304]");   // select_pad repaints all four
+
+        padTo(0x8001b200L);
+        // Pads 1, 2 and 3 on their press edge.  This loop runs EVERY scan,
+        // armed or not: if it only ran while armed, a pad already held when
+        // the arm completed would look like a fresh press and fire at once.
+        emit("MOV R11,0x0");
+        padTo(0x8001b204L);
+        emit("ADD R12,R2,R11 << 0x0");
+        emit("LD.UB R12,R12[0x0]");     // this scan's level
+        emit("ADD R8,R1,R11 << 0x0");
+        emit("LD.UB R9,R8[0x6]");       // last scan's
+        emit("ST.B R8[0x6],R12");
+        emit("LD.UB R10,R1[0x2]");      // armed?
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001b248");
+        emit("LD.UB R10,R1[0x3]");      // one selection per arm
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001b248");
+        emit("CP.W R12,0x2");
+        emit("BR{ne} 0x8001b248");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001b248");
+        // Pad 1 records, pad 2 plays, pad 3 stops.
+        emit("MOV R9,0x2");
+        emit("CP.W R11,0x0");
+        emit("BR{ne} 0x8001b230");
+        emit("MOV R9,0x1");
+        padTo(0x8001b230L);
+        emit("CP.W R11,0x2");
+        emit("BR{ne} 0x8001b238");
+        emit("MOV R9,0x0");
+        padTo(0x8001b238L);
+        emit("ST.B R1[0x4],R9");        // the mode
+        emit("MOV R10,0x1");
+        emit("ST.B R1[0x3],R10");       // selected
+        // Repaint from the frozen pad: that is both the freeze and the clean
+        // slate the flash below writes its own channel onto.
+        emit("LD.UB R12,R1[0x5]");
+        emit("MCALL PC[0x8001b304]");   // select_pad
+        padTo(0x8001b248L);
+        emit("SUB R11,-0x1");
+        emit("CP.W R11,0x3");
+        emit("BR{lt} 0x8001b204");
+
+        // Pad 4's own light: blinking while armed, steady once the press has
+        // been taken.  Only while armed - the release path already repainted.
+        emit("LD.UB R10,R1[0x2]");
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001b268");
+        emit("LD.UB R9,R1[0x3]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001b25e");
+        emit("MOV R9,R3");
+        padTo(0x8001b25eL);
+        emit("MOV R11,0x3");
+        emit("MCALL PC[0x8001b314]");   // write one channel
+        padTo(0x8001b268L);
+        // The running mode flashes its own pad for as long as it runs, and
+        // has to be written EVERY scan: select_pad clears channels 0-3 and
+        // lights one on every pad press, so a flash asserted once would be
+        // wiped by the next press.  Record is pad 1, play is pad 2.
+        emit("LD.UB R11,R1[0x4]");
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001b27a");
+        emit("SUB R11,0x1");
+        emit("MOV R9,R3");
+        emit("MCALL PC[0x8001b314]");   // write one channel
+        padTo(0x8001b27aL);
+        emit("MCALL PC[0x8001b310]");   // led_flush: free when nothing changed
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+
+        padTo(0x8001b290L);
+        // write_channel(R11 = channel, R9 = lit or not).
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R12,R11");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b2a4");
+        emit("MCALL PC[0x8001b308]");   // led_set
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b2a4L);
+        emit("MCALL PC[0x8001b30c]");   // led_clear
+        emit("LDM SP++,R7,PC");
+
+        padTo(0x8001b300L);
+        word(0x00003560L); // global state base
+        word(0x8000698cL); // select_pad(0..3)
+        word(0x80006808L); // led_set(ch)
+        word(0x800068ccL); // led_clear(ch)
+        word(0x8000673cL); // led_flush()
+        word(0x8001b290L); // write_channel(R11, R9)
+        finish("seq_chord", 0x8001b318L);
+
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
@@ -3166,10 +3345,14 @@ public class AssemblePressureFix extends GhidraScript {
             emit("BR{ge} 0x8001a500");
         }
         padTo(0x8001a510L);
-        emit("MCALL PC[0x8001a518]");   // preset voltage editing
+        emit("MCALL PC[0x8001a520]");   // preset voltage editing
+        if (block("seq_chord")) {
+            emit("MCALL PC[0x8001a524]"); // the sequencer's pad chord
+        }
         emit("LDM SP++,R7,PC");
-        padTo(0x8001a518L);
+        padTo(0x8001a520L);
         word(0x8001ae1cL);              // the preset editor
+        word(0x8001b180L);              // the sequencer chord
         padTo(0x8001a534L);
         word(0x00003560L); // global state base
         finish("scan_housekeeping", 0x8001a53cL);

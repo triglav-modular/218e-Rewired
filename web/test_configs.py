@@ -94,6 +94,10 @@ CONFIGS = [
     ("knob2_swing",       [(r"^remap_knobs = true",
                             'remap_knobs = true\nknob2 = "swing"')],
                           {"knob2": "swing"}),
+    # The sequencer adds a cave and a per-scan call, so both builders have to
+    # agree about the housekeeping chain as well as the cave itself.
+    ("sequencer",         [(r"^remap_knobs = true", 'remap_knobs = true\nsequencer = true')],
+                          {"sequencer": True}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
                             + ", ".join(['["tunings/BohlenPierce.scl", '
