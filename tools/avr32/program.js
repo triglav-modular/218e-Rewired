@@ -2948,6 +2948,16 @@ function assembleProgram() {
         fixedPatch("preset_read_2", 0x80003672, 4, "LD.SH R8,R8[0x2bdc]");
         fixedPatch("preset_read_3", 0x800036bc, 4, "LD.SH R8,R8[0x2bde]");
         fixedPatch("preset_read_4", 0x80003706, 4, "LD.SH R8,R8[0x2be0]");
+        // There are TWO of these getters, identical in shape and both
+        // switching on the active pad: the one above feeds the pitch adder,
+        // and this one drives the preset voltage's own output.  Patching only
+        // the first left the jack still following the knob while the pitch
+        // adder had already been decoupled - the two would have disagreed
+        // about what the preset voltage was.
+        fixedPatch("preset_out_1", 0x8000a97e, 4, "LD.SH R8,R8[0x2bda]");
+        fixedPatch("preset_out_2", 0x8000a98e, 4, "LD.SH R8,R8[0x2bdc]");
+        fixedPatch("preset_out_3", 0x8000a99e, 4, "LD.SH R8,R8[0x2bde]");
+        fixedPatch("preset_out_4", 0x8000a9ae, 4, "LD.SH R8,R8[0x2be0]");
 
         // An octave is a 2/1 everywhere in the factory: the panel switch adds
         // -484, 0, +484 or +968 DAC units by position, and the stored octave
