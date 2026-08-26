@@ -86,8 +86,40 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   pitch path (to suspend in record and read ends for rest/tie).
 - Arp rate knob: mirror address + rate handler (for the divider takeover).
 - External clock input: where pulses arrive (interval measurement site).
-- Settings record at 0x0968: length and spare bytes (preset storage).
+- Settings record at 0x0968: SETTLED, see below.  What remains is what sits
+  next to it in flash.
 - Stack low-water mark vs RAM plan (sequence buffer past 0x613a).
+
+## Phase 2 findings (2026-08-26)
+
+The persisted settings record, end to end:
+
+- RAM 0x0968 holds a POINTER to the record in flash; the payload is staged in
+  RAM at 0x46c8 and committed to (pointer + 2).
+- The record is 31 bytes, 0x00..0x1e, and every one of them is in use - the
+  saver at 0x80009fb8 writes each from a live setting, byte 0x02 being our
+  own poly-MIDI marker.  There is no spare byte inside it.
+- Length is the immediate `MOV R10,0x1f` at 0x8000a244 (and again at
+  0x80009f96 in a second saver with the same shape).  Both are two bytes, so
+  0x27 would patch in place with no layout change.
+- The loader at 0x8000a264 does NOT take a length: it dereferences the
+  pointer and reads bytes by offset.  So new bytes need no loader patch -
+  our own code reads 0x1f.. directly.
+- The commit is a general bounds-checked flash writer at 0x800108fc taking
+  (dest, src, len, flag).
+
+So four 16-bit preset voltages want bytes 0x1f..0x26 and length 0x27.
+
+OPEN, and the reason phase 2 is not yet built: what follows the record in
+flash.  The record's address is only known at run time (RAM 0x0968, whose
+writer is not any of the obvious constant-loads), so writing eight bytes past
+it could land on something else.  Options, cheapest first:
+
+1. RAM-only presets for now - works, lost at power-off, contradicts the spec.
+2. Establish the flash layout around the record (read 0x0968 on a running
+   instrument, or find its initialiser) and extend if there is room.
+3. Use the AT32's separate 512-byte User Page, which exists for exactly this -
+   needs checking whether the factory already uses it.
 
 ## Infrastructure
 - Branch 2.0 (pushed).  Add it to firmware.yml + windows workflow
