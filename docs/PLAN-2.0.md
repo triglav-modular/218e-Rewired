@@ -182,7 +182,36 @@ use.  What is missing is the gesture.
 - Verified by emulating the shipped bytes: eight cases including the pickup
   problem and jitter under a held pad.
 
-Still to come: persistence to the User Page, so the store survives power-off.
+Still to come: persistence, and it is blocked on one fact.
+
+WRITE ON RELEASE, never on the follow path: the store tracks the knob in RAM
+while the pad is down, so one gesture is one write.  That is what keeps flash
+wear irrelevant - roughly a hundred thousand erase cycles against a handful of
+edits a day.
+
+NOT the User Page after all, despite it being free.  On this part the DFU
+bootloader keeps its configuration words at the END of that page, so anything
+that erases the page to write it risks taking the bootloader's configuration
+with it - and that is the one failure this project cannot recover from
+without JTAG.  Our own page in the main array is the safer target: the image
+ends at 0x80018bf4 and our caves at 0x8001aec0, so a page at 0x8001c000 is
+empty, ours alone, and a mistake there costs a reflash rather than an
+instrument.
+
+The open fact is the driver at 0x800108fc: whether it erases the target page
+before writing, or assumes the target is already erased.  It matters because
+the two need different code - a driver that erases can rewrite one slot
+forever, while a driver that does not needs a fresh slot each time and an
+erase when the page fills.  Static analysis has not settled it: the FLASHC
+registers are never reached through a pool word or an ORH pair that a scan
+can find, so the controller access is built some other way.
+
+Settle it empirically instead, with a throwaway diagnostic build: write a
+known pattern to 0x8001c000, read it back, write a DIFFERENT pattern to the
+same place, read again.  If the second write takes, the driver erases.  If it
+returns the AND of the two, it does not.  Ten minutes on the instrument
+answers what an afternoon of disassembly has not, and it cannot hurt anything
+- the page belongs to nobody.
 
 ## Phase 2, the wrinkle in the getter repoint (avoided in the end)
 
