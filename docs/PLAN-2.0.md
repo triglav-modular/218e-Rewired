@@ -108,10 +108,13 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   change the adder source.  None of these is the factory pads-2+3 latch,
   which our-latch builds remove anyway.  Mode byte resets to octaves
   wherever the sequencer's own state resets.
-  OPEN: whether anything can acknowledge the arm.  Three seconds with no
-  feedback is a long time to trust; if the pad lighting is reachable and
-  writable, a blink at the arm point would earn its cost.  To be answered
-  in archaeology before this is built, not assumed.
+  ANSWERED 2026-08-27, see LEDs below: the pads are lit, one channel
+  each, and the arm can blink pad 4.  Do NOT use the factory's own blink
+  (0x80003b1c) - it busy-waits 4x150 ms, which would stall the scan for
+  six tenths of a second.  Ours toggles the bit on the scan counter and
+  costs nothing.  One thing to honour: the pad lights are a radio group
+  the factory re-asserts only when a pad is selected, so whatever the
+  blink borrows it has to put back when the arm ends.
   Only the adder's DEFAULT source changes with the option on: the preset
   voltages themselves stay live at their own banana output, pad-selected
   and pad+knob-editable as ever (document the distinction).
@@ -141,6 +144,38 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   configured volts/octave, and possibly an option to cap the table at a
   stated ceiling.  Confirmed on the owner's instrument 2026-08-26.
 
+## LEDs (read out of the factory binary 2026-08-27)
+
+Ten channels, each one bit of a 16-bit shadow word at RAM `0x2ef4`, with a
+dirty flag at `0x2ef6`:
+
+| ch | bit | what |
+|----|-----|------|
+| 0-3 | 7, 9, 10, 11 | the four preset pads, one each |
+| 4 | 2 | unidentified |
+| 5 | 13 | rem-en |
+| 6 | 15 | unidentified |
+| 7 | 3 | unidentified |
+| 8 | 12 | trn |
+| 9 | 14 | unidentified |
+
+- `led_set(R12 = ch)` `0x80006808`, `led_clear(R12 = ch)` `0x800068cc`.  Both
+  set the dirty flag; a channel above 9 falls through and only dirties.
+- `led_flush()` `0x8000673c` pushes the word to a shift register over SPI
+  (peripheral `0xFFFF2400`, two bytes, high first) and strobes GPIO pin 19,
+  then clears the dirty flag.  It returns immediately when nothing is dirty,
+  so calling it per scan is free; the two SPI bytes are microseconds.  The
+  pad selector does not call it, so a caller that wants its change on the
+  panel now should.
+- `select_pad(R12 = 0..3)` `0x8000698c` is the whole pad-light story: clear
+  channels 0-3, set the one that matches, store the pad at `state+0x2ef`.
+  The lights are a radio group and are re-asserted only on a pad press -
+  nothing repaints them per scan, unlike rem-en/trn which the tuning applier
+  re-asserts.
+- `blink(R12 = ch, R11 = currently_on)` `0x80003b1c` blinks twice and restores
+  the state R11 claims.  It is BLOCKING: four `delay(150 ms)` calls, 600 ms
+  of busy-wait.  Fine where the factory uses it; unusable from the scan loop.
+
 ## Archaeology (all in the factory binary)
 - Add-to-pitch toggle: state address + how the source selection is applied
   (forcing point for octave mode).
@@ -148,8 +183,7 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   pitch path (to suspend in record and read ends for rest/tie).
 - Arp rate knob: mirror address + rate handler (for the divider takeover).
 - External clock input: where pulses arrive (interval measurement site).
-- Pad lighting: whether the pads can be lit under program control, and where
-  from - the only candidate for acknowledging the three-second arm.
+- ~~Pad lighting~~ DONE, see below.
 - Settings record at 0x0968: SETTLED, see below.  What remains is what sits
   next to it in flash.
 - Stack low-water mark vs RAM plan (sequence buffer past 0x613a).
