@@ -224,12 +224,12 @@ def expand(options: dict) -> dict:
     # the active pad so the selecting press cannot change a preset, and the
     # knob-moved refusal reads the editor cave, which every build carries.
     # Where along the bend strip the line between a rest and a tie falls, in
-    # the strip's own position units - 0 at one end, 1023 at the other, which
-    # is the range state+0x306 is read and clamped over.  512 is the middle,
-    # and the middle is the rule; the number is here so a real strip can move
-    # it if its ends do not reach.
+    # the strip's own position units - 0 at one end, 4095 at the other, which
+    # is the range the factory clamps state+0x1fe to.  2048 is the middle, and
+    # the middle is the rule; the number is here so a strip that reads off
+    # centre can be told where its own middle is.
     cfg["sequencer"] = {"on": bool(want("sequencer", False)),
-                        "strip_halfway_units": 512,
+                        "strip_halfway_units": 2048,
                         # How far a tie slides into the note after it, on the
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.

@@ -1486,15 +1486,10 @@ function assembleProgram() {
         // At knob zero T exceeds any possible touch, so only the sounding
         // key contributes and the blend is exactly zero (factory behavior).
         // The anchor key is never thresholded, so engagement is smooth.
-        // Read the PORTAMENTO CONTROL (state+0x306), not the combined rate
-        // index at +0x3a2 — the index carries a pressure-derived addend, so
-        // with the full 218r curve the threshold would move with pressure and
-        // the blend would engage and disengage erratically under the fingers.
-        //
-        // state+0x306 is the pitch strip's own position, 0..1023; the factory
-        // recomputes the glide rate from it whenever the strip is not being
-        // touched (0x8000313a), which is what makes it the portamento setting
-        // and what "the knob" here means.
+        // Read the KNOB MIRROR (state+0x306), not the combined rate index at
+        // +0x3a2 — the index carries a pressure-derived addend, so with the
+        // full 218r curve the threshold would move with pressure and the
+        // blend would engage and disengage erratically under the fingers.
         emit("LD.SH R5,R9[0x306]");
         // Hard gate: below the knob's deadzone the blend loop never runs at
         // all — multi-finger common-mode sensor inflation can push deltas
@@ -2864,17 +2859,17 @@ function assembleProgram() {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0x98, not 0x1c: the run reaches from the pressure cache all the way
+        // 0x97, not 0x1c: the run reaches from the pressure cache all the way
         // over the preset block, the arp's own cells, the sequencer, the
-        // clock divider and the strip's two - everything we keep in this gap.
-        // SRAM survives a DFU, so anything left out here starts as whatever
-        // the last image happened to leave: a sequencer that resumes an old
-        // mode mid-flash, a divider that thinks it is still locked, a strip
-        // mode waiting to be given back to a take that never happened, or -
-        // the one that was already wrong at 0x25 - two of the four preset
-        // following flags, which would have stopped the pad-4 chord arming
-        // at all.
-        emit("MOV R12,0x98");
+        // clock divider and the borrowed strip mode - everything we keep in
+        // this gap.  SRAM survives a DFU, so anything left out here starts as
+        // whatever the last image happened to leave: a sequencer that resumes
+        // an old mode mid-flash, a divider that thinks it is still locked, a
+        // strip mode waiting to be given back to a take that never happened,
+        // or - the one that was already wrong at 0x25 - two of the four
+        // preset following flags, which would have stopped the pad-4 chord
+        // arming at all.
+        emit("MOV R12,0x97");
         padTo(0x8001ac40);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3815,7 +3810,7 @@ function assembleProgram() {
         emit("CP.W R8,R9");
         emit("BR{eq} 0x8001b700");      // nothing is changing
         emit("LDDPC R10,0x8001b704");   // global state base
-        emit("MOV R11,0x6230");
+        emit("MOV R11,0x622e");
         emit("CP.W R9,0x1");
         emit("BR{ne} 0x8001b6e8");
         emit("LD.W R8,R10[0x20c]");
@@ -3865,51 +3860,47 @@ function assembleProgram() {
         //
         // A rest or a tie is read from WHERE the strip is when it is let go,
         // not from which way it was pushed: below halfway a rest, above
-        // halfway a tie.  state+0x306 is the position itself, 0..1023 across
-        // the strip, before the factory's bend curve bends it - so halfway is
-        // halfway, which thresholding the bend value could never be.
-        //
-        // The position is taken every scan the touch flag is set, and the
-        // last one taken is what the release uses.  After the flag drops
-        // there is nothing to read: the sensor reports where a finger is, and
-        // there is no finger.
+        // halfway a tie.  state+0x1fe is that position - the centroid of the
+        // seven capacitive segments (0x8000aa98), mapped from 1250..6750 onto
+        // 0..4095 by the factory's own clamping mapper at 0x8000ad00.  It is
+        // written only while the touch flag is up, so after a release it
+        // still holds where the finger left, and it is the raw position in
+        // both strip modes: what state+0x20c changes is state+0x1f8, the
+        // OUTPUT, which is absolute in one mode and centred on 0x7ff in the
+        // other.
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R10,0x61e0");         // the step store; +4 is the strip's latch
         emit("LDDPC R11,0x8001b604");   // global state base
         emit("LD.UB R8,R11[0x206]");    // is the strip touched at all
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b5b6");
-        emit("LD.SH R8,R11[0x306]");
-        emit("MOV R9,0x622e");
-        emit("ST.H R9[0x0],R8");
+        emit("BR{eq} 0x8001b5ac");
         emit("MOV R8,0x1");
         emit("ST.B R10[0x4],R8");       // down, and down is what a release needs
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b5b6);
+        padTo(0x8001b5ac);
         // Up.  One step per release, and every release: three taps at the
         // bottom enter three rests, which is what a bar of them takes.
         emit("LD.UB R8,R10[0x4]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b5fa");      // it was already up
+        emit("BR{eq} 0x8001b5ee");      // it was already up
         emit("MOV R8,0x0");
         emit("ST.B R10[0x4],R8");
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b5fa");      // only record listens to the strip
+        emit("BR{ne} 0x8001b5ee");      // only record listens to the strip
         emit("LD.UB R9,R10[0x0]");
         emit("CP.W R9,0x40");
-        emit("BR{ge} 0x8001b5fa");      // 64 steps and no more
-        emit("MOV R8,0x622e");
-        emit("LD.UH R12,R8[0x0]");
+        emit("BR{ge} 0x8001b5ee");      // 64 steps and no more
+        emit("LD.SH R12,R11[0x1fe]");   // where the finger left
         emit(StringFormat("MOV R8,0x%x",
-             number("strip_halfway_units", 512, 32, 992)));
+             number("strip_halfway_units", 2048, 128, 3968)));
         emit("MOV R11,0x2");            // above halfway: a tie
         emit("CP.W R12,R8");
-        emit("BR{ge} 0x8001b5e4");
+        emit("BR{ge} 0x8001b5d8");
         emit("MOV R11,0x1");            // below halfway: a rest
-        padTo(0x8001b5e4);
+        padTo(0x8001b5d8);
         // 0x7ffe is a rest and 0x7fff a tie, as a pitch can never be either.
         emit("MOV R8,0x7ffd");
         emit("ADD R8,R8,R11 << 0x0");
@@ -3918,7 +3909,7 @@ function assembleProgram() {
         emit("ST.H R12[0x0],R8");
         emit("SUB R9,-0x1");
         emit("ST.B R10[0x0],R9");
-        padTo(0x8001b5fa);
+        padTo(0x8001b5ee);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b600);
         word(0x80002e30); // bend(position)

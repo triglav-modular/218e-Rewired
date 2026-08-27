@@ -220,10 +220,10 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   pressure-blend build, where the knob's answer is zero and notes otherwise
   snap.  The store went out of line into its own cave to make room for the
   test: the clamp's block ends where pulse_defer_set begins.
-  strip_halfway_units is 512, the middle of the 0..1023 the position is read
-  over, and the middle is the rule rather than a number to taste - it is a
-  build number so that a strip whose ends do not reach can be told where its
-  own middle is.  tie_glide_rate is 60 on the
+  strip_halfway_units is 2048, the middle of the 0..4095 the factory clamps
+  the position to, and the middle is the rule rather than a number to taste -
+  it is a build number so that a strip reading off centre can be told where
+  its own middle is.  tie_glide_rate is 60 on the
   factory's own 0..1024 glide scale - the same scale its knob table runs on,
   where 0 snaps and 1024 is the longest glide.  How long 60 actually is was
   not measured; it is a build number for the same reason.
@@ -245,74 +245,106 @@ What it does instead of thresholding a bend direction:
   direction, no re-arm rule - the position is simply what it says when you
   let go.
 
-### The cell, and its range
+### The strip is not a knob, and its position is `state+0x1fe`
 
-`state+0x306` is the strip's POSITION, and the range is **0..1023**.  Read
-out of the factory image rather than assumed:
+The strip has no ADC channel of its own.  It is a **seven-segment capacitive
+sensor**, read through the same array as the keys, and the factory turns it
+into a position at `0x8000aa98`:
 
-- It is written in exactly one place, `0x80007bb8`, from
-  `deadband(0, adc_channel_0)` - the six-channel conditioner at `0x800079e0`,
-  which tracks its input with a 5-count deadband and **caps at the 0x3ff its
-  caller passes in**.  The raw channel is `state+0x2fa`, sampled at
-  `0x8000725c`.
-- The factory indexes a **1024-entry** table with it: `0x80003ea6` reads
-  `curve[state+0x306]` at `0x80015150`, and that table runs 0..1023 mapping
-  to 0..1024.  The only bound the code applies is the floor at `0x1d`
-  (`0x80003e90`), which pins anything lower to `0x1e`.  A strip that could
-  not reach the top of the table would reach only a third of its own bend.
-- The glide path clamps `state+0x306` plus an addend to `0x3ff` at
-  `0x80003178`, and this repo's own shipped `pressure_blend` maps it as
-  `T = 1023 - value` with a deadzone at `0x30` - hardware-verified travel
-  over that whole span.
+```
+total    = sum(seg[0..6])
+weighted = sum(seg[i] * (i+1) * 1000)
+centroid = weighted / total                    # 1000..7000
+```
 
-So halfway is 512, and `strip_halfway_units` says so.  It is a build number
-only so that a strip whose ends do not quite reach can be told where its own
-middle is; the rule is the middle.
+The centroid is then mapped and clamped by the factory's own range mapper
+(`0x8000704a`, `out = clamp((x-in_lo)*(out_hi-out_lo)/(in_hi-in_lo)+out_lo)`):
 
-**What `state+0x306` is not.** This repo has called it "the portamento knob"
-(`pressure_blend`, `seq_glide`) and "arp step state" (`FACTORY_CELLS`).  Both
-labels are for the same cell, and both are the same misreading: there is no
-fifth knob.  Six analog channels are conditioned together at `0x80007ad8` -
-`0x306` strip position, `0x308` strip pressure, `0x30a`/`0x30c`/`0x30e` the
-three preset knobs, `0x310` a switch decoded into positions at `0x80004a0e`.
-What settles `0x306` is that the factory snapshots it into `state+0x312` at
-the instant the touch flag goes up (`0x8000ac5e`, right after
-`ST.B R9[0x206],R8`), beside `0x308` into `0x314` - those are the "last
-position" and "last pressure" the strip handler at `0x80003e60` measures
-movement against.  Nothing snapshots a knob when a strip is touched.
+```
+state[0x1fe] = map(centroid, 1250, 6750, 0, 4095)      # 0x8000ad00
+```
 
-The portamento reading is not wrong, though, only mislabelled: while the
-strip is NOT touched the factory recomputes the glide index from it
-(`0x8000313a`, gated on `state+0x39` and the touch flag), so where you left
-your finger IS the portamento setting.  That is the owner's "mod wheel that
-remembers where you left it", seen from the other end.
+So **`state+0x1fe` is the strip's absolute position, 0..4095**, and the range
+is not inferred - the firmware clamps it there itself.  4095 is also the
+0-10 V the manual promises out of the blue banana.
+
+Two things make it the right cell to read:
+
+- It is written in **exactly one place**, and only while `state+0x206` (the
+  touch flag) is up.  After a release it still holds where the finger left,
+  so the release scan can simply read it - no snapshot of our own is needed.
+- It is the RAW position in **both** strip modes.  What `state+0x20c`
+  changes is `state+0x1f8`, the strip's OUTPUT: in absolute mode
+  `0x1f8 = 0x1fe`; in relative mode `0x1f8 = 0x1fe - 0x200 + 0x7ff` clamped,
+  where `state+0x200` is where the gesture started, and on release it snaps
+  to `0x7ff` - the centre of 0..4095.  That is the pitch-wheel behaviour the
+  manual describes, and it never touches `0x1fe`.
+
+`strip_halfway_units` is 2048.  It is a build number only so that a strip
+reading off centre can be told where its own middle is; the rule is the
+middle.
+
+### The knobs, since this was got wrong once
+
+There are six knobs on the panel and six conditioned analog channels, and
+they line up one to one.  `0x80007ad8` runs all six through the deadband
+follower at `0x800079e0`:
+
+| mirror | knob |
+|---|---|
+| `state+0x306` | PORTAMENTO |
+| `state+0x308` | ARPEGGIATION RATE (through a table) |
+| `state+0x30a` | preset voltage 1 |
+| `state+0x30c` | preset voltage 2 |
+| `state+0x30e` | preset voltage 3 |
+| `state+0x310` | preset voltage 4 - the "trn" knob, decoded into transpose zones at `0x80004a0e` |
+
+An earlier reading of this session had `0x306` down as the strip position,
+on the strength of the factory snapshotting it into `state+0x312` the moment
+the touch flag goes up (`0x8000ac5e`).  That snapshot is real, but it means
+the opposite: it is gated on `state+0x39`, **edit mode**, and it exists so
+that the two edit gestures in the manual can see a knob MOVE while the strip
+is held -
+
+- *"touch and hold a finger on the strip while turning the portamento knob"*
+  sets the strip slew rate → `state+0x202` / `state+0x204` (`0x80003ea6`),
+  the second being the same value with its bottom lifted into 150..330, which
+  is the minimum slew the relative mode's snap-back runs at;
+- *"Hold strip and turn ARP knob"* sets the pitchbend range →
+  `state+0x214` (`0x80003f62`), which the factory defaults to `0xc` at
+  `0x800070f2`.
+
+Two more defaults set on the same line confirm the whole reading:
+`state+0x218 = 1` and `state+0x219 = 2` at `0x800070e2` are the strip's CC1
+and the preset knobs' CC2 that the manual names.
 
 ### The mode
 
 `state+0x20c` is a word, loaded from the persisted settings record at
-`0x8000a396`, and **0 = absolute, 1 = relative pitchbend** - settled by what
-each direction of the two-ended-hold toggle at `0x8000af8a` sends, not
-inferred:
+`0x8000a396`, and **0 = absolute, 1 = relative pitchbend**:
 
-- 1 -> 0 sends pitch bend CENTRE (`0x40`, `0`) and zeroes `state+0x216`, the
-  bend added to the pitch.  You centre a bend when you leave bend mode.
-- 0 -> 1 zeroes the strip's mod-wheel CC (controller `state+0x218`, the one
-  the manual says defaults to CC1 and is assignable 1-12), and forces
-  `state+0x1f8` to its full `0x7ff` span.  You zero a mod wheel when you
-  stop being one.
+- The strip pass itself says so: mode 0 copies `0x1fe` straight to `0x1f8`;
+  mode 1 offsets it against the gesture's start and centres it on `0x7ff`,
+  and on release forces `0x1f8 = 0x7ff`.
+- The two-ended-hold toggle at `0x8000af8a` agrees.  1 -> 0 sends pitch bend
+  CENTRE and zeroes `state+0x216`, the bend added to the pitch; 0 -> 1 zeroes
+  the strip's mod-wheel CC (controller `state+0x218`) and sets `state+0x1f8`
+  to `0x7ff`, the centre.
+- The two-ended hold is detected at `0x8000abaa`: segments 2, 3 and 4 quiet
+  (sum <= 0x63) while segments 0 and 6 both read above 0xc8.  That is what
+  puts 2 in `state+0x210`, and it is why the bend path wants `0x210 == 1`.
 
-Record borrows it and gives it back.  The saved value is kept plus one at
-RAM `0x6230`, so that zero means nothing is being held and a restore cannot
-fire twice; the swap runs at the single point where the sequencer's mode
-byte changes, so every way into and out of record goes through it.
+Record borrows the mode and gives it back.  The saved value is kept plus one
+at RAM `0x622e`, so that zero means nothing is being held and a restore
+cannot fire twice; the swap runs at the single point where the sequencer's
+mode byte changes, so every way into and out of record goes through it.
 
 Two things worth knowing about the borrow:
 
-- **Reading the position never needed it.**  `state+0x306` is the raw
-  position whatever `state+0x20c` says - the mode only picks which of
-  `state+0x202` / `state+0x204` the PITCH path uses, and record silences the
-  bend anyway.  The borrow is for the player's sake, so the strip behaves the
-  same way in record as out of it, which is what was asked for.
+- **Reading the position never needed it.**  `state+0x1fe` is the raw
+  position whatever the mode says.  The borrow is for the player's sake, so
+  the strip behaves the same way in record as out of it, which is what was
+  asked for.
 - **A settings save during a take would persist the borrowed 0.**  The save
   path reads `state+0x20c` like any other setting (`0x80009e94`,
   `0x8000a142`).  Nobody is likely to save settings mid-take, and nothing
@@ -324,13 +356,11 @@ Two things worth knowing about the borrow:
   gives every change and nothing else.
 - It writes `state+0x216`, which the pitch update adds to the pitch at
   `0x800031f4`; the strip's own computed value is mirrored at `state+0x35e`.
-- The raw halves are `state+0x202` / `state+0x204`, scaled against
-  `state+0x1f8` (the bend depth) by `0x8000c150`, with `state+0x206` and
-  `state+0x20c` choosing between them: mode 1 with the strip up takes
-  `0x204`, everything else takes `0x202`.  Neither is the position - `0x202`
-  is `curve[state+0x306]` and `0x204` is `0x202` again with its bottom lifted
-  into 150..330 by the mapper at `0x8000704a`.  Rests and ties read
-  `state+0x306` itself, which is why they can say halfway and mean it.
+- The chain is: seven segments -> centroid (`0x8000aa98`) -> `state+0x1fe`,
+  the position 0..4095 -> `state+0x1f8`, the output, absolute or centred by
+  `state+0x20c` -> slewed against `state+0x202`/`0x204` by `0x8000c150` ->
+  `bend()`.  `state+0x202` and `0x204` are the SLEW RATE, set by the
+  portamento knob in edit mode, not raw halves of anything.
 - The touch flag `state+0x206` goes up at `0x8000ac4a` and down at
   `0x8000acb6`, both inside the factory's strip pass at `0x8000aa74`.
   Watching that flag every scan is what turns a release into an event;
@@ -338,7 +368,8 @@ Two things worth knowing about the borrow:
 - Entering and leaving are our own chord handler now, not the toggle's change
   callback - simpler, and entirely under our control.
 - RAM: the hold counter (halfword), one byte for armed/selected, one byte for
-  the sequencer mode, and the step store.  Declared in RAM_REGIONS when built.
+  the sequencer mode, the step store, and a halfword for the borrowed strip
+  mode.  Declared in RAM_REGIONS.
 - RAM only (lost at power-off) - no new flash machinery.  If the settings
   record has ~130+ spare bytes, persistence can ride along later.
 
@@ -517,9 +548,9 @@ pitch at the value hook: clock, gate, MIDI, the pad octave transpose and the
 calibration remap all come along unchanged.  Rest is a -1 from the selector.
 
 ## Archaeology still to do
-- ~~Pitch-bend strip~~ DONE: position at `state+0x306` over 0..1023, touch at
-  `state+0x206`, mode at `state+0x20c`, bend entering the pitch at
-  `state+0x216`.  See the rests-and-ties section above.
+- ~~Pitch-bend strip~~ DONE: position at `state+0x1fe` over 0..4095, output
+  at `state+0x1f8`, touch at `state+0x206`, mode at `state+0x20c`, bend
+  entering the pitch at `state+0x216`.  See the rests-and-ties section above.
 - Tie: how to hold the gate across a step, given gate-off is the `== 3`
   compare on the countdown.
 - Arp rate knob: mirror address + rate handler (for the divider takeover).

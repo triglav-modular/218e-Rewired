@@ -21,18 +21,21 @@ gives it back. What the old version did — push one way for a rest, the other
 for a tie, thresholded on the bend value — is gone; it is in the history at
 `034cdec` if it is ever wanted back.
 
-The blocker the last handoff named was the range of `state+0x306`, and it is
-settled: **0..1023**, established out of the image rather than guessed. The
-evidence is in PLAN-2.0.md under "Rests and ties from an absolute strip
-position", along with a correction: `state+0x306` is the strip's position,
-not a knob, whatever `pressure_blend` and `seq_glide` call it. They read the
-right cell for the right reason — while the strip is not touched the factory
-computes the glide rate from it — but the name misled a whole session.
+The blocker the last handoff named was the range of the strip position, and
+it is settled — but the cell it named, `state+0x306`, was the wrong one.
+`0x306` is the PORTAMENTO knob, exactly as `pressure_blend` and `seq_glide`
+always had it. The strip has no ADC channel at all: it is seven capacitive
+segments, and the factory turns them into a centroid and maps that to
+**`state+0x1fe`, 0..4095**, clamped there by its own mapper. Written in one
+place, only while the touch flag is up, and raw in both strip modes. The
+evidence, and the panel's six knobs against the six conditioned channels, is
+in PLAN-2.0.md under "Rests and ties from an absolute strip position". Read
+that before touching the strip; a session already lost a day to it.
 
 **Not yet on hardware.** The owner flashes and reports; nothing below has
-been played. `strip_halfway_units` is 512 because 512 is the middle of the
-proven range, and the middle is the rule; it is a build number so a strip
-whose ends do not reach can be told where its own middle is.
+been played. `strip_halfway_units` is 2048 because 2048 is the middle of the
+range the firmware clamps to, and the middle is the rule; it is a build
+number so a strip reading off centre can be told where its own middle is.
 
 **Waiting on the owner: the web page copy.** `web/index.html` around line 154
 still describes pushing the strip one way and the other. It is now wrong, and
@@ -50,7 +53,7 @@ lost, propose a fresh one and wait.
   that build numbers are compiled as immediates, so each one moved to
   runtime needs a RAM cell and a load. Good candidates are the numbers below.
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
-  `chord_hold_scans` (300), and `strip_halfway_units` (512, principled but
+  `chord_hold_scans` (300), and `strip_halfway_units` (2048, principled but
   unplayed). All are build numbers precisely so they can move.
 - **A settings save during a take would persist the borrowed strip mode.**
   Record forces `state+0x20c` to 0 and the save path reads it like any other
@@ -73,9 +76,15 @@ this repo was checked by disassembling the image and emulating those bytes.
 **Ghidra will disassemble the whole image for you.** `src/DumpDisassembly.java`
 takes a start, an end and an outfile; the two code runs are
 `80002000..80014288` and `80014400..80018bf4`. Grepping that dump for a state
-offset — every reader and every writer of one cell at once — is how the
-strip's own cell was identified, after two sessions had it labelled wrong.
-`src/DisasmRange.java` does the same for a handful of instructions.
+offset — every reader and every writer of one cell at once — is how
+`state+0x1fe` was found. `src/DisasmRange.java` does the same for a handful
+of instructions.
+
+**Read the manual before naming a control.** `state+0x306` was identified as
+the strip position off a chain of real evidence, all of it consistent, and it
+was wrong: the panel has six knobs, and the User's Guide says which gestures
+set what. One look at the front panel would have stopped it. The instrument
+is the ground truth the disassembly is being interpreted against.
 
 **Emulating a cave does not exercise its hook.** A clock hook that jumped to
 an invalid address passed every emulation and the whole parity matrix,
@@ -114,7 +123,7 @@ completed fix more than once. Write the file after each edit.
 **New RAM must be declared** in `RAM_REGIONS`, and the first-use clear in the
 initialiser cave must reach it. SRAM survives a DFU, so anything left out
 starts as whatever the previous image left behind. The clear is a counted
-loop from `0x6100`; its count moved to `0x98` for the strip's two cells.
+loop from `0x6100`; its count moved to `0x97` for the borrowed strip mode.
 
 **Repin after every change.** The init marker hashes the settings and the
 assembler source, so any edit — a comment included — moves every image.
