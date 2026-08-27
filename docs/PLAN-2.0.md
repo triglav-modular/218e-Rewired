@@ -250,12 +250,23 @@ Found so far:
   between them and `0x8000c150` scales the result against `state+0x1f8`.
 - `state+0x206` is the touch flag, already used for the release re-arm.
 
-STILL UNKNOWN, and what the build waits on: WHICH value of `0x20c` is the
-mod-wheel mode and which is the spring, and which raw cell carries the
-absolute position in that mode along with its range.  The mode has no plain
-writer in the image - only the settings loader - so the values are most
-easily read off a running instrument: put the strip in each mode from edit
-mode and look at `0x20c`.
+The mode is toggled by holding both ends of the strip, and that handler is
+at `0x8000af8a`: it reads `state+0x20c`, and writes **1** when it was 0
+(`0x8000af96`) or **0** when it was not (`0x8000aff2`).  So the mode is
+0 or 1 and nothing else, and forcing or restoring it is a single word.
+
+Switching TO mode 1 also forces `state+0x1f8` - the bend depth the scaling
+divides by - to `0x7ff`, its full span.  A mode that takes the whole range
+rather than a configured depth is what an absolute strip needs, so **mode 1
+is very probably the mod-wheel one**; that inference is not proof and is
+worth one look at `0x20c` on the instrument before anything relies on it,
+because forcing the WRONG mode on entering record is worse than not forcing
+one at all.
+
+Still to pin down: which of `state+0x202` / `0x204` carries the absolute
+position in that mode, and its range.  `0x800030ae` picks `0x204` when the
+mode is 1, so that is the one to read - but its span wants measuring rather
+than assuming, since halfway is the whole rule.
 
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
