@@ -1746,6 +1746,11 @@ def main() -> None:
         cfg.get("sequencer", {}).get("clock_max_ms", 2400))
     cfg["_numbers"]["clock_release_ms"] = int(
         cfg.get("sequencer", {}).get("clock_release_ms", 2600))
+    # The trigger spike's length, in scheduler units of (n - 1) milliseconds:
+    # the factory's 3 measured 2 ms on the jack.  5 is the ~4 ms Buchla spike
+    # the owner asked for, and the ceiling the attack-age guards cover.
+    cfg["_numbers"]["trigger_spike_units"] = int(
+        cfg.get("sequencer", {}).get("trigger_spike_units", 5))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
     for name in ("clock_scan", "clock_pulse", "clock_hook",
@@ -1754,7 +1759,8 @@ def main() -> None:
                  "clock_gate", "clock_gate_hook", "clock_settle",
                  "clock_capture", "clock_irq_hook", "clock_irq_pool",
                  "clock_edge_mode", "clock_init", "clock_init_pool",
-                 "clock_service", "clock_output", "clock_low_age", "clock_attack_guard"):
+                 "clock_service", "clock_output", "clock_low_age", "clock_attack_guard",
+                 "clock_spike_units"):
         blocks[name] = div
     blocks["profiler_pool"] = div or features.get("scan_profiler", False)
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")

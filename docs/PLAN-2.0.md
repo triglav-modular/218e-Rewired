@@ -732,6 +732,33 @@ flags any `MCALL` reached with LR unsaved.  Zero hazards across the image
 after the fix - and it catches the exact bug that shipped, which is the only
 evidence that it works.
 
+### Dead /1: the knob channel reads past 0x3ff (2026-08-27)
+
+First bench report on the ISR-capture build: divisions steady, /1 silent.
+A knob-position-dependent failure, and the regression had passed /1 - because
+it wrote the raw channel as exactly 1023.
+
+The factory never reads `state+0x2fc` without conditioning it: every reader
+passes the raw cell through 0x800079e0 with an 0x3ff bound in R10, and that
+routine ENDS BY CLAMPING - the raw value exceeds 0x3ff at the top of the
+knob.  The divisor read it raw.  `0x3ff - raw` went negative, the logical
+shift turned it into a divisor in the millions, and every pulse was
+swallowed.  Dead /1 precisely at the fast end, steady /2../8 everywhere else.
+It also finally explains "dropping some triggers seemingly randomly even at
+max rate setting" on the sampler build, whose formula was the same: the
+channel jittering across 0x3ff.
+
+The fix clamps the difference at zero - on the far side of the subtraction,
+where the compact branch conditions live.  The regression now writes 0x420
+for its /1 case, so the over-range path is the one under test.
+
+**And the spike is measured.**  The owner put the factory trigger at 2 ms on
+the jack; the factory schedules the drop with 3, so the scheduler's units
+are (n - 1) milliseconds.  The ~4 ms Buchla spike asked for back when the
+shape was conformed is therefore 5, now `trigger_spike_units`, applied in
+clock builds and bounded at 5 because the attack-age guards cover four
+milliseconds of spike and no more.
+
 ### One way in: the divider's acceptance rule (2026-08-27)
 
 An audit of the first rising-edge build found three P1s, and they were all

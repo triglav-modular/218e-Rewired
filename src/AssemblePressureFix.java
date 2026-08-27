@@ -3667,8 +3667,24 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001c8d0");
         emit("LDDPC R11,0x8001c9e0");
         emit("LD.SH R11,R11[0x2fc]");   // RATE knob itself, not knob-plus-CV
+        // CLAMPED, the way the factory clamps this channel at every single
+        // read (0x800079e0 ends by storing the 0x3ff bound over anything
+        // larger).  The raw cell exceeds 0x3ff at the top of the knob, and
+        // unclamped that made 0x3ff - knob NEGATIVE - the logical shift then
+        // turned it into a divisor in the millions, and every pulse was
+        // swallowed.  Dead /1 precisely at the fast end, steady /2../8
+        // everywhere else; and on the sampler build, whose formula was the
+        // same, the channel jittering across 0x3ff dropped triggers at
+        // random at max rate.
+        // Clamped on the far side of the subtraction, where the compact
+        // branch conditions live: a difference that went negative becomes
+        // zero, which is the /1 the top of the knob means.
         emit("MOV R12,0x3ff");
         emit("SUB R12,R12,R11 << 0x0");
+        emit("CP.W R12,0x0");
+        emit("BR{ge} 0x8001c8c8");
+        emit("MOV R12,0x0");
+        padTo(0x8001c8c8L);
         emit("LSR R12,0x7");
         emit("SUB R12,-0x1");           // /1 .. /8
         padTo(0x8001c8d0L);
@@ -3845,7 +3861,9 @@ public class AssemblePressureFix extends GhidraScript {
         // reaches its gate-off threshold. Protect the actual output's age,
         // not the input/dispatch time. Retry the threshold on the next tick
         // instead of losing the eventual gate-off. The sequencer's tie rule
-        // still has priority, and the physical 3 ms attack-drop is untouched.
+        // still has priority, and the attack-drop itself is untouched - four
+        // milliseconds at the default trigger_spike_units of 5, which this
+        // guard's four-millisecond window exactly covers.
         begin(0x8001ca80L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -3871,7 +3889,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MFSR R12,COUNT");
         emit("SUB R9,R12,R9 << 0x0");
         emit("LD.W R12,R10[0x10]");
-        emit("LSL R12,0x2");
+        emit("LSL R12,0x2");            // the guard window: see clock_service
         emit("SUB R12,0x1");
         emit("CP.W R9,R12");
         emit("BR{hi} 0x8001cb10");
@@ -3985,7 +4003,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MFSR R9,COUNT");
         emit("SUB R8,R9,R8 << 0x0");
         emit("LD.W R9,R10[0x10]");
-        emit("LSL R9,0x2");             // always preserve the 3 ms attack + margin
+        // Four milliseconds of COUNT: the whole spike at the default five
+        // units (measured: units are (n - 1) ms), and spike plus margin at
+        // anything shorter.  trigger_spike_units is bounded at 5 so the
+        // spike can never outgrow this window.
+        emit("LSL R9,0x2");
         emit("SUB R9,0x1");
         emit("CP.W R8,R9");
         emit("BR{ls} 0x8001c540");      // unsigned: long idle is not a negative age
@@ -4940,6 +4962,16 @@ public class AssemblePressureFix extends GhidraScript {
             word(0x8001c200L);
             finish("clock_irq_pool", 0x80007338L);
             singlePatch("clock_edge_mode", 0x8000737eL, "MOV R11,0x0");
+            // The trigger spike's own length.  The factory schedules the
+            // drop with 3 at 0x80007888 and the owner measured that spike at
+            // 2 ms on the jack - the countdown fires at one, so the units
+            // are (n - 1) milliseconds.  The Buchla shape the owner asked
+            // for is a ~4 ms spike, which is 5 here.  Bounded at 5 because
+            // the attack-age guards cover four milliseconds of spike and no
+            // more; raising this past them would let a gate-off truncate
+            // what they protect.
+            singlePatch("clock_spike_units", 0x80007888L, String.format(
+                 "MOV R10,0x%x", number("trigger_spike_units", 5, 1, 5)));
             begin(0x80007d8cL);
             word(0x8001c300L);
             finish("clock_init_pool", 0x80007d90L);

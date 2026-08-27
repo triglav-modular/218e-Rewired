@@ -245,6 +245,10 @@ def expand(options: dict) -> dict:
                         "clock_lock_pulses": 5,
                         "clock_max_ms": 2400,
                         "clock_release_ms": 2600,
+                        # The trigger spike, in units of (n - 1) ms: the
+                        # factory's 3 measured 2 ms; 5 is the ~4 ms Buchla
+                        # spike, and the attack-age guards' ceiling.
+                        "trigger_spike_units": 5,
                         # 0 = fire with the pitch store. Higher settings
                         # deliberately lower maximum sustainable output rate.
                         "clock_settle_scans": 0,

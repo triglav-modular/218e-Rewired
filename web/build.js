@@ -137,7 +137,8 @@ var WEBBUILD = (function () {
          'clock_gate', 'clock_gate_hook', 'clock_settle',
          'clock_capture', 'clock_irq_hook', 'clock_irq_pool',
          'clock_edge_mode', 'clock_init', 'clock_init_pool',
-         'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard']
+         'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard',
+         'clock_spike_units']
             .forEach(function (n) { blocks[n] = div; });
         blocks.profiler_pool = div || !!features.scan_profiler;
         blocks.knob4_octave_switch =

@@ -30,6 +30,14 @@ At the default settings:
   Dispatcher stalls can add latency; a finite queue cannot absorb an
   indefinite stall or a sustained rate above its output capacity.
 
+- The RATE knob's raw channel is clamped to 0x3ff before the divisor is
+  derived, as the factory clamps it at every read - the raw cell exceeds
+  0x3ff at the top of the knob, and unclamped that silenced /1.
+- The trigger spike is `trigger_spike_units` (default 5): the scheduler's
+  units are (n - 1) ms, measured against the factory's 3 producing a 2 ms
+  spike, so 5 is the ~4 ms Buchla spike.  Bounded at 5 - the attack-age
+  guards cover exactly four milliseconds.
+
 These internal settings live in tools/options.py and are exported identically
 by the command-line and browser builds.
 

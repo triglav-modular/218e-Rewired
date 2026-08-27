@@ -118,7 +118,8 @@ var BUILDLIB = (function () {
                           tie_glide_rate: 60, chord_hold_scans: 200,
                           clock_min_ms: 4, clock_lock_pulses: 5,
                           clock_settle_scans: 0, clock_rearm_us: 250,
-                          clock_max_ms: 2400, clock_release_ms: 2600 };
+                          clock_max_ms: 2400, clock_release_ms: 2600,
+                          trigger_spike_units: 5 };
         cfg.clock = { divide: !!want('clock_divide', false) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
@@ -613,6 +614,7 @@ var BUILDLIB = (function () {
             clock_rearm_us: (cfg.sequencer && cfg.sequencer.clock_rearm_us) || 250,
             clock_max_ms: (cfg.sequencer && cfg.sequencer.clock_max_ms) || 2400,
             clock_release_ms: (cfg.sequencer && cfg.sequencer.clock_release_ms) || 2600,
+            trigger_spike_units: (cfg.sequencer && cfg.sequencer.trigger_spike_units) || 5,
             chord_hold_scans: (cfg.sequencer && cfg.sequencer.chord_hold_scans) || 200,
             pattern_count: patternBank(cfg).masks.length
         };
