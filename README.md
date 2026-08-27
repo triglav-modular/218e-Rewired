@@ -86,7 +86,8 @@ match. See [`docs/BUILD.md`](docs/BUILD.md).
 
 ```
 config/       the options — the only file you normally edit
-tunings/      Scala files (12 degrees, 2/1 octave)
+tunings/      Scala files, with .kbm keyboard maps where the degree
+              count is not 12 or the period is not the octave
 calibration/  measured per-key tracking error — instrument-specific
 src/          Ghidra scripts: the AVR32 assembler and verification tools
 tools/        build.py, and avr32/ — the Ghidra-free build

@@ -879,6 +879,7 @@ FACTORY_CELLS = [
     # to provide.
     (0x0854, 0x0894, "key pitch table"),
     (0x2EE6, 0x2EE8, "arp rate knob and CV, combined"),
+    (0x2EED, 0x2EEE, "arp active-note flag"),
     (0x2EEE, 0x2EF0, "glide rate"),
     (0x3212, 0x3214, "pitch mirror"),
     # The pads' own touch states, the same shape as the keys' array: one byte
@@ -1703,7 +1704,8 @@ def main() -> None:
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
                  "seq_strip", "seq_gate", "seq_glide", "strip_pool",
-                 "seq_gate_clear", "seq_gate_clear_hook"):
+                 "seq_gate_clear", "seq_gate_clear_hook",
+                 "seq_noteoff", "seq_noteoff_hook"):
         blocks[name] = seq
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"

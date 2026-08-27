@@ -88,7 +88,11 @@ Everything the build produces lands in `build/` and is not tracked:
 - the written hex reads back byte-for-byte;
 - every difference from the factory image lies inside a declared patch;
 - generated pitch tables are monotonic and inside the 12-bit DAC range;
-- each Scala file has 12 strictly ascending degrees and a true 2/1 octave;
+- each Scala file has strictly ascending degrees.  Twelve of them repeating
+  at a 2/1 need nothing else; any other count, or a period that is not the
+  octave, needs a .kbm keyboard map beside it saying which degree each key
+  plays.  The octave controls then step that period rather than an octave,
+  and every slot has to agree about it, since there is one set of them;
 - the pitch calibration covers every semitone the firmware reads (0..78), so
   a short table cannot leave assembler padding to be read as pitch.
 
@@ -409,9 +413,9 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 |---|---|
 | `tools/test.py` | 126 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
-| `tools/avr32/sweep.py` | 13 representative configurations, built by both toolchains and compared byte for byte |
+| `tools/avr32/sweep.py` | 22 representative configurations, built by both toolchains and compared byte for byte |
 | `web/test_configs.py` | the browser build matches `build.py` for 16 configurations |
-| `web/test_matrix.js` | **all 192 option combinations** built through the guarded path |
+| `web/test_matrix.js` | **all 768 option combinations** built through the guarded path |
 
 Every build, in either toolchain, has to pass four structural checks before it
 produces an image: no two patches overlap, no patch lands on a factory entry
@@ -635,7 +639,7 @@ rather than arbitrary strings in the dataset.
 
 Everything that builds firmware needs Buchla's stock image, and it is not in
 this repository. Without it the workflow still runs, but the golden build, the
-reproducibility check, the 192-build option matrix and the browser/Python
+reproducibility check, the 768-build option matrix and the browser/Python
 comparison all skip — so a green tick covers the flashers, the validators and
 the packaging, and none of the firmware. The notice in the log says so.
 

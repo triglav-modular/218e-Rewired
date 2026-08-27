@@ -42,8 +42,13 @@ pitch_correction = false
 
 # 4. ALTERNATE TUNINGS
 # Up to three Scala files, switchable from edit mode (key 28 toggles slot 0,
-# key 27 toggles slot 1; LEDs rem-en / trn).  Each must be a 12-note scale
-# with a true 2/1 octave, because the key table repeats every octave.
+# key 27 toggles slot 1; LEDs rem-en / trn).  A plain 12-note scale that
+# repeats at the octave needs nothing else.
+#
+# Any other degree count, or a period that is not the octave, needs a .kbm
+# keyboard map beside it saying which degree each key plays - write the pair
+# as ["scale.scl", "map.kbm"].  The octave controls then step that period
+# instead of an octave, so every slot has to agree about what the period is.
 #
 #   alternate_tunings = ["tunings/Sabat II (C-rooted).scl",
 #                        "tunings/5-Limit JI with Septimal 7th.scl",
@@ -161,7 +166,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "5d1c898c9c71a506c998c69e5836ec704d9f5b0f02ce10b1697a02e21d0c6adc"
+golden_sha256  = "4da194069d745ca2a5b6fc084d0e37918377c50c89ed8e9bcb6aef83cef9eeca"
 
 
 [tools]

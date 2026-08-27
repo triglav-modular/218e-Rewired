@@ -3281,35 +3281,48 @@ function assembleProgram() {
         // Every pulse, not only the ones that pass: refreshing on the passed
         // ones alone left the countdown running out partway through a divided
         // step, and the internal timer fired into the gap.
-        emit("LD.UH R9,R10[0x4]");      // the measured interval
+        emit("LD.UH R9,R10[0x4]");      // the measured interval, in scans
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b7e8");      // no interval yet: leave the arp's own
+        // Scans are not the countdown's unit.  This counter ticks once per
+        // 5 ms scan, but the arp's countdown is decremented by the 1 ms task
+        // that posts event 17 - so a measured interval has to be converted
+        // before it means anything here.  Without the conversion a locked
+        // 100 ms clock loaded 25 and the arp stepped again 25 ms later,
+        // before its own next pulse.
+        emit(StringFormat("MOV R11,0x%x", number("scan_period_ms", 5, 1, 20)));
+        emit("MUL R9,R9,R11");          // scans -> milliseconds
         emit("MUL R9,R9,R12");          // times the divisor: the real step
         emit("MOV R11,R9");
         emit("LSR R11,0x2");
         emit("ADD R9,R11");             // and a quarter again
-        emit("MOV R11,0xfff");
+        // The halfword's own range, not the 0xfff the tempo table stops at:
+        // two seconds divided by eight is sixteen, and that has to fit.
+        emit("MOV R11,0x7fff");
         emit("CP.W R9,R11");
-        emit("BR{le} 0x8001b7d4");
+        emit("BR{le} 0x8001b7e0");
         emit("MOV R9,R11");
-        padTo(0x8001b7d4);
-        emit("LDDPC R11,0x8001b800");
+        padTo(0x8001b7e0);
+        emit("LDDPC R11,0x8001b820");
         emit("ST.H R11[0x38e],R9");
+        padTo(0x8001b7e8);
         // Now: does this pulse play, or is it one the divider swallows?
         emit("LD.UB R11,R10[0x6]");
         emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001b7f0");      // not locked: every pulse plays
+        emit("BR{ne} 0x8001b810");      // not locked: every pulse plays
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001b7f0");
+        emit("BR{ge} 0x8001b810");
         emit("ST.B R10[0x7],R11");      // swallowed
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b7f0);
+        padTo(0x8001b810);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
         emit("MOV R12,0xffff");         // -1: step now, do not reload
-        emit("MCALL PC[0x8001b804]");
+        emit("MCALL PC[0x8001b824]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b800);
+        padTo(0x8001b820);
         word(0x00003560); // global state base
         word(0x8000210c); // the arp step
         // MCALL is memory-indirect, so the dispatcher's call needs a word
@@ -3317,7 +3330,7 @@ function assembleProgram() {
         // straight here made event 10 read back 0xebcd4080, this cave's own
         // STM, and jump to it.
         word(0x8001b740);
-        finish("clock_pulse", 0x8001b80c);
+        finish("clock_pulse", 0x8001b82c);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
@@ -3396,6 +3409,31 @@ function assembleProgram() {
         word(0x00003560); // global state base
         word(0x800068cc); // led_clear(ch)
         finish("seq_gate_clear", 0x8001b8dc);
+
+        // Whether the arp should send its MIDI note-off for this step.  The
+        // CV gate and the MIDI note are two ways of saying the same thing and
+        // a tie has to hold both: preserving the gate while the note-off went
+        // out anyway left the CV sustaining a note the MIDI side had already
+        // ended.  Same decision as the gate, asked the same way.
+        //
+        // Answers what the factory's own test would have - the active-note
+        // flag - except while the gate is held, when it answers zero and the
+        // whole note-off block is skipped.
+        begin(0x8001b8f0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R12,0x0");
+        emit("MCALL PC[0x8001b910]");   // seq_gate -> R8 = the threshold
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001b908");      // held: no note-off, no bookkeeping
+        emit("MOV R9,0x2eed");
+        emit("LD.UB R12,R9[0x0]");      // the factory's own active-note flag
+        padTo(0x8001b908);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b910);
+        word(0x8001b4f0); // seq_gate
+        word(0x8001b8f0); // this cave, for the caller too far away to pool it
+        finish("seq_noteoff", 0x8001b918);
 
         // Record.  Called from the note-on wrapper with R12 = the key, which
         // it must leave alone - the wrapper still needs it.  What goes in the
@@ -3790,9 +3828,20 @@ function assembleProgram() {
         // letting this one through.  The arp-switch test above is untouched.
         if (block("clock_pulse")) {
             begin(0x80004e72);
-            emit("MCALL PC[0x8001b808]");
+            emit("MCALL PC[0x8001b828]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7a);
+        }
+
+        // Hook: the arp's MIDI note-off test.  The factory asked "is a note
+        // sounding"; with the sequencer playing a tie the answer has to be no,
+        // so the note is not ended underneath the gate we are holding up.
+        if (block("seq_noteoff")) {
+            begin(0x80002218);
+            emit("MCALL PC[0x8001b914]");
+            emit("CP.W R12,0x0");
+            emit("BR{eq} 0x800022a0");
+            finish("seq_noteoff_hook", 0x80002220);
         }
 
         // Hook: the no-key-held gate clear, routed through the sequencer so a

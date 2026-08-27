@@ -139,7 +139,7 @@ def audit_call_pools(image_path) -> list[str]:
 # instrument this was measured on, and both trims were centred on them; and
 # again for 2.0, which added caves and moved the first-use clear.
 EXPECTED = {
-    "historical_config": "4924c1fca5623e077a6c4f2f06bddd26b25671700b592fa51f976f4b28d08fb5",
+    "historical_config": "a35248df33e24d4f7af9ee7a647ffee60288f5ada85bde26e39b41967c446e04",
 }
 
 
