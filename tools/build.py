@@ -1726,7 +1726,8 @@ def main() -> None:
     div = bool(cfg.get("clock", {}).get("divide"))
     for name in ("clock_scan", "clock_pulse", "clock_hook",
                  "clock_tempo", "clock_tempo_hook",
-                 "clock_ms_tick", "clock_ms_pool"):
+                 "clock_ms_tick", "clock_ms_pool",
+                 "clock_gate", "clock_gate_hook"):
         blocks[name] = div
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     blocks["seq_chord"] = seq

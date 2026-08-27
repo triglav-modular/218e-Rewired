@@ -4161,26 +4161,36 @@ function assembleProgram() {
         // chatter into a burst of notes, and that is what made a fast clock
         // glitch and flash lights that had nothing to do with it.
         //
-        // The window is FLAT, not a fraction of the rate.  Scaling it with the
-        // interval would swallow real pulses: an uneven clock is allowed here
-        // and a short gap after a long one is a pulse, not a bounce, and the
-        // two are the same signal.  So the window is only as wide as the
-        // chatter it exists to kill, and it is a build number - a slow slope
-        // that still gets through wants it raised, at the cost of the fastest
-        // clock the divider will follow.
-        emit(StringFormat("CP.W R8,0x%x",
+        // The window is a 64TH of the clock's own interval, floored at
+        // clock_min_ms.  A flat window was tried first and could not be both
+        // narrow enough for a 780 Hz pulser and wide enough for the same
+        // pulser slowed down: the sawtooth's slow edge drags through the
+        // trip point for longer the slower it runs, so the chatter scales
+        // with the period, and a fixed millisecond killed none of it at
+        // 0.85 Hz - measured off the instrument, where the run of agreeing
+        // intervals never reached five in twelve seconds.  A 64th still
+        // passes an uneven clock whose next gap is a sixty-fourth of the
+        // last one, which is not a clock anyone patches.
+        emit("LD.UH R11,R10[0x4]");     // the interval this clock runs at
+        emit("LSR R11,0x6");
+        emit(StringFormat("MOV R12,0x%x",
              number("clock_min_ms", 1, 1, 100)));
-        emit("BR{ge} 0x8001b760");
+        emit("CP.W R11,R12");
+        emit("BR{ge} 0x8001b75e");
+        emit("MOV R11,R12");
+        padTo(0x8001b75e);
+        emit("CP.W R8,R11");
+        emit("BR{ge} 0x8001b766");
         emit("LDM SP++,R7,PC");         // inside the dead time: it never happened
-        padTo(0x8001b760);
+        padTo(0x8001b766);
         emit("LD.UH R12,R10[0x0]");
         emit("ST.H R10[0x2],R12");      // accepted, and it is the new reference
         emit("MOV R11,0x7d0");          // 2000 ms, two seconds
         emit("CP.W R8,R11");
-        emit("BR{gt} 0x8001b7a0");      // too slow
+        emit("BR{gt} 0x8001b7b0");      // too slow
         emit("LD.UH R9,R10[0x4]");      // the interval before this one
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b798");      // nothing to agree with yet
+        emit("BR{eq} 0x8001b7a8");      // nothing to agree with yet
         // Agreement: within an eighth of the last interval, plus a
         // millisecond or two so a slow clock is not held to an impossible
         // tolerance.  A clock that does not keep time does not get divided -
@@ -4194,7 +4204,7 @@ function assembleProgram() {
         emit("LSR R12,0x3");
         emit("SUB R12,-0x2");
         emit("CP.W R11,R12");
-        emit("BR{gt} 0x8001b798");
+        emit("BR{gt} 0x8001b7a8");
         // Agreeing intervals are COUNTED, and it takes a run of them.  Two
         // was enough to be fooled: a clock with no rate at all still throws
         // the odd matching pair, and one of those latched the divider on for
@@ -4204,27 +4214,27 @@ function assembleProgram() {
         emit("LD.UB R11,R10[0x6]");
         emit(StringFormat("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{ge} 0x8001b794");
+        emit("BR{ge} 0x8001b7a4");
         emit("SUB R11,-0x1");
-        padTo(0x8001b794);
+        padTo(0x8001b7a4);
         emit("ST.B R10[0x6],R11");
-        emit("RJMP 0x8001b79c");
-        padTo(0x8001b798);
+        emit("RJMP 0x8001b7ac");
+        padTo(0x8001b7a8);
         emit("MOV R11,0x1");            // the run starts again from here
         emit("ST.B R10[0x6],R11");
-        padTo(0x8001b79c);
+        padTo(0x8001b7ac);
         emit("ST.H R10[0x4],R8");
-        emit("RJMP 0x8001b7a8");
-        padTo(0x8001b7a0);
+        emit("RJMP 0x8001b7b8");
+        padTo(0x8001b7b0);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x6],R11");
         emit("ST.H R10[0x4],R11");
-        padTo(0x8001b7a8);
+        padTo(0x8001b7b8);
         emit("LD.UB R11,R10[0x6]");
         emit("MOV R12,0x1");            // unlocked, or still settling: /1
         emit(StringFormat("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b7cc");
+        emit("BR{lt} 0x8001b7dc");
         // Locked, so the rate knob divides instead.  Its mirror at 0x2ee6 is
         // the pot and the CV input together, 0..0x3ff; fast end passes every
         // pulse, slow end one in eight.  The Clockwork Card's own law.
@@ -4236,7 +4246,7 @@ function assembleProgram() {
         emit("MUL R12,R12,R11");
         emit("LSR R12,0xa");            // /1024, so the 8 makes up the 1023
         emit("SUB R12,-0x1");           // 1..8 across the knob
-        padTo(0x8001b7cc);
+        padTo(0x8001b7dc);
         // Refresh the arp's own countdown, on EVERY pulse and sized to the
         // whole divided step, with a quarter as margin.
         //
@@ -4255,7 +4265,7 @@ function assembleProgram() {
         // step, and the internal timer fired into the gap.
         emit("LD.UH R9,R10[0x4]");      // the measured interval, in ms
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b7f8");      // no interval yet: leave the arp's own
+        emit("BR{eq} 0x8001b808");      // no interval yet: leave the arp's own
         // The counter and the countdown are both milliseconds now, so the
         // interval means something here without converting.  It used to count
         // 5 ms scans and be multiplied up, which put the shortest clock it
@@ -4273,24 +4283,24 @@ function assembleProgram() {
         // two seconds divided by eight is sixteen, and that has to fit.
         emit("MOV R11,0x7fff");
         emit("CP.W R9,R11");
-        emit("BR{le} 0x8001b7f0");
+        emit("BR{le} 0x8001b800");
         emit("MOV R9,R11");
-        padTo(0x8001b7f0);
-        emit("LDDPC R11,0x8001b840");
+        padTo(0x8001b800);
+        emit("LDDPC R11,0x8001b850");
         emit("ST.H R11[0x38e],R9");
-        padTo(0x8001b7f8);
+        padTo(0x8001b808);
         // Now: does this pulse play, or is it one the divider swallows?
         emit("LD.UB R11,R10[0x6]");
         emit(StringFormat("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b820");      // not locked: every pulse plays
+        emit("BR{lt} 0x8001b830");      // not locked: every pulse plays
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001b820");
+        emit("BR{ge} 0x8001b830");
         emit("ST.B R10[0x7],R11");      // swallowed
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b820);
+        padTo(0x8001b830);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
         // Not on the gate-off count.  The arp step tests the countdown against
@@ -4300,17 +4310,17 @@ function assembleProgram() {
         // divisor of one the refresh above lands on exactly 3, which is that
         // threshold, so a 780 Hz pulser lost most of its notes.  One more
         // millisecond costs nothing and cannot collide.
-        emit("LDDPC R11,0x8001b840");
+        emit("LDDPC R11,0x8001b850");
         emit("LD.SH R12,R11[0x38e]");
         emit("CP.W R12,0x4");
-        emit("BR{ge} 0x8001b834");
+        emit("BR{ge} 0x8001b844");
         emit("MOV R12,0x4");
         emit("ST.H R11[0x38e],R12");
-        padTo(0x8001b834);
+        padTo(0x8001b844);
         emit("MOV R12,0xffff");         // -1: step now, do not reload
-        emit("MCALL PC[0x8001b844]");
+        emit("MCALL PC[0x8001b854]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b840);
+        padTo(0x8001b850);
         word(0x00003560); // global state base
         word(0x8000210c); // the arp step
         // MCALL is memory-indirect, so the dispatcher's call needs a word
@@ -4318,7 +4328,7 @@ function assembleProgram() {
         // straight here made event 10 read back 0xebcd4080, this cave's own
         // STM, and jump to it.
         word(0x8001b740);
-        finish("clock_pulse", 0x8001b84c);
+        finish("clock_pulse", 0x8001b85c);
 
         // The factory snaps the countdown to the new tempo whenever the rate
         // moves by more than 0x33.  That is right when the arp owns its own
@@ -4808,6 +4818,56 @@ function assembleProgram() {
 
 
 
+        // Whether this 1 kHz call is the arp's beat.  The factory said yes
+        // whenever the countdown had run out - which is right when the
+        // internal timer is the only timer, and wrong the moment a clock is
+        // patched in: chatter could leave the countdown short, it ran out
+        // between pulses, and the arp free-ran at the RATE knob's own tempo
+        // over the top of the clock.  At the knob's fast end that was a
+        // continuous spray of notes; at the slow end a phantom note midway
+        // between pulses.  Measured off the instrument, both.
+        //
+        // So: a pulse-driven step (interval -1) always proceeds; a countdown
+        // still running always holds; and a countdown that has run out
+        // proceeds only when NO clock is about.  While one is, the beat
+        // belongs to the pulses, and the countdown is pushed one clock
+        // interval ahead instead - gate-off still rides it on the way down.
+        // "About" is the divider's own presence byte, held by any plausible
+        // pulse and cleared by the two-second release.
+        //
+        // Called from inside the factory arp step with its frame in R7:
+        // R7[-0x10] is the interval this call was made with.  R8 comes back
+        // 0 to proceed, 1 to hold; a leaf, so LR is the way back.
+        begin(0x8001baf0);
+        emit("LDDPC R9,0x8001bb30");    // global state base
+        emit("LD.SH R10,R9[0x38e]");    // the countdown, signed
+        emit("LD.SH R11,R7[-0x10]");    // the interval argument
+        emit("MOV R8,-0x1");
+        emit("CP.W R11,R8");
+        emit("BR{eq} 0x8001bb26");      // a pulse: step now, whatever the count
+        emit("CP.W R10,0x0");
+        emit("BR{gt} 0x8001bb20");      // not time yet
+        emit("MOV R8,0x61ec");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bb26");      // no clock about: the timer is the timer
+        emit("MOV R8,0x61ea");
+        emit("LD.UH R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001bb1c");
+        emit("MOV R8,0x2");             // no interval measured yet: a moment
+        padTo(0x8001bb1c);
+        emit("ST.H R9[0x38e],R8");      // held off for one more interval
+        padTo(0x8001bb20);
+        emit("MOV R8,0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001bb26);
+        emit("MOV R8,0x0");
+        emit("MOV PC,LR");
+        padTo(0x8001bb30);
+        word(0x00003560); // global state base
+        finish("clock_gate", 0x8001bb34);
+
         // The pitch the arp is about to sound.  While the sequencer plays that
         // is the step's own pitch; otherwise it is whatever the keyboard
         // handed up.  Either way the octave randomiser runs on it AFTER it is
@@ -5091,12 +5151,27 @@ function assembleProgram() {
             finish("clock_tempo_hook", 0x80002198);
         }
 
+        // The arp step's own is-it-time test, routed through the gate above
+        // so the internal timer stands down while a clock is about.  The
+        // replaced factory instructions are exactly that test: countdown
+        // still running plus interval == -1, both reproduced in the cave.
+        if (block("clock_gate")) {
+            begin(0x800021ce);
+            emit("MCALL PC[0x800021e8]");
+            emit("CP.W R8,0x0");
+            emit("BR{ne} 0x800023d6");  // hold: the not-time exit
+            padTo(0x800021e8);
+            word(0x8001baf0);
+            padTo(0x800021ee);
+            finish("clock_gate_hook", 0x800021ee);
+        }
+
         // Event 10 is the external clock pulse.  The factory ticked the arp
         // outright here; now the divider decides, and ticks itself if it is
         // letting this one through.  The arp-switch test above is untouched.
         if (block("clock_pulse")) {
             begin(0x80004e72);
-            emit("MCALL PC[0x8001b848]");
+            emit("MCALL PC[0x8001b858]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7a);
         }

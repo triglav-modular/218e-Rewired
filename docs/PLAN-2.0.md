@@ -585,6 +585,56 @@ eyeballed against the source.
   be eaten by the dead time - once, with probability about 1 in 65,000, and
   the next pulse recovers.  Not worth a word of RAM.
 
+### The divider against the pulser's own recordings (2026-08-27)
+
+Four recordings off the instrument - left the pulser, right the trigger out,
+RATE knob at each end, pulser slow (~0.85 Hz) and fast - and they told one
+story.  The divider NEVER LOCKED: at knob 0 the output fired on every input
+pulse with a phantom note midway between them, and at knob max it was a
+continuous ~670 Hz spray with brief dips after each real pulse.  The phantom
+and the spray are the same thing - the arp's INTERNAL timer free-running at
+the knob's own tempo, because standing it down was gated on the lock the
+chatter never allowed.
+
+Two causes, two fixes:
+
+**The dead time now scales with the clock.**  A falling sawtooth's slow edge
+drags through the trip point for longer the slower it runs, so the chatter
+scales with the period, and the flat 1 ms window killed none of it at
+0.85 Hz.  The window is a 64TH of the clock's own measured interval, floored
+at `clock_min_ms`: 18 ms against the slow pulser, still 1 ms at 780 Hz.  An
+uneven clock still passes - only a gap under a 64th of the last one is
+treated as a bounce, and that is not a clock anyone patches.
+
+**The internal timer stands down while a clock is PRESENT, not locked.**
+`clock_gate` (`0x8001baf0`) hooks the factory arp step's own is-it-time test
+at `0x800021ce` - the sixteen replaced instructions are exactly that test,
+both halves reproduced: a pulse-driven step (interval -1) always proceeds, a
+running countdown always holds.  What changes is a countdown that has RUN
+OUT: it proceeds only when no clock is about (the divider's presence byte at
+`0x61ec`, held by any plausible pulse, cleared by the two-second release).
+While one is, the beat belongs to the pulses and the countdown is pushed one
+clock interval ahead - gate-off still rides it down, so notes still end.
+The cave is a leaf that reads the caller's own frame (`R7[-0x10]`) for the
+interval argument; the buried-entry-point check confirms nothing else in the
+factory jumps into the replaced range.
+
+**What the sawtooth still does, and firmware cannot help:** the slow edge's
+threshold crossing is a real event to a comparator, so a sawtooth presents
+TWO pulses per period - the reset and the crossing - and the divider now
+locks onto that doubled, slightly-lopsided clock and divides it steadily.
+Everything aligns to the input and nothing free-runs, but the division base
+is twice the pulser's rate.  The 218e manual's own advice stands for
+perfection: a CV-to-pulse converter on the pulser's sawtooth.  A square wave
+in is exact.
+
+Verified by driving the built image's bytes with a model of the recordings:
+the sawtooth-with-crossing at 0.85 Hz locks and divides with not one
+internal step once the clock appears, at both knob ends; the clean square
+divides by eight; 780 Hz still passes its own dead time; the uneven set
+passes through undivided; with no clock the internal timer beats exactly as
+before, and it returns two seconds after a clock stops.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it
