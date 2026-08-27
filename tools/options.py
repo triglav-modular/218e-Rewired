@@ -234,9 +234,23 @@ def expand(options: dict) -> dict:
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
                         "tie_glide_rate": 60,
+                        # The shortest gap between two pulses the divider will
+                        # believe, in milliseconds.  A 208 pulser at its top
+                        # rate is 780 Hz - 1.28 ms - so 1 is the floor that
+                        # keeps up with it.
+                        "clock_min_ms": 1,
+                        # How many agreeing intervals in a row before the
+                        # divider believes there is a rate to divide.  An
+                        # uneven clock is passed through undivided, and a run
+                        # of agreements is what tells the two apart.  Measured
+                        # against random spacings: a run of 2 divided every
+                        # such clock, 3 divided 90% of them, 5 divides 8%.
+                        # The cost is settling time - a steady clock passes
+                        # this many pulses at 1:1 before it starts dividing.
+                        "clock_lock_pulses": 5,
                         # How long pad 4 has to be held before pads 1-3 mean
-                        # anything, in ~5 ms scans.  300 is a second and a half.
-                        "chord_hold_scans": 300}
+                        # anything, in ~5 ms scans.  200 is a second.
+                        "chord_hold_scans": 200}
     # The arp rate knob divides an external clock once one is locked.
     cfg["clock"] = {"divide": bool(want("clock_divide", False))}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0

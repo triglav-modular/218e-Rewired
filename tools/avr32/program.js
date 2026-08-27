@@ -3242,56 +3242,86 @@ function assembleProgram() {
         emit("MOV R10,0x6154");
         emit("LD.UB R10,R10[0x4]");
         emit("CP.W R10,0x2");
-        emit("BR{ne} 0x8001b64c");      // not playing: whatever the clamp said
+        emit("BR{ne} 0x8001b648");      // not playing: whatever the clamp said
+        // The portamento knob is asked FIRST, and its answer covers the tie's
+        // slide as well as the ordinary glide.  A tie makes the note before it
+        // longer; the note after a tie is a new note, and a new note that
+        // slides in when nothing was asked to slide is just wrong.  The
+        // deadzone is the one every other glide in this firmware answers to.
+        emit("MOV R8,0x3866");
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x30");
+        emit("BR{lt} 0x8001b646");      // knob off: nothing slides at all
         emit("MOV R10,0x61e5");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001b632");
+        emit("BR{eq} 0x8001b63c");
+        // A tie in hand, and the knob up: the slide is the tie's, 303
+        // fashion, rather than the knob's own time.
         emit(StringFormat("MOV R8,0x%x",
              number("tie_glide_rate", 60, 1, 1024)));
-        emit("RJMP 0x8001b64c");
-        padTo(0x8001b632);
+        emit("RJMP 0x8001b648");
+        padTo(0x8001b63c);
         // Playing, no tie in hand: the portamento knob means TIME here, the
         // way it does on a build without the pressure blend.  A blend build
         // otherwise forces the rate to zero, because pressure is the
         // portamento - but the sequencer's keyboard is silent, so there is no
         // pressure to blend and the knob would mean nothing at all.  R9 still
         // holds the table index the caller worked out.
-        emit("MOV R8,0x3866");
-        emit("LD.SH R8,R8[0x0]");
-        emit("CP.W R8,0x30");
-        emit("BR{lt} 0x8001b648");      // the knob's own deadzone: no glide
-        emit("LDDPC R8,0x8001b658");
+        emit("LDDPC R8,0x8001b654");
         emit("LD.SH R8,R8[R9 << 0x1]");
         emit("CASTS.H R8");
-        emit("RJMP 0x8001b64c");
-        padTo(0x8001b648);
+        emit("RJMP 0x8001b648");
+        padTo(0x8001b646);
         emit("MOV R8,0x0");
-        padTo(0x8001b64c);
+        padTo(0x8001b648);
         emit("MOV R9,0x2eee");
         emit("ST.H R9[0x0],R8");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b658);
+        padTo(0x8001b654);
         word(0x80015150); // the factory glide-rate table
-        finish("seq_glide", 0x8001b65c);
+        finish("seq_glide", 0x8001b658);
 
-        // The external clock, per scan: the counter every interval here is
-        // measured against, and the release when the clock stops.  MARF gives
-        // itself two seconds; at a 5 ms scan that is 400 of these.
+        // The divider's own timebase.  It used to count 5 ms scans, which put
+        // its shortest measurable interval at 20 ms - and a 208 pulser at its
+        // top rate is 780 Hz, or 1.28 ms.  Nothing about a scan counter can
+        // see that.
+        //
+        // So the counter ticks on the 1 ms task instead: the factory's own
+        // periodic callback, registered at 0x80007c1c with a period of 1 and
+        // reached through the pool word this cave is chained in front of.
+        // R12 is the task's control block, handed back untouched.
+        begin(0x8001b950);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R8,0x61e6");
+        emit("LD.UH R9,R8[0x0]");
+        emit("SUB R9,-0x1");
+        emit("ST.H R8[0x0],R9");
+        emit("MOV R12,R0");
+        emit("MCALL PC[0x8001b970]");   // the factory's own 1 ms work
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b970);
+        word(0x800076b0); // the factory's 1 ms task callback
+        finish("clock_ms_tick", 0x8001b974);
+
+        // The external clock, per scan: the release when the clock stops.
+        // MARF gives itself two seconds.  The counter itself is not touched
+        // here any more - it ticks on the 1 ms task, because a scan is far
+        // too coarse to measure a pulser with.
         begin(0x8001b980);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R10,0x61e6");
         emit("LD.UH R8,R10[0x0]");
-        emit("SUB R8,-0x1");
-        emit("ST.H R10[0x0],R8");
         emit("LD.UB R9,R10[0x6]");      // locked?
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x8001b9b8");
         emit("LD.UH R9,R10[0x2]");      // when the last pulse arrived
         emit("SUB R8,R9");
         emit("CASTU.H R8");
-        emit("MOV R9,0x190");           // 400 scans, two seconds
+        emit("MOV R9,0x7d0");           // 2000 ms, two seconds
         emit("CP.W R8,R9");
         emit("BR{le} 0x8001b9b8");
         emit("MOV R9,0x0");
@@ -3328,16 +3358,21 @@ function assembleProgram() {
         emit("ST.H R10[0x2],R8");
         emit("SUB R8,R9");
         emit("CASTU.H R8");             // the interval, wrapping cleanly
-        emit("CP.W R8,0x4");
+        emit(StringFormat("CP.W R8,0x%x",
+             number("clock_min_ms", 1, 1, 100)));
         emit("BR{lt} 0x8001b790");      // too fast to be a clock
-        emit("MOV R11,0x190");
+        emit("MOV R11,0x7d0");          // 2000 ms, two seconds
         emit("CP.W R8,R11");
         emit("BR{gt} 0x8001b790");      // too slow
         emit("LD.UH R9,R10[0x4]");      // the interval before this one
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x8001b788");      // nothing to agree with yet
-        // Agreement: within an eighth of the last interval, plus a scan or
-        // two so a slow clock is not held to an impossible tolerance.
+        // Agreement: within an eighth of the last interval, plus a
+        // millisecond or two so a slow clock is not held to an impossible
+        // tolerance.  A clock that does not keep time does not get divided -
+        // every pulse goes through instead, which is the honest answer when
+        // there is no steady rate to take a fraction OF.  Dividing an uneven
+        // train would mean choosing which pulses to believe.
         emit("MOV R11,R8");
         emit("SUB R11,R11,R9 << 0x0");
         emit("ABS R11");
@@ -3346,11 +3381,22 @@ function assembleProgram() {
         emit("SUB R12,-0x2");
         emit("CP.W R11,R12");
         emit("BR{gt} 0x8001b788");
-        emit("MOV R11,0x2");            // locked
+        // Agreeing intervals are COUNTED, and it takes a run of them.  Two
+        // was enough to be fooled: a clock with no rate at all still throws
+        // the odd matching pair, and one of those latched the divider on for
+        // a pulse or two before the next mismatch let it go.  A run of them
+        // cannot be a coincidence often, though it can still be one - there
+        // is no count that makes an irregular clock impossible to mistake.
+        emit("LD.UB R11,R10[0x6]");
+        emit(StringFormat("CP.W R11,0x%x",
+             number("clock_lock_pulses", 5, 2, 32)));
+        emit("BR{ge} 0x8001b784");
+        emit("SUB R11,-0x1");
+        padTo(0x8001b784);
         emit("ST.B R10[0x6],R11");
         emit("RJMP 0x8001b78c");
         padTo(0x8001b788);
-        emit("MOV R11,0x1");            // one plausible interval, not two
+        emit("MOV R11,0x1");            // the run starts again from here
         emit("ST.B R10[0x6],R11");
         padTo(0x8001b78c);
         emit("ST.H R10[0x4],R8");
@@ -3362,8 +3408,9 @@ function assembleProgram() {
         padTo(0x8001b798);
         emit("LD.UB R11,R10[0x6]");
         emit("MOV R12,0x1");            // unlocked, or still settling: /1
-        emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001b7bc");
+        emit(StringFormat("CP.W R11,0x%x",
+             number("clock_lock_pulses", 5, 2, 32)));
+        emit("BR{lt} 0x8001b7bc");
         // Locked, so the rate knob divides instead.  Its mirror at 0x2ee6 is
         // the pot and the CV input together, 0..0x3ff; fast end passes every
         // pulse, slow end one in eight.  The Clockwork Card's own law.
@@ -3392,21 +3439,22 @@ function assembleProgram() {
         // Every pulse, not only the ones that pass: refreshing on the passed
         // ones alone left the countdown running out partway through a divided
         // step, and the internal timer fired into the gap.
-        emit("LD.UH R9,R10[0x4]");      // the measured interval, in scans
+        emit("LD.UH R9,R10[0x4]");      // the measured interval, in ms
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x8001b7e8");      // no interval yet: leave the arp's own
-        // Scans are not the countdown's unit.  This counter ticks once per
-        // 5 ms scan, but the arp's countdown is decremented by the 1 ms task
-        // that posts event 17 - so a measured interval has to be converted
-        // before it means anything here.  Without the conversion a locked
-        // 100 ms clock loaded 25 and the arp stepped again 25 ms later,
-        // before its own next pulse.
-        emit(StringFormat("MOV R11,0x%x", number("scan_period_ms", 5, 1, 20)));
-        emit("MUL R9,R9,R11");          // scans -> milliseconds
+        // The counter and the countdown are both milliseconds now, so the
+        // interval means something here without converting.  It used to count
+        // 5 ms scans and be multiplied up, which put the shortest clock it
+        // could see at 20 ms.
         emit("MUL R9,R9,R12");          // times the divisor: the real step
         emit("MOV R11,R9");
         emit("LSR R11,0x2");
         emit("ADD R9,R11");             // and a quarter again
+        // and two milliseconds besides.  A quarter of a short interval
+        // rounds to nothing - at a 1.28 ms pulser it IS nothing - and a
+        // countdown with no margin at all runs out between pulses and lets
+        // the arp's own timer fire into the gap.
+        emit("SUB R9,-0x2");
         // The halfword's own range, not the 0xfff the tempo table stops at:
         // two seconds divided by eight is sixteen, and that has to fit.
         emit("MOV R11,0x7fff");
@@ -3419,8 +3467,9 @@ function assembleProgram() {
         padTo(0x8001b7e8);
         // Now: does this pulse play, or is it one the divider swallows?
         emit("LD.UB R11,R10[0x6]");
-        emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001b810");      // not locked: every pulse plays
+        emit(StringFormat("CP.W R11,0x%x",
+             number("clock_lock_pulses", 5, 2, 32)));
+        emit("BR{lt} 0x8001b810");      // not locked: every pulse plays
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
@@ -3454,8 +3503,9 @@ function assembleProgram() {
         emit("MOV R7,SP");
         emit("MOV R12,0x61ec");
         emit("LD.UB R12,R12[0x0]");
-        emit("CP.W R12,0x2");
-        emit("BR{eq} 0x8001b854");      // locked: the clock owns it
+        emit(StringFormat("CP.W R12,0x%x",
+             number("clock_lock_pulses", 5, 2, 32)));
+        emit("BR{ge} 0x8001b854");      // locked: the clock owns it
         emit("ST.H R9[0x38e],R8");
         padTo(0x8001b854);
         emit("LDM SP++,R7,PC");
@@ -3537,12 +3587,55 @@ function assembleProgram() {
         word(0x800068cc); // led_clear(ch)
         finish("seq_release", 0x8001b4e0);
 
+        // A Buchla trigger is a 10 V spike that drops to a 5 V sustain only
+        // while the note is HELD, and to 0 when it is let go.  The factory
+        // schedules that drop three counts after the spike (0x8000788a) and
+        // performs it at 0x80007540, which is the pool word this replaces.
+        //
+        // A sequencer step that is not tied into the next one is not held by
+        // anything: it should go to 0 there, not sit at the sustain for the
+        // rest of the step.  Which is which is seq_gate's decision, asked
+        // rather than repeated, so the gate and the pulse can never disagree
+        // about the same step.
+        //
+        // R12 is the scheduler's own message pointer.  The factory routine
+        // stores and increments it and then never reads it, but it is handed
+        // back untouched all the same.
+        begin(0x8001b320);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R8,0x6154");
+        emit("LD.UB R8,R8[0x4]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001b342");      // not playing: the factory's own drop
+        emit("MCALL PC[0x8001b350]");   // seq_gate -> R8, negative if held
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001b342");      // a tie is carrying it: keep the 5 V
+        emit("MCALL PC[0x8001b354]");   // to zero, and flushed
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b342);
+        emit("MOV R12,R0");
+        emit("MCALL PC[0x8001b358]");   // the factory's 10 V -> 5 V
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b350);
+        word(0x8001b4f0); // seq_gate
+        word(0x80002440); // gate to zero and flush it
+        word(0x80007540); // the factory's own drop to the sustain
+        finish("seq_pulse_drop", 0x8001b35c);
+
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
         // and then a threshold the countdown can never reach, so the gate
         // never falls and the note carries across.  The tie's own step
         // answers the selector with -1, so nothing retriggers and the pitch
         // it is carrying stays put.  R8 = the threshold.
+        //
+        // Only the tie holds it.  A real note after a tie used to be held too
+        // - the 303 slide - but a Buchla trigger is a 10 V spike that drops
+        // to 5 V only while a note is HELD, and the note after a tie is a new
+        // note.  It gets its own spike, the way the SH-101 gives one to every
+        // note that is not tied.
         begin(0x8001b4f0);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -3572,15 +3665,8 @@ function assembleProgram() {
         emit("BR{eq} 0x8001b544");
         emit("MOV R11,0x7fff");
         emit("CP.W R10,R11");
-        emit("BR{eq} 0x8001b540");      // a tie next: carry the gate into it
-        // Otherwise a real note - and it is held only if a tie is sounding
-        // right now, which is the slide the tie armed.
-        emit("MOV R11,0x61e5");
-        emit("LD.UB R11,R11[0x0]");
-        emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001b544");
-        padTo(0x8001b540);
-        emit("MOV R8,-0x8000");         // a count the countdown never reaches
+        emit("BR{ne} 0x8001b544");      // a real note next: it gets its own
+        emit("MOV R8,-0x8000");         // a tie next: carry the gate into it
         padTo(0x8001b544);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b54c);
@@ -3698,11 +3784,11 @@ function assembleProgram() {
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001ba10");
+        emit("BR{ne} 0x8001ba20");
         emit("MOV R10,0x61e0");
         emit("LD.UB R9,R10[0x0]");
         emit("CP.W R9,0x40");           // 64 steps and no more
-        emit("BR{ge} 0x8001ba10");
+        emit("BR{ge} 0x8001ba20");
         emit("MOV R11,0x854");          // the live key table
         emit("ADD R11,R11,R12 << 0x1");
         emit("LD.SH R11,R11[0x0]");
@@ -3718,9 +3804,21 @@ function assembleProgram() {
         emit("ST.B R8[0x0],R12");
         emit("SUB R9,-0x1");
         emit("ST.B R10[0x0],R9");
-        padTo(0x8001ba10);
+        // A note going in makes a trigger.  Recording silences the arp, and
+        // with the arp on the keyboard has no pulse of its own, so entering a
+        // bar of notes was silent and unlit - nothing said a key had landed.
+        // The same deferred countdown every other pulse in this firmware
+        // uses, so the trigger still waits for the pitch to reach the DAC.
+        emit("MOV R8,0x60ee");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001ba20");      // one already pending
+        emit(StringFormat("MOV R9,0x%x",
+            number("gate_settle_scans", 1, 0, 3) + 1));
+        emit("ST.B R8[0x0],R9");
+        padTo(0x8001ba20);
         emit("LDM SP++,R7,PC");
-        finish("seq_record", 0x8001ba18);
+        finish("seq_record", 0x8001ba28);
 
         // Play, at the arp's own note selection.  The arp asks which key to
         // sound; while playing we answer with a valid one so the step is not
@@ -4342,6 +4440,22 @@ function assembleProgram() {
         emit("BR{ne} 0x80003256");      // between it and the branch
         emit("MCALL PC[0x8001a268]");
         finish("pitch_store_hook", 0x80003256);
+
+        // The 1 ms task, through our counter first, so the divider has a
+        // timebase fine enough to measure a 780 Hz pulser.
+        if (block("clock_scan")) {
+            begin(0x80007da0);
+            word(0x8001b950);
+            finish("clock_ms_pool", 0x80007da4);
+        }
+
+        // The pulse's drop from 10 V to the 5 V sustain, through our cave, so
+        // that a sequencer step nothing is holding drops to 0 instead.
+        if (block("seq_gate")) {
+            begin(0x800078bc);
+            word(0x8001b320);
+            finish("pulse_drop_pool", 0x800078c0);
+        }
 
         // The bend strip's own pool word.  With the sequencer on it goes
         // through our cave, which reads the ends for rests and ties and

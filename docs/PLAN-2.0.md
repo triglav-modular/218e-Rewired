@@ -379,6 +379,61 @@ added to every note of the take, for the whole take.  Entering record from
 relative mode now runs the factory's own `1 -> 0` cleanup from `0x8000afee`:
 zero `state+0x216`, and send pitch bend centre on both ports.
 
+### The gate is a trigger, and the tie is what holds it (2026-08-27)
+
+A Buchla pulse is a short 10 V spike that drops to a 5 V sustain only while
+the note is HELD, and to 0 when it is let go.  The factory builds exactly
+that: `0x800077f8` writes `0xfff` to `state+0x354`, and a timer scheduled
+three counts later at `0x8000788a` runs `0x80007540`, which drops it to
+`0x7ff`.
+
+A sequencer step that is not tied into the next one is not held by anything,
+so it should go to 0 there rather than sit at the sustain for the rest of the
+step.  `seq_pulse_drop` is chained in front of that callback through its pool
+word at `0x800078bc`: playing, and the step is not carrying a tie, it calls
+`0x80002440` instead - gate to zero and flushed.  Everything else, including
+recording and ordinary keyboard playing, gets the factory drop untouched.
+Which is which is `seq_gate`'s decision, asked rather than repeated, so the
+gate and the pulse can never disagree about the same step.
+
+**A note after a tie retriggers.**  It used to be held - the 303 slide - and
+is not any more.  The tie makes the note before it longer; the note after the
+tie is a new note and gets its own spike, which is what the SH-101 does and
+what "regular notes are pulses" means.
+
+**Nothing slides with the portamento knob at zero.**  `seq_glide` asks the
+knob first, and its deadzone now covers the tie's slide as well as the
+ordinary glide.  With the knob up a tie still slides at `tie_glide_rate`.
+
+**Entering a note in record sends a trigger.**  Recording silences the arp,
+and with the arp on the keyboard has no pulse of its own, so a bar of notes
+went in silent and unlit.  `seq_record` now sets the same deferred-pulse
+countdown at `0x60ee` that every other pulse in this firmware uses, so the
+trigger still waits for the pitch to reach the DAC.
+
+**The pad-4 hold is a second**, not a second and a half: `chord_hold_scans`
+200 at a 5 ms scan.
+
+### The clock divider on a millisecond timebase (2026-08-27)
+
+It counted 5 ms scans, so the shortest interval it could measure was 20 ms.
+A 208 pulser at its top rate is **780 Hz - 1.28 ms** - which no scan counter
+can see at all.  The counter at `0x61e6` is now incremented by
+`clock_ms_tick`, chained in front of the factory's own 1 ms task callback
+through the pool word at `0x80007da0` (the task is registered at
+`0x80007c1c` with a period of 1).  Everything the divider measures is
+milliseconds: the plausible window is `clock_min_ms`..2000, the release is
+2000, and the countdown refresh no longer converts.
+
+**An uneven clock is not divided - every pulse passes through.**  That is the
+honest answer when there is no steady rate to take a fraction of, and it is
+what the lock has always been for.  What was wrong was how easily it locked:
+two agreeing intervals, and a clock with no rate at all still throws the odd
+matching pair.  Measured against random spacings, a run of 2 divided **every**
+such clock; 3 divided 90% of them; 5 divides 8%.  `clock_lock_pulses` is 5,
+and the cost is settling time - a steady clock passes that many pulses at 1:1
+before it starts dividing.  No run length makes a mistake impossible.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

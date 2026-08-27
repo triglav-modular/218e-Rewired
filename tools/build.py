@@ -856,8 +856,9 @@ RAM_REGIONS = [
     # 64 recorded pitches, then how many there are, where play has got to,
     # and the pitch the step about to sound carries.
     (0x6160, 0x61E6, "sequencer steps"),
-    # The external clock: its own scan counter, the last pulse's stamp, the
-    # interval before this one, whether it is locked, and the divide count.
+    # The external clock: a free-running millisecond counter, the last
+    # pulse's stamp, the interval before this one, whether it is locked, and
+    # the divide count.
     (0x61E6, 0x61EE, "external clock divider"),
     # The key each recorded step was played on.  The pitch beside it is what
     # the CV plays; this is what MIDI names the note by.
@@ -1711,20 +1712,25 @@ def main() -> None:
         blocks["arp_rhythm_hook"] = False
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
-    cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 300))
+    cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 200))
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
+    cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 1))
+    cfg["_numbers"]["clock_lock_pulses"] = int(
+        cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
     for name in ("clock_scan", "clock_pulse", "clock_hook",
-                 "clock_tempo", "clock_tempo_hook"):
+                 "clock_tempo", "clock_tempo_hook",
+                 "clock_ms_tick", "clock_ms_pool"):
         blocks[name] = div
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
                  "seq_strip", "seq_gate", "seq_glide", "strip_pool",
                  "seq_gate_clear", "seq_gate_clear_hook",
+                 "seq_pulse_drop", "pulse_drop_pool",
                  "seq_noteoff", "seq_noteoff_hook",
                  "seq_trigger_led", "seq_trigger_led_hook"):
         blocks[name] = seq

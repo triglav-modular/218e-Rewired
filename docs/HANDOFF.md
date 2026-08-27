@@ -35,8 +35,17 @@ that before touching the strip; a session already lost a day to it.
 Two audit findings landed on top of it, both confirmed against the image
 before being fixed: stop and clear left the sequencer's note sounding when
 the arp was not stepping (external clock, or RATE at zero), and entering
-record froze a standing pitch bend into every note of the take. Both are
-written up in PLAN-2.0.md.
+record froze a standing pitch bend into every note of the take.
+
+Then a round of playing notes from the owner, all written up in PLAN-2.0.md:
+the gate is a Buchla trigger now (a 10 V spike that drops to 0 unless a tie
+is holding it), a note after a tie retriggers instead of being slurred into,
+nothing slides with the portamento knob at zero, entering a note in record
+sends a trigger, the pad-4 hold is a second, and the clock divider counts
+milliseconds instead of 5 ms scans so it keeps up with a 780 Hz pulser. An
+uneven clock is passed through undivided, and the run of agreeing intervals
+it takes to believe a rate went from 2 to 5 - measured, not guessed: a run of
+2 divided every uneven clock thrown at it.
 
 **Not yet on hardware.** The owner flashes and reports; nothing below has
 been played. `strip_halfway_units` is 2048 because 2048 is the middle of the
@@ -59,8 +68,12 @@ lost, propose a fresh one and wait.
   that build numbers are compiled as immediates, so each one moved to
   runtime needs a RAM cell and a load. Good candidates are the numbers below.
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
-  `chord_hold_scans` (300), and `strip_halfway_units` (2048, principled but
-  unplayed). All are build numbers precisely so they can move.
+  `strip_halfway_units` (2048), `clock_min_ms` (1) and `clock_lock_pulses`
+  (5). All are build numbers precisely so they can move. `chord_hold_scans`
+  is 200 because the owner asked for a second.
+- **The trigger spike is the factory's own**, scheduled with 3 at
+  `0x8000788a`. The owner puts a Buchla trigger at ~4 ms; if a measurement
+  says the unit is not what 3 assumes, that immediate is the one to move.
 - **A settings save during a take would persist the borrowed strip mode.**
   Record forces `state+0x20c` to 0 and the save path reads it like any other
   setting. Nothing guards it, and nothing is likely to hit it.

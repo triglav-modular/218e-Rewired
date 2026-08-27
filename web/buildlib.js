@@ -115,7 +115,8 @@ var BUILDLIB = (function () {
         });
         // The sequencer's controls live on a pad chord, so it needs the pads.
         cfg.sequencer = { on: !!want('sequencer', false), strip_halfway_units: 2048,
-                          tie_glide_rate: 60, chord_hold_scans: 300 };
+                          tie_glide_rate: 60, chord_hold_scans: 200,
+                          clock_min_ms: 1, clock_lock_pulses: 5 };
         cfg.clock = { divide: !!want('clock_divide', false) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
@@ -604,7 +605,9 @@ var BUILDLIB = (function () {
             knob2_swing: cfg.knob2.mode === 'swing' ? 1 : 0,
             strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
             tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
-            chord_hold_scans: (cfg.sequencer && cfg.sequencer.chord_hold_scans) || 300,
+            clock_min_ms: (cfg.sequencer && cfg.sequencer.clock_min_ms) || 1,
+            clock_lock_pulses: (cfg.sequencer && cfg.sequencer.clock_lock_pulses) || 5,
+            chord_hold_scans: (cfg.sequencer && cfg.sequencer.chord_hold_scans) || 200,
             pattern_count: patternBank(cfg).masks.length
         };
         var span = calib.trim_span;
