@@ -122,6 +122,17 @@ lost, propose a fresh one and wait.
   costs. The one way to make wear real is saving from a scan-rate path: 200
   a second would spend 100K cycles in eight minutes, so saves must be an
   explicit gesture, and skipped entirely when the payload has not changed.
+  **A save must verify by reading back, because the hardware cannot tell you
+  it failed.** FSR's two error bits are COMMAND errors, not cell failures:
+  32059L 14.5 sets PROGE for a bad key, an invalid command, or a command
+  issued while another is running, and LOCKE for writing a locked or
+  BOOTPROT-protected region. There is no "the write did not take" bit, so a
+  worn page reports success and the data is gone at the next power-up. Read
+  the page back and compare; the driver already wraps the cheap form at
+  `0x800107d0` - QPR, whose result is FSR bit 5, QPRR, documented as 1 when
+  the page is erased. And wear-out ends nothing: with ~290 free pages,
+  moving to a fresh one is a build number, and rotating from the start
+  multiplies the ceiling by the size of the rotation.
 - **Settings over MIDI** — feasibility done (dispatcher event 32 at
   `0x80004fc2` carries an incoming message with both data bytes). The cost is
   that build numbers are compiled as immediates, so each one moved to
