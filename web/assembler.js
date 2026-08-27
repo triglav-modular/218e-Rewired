@@ -4251,12 +4251,13 @@ function assembleProgram() {
         // The KNOB'S OWN RAW CHANNEL, state+0x2fc, and nothing else.  The
         // mirror at 0x2ee6 that this used to read is the factory's
         // knob-plus-CV sum (0x80002b62: table[knob] + state[0x2f2]/2), and
-        // state+0x2f2 is the ADC on the arp input jack - THE JACK THE CLOCK
-        // IS PATCHED INTO.  The pulser's own waveform rode into the divisor,
-        // which wobbled with the input's instantaneous voltage whatever the
-        // knob said - measured off the instrument at both knob ends.  The
-        // knob half of that sum is no better a source: it is the tempo
-        // table's OUTPUT, not the knob position.
+        // NEITHER half is the knob position.  The knob half is the tempo
+        // table's OUTPUT - nonlinear, and not even monotonic in the
+        // direction a divisor wants - which is why the division looked
+        // knob-independent on the instrument.  The CV half is the arp-rate
+        // CV input (the 218K+'s own jack, or a reassigned input on a
+        // modified V3; near zero when nothing is patched there), which a
+        // divisor has no business following either.
         emit("LDDPC R11,0x8001b850");   // global state base
         emit("LD.SH R11,R11[0x2fc]");
         emit("MOV R12,0x3ff");

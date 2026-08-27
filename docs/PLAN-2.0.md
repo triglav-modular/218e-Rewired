@@ -638,17 +638,17 @@ before, and it returns two seconds after a clock stops.
 ### The divisor reads the knob, not the jack; and clocked triggers fire sooner (2026-08-27)
 
 Two more recordings (the ARP pair, pulser swept, both knob ends) showed
-triggers dropping at BOTH ends, knob-independent, and worse on the sawtooth
-than a square.  The divisor was reading `state+0x2ee6` - and the factory
-writer at `0x80002b62` shows what that is: `table[knob] + state[0x2f2]/2`,
-clamped, where **`state+0x2f2` is the ADC on the arp input jack - the jack
-the clock is patched into.**  The pulser's own waveform rode into the
-divisor, which wobbled with the input's instantaneous voltage: continuously
-for a sawtooth, as a fixed offset for a square (why the square "seemed
-better" and still dropped at max).  The knob half of the sum is no better a
-source - it is the tempo table's OUTPUT, not the knob position.  The divisor
-now reads **`state+0x2fc`, the rate knob's own raw channel**, and nothing
-the jack carries can move it.
+triggers dropping at BOTH ends, knob-independent.  The divisor was reading
+`state+0x2ee6` - and the factory writer at `0x80002b62` shows what that is:
+`table[knob] + state[0x2f2]/2`, clamped.  **Neither half is the knob
+position.**  The knob half is the tempo table's OUTPUT - nonlinear, and not
+in the direction a divisor wants - which is why the division looked
+knob-independent.  The CV half is the arp-rate CV input: the owner corrected
+an earlier reading here - it is NOT the pulse jack but a separate input (the
+218K+ has its own CV jack beside the orange pulse one; on a stock V3 it is
+only reachable by the Appendix IV reassign or resistor mod), near zero when
+nothing is patched there.  The divisor now reads **`state+0x2fc`, the rate
+knob's own raw channel** - the knob as a position, polluted by nothing.
 
 **And the nine milliseconds.**  Measured from clock pulse to trigger out,
 and it is the deferred-pulse design, not the divider: a trigger waits for

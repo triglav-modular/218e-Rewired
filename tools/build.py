@@ -891,10 +891,11 @@ FACTORY_CELLS = [
     # The note the arp step sounded, and the flag saying one is sounding.
     # Both are read by the release that stop and clear now do for themselves.
     (0x2EE4, 0x2EE6, "the note the arp is sounding"),
-    # table[knob] + jack-CV/2, clamped - written at 0x80002b62.  The divisor
-    # must NOT read this: the CV half is the ADC on the arp input jack, the
-    # jack an external clock is patched into, so the clock's own waveform
-    # rides in it.  The knob alone is state+0x2fc, raw.
+    # table[knob] + CV/2, clamped - written at 0x80002b62.  The divisor must
+    # NOT read this: the knob half is the tempo table's OUTPUT, not the knob
+    # position, and the CV half is the arp-rate CV input (the 218K+'s own
+    # jack; a reassigned input on a modified V3).  The knob alone, as a
+    # position, is state+0x2fc raw.
     (0x2EE6, 0x2EE8, "arp rate knob and CV, combined"),
     (0x2EED, 0x2EEE, "arp active-note flag"),
     # Read before the 208-bus note-off and before every bend send.  Named for

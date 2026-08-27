@@ -17050,8 +17050,8 @@
 },
 {
 "addr": "8001ab6c",
-"text": "MOV R11,0x5a5b",
-"bytes": "e06b5a5b",
+"text": "MOV R11,0x4c00",
+"bytes": "e06b4c00",
 "width": 4
 },
 {
@@ -18100,8 +18100,8 @@
 },
 {
 "addr": "8001ad12",
-"text": "MOV R11,0x5a5b",
-"bytes": "e06b5a5b",
+"text": "MOV R11,0x4c00",
+"bytes": "e06b4c00",
 "width": 4
 },
 {
@@ -31125,5 +31125,5 @@
 "width": 2
 }
 ],
-"program_sha256": "93d82ba41fc5e5f1955ce744953c97edbceb2691cc0336e886d8c9825ab255a9"
+"program_sha256": "7ad23a99c5222fafc1a405755c8668901ab19604f5c974fa47c76af9edf83533"
 }
