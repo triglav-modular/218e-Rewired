@@ -108,6 +108,14 @@ lost, propose a fresh one and wait.
   32059L Table 28-30: `NFARRAY` Flash Array Write/Erase cycle **100K**, and
   `TFDR` Flash Data Retention Time **15 Year** — so RETENTION binds before
   endurance does at anything under about 18 saves a day (100,000 / 15 years).
+  Retention is NOT a shelf life for the instrument, and this note should not
+  be read as one. It is measured from when a PAGE WAS LAST PROGRAMMED, so
+  every DFU flash restarts it for the firmware and every save restarts it for
+  the settings; the datasheet states it with no conditions at all, and the
+  feature list calls it a "capability", which by convention means after the
+  full cycle count at rated temperature — the worst case, not a bench synth's.
+  The failure mode if it were ever reached is a bit flip that reflashing
+  repairs, not a dead instrument.
   Read the table carefully before quoting it: 100K sits in the *Max.* column
   and the 15 years in *Typ.*, so neither is written as a guaranteed minimum.
   Table 28-29 puts page programming at 4 ms, which is the CPU stall a save
