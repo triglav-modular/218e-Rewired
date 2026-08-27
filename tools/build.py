@@ -1697,13 +1697,13 @@ def main() -> None:
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
-    for name in ("clock_scan", "clock_pulse", "clock_hook",
-                 "clock_internal", "clock_internal_hook"):
+    for name in ("clock_scan", "clock_pulse", "clock_hook"):
         blocks[name] = div
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
-                 "seq_strip", "seq_gate", "seq_glide", "strip_pool"):
+                 "seq_strip", "seq_gate", "seq_glide", "strip_pool",
+                 "seq_gate_clear", "seq_gate_clear_hook"):
         blocks[name] = seq
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"

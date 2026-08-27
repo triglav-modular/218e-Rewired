@@ -3444,8 +3444,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R10[0x4],R11");
         padTo(0x8001b798L);
         emit("LD.UB R11,R10[0x6]");
+        emit("MOV R12,0x1");            // unlocked, or still settling: /1
         emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001b7c8");      // not locked: every pulse plays
+        emit("BR{ne} 0x8001b7bc");
         // Locked, so the rate knob divides instead.  Its mirror at 0x2ee6 is
         // the pot and the CV input together, 0..0x3ff; fast end passes every
         // pulse, slow end one in eight.  The Clockwork Card's own law.
@@ -3457,48 +3458,60 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MUL R12,R12,R11");
         emit("LSR R12,0xa");            // /1024, so the 8 makes up the 1023
         emit("SUB R12,-0x1");           // 1..8 across the knob
+        padTo(0x8001b7bcL);
+        // Refresh the arp's own countdown, on EVERY pulse and sized to the
+        // whole divided step, with a quarter as margin.
+        //
+        // The countdown is not just the internal tempo - the factory's
+        // gate-off rides on it, firing when it reaches 3.  Standing the
+        // internal tick down instead, as an earlier attempt did, froze the
+        // countdown: gate-off then never fired, and a countdown that happened
+        // to freeze AT 3 sent every external pulse down the gate-off branch,
+        // which returns before choosing a note - playback stopped until the
+        // clock timed out.  Feeding it keeps gate-off working and keeps the
+        // internal timer permanently pre-empted, which is what the
+        // suppression was for.
+        //
+        // Every pulse, not only the ones that pass: refreshing on the passed
+        // ones alone left the countdown running out partway through a divided
+        // step, and the internal timer fired into the gap.
+        emit("LD.UH R9,R10[0x4]");      // the measured interval
+        emit("MUL R9,R9,R12");          // times the divisor: the real step
+        emit("MOV R11,R9");
+        emit("LSR R11,0x2");
+        emit("ADD R9,R11");             // and a quarter again
+        emit("MOV R11,0xfff");
+        emit("CP.W R9,R11");
+        emit("BR{le} 0x8001b7d4");
+        emit("MOV R9,R11");
+        padTo(0x8001b7d4L);
+        emit("LDDPC R11,0x8001b800");
+        emit("ST.H R11[0x38e],R9");
+        // Now: does this pulse play, or is it one the divider swallows?
+        emit("LD.UB R11,R10[0x6]");
+        emit("CP.W R11,0x2");
+        emit("BR{ne} 0x8001b7f0");      // not locked: every pulse plays
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001b7c8");
+        emit("BR{ge} 0x8001b7f0");
         emit("ST.B R10[0x7],R11");      // swallowed
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b7c8L);
+        padTo(0x8001b7f0L);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
         emit("MOV R12,0xffff");         // -1: step now, do not reload
-        emit("MCALL PC[0x8001b7e0]");
+        emit("MCALL PC[0x8001b804]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b7e0L);
+        padTo(0x8001b800L);
+        word(0x00003560L); // global state base
         word(0x8000210cL); // the arp step
         // MCALL is memory-indirect, so the dispatcher's call needs a word
         // holding this cave's address - not the address itself.  Pointing it
         // straight here made event 10 read back 0xebcd4080, this cave's own
         // STM, and jump to it.
         word(0x8001b740L);
-        finish("clock_pulse", 0x8001b7e8L);
-
-        // The arp's own timer, while an external clock is locked.  Locking
-        // only ever decided which external pulses got through; the periodic
-        // tick kept running underneath and kept advancing the arp on its own
-        // schedule, so a locked clock added steps between its own.  Of the
-        // three sites that step the arp this is the only one that passes a
-        // tempo rather than -1, so it is the only one that means "the
-        // internal timer says so" - and the only one to stand down.
-        begin(0x8001b7f0L);
-        emit("STM --SP,R7,LR");
-        emit("MOV R7,SP");
-        emit("MOV R8,0x61e6");
-        emit("LD.UB R8,R8[0x6]");
-        emit("CP.W R8,0x2");
-        emit("BR{eq} 0x8001b808");      // locked: the clock owns the tempo
-        emit("MCALL PC[0x8001b814]");
-        padTo(0x8001b808L);
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b810L);
-        word(0x8001b7f0L); // this cave, for the caller too far away to pool it
-        word(0x8000210cL); // the arp step
-        finish("clock_internal", 0x8001b818L);
+        finish("clock_pulse", 0x8001b80cL);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
@@ -3549,6 +3562,34 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001b54cL);
         word(0x8001b4f0L); // this cave, for the caller too far away to pool it
         finish("seq_gate", 0x8001b550L);
+
+        // The arp's OTHER gate clear.  When no key is held it drops the gate
+        // and its LED at every fired step, before choosing a note - and in
+        // play mode no key is ever held, so this fired on every step and no
+        // tie could survive it however the countdown compare was answered.
+        // Suppressing one and not the other was the whole of the bug.
+        //
+        // The decision is seq_gate's own, called rather than repeated, so the
+        // two can never come to different conclusions about the same step: it
+        // answers a negative threshold exactly when the gate is to be held.
+        begin(0x8001b8a0L);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001b8d0]");   // seq_gate -> R8 = the threshold
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001b8c4");      // held: leave the gate alone
+        emit("LDDPC R9,0x8001b8d4");
+        emit("MOV R8,0x0");
+        emit("ST.H R9[0x354],R8");
+        emit("MOV R12,0x4");
+        emit("MCALL PC[0x8001b8d8]");   // and its LED
+        padTo(0x8001b8c4L);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b8d0L);
+        word(0x8001b4f0L); // seq_gate
+        word(0x00003560L); // global state base
+        word(0x800068ccL); // led_clear(ch)
+        finish("seq_gate_clear", 0x8001b8dcL);
 
         // Record.  Called from the note-on wrapper with R12 = the key, which
         // it must leave alone - the wrapper still needs it.  What goes in the
@@ -3937,23 +3978,25 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x800021a6L);
         finish("arp_gate_hook", 0x800021a6L);
 
-        // The periodic tick that advances the arp on its own timer.  It is
-        // the one caller that passes a tempo instead of -1, so it is the one
-        // the divider has to silence while it is locked.
-        if (block("clock_internal")) {
-            begin(0x80004faaL);
-            emit("MCALL PC[0x8001b810]");
-            finish("clock_internal_hook", 0x80004faeL);
-        }
-
         // Event 10 is the external clock pulse.  The factory ticked the arp
         // outright here; now the divider decides, and ticks itself if it is
         // letting this one through.  The arp-switch test above is untouched.
         if (block("clock_pulse")) {
             begin(0x80004e72L);
-            emit("MCALL PC[0x8001b7e4]");
+            emit("MCALL PC[0x8001b808]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7aL);
+        }
+
+        // Hook: the no-key-held gate clear, routed through the sequencer so a
+        // tie can keep its gate across the step boundary.
+        if (block("seq_gate_clear")) {
+            begin(0x800022b4L);
+            emit("MCALL PC[0x800022bc]");
+            emit("RJMP 0x800022c2");
+            padTo(0x800022bcL);
+            word(0x8001b8a0L);
+            finish("seq_gate_clear_hook", 0x800022c2L);
         }
 
         // Hook: the arp's note selection.  The factory asked "is anything held,

@@ -124,11 +124,11 @@ var WEBBUILD = (function () {
         blocks.arp_swing = cfg.knob2.mode === 'swing';
         var seq = !!(cfg.sequencer && cfg.sequencer.on);
         ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
-         'seq_strip', 'seq_gate', 'seq_glide', 'strip_pool']
+         'seq_strip', 'seq_gate', 'seq_glide', 'strip_pool',
+         'seq_gate_clear', 'seq_gate_clear_hook']
             .forEach(function (n) { blocks[n] = seq; });
         var div = !!(cfg.clock && cfg.clock.divide);
-        ['clock_scan', 'clock_pulse', 'clock_hook',
-         'clock_internal', 'clock_internal_hook']
+        ['clock_scan', 'clock_pulse', 'clock_hook']
             .forEach(function (n) { blocks[n] = div; });
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
