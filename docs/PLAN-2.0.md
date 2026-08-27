@@ -727,6 +727,57 @@ flags any `MCALL` reached with LR unsaved.  Zero hazards across the image
 after the fix - and it catches the exact bug that shipped, which is the only
 evidence that it works.
 
+### The double rate: it was watching a level, not an edge (2026-08-27)
+
+The owner asked the right question - "why are we watching crosses? we need
+the rising edge" - and the image says that is exactly the trouble.  The
+pulse input is a GPIO **pin-change** interrupt on line 5, and the factory
+handler at `0x800072e4` decides which edge it was by SAMPLING THE LEVEL:
+
+```
+if (IFR bit 5)            // a transition, either way
+    if (PVR bit 5)        // and the pin reads high right now
+        gate off; post(event 10)
+```
+
+That is right for a clean edge and cannot be right for a slow one.  A 208
+pulser's falling sawtooth crawls back down through the trip point and
+chatters there; the ISR keeps sampling HIGH, and the crossing posts a second
+event.  Measured off the instrument: a 181 ms pulser, steps at +80 ms and
++164 ms - dead on double rate, one real beat and one crossing.
+
+**The edge is reconstructed in firmware.**  `clock_ms_tick` reads PVR once a
+millisecond (GPIO port 0 at `0xFFFF1000`, PVR at `+0x60`, straight out of the
+factory's own accessor) and counts the milliseconds the pin has read LOW.
+The divider accepts a pulse only when that count has reached
+`clock_rearm_ms`, and clears it on acceptance.  The crossing never has a
+count - the pin is high from the beat until the crossing, and the dip inside
+the crossing's own chatter is over in far less than the run.
+
+The count is a LATCH, cleared only by an accepted pulse - never reset when
+the pin reads high.  Resetting on high looks right and races the beat: the
+pin goes high exactly when the beat arrives, the event waits its turn in the
+dispatcher, and a tick landing in between would zero the count and throw the
+beat away.  The emulation caught that, with the pin modelled and the tick
+landing on the edge.
+
+The period test stays as the other half: at a fast enough clock the low
+stretch is shorter than the millisecond that watches for it, so a whole
+period elapsing (`clock_hysteresis_eighths`, seven eighths) is the other way
+of knowing a beat arrived.  It needs a rate, so it only applies once locked.
+Between them the two cover each other's blind spot - the pin for slow clocks,
+the period for fast ones - and an unlocked, uneven clock still passes
+everything on the pin alone.
+
+**Verified against the built image with the pin modelled**: a sawtooth
+crossing twice a cycle gives exactly one step per cycle at 60, 181, 500 and
+1170 ms, and at every duty from 10% to 75%.
+
+**The honest limit** is the counter's resolution.  At the pulser's very top
+rate, 780 Hz, both edges of a 1.28 ms cycle land inside the same millisecond
+and cannot always be told apart; it runs, and may run doubled.  Everything
+from 60 ms up is exact.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

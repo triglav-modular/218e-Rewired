@@ -869,6 +869,11 @@ RAM_REGIONS = [
     # The key a note-on left for record to sound, plus one, so that the
     # cleared state is "nothing waiting" rather than key zero.
     (0x6230, 0x6232, "the key record has yet to sound"),
+    # Set by the 1 ms watch whenever the pulse pin reads low, cleared when a
+    # pulse is accepted: "the pin has been properly low, so the next high is
+    # a rising edge".  The factory's pin-change ISR cannot tell the two apart
+    # on a slow slope, which is what doubled the pulser's rate.
+    (0x6232, 0x6233, "the pulse pin has gone low"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1729,6 +1734,10 @@ def main() -> None:
         cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
     cfg["_numbers"]["clock_settle_scans"] = int(
         cfg.get("sequencer", {}).get("clock_settle_scans", 0))
+    cfg["_numbers"]["clock_hysteresis_eighths"] = int(
+        cfg.get("sequencer", {}).get("clock_hysteresis_eighths", 7))
+    cfg["_numbers"]["clock_rearm_ms"] = int(
+        cfg.get("sequencer", {}).get("clock_rearm_ms", 2))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
     for name in ("clock_scan", "clock_pulse", "clock_hook",

@@ -260,6 +260,21 @@ def expand(options: dict) -> dict:
                         # from pulse to trigger drops from up to ten
                         # milliseconds to the scan alignment alone.
                         "clock_settle_scans": 0,
+                        # Hysteresis on the clock's own period, in eighths.
+                        # Once a rate is established, a pulse landing before
+                        # this much of it has elapsed is the pulser
+                        # sawtooth's second threshold crossing rather than a
+                        # beat, and is dropped.  Six leaves a third of the
+                        # period of headroom for a clock that speeds up.
+                        # Only applies while locked: an uneven clock never
+                        # locks and still passes everything.
+                        "clock_hysteresis_eighths": 7,
+                        # How many consecutive milliseconds the pulse pin has
+                        # to read LOW before the next high counts as a rising
+                        # edge.  One sample arms on the momentary dip inside
+                        # the sawtooth crossing's own chatter; a run only
+                        # happens in the long low stretch between cycles.
+                        "clock_rearm_ms": 2,
                         # How long pad 4 has to be held before pads 1-3 mean
                         # anything, in ~5 ms scans.  200 is a second.
                         "chord_hold_scans": 200}

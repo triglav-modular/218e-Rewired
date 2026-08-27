@@ -2167,7 +2167,7 @@ function assembleProgram() {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0x98, not 0x1c: the run reaches from the pressure cache all the way
+        // 0x99, not 0x1c: the run reaches from the pressure cache all the way
         // over the preset block, the arp's own cells, the sequencer, the
         // clock divider and the borrowed strip mode - everything we keep in
         // this gap.  SRAM survives a DFU, so anything left out here starts as
@@ -2177,7 +2177,7 @@ function assembleProgram() {
         // or - the one that was already wrong at 0x25 - two of the four
         // preset following flags, which would have stopped the pad-4 chord
         // arming at all.
-        emit("MOV R12,0x98");
+        emit("MOV R12,0x99");
         padTo(0x8001ac40);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3375,7 +3375,7 @@ function assembleProgram() {
         // periodic callback, registered at 0x80007c1c with a period of 1 and
         // reached through the pool word this cave is chained in front of.
         // R12 is the task's control block, handed back untouched.
-        begin(0x8001b950);
+        begin(0x8001bb70);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");
@@ -3383,12 +3383,55 @@ function assembleProgram() {
         emit("LD.UH R9,R8[0x0]");
         emit("SUB R9,-0x1");
         emit("ST.H R8[0x0],R9");
+        // And watch the pulse pin go LOW, which is what makes the next high a
+        // rising EDGE rather than a level.
+        //
+        // The factory decides rising-from-falling by sampling the pin inside
+        // the pin-change interrupt (0x800072e4: IFR says a transition
+        // happened, PVR says which way).  That works for a clean edge and
+        // cannot work for a slow one: the 208 pulser's sawtooth crawls back
+        // down through the trip point, chatters there, and the ISR keeps
+        // sampling HIGH - so the crossing posts a second event and the arp
+        // runs at double the pulser's rate.  Measured: a 181 ms pulser,
+        // steps at +80 ms and +164 ms.
+        //
+        // A pin read once a millisecond sees the long low stretch between
+        // cycles that the chatter never reaches.  Seeing it arms the next
+        // pulse; the divider drops any that arrives unarmed.  GPIO port 0
+        // is 0xFFFF1000 and PVR is +0x60, both straight out of the factory's
+        // own accessor at 0x8001105a.
+        // A RUN of low milliseconds, not one.  A single sample arms on the
+        // momentary dip inside the crossing's own chatter, and the very next
+        // bounce is then taken for a beat - the doubling all over again.  A
+        // run only happens in the long low stretch between cycles.
+        // The count only ever GOES UP here, and only an accepted pulse clears
+        // it.  Resetting it when the pin reads high looks right and races the
+        // beat: the pin goes high exactly when the beat arrives, the event
+        // waits its turn in the dispatcher, and a tick landing in between
+        // would zero the count and throw the beat away.  As a latch - "the
+        // pin has been low for this long at some point since the last beat" -
+        // there is nothing to race.  The crossing still gets nothing, because
+        // the pin is high from the beat until the crossing, and the dip
+        // inside the crossing's own chatter is over in well under the run.
+        emit("MOV R9,-0xf000");
+        emit("LD.W R9,R9[0x60]");
+        emit("BFEXTU R9,R9,0x5,0x1");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001bba4");      // high: leave the count alone
+        emit("MOV R10,0x6232");
+        emit("LD.UB R9,R10[0x0]");
+        emit(StringFormat("CP.W R9,0x%x",
+             number("clock_rearm_ms", 2, 1, 64)));
+        emit("BR{ge} 0x8001bba4");
+        emit("SUB R9,-0x1");
+        emit("ST.B R10[0x0],R9");
+        padTo(0x8001bba4);
         emit("MOV R12,R0");
-        emit("MCALL PC[0x8001b970]");   // the factory's own 1 ms work
+        emit("MCALL PC[0x8001bbb8]");   // the factory's own 1 ms work
         emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001b970);
+        padTo(0x8001bbb8);
         word(0x800076b0); // the factory's 1 ms task callback
-        finish("clock_ms_tick", 0x8001b974);
+        finish("clock_ms_tick", 0x8001bbbc);
 
         // The external clock, per scan: the release when the clock stops.
         // MARF gives itself two seconds.  The counter itself is not touched
@@ -3441,45 +3484,75 @@ function assembleProgram() {
         emit("LD.UH R9,R10[0x2]");      // the last pulse this took
         emit("SUB R8,R9");
         emit("CASTU.H R8");             // the interval, wrapping cleanly
-        // DEAD TIME.  What arrives here is not a clean clock: the 208's
-        // pulser puts out a falling sawtooth, and whatever thresholds it
-        // chatters as the slope crawls back through the trip point.  A pulse
-        // that arrives inside the dead time is DROPPED - not counted, not
-        // stamped, and above all not stepped.  It used to fall through to
-        // "no rate here, so pass everything", which turned every burst of
-        // chatter into a burst of notes, and that is what made a fast clock
-        // glitch and flash lights that had nothing to do with it.
+        // DEAD TIME, in two parts.
         //
-        // The window is a 64TH of the clock's own interval, floored at
-        // clock_min_ms.  A flat window was tried first and could not be both
-        // narrow enough for a 780 Hz pulser and wide enough for the same
-        // pulser slowed down: the sawtooth's slow edge drags through the
-        // trip point for longer the slower it runs, so the chatter scales
-        // with the period, and a fixed millisecond killed none of it at
-        // 0.85 Hz - measured off the instrument, where the run of agreeing
-        // intervals never reached five in twelve seconds.  A 64th still
-        // passes an uneven clock whose next gap is a sixty-fourth of the
-        // last one, which is not a clock anyone patches.
-        emit("LD.UH R11,R10[0x4]");     // the interval this clock runs at
-        emit("LSR R11,0x6");
-        emit(StringFormat("MOV R12,0x%x",
+        // A pulse arriving inside it is DROPPED - not counted, not stamped,
+        // and above all not stepped.  It used to fall through to "no rate
+        // here, so pass everything", which turned every burst of chatter into
+        // a burst of notes.
+        //
+        // The floor is flat: clock_min_ms, against electrical chatter, and it
+        // is all an UNLOCKED clock gets.  An uneven clock never locks, so it
+        // still passes everything, which is what it is meant to do.
+        //
+        // Once locked there is a second, much wider window - hysteresis on
+        // the period itself.  A 208 pulser's falling sawtooth crosses any
+        // threshold TWICE per cycle, at the reset and again as the slope
+        // crawls back down through it, and the second crossing is a real
+        // edge that no amount of chatter filtering can tell from a beat.
+        // Measured off the instrument: a 181 ms pulser, output at +80 ms and
+        // +164 ms - dead on double rate.  What separates them is that a beat
+        // arrives when the ESTABLISHED PERIOD says it should, and the extra
+        // crossing does not.  So once a rate is known, anything landing
+        // before clock_hysteresis_eighths of it is the other crossing.  Six
+        // eighths leaves a third of the period of headroom for a clock that
+        // speeds up; past that it stops agreeing, unlocks, and passes
+        // everything again while it settles at the new rate.
+        emit(StringFormat("CP.W R8,0x%x",
              number("clock_min_ms", 1, 1, 100)));
-        emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001b75e");
-        emit("MOV R11,R12");
-        padTo(0x8001b75e);
-        emit("CP.W R8,R11");
-        emit("BR{ge} 0x8001b766");
-        emit("LDM SP++,R7,PC");         // inside the dead time: it never happened
-        padTo(0x8001b766);
+        emit("BR{lt} 0x8001b782");      // electrical chatter: never a beat
+        // ARMED?  The 1 ms watch counts the milliseconds the pulse pin reads
+        // LOW, so a full run means "this pin has been properly low since the
+        // last beat, and what just arrived is a rising EDGE".  The sawtooth's
+        // second crossing never gets a run - the pin is still high there, and
+        // the dip inside its own chatter is over in less than the run needs.
+        emit("MOV R11,0x6232");
+        emit("LD.UB R12,R11[0x0]");
+        emit(StringFormat("CP.W R12,0x%x",
+             number("clock_rearm_ms", 2, 1, 64)));
+        emit("BR{ge} 0x8001b77c");      // armed: a real edge
+        // Not armed.  At a fast enough clock the low stretch is shorter than
+        // the millisecond that watches for it, so a whole period elapsing is
+        // the other way of knowing a beat arrived - and it needs a rate to
+        // measure against, so it only applies once locked.  Between them the
+        // two cover each other's blind spot: the pin for slow clocks, the
+        // period for fast ones.
+        emit("LD.UB R12,R10[0x6]");     // the run of agreeing intervals
+        emit(StringFormat("CP.W R12,0x%x",
+             number("clock_lock_pulses", 5, 2, 32)));
+        emit("BR{lt} 0x8001b782");      // unlocked and unarmed: drop it
+        emit("LD.UH R12,R10[0x4]");     // the period this clock keeps
+        emit(StringFormat("MOV R9,0x%x",
+             number("clock_hysteresis_eighths", 7, 1, 8)));
+        emit("MUL R12,R12,R9");
+        emit("LSR R12,0x3");
+        emit("CP.W R8,R12");
+        emit("BR{lt} 0x8001b782");      // too early to be the next beat
+        padTo(0x8001b77c);
+        emit("MOV R12,0x0");
+        emit("ST.B R11[0x0],R12");      // spent: the pin must go low again
+        emit("RJMP 0x8001b786");
+        padTo(0x8001b782);
+        emit("LDM SP++,R7,PC");         // dropped: it never happened
+        padTo(0x8001b786);
         emit("LD.UH R12,R10[0x0]");
         emit("ST.H R10[0x2],R12");      // accepted, and it is the new reference
         emit("MOV R11,0x7d0");          // 2000 ms, two seconds
         emit("CP.W R8,R11");
-        emit("BR{gt} 0x8001b7b0");      // too slow
+        emit("BR{gt} 0x8001b7c4");      // too slow
         emit("LD.UH R9,R10[0x4]");      // the interval before this one
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b7a8");      // nothing to agree with yet
+        emit("BR{eq} 0x8001b7bc");      // nothing to agree with yet
         // Agreement: within an eighth of the last interval, plus a
         // millisecond or two so a slow clock is not held to an impossible
         // tolerance.  A clock that does not keep time does not get divided -
@@ -3493,7 +3566,7 @@ function assembleProgram() {
         emit("LSR R12,0x3");
         emit("SUB R12,-0x2");
         emit("CP.W R11,R12");
-        emit("BR{gt} 0x8001b7a8");
+        emit("BR{gt} 0x8001b7bc");
         // Agreeing intervals are COUNTED, and it takes a run of them.  Two
         // was enough to be fooled: a clock with no rate at all still throws
         // the odd matching pair, and one of those latched the divider on for
@@ -3503,27 +3576,27 @@ function assembleProgram() {
         emit("LD.UB R11,R10[0x6]");
         emit(StringFormat("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{ge} 0x8001b7a4");
+        emit("BR{ge} 0x8001b7b8");
         emit("SUB R11,-0x1");
-        padTo(0x8001b7a4);
+        padTo(0x8001b7b8);
         emit("ST.B R10[0x6],R11");
-        emit("RJMP 0x8001b7ac");
-        padTo(0x8001b7a8);
+        emit("RJMP 0x8001b7c0");
+        padTo(0x8001b7bc);
         emit("MOV R11,0x1");            // the run starts again from here
         emit("ST.B R10[0x6],R11");
-        padTo(0x8001b7ac);
+        padTo(0x8001b7c0);
         emit("ST.H R10[0x4],R8");
-        emit("RJMP 0x8001b7b8");
-        padTo(0x8001b7b0);
+        emit("RJMP 0x8001b7cc");
+        padTo(0x8001b7c4);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x6],R11");
         emit("ST.H R10[0x4],R11");
-        padTo(0x8001b7b8);
+        padTo(0x8001b7cc);
         emit("LD.UB R11,R10[0x6]");
         emit("MOV R12,0x1");            // unlocked, or still settling: /1
         emit(StringFormat("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b7dc");
+        emit("BR{lt} 0x8001b7f0");
         // Locked, so the rate knob divides instead: fast end passes every
         // pulse, slow end one in eight - the Clockwork Card's own law.
         //
@@ -3537,7 +3610,7 @@ function assembleProgram() {
         // CV input (the 218K+'s own jack, or a reassigned input on a
         // modified V3; near zero when nothing is patched there), which a
         // divisor has no business following either.
-        emit("LDDPC R11,0x8001b850");   // global state base
+        emit("LDDPC R11,0x8001b864");   // global state base
         emit("LD.SH R11,R11[0x2fc]");
         emit("MOV R12,0x3ff");
         emit("SUB R12,R12,R11 << 0x0");
@@ -3545,7 +3618,7 @@ function assembleProgram() {
         emit("MUL R12,R12,R11");
         emit("LSR R12,0xa");            // /1024, so the 8 makes up the 1023
         emit("SUB R12,-0x1");           // 1..8 across the knob
-        padTo(0x8001b7dc);
+        padTo(0x8001b7f0);
         // Refresh the arp's own countdown, on EVERY pulse and sized to the
         // whole divided step, with a quarter as margin.
         //
@@ -3564,7 +3637,7 @@ function assembleProgram() {
         // step, and the internal timer fired into the gap.
         emit("LD.UH R9,R10[0x4]");      // the measured interval, in ms
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b808");      // no interval yet: leave the arp's own
+        emit("BR{eq} 0x8001b81c");      // no interval yet: leave the arp's own
         // The counter and the countdown are both milliseconds now, so the
         // interval means something here without converting.  It used to count
         // 5 ms scans and be multiplied up, which put the shortest clock it
@@ -3582,24 +3655,24 @@ function assembleProgram() {
         // two seconds divided by eight is sixteen, and that has to fit.
         emit("MOV R11,0x7fff");
         emit("CP.W R9,R11");
-        emit("BR{le} 0x8001b800");
+        emit("BR{le} 0x8001b814");
         emit("MOV R9,R11");
-        padTo(0x8001b800);
-        emit("LDDPC R11,0x8001b850");
+        padTo(0x8001b814);
+        emit("LDDPC R11,0x8001b864");
         emit("ST.H R11[0x38e],R9");
-        padTo(0x8001b808);
+        padTo(0x8001b81c);
         // Now: does this pulse play, or is it one the divider swallows?
         emit("LD.UB R11,R10[0x6]");
         emit(StringFormat("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b830");      // not locked: every pulse plays
+        emit("BR{lt} 0x8001b844");      // not locked: every pulse plays
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001b830");
+        emit("BR{ge} 0x8001b844");
         emit("ST.B R10[0x7],R11");      // swallowed
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b830);
+        padTo(0x8001b844);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
         // Not on the gate-off count.  The arp step tests the countdown against
@@ -3609,17 +3682,17 @@ function assembleProgram() {
         // divisor of one the refresh above lands on exactly 3, which is that
         // threshold, so a 780 Hz pulser lost most of its notes.  One more
         // millisecond costs nothing and cannot collide.
-        emit("LDDPC R11,0x8001b850");
+        emit("LDDPC R11,0x8001b864");
         emit("LD.SH R12,R11[0x38e]");
         emit("CP.W R12,0x4");
-        emit("BR{ge} 0x8001b844");
+        emit("BR{ge} 0x8001b858");
         emit("MOV R12,0x4");
         emit("ST.H R11[0x38e],R12");
-        padTo(0x8001b844);
+        padTo(0x8001b858);
         emit("MOV R12,0xffff");         // -1: step now, do not reload
-        emit("MCALL PC[0x8001b854]");
+        emit("MCALL PC[0x8001b868]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b850);
+        padTo(0x8001b864);
         word(0x00003560); // global state base
         word(0x8000210c); // the arp step
         // MCALL is memory-indirect, so the dispatcher's call needs a word
@@ -3627,7 +3700,7 @@ function assembleProgram() {
         // straight here made event 10 read back 0xebcd4080, this cave's own
         // STM, and jump to it.
         word(0x8001b740);
-        finish("clock_pulse", 0x8001b85c);
+        finish("clock_pulse", 0x8001b870);
 
         // The factory snaps the countdown to the new tempo whenever the rate
         // moves by more than 0x33.  That is right when the arp owns its own
@@ -4499,7 +4572,7 @@ function assembleProgram() {
         // letting this one through.  The arp-switch test above is untouched.
         if (block("clock_pulse")) {
             begin(0x80004e72);
-            emit("MCALL PC[0x8001b858]");
+            emit("MCALL PC[0x8001b86c]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7a);
         }
@@ -4741,7 +4814,7 @@ function assembleProgram() {
         // timebase fine enough to measure a 780 Hz pulser.
         if (block("clock_scan")) {
             begin(0x80007da0);
-            word(0x8001b950);
+            word(0x8001bb70);
             finish("clock_ms_pool", 0x80007da4);
         }
 
