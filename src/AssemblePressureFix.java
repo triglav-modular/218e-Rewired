@@ -4242,32 +4242,42 @@ public class AssemblePressureFix extends GhidraScript {
         // R9 = the step that just played, R11 = how many there are.  R9 comes
         // back as the next one.  R0, R10 and R11 are the caller's.
         begin(0x8001baa0L);
-        emit("STM --SP,R0,R7,R10,R11,LR");
+        emit("STM --SP,R0,R1,R2,R7,R10,R11,LR");
         emit("MOV R7,SP");
         if (number("knob1_orders", 0, 0, 1) == 0) {
             emit("MOV R8,0x60f2");
             emit("LD.UB R8,R8[0x0]");   // knob 1, 0..127
             emit("CP.W R8,0x0");
-            emit("BR{eq} 0x8001bac8");  // at zero the draw is not even taken
-            emit("MCALL PC[0x8001bad4]");   // the factory PRNG
-            emit("BFEXTU R0,R12,0x0,0x7");
-            emit("CP.W R0,R8");
-            emit("BR{ge} 0x8001bac8");
+            emit("BR{eq} 0x8001bad4");  // at zero the draw is not even taken
+            // Everything still needed after the draw goes into R0..R2, which
+            // the ABI makes a callee preserve - the PRNG destroys R8..R12,
+            // and holding the blend and the count in two of them made every
+            // shuffled advance a product of rubbish.
+            emit("MOV R0,R8");          // the blend
+            emit("MOV R1,R9");          // the step that just played
+            emit("MOV R2,R11");         // how many there are
+            emit("MCALL PC[0x8001bae0]");   // the factory PRNG
+            emit("MOV R9,R1");
+            emit("MOV R11,R2");
+            emit("BFEXTU R10,R12,0x0,0x7");
+            emit("CP.W R10,R0");
+            emit("BR{ge} 0x8001bad4");
             emit("BFEXTU R9,R12,0x8,0x8");
             emit("MUL R9,R9,R11");
             emit("LSR R9,0x8");         // 0 .. count-1, without a divide
-            emit("RJMP 0x8001bad0");
+            emit("RJMP 0x8001badc");
         }
-        padTo(0x8001bac8L);
+        padTo(0x8001bad4L);
         emit("SUB R9,-0x1");
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001bad0");
+        emit("BR{lt} 0x8001badc");
         emit("MOV R9,0x0");
-        padTo(0x8001bad0L);
-        emit("LDM SP++,R0,R7,R10,R11,PC");
-        padTo(0x8001bad4L);
+        padTo(0x8001badcL);
+        emit("LDM SP++,R0,R1,R2,R7,R10,R11,PC");
+        padTo(0x8001bae0L);
         word(0x80013e04L); // the factory PRNG
-        finish("seq_next_step", 0x8001bad8L);
+        finish("seq_next_step", 0x8001bae4L);
+
 
 
         // The pitch the arp is about to sound.  While the sequencer plays that
