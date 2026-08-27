@@ -3935,10 +3935,7 @@ function assembleProgram() {
         emit("MOV R12,0x61ee");
         emit("ADD R12,R12,R9 << 0x0");
         emit("LD.UB R0,R12[0x0]");
-        emit("SUB R9,-0x1");
-        emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b3b8");
-        emit("MOV R9,0x0");
+        emit("MCALL PC[0x8001b438]");   // which step plays next
         padTo(0x8001b3b8);
         emit("ST.B R10[0x1],R9");
         // This step moves the pitch, so it is the one that spends the slide a
@@ -3965,10 +3962,7 @@ function assembleProgram() {
         padTo(0x8001b3e0);
         emit("MOV R12,0x61e5");
         emit("ST.B R12[0x0],R8");
-        emit("SUB R9,-0x1");
-        emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b3f0");
-        emit("MOV R9,0x0");
+        emit("MCALL PC[0x8001b438]");   // which step plays next
         padTo(0x8001b3f0);
         emit("ST.B R10[0x1],R9");
         emit("MOV R12,0x0");
@@ -3994,23 +3988,71 @@ function assembleProgram() {
         word(0x00003560); // global state base
         word(arpSelector);
         word(0x8001b2e8); // what the selector answers while recording
-        finish("seq_select", 0x8001b43c);
+        word(0x8001baa0); // seq_next_step
+        finish("seq_select", 0x8001b440);
 
-        // The pitch the arp is about to sound.  The octave randomiser runs
-        // first and its answer stands for keyboard playing; while the
-        // sequencer plays, the step's own pitch replaces it.  The pad octave
-        // transpose is applied further downstream and so still applies.
+        // Which step plays next.
+        //
+        // Knob 1's BLEND setting reaches a sequence: the knob is the chance,
+        // out of 128, that the next step is any step rather than the one after
+        // this.  At zero it is the recorded order exactly, which is what it
+        // has always been.  Knob 1's other setting - the six note-order zones
+        // - is the keyboard's alone and leaves a recorded order as it was
+        // played.
+        //
+        // Rests and ties come along unchanged, and still mean what they meant:
+        // a tie holds whatever is sounding and a rest silences it, whichever
+        // note the shuffle has put them beside.
+        //
+        // R9 = the step that just played, R11 = how many there are.  R9 comes
+        // back as the next one.  R0, R10 and R11 are the caller's.
+        begin(0x8001baa0);
+        emit("STM --SP,R0,R7,R10,R11,LR");
+        emit("MOV R7,SP");
+        if (number("knob1_orders", 0, 0, 1) == 0) {
+            emit("MOV R8,0x60f2");
+            emit("LD.UB R8,R8[0x0]");   // knob 1, 0..127
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8001bac8");  // at zero the draw is not even taken
+            emit("MCALL PC[0x8001bad4]");   // the factory PRNG
+            emit("BFEXTU R0,R12,0x0,0x7");
+            emit("CP.W R0,R8");
+            emit("BR{ge} 0x8001bac8");
+            emit("BFEXTU R9,R12,0x8,0x8");
+            emit("MUL R9,R9,R11");
+            emit("LSR R9,0x8");         // 0 .. count-1, without a divide
+            emit("RJMP 0x8001bad0");
+        }
+        padTo(0x8001bac8);
+        emit("SUB R9,-0x1");
+        emit("CP.W R9,R11");
+        emit("BR{lt} 0x8001bad0");
+        emit("MOV R9,0x0");
+        padTo(0x8001bad0);
+        emit("LDM SP++,R0,R7,R10,R11,PC");
+        padTo(0x8001bad4);
+        word(0x80013e04); // the factory PRNG
+        finish("seq_next_step", 0x8001bad8);
+
+
+        // The pitch the arp is about to sound.  While the sequencer plays that
+        // is the step's own pitch; otherwise it is whatever the keyboard
+        // handed up.  Either way the octave randomiser runs on it AFTER it is
+        // chosen, so knob 3 displaces sequenced notes the same way it
+        // displaces played ones - it used to run first and have its answer
+        // thrown away by the step.  The pad octave transpose is applied
+        // further downstream and so still applies.
         begin(0x8001ba30);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001ba50]");   // the factory octave path
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001ba4a");
+        emit("BR{ne} 0x8001ba46");
         emit("MOV R9,0x61e2");
-        emit("LD.SH R8,R9[0x0]");
-        padTo(0x8001ba4a);
+        emit("LD.SH R8,R9[0x0]");       // the step's own pitch
+        padTo(0x8001ba46);
+        emit("MCALL PC[0x8001ba50]");   // and then the octave randomiser
         emit("LDM SP++,R7,PC");
         padTo(0x8001ba50);
         word(0x80019da8); // the octave entry this replaces

@@ -52,6 +52,11 @@ recording sounds what you play into it - the note-on leaves its key for the
 per-scan cave, which steps the arp once so the pitch, gate, trigger and MIDI
 note all come from the factory's own machinery.
 
+And the randomisers reach the sequence: knob 3 displaces sequenced notes by
+an octave the way it does played ones, and knob 1's blend shuffles which step
+comes next. Knob 1's six note-order zones stay the keyboard's alone - the
+owner's call - so a recorded sequence keeps the order it was played in.
+
 **Not yet on hardware.** The owner flashes and reports; nothing below has
 been played. `strip_halfway_units` is 2048 because 2048 is the middle of the
 range the firmware clamps to, and the middle is the rule; it is a build

@@ -461,6 +461,31 @@ nothing.  Everything else - the pitch, the gate, the trigger, the MIDI note -
 comes from the factory's own note machinery, already paired, rather than from
 a pulse fired on its own.
 
+### The randomisers reach the sequence (2026-08-27)
+
+**Random octaves.**  `seq_pitch` called the octave randomiser first and then
+replaced its answer with the step's pitch, so knob 3 displaced played notes
+and never sequenced ones.  The order is the other way round now: the step's
+pitch is chosen first and the randomiser runs on it, so knob 3 means the same
+thing whichever is sounding.  The recording keeps the pitch it was played at
+- the displacement is per playback, as it is for the arp.
+
+**Random note order.**  While playing, the next step used to be the next one,
+always.  Both advance sites in `seq_select` now go through `seq_next_step`,
+which applies knob 1's BLEND law to the sequence: the knob is the chance, out
+of 128, that the next step is any step rather than the one after this.  At
+zero it is the recorded order exactly.  The draw is scaled by
+`(draw * count) >> 8` rather than divided, so it needs no `DIVU`.
+
+Knob 1's other setting - the six note-order zones - is the **keyboard's
+alone**.  A recorded sequence keeps the order it was played in whatever the
+zone says, and the arpeggiator's own selector is untouched; the zones build
+emits `seq_next_step` as a plain walk.
+
+Rests and ties come along unchanged and still mean what they meant: a tie
+holds whatever is sounding and a rest silences it, whichever note the shuffle
+has put them beside.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

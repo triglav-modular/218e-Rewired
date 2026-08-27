@@ -1733,7 +1733,7 @@ def main() -> None:
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
                  "seq_strip", "seq_gate", "seq_glide", "strip_pool",
                  "seq_gate_clear", "seq_gate_clear_hook",
-                 "seq_pulse_drop", "pulse_drop_pool",
+                 "seq_pulse_drop", "pulse_drop_pool", "seq_next_step",
                  "seq_noteoff", "seq_noteoff_hook",
                  "seq_trigger_led", "seq_trigger_led_hook"):
         blocks[name] = seq
