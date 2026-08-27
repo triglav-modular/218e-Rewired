@@ -1984,27 +1984,23 @@ function assembleProgram() {
         // restart the countdown: the gate then always rises within a bounded
         // number of scans of the FIRST request, instead of being pushed back
         // indefinitely by a fast arp whose steps land inside the window.
+        // A LEAF, and it must stay one: it returns with MOV PC,LR, so an
+        // MCALL inside it - which writes LR - turns that return into a jump
+        // to itself, and the first trigger request hangs the instrument with
+        // its USB still enumerating.  That shipped once.  The clock-aware
+        // settle choice lives in its own leaf cave instead, and the four
+        // pulse pools point THERE in a divider build.
         begin(0x8001a268);
         word(0x800077f8); // real pulse-high routine
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x8001a27a");
-        if (block("clock_scan")) {
-            // How many scans, and the arming store too - the cave has the
-            // room this block does not.  R8 carries the cell across.
-            emit("MCALL PC[0x8001a27c]");
-        } else {
-            emit(StringFormat("MOV R9,0x%x",
-                number("gate_settle_scans", 1, 0, 3) + 1));
-            emit("ST.B R8[0x0],R9");
-        }
+        emit(StringFormat("MOV R9,0x%x",
+            number("gate_settle_scans", 1, 0, 3) + 1));
+        emit("ST.B R8[0x0],R9");
         padTo(0x8001a27a);
         emit("MOV PC,LR");
-        if (block("clock_scan")) {
-            padTo(0x8001a27c);
-            word(0x8001bb40); // clock_settle: the count, by who is asking
-        }
         finish("pulse_defer_set", 0x8001a280);
 
         // Latch mode (arp switch position 1). Three pieces:
@@ -4899,18 +4895,23 @@ function assembleProgram() {
         // clock_settle_scans puts the wait back if octave jumps under a
         // clock turn out to slew audibly.
         begin(0x8001bb40);
+        emit("MOV R8,0x60ee");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001bb62");      // one already in flight: never restart
         emit(StringFormat("MOV R9,0x%x",
             number("gate_settle_scans", 1, 0, 3) + 1));
         emit("MOV R10,0x61ec");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001bb58");
+        emit("BR{eq} 0x8001bb5e");
         emit(StringFormat("MOV R9,0x%x",
             number("clock_settle_scans", 0, 0, 3) + 1));
-        padTo(0x8001bb58);
-        emit("ST.B R8[0x0],R9");        // the arming store, R8 from the caller
+        padTo(0x8001bb5e);
+        emit("ST.B R8[0x0],R9");
+        padTo(0x8001bb62);
         emit("MOV PC,LR");
-        finish("clock_settle", 0x8001bb60);
+        finish("clock_settle", 0x8001bb68);
 
         // The pitch the arp is about to sound.  While the sequencer plays that
         // is the step's own pitch; otherwise it is whatever the keyboard
@@ -5161,16 +5162,16 @@ function assembleProgram() {
 
         // Repointed pulse-caller pools (arp advance + three key-scan sites).
         begin(0x8000243c);
-        word(0x8001a26c);
+        word(block("clock_scan") ? 0x8001bb40 : 0x8001a26c);
         finish("pulse_pool_arp", 0x80002440);
         begin(0x80005ed8);
-        word(0x8001a26c);
+        word(block("clock_scan") ? 0x8001bb40 : 0x8001a26c);
         finish("pulse_pool_key1", 0x80005edc);
         begin(0x800063fc);
-        word(0x8001a26c);
+        word(block("clock_scan") ? 0x8001bb40 : 0x8001a26c);
         finish("pulse_pool_key2", 0x80006400);
         begin(0x800065a4);
-        word(0x8001a26c);
+        word(block("clock_scan") ? 0x8001bb40 : 0x8001a26c);
         finish("pulse_pool_key3", 0x800065a8);
 
         // Hook: the factory rate-table lookup and store routed through the

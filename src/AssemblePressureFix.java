@@ -1461,27 +1461,23 @@ public class AssemblePressureFix extends GhidraScript {
         // restart the countdown: the gate then always rises within a bounded
         // number of scans of the FIRST request, instead of being pushed back
         // indefinitely by a fast arp whose steps land inside the window.
+        // A LEAF, and it must stay one: it returns with MOV PC,LR, so an
+        // MCALL inside it - which writes LR - turns that return into a jump
+        // to itself, and the first trigger request hangs the instrument with
+        // its USB still enumerating.  That shipped once.  The clock-aware
+        // settle choice lives in its own leaf cave instead, and the four
+        // pulse pools point THERE in a divider build.
         begin(0x8001a268L);
         word(0x800077f8L); // real pulse-high routine
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x8001a27a");
-        if (block("clock_scan")) {
-            // How many scans, and the arming store too - the cave has the
-            // room this block does not.  R8 carries the cell across.
-            emit("MCALL PC[0x8001a27c]");
-        } else {
-            emit(String.format("MOV R9,0x%x",
-                number("gate_settle_scans", 1, 0, 3) + 1));
-            emit("ST.B R8[0x0],R9");
-        }
+        emit(String.format("MOV R9,0x%x",
+            number("gate_settle_scans", 1, 0, 3) + 1));
+        emit("ST.B R8[0x0],R9");
         padTo(0x8001a27aL);
         emit("MOV PC,LR");
-        if (block("clock_scan")) {
-            padTo(0x8001a27cL);
-            word(0x8001bb40L); // clock_settle: the count, by who is asking
-        }
         finish("pulse_defer_set", 0x8001a280L);
 
         // Latch mode (arp switch position 1). Three pieces:
@@ -4376,18 +4372,23 @@ public class AssemblePressureFix extends GhidraScript {
         // clock_settle_scans puts the wait back if octave jumps under a
         // clock turn out to slew audibly.
         begin(0x8001bb40L);
+        emit("MOV R8,0x60ee");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001bb62");      // one already in flight: never restart
         emit(String.format("MOV R9,0x%x",
             number("gate_settle_scans", 1, 0, 3) + 1));
         emit("MOV R10,0x61ec");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001bb58");
+        emit("BR{eq} 0x8001bb5e");
         emit(String.format("MOV R9,0x%x",
             number("clock_settle_scans", 0, 0, 3) + 1));
-        padTo(0x8001bb58L);
-        emit("ST.B R8[0x0],R9");        // the arming store, R8 from the caller
+        padTo(0x8001bb5eL);
+        emit("ST.B R8[0x0],R9");
+        padTo(0x8001bb62L);
         emit("MOV PC,LR");
-        finish("clock_settle", 0x8001bb60L);
+        finish("clock_settle", 0x8001bb68L);
 
         // The pitch the arp is about to sound.  While the sequencer plays that
         // is the step's own pitch; otherwise it is whatever the keyboard
@@ -4637,16 +4638,16 @@ public class AssemblePressureFix extends GhidraScript {
 
         // Repointed pulse-caller pools (arp advance + three key-scan sites).
         begin(0x8000243cL);
-        word(0x8001a26cL);
+        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
         finish("pulse_pool_arp", 0x80002440L);
         begin(0x80005ed8L);
-        word(0x8001a26cL);
+        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
         finish("pulse_pool_key1", 0x80005edcL);
         begin(0x800063fcL);
-        word(0x8001a26cL);
+        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
         finish("pulse_pool_key2", 0x80006400L);
         begin(0x800065a4L);
-        word(0x8001a26cL);
+        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
         finish("pulse_pool_key3", 0x800065a8L);
 
         // Hook: the factory rate-table lookup and store routed through the

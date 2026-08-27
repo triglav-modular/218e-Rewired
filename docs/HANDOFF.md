@@ -123,6 +123,14 @@ was wrong: the panel has six knobs, and the User's Guide says which gestures
 set what. One look at the front panel would have stopped it. The instrument
 is the ground truth the disassembly is being interpreted against.
 
+**A leaf must stay a leaf.**  A cave that returns with `MOV PC,LR` has not
+saved LR, and `MCALL` writes LR - so a call added inside one turns its return
+into a jump to itself.  That shipped once, in `pulse_defer_set`, and bricked
+the running instrument: dead panel, still enumerating on USB, because the
+hang was in the main loop and USB is interrupt-driven.  `tools/test.py`-style
+sweeps in the plan's audit section cover it now; if a leaf needs to make a
+decision, give the decision its own leaf and repoint the callers.
+
 **A call destroys R8-R12.**  They are caller-saved, and a cave that holds a
 live value in one of them across a call is broken.  Two shipped that way in
 one afternoon - the mode being entered, and a MIDI port - because the

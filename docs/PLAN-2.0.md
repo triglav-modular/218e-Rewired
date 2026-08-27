@@ -696,6 +696,37 @@ immediately as before.  The Windows flasher is left alone: its failure flow
 is built around WinUSB driver binding and already pauses for the user, and
 there is no way to test a change to it from here.
 
+### The hang, and the two holes that let it ship (2026-08-27)
+
+`d0554ef` bricked the running instrument: it booted and enumerated on USB,
+and nothing on the panel did anything.  The cause was one instruction.
+
+`pulse_defer_set` is a LEAF - it returns with `MOV PC,LR`, having never
+saved LR.  Making it call `clock_settle` put an `MCALL` inside it, and
+`MCALL` writes LR.  The call returned, and then `MOV PC,LR` jumped to the
+address right after the `MCALL`... which is the `MOV PC,LR` itself.  A
+two-instruction infinite loop, entered by the first trigger request any key
+press makes, inside the main loop.  USB is interrupt-driven, so the
+instrument still appeared on MIDI while the panel was dead - exactly the
+symptom.
+
+The fix: `pulse_defer_set` is a leaf again, unchanged from before; the
+clock-aware settle choice lives in `clock_settle` as its own leaf holding
+the whole defer decision, and in a divider build the four pulse-caller pools
+point THERE instead.  One indirection, no nesting, both ends leaves.
+
+**Hole one: the emulator treated a hang as a pass.**  `run()` looped up to
+its instruction limit and then fell off the end and returned normally, so an
+emulated infinite loop was indistinguishable from a clean return.  It raises
+now, naming the entry and where the PC got stuck - and the limit went from
+400 to 2000 so a long legitimate path cannot trip it.
+
+**Hole two: the audit sweep had no check for this shape.**  It now walks
+every `MOV PC,LR` in the caves, scans back to the nearest boundary, and
+flags any `MCALL` reached with LR unsaved.  Zero hazards across the image
+after the fix - and it catches the exact bug that shipped, which is the only
+evidence that it works.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it
