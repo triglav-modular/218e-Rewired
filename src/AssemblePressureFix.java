@@ -2371,7 +2371,7 @@ public class AssemblePressureFix extends GhidraScript {
         // or - the one that was already wrong at 0x25 - two of the four
         // preset following flags, which would have stopped the pad-4 chord
         // arming at all.
-        emit("MOV R12,0x99");
+        emit("MOV R12,0x9a");
         padTo(0x8001ac40L);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3598,34 +3598,66 @@ public class AssemblePressureFix extends GhidraScript {
         // momentary dip inside the crossing's own chatter, and the very next
         // bounce is then taken for a beat - the doubling all over again.  A
         // run only happens in the long low stretch between cycles.
-        // The count only ever GOES UP here, and only an accepted pulse clears
-        // it.  Resetting it when the pin reads high looks right and races the
-        // beat: the pin goes high exactly when the beat arrives, the event
-        // waits its turn in the dispatcher, and a tick landing in between
-        // would zero the count and throw the beat away.  As a latch - "the
-        // pin has been low for this long at some point since the last beat" -
-        // there is nothing to race.  The crossing still gets nothing, because
-        // the pin is high from the beat until the crossing, and the dip
-        // inside the crossing's own chatter is over in well under the run.
+        // Two separate things, and conflating them was a bug: the RUN BEING
+        // MEASURED, and the QUALIFICATION IT EARNED.
+        //
+        // The run (0x6232) is consecutive low milliseconds, so a high sample
+        // resets it.  Letting it stand across a high sample meant LOW, HIGH,
+        // LOW counted as a run of two - which is exactly the chatter it was
+        // put there to reject, and it armed on it.
+        //
+        // The qualification (0x6233) is what a completed run leaves behind,
+        // and it survives every high sample until a pulse consumes it.  THAT
+        // is what must not be cleared on high: the pin goes high exactly when
+        // the beat arrives, the event waits its turn in the dispatcher, and a
+        // tick landing in between would throw the beat away.  Resetting the
+        // partial measurement cannot race anything, because by then the run
+        // has already been banked.
         emit("MOV R9,-0xf000");
         emit("LD.W R9,R9[0x60]");
         emit("BFEXTU R9,R9,0x5,0x1");
-        emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001bba4");      // high: leave the count alone
         emit("MOV R10,0x6232");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001bb9a");
+        emit("MOV R9,0x0");             // high: the run starts again
+        emit("ST.B R10[0x0],R9");
+        emit("RJMP 0x8001bbb0");
+        padTo(0x8001bb9aL);
         emit("LD.UB R9,R10[0x0]");
         emit(String.format("CP.W R9,0x%x",
              number("clock_rearm_ms", 2, 1, 64)));
-        emit("BR{ge} 0x8001bba4");
+        emit("BR{ge} 0x8001bba8");      // the run already stands: re-bank it
         emit("SUB R9,-0x1");
         emit("ST.B R10[0x0],R9");
-        padTo(0x8001bba4L);
+        emit(String.format("CP.W R9,0x%x",
+             number("clock_rearm_ms", 2, 1, 64)));
+        emit("BR{lt} 0x8001bbb0");
+        // A STANDING RUN QUALIFIES EVERY MILLISECOND, not only the one it was
+        // completed on.  Banking it once and then short-circuiting meant a
+        // pin that simply sits low - which is what an idle input and a slow
+        // square both look like between pulses - qualified exactly one pulse
+        // ever: the run saturated, the branch above took the early way out,
+        // and the beat that spent the latch was the last one to have it.
+        padTo(0x8001bba8L);
+        emit("MOV R9,0x1");
+        emit("ST.B R10[0x1],R9");       // 0x6233: qualified, unspent
+        // and the gate is worth trusting for the next few pulses.  NOT for
+        // ever: a flag that only ever sets is set by an idle low pin before a
+        // clock is even patched, and then a fast clock - whose low phase is
+        // shorter than the millisecond that watches for it, so it can never
+        // qualify - is rejected for good.  A countdown spent one per rejected
+        // pulse bounds that to a few pulses and then gets out of the way,
+        // while a real beat reloads it every cycle and keeps the gate up.
+        emit(String.format("MOV R9,0x%x",
+             number("clock_trust_pulses", 4, 1, 32)));
+        emit("ST.B R10[0x2],R9");       // 0x6234
+        padTo(0x8001bbb0L);
         emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bbb8]");   // the factory's own 1 ms work
+        emit("MCALL PC[0x8001bbbc]");   // the factory's own 1 ms work
         emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001bbb8L);
+        padTo(0x8001bbbcL);
         word(0x800076b0L); // the factory's 1 ms task callback
-        finish("clock_ms_tick", 0x8001bbbcL);
+        finish("clock_ms_tick", 0x8001bbc0L);
 
         // The external clock, per scan: the release when the clock stops.
         // MARF gives itself two seconds.  The counter itself is not touched
@@ -3642,7 +3674,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UH R9,R10[0x2]");      // when the last pulse arrived
         emit("SUB R8,R9");
         emit("CASTU.H R8");
-        emit("MOV R9,0x7d0");           // 2000 ms, two seconds
+        // Longer than the slowest clock the divider will take a period from,
+        // and by more than one interval's jitter.  Both used to be a strict
+        // 2000 ms, which left a nominal half-hertz clock with NO margin at
+        // all: one interval measuring 2001 ms cleared the lock, the period
+        // and the presence together, handed the arp back to its own timer and
+        // started the acquisition over.
+        emit(String.format("MOV R9,0x%x",
+             number("clock_release_ms", 2600, 100, 32000)));
         emit("CP.W R8,R9");
         emit("BR{le} 0x8001b9b8");
         emit("MOV R9,0x0");
@@ -3710,40 +3749,67 @@ public class AssemblePressureFix extends GhidraScript {
         // last beat, and what just arrived is a rising EDGE".  The sawtooth's
         // second crossing never gets a run - the pin is still high there, and
         // the dip inside its own chatter is over in less than the run needs.
+        // ONE way in, one way out.  This had three - a qualified low, a whole
+        // period elapsed, and simply being unlocked - and each handed back
+        // what the others rejected.  The period route was the worst: it asked
+        // only "has enough time passed", which ANY injected event at seven
+        // eighths of the period satisfies, so a crossing artefact got in on
+        // the strength of the very clock it was corrupting.  Elapsed time is
+        // not evidence of an edge.  It is gone.
+        //
+        // The question is only ever whether the pin has been LOW since the
+        // last accepted pulse.  Either it has, and this is a beat; or it has
+        // not, and this is the crossing coming back up - unless the pin
+        // cannot be sampled low at this rate at all, which the countdown
+        // below is what distinguishes.
         emit("MOV R11,0x6232");
-        emit("LD.UB R12,R11[0x0]");
-        emit(String.format("CP.W R12,0x%x",
-             number("clock_rearm_ms", 2, 1, 64)));
-        emit("BR{ge} 0x8001b77c");      // armed: a real edge
-        // Not armed.  At a fast enough clock the low stretch is shorter than
-        // the millisecond that watches for it, so a whole period elapsing is
-        // the other way of knowing a beat arrived - and it needs a rate to
-        // measure against, so it only applies once locked.  Between them the
-        // two cover each other's blind spot: the pin for slow clocks, the
-        // period for fast ones.
-        emit("LD.UB R12,R10[0x6]");     // the run of agreeing intervals
-        emit(String.format("CP.W R12,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b782");      // unlocked and unarmed: drop it
-        emit("LD.UH R12,R10[0x4]");     // the period this clock keeps
-        emit(String.format("MOV R9,0x%x",
-             number("clock_hysteresis_eighths", 7, 1, 8)));
-        emit("MUL R12,R12,R9");
-        emit("LSR R12,0x3");
-        emit("CP.W R8,R12");
-        emit("BR{lt} 0x8001b782");      // too early to be the next beat
+        emit("LD.UB R12,R11[0x1]");     // qualified, and not yet spent
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x8001b77c");
+        // Not qualified.  There is deliberately NO exemption here for pulses
+        // that arrive soon after the last accepted one - two went in, and both
+        // had to come out.  "Enough time has passed" admits any event at all
+        // once the clock is slow enough, which is what the removed period
+        // route did.  "Too little time has passed for the sampler to have seen
+        // anything" sounds like its opposite and exempts exactly the same
+        // events: the crossing arrives SOONER than the next beat, always, so
+        // every window wide enough to be useful waves the crossing through.
+        // A sixteen-millisecond one let every crossing above 30 Hz past, and
+        // at a 200 Hz sawtooth with a short high phase the crossing is one
+        // millisecond behind its beat.
+        //
+        // Whether a millisecond sampler can see a given clock at all is a
+        // question about the CLOCK, not about the gap, and the countdown
+        // below is the whole answer: it stands only while qualifications keep
+        // arriving, and stands aside on a clock that never manages one.
+        emit("LD.UB R12,R11[0x2]");     // is the gate worth trusting?
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001b77c");      // no evidence to reject with: pass
+        emit("SUB R12,0x1");            // it said no, and saying so costs one
+        emit("ST.B R11[0x2],R12");
+        emit("RJMP 0x8001b782");        // two bytes, where the return is four
+        // The disagreement fall, parked in the acceptance block's own slack
+        // because the path it belongs to has four bytes and this needs twelve.
+        padTo(0x8001b770L);
+        emit("LD.UB R11,R10[0x6]");
+        emit("CP.W R11,0x2");
+        emit("BR{lt} 0x8001b7bc");      // at the floor already
+        emit("SUB R11,0x1");
+        emit("ST.B R10[0x6],R11");
+        emit("RJMP 0x8001b7c0");
         padTo(0x8001b77cL);
         emit("MOV R12,0x0");
-        emit("ST.B R11[0x0],R12");      // spent: the pin must go low again
+        emit("ST.B R11[0x1],R12");      // spent: the pin must go low again
         emit("RJMP 0x8001b786");
         padTo(0x8001b782L);
         emit("LDM SP++,R7,PC");         // dropped: it never happened
         padTo(0x8001b786L);
         emit("LD.UH R12,R10[0x0]");
         emit("ST.H R10[0x2],R12");      // accepted, and it is the new reference
-        emit("MOV R11,0x7d0");          // 2000 ms, two seconds
+        emit(String.format("MOV R11,0x%x",
+             number("clock_max_ms", 2400, 50, 30000)));
         emit("CP.W R8,R11");
-        emit("BR{gt} 0x8001b7c4");      // too slow
+        emit("BR{gt} 0x8001b7c4");      // too slow to be a rate
         emit("LD.UH R9,R10[0x4]");      // the interval before this one
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x8001b7bc");      // nothing to agree with yet
@@ -3760,23 +3826,40 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LSR R12,0x3");
         emit("SUB R12,-0x2");
         emit("CP.W R11,R12");
-        emit("BR{gt} 0x8001b7bc");
+        emit("BR{gt} 0x8001b770");      // a real disagreement: the run falls
         // Agreeing intervals are COUNTED, and it takes a run of them.  Two
         // was enough to be fooled: a clock with no rate at all still throws
         // the odd matching pair, and one of those latched the divider on for
         // a pulse or two before the next mismatch let it go.  A run of them
         // cannot be a coincidence often, though it can still be one - there
         // is no count that makes an irregular clock impossible to mistake.
+        // The run climbs PAST the threshold, to a small headroom above it, and
+        // a disagreement costs it one instead of throwing it away.  Resetting
+        // to 1 meant a single interval outside tolerance - a rate change, or
+        // one artefact that got through - dropped the divider to /1 for the
+        // four pulses it took to earn the run back, resetting the divide
+        // phase on each: /8 turned into a burst.  The divisor comes off the
+        // knob and never depended on the period; agreement decides whether to
+        // divide AT ALL, which is a question about this clock, not about this
+        // pulse.  A clock with no rate still walks the run down to nothing
+        // and gets passed through, which takes as many disagreements as the
+        // headroom is deep.
         emit("LD.UB R11,R10[0x6]");
         emit(String.format("CP.W R11,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
+             number("clock_lock_pulses", 5, 2, 32)
+             + number("clock_lock_headroom", 2, 0, 32)));
         emit("BR{ge} 0x8001b7b8");
         emit("SUB R11,-0x1");
         padTo(0x8001b7b8L);
         emit("ST.B R10[0x6],R11");
         emit("RJMP 0x8001b7c0");
+        // Nothing to agree with yet, or the run has fallen as far as it goes.
+        // The floor is ONE, not zero: this byte is also what tells the rest of
+        // the divider a clock is present at all, and a clock that wanders is
+        // still a clock - letting it reach zero handed the arp back to its own
+        // timer, which then beat over the top of every pulse.
         padTo(0x8001b7bcL);
-        emit("MOV R11,0x1");            // the run starts again from here
+        emit("MOV R11,0x1");
         emit("ST.B R10[0x6],R11");
         padTo(0x8001b7c0L);
         emit("ST.H R10[0x4],R8");
@@ -3856,10 +3939,21 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R11[0x38e],R9");
         padTo(0x8001b81cL);
         // Now: does this pulse play, or is it one the divider swallows?
+        //
+        // ONCE THIS CLOCK HAS LOCKED IT STAYS DIVIDING, until the clock goes
+        // away entirely.  Reading the agreement run directly meant a single
+        // interval outside tolerance - a rate change, or one artefact that
+        // got through - dropped the divider to /1 for the four pulses it took
+        // to earn the run back, and reset the divide phase on each of them.
+        // Turning /8 into a burst of /1 is a worse answer to a wobble than
+        // just keeping time, and the divisor never depended on the period
+        // anyway: it comes off the knob.  Agreement decides whether to divide
+        // AT ALL, which is a question about this clock, not about this pulse.
         emit("LD.UB R11,R10[0x6]");
         emit(String.format("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b844");      // not locked: every pulse plays
+        emit("BR{lt} 0x8001b844");      // no rate to divide: every pulse plays
+        padTo(0x8001b832L);
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");

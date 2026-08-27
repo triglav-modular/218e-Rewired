@@ -873,7 +873,13 @@ RAM_REGIONS = [
     # pulse is accepted: "the pin has been properly low, so the next high is
     # a rising edge".  The factory's pin-change ISR cannot tell the two apart
     # on a slow slope, which is what doubled the pulser's rate.
-    (0x6232, 0x6233, "the pulse pin has gone low"),
+    (0x6232, 0x6233, "consecutive low milliseconds on the pulse pin"),
+    # What a completed run banks, and what an accepted pulse spends.
+    (0x6233, 0x6234, "the pulse pin has been low since the last beat"),
+    # How many more pulses the gate above may reject before it has to give
+    # way: a pin whose low phase is too short to sample can never qualify,
+    # and the gate must not be able to shut such a clock out for good.
+    (0x6234, 0x6235, "rejections left before the pin gate stands aside"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),

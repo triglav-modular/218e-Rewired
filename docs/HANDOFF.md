@@ -154,6 +154,18 @@ does not model that will report a bug that is not there.
 **`LDDPC` only reads forward.** Its displacement is unsigned, so a pool word
 behind the load will not encode. Put the pool at the end of the block.
 
+**Two ways to accept is one too many.**  The clock divider grew three
+independent acceptance routes - a qualified pin, an elapsed period, and
+being unlocked - and each handed back what the others rejected: the period
+route admitted any spurious event at seven eighths of the rate, and removing
+the pass-through route stalled the divider dead (nothing accepted, so no
+interval measured, so never locked, so nothing ever accepted).  When a
+decision has one question, give it one answer path and make the exceptions
+explicit state, not extra routes.  Beware especially of an exemption phrased
+as a time window: BOTH directions were tried and both let the same artefact
+through, because the thing being rejected always arrives sooner than the
+thing being kept.
+
 **Do not assume a timebase.** The arp countdown is decremented by a 1 ms task
 (event 17, registered at `0x80007c1c`), not the 5 ms scan (event 2, at
 `0x80007c0c`). A refresh written in scan units was five times too short and

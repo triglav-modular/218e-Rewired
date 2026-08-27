@@ -727,6 +727,89 @@ flags any `MCALL` reached with LR unsaved.  Zero hazards across the image
 after the fix - and it catches the exact bug that shipped, which is the only
 evidence that it works.
 
+### One way in: the divider's acceptance rule (2026-08-27)
+
+An audit of the first rising-edge build found three P1s, and they were all
+the same mistake: **there were three independent routes to accepting a
+pulse, and each one handed back what the others rejected.**
+
+  1. a qualified low on the pin,
+  2. seven eighths of the established period having elapsed,
+  3. simply not being locked yet.
+
+Route 2 asked only "has enough time passed", which any spurious event at
+seven eighths of the period satisfies - so a crossing artefact was admitted
+on the strength of the very clock it was corrupting, and the interval it
+wrote destroyed the rate.  Route 3 was worse in the other direction: it
+shipped as a hard gate with no route 3 at all, and **stalled the divider
+dead** - nothing accepted, so no interval measured, so never locked, so
+nothing ever accepted.  That is what silenced the owner's square wave.
+
+There is one route now.  Has the pin been LOW since the last accepted pulse?
+Either it has, and this is a beat; or it has not, and this is the crossing
+coming back up - unless the pin cannot be sampled low on this clock at all,
+which is what the countdown answers.
+
+**The run and the qualification are separate things**, and conflating them
+was the third P1.  The run (0x6232) is CONSECUTIVE low milliseconds, so a
+high sample resets it; letting it stand meant LOW, HIGH, LOW counted as a run
+of two, which is precisely the chatter it exists to reject.  The
+qualification (0x6233) is what a completed run banks, and it survives every
+high sample until a pulse spends it - THAT is the one that must not be
+cleared on high, because the pin goes high exactly when the beat arrives and
+a tick landing in between would throw the beat away.  A standing run re-banks
+every millisecond, not only on the one that completed it: banking once meant
+a pin that simply sits low - an idle input, or a slow square between pulses -
+qualified exactly one pulse ever.
+
+**The countdown (0x6234) is what makes the gate safe to have.**  It is
+reloaded by every qualification and spent one per rejected pulse, so the gate
+stands while the pin keeps proving itself and stands aside on a clock that
+never manages a qualification.  A permanent "this pin has read low" flag,
+which is what the stalling build had, is set by an idle low input before a
+clock is even patched, and then rejects a fast clock for good.
+
+**No exemption by elapsed time, in either direction.**  Two were tried and
+both came out.  "Enough time has passed" is route 2.  "Too little time has
+passed for the sampler to have seen anything" sounds like its opposite and
+exempts the same events: the crossing always arrives SOONER than the next
+beat, so every window wide enough to be useful waves it through.  A sixteen
+millisecond one passed every crossing above 30 Hz, and at 200 Hz with a short
+high phase the crossing is one millisecond behind its beat.
+
+**Two more from the same audit.**  A single interval outside tolerance used
+to throw the agreement run away, dropping the divider to /1 for the four
+pulses it took to earn back - /8 turning into a burst of notes is a worse
+answer to a wobble than keeping time through it.  The run now FALLS by one
+and climbs to a headroom above the threshold, so a rate change costs nothing
+and a clock that genuinely has no rate still walks down to pass-through.  The
+floor is one, not zero, because that byte is also what tells the rest of the
+divider a clock is present at all.  And both two-second limits had no margin
+for the half-hertz bottom of the range: one interval measuring 2001 ms
+cleared the lock, the period and the presence together.  Period validity is
+2400 ms now and presence 2600 ms, the cost being a longer tail after a clock
+stops.
+
+**What is verified, against the built image with the pin modelled.**  A
+sawtooth crossing its threshold twice a cycle gives exactly one step per
+cycle from 2 Hz to 200 Hz at every duty up to 0.60, and the output path
+starts a physical pulse for every one of them - 201 steps, 201 pulses, in a
+second at 200 Hz.
+
+**The limit is the low phase, not the rate.**  The watch samples once a
+millisecond and wants a run of `clock_rearm_ms` of them, so an input whose
+low phase is shorter than that cannot qualify and the gate stands aside
+rather than reject real beats.  A tenth-of-a-cycle low phase is resolvable
+down to a 20 ms period and no further; a quarter-cycle one down to 8 ms.
+Both are build numbers away from moving: `clock_rearm_ms` at 1 buys another
+octave at the cost of chatter immunity.
+
+Above 200 Hz two things run out at once, and neither is worth chasing: the
+millisecond timebase cannot separate two pulses inside one millisecond, and
+the output path services its pending request on the 5 ms pitch-store scan,
+so it saturates at 201 physical pulses a second whatever arrives.  200 Hz is
+the ceiling and it is met exactly.
+
 ### The double rate: it was watching a level, not an edge (2026-08-27)
 
 The owner asked the right question - "why are we watching crosses? we need
