@@ -86,9 +86,24 @@ lost, propose a fresh one and wait.
   and nothing here is ever tested against hardware.  Archaeology pointers
   are in the plan's DFU section if the owner ever wants it chased.
 
-- **Preset persistence** — blocked on an empirical probe: does the factory
-  flash driver at `0x800108fc` erase before writing? Specified in the plan,
-  never run.
+- **Preset persistence** — the blocking question is ANSWERED, by reading the
+  driver rather than probing hardware. `0x800108fc(dest, src, len, flag)`
+  takes an ERASE FLAG as its fourth argument: at `0x80010e32` a zero flag
+  branches straight past the erase, and a non-zero one calls `0x800108a8`
+  (FLASHC command 0xe, EUP, erase user page) before `0x800108e4` (command
+  0xd, WUP, write user page). The main-array path is the same shape with EP
+  and WP. So the driver can erase, on request.
+  What is now the real blocker is WHERE. The plan settled on the User Page
+  because the application never touches it — but the application is not the
+  only user of that page: the AVR32 UC3 USB DFU bootloader keeps its ISP
+  configuration words at the top of it. Erasing the page blind would risk
+  the recovery path, which is the one thing here that must never break.
+  Neither hex carries User Page bytes, so its contents have to be read off
+  the instrument before anything erases it, and the save must read-merge-
+  write the whole 512 bytes rather than erase and write only our region.
+  The alternative is a spare main-array page — there are ~290 free ones —
+  which carries no bootloader risk but is wiped by every DFU update, so
+  sequences would not survive a firmware flash.
 - **Settings over MIDI** — feasibility done (dispatcher event 32 at
   `0x80004fc2` carries an incoming message with both data bytes). The cost is
   that build numbers are compiled as immediates, so each one moved to
