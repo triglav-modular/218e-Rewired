@@ -780,6 +780,21 @@ it already means "this one really did change".
 offsets 0xac..0xb4.  Its lock belongs to the instrument in front of you, not
 to the last time it was switched off.
 
+**The first build of this saved nothing, and the reason is worth keeping.**
+It wrote 244 bytes straight out of RAM 0x613a - which is 2 mod 8 - to a
+destination 0x10 into a page, then the header separately.  That is the flash
+driver's DIFFICULT path: a destination that is not page-aligned sends it
+through a read-modify-write preamble, and a source that is not 8-byte aligned
+takes it off LD.D and onto byte-at-a-time collection.  The factory does not
+write that way either - it stages its own record at RAM 0x46c8 first, which
+is the hint that was there to be read.  And on the second lap the preamble
+would have copied the OLD header back into the buffer before the erase, so
+the new one would be programmed on top of it and AND into nonsense.
+
+Now: the whole record is staged at 0x6300, 8-byte aligned and rounded to 264
+bytes, and goes down in ONE write to a page-aligned destination.  The
+emulation asserts that contract on every call, so this cannot come back.
+
 22 scenarios against the built image's bytes with the flash driver modelled
 - erase sets 0xff, programming only clears bits, as NOR flash behaves.
 

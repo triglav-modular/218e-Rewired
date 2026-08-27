@@ -893,6 +893,10 @@ RAM_REGIONS = [
     (0x62F8, 0x62F9, "the sequencer mode last scan"),
     (0x62F9, 0x62FD, "each preset's following flag last scan"),
     (0x62FD, 0x62FE, "the stored record has been restored this power-up"),
+    # The record staged for writing, 8-byte aligned and a multiple of 8 long,
+    # so the flash driver takes its simple aligned path - the same reason the
+    # factory stages its own record rather than writing from scattered state.
+    (0x6300, 0x6408, "the whole record, staged for one aligned page write"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),

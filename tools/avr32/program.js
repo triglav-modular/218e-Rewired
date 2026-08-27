@@ -3922,11 +3922,20 @@ function assembleProgram() {
         emit("CP.W R12,0x0");
         emit("BR{eq} 0x8001cf5c");     // UNCHANGED: no write, no wear
         padTo(0x8001ce60);
-        // Stage the header.  The sequence advances, and the checksum binds
-        // the payload to it so a stale page cannot masquerade as a fresh one.
+        // Stage the WHOLE record - header and payload - in one 8-byte aligned
+        // buffer, and write it in one go to a PAGE-ALIGNED destination.
+        //
+        // That is the driver's simple path, and the factory takes it too: it
+        // stages its own record at RAM 0x46c8 rather than handing over a
+        // scattered source.  Writing 244 bytes straight out of 0x613a, which
+        // is 2 mod 8, at a destination 0x10 into a page put the driver on its
+        // byte-at-a-time path through a read-modify-write preamble - and on
+        // the second lap that preamble copies the OLD header back into the
+        // buffer before the erase, so the new header is programmed on top of
+        // it and ANDs into nonsense.  One aligned write has neither problem.
         emit("SUB R3,-0x1");
         emit("MOV R0,0x62e0");
-        emit("MOV R8,0x62e8");
+        emit("MOV R8,0x6300");
         emit("LDDPC R9,0x8001cf78");
         emit("ST.W R8[0x0],R9");       // marker
         emit("MOV R9,0x1");
@@ -3938,41 +3947,49 @@ function assembleProgram() {
         emit("MOV R11,0xf4");
         emit("MCALL PC[0x8001cf7c]");  // persist_sum
         emit("ADD R12,R3");
-        emit("MOV R8,0x62e8");
+        emit("MOV R8,0x6300");
         emit("ST.W R8[0xc],R12");      // checksum
+        // and the payload beside it, so the driver reads one aligned run.
+        emit("MOV R9,0x0");
+        padTo(0x8001cea0);
+        emit("CP.W R9,0xf4");
+        emit("BR{ge} 0x8001cec0");
+        emit("MOV R8,0x613a");
+        emit("ADD R8,R8,R9 << 0x0");
+        emit("LD.UB R10,R8[0x0]");
+        emit("MOV R8,0x6310");
+        emit("ADD R8,R8,R9 << 0x0");
+        emit("ST.B R8[0x0],R10");
+        emit("SUB R9,-0x1");
+        emit("RJMP 0x8001cea0");
+        padTo(0x8001cec0);
         // Try each page in turn, starting after the one in use.
         emit(StringFormat("MOV R1,0x%x",
              number("persist_page_count", 8, 2, 64)));
-        padTo(0x8001cea4);
+        padTo(0x8001cec4);
         emit("CP.W R1,0x0");
         emit("BR{le} 0x8001cf5c");     // every page refused the write
         emit("SUB R1,0x1");
         emit("SUB R2,-0x1");
         emit(StringFormat("CP.W R2,0x%x",
              number("persist_page_count", 8, 2, 64)));
-        emit("BR{lt} 0x8001ceb8");
+        emit("BR{lt} 0x8001ced4");
         emit("MOV R2,0x0");
-        padTo(0x8001ceb8);
+        padTo(0x8001ced4);
         emit("MOV R8,R2");
         emit("LSL R8,0x9");
         emit("LDDPC R9,0x8001cf80");
         emit("ADD R8,R9");
         emit("MOV R0,R8");             // R0 = this page
-        // The payload goes down first, WITH the erase, and the header last.
-        // A power cut between them leaves a page with no marker, which the
-        // loader ignores - and the previous page still holds the last good
-        // record, which is what the rotation is for.
+        // One write: page-aligned destination, 8-byte aligned source, and a
+        // length that is a multiple of eight.  A power cut part way through
+        // leaves this page failing its checksum, and rotation means the
+        // previous page still holds the last good record.
         emit("MOV R12,R0");
-        emit("SUB R12,-0x10");
-        emit("MOV R11,0x613a");
-        emit("MOV R10,0xf4");
-        emit("MOV R9,0x1");            // erase this page first
+        emit("MOV R11,0x6300");
+        emit("MOV R10,0x108");         // 264: the record, rounded up to eight
+        emit("MOV R9,0x1");
         emit("MCALL PC[0x8001cf84]");  // the factory flash writer
-        emit("MOV R12,R0");
-        emit("MOV R11,0x62e8");
-        emit("MOV R10,0x10");
-        emit("MOV R9,0x0");            // already erased: header only
-        emit("MCALL PC[0x8001cf84]");
         emit("MOV R12,R0");
         emit("MCALL PC[0x8001cf88]");  // persist_verify
         emit("CP.W R12,0x0");

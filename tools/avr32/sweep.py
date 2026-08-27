@@ -142,7 +142,7 @@ def audit_call_pools(image_path) -> list[str]:
 # clear once more; and for interrupt-timestamped clock capture, whose FIFO
 # extends that clear through 0x62df. Both assemblers verified this new pin.
 EXPECTED = {
-    "historical_config": "992a64316707c11b93b47e0aa61ba9cb6e33c9654abe6f36eb9c09540822d9eb",
+    "historical_config": "1cd71cc077f2469f51b079303007dc19bbb17554e95aa6ae436cb1e5fbf6d122",
 }
 
 
