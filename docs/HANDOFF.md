@@ -102,8 +102,18 @@ lost, propose a fresh one and wait.
   the instrument before anything erases it, and the save must read-merge-
   write the whole 512 bytes rather than erase and write only our region.
   The alternative is a spare main-array page — there are ~290 free ones —
-  which carries no bootloader risk but is wiped by every DFU update, so
-  sequences would not survive a firmware flash.
+  which carries no bootloader risk but is wiped by every DFU update. The
+  owner has said that is not a concern, which makes it the cheaper choice.
+  **Wear is not a constraint, and the datasheet says why.** AT32UC3B
+  32059L Table 28-30: `NFARRAY` Flash Array Write/Erase cycle **100K**, and
+  `TFDR` Flash Data Retention Time **15 Year** — so RETENTION binds before
+  endurance does at anything under about 18 saves a day (100,000 / 15 years).
+  Read the table carefully before quoting it: 100K sits in the *Max.* column
+  and the 15 years in *Typ.*, so neither is written as a guaranteed minimum.
+  Table 28-29 puts page programming at 4 ms, which is the CPU stall a save
+  costs. The one way to make wear real is saving from a scan-rate path: 200
+  a second would spend 100K cycles in eight minutes, so saves must be an
+  explicit gesture, and skipped entirely when the payload has not changed.
 - **Settings over MIDI** — feasibility done (dispatcher event 32 at
   `0x80004fc2` carries an incoming message with both data bytes). The cost is
   that build numbers are compiled as immediates, so each one moved to
