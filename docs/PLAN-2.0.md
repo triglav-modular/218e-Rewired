@@ -662,6 +662,40 @@ still moving.  Lag from pulse to trigger is the scan alignment alone,
 jumps under a clock turn out to slew audibly.  The keyboard path is
 untouched, and a countdown already in flight is still never restarted.
 
+### The DFU re-enumeration failure, diagnosed and worked around (2026-08-27)
+
+Caught in the act with the two commands the flasher's failure asked for:
+after the DFU SysEx, `ioreg -p IOUSB` showed the XHCI controllers with **no
+children at all** - no `218e`, no `AT32UC3B` - and dfu-programmer said "no
+device present".  So the instrument detaches from USB when it jumps to the
+bootloader and sometimes never re-attaches as anything; the keyboard is dead
+until a power cycle, which brings it back in application mode with nothing
+written.  Intermittent, and reported as getting more frequent with heavy
+flashing.
+
+**The device side is factory code and stays untouched.**  The DFU entry path
+is the recovery path: a bug introduced there could cost the ability to enter
+DFU at all, this repo's rule is that nothing is ever tested against the
+instrument by the assistant, and the failure is recoverable.  Do not patch
+it blind.  For whoever picks this up with the owner's hands on the hardware:
+the watchdog helpers live at `0x8000c1a8` (arm, keyed 0x55/0xAA writes to
+WDT CTRL at `0xFFFF0D30`) and `0x8000c1d8` (disable), with a
+timeout-computing caller at `0x8000c260`; the FLASHC sits behind
+`0xFFFE1400` immediates around `0x80010552`.  The SysEx manufacturer id is
+parsed byte-at-a-time, not stored, so the handler wants finding through the
+MIDI dispatch, not a byte search.
+
+**The macOS flasher now recovers by itself.**  A failed re-enumeration used
+to be a dead end: power-cycle, rerun the whole script.  The DFU step is a
+loop now, up to four attempts: when the DFU device fails to appear and the
+218e has vanished from USB entirely, it says to power-cycle, waits up to
+five minutes for the instrument to come back on MIDI (or for the DFU device
+to appear on its own), and re-sends the request.  Staying in application
+mode after the request, and a missing MIDI port at the start, still fail
+immediately as before.  The Windows flasher is left alone: its failure flow
+is built around WinUSB driver binding and already pauses for the user, and
+there is no way to test a change to it from here.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

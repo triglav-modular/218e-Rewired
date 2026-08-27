@@ -70,6 +70,14 @@ lost, propose a fresh one and wait.
 
 ## Other open items
 
+- **DFU re-enumeration sometimes fails** - the instrument detaches on the
+  DFU SysEx and the bootloader never re-attaches (ioreg shows nothing);
+  power-cycle recovers, nothing written.  The macOS flasher now retries
+  through a power cycle by itself, up to four attempts.  The device side is
+  factory code and is deliberately NOT patched - it is the recovery path,
+  and nothing here is ever tested against hardware.  Archaeology pointers
+  are in the plan's DFU section if the owner ever wants it chased.
+
 - **Preset persistence** — blocked on an empirical probe: does the factory
   flash driver at `0x800108fc` erase before writing? Specified in the plan,
   never run.
