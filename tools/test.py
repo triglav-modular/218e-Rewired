@@ -896,6 +896,66 @@ def test_overlap_and_range() -> None:
     check("non-overlapping patches apply", (changed, added) == (1, 0), f"{changed},{added}")
 
 
+def test_pool_fallthrough() -> None:
+    """A literal pool must not sit where code can fall into it.
+
+    `padTo` fills with NOPs, so a `word(...)` placed after code that does not
+    end in an unconditional transfer is reached by falling through the
+    padding - and the address literal is then executed as instructions.  That
+    shipped in the clock_gate hook: the allowed branch fell straight out of
+    the replaced code and into its own pool word.  Nothing caught it, because
+    emulation calls caves directly and the parity matrix compares two
+    toolchains that were both told the same wrong thing.
+    """
+    print("pool fall-through")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    ENDS = ("RJMP", "BR{al}", "MOV PC,", "LDM SP++", "RET")
+    bad = []
+    for block in re.split(r"\n\s*begin\(", source)[1:]:
+        block = block.split("finish(")[0]
+        name = "?"
+        m = re.search(r'finish\("([^"]+)"', source[source.index(block) + len(block):
+                                                   source.index(block) + len(block) + 200])
+        if m:
+            name = m.group(1)
+        last = None
+        for line in block.split("\n"):
+            mw = re.search(r"^\s*word\(", line)
+            me = re.search(r'emit\("([^"]+)"', line)
+            if me:
+                last = me.group(1)
+            elif mw and last is not None:
+                if not last.startswith(ENDS):
+                    bad.append(f"{name}: word() after {last!r}")
+                last = None          # report the first word of a pool only
+    check("no literal pool is reachable by falling through padding",
+          not bad, "; ".join(bad))
+
+
+def test_leaf_with_call() -> None:
+    """A cave returning `MOV PC,LR` has not saved LR, so it cannot call.
+
+    MCALL writes LR, which turns such a return into a jump to itself.  That
+    shipped once in pulse_defer_set and hung the running instrument: the
+    panel died while USB kept enumerating, because the hang was in the main
+    loop and USB is interrupt-driven.
+    """
+    print("leaf with call")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    bad = []
+    for chunk in re.split(r"\n\s*begin\(", source)[1:]:
+        body, _, rest = chunk.partition("finish(")
+        name = re.match(r'"([^"]+)"', rest)
+        name = name.group(1) if name else "?"
+        emits = re.findall(r'emit\("([^"]+)"', body)
+        saves_lr = any(e.startswith("STM --SP") and "LR" in e for e in emits)
+        calls = [e for e in emits if e.startswith(("MCALL", "RCALL"))]
+        leaf = any(e.startswith("MOV PC,LR") for e in emits)
+        if leaf and calls and not saves_lr:
+            bad.append(f"{name}: returns MOV PC,LR yet calls {calls[0]!r}")
+    check("no leaf cave contains a call", not bad, "; ".join(bad))
+
+
 def test_atomic_replace() -> None:
     """The atomic replace must preserve the file mode: the updater is executable."""
     print("file replacement")
@@ -1037,6 +1097,8 @@ def main() -> None:
     test_migration_and_empty_hand()
     test_filter_equivalence(cfg)
     test_overlap_and_range()
+    test_pool_fallthrough()
+    test_leaf_with_call()
     test_atomic_replace()
     test_generated_is_current()
     test_corpus_current()

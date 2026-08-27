@@ -732,6 +732,61 @@ flags any `MCALL` reached with LR unsaved.  Zero hazards across the image
 after the fix - and it catches the exact bug that shipped, which is the only
 evidence that it works.
 
+### Full firmware audit (2026-08-27)
+
+Against the built sequencer+clock image's own bytes, 108 patched blocks,
+disassembled whole and walked from real entry points - a cave is entered
+because a POOL WORD POINTS AT IT, a hook because it sits in factory code the
+factory runs into.  Seeding every block start instead walks tables as code and
+reports their own contents; that produced 95 findings, all false.
+
+**Clean, with the tools to keep it clean.**  Four structural classes, none of
+which had a guard before:
+
+- *A literal pool reachable by falling through padding.*  Zero.  The
+  clock_gate hook was the only instance and Codex fixed it.  Now guarded by
+  `test_pool_fallthrough`.
+- *A leaf that calls.*  Zero.  Now guarded by `test_leaf_with_call`.
+- *Push/pop disagreement.*  Zero across every block.
+- *A branch to something that is not an instruction.*  Zero.
+
+Both new guards were checked by REINTRODUCING the historical bug and watching
+them fail - a guard that cannot detect the failure is not evidence.
+
+**R8-R12 held across a call**, the class that shipped twice: 36 candidates,
+all resolved, none real.  The resolutions are worth writing down because they
+are what makes the next pass fast:
+
+- R8 and R12 are RESULT registers here (`clock_gate` answers in R8, the
+  factory's own convention), so a read straight after a call is the contract.
+- `seq_next_step` returns the next step in R9, documented at its head.
+- `seq_release` saves R9 in its prologue; `strip_mode_swap` only reads R9 and
+  stacks it around its own calls.
+- `DIVU Rd,Rx,Ry` writes a REGISTER PAIR - quotient Rd, remainder Rd+1 - so
+  the R11 that `arp_order_selector` indexes the stack with is the fresh
+  remainder, not a survivor of the PRNG call.
+
+**The clamp class is closed.**  `state+0x2fc` was the only RAW ADC channel
+our code reads, and it is clamped now.  Everything else at 0x306-0x310 is a
+CONDITIONED OUTPUT: the factory's pass at 0x80007ae0 writes 0x306 itself
+(`ST.H R9[0x306],R8` at 0x80007bb8) from the conditioner's clamped result.
+
+**The timebase is 25 MHz and cannot be zero.**  RAM 0x29cc lives in `.data`,
+copied from flash by the C startup at 0x80002036 before anything else runs,
+with the value 25000000 - so `clock_init`'s `cycles/ms` is 25000 and the
+`DIVU` in `clock_pulse` can never divide by zero.  The regression drives
+25 MHz throughout, matching the instrument, and 60 MHz only for COUNT wrap.
+
+**RAM initialisation.**  Every live declared region is initialised, by the
+counted clear at 0x6100, by `clock_init`, or by an explicit store - including
+the latch pitch stamps, which have their own counted loop.  The pressure
+filter's taps are deliberately NOT initialised and deliberately safe: the
+cave clamps depth and validates count and index before trusting them, on the
+argument that the power-up clearing is gated on a marker surviving in SRAM.
+Two declarations, 0x60E8 and 0x60EC, were dead - named in a comment as "arp
+last countdown" and "arp gate threshold", read and written by nothing - and
+are removed.  No image changed: the golden stayed 75346227.
+
 ### Dead /1: the knob channel reads past 0x3ff (2026-08-27)
 
 First bench report on the ISR-capture build: divisions steady, /1 silent.

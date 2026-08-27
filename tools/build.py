@@ -799,9 +799,11 @@ RAM_REGIONS = [
     # the initialiser addresses it as base+2/+6/+a/+c.
     (0x60E4, 0x60E6, "tuning-apply guard"),
     (0x60E6, 0x60E8, "arp knob 2 latch"),
-    (0x60E8, 0x60EA, "arp last countdown"),
+    # 0x60E8 and 0x60EC were "arp last countdown" and "arp gate threshold".
+    # Nothing in the firmware reads or writes either any more - the audit
+    # walked every base-plus-offset access in the built image and found none -
+    # so they are gone rather than left looking like live state.
     (0x60EA, 0x60EC, "arp knob 3 latch"),
-    (0x60EC, 0x60EE, "arp gate threshold"),
     (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
     (0x60EF, 0x60F0, "previous switch position"),
     (0x60F0, 0x60F2, "vibrato knob latch"),
