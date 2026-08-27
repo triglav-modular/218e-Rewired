@@ -3872,23 +3872,23 @@ function assembleProgram() {
         // whatever the player had, rather than switching them silently.
         // The saved value is kept plus one, so that zero means nothing is
         // being held and a restore cannot fire twice.
-        emit("STM --SP,R7,LR");
+        emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("LD.UB R8,R12[0x4]");      // the mode this press replaces
         emit("CP.W R8,R9");
-        emit("BR{eq} 0x8001b720");      // nothing is changing
+        emit("BR{eq} 0x8001b728");      // nothing is changing
         // Leaving PLAY ends the note the sequencer was sounding.  Nothing
         // else will: the arp step is what tidies up after a step, and stop is
         // most useful exactly when the arp is not stepping.
         emit("CP.W R8,0x2");
         emit("BR{ne} 0x8001b6d6");
-        emit("MCALL PC[0x8001b72c]");   // seq_release, which keeps R9 and R12
+        emit("MCALL PC[0x8001b734]");   // seq_release, which keeps R9 and R12
         emit("LD.UB R8,R12[0x4]");      // the call had R8
         padTo(0x8001b6d6);
-        emit("LDDPC R10,0x8001b728");   // global state base
+        emit("LDDPC R10,0x8001b730");   // global state base
         emit("MOV R11,0x622e");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b70c");
+        emit("BR{ne} 0x8001b714");
         emit("LD.W R8,R10[0x20c]");
         emit("SUB R8,-0x1");
         emit("ST.H R11[0x0],R8");
@@ -3902,35 +3902,43 @@ function assembleProgram() {
         // every note of it.  This is the factory's own 1 -> 0 cleanup at
         // 0x8000afee, done for the same reason it does it.
         emit("CP.W R8,0x2");            // relative, plus the one it is kept as
-        emit("BR{ne} 0x8001b720");
+        emit("BR{ne} 0x8001b728");
         emit("ST.H R10[0x216],R11");    // R11 is still zero
-        emit("LD.UB R10,R10[0x2e7]");
+        // R9 is the mode being entered and the caller still needs it, and a
+        // call is free to destroy R8..R12 - so it goes on the stack, and the
+        // port is loaded again for the second send rather than being expected
+        // to survive the first.
+        emit("ST.W --SP,R9");
+        emit("LD.UB R0,R10[0x2e7]");    // the port, where a call cannot reach
+        emit("MOV R10,R0");
         emit("MOV R11,0x0");
         emit("MOV R12,0x40");           // pitch bend centre: 0x2000
-        emit("MCALL PC[0x8001b730]");
+        emit("MCALL PC[0x8001b738]");
+        emit("MOV R10,R0");
         emit("MOV R11,0x0");
         emit("MOV R12,0x40");
-        emit("MCALL PC[0x8001b734]");
-        emit("RJMP 0x8001b720");
-        padTo(0x8001b70c);
+        emit("MCALL PC[0x8001b73c]");
+        emit("LD.W R9,SP++");
+        emit("RJMP 0x8001b728");
+        padTo(0x8001b714);
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b720");      // record is not what is being left
+        emit("BR{ne} 0x8001b728");      // record is not what is being left
         emit("LD.UH R8,R11[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b720");      // nothing was ever borrowed
+        emit("BR{eq} 0x8001b728");      // nothing was ever borrowed
         emit("SUB R8,0x1");
         emit("ST.W R10[0x20c],R8");
         emit("MOV R8,0x0");
         emit("ST.H R11[0x0],R8");
-        padTo(0x8001b720);
-        emit("MOV R12,0x6154");         // the block again, for the caller
-        emit("LDM SP++,R7,PC");
         padTo(0x8001b728);
+        emit("MOV R12,0x6154");         // the block again, for the caller
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b730);
         word(0x00003560); // global state base
         word(0x8001b448); // seq_release
         word(0x80008104); // pitch bend out, one port
         word(0x80007efc); // and the other
-        finish("seq_enter", 0x8001b738);
+        finish("seq_enter", 0x8001b740);
 
         // The bend strip, while recording.  Two pieces share this block: the
         // bend hook, whose only job is silence, and the per-scan watch that
@@ -4244,7 +4252,7 @@ function assembleProgram() {
         emit("BR{le} 0x8001b7e0");
         emit("MOV R9,R11");
         padTo(0x8001b7e0);
-        emit("LDDPC R11,0x8001b820");
+        emit("LDDPC R11,0x8001b830");
         emit("ST.H R11[0x38e],R9");
         padTo(0x8001b7e8);
         // Now: does this pulse play, or is it one the divider swallows?
@@ -4261,10 +4269,24 @@ function assembleProgram() {
         padTo(0x8001b810);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
+        // Not on the gate-off count.  The arp step tests the countdown against
+        // the gate-off threshold FIRST and returns there without choosing a
+        // note, so a pulse that arrives with the countdown already sitting on
+        // it is swallowed - the note never sounds.  At a 1 ms interval and a
+        // divisor of one the refresh above lands on exactly 3, which is that
+        // threshold, so a 780 Hz pulser lost most of its notes.  One more
+        // millisecond costs nothing and cannot collide.
+        emit("LDDPC R11,0x8001b830");
+        emit("LD.SH R12,R11[0x38e]");
+        emit("CP.W R12,0x4");
+        emit("BR{ge} 0x8001b824");
+        emit("MOV R12,0x4");
+        emit("ST.H R11[0x38e],R12");
+        padTo(0x8001b824);
         emit("MOV R12,0xffff");         // -1: step now, do not reload
-        emit("MCALL PC[0x8001b824]");
+        emit("MCALL PC[0x8001b834]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b820);
+        padTo(0x8001b830);
         word(0x00003560); // global state base
         word(0x8000210c); // the arp step
         // MCALL is memory-indirect, so the dispatcher's call needs a word
@@ -4272,7 +4294,7 @@ function assembleProgram() {
         // straight here made event 10 read back 0xebcd4080, this cave's own
         // STM, and jump to it.
         word(0x8001b740);
-        finish("clock_pulse", 0x8001b82c);
+        finish("clock_pulse", 0x8001b83c);
 
         // The factory snaps the countdown to the new tempo whenever the rate
         // moves by more than 0x33.  That is right when the arp owns its own
@@ -4652,7 +4674,7 @@ function assembleProgram() {
         emit("MOV R12,0x61ee");
         emit("ADD R12,R12,R9 << 0x0");
         emit("LD.UB R0,R12[0x0]");
-        emit("MCALL PC[0x8001b438]");   // which step plays next
+        emit("MCALL PC[0x8001b43c]");   // which step plays next
         padTo(0x8001b3b8);
         emit("ST.B R10[0x1],R9");
         // This step moves the pitch, so it is the one that spends the slide a
@@ -4679,7 +4701,7 @@ function assembleProgram() {
         padTo(0x8001b3e0);
         emit("MOV R12,0x61e5");
         emit("ST.B R12[0x0],R8");
-        emit("MCALL PC[0x8001b438]");   // which step plays next
+        emit("MCALL PC[0x8001b43c]");   // which step plays next
         padTo(0x8001b3f0);
         emit("ST.B R10[0x1],R9");
         emit("MOV R12,0x0");
@@ -5040,7 +5062,7 @@ function assembleProgram() {
         // letting this one through.  The arp-switch test above is untouched.
         if (block("clock_pulse")) {
             begin(0x80004e72);
-            emit("MCALL PC[0x8001b828]");
+            emit("MCALL PC[0x8001b838]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7a);
         }

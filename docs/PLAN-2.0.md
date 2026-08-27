@@ -486,6 +486,37 @@ Rests and ties come along unchanged and still mean what they meant: a tie
 holds whatever is sounding and a rest silences it, whichever note the shuffle
 has put them beside.
 
+### Three from audit, and the hole that let two of them through (2026-08-27)
+
+**Playback repeated its first step.**  Both advance sites in `seq_select`
+called `MCALL PC[0x8001b438]`, and that pool word is the RECORDING answer,
+not `seq_next_step`: the helper returned -1 in R12 and left R9 exactly as it
+found it, so the index was written back unchanged and step one played for
+ever.  The advances read `0x8001b43c` now; the recording call keeps
+`0x8001b438`.
+
+**Entering record from relative strip mode did not enter record.**  The bend
+centre sends destroy R8..R12, and R9 was carrying the mode being entered - so
+`ST.B R12[0x4],R9` wrote rubbish and the sequencer never went into record at
+all.  R10, the MIDI port, was destroyed by the first send and the second one
+went wherever that left it.  R9 goes on the stack across both sends now, and
+the port is kept in R0, which a callee has to preserve.
+
+**A 780 Hz clock lost most of its notes.**  The arp step tests the countdown
+against the gate-off threshold BEFORE it chooses a note, and returns there.
+At a 1 ms interval with a divisor of one the refresh lands on exactly 3,
+which is that threshold, so the forced pulse was swallowed.  `clock_pulse`
+now lifts a countdown below 4 before it steps.
+
+**What let the first two through** was the emulator, not the review: calls to
+routines outside the dumped window were modelled as leaving every register
+alone.  They are calls, and R8..R12 are caller-saved - a cave that keeps a
+live value in one of them across a call is broken.  The emulator fills them
+with rubbish now, which fails that immediately.  The scenarios that missed
+these also tested the routine rather than the call site; playing a whole
+sequence THROUGH `seq_select`, and entering record all the way through
+`seq_enter`, is what the suites do now.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

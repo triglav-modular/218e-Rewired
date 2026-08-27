@@ -115,6 +115,14 @@ was wrong: the panel has six knobs, and the User's Guide says which gestures
 set what. One look at the front panel would have stopped it. The instrument
 is the ground truth the disassembly is being interpreted against.
 
+**A call destroys R8-R12.**  They are caller-saved, and a cave that holds a
+live value in one of them across a call is broken.  Two shipped that way in
+one afternoon - the mode being entered, and a MIDI port - because the
+emulator left registers alone for routines outside its dumped window.  It
+fills them with rubbish now.  Scenarios should drive the CALL SITE, not the
+routine: a pool word pointing at the wrong helper is invisible to a test that
+calls the right one directly.
+
 **Emulating a cave does not exercise its hook.** A clock hook that jumped to
 an invalid address passed every emulation and the whole parity matrix,
 because the emulations called caves directly and the matrix compares two
