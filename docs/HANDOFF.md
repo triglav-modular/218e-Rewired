@@ -6,12 +6,20 @@ of a conversation.
 
 ## Where it stands
 
+**Current clock fix:** see [CLOCK.md](CLOCK.md). The interrupt-timestamped
+capture/FIFO replaces the sampled-low and rejection-budget experiments
+described below. It explicitly enables both GPIO edges, fixes literal-pool
+fallthrough, latches division independently of interval confidence, and
+serializes note/pitch/trigger output. The requirement is 0.5–200 Hz.
+Run `python3 tools/test_clock.py` against fresh produced firmware.
+This revision still needs the owner's hardware check.
+
 Phases 0–5 of [PLAN-2.0.md](PLAN-2.0.md) are built and on the owner's
 instrument: `.kbm` keyboard maps and period-aware octave controls, preset
 voltages decoupled from the knobs, the four knob roles, the step sequencer,
-and the external clock divider. The plan document is the source of truth for
-what each one does and why; it also carries the archaeology, which is worth
-reading before touching anything near the arpeggiator.
+and the external clock divider. The plan records the feature decisions and
+archaeology; [CLOCK.md](CLOCK.md) supersedes its older clock experiments.
+Read the history before touching anything near the arpeggiator.
 
 The half-done thing from the last handoff is done: **rests and ties are read
 from an absolute strip position.** Touch the strip while recording and let
@@ -86,11 +94,14 @@ lost, propose a fresh one and wait.
   that build numbers are compiled as immediates, so each one moved to
   runtime needs a RAM cell and a load. Good candidates are the numbers below.
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
-  `strip_halfway_units` (2048), `clock_min_ms` (1) and `clock_lock_pulses`
+  `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250)
+  and `clock_lock_pulses`
   (5). All are build numbers precisely so they can move. `chord_hold_scans`
-  is 200 because the owner asked for a second.
+  is 200 because the owner asked for a second. For current clock timing
+  values and their digital-input constraints, use [CLOCK.md](CLOCK.md).
 - **The trigger spike is the factory's own**, scheduled with 3 at
-  `0x8000788a`. The owner puts a Buchla trigger at ~4 ms; if a measurement
+  `0x80007888` (R10; the adjacent R11=2 selects the timer ID). The owner puts
+  a Buchla trigger at ~4 ms; if a measurement
   says the unit is not what 3 assumes, that immediate is the one to move.
 - **A settings save during a take would persist the borrowed strip mode.**
   Record forces `state+0x20c` to 0 and the save path reads it like any other

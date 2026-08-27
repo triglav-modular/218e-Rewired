@@ -856,9 +856,9 @@ RAM_REGIONS = [
     # 64 recorded pitches, then how many there are, where play has got to,
     # and the pitch the step about to sound carries.
     (0x6160, 0x61E6, "sequencer steps"),
-    # The external clock: a free-running millisecond counter, the last
-    # pulse's stamp, the interval before this one, whether it is locked, and
-    # the divide count.
+    # The external clock: diagnostic milliseconds / dispatch stamp, measured
+    # period, acquisition confidence, and divide phase. The active-divider
+    # latch and physical edge timestamps are separate, below.
     (0x61E6, 0x61EE, "external clock divider"),
     # The key each recorded step was played on.  The pitch beside it is what
     # the CV plays; this is what MIDI names the note by.
@@ -869,17 +869,16 @@ RAM_REGIONS = [
     # The key a note-on left for record to sound, plus one, so that the
     # cleared state is "nothing waiting" rather than key zero.
     (0x6230, 0x6232, "the key record has yet to sound"),
-    # Set by the 1 ms watch whenever the pulse pin reads low, cleared when a
-    # pulse is accepted: "the pin has been properly low, so the next high is
-    # a rising edge".  The factory's pin-change ISR cannot tell the two apart
-    # on a slow slope, which is what doubled the pulser's rate.
-    (0x6232, 0x6233, "consecutive low milliseconds on the pulse pin"),
-    # What a completed run banks, and what an accepted pulse spends.
-    (0x6233, 0x6234, "the pulse pin has been low since the last beat"),
-    # How many more pulses the gate above may reject before it has to give
-    # way: a pin whose low phase is too short to sample can never qualify,
-    # and the gate must not be able to shut such a clock out for good.
-    (0x6234, 0x6235, "rejections left before the pin gate stands aside"),
+    (0x6232, 0x6233, "unconsumed low interval, GPIO ISR"),
+    (0x6233, 0x6234, "acquired divider latch"),
+    (0x6234, 0x6236, "clock FIFO producer and consumer indices"),
+    (0x6236, 0x6238, "input-present and output-step-in-flight flags"),
+    (0x6238, 0x6244, "low, accepted and consumed COUNT timestamps"),
+    (0x6244, 0x6254, "cycles/ms, low qualification, refractory and release"),
+    (0x6254, 0x6258, "last physical output COUNT timestamp"),
+    (0x6258, 0x625A, "saturating capture FIFO overrun count"),
+    (0x625A, 0x625B, "physical output timestamp valid"),
+    (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -894,6 +893,7 @@ RAM_REGIONS = [
 # the factory already does — but listed so that a new cell of our own cannot
 # be placed on top of one without the coverage check noticing.
 FACTORY_CELLS = [
+    (0x29CC, 0x29D0, "CPU frequency, also used by the factory COUNT delay"),
     # 32 halfwords - the tuning applier loop counts MOV R9,0x20 - so the
     # cell ends at 0x894.  It was declared 6 bytes short, which left the
     # last three entries outside the overlap protection this map exists
@@ -1735,22 +1735,28 @@ def main() -> None:
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
-    cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 1))
+    cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 4))
     cfg["_numbers"]["clock_lock_pulses"] = int(
         cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
     cfg["_numbers"]["clock_settle_scans"] = int(
         cfg.get("sequencer", {}).get("clock_settle_scans", 0))
-    cfg["_numbers"]["clock_hysteresis_eighths"] = int(
-        cfg.get("sequencer", {}).get("clock_hysteresis_eighths", 7))
-    cfg["_numbers"]["clock_rearm_ms"] = int(
-        cfg.get("sequencer", {}).get("clock_rearm_ms", 2))
+    cfg["_numbers"]["clock_rearm_us"] = int(
+        cfg.get("sequencer", {}).get("clock_rearm_us", 250))
+    cfg["_numbers"]["clock_max_ms"] = int(
+        cfg.get("sequencer", {}).get("clock_max_ms", 2400))
+    cfg["_numbers"]["clock_release_ms"] = int(
+        cfg.get("sequencer", {}).get("clock_release_ms", 2600))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
     for name in ("clock_scan", "clock_pulse", "clock_hook",
                  "clock_tempo", "clock_tempo_hook",
                  "clock_ms_tick", "clock_ms_pool",
-                 "clock_gate", "clock_gate_hook", "clock_settle"):
+                 "clock_gate", "clock_gate_hook", "clock_settle",
+                 "clock_capture", "clock_irq_hook", "clock_irq_pool",
+                 "clock_edge_mode", "clock_init", "clock_init_pool",
+                 "clock_service", "clock_output", "clock_low_age", "clock_attack_guard"):
         blocks[name] = div
+    blocks["profiler_pool"] = div or features.get("scan_profiler", False)
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",

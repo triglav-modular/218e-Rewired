@@ -139,9 +139,10 @@ def audit_call_pools(image_path) -> list[str]:
 # instrument this was measured on, and both trims were centred on them; and
 # again for 2.0, which added caves and moved the first-use clear; and again
 # when rests and ties moved to an absolute strip position, which moved the
-# clear once more.
+# clear once more; and for interrupt-timestamped clock capture, whose FIFO
+# extends that clear through 0x62df. Both assemblers verified this new pin.
 EXPECTED = {
-    "historical_config": "cf31e837b1444b2416a7802ded6783f300d3c937987cba545304b60703a330ba",
+    "historical_config": "0e5d277e65edfbe08658aa3d204313e08d4106aee42c291203946291f1ba7143",
 }
 
 

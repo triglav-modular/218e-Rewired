@@ -1139,14 +1139,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R11,0x60ea");
         emit("ST.H R11[0x0],R8");
         padTo(0x80019d94L);
-        if (block("seq_gate")) {
+        if (block("clock_attack_guard")) {
+            emit("MCALL PC[0x8001cb1c]");
+        } else if (block("seq_gate")) {
             // LR is still on the stack here, so a call is safe; two lines
             // later it would not be.  R8 comes back as the threshold.
             emit("MCALL PC[0x8001b54c]");
         }
         padTo(0x80019d98L);
         emit("LDM SP++,R7,R9,R10,R11,R12,LR");
-        if (!block("seq_gate")) {
+        if (!block("seq_gate") && !block("clock_attack_guard")) {
             emit("MOV R8,0x3");
         }
         emit("CP.H R9,R8");
@@ -1465,8 +1467,8 @@ public class AssemblePressureFix extends GhidraScript {
         // MCALL inside it - which writes LR - turns that return into a jump
         // to itself, and the first trigger request hangs the instrument with
         // its USB still enumerating.  That shipped once.  The clock-aware
-        // settle choice lives in its own leaf cave instead, and the four
-        // pulse pools point THERE in a divider build.
+        // helper now saves LR before its gate-off call; the
+        // four pulse pools point THERE in a divider build.
         begin(0x8001a268L);
         word(0x800077f8L); // real pulse-high routine
         emit("MOV R8,0x60ee");
@@ -1624,7 +1626,7 @@ public class AssemblePressureFix extends GhidraScript {
 
         // Main-loop dispatcher pointer -> profiler wrapper.
         begin(0x80007dc0L);
-        word(0x8001a540L);
+        word(block("clock_scan") ? 0x8001b980L : 0x8001a540L);
         finish("profiler_pool", 0x80007dc4L);
 
         // Pressure output interpolation.  The scan writes a target at RAM
@@ -2361,9 +2363,9 @@ public class AssemblePressureFix extends GhidraScript {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0x99, not 0x1c: the run reaches from the pressure cache all the way
+        // 0xef, not 0x1c: the run reaches from the pressure cache all the way
         // over the preset block, the arp's own cells, the sequencer, the
-        // clock divider and the borrowed strip mode - everything we keep in
+        // clock divider, its FIFO and the borrowed strip mode - everything in
         // this gap.  SRAM survives a DFU, so anything left out here starts as
         // whatever the last image happened to leave: a sequencer that resumes
         // an old mode mid-flash, a divider that thinks it is still locked, a
@@ -2371,7 +2373,7 @@ public class AssemblePressureFix extends GhidraScript {
         // or - the one that was already wrong at 0x25 - two of the four
         // preset following flags, which would have stopped the pad-4 chord
         // arming at all.
-        emit("MOV R12,0x9a");
+        emit("MOV R12,0xef");           // through 0x62df: clock capture + FIFO
         padTo(0x8001ac40L);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3560,15 +3562,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80015150L); // the factory glide-rate table
         finish("seq_glide", 0x8001b658L);
 
-        // The divider's own timebase.  It used to count 5 ms scans, which put
-        // its shortest measurable interval at 20 ms - and a 208 pulser at its
-        // top rate is 780 Hz, or 1.28 ms.  Nothing about a scan counter can
-        // see that.
-        //
-        // So the counter ticks on the 1 ms task instead: the factory's own
-        // periodic callback, registered at 0x80007c1c with a period of 1 and
-        // reached through the pool word this cave is chained in front of.
-        // R12 is the task's control block, handed back untouched.
+        // Scheduled diagnostic counter and long-low banking. Short low phases
+        // and input intervals are measured with COUNT in the GPIO ISR.
         begin(0x8001bb70L);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
@@ -3577,439 +3572,507 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UH R9,R8[0x0]");
         emit("SUB R9,-0x1");
         emit("ST.H R8[0x0],R9");
-        // And watch the pulse pin go LOW, which is what makes the next high a
-        // rising EDGE rather than a level.
-        //
-        // The factory decides rising-from-falling by sampling the pin inside
-        // the pin-change interrupt (0x800072e4: IFR says a transition
-        // happened, PVR says which way).  That works for a clean edge and
-        // cannot work for a slow one: the 208 pulser's sawtooth crawls back
-        // down through the trip point, chatters there, and the ISR keeps
-        // sampling HIGH - so the crossing posts a second event and the arp
-        // runs at double the pulser's rate.  Measured: a 181 ms pulser,
-        // steps at +80 ms and +164 ms.
-        //
-        // A pin read once a millisecond sees the long low stretch between
-        // cycles that the chatter never reaches.  Seeing it arms the next
-        // pulse; the divider drops any that arrives unarmed.  GPIO port 0
-        // is 0xFFFF1000 and PVR is +0x60, both straight out of the factory's
-        // own accessor at 0x8001105a.
-        // A RUN of low milliseconds, not one.  A single sample arms on the
-        // momentary dip inside the crossing's own chatter, and the very next
-        // bounce is then taken for a beat - the doubling all over again.  A
-        // run only happens in the long low stretch between cycles.
-        // Two separate things, and conflating them was a bug: the RUN BEING
-        // MEASURED, and the QUALIFICATION IT EARNED.
-        //
-        // The run (0x6232) is consecutive low milliseconds, so a high sample
-        // resets it.  Letting it stand across a high sample meant LOW, HIGH,
-        // LOW counted as a run of two - which is exactly the chatter it was
-        // put there to reject, and it armed on it.
-        //
-        // The qualification (0x6233) is what a completed run leaves behind,
-        // and it survives every high sample until a pulse consumes it.  THAT
-        // is what must not be cleared on high: the pin goes high exactly when
-        // the beat arrives, the event waits its turn in the dispatcher, and a
-        // tick landing in between would throw the beat away.  Resetting the
-        // partial measurement cannot race anything, because by then the run
-        // has already been banked.
-        emit("MOV R9,-0xf000");
-        emit("LD.W R9,R9[0x60]");
-        emit("BFEXTU R9,R9,0x5,0x1");
-        emit("MOV R10,0x6232");
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001bb9a");
-        emit("MOV R9,0x0");             // high: the run starts again
-        emit("ST.B R10[0x0],R9");
-        emit("RJMP 0x8001bbb0");
-        padTo(0x8001bb9aL);
-        emit("LD.UB R9,R10[0x0]");
-        emit(String.format("CP.W R9,0x%x",
-             number("clock_rearm_ms", 2, 1, 64)));
-        emit("BR{ge} 0x8001bba8");      // the run already stands: re-bank it
-        emit("SUB R9,-0x1");
-        emit("ST.B R10[0x0],R9");
-        emit(String.format("CP.W R9,0x%x",
-             number("clock_rearm_ms", 2, 1, 64)));
-        emit("BR{lt} 0x8001bbb0");
-        // A STANDING RUN QUALIFIES EVERY MILLISECOND, not only the one it was
-        // completed on.  Banking it once and then short-circuiting meant a
-        // pin that simply sits low - which is what an idle input and a slow
-        // square both look like between pulses - qualified exactly one pulse
-        // ever: the run saturated, the branch above took the early way out,
-        // and the beat that spent the latch was the last one to have it.
-        padTo(0x8001bba8L);
-        emit("MOV R9,0x1");
-        emit("ST.B R10[0x1],R9");       // 0x6233: qualified, unspent
-        // and the gate is worth trusting for the next few pulses.  NOT for
-        // ever: a flag that only ever sets is set by an idle low pin before a
-        // clock is even patched, and then a fast clock - whose low phase is
-        // shorter than the millisecond that watches for it, so it can never
-        // qualify - is rejected for good.  A countdown spent one per rejected
-        // pulse bounds that to a few pulses and then gets out of the way,
-        // while a real beat reloads it every cycle and keeps the gate up.
-        emit(String.format("MOV R9,0x%x",
-             number("clock_trust_pulses", 4, 1, 32)));
-        emit("ST.B R10[0x2],R9");       // 0x6234
-        padTo(0x8001bbb0L);
+        emit("MCALL PC[0x8001bbb8]");   // bank a long low before COUNT wraps
         emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bbbc]");   // the factory's own 1 ms work
+        emit("MCALL PC[0x8001bbbc]");
         emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001bbbcL);
-        word(0x800076b0L); // the factory's 1 ms task callback
+        padTo(0x8001bbb8L);
+        word(0x8001ca00L);
+        word(0x800076b0L);
         finish("clock_ms_tick", 0x8001bbc0L);
 
-        // The external clock, per scan: the release when the clock stops.
-        // MARF gives itself two seconds.  The counter itself is not touched
-        // here any more - it ticks on the 1 ms task, because a scan is far
-        // too coarse to measure a pulser with.
+        // Main-loop wrapper, NOT a pitch-remap callback. Take at most one
+        // queued edge before the factory dispatcher. A sounding step holds
+        // its slot until its pitch has been stored and its trigger emitted.
+        // Consequently a delayed dispatcher cannot merge two notes into one
+        // pending-trigger flag, or compute a new note inside an old remap.
         begin(0x8001b980L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MOV R10,0x61e6");
-        emit("LD.UH R8,R10[0x0]");
-        emit("LD.UB R9,R10[0x6]");      // locked?
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b9b8");
-        emit("LD.UH R9,R10[0x2]");      // when the last pulse arrived
-        emit("SUB R8,R9");
-        emit("CASTU.H R8");
-        // Longer than the slowest clock the divider will take a period from,
-        // and by more than one interval's jitter.  Both used to be a strict
-        // 2000 ms, which left a nominal half-hertz clock with NO margin at
-        // all: one interval measuring 2001 ms cleared the lock, the period
-        // and the presence together, handed the arp back to its own timer and
-        // started the acquisition over.
-        emit(String.format("MOV R9,0x%x",
-             number("clock_release_ms", 2600, 100, 32000)));
-        emit("CP.W R8,R9");
-        emit("BR{le} 0x8001b9b8");
-        emit("MOV R9,0x0");
-        emit("ST.B R10[0x6],R9");       // released: free-running again
-        emit("ST.H R10[0x4],R9");
-        // and the countdown goes back to the arp's own tempo.  Releasing the
-        // lock alone left whatever the clock last loaded still counting down -
-        // at a second divided by eight that is ten seconds of silence after a
-        // timeout that advertises two.
-        emit("LDDPC R11,0x8001b9c0");
-        emit("LD.SH R9,R11[0x34a]");
-        emit("ST.H R11[0x38e],R9");
-        padTo(0x8001b9b8L);
+        emit("MCALL PC[0x8001b9bc]");
+        emit("MCALL PC[0x8001b9c0]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b9c0L);
-        word(0x00003560L); // global state base
+        padTo(0x8001b9bcL);
+        word(0x8001c400L); // clock_service
+        word(feature("scan_profiler") ? 0x8001a540L : 0x80004c64L);
         finish("clock_scan", 0x8001b9c4L);
 
-        // A clock pulse, reached where the factory ticked the arp outright.
-        // Its arp-switch test still stands above us, so by here the arp is
-        // running and the only question left is whether this pulse gets
-        // through.
-        //
-        // Locking is MARF's: pulses have to be plausibly spaced - 20 ms to
-        // 2 s, which is 4 to 400 scans - and the second one has to agree with
-        // the first before the knob starts dividing.  Until then every pulse
-        // goes through, which is what an unlocked clock should do.
-        begin(0x8001b740L);
-        emit("STM --SP,R7,LR");
+        // One accepted, timestamped input from the FIFO. R12 = COUNT at the
+        // edge. Neither dispatcher latency nor the 1 ms task changes its
+        // interval. Input qualification has already happened in the ISR.
+        begin(0x8001c800L);
+        emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
+        emit("MOV R0,R12");
         emit("MOV R10,0x61e6");
-        emit("LD.UH R8,R10[0x0]");      // now
-        emit("LD.UH R9,R10[0x2]");      // the last pulse this took
-        emit("SUB R8,R9");
-        emit("CASTU.H R8");             // the interval, wrapping cleanly
-        // DEAD TIME, in two parts.
-        //
-        // A pulse arriving inside it is DROPPED - not counted, not stamped,
-        // and above all not stepped.  It used to fall through to "no rate
-        // here, so pass everything", which turned every burst of chatter into
-        // a burst of notes.
-        //
-        // The floor is flat: clock_min_ms, against electrical chatter, and it
-        // is all an UNLOCKED clock gets.  An uneven clock never locks, so it
-        // still passes everything, which is what it is meant to do.
-        //
-        // Once locked there is a second, much wider window - hysteresis on
-        // the period itself.  A 208 pulser's falling sawtooth crosses any
-        // threshold TWICE per cycle, at the reset and again as the slope
-        // crawls back down through it, and the second crossing is a real
-        // edge that no amount of chatter filtering can tell from a beat.
-        // Measured off the instrument: a 181 ms pulser, output at +80 ms and
-        // +164 ms - dead on double rate.  What separates them is that a beat
-        // arrives when the ESTABLISHED PERIOD says it should, and the extra
-        // crossing does not.  So once a rate is known, anything landing
-        // before clock_hysteresis_eighths of it is the other crossing.  Six
-        // eighths leaves a third of the period of headroom for a clock that
-        // speeds up; past that it stops agreeing, unlocks, and passes
-        // everything again while it settles at the new rate.
-        emit(String.format("CP.W R8,0x%x",
-             number("clock_min_ms", 1, 1, 100)));
-        emit("BR{lt} 0x8001b782");      // electrical chatter: never a beat
-        // ARMED?  The 1 ms watch counts the milliseconds the pulse pin reads
-        // LOW, so a full run means "this pin has been properly low since the
-        // last beat, and what just arrived is a rising EDGE".  The sawtooth's
-        // second crossing never gets a run - the pin is still high there, and
-        // the dip inside its own chatter is over in less than the run needs.
-        // ONE way in, one way out.  This had three - a qualified low, a whole
-        // period elapsed, and simply being unlocked - and each handed back
-        // what the others rejected.  The period route was the worst: it asked
-        // only "has enough time passed", which ANY injected event at seven
-        // eighths of the period satisfies, so a crossing artefact got in on
-        // the strength of the very clock it was corrupting.  Elapsed time is
-        // not evidence of an edge.  It is gone.
-        //
-        // The question is only ever whether the pin has been LOW since the
-        // last accepted pulse.  Either it has, and this is a beat; or it has
-        // not, and this is the crossing coming back up - unless the pin
-        // cannot be sampled low at this rate at all, which the countdown
-        // below is what distinguishes.
-        emit("MOV R11,0x6232");
-        emit("LD.UB R12,R11[0x1]");     // qualified, and not yet spent
-        emit("CP.W R12,0x0");
-        emit("BR{ne} 0x8001b77c");
-        // Not qualified.  There is deliberately NO exemption here for pulses
-        // that arrive soon after the last accepted one - two went in, and both
-        // had to come out.  "Enough time has passed" admits any event at all
-        // once the clock is slow enough, which is what the removed period
-        // route did.  "Too little time has passed for the sampler to have seen
-        // anything" sounds like its opposite and exempts exactly the same
-        // events: the crossing arrives SOONER than the next beat, always, so
-        // every window wide enough to be useful waves the crossing through.
-        // A sixteen-millisecond one let every crossing above 30 Hz past, and
-        // at a 200 Hz sawtooth with a short high phase the crossing is one
-        // millisecond behind its beat.
-        //
-        // Whether a millisecond sampler can see a given clock at all is a
-        // question about the CLOCK, not about the gap, and the countdown
-        // below is the whole answer: it stands only while qualifications keep
-        // arriving, and stands aside on a clock that never manages one.
-        emit("LD.UB R12,R11[0x2]");     // is the gate worth trusting?
-        emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001b77c");      // no evidence to reject with: pass
-        emit("SUB R12,0x1");            // it said no, and saying so costs one
-        emit("ST.B R11[0x2],R12");
-        emit("RJMP 0x8001b782");        // two bytes, where the return is four
-        // The disagreement fall, parked in the acceptance block's own slack
-        // because the path it belongs to has four bytes and this needs twelve.
-        padTo(0x8001b770L);
-        emit("LD.UB R11,R10[0x6]");
-        emit("CP.W R11,0x2");
-        emit("BR{lt} 0x8001b7bc");      // at the floor already
-        emit("SUB R11,0x1");
-        emit("ST.B R10[0x6],R11");
-        emit("RJMP 0x8001b7c0");
-        padTo(0x8001b77cL);
-        emit("MOV R12,0x0");
-        emit("ST.B R11[0x1],R12");      // spent: the pin must go low again
-        emit("RJMP 0x8001b786");
-        padTo(0x8001b782L);
-        emit("LDM SP++,R7,PC");         // dropped: it never happened
-        padTo(0x8001b786L);
-        emit("LD.UH R12,R10[0x0]");
-        emit("ST.H R10[0x2],R12");      // accepted, and it is the new reference
+        emit("MOV R11,0x6240");
+        emit("LD.W R8,R11[0x0]");
+        emit("ST.W R11[0x0],R0");       // last consumed edge
+        emit("LD.UB R9,R10[0x6]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c884");     // first edge: no period to infer
+        emit("SUB R8,R0,R8 << 0x0");   // unsigned wrap-safe cycle interval
+        emit("LD.W R11,R11[0x4]");      // cycles/ms, from factory CPU frequency
+        emit("MOV R9,R11");
+        emit("LSR R9,0x1");
+        emit("ADD R8,R9");              // round to nearest ms
+        emit("DIVU R8,R8,R11");         // quotient R8, remainder R9
         emit(String.format("MOV R11,0x%x",
              number("clock_max_ms", 2400, 50, 30000)));
         emit("CP.W R8,R11");
-        emit("BR{gt} 0x8001b7c4");      // too slow to be a rate
-        emit("LD.UH R9,R10[0x4]");      // the interval before this one
+        emit("BR{gt} 0x8001c884");
+        emit("MOV R1,R8");
+        emit("LD.UH R9,R10[0x4]");
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b7bc");      // nothing to agree with yet
-        // Agreement: within an eighth of the last interval, plus a
-        // millisecond or two so a slow clock is not held to an impossible
-        // tolerance.  A clock that does not keep time does not get divided -
-        // every pulse goes through instead, which is the honest answer when
-        // there is no steady rate to take a fraction OF.  Dividing an uneven
-        // train would mean choosing which pulses to believe.
+        emit("BR{eq} 0x8001c878");
         emit("MOV R11,R8");
         emit("SUB R11,R11,R9 << 0x0");
         emit("ABS R11");
-        emit("MOV R12,R9");
-        emit("LSR R12,0x3");
-        emit("SUB R12,-0x2");
-        emit("CP.W R11,R12");
-        emit("BR{gt} 0x8001b770");      // a real disagreement: the run falls
-        // Agreeing intervals are COUNTED, and it takes a run of them.  Two
-        // was enough to be fooled: a clock with no rate at all still throws
-        // the odd matching pair, and one of those latched the divider on for
-        // a pulse or two before the next mismatch let it go.  A run of them
-        // cannot be a coincidence often, though it can still be one - there
-        // is no count that makes an irregular clock impossible to mistake.
-        // The run climbs PAST the threshold, to a small headroom above it, and
-        // a disagreement costs it one instead of throwing it away.  Resetting
-        // to 1 meant a single interval outside tolerance - a rate change, or
-        // one artefact that got through - dropped the divider to /1 for the
-        // four pulses it took to earn the run back, resetting the divide
-        // phase on each: /8 turned into a burst.  The divisor comes off the
-        // knob and never depended on the period; agreement decides whether to
-        // divide AT ALL, which is a question about this clock, not about this
-        // pulse.  A clock with no rate still walks the run down to nothing
-        // and gets passed through, which takes as many disagreements as the
-        // headroom is deep.
+        emit("LSR R9,0x3");
+        emit("SUB R9,-0x2");
+        emit("CP.W R11,R9");
+        emit("BR{gt} 0x8001c878");
         emit("LD.UB R11,R10[0x6]");
         emit(String.format("CP.W R11,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)
-             + number("clock_lock_headroom", 2, 0, 32)));
-        emit("BR{ge} 0x8001b7b8");
+             number("clock_lock_pulses", 5, 2, 32)));
+        emit("BR{ge} 0x8001c87c");
         emit("SUB R11,-0x1");
-        padTo(0x8001b7b8L);
+        emit("RJMP 0x8001c87c");
+        padTo(0x8001c878L);
+        emit("MOV R11,0x1");            // reacquire confidence, NOT divide phase
+        emit("RJMP 0x8001c87c");
+        padTo(0x8001c87cL);
         emit("ST.B R10[0x6],R11");
-        emit("RJMP 0x8001b7c0");
-        // Nothing to agree with yet, or the run has fallen as far as it goes.
-        // The floor is ONE, not zero: this byte is also what tells the rest of
-        // the divider a clock is present at all, and a clock that wanders is
-        // still a clock - letting it reach zero handed the arp back to its own
-        // timer, which then beat over the top of every pulse.
-        padTo(0x8001b7bcL);
+        emit("ST.H R10[0x4],R1");
+        emit("RJMP 0x8001c894");
+        padTo(0x8001c884L);
         emit("MOV R11,0x1");
         emit("ST.B R10[0x6],R11");
-        padTo(0x8001b7c0L);
-        emit("ST.H R10[0x4],R8");
-        emit("RJMP 0x8001b7cc");
-        padTo(0x8001b7c4L);
-        emit("MOV R11,0x0");
-        emit("ST.B R10[0x6],R11");
-        emit("ST.H R10[0x4],R11");
-        padTo(0x8001b7ccL);
+        emit("MOV R1,0x0");
+        emit("ST.H R10[0x4],R1");
+        padTo(0x8001c894L);
+        emit("LD.UH R8,R10[0x0]");
+        emit("ST.H R10[0x2],R8");       // diagnostic dispatch time only
+        emit("MOV R9,0x6233");
         emit("LD.UB R11,R10[0x6]");
-        emit("MOV R12,0x1");            // unlocked, or still settling: /1
         emit(String.format("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b7f0");
-        // Locked, so the rate knob divides instead: fast end passes every
-        // pulse, slow end one in eight - the Clockwork Card's own law.
-        //
-        // The KNOB'S OWN RAW CHANNEL, state+0x2fc, and nothing else.  The
-        // mirror at 0x2ee6 that this used to read is the factory's
-        // knob-plus-CV sum (0x80002b62: table[knob] + state[0x2f2]/2), and
-        // NEITHER half is the knob position.  The knob half is the tempo
-        // table's OUTPUT - nonlinear, and not even monotonic in the
-        // direction a divisor wants - which is why the division looked
-        // knob-independent on the instrument.  The CV half is the arp-rate
-        // CV input (the 218K+'s own jack, or a reassigned input on a
-        // modified V3; near zero when nothing is patched there), which a
-        // divisor has no business following either.
-        emit("LDDPC R11,0x8001b864");   // global state base
-        emit("LD.SH R11,R11[0x2fc]");
+        emit("BR{lt} 0x8001c8ac");
+        emit("MOV R11,0x1");
+        emit("ST.B R9[0x0],R11");       // once acquired, latched until timeout
+        padTo(0x8001c8acL);
+        emit("LD.UB R11,R9[0x0]");
+        emit("MOV R12,0x1");
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001c8d0");
+        emit("LDDPC R11,0x8001c9e0");
+        emit("LD.SH R11,R11[0x2fc]");   // RATE knob itself, not knob-plus-CV
         emit("MOV R12,0x3ff");
         emit("SUB R12,R12,R11 << 0x0");
-        emit("MOV R11,0x8");
-        emit("MUL R12,R12,R11");
-        emit("LSR R12,0xa");            // /1024, so the 8 makes up the 1023
-        emit("SUB R12,-0x1");           // 1..8 across the knob
-        padTo(0x8001b7f0L);
-        // Refresh the arp's own countdown, on EVERY pulse and sized to the
-        // whole divided step, with a quarter as margin.
-        //
-        // The countdown is not just the internal tempo - the factory's
-        // gate-off rides on it, firing when it reaches 3.  Standing the
-        // internal tick down instead, as an earlier attempt did, froze the
-        // countdown: gate-off then never fired, and a countdown that happened
-        // to freeze AT 3 sent every external pulse down the gate-off branch,
-        // which returns before choosing a note - playback stopped until the
-        // clock timed out.  Feeding it keeps gate-off working and keeps the
-        // internal timer permanently pre-empted, which is what the
-        // suppression was for.
-        //
-        // Every pulse, not only the ones that pass: refreshing on the passed
-        // ones alone left the countdown running out partway through a divided
-        // step, and the internal timer fired into the gap.
-        emit("LD.UH R9,R10[0x4]");      // the measured interval, in ms
+        emit("LSR R12,0x7");
+        emit("SUB R12,-0x1");           // /1 .. /8
+        padTo(0x8001c8d0L);
+        // Keep the factory gate-off countdown alive without allowing the
+        // internal timer to generate extra steps while an input is present.
+        emit("MOV R9,R1");
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b81c");      // no interval yet: leave the arp's own
-        // The counter and the countdown are both milliseconds now, so the
-        // interval means something here without converting.  It used to count
-        // 5 ms scans and be multiplied up, which put the shortest clock it
-        // could see at 20 ms.
-        emit("MUL R9,R9,R12");          // times the divisor: the real step
+        emit("BR{ne} 0x8001c8dc");
+        emit(String.format("MOV R9,0x%x",
+             number("clock_release_ms", 2600, 100, 32000)));
+        padTo(0x8001c8dcL);
+        emit("MUL R9,R9,R12");
         emit("MOV R11,R9");
         emit("LSR R11,0x2");
-        emit("ADD R9,R11");             // and a quarter again
-        // and two milliseconds besides.  A quarter of a short interval
-        // rounds to nothing - at a 1.28 ms pulser it IS nothing - and a
-        // countdown with no margin at all runs out between pulses and lets
-        // the arp's own timer fire into the gap.
+        emit("ADD R9,R11");
         emit("SUB R9,-0x2");
-        // The halfword's own range, not the 0xfff the tempo table stops at:
-        // two seconds divided by eight is sixteen, and that has to fit.
         emit("MOV R11,0x7fff");
         emit("CP.W R9,R11");
-        emit("BR{le} 0x8001b814");
+        emit("BR{le} 0x8001c8f8");
         emit("MOV R9,R11");
-        padTo(0x8001b814L);
-        emit("LDDPC R11,0x8001b864");
+        padTo(0x8001c8f8L);
+        emit("LDDPC R11,0x8001c9e0");
         emit("ST.H R11[0x38e],R9");
-        padTo(0x8001b81cL);
-        // Now: does this pulse play, or is it one the divider swallows?
-        //
-        // ONCE THIS CLOCK HAS LOCKED IT STAYS DIVIDING, until the clock goes
-        // away entirely.  Reading the agreement run directly meant a single
-        // interval outside tolerance - a rate change, or one artefact that
-        // got through - dropped the divider to /1 for the four pulses it took
-        // to earn the run back, and reset the divide phase on each of them.
-        // Turning /8 into a burst of /1 is a worse answer to a wobble than
-        // just keeping time, and the divisor never depended on the period
-        // anyway: it comes off the knob.  Agreement decides whether to divide
-        // AT ALL, which is a question about this clock, not about this pulse.
-        emit("LD.UB R11,R10[0x6]");
-        emit(String.format("CP.W R11,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{lt} 0x8001b844");      // no rate to divide: every pulse plays
-        padTo(0x8001b832L);
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001b844");
-        emit("ST.B R10[0x7],R11");      // swallowed
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b844L);
+        emit("BR{ge} 0x8001c914");
+        emit("ST.B R10[0x7],R11");
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(0x8001c914L);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
-        // Not on the gate-off count.  The arp step tests the countdown against
-        // the gate-off threshold FIRST and returns there without choosing a
-        // note, so a pulse that arrives with the countdown already sitting on
-        // it is swallowed - the note never sounds.  At a 1 ms interval and a
-        // divisor of one the refresh above lands on exactly 3, which is that
-        // threshold, so a 780 Hz pulser lost most of its notes.  One more
-        // millisecond costs nothing and cannot collide.
-        emit("LDDPC R11,0x8001b864");
-        emit("LD.SH R12,R11[0x38e]");
-        emit("CP.W R12,0x4");
-        emit("BR{ge} 0x8001b858");
-        emit("MOV R12,0x4");
-        emit("ST.H R11[0x38e],R12");
-        padTo(0x8001b858L);
-        emit("MOV R12,0xffff");         // -1: step now, do not reload
-        emit("MCALL PC[0x8001b868]");
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b864L);
-        word(0x00003560L); // global state base
-        word(0x8000210cL); // the arp step
-        // MCALL is memory-indirect, so the dispatcher's call needs a word
-        // holding this cave's address - not the address itself.  Pointing it
-        // straight here made event 10 read back 0xebcd4080, this cave's own
-        // STM, and jump to it.
-        word(0x8001b740L);
-        finish("clock_pulse", 0x8001b870L);
+        emit("MOV R11,0x6237");
+        emit("MOV R12,0x1");
+        emit("ST.B R11[0x0],R12");       // even a rest/tie gets its own pitch scan
+        emit("MOV R12,0xffff");
+        emit("MCALL PC[0x8001c9e4]");
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(0x8001c9e0L);
+        word(0x00003560L);
+        word(0x8000210cL);
+        finish("clock_pulse", 0x8001ca00L);
 
-        // The factory snaps the countdown to the new tempo whenever the rate
-        // moves by more than 0x33.  That is right when the arp owns its own
-        // timing and wrong while an external clock does: turning RATE mid-lock
-        // replaced a clock-sized countdown with a tempo-sized one and the arp
-        // ran away between pulses.  R9 is the state base and R8 the value, as
-        // the store this replaces had them.
+        // The rate knob cannot reload the countdown while an external input
+        // owns timing, including acquisition (not just a fully locked rate).
         begin(0x8001b870L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MOV R12,0x61ec");
+        emit("MOV R12,0x6236");
         emit("LD.UB R12,R12[0x0]");
-        emit(String.format("CP.W R12,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
-        emit("BR{ge} 0x8001b884");      // locked: the clock owns it
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x8001b884");
         emit("ST.H R9[0x38e],R8");
         padTo(0x8001b884L);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b890L);
-        word(0x8001b870L); // this cave, for the caller too far away to pool it
+        word(0x8001b870L);
         finish("clock_tempo", 0x8001b894L);
+
+        // GPIO capture, called inside the factory ISR's existing frame.
+        // The factory selected RISING-only interrupts (mode 1); the clock
+        // build explicitly selects PIN CHANGE (mode 0) below. IFR is cleared
+        // BEFORE sampling PVR, so a later transition remains pending.
+        //
+        // A high consumes the low interval even when rejected. No count of
+        // rejected events, elapsed period or missing sample can bypass this
+        // check. Only the interrupt writes the producer index and timestamps.
+        // There are no DAC calls, event-queue calls or waits in this path.
+        begin(0x8001c200L);
+        emit("MOV R8,-0xf000");
+        emit("LD.W R9,R8[0xd0]");
+        emit("BFEXTU R9,R9,0x5,0x1");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c2f0");
+        emit("MOV R9,0x20");
+        emit("ST.W R8[0xd8],R9");
+        emit("LD.W R9,R8[0x60]");
+        emit("MFSR R12,COUNT");
+        emit("BFEXTU R9,R9,0x5,0x1");
+        emit("MOV R10,0x6234");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001c244");
+        emit("MOV R9,0x1");
+        emit("ST.B R10[-0x2],R9");
+        emit("ST.W R10[0x4],R12");      // a new low run, even after a hidden bounce
+        emit("RJMP 0x8001c2f0");
+        padTo(0x8001c244L);
+        emit("LD.UB R9,R10[-0x2]");
+        emit("MOV R8,0x0");
+        emit("ST.B R10[-0x2],R8");      // spend/reset BEFORE either rejection
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c2f0");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001c264");      // a continuous low already timed and banked
+        emit("LD.W R8,R10[0x4]");
+        emit("SUB R8,R12,R8 << 0x0");
+        emit("LD.W R9,R10[0x14]");
+        emit("CP.W R8,R9");
+        emit("BR{ls} 0x8001c2f0");      // <=250 us at default: chatter
+        padTo(0x8001c264L);
+        emit("LD.UB R9,R10[0x2]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c290");
+        emit("LD.W R8,R10[0x8]");
+        emit("SUB R8,R12,R8 << 0x0");
+        emit("LD.W R9,R10[0x18]");
+        emit("SUB R9,0x1");
+        emit("CP.W R8,R9");
+        emit("BR{ls} 0x8001c2f0");      // unsigned refractory, including COUNT wrap
+        padTo(0x8001c290L);
+        emit("ST.W R10[0x8],R12");      // accepted physical edge, not dispatch time
+        emit("MOV R9,0x1");
+        emit("ST.B R10[0x2],R9");
+        emit("LD.UB R8,R10[0x0]");
+        emit("LD.UB R9,R10[0x1]");
+        emit("MOV R11,R8");
+        emit("SUB R11,-0x1");
+        emit("ANDL R11,0x1f");
+        emit("CP.W R11,R9");
+        emit("BR{eq} 0x8001c2d4");
+        emit("MOV R9,0x6260");
+        emit("ADD R8,R9,R8 << 0x2");
+        emit("ST.W R8[0x0],R12");
+        emit("ST.B R10[0x0],R11");      // publish only after the entry is complete
+        emit("RJMP 0x8001c2f0");
+        padTo(0x8001c2d4L);
+        // Full: drop newest, preserve unread entries, expose an overrun
+        // counter. Never spin in an interrupt or overwrite the consumer.
+        emit("LD.UH R8,R10[0x24]");
+        emit("CP.W R8,0xffff");
+        emit("BR{eq} 0x8001c2f0");
+        emit("SUB R8,-0x1");
+        emit("ST.H R10[0x24],R8");
+        padTo(0x8001c2f0L);
+        emit("MOV PC,LR");
+        finish("clock_capture", 0x8001c300L);
+
+        // A low can last minutes while disconnected. Bank its qualification
+        // before the 32-bit COUNT wraps, without using samples to count short
+        // low phases. Pending GPIO transitions invalidate this observation;
+        // only the ISR starts/restarts a low run and every high spends it.
+        begin(0x8001ca00L);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MFSR R0,SR");
+        emit("SSRF 0x10");
+        emit("MOV R10,0x6234");
+        emit("LD.UB R8,R10[-0x2]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001ca70");
+        emit("MOV R11,-0xf000");
+        emit("LD.W R8,R11[0x60]");
+        emit("BFEXTU R8,R8,0x5,0x1");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001ca70");
+        emit("LD.W R8,R10[0x4]");
+        emit("MFSR R9,COUNT");
+        emit("SUB R8,R9,R8 << 0x0");
+        emit("LD.W R9,R10[0x14]");
+        emit("CP.W R8,R9");
+        emit("BR{ls} 0x8001ca70");
+        emit("LD.W R8,R11[0xd0]");
+        emit("BFEXTU R8,R8,0x5,0x1");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001ca70");
+        emit("MOV R8,0x2");
+        emit("ST.B R10[-0x2],R8");
+        padTo(0x8001ca70L);
+        emit("MTSR SR,R0");
+        emit("LDM SP++,R0,R7,PC");
+        finish("clock_low_age", 0x8001ca80L);
+
+        // A delayed pitch scan can emit a spike just as the factory countdown
+        // reaches its gate-off threshold. Protect the actual output's age,
+        // not the input/dispatch time. Retry the threshold on the next tick
+        // instead of losing the eventual gate-off. The sequencer's tie rule
+        // still has priority, and the physical 3 ms attack-drop is untouched.
+        begin(0x8001ca80L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        if (block("seq_gate")) {
+            emit("MCALL PC[0x8001b54c]");
+        } else {
+            emit("MOV R8,0x3");
+        }
+        emit("CP.W R8,0x3");
+        emit("BR{ne} 0x8001cb10");
+        emit("MOV R10,0x6234");
+        emit("LD.UB R9,R10[0x2]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001cb10");
+        emit("LD.UB R9,R10[0x26]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001cb10");
+        emit("LDDPC R11,0x8001cb18");
+        emit("LD.SH R9,R11[0x38e]");
+        emit("CP.W R9,0x3");
+        emit("BR{ne} 0x8001cb10");
+        emit("LD.W R9,R10[0x20]");
+        emit("MFSR R12,COUNT");
+        emit("SUB R9,R12,R9 << 0x0");
+        emit("LD.W R12,R10[0x10]");
+        emit("LSL R12,0x2");
+        emit("SUB R12,0x1");
+        emit("CP.W R9,R12");
+        emit("BR{hi} 0x8001cb10");
+        emit("MOV R9,0x4");
+        emit("ST.H R11[0x38e],R9");
+        emit("MOV R8,-0x8000");
+        padTo(0x8001cb10L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001cb18L);
+        word(0x00003560L);
+        word(0x8001ca80L);
+        finish("clock_attack_guard", 0x8001cb20L);
+
+        // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
+        // enabling the input. SRAM survives warm restart and DFU: reset the
+        // FIFO explicitly even if the common first-use marker already matches.
+        // COUNT's scale is the factory delay routine's CPU-frequency word
+        // (0x800129e0 -> pool 0x80012a24 -> RAM 0x29cc), not a guessed 60 MHz.
+        begin(0x8001c300L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001ac80]");
+        emit("MOV R8,0x0");
+        emit("MOV R10,0x6232");
+        emit("MOV R9,0x56");
+        padTo(0x8001c318L);
+        emit("ST.H R10[0x0],R8");
+        emit("SUB R10,-0x2");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001c318");
+        emit("MOV R10,0x61e6");
+        emit("ST.W R10[0x2],R8");       // 0x61e8: last dispatch / period
+        emit("ST.H R10[0x6],R8");       // presence confidence / divide phase
+        emit("MOV R10,0x60ee");
+        emit("ST.B R10[0x0],R8");       // no pre-restart deferred trigger survives
+        emit("MOV R10,0x6244");
+        emit("MOV R8,0x29cc");
+        emit("LD.W R8,R8[0x0]");
+        emit("MOV R9,0x3e8");
+        emit("DIVU R8,R8,R9");
+        emit("ST.W R10[0x0],R8");       // cycles/ms
+        emit(String.format("MOV R9,0x%x", number("clock_min_ms", 4, 1, 4)));
+        emit("MUL R9,R8,R9");
+        emit("ST.W R10[0x8],R9");
+        emit(String.format("MOV R9,0x%x",
+             number("clock_release_ms", 2600, 100, 32000)));
+        emit("MUL R9,R8,R9");
+        emit("ST.W R10[0xc],R9");
+        emit(String.format("MOV R9,0x%x",
+             number("clock_rearm_us", 250, 1, 1000)));
+        emit("MUL R8,R8,R9");
+        emit("MOV R9,0x3e8");
+        emit("DIVU R8,R8,R9");
+        emit("ST.W R10[0x4],R8");
+        emit("MCALL PC[0x8001c3b8]");   // install/enable factory interrupts
+        emit("MOV R8,-0xf000");
+        emit("MOV R9,0x20");
+        emit("ST.W R8[0xd8],R9");
+        emit("LD.W R8,R8[0x60]");
+        emit("BFEXTU R8,R8,0x5,0x1");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001c3b0");
+        emit("MOV R10,0x6234");
+        emit("MFSR R8,COUNT");
+        emit("ST.W R10[0x4],R8");
+        emit("MOV R8,0x1");
+        emit("ST.B R10[-0x2],R8");
+        padTo(0x8001c3b0L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001c3b8L);
+        word(0x80007340L);
+        finish("clock_init", 0x8001c3c0L);
+
+        // One bounded main-loop dequeue. The short critical section covers
+        // timeout and tail publication; SR is restored EXACTLY, including
+        // a pre-existing interrupt mask. All musical/DAC work is outside it.
+        begin(0x8001c400L);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MFSR R0,SR");
+        emit("SSRF 0x10");
+        emit("MOV R10,0x6234");
+        emit("LDDPC R11,0x8001c570");
+        emit("LD.UB R8,R11[0x340]");
+        emit("LD.UB R9,R11[0x341]");
+        emit("OR R8,R9");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001c4e0");
+        emit("LD.UB R8,R10[0x2]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001c540");
+        emit("LD.W R8,R10[0x8]");
+        emit("MFSR R9,COUNT");
+        emit("SUB R8,R9,R8 << 0x0");
+        emit("LD.W R9,R10[0x1c]");
+        emit("CP.W R8,R9");
+        emit("BR{hi} 0x8001c4e0");
+        emit("LD.UB R8,R10[0x3]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001c540");
+        emit("MOV R8,0x60ee");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001c540");
+        // Do not cut the previous 3 ms attack merely because a later edge
+        // is queued. Its pitch scan may have completed only a moment ago.
+        emit("LD.UB R8,R10[0x26]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001c47c");
+        emit("LD.W R8,R10[0x20]");
+        emit("MFSR R9,COUNT");
+        emit("SUB R8,R9,R8 << 0x0");
+        emit("LD.W R9,R10[0x10]");
+        emit("LSL R9,0x2");             // always preserve the 3 ms attack + margin
+        emit("SUB R9,0x1");
+        emit("CP.W R8,R9");
+        emit("BR{ls} 0x8001c540");      // unsigned: long idle is not a negative age
+        padTo(0x8001c47cL);
+        emit("LD.UB R8,R10[0x0]");
+        emit("LD.UB R9,R10[0x1]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001c540");
+        emit("MOV R8,0x6260");
+        emit("ADD R8,R8,R9 << 0x2");
+        emit("LD.W R12,R8[0x0]");
+        emit("SUB R9,-0x1");
+        emit("ANDL R9,0x1f");
+        emit("ST.B R10[0x1],R9");
+        emit("MTSR SR,R0");
+        emit("MCALL PC[0x8001c574]");
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001c4e0L);
+        emit("MOV R8,0x0");
+        emit("ST.B R10[0x2],R8");
+        emit("ST.B R10[-0x1],R8");       // acquired divider releases only here
+        emit("LD.UB R9,R10[0x0]");
+        emit("ST.B R10[0x1],R9");       // discard stale/off-mode queued edges
+        emit("MOV R9,0x61ea");
+        emit("ST.H R9[0x0],R8");
+        emit("ST.H R9[0x2],R8");
+        emit("LD.SH R8,R11[0x34a]");
+        emit("ST.H R11[0x38e],R8");
+        padTo(0x8001c540L);
+        emit("MTSR SR,R0");
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001c570L);
+        word(0x00003560L);
+        word(0x8001c800L);
+        finish("clock_service", 0x8001c580L);
+
+        // After the real pitch remap/store. Keep a clock step in flight until
+        // its own trigger has actually fired, including a configured settle
+        // wait. Back-to-back catch-up scans must not merge physical spikes:
+        // leave the request pending if the last output is less than 4 ms old.
+        begin(0x8001c600L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R10,0x6234");
+        emit("MOV R8,0x60ee");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c678");
+        emit("CP.W R9,0x1");
+        emit("BR{gt} 0x8001c66c");
+        emit("LD.UB R9,R10[0x3]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c648");
+        emit("LD.UB R9,R10[0x26]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c648");
+        emit("LD.W R9,R10[0x20]");
+        emit("MFSR R11,COUNT");
+        emit("SUB R9,R11,R9 << 0x0");
+        emit("LD.W R11,R10[0x10]");
+        emit("LSL R11,0x2");
+        emit("SUB R11,0x1");
+        emit("CP.W R9,R11");
+        emit("BR{ls} 0x8001c688");
+        padTo(0x8001c648L);
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");
+        emit("MCALL PC[0x8001c6b0]");
+        emit("MOV R10,0x6234");
+        emit("MFSR R9,COUNT");
+        emit("ST.W R10[0x20],R9");
+        emit("MOV R9,0x1");
+        emit("ST.B R10[0x26],R9");
+        emit("RJMP 0x8001c678");
+        padTo(0x8001c66cL);
+        emit("SUB R9,0x1");
+        emit("ST.B R8[0x0],R9");
+        emit("RJMP 0x8001c688");
+        padTo(0x8001c678L);
+        emit("MOV R9,0x0");
+        emit("ST.B R10[0x3],R9");       // a rest/tie completes here too
+        padTo(0x8001c688L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001c6b0L);
+        word(0x800077f8L);
+        word(0x8001c600L);
+        finish("clock_output", 0x8001c6c0L);
 
         // Ending a take has to end the NOTE, not just the mode.  The
         // sequencer's note is started and stopped by the arp's step function,
@@ -4507,7 +4570,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001bb26");      // a pulse: step now, whatever the count
         emit("CP.W R10,0x0");
         emit("BR{gt} 0x8001bb20");      // not time yet
-        emit("MOV R8,0x61ec");
+        emit("MOV R8,0x6236");          // ISR-owned presence, even before dequeue
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x8001bb26");      // no clock about: the timer is the timer
@@ -4528,34 +4591,38 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         finish("clock_gate", 0x8001bb34L);
 
-        // How many scans a deferred trigger waits, by who is asking.  The
-        // settle scan is for the analog RC on the pitch output - right for a
-        // key under a finger, and most of a NINE MILLISECOND lag measured
-        // from clock pulse to trigger out: up to a scan to the pitch store,
-        // then a whole scan more of settle.  While a clock is about, the
-        // trigger fires at the pitch store itself - the DAC already holds
-        // the new note, only the RC (tau 0.9 ms) is still moving - which
-        // brings the lag to the scan alignment alone, nought to five.
-        // clock_settle_scans puts the wait back if octave jumps under a
-        // clock turn out to slew audibly.
-        begin(0x8001bb40L);
+        // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
+        // The divider and the sequencer's rest/tie decision have already run.
+        // This is a non-leaf: preserve LR across the physical gate-off call.
+        begin(0x8001c700L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001bb62");      // one already in flight: never restart
-        emit(String.format("MOV R9,0x%x",
-            number("gate_settle_scans", 1, 0, 3) + 1));
-        emit("MOV R10,0x61ec");
+        emit("BR{ne} 0x8001c760");
+        emit("MOV R10,0x6237");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001bb5e");
+        emit("BR{eq} 0x8001c730");
+        emit("MCALL PC[0x8001c778]");
+        padTo(0x8001c730L);
+        emit("MOV R8,0x60ee");
+        emit(String.format("MOV R9,0x%x",
+            number("gate_settle_scans", 1, 0, 3) + 1));
+        emit("MOV R10,0x6236");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001c756");
         emit(String.format("MOV R9,0x%x",
             number("clock_settle_scans", 0, 0, 3) + 1));
-        padTo(0x8001bb5eL);
+        padTo(0x8001c756L);
         emit("ST.B R8[0x0],R9");
-        padTo(0x8001bb62L);
-        emit("MOV PC,LR");
-        finish("clock_settle", 0x8001bb68L);
+        padTo(0x8001c760L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001c778L);
+        word(0x80002440L);
+        finish("clock_settle", 0x8001c780L);
 
         // The pitch the arp is about to sound.  While the sequencer plays that
         // is the step's own pitch; otherwise it is whatever the keyboard
@@ -4751,9 +4818,8 @@ public class AssemblePressureFix extends GhidraScript {
         if (block("seq_chord")) {
             emit("MCALL PC[0x8001a524]"); // the sequencer's pad chord
         }
-        if (block("clock_scan")) {
-            emit("MCALL PC[0x8001a528]"); // the external clock's own counter
-        }
+        // Clock dequeue runs only from the main loop, never inside a pitch
+        // remap whose input pitch has already been calculated.
         emit("LDM SP++,R7,PC");
         padTo(0x8001a520L);
         word(0x8001ae1cL);              // the preset editor
@@ -4805,16 +4871,16 @@ public class AssemblePressureFix extends GhidraScript {
 
         // Repointed pulse-caller pools (arp advance + three key-scan sites).
         begin(0x8000243cL);
-        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
+        word(block("clock_scan") ? 0x8001c700L : 0x8001a26cL);
         finish("pulse_pool_arp", 0x80002440L);
         begin(0x80005ed8L);
-        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
+        word(block("clock_scan") ? 0x8001c700L : 0x8001a26cL);
         finish("pulse_pool_key1", 0x80005edcL);
         begin(0x800063fcL);
-        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
+        word(block("clock_scan") ? 0x8001c700L : 0x8001a26cL);
         finish("pulse_pool_key2", 0x80006400L);
         begin(0x800065a4L);
-        word(block("clock_scan") ? 0x8001bb40L : 0x8001a26cL);
+        word(block("clock_scan") ? 0x8001c700L : 0x8001a26cL);
         finish("pulse_pool_key3", 0x800065a8L);
 
         // Hook: the factory rate-table lookup and store routed through the
@@ -4848,20 +4914,35 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MCALL PC[0x800021e8]");
             emit("CP.W R8,0x0");
             emit("BR{ne} 0x800023d6");  // hold: the not-time exit
+            emit("RJMP 0x800021ee");  // never execute the address literal below
             padTo(0x800021e8L);
             word(0x8001baf0L);
             padTo(0x800021eeL);
             finish("clock_gate_hook", 0x800021eeL);
         }
 
-        // Event 10 is the external clock pulse.  The factory ticked the arp
-        // outright here; now the divider decides, and ticks itself if it is
-        // letting this one through.  The arp-switch test above is untouched.
+        // Clock builds never post event 10. A stale/synthetic event must not
+        // bypass the capture FIFO and advance a note without a physical edge.
         if (block("clock_pulse")) {
             begin(0x80004e72L);
-            emit("MCALL PC[0x8001b86c]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7aL);
+        }
+
+        if (block("clock_capture")) {
+            // Keep the factory ISR prologue/epilogue and RETE. Replace ALL
+            // raw gate-low/post-event work, including the late IFR clear.
+            begin(0x800072eeL);
+            emit("MCALL PC[0x80007334]");
+            emit("RJMP 0x80007322");
+            finish("clock_irq_hook", 0x80007322L);
+            begin(0x80007334L);
+            word(0x8001c200L);
+            finish("clock_irq_pool", 0x80007338L);
+            singlePatch("clock_edge_mode", 0x8000737eL, "MOV R11,0x0");
+            begin(0x80007d8cL);
+            word(0x8001c300L);
+            finish("clock_init_pool", 0x80007d90L);
         }
 
         // Hook: event 13, the trigger LED.  Its own two other reasons to
@@ -5086,6 +5167,10 @@ public class AssemblePressureFix extends GhidraScript {
         // the up-to-one this hook already imposes.  It also cannot help an arp
         // whose steps are closer together than the countdown, which drops
         // triggers rather than delaying them — see the config note.
+        if (block("clock_output")) {
+            emit("MCALL PC[0x8001c6b4]");
+            emit("RJMP 0x80003256");
+        } else {
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
@@ -5095,10 +5180,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R9,0x0");            // SUB set the flags, but ST.B sits
         emit("BR{ne} 0x80003256");      // between it and the branch
         emit("MCALL PC[0x8001a268]");
+        }
         finish("pitch_store_hook", 0x80003256L);
 
-        // The 1 ms task, through our counter first, so the divider has a
-        // timebase fine enough to measure a 780 Hz pulser.
+        // The 1 ms task maintains diagnostics and banks long low intervals.
+        // Input timestamps come directly from COUNT in the GPIO ISR.
         if (block("clock_scan")) {
             begin(0x80007da0L);
             word(0x8001bb70L);

@@ -105,6 +105,11 @@ rewritten updater behind.
 `tools/test.py --golden` also rebuilds and compares against
 `[firmware].golden_sha256`.
 
+`python3 tools/test_clock.py` builds clock-only and clock+sequencer variants
+and emulates the actual ISR, divider and pitch/trigger hooks. It requires
+Ghidra and never flashes a device. See [CLOCK.md](CLOCK.md) for the input
+contract, regression coverage and remaining hardware checks.
+
 ## macOS tool compatibility
 
 | Tool | Architectures | Minimum macOS |
@@ -245,7 +250,7 @@ the options into the full internal settings the build has always used.
 | `knob1`, `knob2`, `knob3`, `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
 | `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
 | `sequencer` | `false` | A 64-step sequencer on the preset pads: hold pad 4 three seconds, then pad 1 records, pad 2 plays, pad 3 stops. The pitch strip enters rests and ties while recording. Playback runs on the arpeggiator's clock. |
-| `clock_divide` | `false` | With a steady external clock, the arp RATE knob becomes a divider — every pulse to one in eight. Locks on two evenly spaced pulses 20 ms–2 s apart, releases two seconds after the clock stops. |
+| `clock_divide` | `false` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
 
 The options combine freely, with one exception the build enforces:
 **pressure-based portamento needs the pressure response fix**. The blend

@@ -464,6 +464,11 @@ def test_blend(cfg: dict) -> None:
     # three bytes past key 28 sometimes hold live state, which is how phantom
     # keys got into the arp once.
     source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    # Pin 5's write-one-to-clear mask is 0x20 too, but is not an array
+    # bound. Exclude only that exact store pair, not all new uses of 32.
+    source = re.sub(
+        r'emit\("MOV (R\d+),0x20"\);\s*emit\("ST.W R\d+\[0xd8\],\1"\);',
+        "", source)
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
     walkers = sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', source))

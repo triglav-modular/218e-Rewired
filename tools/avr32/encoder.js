@@ -61,6 +61,9 @@ var AVR32 = (function () {
         { re: /^\.word (-?0x[0-9a-fA-F]+)$/, fn: function (m) { return word(imm(m[1]) >>> 0); } },
 
         { re: /^NOP$/, fn: function () { return half(0xD703); } },
+        // Proven against the factory's interrupt mask instructions and the
+        // Ghidra clock regression build. Do not accept other SR bit numbers.
+        { re: /^SSRF 0x10$/, fn: function () { return half(0xD303); } },
 
         // --- MOV -------------------------------------------------------
         // Compact imm8 is SIGNED: 0xa0 (160) does not fit and goes extended,
@@ -320,12 +323,17 @@ var AVR32 = (function () {
             }
         },
         {
-            // System-register read.  Only COUNT is proven; any other register
-            // name returns null rather than an invented number.
+            // System-register read; COUNT and SR are verified against Ghidra.
             re: /^MFSR (\S+),(\w+)$/, fn: function (m) {
                 var rd = reg(m[1]), sysreg = SYSREG[m[2]];
                 if (rd === null || sysreg === undefined) return null;
                 return extended(0xE1B, rd, sysreg);
+            }
+        },
+        {
+            re: /^MTSR SR,(\S+)$/, fn: function (m) {
+                var rs = reg(m[1]);
+                return rs === null ? null : extended(0xE3B, rs, 0);
             }
         },
         {
@@ -454,14 +462,14 @@ var AVR32 = (function () {
     // Encoding tables for the load/store families, derived from the corpus.
     var DISP_COMPACT = {
         'LD.UB': [0, 24, 1, 7], 'LD.W': [3, 0, 4, 31], 'LD.SH': [4, 0, 2, 7],
-        'LD.UH': [4, 8, 2, 7], 'ST.W': [4, 16, 4, 7], 'ST.H': [5, 0, 2, 7],
+        'LD.UH': [4, 8, 2, 7], 'ST.W': [4, 16, 4, 15], 'ST.H': [5, 0, 2, 7],
         'ST.B': [5, 8, 1, 7]
     };
     var DISP_EXTENDED = {
         'LD.W': 15, 'LD.SH': 16, 'LD.UH': 17, 'LD.UB': 19,
         'ST.W': 20, 'ST.H': 21, 'ST.B': 22
     };
-    var SYSREG = { 'COUNT': 0x42 };
+    var SYSREG = { 'COUNT': 0x42, 'SR': 0 };
 
     var INDEXED = { 'LD.SH': 0x04, 'LD.UH': 0x05, 'LD.UB': 0x07, 'ST.H': 0x0A };
 

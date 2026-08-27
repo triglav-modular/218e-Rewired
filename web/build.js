@@ -134,8 +134,12 @@ var WEBBUILD = (function () {
         ['clock_scan', 'clock_pulse', 'clock_hook',
          'clock_tempo', 'clock_tempo_hook',
          'clock_ms_tick', 'clock_ms_pool',
-         'clock_gate', 'clock_gate_hook', 'clock_settle']
+         'clock_gate', 'clock_gate_hook', 'clock_settle',
+         'clock_capture', 'clock_irq_hook', 'clock_irq_pool',
+         'clock_edge_mode', 'clock_init', 'clock_init_pool',
+         'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard']
             .forEach(function (n) { blocks[n] = div; });
+        blocks.profiler_pool = div || !!features.scan_profiler;
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
         if (blocks.knob4_octave_switch) {

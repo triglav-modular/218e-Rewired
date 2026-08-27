@@ -3,6 +3,11 @@
 Decisions below were settled with the owner (2026-08-26); the archaeology
 items are the remaining unknowns.  Nothing here is user-facing copy.
 
+Current clock implementation and limits are in [CLOCK.md](CLOCK.md).
+That contract supersedes the historical sampled-low, rejection-budget,
+780 Hz and interrupt-mode experiments below. The current target is
+0.5–200 Hz, with interrupt timestamps and queued, serialized playback.
+
 ## Features and settled decisions
 
 ### 1. .kbm support (build-side only)
@@ -384,7 +389,7 @@ zero `state+0x216`, and send pitch bend centre on both ports.
 A Buchla pulse is a short 10 V spike that drops to a 5 V sustain only while
 the note is HELD, and to 0 when it is let go.  The factory builds exactly
 that: `0x800077f8` writes `0xfff` to `state+0x354`, and a timer scheduled
-three counts later at `0x8000788a` runs `0x80007540`, which drops it to
+three counts later (R10=3 at `0x80007888`) runs `0x80007540`, which drops it to
 `0x7ff`.
 
 A sequencer step that is not tied into the next one is not held by anything,

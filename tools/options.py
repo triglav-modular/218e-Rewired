@@ -234,47 +234,20 @@ def expand(options: dict) -> dict:
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
                         "tie_glide_rate": 60,
-                        # The divider's dead time, in milliseconds: a pulse
-                        # arriving this soon after the last one is dropped
-                        # outright, not counted and not played.  A 208 pulser
-                        # puts out a falling sawtooth, and whatever thresholds
-                        # it chatters as the slope crawls back through the trip
-                        # point.  1 is the floor that still keeps up with the
-                        # pulser's top rate of 780 Hz (1.28 ms); raise it if a
-                        # slow slope still gets through, at the cost of the
-                        # fastest clock the divider will follow.
-                        "clock_min_ms": 1,
-                        # How many agreeing intervals in a row before the
-                        # divider believes there is a rate to divide.  An
-                        # uneven clock is passed through undivided, and a run
-                        # of agreements is what tells the two apart.  Measured
-                        # against random spacings: a run of 2 divided every
-                        # such clock, 3 divided 90% of them, 5 divides 8%.
-                        # The cost is settling time - a steady clock passes
-                        # this many pulses at 1:1 before it starts dividing.
+                        # Capture is interrupt-timestamped. At 200 Hz a
+                        # 4 ms refractory leaves 1 ms of period margin; the
+                        # low phase must be longer than 250 us at the MCU.
+                        "clock_min_ms": 4,
+                        "clock_rearm_us": 250,
+                        # Acquisition confidence is separate from the active
+                        # divider latch. Once acquired, jitter cannot reset
+                        # /N to /1; only absence or arp-off releases it.
                         "clock_lock_pulses": 5,
-                        # How many settle scans a clock-driven trigger waits
-                        # after the pitch store.  0 fires at the store itself:
-                        # the DAC already holds the new note and only the
-                        # output RC (tau 0.9 ms) is still moving, and the lag
-                        # from pulse to trigger drops from up to ten
-                        # milliseconds to the scan alignment alone.
+                        "clock_max_ms": 2400,
+                        "clock_release_ms": 2600,
+                        # 0 = fire with the pitch store. Higher settings
+                        # deliberately lower maximum sustainable output rate.
                         "clock_settle_scans": 0,
-                        # Hysteresis on the clock's own period, in eighths.
-                        # Once a rate is established, a pulse landing before
-                        # this much of it has elapsed is the pulser
-                        # sawtooth's second threshold crossing rather than a
-                        # beat, and is dropped.  Six leaves a third of the
-                        # period of headroom for a clock that speeds up.
-                        # Only applies while locked: an uneven clock never
-                        # locks and still passes everything.
-                        "clock_hysteresis_eighths": 7,
-                        # How many consecutive milliseconds the pulse pin has
-                        # to read LOW before the next high counts as a rising
-                        # edge.  One sample arms on the momentary dip inside
-                        # the sawtooth crossing's own chatter; a run only
-                        # happens in the long low stretch between cycles.
-                        "clock_rearm_ms": 2,
                         # How long pad 4 has to be held before pads 1-3 mean
                         # anything, in ~5 ms scans.  200 is a second.
                         "chord_hold_scans": 200}

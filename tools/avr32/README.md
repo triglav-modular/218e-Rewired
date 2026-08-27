@@ -129,7 +129,7 @@ scaled by the access width** and must be non-negative and aligned to it:
 | `LD.W` | 3 | 0 | 4 | 124 | 15 | — |
 | `LD.SH` | 4 | 0 | 2 | 14 | 16 | `0x04` |
 | `LD.UH` | 4 | 8 | 2 | 14 | 17 | `0x05` |
-| `ST.W` | 4 | 16 | 4 | 28 | 20 | — |
+| `ST.W` | 4 | 16 | 4 | 60 | 20 | — |
 | `ST.H` | 5 | 0 | 2 | 14 | 21 | `0x0A` |
 | `ST.B` | 5 | 8 | 1 | 7 | 22 | — |
 
