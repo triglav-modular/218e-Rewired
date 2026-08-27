@@ -102,6 +102,10 @@ CONFIGS = [
     # both builders have to agree about the housekeeping chain too.
     ("clock_divide",      [(r"^clock_divide = false", "clock_divide = true")],
                           {"clock_divide": True}),
+    ("persist",           [(r"^sequencer = false", "sequencer = true"),
+                           (r"^clock_divide = false", "clock_divide = true"),
+                           (r"^pressure_fix = true", "persist = true\npressure_fix = true")],
+                          {"sequencer": True, "clock_divide": True, "persist": True}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
                             + ", ".join(['["tunings/BohlenPierce.scl", '

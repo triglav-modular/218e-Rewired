@@ -732,6 +732,57 @@ flags any `MCALL` reached with LR unsaved.  Zero hazards across the image
 after the fix - and it catches the exact bug that shipped, which is the only
 evidence that it works.
 
+### Persistence: presets and the sequence survive power-off (2026-08-28)
+
+Built behind `persist`, OFF by default until it has been on hardware.
+
+**Where.**  Eight pages from 0x8003e000, in the main array rather than the
+User Page.  The User Page would survive a firmware update, which is why the
+old plan chose it, but the AVR32 UC3 DFU bootloader keeps its ISP
+configuration at the top of that page and erasing it blind would risk the
+recovery path.  The owner's call was that losing settings on a reflash does
+not matter, which makes the main array the cheaper and far safer choice -
+there are ~290 spare pages and the factory already erase-writes that array
+for its own record.
+
+**The driver takes an erase flag**, which is what the old open item was
+blocked on: `0x800108fc(dest, src, len, erase)`, and at 0x80010e32 a zero
+flag branches past EUP straight to WUP.
+
+**Rotation.**  Each save goes to the NEXT page, so the previous record is
+still whole while the new one is being written.  The payload goes down first
+WITH the erase and the 16-byte header last, so a power cut between them
+leaves a page with no marker - which the loader ignores, falling back to the
+previous page.  Verified by writing the payload alone and confirming the old
+record still loads.
+
+**Read-back verify**, because nothing else can tell us.  FSR's PROGE and
+LOCKE are COMMAND errors - bad key, busy, locked region - not cell failures,
+so a worn page reports a perfectly successful write and loses the data at
+the next power-up.  Every save re-reads the header, the checksum and all 244
+payload bytes; a page that will not take the write is skipped and the next
+one tried, up to a full lap.
+
+**Only if it changed** is the payload comparison, not the gesture: a save
+whose bytes already match the stored record does not spend a cycle.  That is
+the entire wear budget, and it makes the triggers free to be generous.
+
+**The triggers are watched, not hooked.**  seq_enter and the preset editor
+are both full to the last byte, and an edge seen from the 5 ms scan is the
+same event one scan later - with the flash write off the gesture's own path,
+which matters more, since an erase plus a page programme is milliseconds of
+stalled CPU.  Leaving record mode is the sequencer's mode going from 1 to
+anything else.  A preset is its FOLLOWING FLAG falling back to zero: that
+flag is only set when the knob moved far enough to take the voltage over, so
+it already means "this one really did change".
+
+**What is not restored.**  The clock divider's own live cells, payload
+offsets 0xac..0xb4.  Its lock belongs to the instrument in front of you, not
+to the last time it was switched off.
+
+22 scenarios against the built image's bytes with the flash driver modelled
+- erase sets 0xff, programming only clears bits, as NOR flash behaves.
+
 ### Second audit pass: arithmetic, bounds, budget, and what the hooks destroyed (2026-08-27)
 
 The first pass was structural and covered one image.  This one covers the

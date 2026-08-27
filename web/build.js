@@ -130,6 +130,11 @@ var WEBBUILD = (function () {
          'seq_noteoff', 'seq_noteoff_hook',
          'seq_trigger_led', 'seq_trigger_led_hook']
             .forEach(function (n) { blocks[n] = seq; });
+        var keep = !!(cfg.persist && cfg.persist.on);
+        ['persist_sum', 'persist_valid', 'persist_newest', 'persist_load',
+         'persist_same', 'persist_verify', 'persist_save', 'persist_tick',
+         'persist_scan_shim', 'persist']
+            .forEach(function (n) { blocks[n] = keep; });
         var div = !!(cfg.clock && cfg.clock.divide);
         ['clock_scan', 'clock_pulse', 'clock_hook',
          'clock_tempo', 'clock_tempo_hook',

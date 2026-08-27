@@ -881,6 +881,18 @@ RAM_REGIONS = [
     (0x6258, 0x625A, "saturating capture FIFO overrun count"),
     (0x625A, 0x625B, "physical output timestamp valid"),
     (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
+    # Persistence.  The request flag is set by a gesture and serviced from
+    # the scan, because a flash write stalls the CPU for milliseconds and
+    # has no business happening inside the gesture that asked for it.
+    (0x62E0, 0x62E1, "a save has been asked for"),
+    (0x62E1, 0x62E2, "which rotation page holds the newest record"),
+    (0x62E4, 0x62E8, "the sequence number that record carries"),
+    (0x62E8, 0x62F8, "the 16-byte record header, staged for writing"),
+    # The scan watches for two gestures ENDING, so it has to remember what
+    # they looked like on the previous scan.
+    (0x62F8, 0x62F9, "the sequencer mode last scan"),
+    (0x62F9, 0x62FD, "each preset's following flag last scan"),
+    (0x62FD, 0x62FE, "the stored record has been restored this power-up"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1751,6 +1763,8 @@ def main() -> None:
     # The trigger spike's length, in scheduler units of (n - 1) milliseconds:
     # the factory's 3 measured 2 ms on the jack.  5 is the ~4 ms Buchla spike
     # the owner asked for, and the ceiling the attack-age guards cover.
+    cfg["_numbers"]["persist_page_count"] = int(
+        cfg.get("persist", {}).get("page_count", 8))
     cfg["_numbers"]["trigger_spike_units"] = int(
         cfg.get("sequencer", {}).get("trigger_spike_units", 5))
     seq = bool(cfg.get("sequencer", {}).get("on"))
@@ -1766,6 +1780,12 @@ def main() -> None:
         blocks[name] = div
     blocks["profiler_pool"] = div or features.get("scan_profiler", False)
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
+    keep = bool(cfg.get("persist", {}).get("on"))
+    for name in ("persist_sum", "persist_valid", "persist_newest", "persist_load",
+                 "persist_same", "persist_verify", "persist_save", "persist_tick",
+                 "persist_scan_shim", "persist"):
+        blocks[name] = keep
+    summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
                  "seq_strip", "seq_gate", "seq_glide", "strip_pool",
