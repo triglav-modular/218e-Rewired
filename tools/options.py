@@ -231,7 +231,10 @@ def expand(options: dict) -> dict:
                         # How far a tie slides into the note after it, on the
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
-                        "tie_glide_rate": 60}
+                        "tie_glide_rate": 60,
+                        # How long pad 4 has to be held before pads 1-3 mean
+                        # anything, in ~5 ms scans.  300 is a second and a half.
+                        "chord_hold_scans": 300}
     # The arp rate knob divides an external clock once one is locked.
     cfg["clock"] = {"divide": bool(want("clock_divide", False))}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0

@@ -3077,7 +3077,8 @@ public class AssemblePressureFix extends GhidraScript {
         // Held.  Count towards the arm, saturating rather than wrapping -
         // wrapping would disarm a long hold when the count passed zero.
         emit("LD.UH R8,R1[0x0]");
-        emit("MOV R9,0x258");           // 600 scans, ~3 s at a 5 ms scan
+        emit(String.format("MOV R9,0x%x",
+             number("chord_hold_scans", 300, 20, 2000)));
         emit("CP.W R8,R9");
         emit("BR{ge} 0x8001b1ae");
         emit("SUB R8,-0x1");
@@ -3087,7 +3088,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R10,0x0");
         emit("BR{ne} 0x8001b1cc");
         emit("CP.W R8,R9");
-        emit("BR{lt} 0x8001b200");      // not three seconds yet
+        emit("BR{lt} 0x8001b200");      // not long enough yet
         // A hold whose knob has moved is a preset edit, not a chord.  The
         // editor flags that pad as following at 0x614a + pad.
         emit("MOV R10,0x614d");
@@ -3144,27 +3145,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R10,R1[0x2]");      // armed?
         emit("CP.W R10,0x0");
         emit("BR{eq} 0x8001b248");
-        emit("LD.UB R10,R1[0x3]");      // one selection per arm
-        emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001b248");
         emit("CP.W R12,0x2");
         emit("BR{ne} 0x8001b248");
         emit("CP.W R9,0x2");
         emit("BR{eq} 0x8001b248");
-        // Pad 1 records, pad 2 plays, pad 3 stops.
-        emit("MOV R9,0x2");
-        emit("CP.W R11,0x0");
-        emit("BR{ne} 0x8001b230");
-        emit("MOV R9,0x1");
-        padTo(0x8001b230L);
-        emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001b238");
-        emit("MOV R9,0x0");
-        padTo(0x8001b238L);
-        emit("ST.B R1[0x4],R9");        // the mode
-        emit("MCALL PC[0x8001b318]");   // and clear what it is about to write
-        emit("MOV R10,0x1");
-        emit("ST.B R1[0x3],R10");       // selected
+        // A press, and as many as you like: using the hold does not spend
+        // it.  Pad 4 stays held and stays armed until it is let go, so play
+        // then stop then clear is three presses inside one hold rather than
+        // three separate holds.  R11 is the pad; seq_enter decides what it
+        // means and writes the mode itself.
+        emit("MCALL PC[0x8001b318]");
         // Repaint from the frozen pad: that is both the freeze and the clean
         // slate the flash below writes its own channel onto.
         emit("LD.UB R12,R1[0x5]");
@@ -3174,14 +3164,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R11,0x3");
         emit("BR{lt} 0x8001b204");
 
-        // Pad 4's own light: blinking while armed, steady once the press has
-        // been taken.  Only while armed - the release path already repainted.
+        // Pad 4's own light blinks for as long as the hold lasts.  It used to
+        // go steady on the first press, which said "taken" when only one
+        // press was allowed; now that the hold keeps taking them, blinking
+        // for the whole hold is what is true.  Only while armed - the release
+        // path already repainted.
         emit("LD.UB R10,R1[0x2]");
         emit("CP.W R10,0x0");
         emit("BR{eq} 0x8001b268");
-        emit("LD.UB R9,R1[0x3]");
-        emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001b25e");
         emit("MOV R9,R3");
         padTo(0x8001b25eL);
         emit("MOV R11,0x3");
@@ -3198,19 +3188,33 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,R3");
         emit("MCALL PC[0x8001b314]");   // write one channel
         padTo(0x8001b27aL);
+        // Letting go of the pitch strip re-arms it, every scan and whatever
+        // it reads.  Re-arming on the VALUE coming back near the middle is
+        // what made consecutive rests unreliable: it needs the strip to be
+        // released to somewhere specific, and it can only be noticed when the
+        // bend value changes at all.  A release is a release - so three taps
+        // at the same end enter three rests, which is what entering a bar of
+        // them takes.
+        emit("LD.UB R8,R0[0x206]");     // is the strip touched at all
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001b28a");
+        emit("MOV R8,0x61e4");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");
+        padTo(0x8001b28aL);
         emit("MCALL PC[0x8001b310]");   // led_flush: free when nothing changed
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
 
-        padTo(0x8001b290L);
+        padTo(0x8001b2a0L);
         // write_channel(R11 = channel, R9 = lit or not).
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R12,R11");
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b2a4");
+        emit("BR{eq} 0x8001b2b4");
         emit("MCALL PC[0x8001b308]");   // led_set
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b2a4L);
+        padTo(0x8001b2b4L);
         emit("MCALL PC[0x8001b30c]");   // led_clear
         emit("LDM SP++,R7,PC");
 
@@ -3220,8 +3224,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80006808L); // led_set(ch)
         word(0x800068ccL); // led_clear(ch)
         word(0x8000673cL); // led_flush()
-        word(0x8001b290L); // write_channel(R11, R9)
-        word(0x8001b660L); // seq_enter(R9 = mode)
+        word(0x8001b2a0L); // write_channel(R11, R9)
+        word(0x8001b660L); // seq_enter(R11 = the pad pressed)
         finish("seq_chord", 0x8001b31cL);
 
         // Entering a mode clears what that mode is about to write: record
@@ -3232,23 +3236,43 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R7,SP");
         emit("MOV R8,0x61e0");
         emit("MOV R10,0x0");
-        // Whatever mode is being entered, nothing transient carries into it.
+        // Whatever this press means, nothing transient carries into it.
         // Stopping mid-tie used to leave the slide armed, so the first note
         // after restarting held its gate and slid in from nowhere; and
         // leaving record with the strip still at an end left that end
         // latched, so the first rest or tie of the next take was swallowed.
         emit("ST.B R8[0x4],R10");       // 0x61e4, the strip's edge latch
         emit("ST.B R8[0x5],R10");       // 0x61e5, the tie's slide count
-        emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b676");
-        emit("ST.B R8[0x0],R10");       // record: no steps yet
-        padTo(0x8001b676L);
+        emit("MOV R12,0x6154");
+        emit("CP.W R11,0x0");
+        emit("BR{ne} 0x8001b684");
+        // Record APPENDS.  It used to wipe, which made going back for one
+        // more note mean playing the whole thing again; clearing is pad 3's
+        // job and saying so once is enough.
+        emit("MOV R9,0x1");
+        emit("RJMP 0x8001b6a4");
+        padTo(0x8001b684L);
+        emit("CP.W R11,0x1");
+        emit("BR{ne} 0x8001b69c");
+        // Pad 2 both starts and stops: the same pad either way, so there is
+        // no hunting for which one ends it.
+        emit("LD.UB R9,R12[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b680");
-        emit("ST.B R8[0x1],R10");       // play: from the top
-        padTo(0x8001b680L);
+        emit("BR{eq} 0x8001b698");
+        emit("ST.B R8[0x1],R10");       // play, from the top
+        emit("MOV R9,0x2");
+        emit("RJMP 0x8001b6a4");
+        padTo(0x8001b698L);
+        emit("MOV R9,0x0");             // already playing: stop
+        emit("RJMP 0x8001b6a4");
+        padTo(0x8001b69cL);
+        emit("ST.B R8[0x0],R10");       // pad 3: clear it out, and stop
+        emit("ST.B R8[0x1],R10");
+        emit("MOV R9,0x0");
+        padTo(0x8001b6a4L);
+        emit("ST.B R12[0x4],R9");       // the mode this press leaves behind
         emit("LDM SP++,R7,PC");
-        finish("seq_enter", 0x8001b688L);
+        finish("seq_enter", 0x8001b6b0L);
 
         // The bend strip, while recording.  One hook does both jobs the plan
         // asks of it: it reads how far the strip has been pushed, and it
@@ -3280,8 +3304,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R8,R8,R10 << 0x0");   // the far end, the other way
         emit("CP.W R9,R8");
         emit("BR{lt} 0x8001b5b0");
-        emit("MOV R8,0x0");
-        emit("ST.B R11[0x0],R8");       // back near the middle: re-armed
+        // In between: nothing.  Re-arming used to happen here, on the value
+        // coming back near the middle - which needs the strip released to
+        // somewhere particular, and can only be seen when the bend value
+        // changes at all.  A RELEASE re-arms it now, checked every scan, so
+        // three taps at one end enter three rests.
+        emit("MOV R8,R8");
         emit("RJMP 0x8001b5b8");
         padTo(0x8001b5a6L);
         emit("MOV R8,0x2");             // one end: a tie
@@ -3678,6 +3706,33 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001b8f0L); // this cave, for the caller too far away to pool it
         finish("seq_noteoff", 0x8001b944L);
 
+        // Whether the trigger LED should be lit.  Event 13 lights it only
+        // when something is held - a key, a touch, a note - and while the
+        // sequencer plays nothing is, so the light stayed dark through a
+        // sequence that was sending triggers the whole time.  Same shape as
+        // the gate clear: a no-key-held test that play mode always fails.
+        begin(0x8001ba60L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R9,0x8001ba90");
+        emit("LD.UB R12,R9[0x21a]");    // the factory's own reason to light
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x8001ba84");
+        emit("MOV R9,0x6154");
+        emit("LD.UB R12,R9[0x4]");
+        emit("CP.W R12,0x2");
+        emit("BR{ne} 0x8001ba80");
+        emit("MOV R12,0x1");            // playing: light it
+        emit("RJMP 0x8001ba84");
+        padTo(0x8001ba80L);
+        emit("MOV R12,0x0");
+        padTo(0x8001ba84L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001ba90L);
+        word(0x00003560L); // global state base
+        word(0x8001ba60L); // this cave, for the caller too far away to pool it
+        finish("seq_trigger_led", 0x8001ba98L);
+
         // Record.  Called from the note-on wrapper with R12 = the key, which
         // it must leave alone - the wrapper still needs it.  What goes in the
         // store is the PITCH, the same halfword the arp would have played for
@@ -3726,6 +3781,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R7,SP");
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
+        // Recording silences the arp.  You are playing the keyboard to put
+        // notes in, and an arpeggiator chewing on what you hold is not what
+        // you are listening for.
+        emit("CP.W R9,0x1");
+        emit("BR{eq} 0x8001b400");      // recording: nothing sounds
         emit("CP.W R9,0x2");
         emit("BR{ne} 0x8001b410");      // not playing: the factory's question
         emit("MOV R10,0x61e0");
@@ -3734,9 +3794,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001b400");      // none: silence
         emit("LD.UB R9,R10[0x1]");      // where we are in them
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b382");
+        emit("BR{lt} 0x8001b38a");
         emit("MOV R9,0x0");
-        padTo(0x8001b382L);
+        padTo(0x8001b38aL);
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R9 << 0x1");
         emit("LD.SH R8,R8[0x0]");
@@ -3757,9 +3817,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R0,R12[0x0]");
         emit("SUB R9,-0x1");
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b3b2");
+        emit("BR{lt} 0x8001b3b8");
         emit("MOV R9,0x0");
-        padTo(0x8001b3b2L);
+        padTo(0x8001b3b8L);
         emit("ST.B R10[0x1],R9");
         // This step moves the pitch, so it is the one that spends the slide a
         // tie armed.  The glide clamp reads the same cell every scan.
@@ -4093,6 +4153,18 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MCALL PC[0x8001b828]");
             emit("RJMP 0x800051b0");
             finish("clock_hook", 0x80004e7aL);
+        }
+
+        // Hook: event 13, the trigger LED.  Its own two other reasons to
+        // light branch straight past this test and are untouched.
+        if (block("seq_trigger_led")) {
+            // Stop short of 0x80004F48: the other two reasons to light branch
+            // straight to it, and swallowing it would bury them.
+            begin(0x80004f3aL);
+            emit("MCALL PC[0x8001ba94]");
+            emit("CP.W R12,0x0");
+            emit("BR{eq} 0x80005192");
+            finish("seq_trigger_led_hook", 0x80004f48L);
         }
 
         // Hook: the arp's MIDI note-off test.  The factory asked "is a note

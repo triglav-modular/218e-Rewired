@@ -128,11 +128,14 @@ pressure_portamento = true
 
 # 10. STEP SEQUENCER
 # Sixty-four steps, recorded and played from the preset pads.  Hold pad 4 for
-# three seconds until it blinks, then - still holding it - press pad 1 to
-# record, pad 2 to play, pad 3 to stop.  While recording, push the pitch strip
-# hard one way for a rest and the other for a tie; a tie slides into the note
-# after it.  Playback runs on the arpeggiator's clock, so the arpeggiator has
-# to be running for the sequence to advance.
+# a second and a half until it blinks, then - still holding it - press pad 1
+# to record, pad 2 to play or stop, pad 3 to clear.  Recording APPENDS to
+# what is there; pad 3 is the only thing that empties it.  Pad 4 stays held, so the
+# presses can follow one another without letting go.  While recording, push
+# the pitch strip hard one way for a rest and the other for a tie, one per
+# touch; a tie slides into the note after it.  Playback runs on the
+# arpeggiator's clock, so the arpeggiator has to be running for the sequence
+# to advance, and the arpeggiator itself is silent while recording.
 sequencer = false
 
 # 11. EXTERNAL CLOCK DIVIDE
@@ -166,7 +169,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "c6423467e63dc7084db0cbb4fcfef5e9084be220a04d1a0ecbf67426ee14e3c5"
+golden_sha256  = "30c19eb7288c00b2a179d0754701c2ad8931934984c460a102488d4652b611da"
 
 
 [tools]
