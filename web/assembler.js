@@ -856,7 +856,7 @@ function assembleProgram() {
         word(0x00006080); // raw-filter sample count
         word(0x8001a020); // press-order list append
         word(0x8001a930); // pitch-aware latch toggle (stamps on proceed)
-        word(0x8001b320); // the sequencer's recorder
+        word(0x8001b9d0); // the sequencer's recorder
         finish("note_on_reset_raw_filter", 0x80018d40);
 
         // Release/source-selection wrapper. Preserve the selected-key return
@@ -1619,7 +1619,7 @@ function assembleProgram() {
         // note selector instead and turns the randomiser off.
         begin(0x80019d38);
         word(0x80019d44); // gate/housekeeping entry (hook at 0x21a0)
-        word(block("seq_pitch") ? 0x8001b430 : 0x80019da8);
+        word(block("seq_pitch") ? 0x8001ba30 : 0x80019da8);
         word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100 : 0x80019df8);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
@@ -2859,7 +2859,7 @@ function assembleProgram() {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0x76, not 0x1c: the run reaches from the pressure cache all the way
+        // 0x96, not 0x1c: the run reaches from the pressure cache all the way
         // over the preset block, the arp's own cells, the sequencer and the
         // clock divider - everything we keep in this gap.  SRAM survives a
         // DFU, so anything left out here starts as whatever the last image
@@ -2867,7 +2867,7 @@ function assembleProgram() {
         // a divider that thinks it is still locked, or - the one that was
         // already wrong at 0x25 - two of the four preset following flags,
         // which would have stopped the pad-4 chord arming at all.
-        emit("MOV R12,0x76");
+        emit("MOV R12,0x96");
         padTo(0x8001ac40);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3893,7 +3893,7 @@ function assembleProgram() {
         // The external clock, per scan: the counter every interval here is
         // measured against, and the release when the clock stops.  MARF gives
         // itself two seconds; at a 5 ms scan that is 400 of these.
-        begin(0x8001b700);
+        begin(0x8001b980);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R10,0x61e6");
@@ -3902,19 +3902,28 @@ function assembleProgram() {
         emit("ST.H R10[0x0],R8");
         emit("LD.UB R9,R10[0x6]");      // locked?
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b730");
+        emit("BR{eq} 0x8001b9b8");
         emit("LD.UH R9,R10[0x2]");      // when the last pulse arrived
         emit("SUB R8,R9");
         emit("CASTU.H R8");
         emit("MOV R9,0x190");           // 400 scans, two seconds
         emit("CP.W R8,R9");
-        emit("BR{le} 0x8001b730");
+        emit("BR{le} 0x8001b9b8");
         emit("MOV R9,0x0");
         emit("ST.B R10[0x6],R9");       // released: free-running again
         emit("ST.H R10[0x4],R9");
-        padTo(0x8001b730);
+        // and the countdown goes back to the arp's own tempo.  Releasing the
+        // lock alone left whatever the clock last loaded still counting down -
+        // at a second divided by eight that is ten seconds of silence after a
+        // timeout that advertises two.
+        emit("LDDPC R11,0x8001b9c0");
+        emit("LD.SH R9,R11[0x34a]");
+        emit("ST.H R11[0x38e],R9");
+        padTo(0x8001b9b8);
         emit("LDM SP++,R7,PC");
-        finish("clock_scan", 0x8001b738);
+        padTo(0x8001b9c0);
+        word(0x00003560); // global state base
+        finish("clock_scan", 0x8001b9c4);
 
         // A clock pulse, reached where the factory ticked the arp outright.
         // Its arp-switch test still stands above us, so by here the arp is
@@ -4049,6 +4058,26 @@ function assembleProgram() {
         word(0x8001b740);
         finish("clock_pulse", 0x8001b82c);
 
+        // The factory snaps the countdown to the new tempo whenever the rate
+        // moves by more than 0x33.  That is right when the arp owns its own
+        // timing and wrong while an external clock does: turning RATE mid-lock
+        // replaced a clock-sized countdown with a tempo-sized one and the arp
+        // ran away between pulses.  R9 is the state base and R8 the value, as
+        // the store this replaces had them.
+        begin(0x8001b840);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R12,0x61ec");
+        emit("LD.UB R12,R12[0x0]");
+        emit("CP.W R12,0x2");
+        emit("BR{eq} 0x8001b854");      // locked: the clock owns it
+        emit("ST.H R9[0x38e],R8");
+        padTo(0x8001b854);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b860);
+        word(0x8001b840); // this cave, for the caller too far away to pool it
+        finish("clock_tempo", 0x8001b864);
+
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
         // and then a threshold the countdown can never reach, so the gate
@@ -4127,58 +4156,85 @@ function assembleProgram() {
         word(0x800068cc); // led_clear(ch)
         finish("seq_gate_clear", 0x8001b8dc);
 
-        // Whether the arp should send its MIDI note-off for this step.  The
-        // CV gate and the MIDI note are two ways of saying the same thing and
-        // a tie has to hold both: preserving the gate while the note-off went
-        // out anyway left the CV sustaining a note the MIDI side had already
-        // ended.  Same decision as the gate, asked the same way.
+        // Whether the arp should send its MIDI note-off for this step.
         //
-        // Answers what the factory's own test would have - the active-note
-        // flag - except while the gate is held, when it answers zero and the
-        // whole note-off block is skipped.
+        // NOT the gate's decision, which is where this went wrong first.  The
+        // CV gate is held across a tie AND across the tie into the note it
+        // slides to, because that is one continuous voltage.  MIDI cannot do
+        // that: the note it slides to sends its own Note On, so the old note
+        // must be ended or the Ons and Offs stop balancing - note, tie, note,
+        // rest sent two Ons and one Off and left a voice hanging on any
+        // receiver that stacks them.
+        //
+        // So the rule here is only: is the step about to play a TIE?  Then
+        // nothing new sounds and the note carries.  Everything else - a real
+        // note, a rest, the end of a tie - ends the note that was sounding.
         begin(0x8001b8f0);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MOV R12,0x0");
-        emit("MCALL PC[0x8001b910]");   // seq_gate -> R8 = the threshold
-        emit("CP.W R8,0x0");
-        emit("BR{lt} 0x8001b908");      // held: no note-off, no bookkeeping
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x2");
+        emit("BR{ne} 0x8001b930");      // not playing: the factory's answer
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R11,R10[0x0]");
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001b930");
+        emit("LD.UB R9,R10[0x1]");      // the step about to play
+        emit("CP.W R9,R11");
+        emit("BR{lt} 0x8001b914");
+        emit("MOV R9,0x0");
+        padTo(0x8001b914);
+        emit("MOV R10,0x6160");
+        emit("ADD R10,R10,R9 << 0x1");
+        emit("LD.SH R10,R10[0x0]");
+        emit("MOV R11,0x7fff");
+        emit("CP.W R10,R11");
+        emit("BR{ne} 0x8001b930");
+        emit("MOV R12,0x0");            // a tie next: hold the note
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b930);
         emit("MOV R9,0x2eed");
         emit("LD.UB R12,R9[0x0]");      // the factory's own active-note flag
-        padTo(0x8001b908);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b910);
-        word(0x8001b4f0); // seq_gate
+        padTo(0x8001b940);
         word(0x8001b8f0); // this cave, for the caller too far away to pool it
-        finish("seq_noteoff", 0x8001b918);
+        finish("seq_noteoff", 0x8001b944);
 
         // Record.  Called from the note-on wrapper with R12 = the key, which
         // it must leave alone - the wrapper still needs it.  What goes in the
         // store is the PITCH, the same halfword the arp would have played for
         // that key, so a later change of tuning slot moves the keyboard
         // without moving anything already recorded.
-        begin(0x8001b320);
+        begin(0x8001b9d0);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b354");
+        emit("BR{ne} 0x8001ba10");
         emit("MOV R10,0x61e0");
         emit("LD.UB R9,R10[0x0]");
         emit("CP.W R9,0x40");           // 64 steps and no more
-        emit("BR{ge} 0x8001b354");
+        emit("BR{ge} 0x8001ba10");
         emit("MOV R11,0x854");          // the live key table
         emit("ADD R11,R11,R12 << 0x1");
         emit("LD.SH R11,R11[0x0]");
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R9 << 0x1");
         emit("ST.H R8[0x0],R11");
+        // The KEY as well as the pitch.  The pitch is what the CV plays, and
+        // keeping it is what makes a recording survive a change of tuning -
+        // but MIDI names notes by key, and answering the arp's selector with
+        // a placeholder made every step of every sequence go out as note 36.
+        emit("MOV R8,0x61ee");
+        emit("ADD R8,R8,R9 << 0x0");
+        emit("ST.B R8[0x0],R12");
         emit("SUB R9,-0x1");
         emit("ST.B R10[0x0],R9");
-        padTo(0x8001b354);
+        padTo(0x8001ba10);
         emit("LDM SP++,R7,PC");
-        finish("seq_record", 0x8001b35c);
+        finish("seq_record", 0x8001ba18);
 
         // Play, at the arp's own note selection.  The arp asks which key to
         // sound; while playing we answer with a valid one so the step is not
@@ -4189,16 +4245,16 @@ function assembleProgram() {
         // Not playing, this is the factory's own question, asked the factory's
         // way: no key held means no note.
         begin(0x8001b360);
-        emit("STM --SP,R7,LR");
+        emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b400");      // not playing: the factory's question
+        emit("BR{ne} 0x8001b410");      // not playing: the factory's question
         emit("MOV R10,0x61e0");
         emit("LD.UB R11,R10[0x0]");     // how many steps there are
         emit("CP.W R11,0x0");
-        emit("BR{eq} 0x8001b3f0");      // none: silence
+        emit("BR{eq} 0x8001b400");      // none: silence
         emit("LD.UB R9,R10[0x1]");      // where we are in them
         emit("CP.W R9,R11");
         emit("BR{lt} 0x8001b382");
@@ -4212,87 +4268,92 @@ function assembleProgram() {
         // which seq_gate holds up across a tie and lets fall on a rest.
         emit("MOV R12,0x7ffe");
         emit("CP.W R8,R12");
-        emit("BR{ge} 0x8001b3c4");
+        emit("BR{ge} 0x8001b3d4");
         emit("MOV R12,0x61e2");
         emit("ST.H R12[0x0],R8");       // the pitch this step sounds
+        // and the key it was played on, which is what MIDI names it by.  R0
+        // carries it past the advance and the slide bookkeeping below, both
+        // of which want the other registers.  Answering with a placeholder
+        // instead sent every step of every sequence out as the same note.
+        emit("MOV R12,0x61ee");
+        emit("ADD R12,R12,R9 << 0x0");
+        emit("LD.UB R0,R12[0x0]");
         emit("SUB R9,-0x1");
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b3a2");
+        emit("BR{lt} 0x8001b3b2");
         emit("MOV R9,0x0");
-        padTo(0x8001b3a2);
+        padTo(0x8001b3b2);
         emit("ST.B R10[0x1],R9");
         // This step moves the pitch, so it is the one that spends the slide a
         // tie armed.  The glide clamp reads the same cell every scan.
         emit("MOV R12,0x61e5");
         emit("LD.UB R8,R12[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b3b4");
+        emit("BR{eq} 0x8001b3ca");
         emit("SUB R8,0x1");
         emit("ST.B R12[0x0],R8");
-        padTo(0x8001b3b4);
-        emit("MOV R12,0x0");            // any real key; the pitch is swapped
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b3c4);
+        padTo(0x8001b3ca);
+        emit("MOV R12,R0");             // the key this step was recorded on
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b3d4);
         // A rest or a tie: step past it, sound nothing new.  A tie arms the
-        // slide into whatever follows - two steps, so it survives the tie's
-        // own step and is spent by the one that moves the pitch.  A rest ENDS
-        // one, so the note after a rest attacks cleanly rather than sliding
-        // in from a note two steps back that the rest already silenced.
+        // slide into whatever follows; a rest ENDS one, so the note after a
+        // rest attacks cleanly rather than sliding in from a note two steps
+        // back that the rest already silenced.
         emit("MOV R12,0x7fff");
         emit("CP.W R8,R12");
         emit("MOV R8,0x0");             // a rest: the slide ends here
-        emit("BR{ne} 0x8001b3d0");
+        emit("BR{ne} 0x8001b3e0");
         emit("MOV R8,0x2");             // a tie: it arms one
-        padTo(0x8001b3d0);
+        padTo(0x8001b3e0);
         emit("MOV R12,0x61e5");
         emit("ST.B R12[0x0],R8");
-        padTo(0x8001b3d8);
         emit("SUB R9,-0x1");
         emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b3e4");
+        emit("BR{lt} 0x8001b3f0");
         emit("MOV R9,0x0");
-        padTo(0x8001b3e4);
+        padTo(0x8001b3f0);
         emit("ST.B R10[0x1],R9");
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b3f0);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b400);
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");            // nothing recorded: silence
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b400);
-        emit("LDDPC R9,0x8001b418");
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b410);
+        emit("LDDPC R9,0x8001b430");
         emit("LD.UB R8,R9[0x21a]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b3f0");
+        emit("BR{eq} 0x8001b400");
         emit("MOV R12,0x21b");
         emit("ADD R12,R9");             // &state[0x21b], the held-key flags
-        emit("MCALL PC[0x8001b41c]");   // the selector this build installed
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b418);
+        emit("MCALL PC[0x8001b434]");   // the selector this build installed
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b430);
         word(0x00003560); // global state base
         word(arpSelector);
-        finish("seq_select", 0x8001b420);
+        finish("seq_select", 0x8001b438);
 
         // The pitch the arp is about to sound.  The octave randomiser runs
         // first and its answer stands for keyboard playing; while the
         // sequencer plays, the step's own pitch replaces it.  The pad octave
         // transpose is applied further downstream and so still applies.
-        begin(0x8001b430);
+        begin(0x8001ba30);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001b450]");   // the factory octave path
+        emit("MCALL PC[0x8001ba50]");   // the factory octave path
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b44a");
+        emit("BR{ne} 0x8001ba4a");
         emit("MOV R9,0x61e2");
         emit("LD.SH R8,R9[0x0]");
-        padTo(0x8001b44a);
+        padTo(0x8001ba4a);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b450);
+        padTo(0x8001ba50);
         word(0x80019da8); // the octave entry this replaces
-        finish("seq_pitch", 0x8001b454);
+        finish("seq_pitch", 0x8001ba54);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate
@@ -4467,7 +4528,7 @@ function assembleProgram() {
         padTo(0x8001a520);
         word(0x8001ae1c);              // the preset editor
         word(0x8001b180);              // the sequencer chord
-        word(0x8001b700);              // the external clock, per scan
+        word(0x8001b980);              // the external clock, per scan
         padTo(0x8001a534);
         word(0x00003560); // global state base
         finish("scan_housekeeping", 0x8001a53c);
@@ -4540,6 +4601,14 @@ function assembleProgram() {
         padTo(0x800021a6);
         finish("arp_gate_hook", 0x800021a6);
 
+        // The factory's tempo-change reload of the countdown, routed through
+        // the divider so it cannot take it over mid-lock.
+        if (block("clock_tempo")) {
+            begin(0x80002194);
+            emit("MCALL PC[0x8001b860]");
+            finish("clock_tempo_hook", 0x80002198);
+        }
+
         // Event 10 is the external clock pulse.  The factory ticked the arp
         // outright here; now the divider decides, and ticks itself if it is
         // letting this one through.  The arp-switch test above is untouched.
@@ -4555,7 +4624,7 @@ function assembleProgram() {
         // so the note is not ended underneath the gate we are holding up.
         if (block("seq_noteoff")) {
             begin(0x80002218);
-            emit("MCALL PC[0x8001b914]");
+            emit("MCALL PC[0x8001b940]");
             emit("CP.W R12,0x0");
             emit("BR{eq} 0x800022a0");
             finish("seq_noteoff_hook", 0x80002220);

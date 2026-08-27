@@ -859,6 +859,9 @@ RAM_REGIONS = [
     # The external clock: its own scan counter, the last pulse's stamp, the
     # interval before this one, whether it is locked, and the divide count.
     (0x61E6, 0x61EE, "external clock divider"),
+    # The key each recorded step was played on.  The pitch beside it is what
+    # the CV plays; this is what MIDI names the note by.
+    (0x61EE, 0x622E, "sequencer step keys"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1698,7 +1701,8 @@ def main() -> None:
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
-    for name in ("clock_scan", "clock_pulse", "clock_hook"):
+    for name in ("clock_scan", "clock_pulse", "clock_hook",
+                 "clock_tempo", "clock_tempo_hook"):
         blocks[name] = div
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     blocks["seq_chord"] = seq
