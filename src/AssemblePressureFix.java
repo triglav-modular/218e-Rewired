@@ -1039,7 +1039,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         finish("pressure_blend", 0x80019d38L);
 
-        // Arpeggiator randomness on the preset-voltage knobs (outside edit):
+        // Arpeggiator randomness on the preset-voltage knobs (None mode,
+        // outside edit):
         //   knob 1 (0x30a) -> 0x60f2 latch, read by the replacement key
         //     selector below.  Not state+0x38c: that is the factory
         //     weighted-random selector's own bias parameter, and the factory
@@ -1050,11 +1051,12 @@ public class AssemblePressureFix extends GhidraScript {
         //     [3, 3 + (interval-4)*knob/1024] via the factory PRNG (0x80013e04);
         //   knob 3 (0x30e) -> random +-octave on each arp note with
         //     probability knob/1024 (bottom deadzone = off, factory-exact).
-        // Knob values latch only outside edit mode so edit-mode knob use
-        // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60e8 last
+        // Knob values latch only in the selector's None position and outside
+        // edit mode, so Preset, Octaves and edit-mode knob use never disturb
+        // the arp.  RAM: 0x60e6 knob2 latch, 0x60e8 last
         // countdown, 0x60ea knob3 latch, 0x60ec gate threshold, 0x60f2
         // knob1 latch.
-        // Arp controls on the preset knobs (outside edit; latches edit-gated):
+        // Arp controls on the preset knobs (None mode, outside edit):
         //   knob 1 (0x30a>>3 -> 0x60f2 latch): press-order vs random key
         //     selection, applied by the replacement selector below;
         //   knob 2 (0x30c -> 0x60e6 latch): rhythm randomness — the per-step
@@ -1078,6 +1080,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R8,R10[0x39]");
         emit("CP.W R8,0x1");
         emit("BR{eq} 0x80019d98");
+        // The factory selector reader stores 0 for None and 1/2 for its two
+        // active outer positions at state+0x344.
+        emit("LD.W R8,R10[0x344]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x80019d98");
         emit("LD.SH R8,R10[0x30a]");
         emit("LSR R8,0x3");
         emit("MOV R11,0x60f2");
@@ -2596,7 +2603,8 @@ public class AssemblePressureFix extends GhidraScript {
         // rise together; +-33 cents and 1..6 Hz at full; deadzone = off).
         // Pressure scales the effective knob from one-half to full value.
         // Runs at 200 Hz from applier_plus. RAM: 0x60f0 knob latch
-        // (edit-gated — knob 4 in edit still sets the pressure curve),
+        // (None-mode and edit-gated — Preset and Octaves retain their factory
+        // knob behavior, while knob 4 in edit still sets the pressure curve),
         // 0x6024 LFO phase, 0x6026 smoothed depth (steps +-1/scan, ~65 ms
         // swell), 0x6028 signed output offset in pitch units.
         begin(0x8001a350L);
@@ -2605,11 +2613,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDDPC R10,0x8001a470");
         emit("LD.UB R8,R10[0x39]");
         emit("CP.W R8,0x1");
-        emit("BR{eq} 0x8001a370");
+        emit("BR{eq} 0x8001a374");
+        // None is selector state 0; Preset and Octaves are the outer states.
+        emit("LD.W R8,R10[0x344]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001a374");
         emit("LD.SH R8,R10[0x310]");
         emit("MOV R9,0x60f0");
         emit("ST.H R9[0x0],R8");
-        padTo(0x8001a370L);
+        padTo(0x8001a374L);
         emit("MOV R9,0x60f0");
         emit("LD.SH R11,R9[0x0]");
         emit("CP.W R11,0x30");

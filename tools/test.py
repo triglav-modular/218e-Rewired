@@ -500,6 +500,13 @@ def test_vibrato() -> None:
           'emit("LD.SH R8,R0[0x2]");' in cave)
     check("the sine carries a wrap sentinel",
           "halfword(sine[0]);" in source)
+    check("vibrato only follows knob 4 in None mode",
+          'emit("LD.W R8,R10[0x344]");' in cave and
+          'emit("BR{ne} 0x8001a374");' in cave)
+    arp = source[source.index("begin(0x80019d38L)"):source.index('finish("arp_random_knobs"')]
+    check("arp controls only follow knobs 1-3 in None mode",
+          'emit("LD.W R8,R10[0x344]");' in arp and
+          'emit("BR{ne} 0x80019d98");' in arp)
 
 
 def test_poly_midi_lifecycle() -> None:

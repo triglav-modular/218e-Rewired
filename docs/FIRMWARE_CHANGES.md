@@ -40,6 +40,8 @@ Pressure-controlled glide: press harder and the glide shortens.
 ## Arpeggiator
 
 - **Latching** — the arpeggio holds after you lift your hands.
+- With the **Octaves / Preset / None** selector at **None**, knobs 1–3 control
+  the arpeggiator. Preset and Octaves retain their factory behavior.
 - **Knob 1** sets note order, from strict press order through to fully
   random.
 - **Knob 2** sets rhythm, from even pulses to increasingly irregular
@@ -48,8 +50,8 @@ Pressure-controlled glide: press harder and the glide shortens.
 
 ## Vibrato
 
-- **Knob 4** adds global vibrato, depth and rate rising together, up to
-  about a third of a semitone.
+- With the selector at **None**, **knob 4** adds global vibrato, depth and rate
+  rising together, up to about a third of a semitone.
 
 ---
 

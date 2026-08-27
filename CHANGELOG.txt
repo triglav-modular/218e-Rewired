@@ -1,2 +1,5 @@
+1.3
+— Arpeggiator and vibrato controls now follow knobs 1–4 only in None mode, preserving the factory Preset and Octaves behavior.
+
 1.2
 — Improved pressure-based portamento behavior.

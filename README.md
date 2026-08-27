@@ -36,6 +36,8 @@ after an interrupted flash. The second writes nothing.
 
 **Playing**
 
+With the **Octaves / Preset / None** selector at **None**:
+
 | Control | What it does |
 |---|---|
 | Knob 1 | Arp note order: press order → random. |

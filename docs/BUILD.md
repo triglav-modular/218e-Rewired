@@ -232,7 +232,7 @@ the seven options into the full internal settings the build has always used.
 | Option | Default | What it does |
 | --- | --- | --- |
 | `latching_arp` | `true` | Arp switch becomes latch / regular / off. Latched notes are *pitches*, so a key held in three octaves stacks three notes. `false` restores the factory switch. |
-| `remap_knobs` | `true` | Remaps knobs 1–4 to arpeggiator and vibrato controls: arp order, arp rhythm, random octaves, vibrato. `false` hands all four back. Edit-mode knobs 1 and 4 are unaffected. |
+| `remap_knobs` | `true` | In None mode, remaps knobs 1–4 to arpeggiator and vibrato controls: arp order, arp rhythm, random octaves, vibrato. Preset and Octaves keep their factory behavior. `false` hands all four back in every mode. Edit-mode knobs 1 and 4 are unaffected. |
 | `pitch_correction` | `false` | Path to a per-semitone correction CSV. `false` emits an ideal ramp with no per-key trim. |
 | `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` leaves the edit keys and their LEDs entirely alone. |
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |

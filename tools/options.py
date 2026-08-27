@@ -10,7 +10,7 @@ already consumed, so the generators, the safety checks, the Ghidra assembler
 and the JavaScript toolchain underneath are all unchanged.
 
     latching_arp        = true/false     arp switch: latch / factory
-    remap_knobs         = true/false     knobs 1-4: arp+vibrato / factory
+    remap_knobs         = true/false     None-mode knobs: arp+vibrato / factory
     pitch_correction    = "<csv>"/false  per-key offsets, or a flat ramp
     alternate_tunings   = [scl,...]/false  up to 3 Scala files, or factory
     volts_per_octave    = 1.2 / 1.0      pitch ramp scaling
@@ -166,7 +166,7 @@ def expand(options: dict) -> dict:
     # 1. Latching arpeggiator ------------------------------------------------
     cfg["arp"]["switch"] = "latch" if want("latching_arp", True) else "factory"
 
-    # 2. Remap knobs 1-4 ----------------------------------------------------
+    # 2. Remap knobs 1-4 in None mode ---------------------------------------
     remap = want("remap_knobs", True)
     live = {"knob1": "arp_order", "knob2": "arp_rhythm",
             "knob3": "arp_octaves", "knob4": "vibrato"}

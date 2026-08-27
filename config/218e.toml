@@ -18,9 +18,10 @@
 latching_arp = true
 
 # 2. REMAP KNOBS 1-4
-# Outside edit mode the four preset-voltage knobs become arpeggiator note
-# order, arpeggiator rhythm, random octave displacement, and global vibrato.
-# false hands all four back to the factory preset voltages.
+# With the octave/preset/none selector at None and outside edit mode, the four
+# preset-voltage knobs become arpeggiator note order, arpeggiator rhythm, random
+# octave displacement, and global vibrato. Preset and Octaves retain their
+# factory behavior. false hands all four back in every selector position.
 # Edit-mode knob 1 (pressure calibration) and knob 4 (curve) are unaffected.
 remap_knobs = true
 
@@ -98,12 +99,12 @@ updaters       = ["Program218e_v3_Rewired_macOS.command",
 # SHA-256, which is derived and cannot drift; this is the part people can say
 # out loud.  The build reports them together as "Rewired <version> (<sha8>)"
 # and writes that into both flashers.
-version        = "1.2.0"
+version        = "1.3.0"
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "5ea2ba82dcf9403a8b4e10faa88dc957c5e597ad61fc5feb3879ae745faf64cd"
+golden_sha256  = "8336a162ee2e1669543aab1f78dc02e2df9bb9287411b9065f241ece39034de3"
 
 
 [tools]
