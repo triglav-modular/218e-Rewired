@@ -1,8 +1,8 @@
 # Handoff — 218e Rewired 2.0
 
-Written 2026-08-27, at the end of a long session. Branch `2.0`, last commit
-on that branch. Everything below is either in the repo or reproducible from
-it; nothing here is a memory of a conversation.
+Written 2026-08-27. Branch `2.0`, last commit on that branch. Everything
+below is either in the repo or reproducible from it; nothing here is a memory
+of a conversation.
 
 ## Where it stands
 
@@ -13,41 +13,32 @@ and the external clock divider. The plan document is the source of truth for
 what each one does and why; it also carries the archaeology, which is worth
 reading before touching anything near the arpeggiator.
 
-The owner flashes and reports. Several rounds of that have already landed —
-the trigger LED, the arm time, record appending rather than wiping, the pad
-chord staying armed. Expect more.
+The half-done thing from the last handoff is done: **rests and ties are read
+from an absolute strip position.** Touch the strip while recording and let
+go — below halfway a rest, above halfway a tie, one step per touch. Record
+borrows the strip's own mode (`state+0x20c`) for the length of a take and
+gives it back. What the old version did — push one way for a rest, the other
+for a tie, thresholded on the bend value — is gone; it is in the history at
+`034cdec` if it is ever wanted back.
 
-## The one thing that is half-done
+The blocker the last handoff named was the range of `state+0x306`, and it is
+settled: **0..1023**, established out of the image rather than guessed. The
+evidence is in PLAN-2.0.md under "Rests and ties from an absolute strip
+position", along with a correction: `state+0x306` is the strip's position,
+not a knob, whatever `pressure_blend` and `seq_glide` call it. They read the
+right cell for the right reason — while the strip is not touched the factory
+computes the glide rate from it — but the name misled a whole session.
 
-**Rests and ties from an absolute strip position.** The owner's model:
+**Not yet on hardware.** The owner flashes and reports; nothing below has
+been played. `strip_halfway_units` is 512 because 512 is the middle of the
+proven range, and the middle is the rule; it is a build number so a strip
+whose ends do not reach can be told where its own middle is.
 
-> The strip has two modes. One snaps back to the middle; one is like a mod
-> wheel with absolute positions and remembers where you left it. The latter
-> is the default. In sequencer write mode it should be in the latter mode,
-> reverting to whatever the user was in before. Then read absolute values at
-> release rather than a bend direction — **below halfway a rest, above
-> halfway a tie**.
-
-What is settled, with evidence, in PLAN-2.0.md:
-
-- The mode is `state+0x20c`, **0 = absolute, 1 = relative pitchbend**. Proved
-  from what the two-ended-hold toggle at `0x8000af8a` sends in each
-  direction, not inferred.
-- Forcing and restoring it is one store each way. That half is ready.
-
-What is **not** settled, and must not be guessed:
-
-- The threshold. `state+0x202`, which the pitch path reads in absolute mode,
-  is not the position — it is `table[state+0x306]` through the shared curve
-  at `0x80015150`, which is steeply non-linear (index 512 → 166 of 1024).
-  Half its range is nowhere near the middle of the strip. `state+0x306` looks
-  like the raw position but is also read by the glide path and compared
-  against `0x1d` in the scanner, so its range wants establishing first.
-  Halfway is the entire rule here.
-
-What works today, and should keep working until the replacement is verified:
-tap an end of the strip while recording — one rest or tie per touch, re-armed
-by releasing (`state+0x206`, checked every scan).
+**Waiting on the owner: the web page copy.** `web/index.html` around line 154
+still describes pushing the strip one way and the other. It is now wrong, and
+it was left alone deliberately — user-facing wording gets proposed, not
+changed. A replacement is proposed in the session that built this; if that is
+lost, propose a fresh one and wait.
 
 ## Other open items
 
@@ -58,9 +49,12 @@ by releasing (`state+0x206`, checked every scan).
   `0x80004fc2` carries an incoming message with both data bytes). The cost is
   that build numbers are compiled as immediates, so each one moved to
   runtime needs a RAM cell and a load. Good candidates are the numbers below.
-- **Three numbers never measured on hardware**: `strip_end_units` (48),
-  `tie_glide_rate` (60), `chord_hold_scans` (300). All are build numbers
-  precisely so they can move.
+- **Numbers never measured on hardware**: `tie_glide_rate` (60),
+  `chord_hold_scans` (300), and `strip_halfway_units` (512, principled but
+  unplayed). All are build numbers precisely so they can move.
+- **A settings save during a take would persist the borrowed strip mode.**
+  Record forces `state+0x20c` to 0 and the save path reads it like any other
+  setting. Nothing guards it, and nothing is likely to hit it.
 - **Clock multiplication** — deliberately not built; MARF gets it by
   subdividing between pulses, which needs edge prediction. See the plan.
 - **208p oscillator ceiling** — a builder-side warning was noted for later.
@@ -76,6 +70,13 @@ this repo was checked by disassembling the image and emulating those bytes.
 `web/test_configs.py` compares 16 against the browser build;
 `web/test_matrix.js` builds 768 combinations. Run all of them.
 
+**Ghidra will disassemble the whole image for you.** `src/DumpDisassembly.java`
+takes a start, an end and an outfile; the two code runs are
+`80002000..80014288` and `80014400..80018bf4`. Grepping that dump for a state
+offset — every reader and every writer of one cell at once — is how the
+strip's own cell was identified, after two sessions had it labelled wrong.
+`src/DisasmRange.java` does the same for a handful of instructions.
+
 **Emulating a cave does not exercise its hook.** A clock hook that jumped to
 an invalid address passed every emulation and the whole parity matrix,
 because the emulations called caves directly and the matrix compares two
@@ -84,7 +85,12 @@ walks every `MCALL` in the image and checks the word it reads holds a code
 address — that guard has since caught two more of the same. Trust it.
 
 **`MCALL PC[x]` is memory-indirect.** It calls whatever the *word* at x says.
-It needs a pool word, never the routine's own address.
+It needs a pool word, never the routine's own address. It also writes LR, so
+a cave that calls another must have pushed LR first — and an emulator that
+does not model that will report a bug that is not there.
+
+**`LDDPC` only reads forward.** Its displacement is unsigned, so a pool word
+behind the load will not encode. Put the pool at the end of the block.
 
 **Do not assume a timebase.** The arp countdown is decremented by a 1 ms task
 (event 17, registered at `0x80007c1c`), not the 5 ms scan (event 2, at
@@ -107,12 +113,14 @@ completed fix more than once. Write the file after each edit.
 
 **New RAM must be declared** in `RAM_REGIONS`, and the first-use clear in the
 initialiser cave must reach it. SRAM survives a DFU, so anything left out
-starts as whatever the previous image left behind.
+starts as whatever the previous image left behind. The clear is a counted
+loop from `0x6100`; its count moved to `0x98` for the strip's two cells.
 
 **Repin after every change.** The init marker hashes the settings and the
 assembler source, so any edit — a comment included — moves every image.
 `config/218e.toml`'s `golden_sha256` and `sweep.py`'s `historical_config`
-both need updating, and `web/generate.py` re-run.
+both need updating, `tools/avr32/make_corpus.py` re-run (it needs Ghidra),
+and `web/generate.py` re-run. Do it once, after the last source edit.
 
 ## Standing instructions from the owner
 

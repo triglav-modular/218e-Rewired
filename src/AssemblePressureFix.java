@@ -963,10 +963,15 @@ public class AssemblePressureFix extends GhidraScript {
         // At knob zero T exceeds any possible touch, so only the sounding
         // key contributes and the blend is exactly zero (factory behavior).
         // The anchor key is never thresholded, so engagement is smooth.
-        // Read the KNOB MIRROR (state+0x306), not the combined rate index at
-        // +0x3a2 — the index carries a pressure-derived addend, so with the
-        // full 218r curve the threshold would move with pressure and the
-        // blend would engage and disengage erratically under the fingers.
+        // Read the PORTAMENTO CONTROL (state+0x306), not the combined rate
+        // index at +0x3a2 — the index carries a pressure-derived addend, so
+        // with the full 218r curve the threshold would move with pressure and
+        // the blend would engage and disengage erratically under the fingers.
+        //
+        // state+0x306 is the pitch strip's own position, 0..1023; the factory
+        // recomputes the glide rate from it whenever the strip is not being
+        // touched (0x8000313a), which is what makes it the portamento setting
+        // and what "the knob" here means.
         emit("LD.SH R5,R9[0x306]");
         // Hard gate: below the knob's deadzone the blend loop never runs at
         // all — multi-finger common-mode sensor inflation can push deltas
@@ -2336,15 +2341,17 @@ public class AssemblePressureFix extends GhidraScript {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0x96, not 0x1c: the run reaches from the pressure cache all the way
-        // over the preset block, the arp's own cells, the sequencer and the
-        // clock divider - everything we keep in this gap.  SRAM survives a
-        // DFU, so anything left out here starts as whatever the last image
-        // happened to leave: a sequencer that resumes an old mode mid-flash,
-        // a divider that thinks it is still locked, or - the one that was
-        // already wrong at 0x25 - two of the four preset following flags,
-        // which would have stopped the pad-4 chord arming at all.
-        emit("MOV R12,0x96");
+        // 0x98, not 0x1c: the run reaches from the pressure cache all the way
+        // over the preset block, the arp's own cells, the sequencer, the
+        // clock divider and the strip's two - everything we keep in this gap.
+        // SRAM survives a DFU, so anything left out here starts as whatever
+        // the last image happened to leave: a sequencer that resumes an old
+        // mode mid-flash, a divider that thinks it is still locked, a strip
+        // mode waiting to be given back to a take that never happened, or -
+        // the one that was already wrong at 0x25 - two of the four preset
+        // following flags, which would have stopped the pad-4 chord arming
+        // at all.
+        emit("MOV R12,0x98");
         padTo(0x8001ac40L);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3188,19 +3195,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,R3");
         emit("MCALL PC[0x8001b314]");   // write one channel
         padTo(0x8001b27aL);
-        // Letting go of the pitch strip re-arms it, every scan and whatever
-        // it reads.  Re-arming on the VALUE coming back near the middle is
-        // what made consecutive rests unreliable: it needs the strip to be
-        // released to somewhere specific, and it can only be noticed when the
-        // bend value changes at all.  A release is a release - so three taps
-        // at the same end enter three rests, which is what entering a bar of
-        // them takes.
-        emit("LD.UB R8,R0[0x206]");     // is the strip touched at all
-        emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001b28a");
-        emit("MOV R8,0x61e4");
-        emit("MOV R9,0x0");
-        emit("ST.B R8[0x0],R9");
+        // The pitch strip, watched here because this is the cave that runs
+        // every scan.  It reads where the strip is while it is held and
+        // enters a rest or a tie when it is let go - a release is a release,
+        // whatever the bend value happened to be doing.
+        emit("MCALL PC[0x8001b31c]");   // the strip, per scan
         padTo(0x8001b28aL);
         emit("MCALL PC[0x8001b310]");   // led_flush: free when nothing changed
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
@@ -3226,7 +3225,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8000673cL); // led_flush()
         word(0x8001b2a0L); // write_channel(R11, R9)
         word(0x8001b660L); // seq_enter(R11 = the pad pressed)
-        finish("seq_chord", 0x8001b31cL);
+        word(0x8001b590L); // the strip, per scan
+        finish("seq_chord", 0x8001b320L);
 
         // Entering a mode clears what that mode is about to write: record
         // starts from an empty sequence, play starts from its first step.
@@ -3238,10 +3238,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R10,0x0");
         // Whatever this press means, nothing transient carries into it.
         // Stopping mid-tie used to leave the slide armed, so the first note
-        // after restarting held its gate and slid in from nowhere; and
-        // leaving record with the strip still at an end left that end
-        // latched, so the first rest or tie of the next take was swallowed.
-        emit("ST.B R8[0x4],R10");       // 0x61e4, the strip's edge latch
+        // after restarting held its gate and slid in from nowhere; and a
+        // strip still held when record starts is not a release, so the take
+        // does not open with a rest nobody entered.
+        emit("ST.B R8[0x4],R10");       // 0x61e4, the strip down last scan
         emit("ST.B R8[0x5],R10");       // 0x61e5, the tie's slide count
         emit("MOV R12,0x6154");
         emit("CP.W R11,0x0");
@@ -3270,86 +3270,137 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.B R8[0x1],R10");
         emit("MOV R9,0x0");
         padTo(0x8001b6a4L);
+        emit("MCALL PC[0x8001b6b0]");   // the strip's mode, aside or back
         emit("ST.B R12[0x4],R9");       // the mode this press leaves behind
         emit("LDM SP++,R7,PC");
-        finish("seq_enter", 0x8001b6b0L);
+        padTo(0x8001b6b0L);
+        word(0x8001b6c0L); // strip_mode_swap(R9 = the mode being entered)
 
-        // The bend strip, while recording.  One hook does both jobs the plan
-        // asks of it: it reads how far the strip has been pushed, and it
-        // passes zero on to the factory so the strip does not also bend the
-        // pitch while you are entering rests.  Called with R12 = the strip's
-        // value, and only when that value CHANGES - the factory's own bend
-        // function already early-exits on an unchanged one.
+        padTo(0x8001b6c0L);
+        // The strip has two modes of its own, and state+0x20c says which:
+        // 0 stays where it is left, 1 springs back and bends the pitch.
+        // Recording wants the first, because a rest and a tie are read from
+        // an absolute position - so record borrows it and gives back
+        // whatever the player had, rather than switching them silently.
         //
-        // Push it hard one way for a REST, the other way for a TIE.  Both are
-        // edge-triggered off 0x61e4, so a held push enters one step, not
-        // hundreds; letting the strip back towards the middle re-arms it.
-        begin(0x8001b570L);
-        emit("STM --SP,R0,R7,LR");
+        // The saved value is kept plus one, so that zero means nothing is
+        // being held and a restore cannot fire twice.  R9 is the mode being
+        // entered, R12 the sequencer's own block.
+        emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MOV R0,R12");
+        emit("LD.UB R8,R12[0x4]");      // the mode this press replaces
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001b700");      // nothing is changing
+        emit("LDDPC R10,0x8001b704");   // global state base
+        emit("MOV R11,0x6230");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x8001b6e8");
+        emit("LD.W R8,R10[0x20c]");
+        emit("SUB R8,-0x1");
+        emit("ST.H R11[0x0],R8");
+        emit("MOV R8,0x0");
+        emit("ST.W R10[0x20c],R8");     // absolute, for as long as record lasts
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b6e8L);
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001b700");      // record is not what is being left
+        emit("LD.UH R8,R11[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b700");      // nothing was ever borrowed
+        emit("SUB R8,0x1");
+        emit("ST.W R10[0x20c],R8");
+        emit("MOV R8,0x0");
+        emit("ST.H R11[0x0],R8");
+        padTo(0x8001b700L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b704L);
+        word(0x00003560L); // global state base
+        finish("seq_enter", 0x8001b708L);
+
+        // The bend strip, while recording.  Two pieces share this block: the
+        // bend hook, whose only job is silence, and the per-scan watch that
+        // reads where the strip is and enters what it says.
+        //
+        // The hook is called with R12 = the strip's value, and only when that
+        // value CHANGES - the factory's own bend function already early-exits
+        // on an unchanged one.  Recording passes zero on, so a strip touched
+        // to enter a rest does not also bend the pitch.
+        begin(0x8001b570L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b5f8");      // only record listens to the ends
-        emit("LSL R9,R0,0x10");
-        emit("ASR R9,0x10");            // the strip, signed
-        emit(String.format("MOV R10,0x%x",
-             number("strip_end_units", 48, 4, 2000)));
-        emit("MOV R11,0x61e4");
-        emit("LD.UB R12,R11[0x0]");     // which end is already entered
-        emit("CP.W R9,R10");
-        emit("BR{gt} 0x8001b5a6");
+        emit("BR{ne} 0x8001b582");      // not recording: the strip is itself
+        emit("MOV R12,0x0");
+        padTo(0x8001b582L);
+        emit("MCALL PC[0x8001b600]");   // the factory's own bend
+        emit("LDM SP++,R7,PC");
+
+        padTo(0x8001b590L);
+        // The strip, once per scan, called from the pad chord's own cave.
+        //
+        // A rest or a tie is read from WHERE the strip is when it is let go,
+        // not from which way it was pushed: below halfway a rest, above
+        // halfway a tie.  state+0x306 is the position itself, 0..1023 across
+        // the strip, before the factory's bend curve bends it - so halfway is
+        // halfway, which thresholding the bend value could never be.
+        //
+        // The position is taken every scan the touch flag is set, and the
+        // last one taken is what the release uses.  After the flag drops
+        // there is nothing to read: the sensor reports where a finger is, and
+        // there is no finger.
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R10,0x61e0");         // the step store; +4 is the strip's latch
+        emit("LDDPC R11,0x8001b604");   // global state base
+        emit("LD.UB R8,R11[0x206]");    // is the strip touched at all
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b5b6");
+        emit("LD.SH R8,R11[0x306]");
+        emit("MOV R9,0x622e");
+        emit("ST.H R9[0x0],R8");
+        emit("MOV R8,0x1");
+        emit("ST.B R10[0x4],R8");       // down, and down is what a release needs
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b5b6L);
+        // Up.  One step per release, and every release: three taps at the
+        // bottom enter three rests, which is what a bar of them takes.
+        emit("LD.UB R8,R10[0x4]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b5fa");      // it was already up
         emit("MOV R8,0x0");
-        emit("SUB R8,R8,R10 << 0x0");   // the far end, the other way
-        emit("CP.W R9,R8");
-        emit("BR{lt} 0x8001b5b0");
-        // In between: nothing.  Re-arming used to happen here, on the value
-        // coming back near the middle - which needs the strip released to
-        // somewhere particular, and can only be seen when the bend value
-        // changes at all.  A RELEASE re-arms it now, checked every scan, so
-        // three taps at one end enter three rests.
-        emit("MOV R8,R8");
-        emit("RJMP 0x8001b5b8");
-        padTo(0x8001b5a6L);
-        emit("MOV R8,0x2");             // one end: a tie
-        emit("ST.B R11[0x0],R8");
-        emit("RJMP 0x8001b5b8");
-        padTo(0x8001b5b0L);
-        emit("MOV R8,0x1");             // the other: a rest
-        emit("ST.B R11[0x0],R8");
-        padTo(0x8001b5b8L);
-        emit("MOV R9,0x61e4");
-        emit("LD.UB R9,R9[0x0]");
-        emit("CP.W R9,R12");
-        emit("BR{eq} 0x8001b5f0");      // no crossing, nothing to enter
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001b5f0");      // crossing back to the middle
-        emit("MOV R10,0x61e0");
-        emit("LD.UB R11,R10[0x0]");
-        emit("CP.W R11,0x40");
-        emit("BR{ge} 0x8001b5f0");      // the store is full
-        emit("MOV R8,0x7ffe");          // a rest, as a pitch can never be
-        emit("CP.W R9,0x1");
-        emit("BR{eq} 0x8001b5e0");
-        emit("MOV R8,0x7fff");          // and a tie
-        padTo(0x8001b5e0L);
+        emit("ST.B R10[0x4],R8");
+        emit("MOV R8,0x6154");
+        emit("LD.UB R8,R8[0x4]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001b5fa");      // only record listens to the strip
+        emit("LD.UB R9,R10[0x0]");
+        emit("CP.W R9,0x40");
+        emit("BR{ge} 0x8001b5fa");      // 64 steps and no more
+        emit("MOV R8,0x622e");
+        emit("LD.UH R12,R8[0x0]");
+        emit(String.format("MOV R8,0x%x",
+             number("strip_halfway_units", 512, 32, 992)));
+        emit("MOV R11,0x2");            // above halfway: a tie
+        emit("CP.W R12,R8");
+        emit("BR{ge} 0x8001b5e4");
+        emit("MOV R11,0x1");            // below halfway: a rest
+        padTo(0x8001b5e4L);
+        // 0x7ffe is a rest and 0x7fff a tie, as a pitch can never be either.
+        emit("MOV R8,0x7ffd");
+        emit("ADD R8,R8,R11 << 0x0");
         emit("MOV R12,0x6160");
-        emit("ADD R12,R12,R11 << 0x1");
+        emit("ADD R12,R12,R9 << 0x1");
         emit("ST.H R12[0x0],R8");
-        emit("SUB R11,-0x1");
-        emit("ST.B R10[0x0],R11");
-        padTo(0x8001b5f0L);
-        emit("MOV R12,0x0");            // and no bend while recording
-        emit("RJMP 0x8001b5fc");
-        padTo(0x8001b5f8L);
-        emit("MOV R12,R0");             // not recording: the strip is itself
-        padTo(0x8001b5fcL);
-        emit("MCALL PC[0x8001b608]");   // the factory's own bend
-        emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001b608L);
+        emit("SUB R9,-0x1");
+        emit("ST.B R10[0x0],R9");
+        padTo(0x8001b5faL);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b600L);
         word(0x80002e30L); // bend(position)
-        finish("seq_strip", 0x8001b60cL);
+        word(0x00003560L); // global state base
+        finish("seq_strip", 0x8001b608L);
 
         // The glide rate, stored.  Normally whatever the clamp worked out -
         // for a pressure-blend build that is zero, meaning notes snap.  But

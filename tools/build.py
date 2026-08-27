@@ -862,6 +862,13 @@ RAM_REGIONS = [
     # The key each recorded step was played on.  The pitch beside it is what
     # the CV plays; this is what MIDI names the note by.
     (0x61EE, 0x622E, "sequencer step keys"),
+    # Where the pitch strip was on the last scan its touch flag was set.  The
+    # release reads it back: after the flag drops the sensor has no finger to
+    # report on.
+    (0x622E, 0x6230, "strip position while held"),
+    # The strip's own mode, plus one, for as long as record has it aside.
+    # Zero means nothing is being held and a restore cannot fire twice.
+    (0x6230, 0x6232, "strip mode borrowed by record"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -895,7 +902,11 @@ FACTORY_CELLS = [
     (0x3490, 0x34AD, "per-key touch state"),
     (0x3686, 0x36C0, "per-key raw pressure"),
     (0x377B, 0x3798, "state+0x21b: per-slot held flags"),
-    (0x3866, 0x3868, "arp step state"),
+    # state+0x306: the pitch strip's position, 0..1023.  It is also what the
+    # factory reads for the glide rate whenever the strip is not being
+    # touched, which is why the caves that read it call it the portamento
+    # knob.  It is not a knob, and not arp state, which is what this said.
+    (0x3866, 0x3868, "strip position mirror"),
     (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
     (0x38B0, 0x38B2, "state+0x350: transpose"),
 ]
@@ -1698,7 +1709,8 @@ def main() -> None:
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
     cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 300))
-    cfg["_numbers"]["strip_end_units"] = int(cfg.get("sequencer", {}).get("strip_end_units", 48))
+    cfg["_numbers"]["strip_halfway_units"] = int(
+        cfg.get("sequencer", {}).get("strip_halfway_units", 512))
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))

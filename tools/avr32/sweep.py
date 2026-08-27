@@ -137,9 +137,11 @@ def audit_call_pools(image_path) -> list[str]:
 # stable anchor for the most complex configuration.
 # Re-pinned after the calibration defaults moved to the settings that suit the
 # instrument this was measured on, and both trims were centred on them; and
-# again for 2.0, which added caves and moved the first-use clear.
+# again for 2.0, which added caves and moved the first-use clear; and again
+# when rests and ties moved to an absolute strip position, which moved the
+# clear once more.
 EXPECTED = {
-    "historical_config": "7387ecdbac97e64877e551d94c1a26cbd2b78b56167e08368fa2c03c343be641",
+    "historical_config": "683647fbbf216eb7cd17c77b7e91b0b573a7fbe5fb45bae221b38024cdac6842",
 }
 
 

@@ -223,11 +223,13 @@ def expand(options: dict) -> dict:
     # remap_knobs: with factory knobs the chord still works - the arm freezes
     # the active pad so the selecting press cannot change a preset, and the
     # knob-moved refusal reads the editor cave, which every build carries.
-    # How far the bend strip has to be pushed before it enters a rest or a
-    # tie, in DAC units - the same units the bend itself is added to the pitch
-    # in.  48 is roughly a semitone; it wants confirming against a real strip.
+    # Where along the bend strip the line between a rest and a tie falls, in
+    # the strip's own position units - 0 at one end, 1023 at the other, which
+    # is the range state+0x306 is read and clamped over.  512 is the middle,
+    # and the middle is the rule; the number is here so a real strip can move
+    # it if its ends do not reach.
     cfg["sequencer"] = {"on": bool(want("sequencer", False)),
-                        "strip_end_units": 48,
+                        "strip_halfway_units": 512,
                         # How far a tie slides into the note after it, on the
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
