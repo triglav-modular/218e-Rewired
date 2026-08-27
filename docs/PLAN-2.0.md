@@ -732,6 +732,57 @@ flags any `MCALL` reached with LR unsaved.  Zero hazards across the image
 after the fix - and it catches the exact bug that shipped, which is the only
 evidence that it works.
 
+### Second audit pass: arithmetic, bounds, budget, and what the hooks destroyed (2026-08-27)
+
+The first pass was structural and covered one image.  This one covers the
+arithmetic and memory-safety classes, three configurations, and the question
+no guard asks: what did each hook DESTROY?
+
+**Sign-extended values used beyond their range** - the /1 bug generalised.
+Two candidates, both false: one is seq_chord's literal pool mis-decoded by
+Ghidra's linear sweep, and the other reads `state+0x30a`, which has EXACTLY
+ONE WRITER IN THE WHOLE IMAGE - the factory's conditioning pass at
+0x80007b2e, storing a value already clamped to 0..0x3ff.  No reachable
+signed-range hazard.
+
+**Indexed loads and stores without a bound.**  One, in `seq_glide`:
+`LD.SH R8,R8[R9 << 0x1]` on the factory glide table, R9 zero-extended to 16
+bits by the factory at 0x800031be.  The factory's own code at that site is
+`LD.SH R8,R8[R9 << 0x1]` with the SAME R9 - we reproduce it exactly, so the
+bound is the factory's guarantee and not something the patch introduced.
+
+**Other configurations.**  The default build (95 blocks) and an
+all-features build (108) were disassembled and walked the same way: no
+reachable literal, no leaf with a call, no push/pop disagreement, no branch
+off an instruction, no unbounded index.  The audit's conclusions are not
+about one image.
+
+**Budget.**  SP starts at 0x8000 and .bss ends at 0x4748, so the stack has
+about 14 KB.  The deepest chain through our code is the 5 ms scan at 300
+bytes; the pitch-store hook is 224.  The GPIO ISR is 75 instructions
+(measured by the clock regression) - about 3 us at 25 MHz, or 0.2% of the CPU
+at a 200 Hz input - and the 1 ms task's whole chain is 88.  Nothing is close
+to a limit.
+
+**What the hooks destroyed.**  Every factory instruction overwritten by a
+hook was listed and the consequential ones - the CALLS, whose side effects
+would simply be gone - were followed:
+
+- `clock_hook` skips the factory's event-10 arm, which is
+  `MOV R12,0xffff; MCALL -> 0x8000210c`, the arp step.  **Event 10 has
+  exactly one poster in the factory image**, 0x80007316, inside the GPIO ISR
+  that clock builds replace outright.  MIDI realtime does NOT use it: clock
+  (0xF8) posts event 0x22, start 0x23, continue and stop 0x25.  So MIDI
+  clock sync is untouched by that hook, which was the thing worth checking.
+- `seq_gate_clear_hook` displaced a call to 0x800068cc; our own cave still
+  makes it, from 0x8001b8b8.
+- `arp_select_hook` displaced a call to the factory's note selection at
+  0x800029a8, and nothing calls that routine any more.  Deliberate: the
+  not-playing path calls `arp_order_selector` instead, which is the feature
+  that replaced it.  Dead factory code, not a dropped call.
+
+No defects found in this pass, and nothing changed in any image.
+
 ### Full firmware audit (2026-08-27)
 
 Against the built sequencer+clock image's own bytes, 108 patched blocks,
