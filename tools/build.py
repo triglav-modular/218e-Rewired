@@ -866,6 +866,9 @@ RAM_REGIONS = [
     # The strip's own mode, plus one, for as long as record has it aside.
     # Zero means nothing is being held and a restore cannot fire twice.
     (0x622E, 0x6230, "strip mode borrowed by record"),
+    # The key a note-on left for record to sound, plus one, so that the
+    # cleared state is "nothing waiting" rather than key zero.
+    (0x6230, 0x6232, "the key record has yet to sound"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),

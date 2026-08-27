@@ -434,6 +434,33 @@ such clock; 3 divided 90% of them; 5 divides 8%.  `clock_lock_pulses` is 5,
 and the cost is settling time - a steady clock passes that many pulses at 1:1
 before it starts dividing.  No run length makes a mistake impossible.
 
+### A knob does one thing at a time (2026-08-27)
+
+Holding a preset pad and turning its knob sets that pad's voltage, and while
+that is happening the knob's OTHER job has to stand still.  It did not:
+setting preset voltage 2 wound the arp's rhythm randomness up with it.
+
+The editor already says when it is happening - `0x614a + pad` is set for
+exactly as long as that pad's voltage is following its knob - so the arp knob
+latches at `0x80019d44` and the vibrato latch at `0x8001a350` now test it,
+per knob rather than all at once, so holding pad 1 does not freeze knobs 2
+and 3.  Edit mode still suspends all four, as before.
+
+### Hearing what goes into a take (2026-08-27)
+
+Recording silences the arp, which is right - an arpeggiator chewing on what
+you hold is not what you are listening for - but silence was not right
+either: a bar of notes went in with no pitch, no gate and no light, and
+nothing said which key had landed.
+
+The note-on leaves its key at RAM `0x6230` (plus one, so the cleared state is
+"nothing waiting"), and the per-scan cave steps the arp once for it with
+R12 = -1: step now, do not reload.  The selector answers that step with the
+waiting key and spends it, so the arp's own steps after it still sound
+nothing.  Everything else - the pitch, the gate, the trigger, the MIDI note -
+comes from the factory's own note machinery, already paired, rather than from
+a pulse fired on its own.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

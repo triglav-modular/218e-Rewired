@@ -915,13 +915,32 @@ function assembleProgram() {
         emit("LD.UB R8,R10[0x39]");
         emit("CP.W R8,0x1");
         emit("BR{eq} 0x80019d94");
+        // A knob does one thing at a time.  Holding a preset pad and turning
+        // its knob sets that pad's voltage, and while it is doing that the
+        // knob's OTHER job has to stand still - setting preset voltage 2 was
+        // also winding the arp's rhythm randomness up with it.  The editor
+        // already says when it is happening: 0x614a + pad is set for exactly
+        // as long as that pad's voltage is following its knob.  Per knob, not
+        // all of them, so holding pad 1 does not freeze knobs 2 and 3.
+        emit("MOV R12,0x614a");
+        emit("LD.UB R9,R12[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x80019d6a");
         emit("LD.SH R8,R10[0x30a]");
         emit("LSR R8,0x3");
         emit("MOV R11,0x60f2");
         emit("ST.B R11[0x0],R8");
+        padTo(0x80019d6a);
+        emit("LD.UB R9,R12[0x1]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x80019d7e");
         emit("LD.SH R8,R10[0x30c]");
         emit("MOV R11,0x60e6");
         emit("ST.H R11[0x0],R8");
+        padTo(0x80019d7e);
+        emit("LD.UB R9,R12[0x2]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x80019d94");
         emit("LD.SH R8,R10[0x30e]");
         emit("MOV R11,0x60ea");
         emit("ST.H R11[0x0],R8");
@@ -2142,7 +2161,7 @@ function assembleProgram() {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0x97, not 0x1c: the run reaches from the pressure cache all the way
+        // 0x98, not 0x1c: the run reaches from the pressure cache all the way
         // over the preset block, the arp's own cells, the sequencer, the
         // clock divider and the borrowed strip mode - everything we keep in
         // this gap.  SRAM survives a DFU, so anything left out here starts as
@@ -2152,7 +2171,7 @@ function assembleProgram() {
         // or - the one that was already wrong at 0x25 - two of the four
         // preset following flags, which would have stopped the pad-4 chord
         // arming at all.
-        emit("MOV R12,0x97");
+        emit("MOV R12,0x98");
         padTo(0x8001ac40);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3001,6 +3020,7 @@ function assembleProgram() {
         // enters a rest or a tie when it is let go - a release is a release,
         // whatever the bend value happened to be doing.
         emit("MCALL PC[0x8001b31c]");   // the strip, per scan
+        emit("MCALL PC[0x8001b2bc]");   // and sound whatever record took in
         padTo(0x8001b28a);
         emit("MCALL PC[0x8001b310]");   // led_flush: free when nothing changed
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
@@ -3017,6 +3037,51 @@ function assembleProgram() {
         padTo(0x8001b2b4);
         emit("MCALL PC[0x8001b30c]");   // led_clear
         emit("LDM SP++,R7,PC");
+
+        padTo(0x8001b2bc);
+        word(0x8001b2c0); // seq_record_sound, for the call above
+        padTo(0x8001b2c0);
+        // Hearing what you just played into the sequence.  Recording silences
+        // the arp - an arpeggiator chewing on what you hold is not what you
+        // are listening for - but silence is not what you want either: you
+        // want the note you just entered, once, with its pitch and its
+        // trigger.
+        //
+        // So the note-on leaves the key here and this steps the arp once, now
+        // (R12 = -1: step, do not reload).  The selector answers with that key
+        // and spends it, so the arp's own steps after it sound nothing.  The
+        // pitch, the gate, the trigger and the MIDI note all come from the
+        // factory's own note machinery that way, already paired.
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("LD.UB R8,R1[0x4]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001b2de");      // only record
+        emit("MOV R8,0x6230");
+        emit("LD.UH R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b2de");      // nothing waiting to be heard
+        emit("MOV R12,0xffff");
+        emit("MCALL PC[0x8001b2e4]");   // the arp step
+        padTo(0x8001b2de);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b2e4);
+        word(0x8000210c); // the arp step
+        padTo(0x8001b2e8);
+        // What the selector answers while recording: the key waiting to be
+        // heard, once, or nothing.
+        emit("MOV R8,0x6230");
+        emit("LD.UH R12,R8[0x0]");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001b2fa");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x0],R9");        // spent
+        emit("SUB R12,0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001b2fa);
+        emit("MOV R12,0x0");
+        emit("SUB R12,0x1");            // -1: nothing sounds
+        emit("MOV PC,LR");
 
         padTo(0x8001b300);
         word(0x00003560); // global state base
@@ -3145,7 +3210,7 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x8001b728);
         word(0x00003560); // global state base
-        word(0x8001b438); // seq_release
+        word(0x8001b448); // seq_release
         word(0x80008104); // pitch bend out, one port
         word(0x80007efc); // and the other
         finish("seq_enter", 0x8001b738);
@@ -3527,14 +3592,14 @@ function assembleProgram() {
         // routines and in the factory's own order.  It preserves R9 and R12
         // because seq_enter is still holding the mode being entered and the
         // sequencer's block in them.
-        begin(0x8001b438);
+        begin(0x8001b448);
         emit("STM --SP,R0,R1,R7,R9,R12,LR");
         emit("MOV R7,SP");
-        emit("LDDPC R1,0x8001b4c0");    // global state base
+        emit("LDDPC R1,0x8001b4d0");    // global state base
         emit("MOV R8,0x2eed");
         emit("LD.UB R8,R8[0x0]");       // the factory's own active-note flag
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b4a8");      // nothing is sounding
+        emit("BR{eq} 0x8001b4b8");      // nothing is sounding
         emit("MOV R8,0x2ee4");
         // The low byte of the halfword, which is what the factory's own
         // CASTU.B takes from it - this processor is big-endian, so that byte
@@ -3544,39 +3609,39 @@ function assembleProgram() {
         emit("MOV R8,0x2efa");
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b47c");
+        emit("BR{eq} 0x8001b48c");
         emit("LD.W R8,R1[0x4]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b47c");
+        emit("BR{eq} 0x8001b48c");
         emit("LD.UB R12,R1[0x0]");
-        emit("MCALL PC[0x8001b4c4]");   // take the bus
+        emit("MCALL PC[0x8001b4d4]");   // take the bus
         emit("MOV R10,R0");
         emit("LD.W R11,R1[0x4]");
         emit("LD.UB R12,R1[0x34e]");
-        emit("MCALL PC[0x8001b4c8]");   // note off, on the bus
+        emit("MCALL PC[0x8001b4d8]");   // note off, on the bus
         emit("LD.UB R12,R1[0x0]");
-        emit("MCALL PC[0x8001b4cc]");   // and give it back
-        padTo(0x8001b47c);
+        emit("MCALL PC[0x8001b4dc]");   // and give it back
+        padTo(0x8001b48c);
         emit("LD.UB R10,R1[0x2e7]");
         emit("MOV R11,R0");
         emit("LD.UB R12,R1[0x34e]");
-        emit("MCALL PC[0x8001b4d0]");   // note off, one port
+        emit("MCALL PC[0x8001b4e0]");   // note off, one port
         emit("LD.UB R10,R1[0x2e7]");
         emit("MOV R11,R0");
         emit("LD.UB R12,R1[0x34e]");
-        emit("MCALL PC[0x8001b4d4]");   // and the other
+        emit("MCALL PC[0x8001b4e4]");   // and the other
         emit("MOV R8,0x2eed");
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");        // nothing is sounding now
-        padTo(0x8001b4a8);
-        emit("MCALL PC[0x8001b4d8]");   // gate to zero, and flushed
+        padTo(0x8001b4b8);
+        emit("MCALL PC[0x8001b4e8]");   // gate to zero, and flushed
         emit("MOV R12,0x4");
-        emit("MCALL PC[0x8001b4dc]");   // the trigger light with it
+        emit("MCALL PC[0x8001b4ec]");   // the trigger light with it
         emit("MOV R8,0x60ee");
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");        // and no deferred pulse outlives the stop
         emit("LDM SP++,R0,R1,R7,R9,R12,PC");
-        padTo(0x8001b4c0);
+        padTo(0x8001b4d0);
         word(0x00003560); // global state base
         word(0x8000f1f0); // take the 208 bus
         word(0x8000f3a8); // note off on the bus
@@ -3585,7 +3650,7 @@ function assembleProgram() {
         word(0x800081f0); // MIDI note off, port two
         word(0x80002440); // gate to zero and flush it
         word(0x800068cc); // led_clear(ch)
-        finish("seq_release", 0x8001b4e0);
+        finish("seq_release", 0x8001b4f0);
 
         // A Buchla trigger is a 10 V spike that drops to a 5 V sustain only
         // while the note is HELD, and to 0 when it is let go.  The factory
@@ -3804,18 +3869,19 @@ function assembleProgram() {
         emit("ST.B R8[0x0],R12");
         emit("SUB R9,-0x1");
         emit("ST.B R10[0x0],R9");
-        // A note going in makes a trigger.  Recording silences the arp, and
-        // with the arp on the keyboard has no pulse of its own, so entering a
-        // bar of notes was silent and unlit - nothing said a key had landed.
-        // The same deferred countdown every other pulse in this firmware
-        // uses, so the trigger still waits for the pitch to reach the DAC.
-        emit("MOV R8,0x60ee");
-        emit("LD.UB R9,R8[0x0]");
+        // And it is left here to be HEARD.  Recording silences the arp, and
+        // with the arp on the keyboard has no pulse or pitch of its own, so a
+        // bar of notes went in silent: nothing said a key had landed, and
+        // nothing said which one.  The per-scan cave steps the arp once for
+        // this key, which sounds it the factory's own way - pitch, gate,
+        // trigger and MIDI note together.
+        emit("MOV R8,0x6230");
+        emit("LD.UH R9,R8[0x0]");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001ba20");      // one already pending
-        emit(StringFormat("MOV R9,0x%x",
-            number("gate_settle_scans", 1, 0, 3) + 1));
-        emit("ST.B R8[0x0],R9");
+        emit("BR{ne} 0x8001ba20");      // one still waiting to be heard
+        emit("SUB R12,-0x1");
+        emit("ST.H R8[0x0],R12");       // the key, plus one
+        emit("SUB R12,0x1");            // and left as the caller had it
         padTo(0x8001ba20);
         emit("LDM SP++,R7,PC");
         finish("seq_record", 0x8001ba28);
@@ -3837,7 +3903,9 @@ function assembleProgram() {
         // notes in, and an arpeggiator chewing on what you hold is not what
         // you are listening for.
         emit("CP.W R9,0x1");
-        emit("BR{eq} 0x8001b400");      // recording: nothing sounds
+        // Recording: the arp sounds nothing of its own, but it does sound the
+        // one key the note-on left waiting - see seq_record_sound.
+        emit("BR{eq} 0x8001b428");
         emit("CP.W R9,0x2");
         emit("BR{ne} 0x8001b410");      // not playing: the factory's question
         emit("MOV R10,0x61e0");
@@ -3919,10 +3987,14 @@ function assembleProgram() {
         emit("ADD R12,R9");             // &state[0x21b], the held-key flags
         emit("MCALL PC[0x8001b434]");   // the selector this build installed
         emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b428);
+        emit("MCALL PC[0x8001b438]");   // the key waiting to be heard, or -1
+        emit("LDM SP++,R0,R7,PC");
         padTo(0x8001b430);
         word(0x00003560); // global state base
         word(arpSelector);
-        finish("seq_select", 0x8001b438);
+        word(0x8001b2e8); // what the selector answers while recording
+        finish("seq_select", 0x8001b43c);
 
         // The pitch the arp is about to sound.  The octave randomiser runs
         // first and its answer stands for keyboard playing; while the
@@ -3958,11 +4030,17 @@ function assembleProgram() {
         emit("LDDPC R10,0x8001a470");
         emit("LD.UB R8,R10[0x39]");
         emit("CP.W R8,0x1");
-        emit("BR{eq} 0x8001a370");
+        emit("BR{eq} 0x8001a374");
+        // and not while pad 4 is using knob 4 to set its own voltage - the
+        // same rule the other three knobs answer to.
+        emit("MOV R9,0x614d");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001a374");
         emit("LD.SH R8,R10[0x310]");
         emit("MOV R9,0x60f0");
         emit("ST.H R9[0x0],R8");
-        padTo(0x8001a370);
+        padTo(0x8001a374);
         emit("MOV R9,0x60f0");
         emit("LD.SH R11,R9[0x0]");
         emit("CP.W R11,0x30");

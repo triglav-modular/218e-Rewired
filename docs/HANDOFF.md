@@ -47,6 +47,11 @@ uneven clock is passed through undivided, and the run of agreeing intervals
 it takes to believe a rate went from 2 to 5 - measured, not guessed: a run of
 2 divided every uneven clock thrown at it.
 
+Then: a knob no longer does its other job while a preset pad is using it, and
+recording sounds what you play into it - the note-on leaves its key for the
+per-scan cave, which steps the arp once so the pitch, gate, trigger and MIDI
+note all come from the factory's own machinery.
+
 **Not yet on hardware.** The owner flashes and reports; nothing below has
 been played. `strip_halfway_units` is 2048 because 2048 is the middle of the
 range the firmware clamps to, and the middle is the rule; it is a build
