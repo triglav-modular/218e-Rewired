@@ -99,10 +99,12 @@ lost, propose a fresh one and wait.
   (5). All are build numbers precisely so they can move. `chord_hold_scans`
   is 200 because the owner asked for a second. For current clock timing
   values and their digital-input constraints, use [CLOCK.md](CLOCK.md).
-- **The trigger spike is the factory's own**, scheduled with 3 at
-  `0x80007888` (R10; the adjacent R11=2 selects the timer ID). The owner puts
-  a Buchla trigger at ~4 ms; if a measurement
-  says the unit is not what 3 assumes, that immediate is the one to move.
+- **The trigger spike is measured and settled.** The factory schedules it
+  with 3 at `0x80007888` (R10; the adjacent R11=2 selects the timer ID) and
+  the owner measured that spike at 2 ms, so the units are (n − 1) ms. Clock
+  builds set it to `trigger_spike_units` (5); the owner measured the result
+  at 4.2 ms on the jack — the model holds, the 0.2 ms being the analog
+  edge. Bounded at 5: the attack-age guards cover exactly four milliseconds.
 - **A settings save during a take would persist the borrowed strip mode.**
   Record forces `state+0x20c` to 0 and the save path reads it like any other
   setting. Nothing guards it, and nothing is likely to hit it.

@@ -759,6 +759,11 @@ shape was conformed is therefore 5, now `trigger_spike_units`, applied in
 clock builds and bounded at 5 because the attack-age guards cover four
 milliseconds of spike and no more.
 
+**Confirmed on the bench, same day**: /1 plays correctly at the top of the
+knob, and the spike measures 4.2 ms — the (n − 1) model predicted 4.0 from
+a single data point and the second measurement lands on it, the 0.2 ms
+being the analog edge rather than the scheduler.
+
 ### One way in: the divider's acceptance rule (2026-08-27)
 
 An audit of the first rising-edge build found three P1s, and they were all
