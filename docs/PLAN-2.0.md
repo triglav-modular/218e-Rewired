@@ -553,6 +553,38 @@ rescheduled 3 ms timer - and that is the instrument being driven far past
 anything the factory expected, not a bug in the divider.  Dividing down is
 what the knob is for.
 
+### Full audit (2026-08-27, after the shuffle register bug)
+
+Run over BOTH built images - the blend build and the zones build - since they
+emit different code.  Mechanical where a sweep could be written; each hit
+eyeballed against the source.
+
+- **Register liveness across every `MCALL`.**  Fourteen candidates in the
+  blend build, twelve in the zones build.  One real - the shuffle holding the
+  blend, index and count across the PRNG, fixed at `1fabc2a` - and the rest
+  are return values or callees that push what they preserve
+  (`first_use_initializer` keeps R8..R12 by design, the proximity estimator
+  pushes R9, the vibrato helper takes and returns R11, `seq_release` and
+  `seq_next_step` keep their caller's registers by documented contract).
+- **Stack pairing: every `STM` against its `LDM`.**  All balanced.  Two
+  scanner flags were the scanner's own: `first_use_initializer` pops its
+  seven registers at a tail it reaches by `RJMP`, which address order
+  misattributes to the migration cave; and the arp gate hook's pop-to-LR is
+  the documented flags-preserving pattern.
+- **Every branch target in the caves lands on an instruction.**  All do.
+- **The first-use clear's reach, from the image:** 0x99 halfwords from
+  `0x6100`, through `0x6231` - both cells this week added are inside.
+- **One latent bug found and fixed:** the key a note-on leaves at `0x6230`
+  for the record-sound scan survived a mode change, because the pad loop runs
+  before the record-sound call in the same scan.  A press ending a take could
+  leave the last note pending, and the NEXT take opened by sounding a note
+  nobody played into it.  `seq_enter` clears the cell with the other take
+  transients now.
+- **Noted, not fixed:** the divider's millisecond counter is a halfword, so
+  after ~65.5 s of silence a first pulse landing in a ~1 ms wrap window can
+  be eaten by the dead time - once, with probability about 1 in 65,000, and
+  the next pulse recovers.  Not worth a word of RAM.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

@@ -141,7 +141,7 @@ def audit_call_pools(image_path) -> list[str]:
 # when rests and ties moved to an absolute strip position, which moved the
 # clear once more.
 EXPECTED = {
-    "historical_config": "3d92fbdc69f6071b01db391eebcb9a2f20a52940b82258fe57b0f97c6b4a4661",
+    "historical_config": "8eea1a3a13551df9b3da6717e9923a6cda99a4a6c4d1f6c9b8a37c23a869ad32",
 }
 
 

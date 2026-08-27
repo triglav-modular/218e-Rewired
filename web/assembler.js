@@ -3826,6 +3826,11 @@ function assembleProgram() {
         // does not open with a rest nobody entered.
         emit("ST.B R8[0x4],R10");       // 0x61e4, the strip down last scan
         emit("ST.B R8[0x5],R10");       // 0x61e5, the tie's slide count
+        // and the key a note-on left waiting to be heard.  The pad loop runs
+        // before the record-sound call in the same scan, so a press that ends
+        // a take can leave the last note pending - and the NEXT take would
+        // open by sounding a note nobody played into it.
+        emit("ST.H R8[0x50],R10");      // 0x6230
         emit("MOV R12,0x6154");
         emit("CP.W R11,0x0");
         emit("BR{ne} 0x8001b684");
