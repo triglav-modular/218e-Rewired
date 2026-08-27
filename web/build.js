@@ -127,7 +127,8 @@ var WEBBUILD = (function () {
          'seq_strip', 'seq_gate', 'seq_glide', 'strip_pool']
             .forEach(function (n) { blocks[n] = seq; });
         var div = !!(cfg.clock && cfg.clock.divide);
-        ['clock_scan', 'clock_pulse', 'clock_hook']
+        ['clock_scan', 'clock_pulse', 'clock_hook',
+         'clock_internal', 'clock_internal_hook']
             .forEach(function (n) { blocks[n] = div; });
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';

@@ -238,7 +238,7 @@ the options into the full internal settings the build has always used.
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
-| `knob1` … `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
+| `knob1`, `knob2`, `knob3`, `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
 | `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
 | `sequencer` | `false` | A 64-step sequencer on the preset pads: hold pad 4 three seconds, then pad 1 records, pad 2 plays, pad 3 stops. The pitch strip enters rests and ties while recording. Playback runs on the arpeggiator's clock. |
 | `clock_divide` | `false` | With a steady external clock, the arp RATE knob becomes a divider — every pulse to one in eight. Locks on two evenly spaced pulses 20 ms–2 s apart, releases two seconds after the clock stops. |

@@ -111,6 +111,7 @@ pressure_portamento = true
 # Any knob may also be "factory" to hand that one back to its preset voltage.
 # knob1 = "orders"
 # knob2 = "swing"
+# knob3 = "factory"
 # knob4 = "trn"
 
 # 9. ARPEGGIATOR STEP PATTERNS
@@ -160,7 +161,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "eb8b69e4a1b74ffb3642d5c691e2a24ff61970276407012a104821c3b1176bf6"
+golden_sha256  = "ef632991bc07b4b68bcc31f76998c5ed1513e44f4cffd5286d9f015bb3fd491a"
 
 
 [tools]

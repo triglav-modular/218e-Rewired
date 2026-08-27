@@ -301,18 +301,24 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001ac80]");
+        if (block("seq_record")) {
+            // BEFORE the latch toggle, not after.  In the latch position a
+            // press of an already-sounding pitch means "release it" and
+            // returns -1, and the wrapper stops there - so a repeated note
+            // never reached the recorder and simply went missing from the
+            // sequence.  What is recorded is the physical press, which is
+            // what was played.  R12 is the key here (the first-use cave
+            // saves and restores it) and this cave leaves it alone.  The pool
+            // below starts one word earlier to make room for its entry;
+            // extending the block instead would run into its neighbour.
+            emit("MCALL PC[0x80018d3c]");
+        }
         if (feature("arp_latch")) {
             // A press of an already-latched key returns -1 and the note-on is
             // skipped, which is what makes the keys behave as toggles.
             emit("MCALL PC[0x80018d38]");
             emit("CP.W R12,-0x1");
             emit("BR{eq} 0x80018d28");
-        }
-        if (block("seq_record")) {
-            // R12 is still the key here, and the cave leaves it alone.  The
-            // pool below starts one word earlier to make room for its entry;
-            // extending the block instead would run into its neighbour.
-            emit("MCALL PC[0x80018d3c]");
         }
         emit("ST.W --SP,R12");
         emit("MCALL PC[0x80018d2c]");
@@ -3472,6 +3478,28 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001b740L);
         finish("clock_pulse", 0x8001b7e8L);
 
+        // The arp's own timer, while an external clock is locked.  Locking
+        // only ever decided which external pulses got through; the periodic
+        // tick kept running underneath and kept advancing the arp on its own
+        // schedule, so a locked clock added steps between its own.  Of the
+        // three sites that step the arp this is the only one that passes a
+        // tempo rather than -1, so it is the only one that means "the
+        // internal timer says so" - and the only one to stand down.
+        begin(0x8001b7f0L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x61e6");
+        emit("LD.UB R8,R8[0x6]");
+        emit("CP.W R8,0x2");
+        emit("BR{eq} 0x8001b808");      // locked: the clock owns the tempo
+        emit("MCALL PC[0x8001b814]");
+        padTo(0x8001b808L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b810L);
+        word(0x8001b7f0L); // this cave, for the caller too far away to pool it
+        word(0x8000210cL); // the arp step
+        finish("clock_internal", 0x8001b818L);
+
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,
         // and then a threshold the countdown can never reach, so the gate
@@ -3908,6 +3936,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MCALL PC[0x80019d38]");
         padTo(0x800021a6L);
         finish("arp_gate_hook", 0x800021a6L);
+
+        // The periodic tick that advances the arp on its own timer.  It is
+        // the one caller that passes a tempo instead of -1, so it is the one
+        // the divider has to silence while it is locked.
+        if (block("clock_internal")) {
+            begin(0x80004faaL);
+            emit("MCALL PC[0x8001b810]");
+            finish("clock_internal_hook", 0x80004faeL);
+        }
 
         // Event 10 is the external clock pulse.  The factory ticked the arp
         // outright here; now the divider decides, and ticks itself if it is
