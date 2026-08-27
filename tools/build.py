@@ -891,6 +891,10 @@ FACTORY_CELLS = [
     # The note the arp step sounded, and the flag saying one is sounding.
     # Both are read by the release that stop and clear now do for themselves.
     (0x2EE4, 0x2EE6, "the note the arp is sounding"),
+    # table[knob] + jack-CV/2, clamped - written at 0x80002b62.  The divisor
+    # must NOT read this: the CV half is the ADC on the arp input jack, the
+    # jack an external clock is patched into, so the clock's own waveform
+    # rides in it.  The knob alone is state+0x2fc, raw.
     (0x2EE6, 0x2EE8, "arp rate knob and CV, combined"),
     (0x2EED, 0x2EEE, "arp active-note flag"),
     # Read before the 208-bus note-off and before every bend send.  Named for
@@ -1722,12 +1726,14 @@ def main() -> None:
     cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 1))
     cfg["_numbers"]["clock_lock_pulses"] = int(
         cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
+    cfg["_numbers"]["clock_settle_scans"] = int(
+        cfg.get("sequencer", {}).get("clock_settle_scans", 0))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
     for name in ("clock_scan", "clock_pulse", "clock_hook",
                  "clock_tempo", "clock_tempo_hook",
                  "clock_ms_tick", "clock_ms_pool",
-                 "clock_gate", "clock_gate_hook"):
+                 "clock_gate", "clock_gate_hook", "clock_settle"):
         blocks[name] = div
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     blocks["seq_chord"] = seq

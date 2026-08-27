@@ -253,6 +253,13 @@ def expand(options: dict) -> dict:
                         # The cost is settling time - a steady clock passes
                         # this many pulses at 1:1 before it starts dividing.
                         "clock_lock_pulses": 5,
+                        # How many settle scans a clock-driven trigger waits
+                        # after the pitch store.  0 fires at the store itself:
+                        # the DAC already holds the new note and only the
+                        # output RC (tau 0.9 ms) is still moving, and the lag
+                        # from pulse to trigger drops from up to ten
+                        # milliseconds to the scan alignment alone.
+                        "clock_settle_scans": 0,
                         # How long pad 4 has to be held before pads 1-3 mean
                         # anything, in ~5 ms scans.  200 is a second.
                         "chord_hold_scans": 200}

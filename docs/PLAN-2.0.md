@@ -635,6 +635,33 @@ divides by eight; 780 Hz still passes its own dead time; the uneven set
 passes through undivided; with no clock the internal timer beats exactly as
 before, and it returns two seconds after a clock stops.
 
+### The divisor reads the knob, not the jack; and clocked triggers fire sooner (2026-08-27)
+
+Two more recordings (the ARP pair, pulser swept, both knob ends) showed
+triggers dropping at BOTH ends, knob-independent, and worse on the sawtooth
+than a square.  The divisor was reading `state+0x2ee6` - and the factory
+writer at `0x80002b62` shows what that is: `table[knob] + state[0x2f2]/2`,
+clamped, where **`state+0x2f2` is the ADC on the arp input jack - the jack
+the clock is patched into.**  The pulser's own waveform rode into the
+divisor, which wobbled with the input's instantaneous voltage: continuously
+for a sawtooth, as a fixed offset for a square (why the square "seemed
+better" and still dropped at max).  The knob half of the sum is no better a
+source - it is the tempo table's OUTPUT, not the knob position.  The divisor
+now reads **`state+0x2fc`, the rate knob's own raw channel**, and nothing
+the jack carries can move it.
+
+**And the nine milliseconds.**  Measured from clock pulse to trigger out,
+and it is the deferred-pulse design, not the divider: a trigger waits for
+the next 5 ms scan to put the pitch in the DAC, then `gate_settle_scans`
+(default 1) more for the output RC - 5..10 ms, ~7.5 mean.  Right for a key
+under a finger; most of the latency under a clock.  While a clock is about
+(the presence byte again), the deferred trigger now fires AT the pitch
+store: the DAC already holds the new note and only the RC (tau 0.9 ms) is
+still moving.  Lag from pulse to trigger is the scan alignment alone,
+0..5 ms.  `clock_settle_scans` (default 0) puts the wait back if octave
+jumps under a clock turn out to slew audibly.  The keyboard path is
+untouched, and a countdown already in flight is still never restarted.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

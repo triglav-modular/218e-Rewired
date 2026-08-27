@@ -1467,11 +1467,21 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x8001a27a");
-        emit(String.format("MOV R9,0x%x",
-            number("gate_settle_scans", 1, 0, 3) + 1));
-        emit("ST.B R8[0x0],R9");
+        if (block("clock_scan")) {
+            // How many scans, and the arming store too - the cave has the
+            // room this block does not.  R8 carries the cell across.
+            emit("MCALL PC[0x8001a27c]");
+        } else {
+            emit(String.format("MOV R9,0x%x",
+                number("gate_settle_scans", 1, 0, 3) + 1));
+            emit("ST.B R8[0x0],R9");
+        }
         padTo(0x8001a27aL);
         emit("MOV PC,LR");
+        if (block("clock_scan")) {
+            padTo(0x8001a27cL);
+            word(0x8001bb40L); // clock_settle: the count, by who is asking
+        }
         finish("pulse_defer_set", 0x8001a280L);
 
         // Latch mode (arp switch position 1). Three pieces:
@@ -3712,11 +3722,20 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("CP.W R11,0x%x",
              number("clock_lock_pulses", 5, 2, 32)));
         emit("BR{lt} 0x8001b7dc");
-        // Locked, so the rate knob divides instead.  Its mirror at 0x2ee6 is
-        // the pot and the CV input together, 0..0x3ff; fast end passes every
-        // pulse, slow end one in eight.  The Clockwork Card's own law.
-        emit("MOV R11,0x2ee6");
-        emit("LD.SH R11,R11[0x0]");
+        // Locked, so the rate knob divides instead: fast end passes every
+        // pulse, slow end one in eight - the Clockwork Card's own law.
+        //
+        // The KNOB'S OWN RAW CHANNEL, state+0x2fc, and nothing else.  The
+        // mirror at 0x2ee6 that this used to read is the factory's
+        // knob-plus-CV sum (0x80002b62: table[knob] + state[0x2f2]/2), and
+        // state+0x2f2 is the ADC on the arp input jack - THE JACK THE CLOCK
+        // IS PATCHED INTO.  The pulser's own waveform rode into the divisor,
+        // which wobbled with the input's instantaneous voltage whatever the
+        // knob said - measured off the instrument at both knob ends.  The
+        // knob half of that sum is no better a source: it is the tempo
+        // table's OUTPUT, not the knob position.
+        emit("LDDPC R11,0x8001b850");   // global state base
+        emit("LD.SH R11,R11[0x2fc]");
         emit("MOV R12,0x3ff");
         emit("SUB R12,R12,R11 << 0x0");
         emit("MOV R11,0x8");
@@ -4344,6 +4363,30 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001bb30L);
         word(0x00003560L); // global state base
         finish("clock_gate", 0x8001bb34L);
+
+        // How many scans a deferred trigger waits, by who is asking.  The
+        // settle scan is for the analog RC on the pitch output - right for a
+        // key under a finger, and most of a NINE MILLISECOND lag measured
+        // from clock pulse to trigger out: up to a scan to the pitch store,
+        // then a whole scan more of settle.  While a clock is about, the
+        // trigger fires at the pitch store itself - the DAC already holds
+        // the new note, only the RC (tau 0.9 ms) is still moving - which
+        // brings the lag to the scan alignment alone, nought to five.
+        // clock_settle_scans puts the wait back if octave jumps under a
+        // clock turn out to slew audibly.
+        begin(0x8001bb40L);
+        emit(String.format("MOV R9,0x%x",
+            number("gate_settle_scans", 1, 0, 3) + 1));
+        emit("MOV R10,0x61ec");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001bb58");
+        emit(String.format("MOV R9,0x%x",
+            number("clock_settle_scans", 0, 0, 3) + 1));
+        padTo(0x8001bb58L);
+        emit("ST.B R8[0x0],R9");        // the arming store, R8 from the caller
+        emit("MOV PC,LR");
+        finish("clock_settle", 0x8001bb60L);
 
         // The pitch the arp is about to sound.  While the sequencer plays that
         // is the step's own pitch; otherwise it is whatever the keyboard
