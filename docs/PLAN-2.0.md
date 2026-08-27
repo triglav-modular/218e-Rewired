@@ -517,6 +517,42 @@ these also tested the routine rather than the call site; playing a whole
 sequence THROUGH `seq_select`, and entering record all the way through
 `seq_enter`, is what the suites do now.
 
+### The divider drops chatter instead of playing it (2026-08-27)
+
+A pulse arriving too soon after the last one used to fall through to "no rate
+here, so pass everything" - which STEPPED THE ARP on it.  Every burst of
+chatter therefore became a burst of notes, and that is what made a fast clock
+glitch and flash lights that had nothing to do with it.  It is dropped now:
+not counted, not stamped, not stepped.
+
+The 208's pulser puts out a falling sawtooth, and whatever thresholds it
+chatters as the slope crawls back through the trip point - which is why a
+square wave behaved better than the sawtooth it is meant to be driven with.
+
+The window is FLAT rather than a fraction of the measured rate.  Scaling it
+was tried and reverted: an uneven clock is allowed here, and a short gap
+after a long one is a real pulse rather than a bounce, so a rate-scaled
+window swallowed pulses the divider is supposed to pass through.  A flat
+window is only as wide as the chatter it exists to kill.
+
+`clock_min_ms` is that window, 1 ms by default - the floor that still keeps up
+with the pulser's top rate of 780 Hz, or 1.28 ms.  A slow slope that still
+gets through wants it raised, and the cost is the fastest clock the divider
+will follow.
+
+Beyond that there is nothing the firmware can do about the difference between
+a bounce and a pulse: they are the same signal.  A CV-to-pulse converter is
+what the 218e's own manual recommends for the pulser, and it remains the
+right answer for a slope this slow.
+
+**Still unexplained: unrelated LEDs.**  The chatter bursts account for lights
+flashing at a fast clock, and dropping them should take it with them.  If it
+survives, note that divide-by-one at 780 Hz asks the arp to step 780 times a
+second - every step is a note-off, a note-on, a gate, a MIDI pair and a
+rescheduled 3 ms timer - and that is the instrument being driven far past
+anything the factory expected, not a bug in the divider.  Dividing down is
+what the knob is for.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

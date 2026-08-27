@@ -234,10 +234,15 @@ def expand(options: dict) -> dict:
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
                         "tie_glide_rate": 60,
-                        # The shortest gap between two pulses the divider will
-                        # believe, in milliseconds.  A 208 pulser at its top
-                        # rate is 780 Hz - 1.28 ms - so 1 is the floor that
-                        # keeps up with it.
+                        # The divider's dead time, in milliseconds: a pulse
+                        # arriving this soon after the last one is dropped
+                        # outright, not counted and not played.  A 208 pulser
+                        # puts out a falling sawtooth, and whatever thresholds
+                        # it chatters as the slope crawls back through the trip
+                        # point.  1 is the floor that still keeps up with the
+                        # pulser's top rate of 780 Hz (1.28 ms); raise it if a
+                        # slow slope still gets through, at the cost of the
+                        # fastest clock the divider will follow.
                         "clock_min_ms": 1,
                         # How many agreeing intervals in a row before the
                         # divider believes there is a rate to divide.  An
