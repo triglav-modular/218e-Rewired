@@ -255,18 +255,29 @@ at `0x8000af8a`: it reads `state+0x20c`, and writes **1** when it was 0
 (`0x8000af96`) or **0** when it was not (`0x8000aff2`).  So the mode is
 0 or 1 and nothing else, and forcing or restoring it is a single word.
 
-Switching TO mode 1 also forces `state+0x1f8` - the bend depth the scaling
-divides by - to `0x7ff`, its full span.  A mode that takes the whole range
-rather than a configured depth is what an absolute strip needs, so **mode 1
-is very probably the mod-wheel one**; that inference is not proof and is
-worth one look at `0x20c` on the instrument before anything relies on it,
-because forcing the WRONG mode on entering record is worse than not forcing
-one at all.
+**mode 0 is ABSOLUTE, mode 1 is RELATIVE PITCHBEND** - settled twice over by
+what each direction of the toggle sends, not inferred:
 
-Still to pin down: which of `state+0x202` / `0x204` carries the absolute
-position in that mode, and its range.  `0x800030ae` picks `0x204` when the
-mode is 1, so that is the one to read - but its span wants measuring rather
-than assuming, since halfway is the whole rule.
+- 1 -> 0 sends pitch bend CENTRE (`0x40`, `0`) and zeroes `state+0x216`, the
+  bend added to the pitch.  You centre a bend when you leave bend mode.
+- 0 -> 1 zeroes the strip's mod-wheel CC (controller `state+0x218`, the one
+  the manual says defaults to CC1 and is assignable 1-12), and forces
+  `state+0x1f8` to its full `0x7ff` span.  You zero a mod wheel when you
+  stop being one.
+
+So record forces `state+0x20c` to 0 and puts back whatever it read on the
+way out.  That part is ready to build.
+
+The threshold is NOT.  `0x800030ae` reads `state+0x202` in absolute mode,
+but 0x202 is not the position - it is `table[state+0x306]` through the
+shared curve at `0x80015150`, and that curve is far from linear (index 512
+maps to 166 of 1024).  Thresholding 0x202 at half its range would put the
+rest/tie boundary nowhere near the middle of the strip.  `state+0x306`
+looks like the position that indexes it, but it is also read by the glide
+path and compared against 0x1d in the scanner, so its range wants measuring
+before it decides whether a note is a rest or a tie.  Halfway is the whole
+rule here, so a guess at it is worse than the tap-based entry that works
+now.
 
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
