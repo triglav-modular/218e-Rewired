@@ -884,8 +884,14 @@ FACTORY_CELLS = [
     # last three entries outside the overlap protection this map exists
     # to provide.
     (0x0854, 0x0894, "key pitch table"),
+    # The note the arp step sounded, and the flag saying one is sounding.
+    # Both are read by the release that stop and clear now do for themselves.
+    (0x2EE4, 0x2EE6, "the note the arp is sounding"),
     (0x2EE6, 0x2EE8, "arp rate knob and CV, combined"),
     (0x2EED, 0x2EEE, "arp active-note flag"),
+    # Read before the 208-bus note-off and before every bend send.  Named for
+    # what it is seen to do, not for a writer this repo has found.
+    (0x2EFA, 0x2EFB, "send-enable flag"),
     (0x2EEE, 0x2EF0, "glide rate"),
     (0x3212, 0x3214, "pitch mirror"),
     # The pads' own touch states, the same shape as the keys' array: one byte

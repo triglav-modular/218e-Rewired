@@ -350,6 +350,35 @@ Two things worth knowing about the borrow:
   `0x8000a142`).  Nobody is likely to save settings mid-take, and nothing
   guards it.
 
+### Two things the mode change has to do besides change the mode
+
+Both found by audit, both confirmed against the image before being fixed.
+
+**Stop and clear have to end the NOTE.**  The sequencer's note is started and
+ended by the arp's step function: the MIDI note-off, the gate and the trigger
+light all live inside it at `0x80002218`-`0x800022c2`.  Stop and clear only
+changed the mode and left the next step to tidy up - and the case where stop
+matters most is exactly the case where there is no next step.  Set RATE to
+zero and advance from an external pulse, or lock the divider to a clock and
+then take the clock away, and the arp is not stepping: the gate sits at its
+5 V sustain (`state+0x354` = `0x7ff`) and the MIDI note stays on until the
+power does not.
+
+`seq_release` now does what that step would have, with the factory's own
+routines in the factory's own order: the 208 bus note-off when the bus is
+carrying the note, both MIDI note-offs, the active-note flag, the gate
+through `0x80002440` (which zeroes `state+0x354` and flushes it), the trigger
+light, and our own deferred pulse at `0x60ee` so none outlives the stop.  It
+runs whenever PLAY is what is being left - stop, clear, and record too.
+
+**Record has to put away a bend before it borrows the mode.**  `bend()` only
+writes `state+0x216`, the offset the pitch adds, on the relative side of its
+own test at `0x80002edc`.  Once record has forced absolute, no value passed to
+`bend()` can reach that cell - so a bend standing when record started was
+added to every note of the take, for the whole take.  Entering record from
+relative mode now runs the factory's own `1 -> 0` cleanup from `0x8000afee`:
+zero `state+0x216`, and send pitch bend centre on both ports.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it

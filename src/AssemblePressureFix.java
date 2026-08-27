@@ -3272,45 +3272,77 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001b6c0L); // strip_mode_swap(R9 = the mode being entered)
 
         padTo(0x8001b6c0L);
+        // Everything that has to happen because the sequencer's mode is
+        // CHANGING, in the one place that can see both what it was and what
+        // it is becoming.  R9 is the mode being entered, R12 the sequencer's
+        // own block.
+        //
         // The strip has two modes of its own, and state+0x20c says which:
         // 0 stays where it is left, 1 springs back and bends the pitch.
         // Recording wants the first, because a rest and a tie are read from
         // an absolute position - so record borrows it and gives back
         // whatever the player had, rather than switching them silently.
-        //
         // The saved value is kept plus one, so that zero means nothing is
-        // being held and a restore cannot fire twice.  R9 is the mode being
-        // entered, R12 the sequencer's own block.
+        // being held and a restore cannot fire twice.
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("LD.UB R8,R12[0x4]");      // the mode this press replaces
         emit("CP.W R8,R9");
-        emit("BR{eq} 0x8001b700");      // nothing is changing
-        emit("LDDPC R10,0x8001b704");   // global state base
+        emit("BR{eq} 0x8001b720");      // nothing is changing
+        // Leaving PLAY ends the note the sequencer was sounding.  Nothing
+        // else will: the arp step is what tidies up after a step, and stop is
+        // most useful exactly when the arp is not stepping.
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001b6d6");
+        emit("MCALL PC[0x8001b72c]");   // seq_release, which keeps R9 and R12
+        emit("LD.UB R8,R12[0x4]");      // the call had R8
+        padTo(0x8001b6d6L);
+        emit("LDDPC R10,0x8001b728");   // global state base
         emit("MOV R11,0x622e");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b6e8");
+        emit("BR{ne} 0x8001b70c");
         emit("LD.W R8,R10[0x20c]");
         emit("SUB R8,-0x1");
         emit("ST.H R11[0x0],R8");
-        emit("MOV R8,0x0");
-        emit("ST.W R10[0x20c],R8");     // absolute, for as long as record lasts
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b6e8L);
+        emit("MOV R11,0x0");
+        emit("ST.W R10[0x20c],R11");    // absolute, for as long as record lasts
+        // A bend already standing has to be put away with the mode that made
+        // it.  state+0x216 is the offset the pitch adds, and bend() only ever
+        // writes it on the relative side of its own test at 0x80002edc - so
+        // once record has forced absolute, no value we pass bend() can reach
+        // it, and a bend left over from before the take would be added to
+        // every note of it.  This is the factory's own 1 -> 0 cleanup at
+        // 0x8000afee, done for the same reason it does it.
+        emit("CP.W R8,0x2");            // relative, plus the one it is kept as
+        emit("BR{ne} 0x8001b720");
+        emit("ST.H R10[0x216],R11");    // R11 is still zero
+        emit("LD.UB R10,R10[0x2e7]");
+        emit("MOV R11,0x0");
+        emit("MOV R12,0x40");           // pitch bend centre: 0x2000
+        emit("MCALL PC[0x8001b730]");
+        emit("MOV R11,0x0");
+        emit("MOV R12,0x40");
+        emit("MCALL PC[0x8001b734]");
+        emit("RJMP 0x8001b720");
+        padTo(0x8001b70cL);
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b700");      // record is not what is being left
+        emit("BR{ne} 0x8001b720");      // record is not what is being left
         emit("LD.UH R8,R11[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b700");      // nothing was ever borrowed
+        emit("BR{eq} 0x8001b720");      // nothing was ever borrowed
         emit("SUB R8,0x1");
         emit("ST.W R10[0x20c],R8");
         emit("MOV R8,0x0");
         emit("ST.H R11[0x0],R8");
-        padTo(0x8001b700L);
+        padTo(0x8001b720L);
+        emit("MOV R12,0x6154");         // the block again, for the caller
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b704L);
+        padTo(0x8001b728L);
         word(0x00003560L); // global state base
-        finish("seq_enter", 0x8001b708L);
+        word(0x8001b438L); // seq_release
+        word(0x80008104L); // pitch bend out, one port
+        word(0x80007efcL); // and the other
+        finish("seq_enter", 0x8001b738L);
 
         // The bend strip, while recording.  Two pieces share this block: the
         // bend hook, whose only job is silence, and the per-scan watch that
@@ -3624,6 +3656,80 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001b860L);
         word(0x8001b840L); // this cave, for the caller too far away to pool it
         finish("clock_tempo", 0x8001b864L);
+
+        // Ending a take has to end the NOTE, not just the mode.  The
+        // sequencer's note is started and stopped by the arp's step function,
+        // and everything that ends one - the MIDI note-off, the gate, the
+        // trigger light - lives inside it at 0x80002218..0x800022c2.  Stop
+        // and clear change the mode and then wait for the next step to tidy
+        // up.  With RATE at zero, or with an external clock locked and then
+        // taken away, there IS no next step: the gate sits at its 5 V sustain
+        // and the MIDI note stays on, for as long as the instrument is
+        // powered.
+        //
+        // So this does what that step would have done, with the factory's own
+        // routines and in the factory's own order.  It preserves R9 and R12
+        // because seq_enter is still holding the mode being entered and the
+        // sequencer's block in them.
+        begin(0x8001b438L);
+        emit("STM --SP,R0,R1,R7,R9,R12,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R1,0x8001b4c0");    // global state base
+        emit("MOV R8,0x2eed");
+        emit("LD.UB R8,R8[0x0]");       // the factory's own active-note flag
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b4a8");      // nothing is sounding
+        emit("MOV R8,0x2ee4");
+        // The low byte of the halfword, which is what the factory's own
+        // CASTU.B takes from it - this processor is big-endian, so that byte
+        // is the second one.  The note, kept where a call cannot reach it.
+        emit("LD.UB R0,R8[0x1]");
+        // The 208's own bus first, when it is the one carrying the note.
+        emit("MOV R8,0x2efa");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b47c");
+        emit("LD.W R8,R1[0x4]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b47c");
+        emit("LD.UB R12,R1[0x0]");
+        emit("MCALL PC[0x8001b4c4]");   // take the bus
+        emit("MOV R10,R0");
+        emit("LD.W R11,R1[0x4]");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001b4c8]");   // note off, on the bus
+        emit("LD.UB R12,R1[0x0]");
+        emit("MCALL PC[0x8001b4cc]");   // and give it back
+        padTo(0x8001b47cL);
+        emit("LD.UB R10,R1[0x2e7]");
+        emit("MOV R11,R0");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001b4d0]");   // note off, one port
+        emit("LD.UB R10,R1[0x2e7]");
+        emit("MOV R11,R0");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001b4d4]");   // and the other
+        emit("MOV R8,0x2eed");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // nothing is sounding now
+        padTo(0x8001b4a8L);
+        emit("MCALL PC[0x8001b4d8]");   // gate to zero, and flushed
+        emit("MOV R12,0x4");
+        emit("MCALL PC[0x8001b4dc]");   // the trigger light with it
+        emit("MOV R8,0x60ee");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // and no deferred pulse outlives the stop
+        emit("LDM SP++,R0,R1,R7,R9,R12,PC");
+        padTo(0x8001b4c0L);
+        word(0x00003560L); // global state base
+        word(0x8000f1f0L); // take the 208 bus
+        word(0x8000f3a8L); // note off on the bus
+        word(0x8000f160L); // give the bus back
+        word(0x80007e44L); // MIDI note off, port one
+        word(0x800081f0L); // MIDI note off, port two
+        word(0x80002440L); // gate to zero and flush it
+        word(0x800068ccL); // led_clear(ch)
+        finish("seq_release", 0x8001b4e0L);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does - unless the step about to play is a tie,

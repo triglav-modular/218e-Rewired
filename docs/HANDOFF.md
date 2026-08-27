@@ -32,6 +32,12 @@ evidence, and the panel's six knobs against the six conditioned channels, is
 in PLAN-2.0.md under "Rests and ties from an absolute strip position". Read
 that before touching the strip; a session already lost a day to it.
 
+Two audit findings landed on top of it, both confirmed against the image
+before being fixed: stop and clear left the sequencer's note sounding when
+the arp was not stepping (external clock, or RATE at zero), and entering
+record froze a standing pitch bend into every note of the take. Both are
+written up in PLAN-2.0.md.
+
 **Not yet on hardware.** The owner flashes and reports; nothing below has
 been played. `strip_halfway_units` is 2048 because 2048 is the middle of the
 range the firmware clamps to, and the middle is the rule; it is a build
