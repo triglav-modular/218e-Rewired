@@ -223,6 +223,40 @@ items are the remaining unknowns.  Nothing here is user-facing copy.
   where 0 snaps and 1024 is the longest glide.  How long 60 actually is was
   not measured; it is a build number for the same reason.
 
+## NEXT: rests and ties from an absolute strip position (not started)
+
+The owner's own model of the hardware, which is better than the one the
+current code is built on.  The pitch strip has TWO modes: one that springs
+back to the middle, and one that behaves like a mod wheel and stays where it
+is left.  The second is the default.
+
+What it should do instead of thresholding a bend direction:
+
+- Entering RECORD forces the strip into the mod-wheel mode, and leaving
+  record puts it back to whatever the player had before - so somebody who
+  works in spring mode is not silently switched.
+- Rest and tie are then read from the ABSOLUTE position at the moment of
+  release: **below halfway is a rest, above halfway is a tie.**  No
+  threshold, no direction, no re-arm rule - the position is simply what it
+  says when you let go.
+
+Found so far:
+- `state+0x20c` is the mode.  It is a word, loaded from the persisted
+  settings record at `0x8000a396` (assembled from two record bytes), so it is
+  a saved user setting and reading it back is how "what they had before" gets
+  restored.  The pitch update tests it at `0x800030ae`: `== 1` takes one raw
+  half, anything else takes the other.
+- The two raw halves are `state+0x202` and `state+0x204`; `0x800030ae` picks
+  between them and `0x8000c150` scales the result against `state+0x1f8`.
+- `state+0x206` is the touch flag, already used for the release re-arm.
+
+STILL UNKNOWN, and what the build waits on: WHICH value of `0x20c` is the
+mod-wheel mode and which is the spring, and which raw cell carries the
+absolute position in that mode along with its range.  The mode has no plain
+writer in the image - only the settings loader - so the values are most
+easily read off a running instrument: put the strip in each mode from edit
+mode and look at `0x20c`.
+
 ## Strip archaeology (2026-08-27)
 - `bend(R12 = value)` `0x80002e30`, reached through the pool word at
   `0x8000335c`.  Early-exits when the value has not changed, so hooking it
