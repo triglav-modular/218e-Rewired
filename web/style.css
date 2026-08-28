@@ -2233,19 +2233,18 @@ section,
    margin keep the diagram rule further down this sheet off them. */
 .padmap {
   --tr-w: 15px;
-  --tr-gap: 5px;
+  --tr-gap: 3px;
 }
 .padmap .tr {
   width: var(--tr-w);
   height: var(--tr-w);
   margin: 0 var(--tr-gap) 0 0;
   display: inline-block;
-  /* The ink centres on the x-height, not the cap height: the label is
-     mixed case, so the body of the word sits between the baseline and the
-     x-line and a mark levelled with the capitals rides above it.  The ink is
-     the middle half of the box, so the box hangs 3.5px below the line to put
-     its centre on 8.00px of x-height, measured off the face at 16px. */
-  vertical-align: -3.5px;
+  /* Set by eye, and it lands between the two figures: the ink centres 5.0px
+     above the baseline where the x-height's middle is 4.0 and the capitals'
+     is 5.68.  Nearer the x-height, which is what a mark beside a mixed-case
+     word wants, but not sitting all the way down on it. */
+  vertical-align: -2.5px;
 }
 /* Coloured by what each one does, not decoratively: record takes the page's
    own red, which is also what the LED lights, play the ok green, and stop
