@@ -233,6 +233,121 @@ public class ControlRegression extends SequenceEditRegression {
         println("PASS pitch-aware up/down/mirror: "+(lean?"factory arp ignores stamps":"real octave latching and signed stamps")
             +", equal pitches, all/none held, missing current, regular arp");
     }
+    void sound() throws Exception { controlScan(); call(0x80003590L); pitch(); }
+    void noteUp(int key) throws Exception { e.writeRegister("R12",key); call(0x8001a280L); }
+    void latchFixture() throws Exception {
+        w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,0); controlScan();
+    }
+    void latchRecording() throws Exception {
+        // WRITE entered from the latching arp: every physical press records
+        // the pitch it SOUNDS - the key table plus the transpose published
+        // at 0x60a0 - never a slot stamp, which does not exist yet for a
+        // fresh press and is somebody else's note for a reused slot.  The
+        // published transpose can walk one unit between scans (the latch
+        // toggle's own tolerance exists for the same reason), so repeats
+        // are compared one unit wide.
+        setup(0,false,1); latchFixture(); octavePad(3);
+        key(0); sound();
+        long high=r(S+0x352,2);
+        check("fresh latch sounds above its table pitch",high>r(0x854,2));
+        check("fresh latch records the pitch it sounds",r(0x61e0,1)==1&&r(0x6160,2)==high);
+        noteUp(0); octavePad(1); key(0); sound();
+        check("repeat press records today's octave, not the old stamp",
+            r(0x61e0,1)==2&&r(0x6162,2)==r(0x854,2));
+        // A slot latched and unlatched OUTSIDE the take keeps its stamp;
+        // recording that key afterwards must not resurrect it.
+        setup(0,false,1); command(2); latchFixture();
+        octavePad(3); key(0); sound(); noteUp(0); key(0); sound();
+        check("fixture unlatches slot zero with its stamp left",
+            r(S+0x21b,1)==0&&(short)r(0x60a2,2)!=0);
+        octavePad(1); command(0); key(0); sound();
+        check("a reused slot records the pitch it sounds",
+            r(0x61e0,1)==1&&r(0x6160,2)==r(S+0x352,2));
+        // Recorded steps are absolute: playback adds the live pad transpose
+        // once, and a still-held latch slot must not re-base it again.
+        setup(0,false,1); latchFixture(); octavePad(3);
+        key(0); sound(); noteUp(0);
+        long wanted=r(S+0x352,2);
+        key(0); sound(); noteUp(0); key(0); sound();
+        check("every repeat press is recorded, the last still held",
+            r(0x61e0,1)==3&&r(S+0x21b,1)==1);
+        check("repeat presses record the absolute pitch",
+            Math.abs((short)r(0x6162,2)-wanted)<=1&&Math.abs((short)r(0x6164,2)-wanted)<=1);
+        command(1); octavePad(1); w(S+0x2fc,2,0x420);
+        externalBeat(); sound(); externalBeat(); sound();
+        check("playback in latch mode plays the step it recorded",
+            r(S+0x352,2)==r(0x61e2,2));
+        octavePad(3); externalBeat(); sound();
+        check("the pad transposes playback exactly once",
+            r(S+0x352,2)==r(0x61e2,2)+(short)r(0x60a0,2));
+        octavePad(1); arp(2); sound();
+        check("leaving latch mode does not move the step",r(S+0x352,2)==r(0x61e2,2));
+        println("PASS latch recording: fresh press, repeat, reused slot, absolute playback with a held slot");
+    }
+    void recordedBounds() throws Exception {
+        // The recorder must never store a pitch the DAC cannot play:
+        // octaves stacked on the top key clamp to 4095 exactly as the
+        // sounding path clamps, and the completed take stays saveable -
+        // one out-of-range step used to make the whole take unsaveable.
+        setup(0,false,1);
+        w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,1023); musicalScan(); octavePad(3);
+        key(28); sound(); noteUp(28); key(28); sound();
+        check("stacked transpose sounds at the DAC limit",r(S+0x352,2)==4095);
+        check("recorded steps stay inside the DAC range",
+            r(0x61e0,1)==2&&r(0x6160,2)==4095&&r(0x6162,2)==4095);
+        int before=writes; command(0);
+        if(persistent) {
+            long page=call(NEWEST);
+            check("the take with clamped steps saves",writes>before&&r(page+24,1)==2);
+            cold();
+            check("and survives a power cycle",r(0x61e0,1)==2);
+        }
+        // Both clamp ends of the leaf itself, driven directly.
+        arp(1);
+        w(0x60a0,2,5000); e.writeRegister("R12",0); call(0x8001dce0L);
+        check("recorded pitch clamps high",reg("R11")==4095);
+        w(0x60a0,2,0xf448); e.writeRegister("R12",0); call(0x8001dce0L);
+        check("recorded pitch clamps low",reg("R11")==0);
+        println("PASS recorded pitch bounds: DAC-limit take records, saves and restores; both clamp ends");
+    }
+    void heldPresetEdit() throws Exception {
+        // Holding a pad while its knob edits the preset is a voltage
+        // gesture: the editor's following flag declines the bare-pad hold,
+        // so an edit during recording neither previews nor deletes.  A
+        // hold without an edit still acts.
+        for(int pad:new int[]{1,2}) {
+            setup(4,false,0);
+            w(S+0x30a+2*pad,2,200); controlScan();
+            press(pad,0); w(S+0x30a+2*pad,2,600);
+            for(int i=0;i<70;i++)controlScan();
+            check("the editor is following the held pad",
+                r(0x614a+pad,1)==1&&r(0x613a+2*pad,2)==600);
+            check("a preset edit is not a sequencer command",
+                r(0x6158,1)==1&&r(0x61e0,1)==4&&r(0x62fe,1)==0);
+            release(pad);
+            press(pad,0);
+            for(int i=0;i<70;i++)controlScan();
+            check("an editless hold still previews or deletes",
+                pad==1?r(0x62fe,1)==1:r(0x61e0,1)==3);
+            release(pad);
+        }
+        println("PASS preset edits during recording decline the bare-pad hold; editless holds still act");
+    }
+    void retainedStartup() throws Exception {
+        // SRAM survives a DFU: another image's pickup stamps must not
+        // freeze the knobs of a build without sequencer or persistence,
+        // whose first-use fill used to stop short of the stamp cells.
+        fresh();
+        w(0x602a,2,0);
+        for(int k=0;k<4;k++) { w(0x62e8+2*k,2,601); w(S+0x30a+2*k,2,600); }
+        call(0x8001ab60L);
+        check("first use clears every retained pickup stamp",
+            r(0x62e8,2)==0&&r(0x62ea,2)==0&&r(0x62ec,2)==0&&r(0x62ee,2)==0);
+        controlScan(); call(0x8000307cL); call(0x80019d44L);
+        check("the knobs follow their physical positions from the first scan",
+            r(0x60f2,1)==75&&r(0x60e6,2)==600&&r(0x60ea,2)==600);
+        println("PASS retained-SRAM startup: pickup stamps cleared, no knob freeze");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         transpose=args.length>0&&args[0].equals("trn");
@@ -248,6 +363,10 @@ public class ControlRegression extends SequenceEditRegression {
             if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq&&transpose)try { recordedBounds(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq)try { heldPresetEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(lean)try { retainedStartup(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean);
         } finally { if(e!=null)e.dispose(); }

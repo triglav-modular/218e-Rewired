@@ -156,10 +156,13 @@ def audit_call_pools(image_path) -> list[str]:
 # preset-4 role isolation, the corrected up-down zone, early transpose
 # ownership, held-only reverse history, and pitch-aware note ordering; and
 # for the millisecond-timed clock release, latch-aware sequence recording,
-# held preview/backspace, the pad-1 record toggle and preset knob pickup.
+# held preview/backspace, the pad-1 record toggle and preset knob pickup;
+# and again for the audit corrections: recording at today's transpose with
+# clamped pitches, playback without a second latch re-base, preset edits
+# declining the bare-pad hold, and the unconditional first-use fill.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "730549cc4c5bc8f4598c3eb196ee9e3619a882cfb429655c0aa467bdcf62de50",
+    "historical_config": "679225781f050f061f88b0f0910bdd255d529522595cca1b127173da41eb635d",
 }
 
 

@@ -1785,16 +1785,23 @@ function assembleProgram() {
         begin(0x8001a8a0);
         emit("STM --SP,R7,LR");
         emit("MCALL PC[0x8001ac80]");
-        emit("MOV R8,0x38b0");
-        emit("LD.SH R9,R8[0x0]");
-        emit("SUB R9,R12,R9 << 0x0");
         emit("MOV R8,0x60a0");
+        emit("LD.SH R9,R8[-0x27f0]");   // state+0x350, read off the publish base
+        emit("RSUB R9,R12");
         emit("ST.H R8[0x0],R9");
         if (feature("arp_latch")) {
             emit("MOV R10,0x38a0");
             emit("LD.UB R11,R10[0x0]");
             emit("CP.W R11,0x1");
             emit("BR{ne} 0x8001a8e4");
+            // While the sequencer PLAYS, the sounding note is a recorded
+            // step whose pitch is already absolute, and the last arp key is
+            // whatever key that step happened to name.  Re-basing off that
+            // key's live latch slot would transpose the step a second time,
+            // so playback keeps the pitch it was handed.
+            emit("LD.UB R11,R8[0xb8]");     // 0x60a0 + 0xb8: sequencer mode
+            emit("CP.W R11,0x2");
+            emit("BR{eq} 0x8001a8e4");
             emit("LD.UB R10,R10[0xd]");
             // 0x1d with BR{ge}, not 0x1c with BR{hi}: the key arrives
             // zero-extended from LD.UB, so the signed test is the same test,
@@ -1813,8 +1820,11 @@ function assembleProgram() {
             emit("BR{ne} 0x8001a8e4");
             emit("ADD R8,R8,R10 << 0x1");
             emit("LD.SH R8,R8[0x2]");
-            emit("SUB R8,R8,R9 << 0x0");
-            emit("ADD R12,R8");
+            // RSUB leaves transpose-now MINUS the stamp, so subtracting it
+            // rebases R12 onto the stamp - two bytes shorter than the sum
+            // the other way round, and those bytes pay for the mode check.
+            emit("RSUB R8,R9");
+            emit("SUB R12,R8");
         }
         padTo(0x8001a8e4);
         emit("MCALL PC[0x8001a8ec]");
@@ -2176,7 +2186,7 @@ function assembleProgram() {
         // The blend can also precede the pressure pass: publish known-zero
         // samples for all 29 physical keys until that pass fills the cache.
         emit("MOV R9,0x6100");
-        // 0xef, not 0x1c: the run reaches from the pressure cache all the way
+        // 0xff, not 0x1c: the run reaches from the pressure cache all the way
         // over the preset block, the arp's own cells, the sequencer, the
         // clock divider, its FIFO and the borrowed strip mode - everything in
         // this gap.  SRAM survives a DFU, so anything left out here starts as
@@ -2186,10 +2196,12 @@ function assembleProgram() {
         // or - the one that was already wrong at 0x25 - two of the four
         // preset following flags, which would have stopped the pad-4 chord
         // arming at all.
-        // 0xff with persistence OR sequencing on: preview ownership and the
-        // explicit CLEAR event at 0x62fe/0x62ff need initialization even in
-        // builds that do not save musical data.
-        emit(StringFormat("MOV R12,0x%x", block("persist") || block("seq_chord") ? 0xff : 0xef));
+        // The last sixteen halfwords used to be conditional on persistence
+        // or sequencing, but the knob pickup stamps at 0x62e8 belong to the
+        // remapped knobs, which every build carries - and a stale stamp
+        // from the previous image froze those knobs at power-up until each
+        // was moved.  The full run is unconditional now.
+        emit("MOV R12,0xff");
         padTo(0x8001ac40);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -4452,11 +4464,18 @@ function assembleProgram() {
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x2");
         emit("BR{eq} 0x8001d7f8");      // held but not armed is NOT a bare press
+        // A pad the preset editor is FOLLOWING is setting a voltage, not
+        // running the sequencer: the hold that reached here belongs to the
+        // edit, and acting on it previewed or deleted mid-edit.  Following
+        // is sticky until the release, so the whole hold is declined.
+        emit("MOV R8,0x614a");
+        emit("LD.UB R8,R8[R11 << 0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001d7f8");
         emit("CP.W R11,0x1");
         emit("BR{eq} 0x8001d7b0");      // pad 2: hear it back
         emit("CP.W R11,0x2");
         emit("BR{eq} 0x8001d7c8");      // pad 3: take the last one back
-        emit("RJMP 0x8001d7f8");
         padTo(0x8001d7b0);
         emit("MCALL PC[0x8001d7f4]");   // seq_preview_start
         emit("RJMP 0x8001d7f8");
@@ -4840,13 +4859,19 @@ function assembleProgram() {
         // The pitch a key actually SOUNDS.  R12 = key, returns R11, and R12
         // is left as the caller had it.  A leaf, and it must stay one.
         //
-        // With the latching arp the key table is only half the answer: an
-        // octave-displaced latch keeps its displacement in the signed stamp
-        // at 0x60a2, and the arp adds it when it plays.  Recording read the
-        // table alone, so entering record from a latched chord wrote those
-        // notes back at their undisplaced octave and the take disagreed with
-        // what had just been sounding.  This is the sum arp_pitch_rank ranks
-        // by, so recorder and selector now agree what a key is worth.
+        // With the latching arp the key table is only half the answer: a
+        // press is worth the table pitch plus TODAY'S transpose - the same
+        // sum the latch toggle stamps when it lets the press through.  An
+        // earlier version read the SLOT stamp at 0x60a2 instead, but the
+        // recorder runs before the toggle, so a fresh press read a stamp
+        // that had not been written yet and a reused slot read the note
+        // that used to live there.  0x60a0 is published every scan and
+        // belongs to no slot.
+        //
+        // The sum is then clamped to 0..4095 exactly as the sounding path
+        // clamps it.  Octaves stacked on the top keys can push past the
+        // DAC's range, and persistence rightly refuses a step it could not
+        // play back - one such note left the whole take unsaveable.
         begin(0x8001dce0);
         emit("MOV R11,0x854");
         emit("ADD R11,R11,R12 << 0x1");
@@ -4855,10 +4880,19 @@ function assembleProgram() {
         emit("LD.UB R8,R8[0x340]");
         emit("CP.W R8,0x1");
         emit("BR{ne} 0x8001dd00");      // not latching: the table is the pitch
-        emit("MOV R8,0x60a2");
-        emit("LD.SH R8,R8[R12 << 0x1]");
+        emit("MOV R8,0x60a0");
+        emit("LD.SH R8,R8[0x0]");
         emit("ADD R11,R8");
         padTo(0x8001dd00);
+        emit("CP.W R11,0x0");
+        emit("BR{ge} 0x8001dd08");
+        emit("MOV R11,0x0");
+        padTo(0x8001dd08);
+        emit("MOV R8,0xfff");
+        emit("CP.W R11,R8");
+        emit("BR{lt} 0x8001dd12");      // {lt}, which has the short encoding;
+        emit("MOV R11,R8");             // equal rewrites 4095 with itself
+        padTo(0x8001dd12);
         emit("MOV PC,LR");
         finish("seq_record_pitch", 0x8001dd20);
 

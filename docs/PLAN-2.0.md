@@ -20,7 +20,8 @@ WRITE. The next beat after the last step ends preview without repeating step
 0, so the last step keeps its duration. Preview ignores the BLEND shuffle
 setting; ordinary PLAY retains its existing shuffle and wrap behavior.
 
-**Pad 3 backspaces** one step per press. It shortens the take and clears the
+**Pad 3 backspaces** one step per hold (see the hold requirement in the
+field-fix section below). It shortens the take and clears the
 freed pitch/key slot; the next recorded note reuses that slot. Persistence
 already canonicalizes inactive slots to zero, independently of this cleanup.
 
@@ -63,7 +64,8 @@ the factory 1 ms counter (0x61e6) into 0x62f6 at each accepted edge, and
 `seq_record` recorded the key table's pitch; a latched key can carry an
 octave stamp (0x60a2 table) on top, so the take came back an octave off.
 `seq_record_pitch` (0x8001dce0) returns table pitch plus, in latch mode
-only, the slot's stamp - the same sum the arp plays.
+only, the transpose published at 0x60a0 - the same sum the latch toggle
+stamps for the press (the audit below moved it off the slot stamp).
 
 **Preview and backspace want a deliberate hold.**  A bare tap on pad 2 or 3
 also means "octave 2" or "octave 3", so an instant fire made octave 3
@@ -89,6 +91,60 @@ stays put until the knob moves past the editor's own 8-unit threshold.
 Knob 4's held-pad pickup prediction is unchanged; a parked stamp also stops
 a bare pad touch from snapping the zone.  Verified by emulating the shipped
 bytes: 25 cases across all four knobs, thresholds exact in both directions.
+
+### The audit of the field-fix build (2026-08-28)
+
+An emitted-firmware audit of commit 8373988 confirmed five defects in the
+fixes above; all five are corrected.
+
+**The recorder read a slot stamp it should not trust.**  `seq_record` runs
+BEFORE the latch toggle (an unlatching repeat returns -1 and would lose the
+press), so the stamp at 0x60a2 was not yet written for a fresh press, and a
+slot latched some other time still carried its old note.  A fresh
+high-octave press recorded the undisplaced pitch; a reused slot recorded
+the note that USED to live there.  `seq_record_pitch` now reads the
+published transpose at 0x60a0 - the value the toggle is about to stamp -
+and touches no slot.
+
+**A recorded pitch could be unsaveable.**  Octaves stacked on the top key
+push table-plus-transpose past 4095; persistence permits only 0..4095,
+REST and TIE, so one such step made the save exhaust its replacement pages
+and the whole take was lost on the next power cycle.  The recorded sum is
+now clamped to 0..4095 exactly as the sounding path clamps it.
+
+**Playback re-based a step off a live latch slot.**  `transpose_capture`'s
+per-note hold re-bases the sounding note to its stamp whenever the last
+arp key is a held latch slot - right for live play, wrong while the
+sequencer PLAYS a recorded step whose pitch is already absolute: the
+octave applied twice.  The re-base now steps aside while 0x6158 reads 2
+(playback); the pad transpose downstream still applies, once.  Two RSUB
+rewrites paid for the mode check inside the same cave.
+
+**A preset edit could fire preview or backspace.**  The bare-pad hold only
+measured time, so holding a pad to set its preset voltage while recording
+previewed (pad 2) or deleted a step (pad 3) after the hold threshold.
+`seq_edit` now declines the pad while the editor's following flag
+(0x614a + pad) owns it; following is sticky until release, so the whole
+hold is declined.  An editless hold still acts.
+
+**Lean builds left the pickup stamps uninitialised.**  The first-use fill
+stopped at 0x62df unless persistence or the sequencer extended it, but the
+knob pickup stamps at 0x62e8 belong to the remapped knobs, which every
+build carries.  Retained SRAM from a different image read as parked stamps
+and froze the knobs at power-up until each was moved.  The fill now covers
+0x6100..0x62ff unconditionally.
+
+The audit also modelled the external-clock timebase and could not confirm
+on hardware that COUNT and the factory CPU-frequency word (RAM 0x29cc)
+agree; only the release timeout is measured in milliseconds, while low
+qualification, refractory time, period acquisition and attack spacing
+still trust that word.  Measuring COUNT against the millisecond counter on
+the instrument is the outstanding check.
+
+Coverage: `ControlRegression.java` gained latch recording (fresh press,
+repeat, reused slot, absolute playback with a held slot), recorded pitch
+bounds with the persistent save, preset-edit holds against bare-pad
+commands, and the retained-SRAM lean startup.
 
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
