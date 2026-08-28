@@ -130,13 +130,15 @@ pressure_portamento = true
 # Sixty-four steps, recorded and played from the preset pads.  Hold pad 4 for
 # about a second until it blinks, then - still holding it - press pad 1
 # to record, pad 2 to play or stop, pad 3 to clear.  Recording APPENDS to
-# what is there; pad 3 is the only thing that empties it.  Pad 4 stays held, so the
+# what is there; the pad-3 chord clears it. Pad 4 stays held, so the
 # presses can follow one another without letting go. While recording, touch
 # the lower half of the pitch strip for a rest or the upper half for a tie,
 # one per touch; a tie slides into the note after it. Play starts the sequence's
 # clock and stop ends it, independently of the arp switch. RATE still sets
 # tempo (or external-clock division); the arp is silent while recording.
 # Stopping returns the keyboard to the physical arp switch's normal mode.
+# With pad 4 released while recording, pad 2 previews the recorded order
+# once and returns to WRITE; pad 3 backspaces one step per press.
 sequencer = false
 
 # 11. EXTERNAL CLOCK DIVIDE
@@ -150,6 +152,8 @@ clock_divide = false
 # Save the remapped preset voltages and sequence across power cycles.
 # Save a changed sequence when leaving record or clearing it; save a
 # changed preset when its pad is released. No idle or arp-off requirement.
+# Preview and backspace keep WRITE open, even when backspace empties it.
+# Explicit STOP during preview or the CLEAR chord finishes/saves the take.
 # Flash writes can briefly interrupt playback/capture. DFU updates erase
 # these records. See docs/PERSISTENCE.md for the format and limits.
 persist = false
@@ -178,7 +182,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "5acb6d45f7bc8a5faf4f96f88715f4e3e62c483309464c4bd8176204fb0e9af7"
+golden_sha256  = "9efd500bbb7cf3750d38030ab86b76ba49a0d3841cd9edf1123fb74ae6a205ea"
 
 
 [tools]

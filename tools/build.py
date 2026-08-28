@@ -885,16 +885,16 @@ RAM_REGIONS = [
     # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
     (0x62E0, 0x62E1, "persistence request/result"),
     (0x62E1, 0x62E2, "which rotation page holds the newest record"),
-    (0x62E2, 0x62E3, "sequence length last scan, for clear detection"),
     (0x62E4, 0x62E8, "the sequence number that record carries"),
     # The scan watches for two gestures ENDING, so it has to remember what
     # they looked like on the previous scan.
-    (0x62F8, 0x62F9, "the sequencer mode last scan"),
+    (0x62F8, 0x62F9, "logical sequencer mode last scan, preview counts as WRITE"),
     (0x62F9, 0x62FD, "each preset was edited since its last full release"),
     (0x62FD, 0x62FE, "the stored record has been restored this power-up"),
     # A preview is a take being listened back to, not a take being
     # finished: it must not read as leaving record mode.
     (0x62FE, 0x62FF, "a one-shot preview of the take is playing"),
+    (0x62FF, 0x6300, "explicit CLEAR event awaiting persistence scan"),
     # The record staged for writing, 8-byte aligned and a multiple of 8 long,
     # so the flash driver takes its simple aligned path - the same reason the
     # factory stages its own record rather than writing from scattered state.
@@ -1805,7 +1805,8 @@ def main() -> None:
                  "seq_pulse_drop", "pulse_drop_pool", "seq_next_step",
                  "seq_noteoff", "seq_noteoff_hook",
                  "seq_trigger_led", "seq_trigger_led_hook",
-                 "seq_edit", "seq_preview_step"):
+                 "seq_edit", "seq_preview_step", "seq_command",
+                 "seq_preview_next", "seq_preview_start", "seq_preview_transport"):
         blocks[name] = seq
     blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")

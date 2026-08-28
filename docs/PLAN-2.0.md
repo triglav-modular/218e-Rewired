@@ -15,39 +15,37 @@ That contract supersedes the historical sampled-low, rejection-budget,
 Two things a bare pad press means while a take is being recorded - bare
 meaning pad 4 is NOT held, so it cannot be confused with the chord.
 
-**Pad 2 previews**: play what is there from the top, once, and stop.  Pad 3
-is a backspace: the last step goes, and the cursor with it, so the next note
-rewrites that slot.
+**Pad 2 previews** the recorded order from the top, once, then returns to
+WRITE. The next beat after the last step ends preview without repeating step
+0, so the last step keeps its duration. Preview ignores the BLEND shuffle
+setting; ordinary PLAY retains its existing shuffle and wrap behavior.
 
-**Backspace ERASES rather than just shortening.**  Dropping the count alone
-would play correctly - the steps past it are never reached - but it leaves
-the old notes in the array for anything that reads past the count, the saved
-record included, and four backspaces followed by one note would carry three
-stale steps into flash.  Each press clears the pitch AND the key of the slot
-it gives up.
+**Pad 3 backspaces** one step per press. It shortens the take and clears the
+freed pitch/key slot; the next recorded note reuses that slot. Persistence
+already canonicalizes inactive slots to zero, independently of this cleanup.
 
-**The preview ends where the sequence would otherwise wrap.**  That is the
-only place in the firmware that can see the take run out, so the wrap test
-moved into `seq_preview_step`, which answers with the step to play or -1 to
-sound nothing.  Without a preview in flight it wraps exactly as it always
-did; with one, it clears the flag, hands the sequencer back to recording
-through the same transport the chord uses, and sounds nothing on the way out
-so the ending does not play step 0 again.
+**Preview is part of the open WRITE session.** `seq_select` calls
+`seq_preview_step`, and `seq_preview_next` preserves the end sentinel instead
+of wrapping it away. Preview start/end clear pending audition, strip history
+and tie state through `seq_preview_transport` before shared clock transport.
+Persistence tracks preview as logical WRITE, so neither listening back nor
+returning to WRITE saves. Every explicit chord command clears preview:
+STOP finishes/saves the take, RECORD resumes editing, and CLEAR saves empty.
 
-**A preview must not look like the end of a take.**  Persistence saves when
-the mode leaves record, and a preview leaves record to play - so it would
-spend an erase, and a stalled CPU, every time you listened back.  The trigger
-now ignores the transition while the preview flag is up.  Leaving record for
-real still saves, because by then the flag is down.
+**Backspace is not CLEAR.** `seq_command` latches explicit CLEAR separately;
+the persistence scanner consumes that event rather than inferring it from
+length becoming zero. Deleting the last step remains an unfinished edit,
+even if an independent preset release causes a save in the meantime.
 
-**The press edge is computed once, for both readings.**  It used to sit
-behind the armed test, so a bare press never reached anything; now the edge
-comes first and the armed test only chooses between the chord and these two.
+**The press edge is computed once, before dispatch.** Both bare actions also
+check raw pad-4 hold state, so a held but not-yet-armed pad cannot be mistaken
+for a bare press. A pad already down when the hold arms is not a new press.
 
-Verified against the built image: 25 scenarios covering the erase, the
-four-in-a-row case, an empty take, preview from a moved cursor, the stop at
-the end, the unchanged wrap when no preview is running, and both pads being
-inert outside record mode.
+Permanent emitted-firmware coverage is in `SequenceEditRegression.java`,
+run by `tools/test_persistence.py`: real pad scans, internal/external clocks,
+0/1/4/64 steps, rests/ties, all three arp positions, repeat preview, ordinary
+looping, cancellation, arming edges, repeated delete, and save/restart
+boundaries. The runner also supports sequencer variants without persistence.
 
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps

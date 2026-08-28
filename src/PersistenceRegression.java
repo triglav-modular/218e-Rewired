@@ -150,7 +150,7 @@ public class PersistenceRegression extends GhidraScript {
     }
     void seed() throws Exception {
         for(int i=0;i<4;i++) { w(0x613a+2*i,2,400+100*i); w(0x6160+2*i,2,500+100*i); w(0x61ee+i,1,i); }
-        w(0x61e0,1,4); w(0x62e2,1,4);
+        w(0x61e0,1,4);
         check("initial save succeeds",saveLive()==0&&writes==2&&erases==1&&programs==2);
         check("first slot and generation",call(NEWEST)==BASE&&r(0x62e1,1)==0&&r(0x62e4,4)==1);
     }

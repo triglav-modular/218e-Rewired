@@ -3,6 +3,7 @@
 
     python3 tools/test_persistence.py
     python3 tools/test_persistence.py --mode seq-clock --quick
+    python3 tools/test_persistence.py --mode seq --no-persist --quick
 
 Requires Ghidra's AVR32 language. All images, configs, logs and private
 Ghidra projects stay under build/persistence-regression-*. Shared build
@@ -27,8 +28,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("presets", "seq", "clock", "seq-clock", "all"), default="all")
     parser.add_argument("--quick", action="store_true", help="skip the clock frequency/duty sweep")
+    parser.add_argument("--no-persist", action="store_true", help="test volatile sequencer edits/transport (requires --mode seq or seq-clock)")
     parser.add_argument("--ghidra", type=Path)
     args = parser.parse_args()
+    if args.no_persist and args.mode not in ("seq", "seq-clock"):
+        parser.error("--no-persist requires --mode seq or seq-clock")
     base = (REPO / "config/218e.toml").read_text()
     settings = tomllib.loads(base).get("tools", {})
     local = REPO / "config/local.toml"
@@ -47,7 +51,7 @@ def main() -> None:
     try:
         for mode in modes:
             text = base
-            for option, value in (("persist", True), ("sequencer", "seq" in mode), ("clock_divide", "clock" in mode)):
+            for option, value in (("persist", not args.no_persist), ("sequencer", "seq" in mode), ("clock_divide", "clock" in mode)):
                 text, n = re.subn(rf"^{option} = (?:true|false)$", f"{option} = {str(value).lower()}", text, flags=re.M)
                 if n != 1:
                     raise SystemExit(f"Cannot set {option} in regression config")
@@ -66,9 +70,10 @@ def main() -> None:
             if result.returncode:
                 raise SystemExit(result.stdout + result.stderr)
             command = [str(headless), str(work), "persistence", "-import", str(image),
-                       "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src"),
-                       "-postScript", "PersistenceRegression.java", mode]
-            if "clock" in mode:
+                       "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src")]
+            if not args.no_persist:
+                command += ["-postScript", "PersistenceRegression.java", mode]
+            if "clock" in mode and not args.no_persist:
                 command += ["-postScript", "PersistenceClockRegression.java", "seq" if "seq" in mode else "arp"]
                 if args.quick:
                     command.append("quick")
@@ -76,6 +81,8 @@ def main() -> None:
                 command += ["-postScript", "SequenceTransportRegression.java", mode]
                 if args.quick:
                     command.append("quick")
+                command += ["-postScript", "SequenceEditRegression.java", mode,
+                            "volatile" if args.no_persist else "persist"]
             print(f"Emulating {mode} firmware...", flush=True)
             result = subprocess.run(command, cwd=REPO, text=True, capture_output=True)
             output = result.stdout + result.stderr
@@ -85,9 +92,9 @@ def main() -> None:
                 if "Regression.java>" in line:
                     print(line.split("Regression.java>", 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
             if (result.returncode or "ERROR REPORT SCRIPT ERROR" in output
-                    or "PERSISTENCE REGRESSION PASS:" not in output
-                    or ("clock" in mode and "CLOCK REGRESSION PASS:" not in output)
-                    or ("seq" in mode and "SEQUENCE TRANSPORT PASS:" not in output)):
+                    or (not args.no_persist and "PERSISTENCE REGRESSION PASS:" not in output)
+                    or (not args.no_persist and "clock" in mode and "CLOCK REGRESSION PASS:" not in output)
+                    or ("seq" in mode and ("SEQUENCE TRANSPORT PASS:" not in output or "SEQUENCE EDIT PASS:" not in output))):
                 raise SystemExit(f"Persistence regression failed; see {log}\n{output[-5000:]}")
     finally:
         for name, data in saved.items():

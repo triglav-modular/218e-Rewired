@@ -150,10 +150,11 @@ def audit_call_pools(image_path) -> list[str]:
 # when rests and ties moved to an absolute strip position, which moved the
 # clear once more; and for interrupt-timestamped clock capture, whose FIFO
 # extends that clear through 0x62df; and for canonical persistence plus
-# independent sequence transport and completed-gesture persistence.
+# independent sequence transport, completed-gesture persistence, and
+# one-shot preview/explicit CLEAR ownership.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "1b0d779fb7a6f55f650dbf3c45b134b58b0de76acb7ca6b85ffc980870dc35b9",
+    "historical_config": "0cb5611ffa75da8cd02dab9b0141195abf55ff29117c5728601eb097fde33981",
 }
 
 

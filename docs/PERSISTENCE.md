@@ -9,8 +9,16 @@ when knob remapping is disabled.
 
 Saving is automatic at the end of an edit:
 
-- The sequence saves on leaving record mode, including directly into PLAY,
-  or on CLEAR from stopped, recording or playing.
+- The sequence saves on finishing WRITE, including directly into normal
+  PLAY, or on explicit CLEAR from stopped, recording or playing.
+- Bare pad 2 previews the take once and returns to WRITE without saving.
+  Preview keeps the WRITE session open. An explicit STOP during preview
+  finishes and saves the take; RECORD resumes WRITE without saving, and
+  CLEAR saves the cleared take.
+- Bare pad 3 backspaces while recording. Even deleting the last step is
+  an unfinished edit, not CLEAR: save it by finishing WRITE or using the
+  pad-4 + pad-3 CLEAR chord. Releasing a preset meanwhile still saves only
+  that preset, not the unfinished sequence.
 - A preset saves when its pad is fully released after a new value was
   written. The intermediate touched-but-not-held state is not a release.
 - Only changed musical data causes a commit. An unchanged take, an empty
@@ -104,6 +112,9 @@ The final commit separates an unverified body from a boot-loadable record.
 
 The completed-edit snapshot is the 204-byte musical payload at
 `0x6400..0x64cb`, initialized from restored data (or defaults) on every boot.
+`0x62f8` tracks logical mode (preview counts as WRITE); `0x62fe` is the
+preview flag. Explicit CLEAR latches an event at `0x62ff`, consumed by the
+same scan. Length reaching zero is not used to infer CLEAR.
 `0x62f9..0x62fc` latch which presets were edited until each pad is fully
 released. `persist_capture` at `0x8001d280` accepts a mask: bits 0–3 select
 preset pads and bit 4 selects the sequence. It canonicalizes and compares
@@ -115,6 +126,9 @@ Run `python3 tools/test_persistence.py` (requires Ghidra). `--quick` omits
 only the clock frequency/duty sweep. The runner builds presets-only,
 sequencer, clock, and sequencer+clock variants in private `build/` folders,
 restores shared build metadata and never invokes a flasher.
+For the same sequencer edit/transport checks with persistence disabled, run
+`python3 tools/test_persistence.py --mode seq --no-persist --quick` and
+repeat with `--mode seq-clock`.
 
 `src/PersistenceRegression.java` executes emitted save/load/CRC instructions,
 startup/gesture hooks and the real factory copy wrapper. Only controller
@@ -129,11 +143,20 @@ modeled scheduling pause, without fabricating unobserved input events.
 preset remains held and fails if that unfinished edit writes flash.
 Both assemblers and the browser builder must also agree on image bytes.
 
+`src/SequenceEditRegression.java` drives real pad scans and internal/external
+clock dispatch: 0/1/4/64-step previews, three arp-switch positions, recorded
+order with BLEND turned up, rests/ties, normal looping, preview cancellation,
+unarmed pad-4 holds, repeated backspaces, empty-edit save isolation and restart.
+It shares the transport suite's narrowly scoped factory soft-float workaround;
+the sequencer, gesture and save decisions are not mocked.
+
 The same runner checks independent sequence transport; see [CLOCK.md](CLOCK.md).
 
 On the instrument, verify power cycles immediately after completed edits,
 clear-and-restart, warm reset, save latency and interrupted-save recovery.
 Release a changed preset while recording and playing; verify that only
 completed edits return after restart. Check clock behavior during an actual
-save and clean continuation afterward. Emulation does not measure physical
+save and clean continuation afterward. Preview to completion, cancel a
+preview with STOP, and backspace to empty before CLEAR; check the next take
+still saves. Emulation does not measure physical
 flash, supply collapse, analog conditioning or output timing.

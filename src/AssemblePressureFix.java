@@ -2373,10 +2373,10 @@ public class AssemblePressureFix extends GhidraScript {
         // or - the one that was already wrong at 0x25 - two of the four
         // preset following flags, which would have stopped the pad-4 chord
         // arming at all.
-        // 0xff with persistence on, so the run also reaches its cells at
-        // 0x62e0 - including the two shadows the scan compares against to
-        // notice a gesture ending, which must start life agreeing with it.
-        emit(String.format("MOV R12,0x%x", block("persist") ? 0xff : 0xef));
+        // 0xff with persistence OR sequencing on: preview ownership and the
+        // explicit CLEAR event at 0x62fe/0x62ff need initialization even in
+        // builds that do not save musical data.
+        emit(String.format("MOV R12,0x%x", block("persist") || block("seq_chord") ? 0xff : 0xef));
         padTo(0x8001ac40L);
         emit("ST.H R9[0x0],R8");
         emit("SUB R9,-0x2");
@@ -3308,14 +3308,13 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001b590L); // the strip, per scan
         finish("seq_chord", 0x8001b320L);
 
-        // Entering a mode clears what that mode is about to write: record
-        // starts from an empty sequence, play starts from its first step.
-        // R9 = the mode being entered.
+        // Explicit pad transport: record appends, play starts at the top,
+        // and CLEAR alone erases the take. Cancel preview ownership here,
+        // not in the shared transport used to start/end a preview internally.
         begin(0x8001b660L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MOV R8,0x61e0");
-        emit("MOV R10,0x0");
+        emit("MCALL PC[0x8001b6b4]");   // seq_command: R8=steps, R10=zero
         // Whatever this press means, nothing transient carries into it.
         // Stopping mid-tie used to leave the slide armed, so the first note
         // after restarting held its gate and slid in from nowhere; and a
@@ -3360,6 +3359,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R7,PC");
         padTo(0x8001b6b0L);
         word(0x8001d640L); // transport + strip_mode_swap(R9 = new mode)
+        word(0x8001d840L); // seq_command(R11 = explicit pad command)
 
         padTo(0x8001b6c0L);
         // Everything that has to happen because the sequencer's mode is
@@ -4452,8 +4452,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
         finish("persist_capture", 0x8001d400L);
 
-        // Watch completion of recording/preset edits AND a nonempty-to-empty
-        // sequence transition. A preset's edit flag survives the intermediate
+        // Watch completion of recording/preset edits and explicit CLEAR.
+        // Preview is logically still WRITE, including across multiple scans:
+        // ending it naturally resumes WRITE; an explicit STOP finishes it.
+        // A preset's edit flag survives the intermediate
         // touched-but-not-held level: commit only once that pad is released.
         // Changed completed gestures commit in this scan, regardless of mode,
         // held controls, clock input, gate state or CPU timebase.
@@ -4464,31 +4466,30 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R2,0x0");
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
+        emit("MOV R8,0x62fe");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d424");
+        emit("MOV R9,0x1");             // preview keeps the WRITE session open
+        padTo(0x8001d424L);
         emit("LD.UB R10,R0[0x18]");
         emit("ST.B R0[0x18],R9");
         emit("CP.W R10,0x1");
         emit("BR{ne} 0x8001d440");
         emit("CP.W R9,0x1");
         emit("BR{eq} 0x8001d440");
-        // Unless it is a PREVIEW.  Pad 2 leaves record mode to play the take
-        // back, and that is the middle of a take rather than the end of one:
-        // saving there would spend an erase, and a stalled CPU, every time
-        // you listened to what you had.
-        emit("MOV R8,0x62fe");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001d440");
         emit("MOV R8,0x10");
         emit("OR R2,R8");
         padTo(0x8001d440L);
-        emit("MOV R8,0x61e0");
+        // Length reaching zero is not a CLEAR gesture: backspace can do
+        // that while the take is still being edited. Consume the event
+        // latched by seq_command instead, including CLEAR of an empty edit.
+        emit("MOV R8,0x62ff");
         emit("LD.UB R9,R8[0x0]");
-        emit("LD.UB R10,R0[0x2]");
-        emit("ST.B R0[0x2],R9");
-        emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001d470");
+        emit("MOV R10,0x0");
+        emit("ST.B R8[0x0],R10");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001d470");
+        emit("BR{eq} 0x8001d470");
         emit("MOV R8,0x10");
         emit("OR R2,R8");
         padTo(0x8001d470L);
@@ -4578,9 +4579,6 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R10,0x62e0");
         emit("MOV R9,0x1");
         emit("ST.B R10[0x1d],R9");
-        emit("MOV R8,0x61e0");
-        emit("LD.UB R9,R8[0x0]");
-        emit("ST.B R10[0x2],R9");       // restored length is not a clear gesture
         emit("MCALL PC[0x8001d5b8]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001d5b0L);
@@ -4667,42 +4665,30 @@ public class AssemblePressureFix extends GhidraScript {
         finish("seq_transport", 0x8001d780L);
 
         // A bare pad press while RECORDING - pad 4 not held, so it is not a
-        // chord.  R11 is the pad, 0..2.
+        // chord. R11 is the pad-loop index and must survive the transport.
         begin(0x8001d780L);
-        emit("STM --SP,R0,R7,LR");
+        emit("STM --SP,R0,R7,R11,LR");
         emit("MOV R7,SP");
         emit("MOV R0,0x6154");
         emit("LD.UB R8,R0[0x4]");
         emit("CP.W R8,0x1");
         emit("BR{ne} 0x8001d7f8");      // only while recording
+        emit("MOV R8,0x46f3");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x2");
+        emit("BR{eq} 0x8001d7f8");      // held but not armed is NOT a bare press
         emit("CP.W R11,0x1");
-        emit("BR{eq} 0x8001d7a0");      // pad 2: hear it back
+        emit("BR{eq} 0x8001d7b0");      // pad 2: hear it back
         emit("CP.W R11,0x2");
         emit("BR{eq} 0x8001d7c8");      // pad 3: take the last one back
         emit("RJMP 0x8001d7f8");
-        padTo(0x8001d7a0L);
-        // Preview: play what is there from the top, ONCE.  The end of it is
-        // seq_preview_step's business, which is the only place that can see
-        // the sequence run out before it wraps.
-        emit("MOV R10,0x61e0");
-        emit("LD.UB R8,R10[0x0]");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001d7f8");      // nothing recorded, nothing to hear
-        emit("MOV R8,0x0");
-        emit("ST.B R10[0x1],R8");       // from the top
-        emit("MOV R8,0x62fe");
-        emit("MOV R9,0x1");
-        emit("ST.B R8[0x0],R9");
-        emit("MOV R12,0x6154");
-        emit("MOV R9,0x2");
-        emit("MCALL PC[0x8001d7fc]");   // the same transport the chord uses
-        emit("ST.B R12[0x4],R9");
+        padTo(0x8001d7b0L);
+        emit("MCALL PC[0x8001d7f4]");   // seq_preview_start
         emit("RJMP 0x8001d7f8");
         padTo(0x8001d7c8L);
         // Backspace.  Shortening the sequence is what makes it play right,
-        // but the slot is ERASED as well: four presses have to clear four
-        // steps, or anything that reads past the count - the saved record
-        // included - still has the old notes in it.
+        // and erase the freed slot. Persistence canonicalizes unused slots
+        // separately; this edit does not complete or save the WRITE session.
         emit("MOV R10,0x61e0");
         emit("LD.UB R8,R10[0x0]");
         emit("CP.W R8,0x0");
@@ -4716,10 +4702,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R12,0x61ee");
         emit("ADD R12,R12,R8 << 0x0");
         emit("ST.B R12[0x0],R9");       // and the key it was played on
+        emit("RJMP 0x8001d7f8");
+        padTo(0x8001d7f4L);
+        word(0x8001d880L);              // seq_preview_start
         padTo(0x8001d7f8L);
-        emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001d7fcL);
-        word(0x8001d640L);              // transport + strip_mode_swap
+        emit("LDM SP++,R0,R7,R11,PC");
         finish("seq_edit", 0x8001d800L);
 
         // Which step plays next, asked where the sequence would otherwise
@@ -4751,8 +4738,80 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001d834L);
         emit("LDM SP++,R7,R8,R10,R11,R12,PC");
         padTo(0x8001d838L);
-        word(0x8001d640L);              // transport + strip_mode_swap
+        word(0x8001d8e0L);              // clear audition state + transport
         finish("seq_preview_step", 0x8001d840L);
+
+        // Explicit chord commands cancel preview. Only pad 3 emits CLEAR;
+        // the persistence scan consumes that event, not a length transition.
+        // Leave R8/R10 exactly as seq_enter's transient reset expects them.
+        begin(0x8001d840L);
+        emit("MOV R8,0x62fe");
+        emit("MOV R10,0x0");
+        emit("ST.B R8[0x0],R10");
+        emit("CP.W R11,0x2");
+        emit("BR{ne} 0x8001d854");
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x1],R9");
+        padTo(0x8001d854L);
+        emit("MOV R8,0x61e0");
+        emit("MOV PC,LR");
+        finish("seq_command", 0x8001d860L);
+
+        // A preview traverses the recorded order once, irrespective of the
+        // shuffle knob. Keep count as an end sentinel until seq_select asks
+        // for its next note; wrapping here would make the end unreachable.
+        // Ordinary playback tail-calls the existing shuffle/wrap routine.
+        begin(0x8001d860L);
+        emit("MOV R8,0x62fe");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001d878");
+        emit("LDDPC R8,0x8001d874");
+        emit("MOV PC,R8");              // preserve LR across the long tail call
+        padTo(0x8001d874L);
+        word(0x8001baa0L);
+        padTo(0x8001d878L);
+        emit("SUB R9,-0x1");
+        emit("MOV PC,LR");
+        finish("seq_preview_next", 0x8001d880L);
+
+        begin(0x8001d880L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d8d0");      // an empty take cannot preview
+        emit("MOV R8,0x0");
+        emit("ST.B R10[0x1],R8");
+        emit("MOV R8,0x62fe");
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x0],R9");
+        emit("MOV R12,0x6154");
+        emit("MOV R9,0x2");
+        emit("MCALL PC[0x8001d8dc]");
+        padTo(0x8001d8d0L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001d8dcL);
+        word(0x8001d8e0L);
+        finish("seq_preview_start", 0x8001d8e0L);
+
+        // Preview transitions bypass seq_enter, so reset the same transient
+        // strip/tie/audition state before the shared mode/clock transition.
+        // R9/R12 are the transport's arguments and survive unchanged.
+        begin(0x8001d8e0L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x61e0");
+        emit("MOV R10,0x0");
+        emit("ST.B R8[0x4],R10");
+        emit("ST.B R8[0x5],R10");
+        emit("ST.H R8[0x50],R10");
+        emit("MCALL PC[0x8001d91c]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001d91cL);
+        word(0x8001d640L);
+        finish("seq_preview_transport", 0x8001d920L);
 
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the
@@ -5285,10 +5344,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R11,R10[0x0]");     // how many steps there are
         emit("CP.W R11,0x0");
         emit("BR{eq} 0x8001b400");      // none: silence
-        emit("LD.UB R9,R10[0x1]");      // where we are in them
-        emit("CP.W R9,R11");
-        emit("BR{lt} 0x8001b38a");
-        emit("MOV R9,0x0");
+        emit("MCALL PC[0x8001b408]");   // preview end, or normal wrap
+        emit("CP.W R9,0x0");
+        emit("BR{lt} 0x8001b400");      // end returns silence, not step zero
         padTo(0x8001b38aL);
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R9 << 0x1");
@@ -5363,7 +5421,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         word(arpSelector);
         word(0x8001b2e8L); // what the selector answers while recording
-        word(0x8001baa0L); // seq_next_step
+        word(0x8001d860L); // preview-aware next step; normal play still shuffles
         finish("seq_select", 0x8001b440L);
 
         // Which step plays next.

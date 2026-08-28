@@ -58,6 +58,11 @@ set internal tempo; with clock division enabled, incoming pulses take over
 and RATE sets /1–/8 as before. RATE's minimum retains the factory
 external-only behavior. Playback never bypasses input qualification.
 
+Bare pad 2 during WRITE borrows this clock for a one-shot preview. The beat
+after its final step ends playback and returns to WRITE, without looping or
+saving. Explicit STOP cancels preview and completes the take; see
+[PERSISTENCE.md](PERSISTENCE.md) for those save boundaries.
+
 The effective enable (`sequence playing OR arp enabled`) is used by tempo
 conditioning at `0x80002b30`, the factory enable-change detector and setup at
 `0x80002ac4`/`0x80002c2c`, timer dispatch at `0x80004f86`, and external input
