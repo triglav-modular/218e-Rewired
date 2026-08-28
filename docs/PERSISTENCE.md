@@ -7,29 +7,36 @@ when knob remapping is disabled.
 
 ## Saving and restarting
 
-Leaving record mode, clearing a nonempty sequence (from stopped, recording,
-or playing), or releasing a preset after knob pickup queues a save. Edits
-coalesce while busy. Unchanged musical data does not write flash, even if
-playback position, touch history or inactive steps changed.
+Saving is automatic at the end of an edit:
 
-Before powering off:
+- The sequence saves on leaving record mode, including directly into PLAY,
+  or on CLEAR from stopped, recording or playing.
+- A preset saves when its pad is fully released after a new value was
+  written. The intermediate touched-but-not-held state is not a release.
+- Only changed musical data causes a commit. An unchanged take, an empty
+  clear, a pad tap without editing, or a value returned to its old setting
+  does not write flash, including when storage is still empty.
 
-1. Finish recording and stop the sequence.
-2. Switch the arpeggiator OFF and release keys, pads and preset controls.
-3. Stop the incoming clock if clock division is enabled.
-4. Allow about three seconds of continuous idle time.
+The commit runs in the **same control scan** that handles the completed
+gesture. There is no idle timer and no requirement to turn the arp off,
+stop incoming clocks, stop playback or release other controls.
 
-The exact threshold is **more than 2.6 seconds**, using the factory CPU
-frequency and COUNT. Gates and deferred triggers must be inactive.
-Clock-divider builds also require that much time since the last captured
-input; the waits run concurrently. Flash programming stalls the CPU, so
-saving during playback could lose edges. The working capture ISR is unchanged.
+Each gesture updates only its own part of a completed-edit snapshot.
+Releasing one preset does not save another held preset or an unfinished
+recording. Leaving record saves the sequence without saving held preset
+edits. Simultaneous completions share one record commit.
 
-There is no save-complete LED or power-fail hold-up. Powering off before the
-idle save completes loses pending edits; the previous committed record
-remains available. A newly started performance during the brief flash
-operation can still be delayed. This is an idle-save policy, not background
-flash programming with real-time guarantees.
+Flash programming temporarily blocks execution from flash; playback,
+output timing and incoming edge capture can pause during the save.
+Consequently, saves during a running clock can miss edges. The capture ISR,
+its thresholds and queued clock state are unchanged, and firmware does not
+invent replacement edges. This is immediate gesture saving, **not** a
+gapless background writer; see section 14.5 of the
+[AT32UC3B datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/doc32059.pdf).
+
+There is no save-complete LED or power-fail hold-up. Let the gesture and
+its flash operation finish before powering off. Power loss during a save
+falls back to the previous committed record; unfinished edits are not saved.
 
 Startup loads musical data before GPIO interrupt setup. The sequence always
 starts stopped, at its beginning. Recording mode, strip borrowing, touch
@@ -85,14 +92,22 @@ Aligned calls avoid the wrapper's unaligned read/modify/write paths.
 Retries never target the newest valid page: at most seven other pages are
 attempted, or eight when no valid record exists. Failed bodies and commits
 advance the same bounded counter. Exhaustion latches failure instead of
-starting another erase loop on the next scan. Another completed edit
-re-arms the request. This is not a permanent bad-page blacklist.
+starting another erase loop on the next scan. Another changed, completed
+edit re-arms the request; an unchanged gesture does not retry it. This is
+not a permanent bad-page blacklist.
 
 Debugger state: `0x62e0` is `0` clean, `1` pending, `2` failed; `0x62e1` is
 the last loaded/saved page index (`0xff` if none); `0x62e4` is its generation.
 Read-back detects failed writes even without a FLASHC command error. CRC
 detects corruption but cannot guarantee detection of every multi-bit fault.
 The final commit separates an unverified body from a boot-loadable record.
+
+The completed-edit snapshot is the 204-byte musical payload at
+`0x6400..0x64cb`, initialized from restored data (or defaults) on every boot.
+`0x62f9..0x62fc` latch which presets were edited until each pad is fully
+released. `persist_capture` at `0x8001d280` accepts a mask: bits 0–3 select
+preset pads and bit 4 selects the sequence. It canonicalizes and compares
+only selected data before the save code stages the combined record.
 
 ## Verification and remaining bench checks
 
@@ -105,14 +120,20 @@ restores shared build metadata and never invokes a flasher.
 startup/gesture hooks and the real factory copy wrapper. Only controller
 commands, the write-only flash page buffer and physical I/O are modeled.
 Coverage includes rotation, no-change saves, retry exhaustion, retained
-backups, body/marker power cuts, corruption/bounds, generation/COUNT wrap,
-clear gestures, preset editing during record, and cold/warm startup without
-phantom steps. `src/PersistenceClockRegression.java` reruns the clock suite
-with a pending save and fails if playback enters flash code. Both assemblers
-and the browser builder must also agree on the image bytes.
+backups, body/marker power cuts, corruption/bounds, generation wrap,
+same-scan clear/record-exit gestures, independent/overlapping preset edits,
+saving during record/playback, and cold/warm startup without phantom steps.
+It drives real clock/output paths before and after a release save and a
+modeled scheduling pause, without fabricating unobserved input events.
+`src/PersistenceClockRegression.java` reruns the clock suite while a changed
+preset remains held and fails if that unfinished edit writes flash.
+Both assemblers and the browser builder must also agree on image bytes.
 
-On the instrument, verify preset/sequence power cycles, clear-and-restart,
-warm reset, save latency and interrupted-save recovery. Check square and
-descending-saw clocks over 0.5–200 Hz while edits are pending, then stop
-playback/clock and confirm they save. Emulation does not measure physical
+The same runner checks independent sequence transport; see [CLOCK.md](CLOCK.md).
+
+On the instrument, verify power cycles immediately after completed edits,
+clear-and-restart, warm reset, save latency and interrupted-save recovery.
+Release a changed preset while recording and playing; verify that only
+completed edits return after restart. Check clock behavior during an actual
+save and clean continuation afterward. Emulation does not measure physical
 flash, supply collapse, analog conditioning or output timing.

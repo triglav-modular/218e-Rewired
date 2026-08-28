@@ -1,8 +1,11 @@
 # External clock implementation and verification
 
-This describes the clock-divider fix on branch 2.0, dated 2026-08-27.
+This describes the clock-divider fix and independent sequence transport on
+branch 2.0, updated 2026-08-28. The owner confirmed the clock-divider fix
+working on hardware; the persistence and independent-transport additions
+still require instrument validation.
 Earlier clock experiments in PLAN-2.0.md are historical, not the current
-implementation. Hardware validation of this revision is still required.
+implementation.
 
 ## Input contract
 
@@ -22,9 +25,10 @@ At the default settings:
 - Five consistent measured intervals acquire division. Before acquisition,
   qualified inputs pass at /1. After acquisition, the RATE knob selects /1
   through /8, and interval disagreement cannot reset the divide phase.
-- An absence longer than **2600 ms**, or switching the arp off, releases
-  division. Period acquisition accepts intervals up to 2400 ms, leaving
-  margin around the 2000 ms lower-frequency boundary.
+- An absence longer than **2600 ms**, or switching the arp off while the
+  sequencer is not playing, releases division. Period acquisition accepts
+  intervals up to 2400 ms, leaving margin around the 2000 ms lower-frequency
+  boundary.
 - The normal 5 ms pitch scan permits 200 outputs/second with
   `clock_settle_scans=0`. Additional settle scans reduce that ceiling.
   Dispatcher stalls can add latency; a finite queue cannot absorb an
@@ -40,6 +44,33 @@ At the default settings:
 
 These internal settings live in tools/options.py and are exported identically
 by the command-line and browser builds.
+
+## Independent sequencer transport
+
+With `sequencer = true`, PLAY starts the sequence clock even with the arp
+switch OFF. STOP/CLEAR stop the sequence, release its note and cancel its
+pending trigger/FIFO entries. The physical switch is never overwritten;
+after stop, the ordinary arpeggiator follows that switch again. Switching
+arp positions during playback does not stop or reset the sequence clock.
+
+This reuses the factory clock, not a second oscillator. RATE and its CV still
+set internal tempo; with clock division enabled, incoming pulses take over
+and RATE sets /1–/8 as before. RATE's minimum retains the factory
+external-only behavior. Playback never bypasses input qualification.
+
+The effective enable (`sequence playing OR arp enabled`) is used by tempo
+conditioning at `0x80002b30`, the factory enable-change detector and setup at
+`0x80002ac4`/`0x80002c2c`, timer dispatch at `0x80004f86`, and external input
+dispatch. `0x8001d600` computes it; `0x8001d640` wraps the actual pad transport
+and calls the factory tempo/setup routine after publishing the new mode.
+Transport discards old FIFO entries in a short SR-preserving critical section.
+The GPIO capture code and qualification thresholds are unchanged.
+
+Persistence commits changed sequences on record exit/CLEAR and changed
+presets on pad release, even during playback. These explicit flash saves
+can briefly stall clock/output processing and miss incoming edges; the
+normal 0.5–200 Hz clock tests do not guarantee gapless flash writes.
+See [PERSISTENCE.md](PERSISTENCE.md).
 
 ## What changed
 
@@ -101,7 +132,8 @@ pool. It no longer executes the bytes at 0x800021e8 as loads/stores.
 The old proposed page at 0x8001c000–0x8001c1ff is still unused. Persistence
 now stores records at 0x8003e000–0x8003efff; see [PERSISTENCE.md](PERSISTENCE.md).
 When enabled, its startup wrapper restores musical data before calling the
-clock initializer above. Pending saves do not run during playback.
+clock initializer above. Completed edit gestures can save during playback;
+unfinished edits do not write.
 
 | RAM | Meaning |
 | --- | --- |
@@ -119,6 +151,7 @@ clock initializer above. Pending saves do not run during playback.
 
 ```sh
 python3 tools/test_clock.py
+python3 tools/test_persistence.py
 python3 tools/avr32/sweep.py
 python3 web/test_configs.py
 python3 tools/test.py --golden
@@ -133,10 +166,21 @@ rests/ties. Startup, main-loop and 1 ms callback pointers are exercised too.
 Missing completion markers and emulator instruction-budget exhaustion fail
 the run, even if Ghidra itself exits zero.
 
+The persistence runner additionally executes `SequenceTransportRegression.java`
+for both sequencer variants: real pad PLAY/STOP/CLEAR, all three physical
+switch positions, changes during playback, factory RATE/setup, normal arp
+handback and stale-queue cancellation. Its full external sweep runs with
+the physical arp OFF; persistence's own clock sweep keeps the arp ON and
+a changed preset held. Separate tests save on release and check clock
+continuation after a modeled pause, not physical flash timing.
+
 The harness supplies a zero-portamento pitch result and runs the actual
 remap/DAC-slot/output hook. It models peripheral boundaries and does not
 validate analog settling, interrupt response latency on a loaded board,
 factory floating-point glide, or the electrical waveform at the jack.
+The transport harness also models the three unchanged factory soft-float
+calls in tempo conversion; its enable gates, raw-input conditioning, rate
+table lookup and setup/teardown execute from the firmware image.
 
 On hardware, compare input and output edge counts at 0.5, 10, 150, 180,
 199 and 200 Hz using both sources; exercise /1, /2 and /8, tempo changes,

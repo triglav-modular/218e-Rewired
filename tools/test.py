@@ -464,14 +464,21 @@ def test_blend(cfg: dict) -> None:
     # three bytes past key 28 sometimes hold live state, which is how phantom
     # keys got into the arp once.
     source = (REPO / "src" / "AssemblePressureFix.java").read_text()
-    # Pin 5's write-one-to-clear mask is 0x20 too, but is not an array
-    # bound. Exclude only that exact store pair, not all new uses of 32.
-    source = re.sub(
-        r'emit\("MOV (R\d+),0x20"\);\s*emit\("ST.W R\d+\[0xd8\],\1"\);',
-        "", source)
+    def key_walkers(text: str) -> list[str]:
+        # Pin 5's write-one-to-clear mask is 0x20 too, but is not an array
+        # bound. Exclude only that exact store pair, not all new uses of 32.
+        text = re.sub(
+            r'emit\("MOV (R\d+),0x20"\);\s*emit\("ST.W R\d+\[0xd8\],\1"\);',
+            "", text)
+        # Boot captures all four presets plus the sequence with mask 0x1f.
+        # Exempt only that argument/call pair, never a loop using 31 keys.
+        text = re.sub(
+            r'emit\("MOV R12,0x1f"\);\s*emit\("MCALL PC\[0x8001d5bc\]"\);',
+            "", text)
+        return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
-    walkers = sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', source))
+    walkers = key_walkers(source)
     # 0x1c is a walk over the keys and 0x20 the tuning applier's 32-halfword
     # table copy - counts over arrays that are not the key array, and only a
     # walk over the KEYS starting past 28 is the bug this guards.  The
@@ -481,6 +488,9 @@ def test_blend(cfg: dict) -> None:
     check("every key walk starts at the last real key",
           not stray and walkers.count("20") == 1,
           f"unexpected loop bounds {stray or walkers}")
+    bad_walk = source.replace('emit("MOV R12,0x1c");', 'emit("MOV R12,0x1f");')
+    check("capture-mask exception still rejects an oversized key walk",
+          bad_walk != source and "1f" in key_walkers(bad_walk))
 
 
 def test_call_pools(cfg: dict) -> None:

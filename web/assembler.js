@@ -287,7 +287,7 @@ var AVR32 = (function () {
         },
         // --- ALU -------------------------------------------------------
         {
-            re: /^(ADD|SUB|OR) (\S+),(\S+)$/, fn: function (m) {
+            re: /^(ADD|SUB|OR|EOR) (\S+),(\S+)$/, fn: function (m) {
                 var rd = reg(m[2]), rs = reg(m[3]);
                 return rd === null || rs === null ? null
                      : regreg(REGREG[m[1]], rs, rd);
@@ -421,7 +421,8 @@ var AVR32 = (function () {
 
     // --- ALU -------------------------------------------------------------
     // Compact two-operand sub-opcodes, in the (Rs << 9) | (sub << 4) | Rd form.
-    var REGREG = { 'ADD': 0x0, 'SUB': 0x1, 'CP.W': 0x3, 'OR': 0x4, 'MOV': 0x9 };
+    // EOR format I: AVR32 SLEIGH op4_5=5, also checked by the Ghidra corpus.
+    var REGREG = { 'ADD': 0x0, 'SUB': 0x1, 'CP.W': 0x3, 'OR': 0x4, 'EOR': 0x5, 'MOV': 0x9 };
 
     // Compact one-operand: (op12 << 4) | Rd.
     var UNARY = { 'ABS': 0x5C4, 'CASTU.H': 0x5C7, 'CASTS.H': 0x5C8, 'SR{EQ}': 0x5F0 };
@@ -3881,7 +3882,7 @@ function assembleProgram() {
         emit("ST.B R12[0x4],R9");       // the mode this press leaves behind
         emit("LDM SP++,R7,PC");
         padTo(0x8001b6b0);
-        word(0x8001b6c0); // strip_mode_swap(R9 = the mode being entered)
+        word(0x8001d640); // transport + strip_mode_swap(R9 = new mode)
 
         padTo(0x8001b6c0);
         // Everything that has to happen because the sequencer's mode is
@@ -4438,386 +4439,747 @@ function assembleProgram() {
         finish("clock_attack_guard", 0x8001cb20);
 
         // ---------------------------------------------------------------
-        // Persistence.  Presets and the sequence survive power-off, in a
-        // ROTATION of flash pages so the previous record is still intact
-        // while the next one is being written, and with every write READ
-        // BACK, because the hardware cannot report a failed one: FSR's
-        // PROGE and LOCKE are command errors (bad key, busy, locked
-        // region), not cell failures, so a worn page reports success and
-        // loses the data at the next power-up.
+        // Persistence v2. Only musical data is serialized, never mode,
+        // touch history, clock state or knob pickup state. A verified body
+        // is committed by programming its still-erased marker word LAST.
+        // Keep the newest valid page out of every retry lap. Completed edit
+        // gestures commit immediately, without an idle/clock/arp gate. A
+        // separate musical snapshot excludes other edits still in progress.
+        //
+        // Header: marker[4], version[2]=2, length[2]=204, generation[4],
+        // CRC32[4]. Payload: presets[8], count[1], reserved[3], pitches[128],
+        // keys[64]. Unused steps, reserved bytes and alignment padding are
+        // zero. CRC-32/ISO-HDLC covers header bytes 4..11 then the payload.
+        // The 224-byte staging buffer and both writes are 8-byte aligned.
         // ---------------------------------------------------------------
 
-        // Sum a byte range.  R12 = address, R11 = count, returns R12.
-        // A leaf, and it must stay one: it has no call and returns MOV PC,LR.
+        // Incremental reflected CRC32. R12 = unfinalized CRC, R11 = bytes,
+        // R10 = length; returns CRC in R12. Polynomial 0xedb88320.
         begin(0x8001cc00);
-        emit("MOV R8,0x0");
-        emit("MOV R9,0x0");
-        padTo(0x8001cc08);
-        emit("CP.W R9,R11");
-        emit("BR{ge} 0x8001cc18");
-        emit("ADD R10,R12,R9 << 0x0");
-        emit("LD.UB R10,R10[0x0]");
-        emit("ADD R8,R10");
-        emit("SUB R9,-0x1");
-        emit("RJMP 0x8001cc08");
-        padTo(0x8001cc18);
-        emit("MOV R12,R8");
-        emit("MOV PC,LR");
-        finish("persist_sum", 0x8001cc20);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R8,0x8001cc7c");
+        padTo(0x8001cc10);
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001cc60");
+        emit("LD.UB R9,R11[0x0]");
+        emit("EOR R12,R9");
+        emit("SUB R11,-0x1");
+        emit("MOV R0,0x8");
+        padTo(0x8001cc20);
+        emit("BFEXTU R9,R12,0x0,0x1");
+        emit("LSR R12,0x1");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001cc30");
+        emit("EOR R12,R8");
+        padTo(0x8001cc30);
+        emit("SUB R0,0x1");
+        emit("BR{ne} 0x8001cc20");
+        emit("SUB R10,0x1");
+        emit("RJMP 0x8001cc10");
+        padTo(0x8001cc60);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001cc7c);
+        word(0xedb88320);
+        finish("persist_crc", 0x8001cc80);
 
-        // Is the record at R12 valid?  Returns R12 = its sequence, or 0.
-        // Sequence 0 is therefore never a valid record, which costs one
-        // save out of four billion and saves a second return register.
-        begin(0x8001cc20);
+        // R12 = record address; returns the finalized CRC of metadata/data.
+        begin(0x8001cc80);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x4");
+        emit("MOV R10,0x8");
+        emit("MOV R12,-0x1");
+        emit("MCALL PC[0x8001ccdc]");
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x10");
+        emit("MOV R10,0xcc");
+        emit("MCALL PC[0x8001ccdc]");
+        emit("MOV R8,-0x1");
+        emit("EOR R12,R8");
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001ccdc);
+        word(0x8001cc00);
+        finish("persist_record_crc", 0x8001cce0);
+
+        // Validate commit, version, CRC and the bounds needed by every
+        // consumer. R12 = record; returns generation, or zero if invalid.
+        // V1 raw-RAM records are deliberately not accepted as V2 data.
+        begin(0x8001cce0);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
         emit("LD.W R8,R0[0x0]");
-        emit("LDDPC R9,0x8001ccb8");
+        emit("LDDPC R9,0x8001cdf8");
         emit("CP.W R8,R9");
-        emit("BR{ne} 0x8001cca8");
+        emit("BR{ne} 0x8001cde0");
         emit("LD.UH R8,R0[0x4]");
-        emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001cca8");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001cde0");
         emit("LD.UH R8,R0[0x6]");
-        emit("CP.W R8,0xf4");
-        emit("BR{ne} 0x8001cca8");
+        emit("CP.W R8,0xcc");
+        emit("BR{ne} 0x8001cde0");
         emit("LD.W R8,R0[0x8]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001cca8");     // sequence 0: never valid
-        emit("MOV R12,R0");
-        emit("SUB R12,-0x10");
-        emit("MOV R11,0xf4");
-        emit("MCALL PC[0x8001ccbc]");  // persist_sum
-        emit("LD.W R8,R0[0x8]");
-        emit("ADD R12,R8");            // the sum is bound to the sequence
-        emit("LD.W R9,R0[0xc]");
-        emit("CP.W R12,R9");
-        emit("BR{ne} 0x8001cca8");
+        emit("BR{eq} 0x8001cde0");
+        emit("MCALL PC[0x8001cdfc]");
+        emit("LD.W R8,R0[0xc]");
+        emit("CP.W R12,R8");
+        emit("BR{ne} 0x8001cde0");
+        emit("MOV R1,0x0");
+        padTo(0x8001cd30);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x10]");
+        emit("CP.W R8,0x3ff");
+        emit("BR{hi} 0x8001cde0");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x4");
+        emit("BR{lt} 0x8001cd30");
+        emit("LD.UB R10,R0[0x18]");
+        emit("CP.W R10,0x40");
+        emit("BR{hi} 0x8001cde0");
+        emit("MOV R1,0x0");
+        padTo(0x8001cd60);
+        emit("CP.W R1,R10");
+        emit("BR{ge} 0x8001cdd8");
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R9,R8[0x1c]");
+        emit("CP.W R9,0xfff");
+        emit("BR{ls} 0x8001cd90");
+        emit("CP.W R9,0x7ffe");
+        emit("BR{eq} 0x8001cdb0");
+        emit("CP.W R9,0x7fff");
+        emit("BR{ne} 0x8001cde0");
+        emit("RJMP 0x8001cdb0");
+        padTo(0x8001cd90);
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R9,R8[0x9c]");
+        emit("CP.W R9,0x1d");
+        emit("BR{ge} 0x8001cde0");
+        padTo(0x8001cdb0);
+        emit("SUB R1,-0x1");
+        emit("RJMP 0x8001cd60");
+        padTo(0x8001cdd8);
         emit("LD.W R12,R0[0x8]");
-        emit("RJMP 0x8001ccac");
-        padTo(0x8001cca8);
+        emit("RJMP 0x8001cde4");
+        padTo(0x8001cde0);
         emit("MOV R12,0x0");
-        padTo(0x8001ccac);
-        emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001ccb8);
-        word(0x32313850);             // '218P'
-        word(0x8001cc00);             // persist_sum
-        finish("persist_valid", 0x8001ccc0);
+        padTo(0x8001cde4);
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(0x8001cdf8);
+        word(0x32313850);
+        word(0x8001cc80);
+        finish("persist_valid", 0x8001ce00);
 
-        // Find the newest valid record.  Returns R12 = its address, or 0,
-        // and leaves the page index in R11 and the sequence in R10.
-        begin(0x8001ccc0);
+        // Return newest address R12 (zero if empty), index R11 (-1 if
+        // empty), generation R10. Serial-number arithmetic handles wrap;
+        // successful generations in this eight-page ring stay close.
+        begin(0x8001ce00);
         emit("STM --SP,R0,R1,R2,R3,R7,LR");
         emit("MOV R7,SP");
-        emit("MOV R0,0x0");            // page index
-        emit("MOV R1,0x0");            // best address
-        emit("MOV R2,0x0");            // best sequence
-        emit("MOV R3,0x0");            // best page
-        padTo(0x8001ccd0);
-        emit(StringFormat("CP.W R0,0x%x",
-             number("persist_page_count", 8, 2, 64)));
-        emit("BR{ge} 0x8001cd04");
+        emit("MOV R0,0x0");
+        emit("MOV R1,0x0");
+        emit("MOV R2,0x0");
+        emit("MOV R3,-0x1");
+        padTo(0x8001ce10);
+        emit(StringFormat("CP.W R0,0x%x", number("persist_page_count", 8, 2, 8)));
+        emit("BR{ge} 0x8001ce60");
         emit("MOV R8,R0");
-        emit("LSL R8,0x9");            // 512 bytes a page
-        emit("LDDPC R9,0x8001cd18");
+        emit("LSL R8,0x9");
+        emit("LDDPC R9,0x8001ce78");
         emit("ADD R8,R9");
         emit("MOV R12,R8");
         emit("ST.W --SP,R8");
-        emit("MCALL PC[0x8001cd1c]");  // persist_valid
+        emit("MCALL PC[0x8001ce7c]");
         emit("LD.W R8,SP++");
         emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001ccfc");
-        emit("CP.W R12,R2");
-        emit("BR{ls} 0x8001ccfc");     // unsigned: not newer
+        emit("BR{eq} 0x8001ce54");
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001ce48");
+        emit("SUB R9,R12,R2 << 0x0");
+        emit("CP.W R9,0x0");
+        emit("BR{le} 0x8001ce54");
+        padTo(0x8001ce48);
         emit("MOV R2,R12");
         emit("MOV R1,R8");
         emit("MOV R3,R0");
-        padTo(0x8001ccfc);
+        padTo(0x8001ce54);
         emit("SUB R0,-0x1");
-        emit("RJMP 0x8001ccd0");
-        padTo(0x8001cd04);
+        emit("RJMP 0x8001ce10");
+        padTo(0x8001ce60);
         emit("MOV R12,R1");
         emit("MOV R11,R3");
         emit("MOV R10,R2");
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
-        padTo(0x8001cd18);
-        word(0x8003e000);             // the rotation's first page
-        word(0x8001cc20);             // persist_valid
-        finish("persist_newest", 0x8001cd20);
+        padTo(0x8001ce78);
+        word(0x8003e000);
+        word(0x8001cce0);
+        finish("persist_newest", 0x8001ce80);
 
-        // Restore, at startup.  Everything except the clock divider's own
-        // live state at 0x61e6..0x61ee, which must come from the instrument
-        // in front of you rather than from the last time it was switched off.
-        begin(0x8001cd20);
+        // Canonical record from COMPLETED edits at 0x6400, generation in R12.
+        // A preset release cannot accidentally commit an unfinished take,
+        // and leaving record cannot commit a different pad still held down.
+        begin(0x8001ce80);
+        emit("STM --SP,R0,R1,R2,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R8,0x6300");
+        emit("MOV R9,0x0");
+        emit("MOV R10,0x38");
+        padTo(0x8001cea0);
+        emit("ST.W R8[0x0],R9");
+        emit("SUB R8,-0x4");
+        emit("SUB R10,0x1");
+        emit("BR{ne} 0x8001cea0");
+        emit("MOV R8,0x6300");
+        emit("MOV R9,-0x1");
+        emit("ST.W R8[0x0],R9");       // uncommitted
+        emit("MOV R9,0x2");
+        emit("ST.H R8[0x4],R9");
+        emit("MOV R9,0xcc");
+        emit("ST.H R8[0x6],R9");
+        emit("ST.W R8[0x8],R0");
+        emit("MOV R1,0x0");
+        padTo(0x8001ced0);
+        emit("MOV R8,0x6400");
+        emit("ADD R8,R8,R1 << 0x0");
+        emit("LD.UB R9,R8[0x0]");
+        emit("MOV R8,0x6310");
+        emit("ADD R8,R8,R1 << 0x0");
+        emit("ST.B R8[0x0],R9");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x8");
+        emit("BR{lt} 0x8001ced0");
+        emit("MOV R8,0x6408");
+        emit("LD.UB R2,R8[0x0]");
+        emit("MOV R9,0x40");
+        emit("CP.W R2,R9");
+        emit("BR{ls} 0x8001cf00");
+        emit("MOV R2,R9");
+        padTo(0x8001cf00);
+        emit("MOV R8,0x6318");
+        emit("ST.B R8[0x0],R2");
+        emit("MOV R1,0x0");
+        padTo(0x8001cf10);
+        emit("CP.W R1,R2");
+        emit("BR{ge} 0x8001cf90");
+        emit("MOV R8,0x640c");
+        emit("ADD R8,R8,R1 << 0x1");
+        emit("LD.UH R9,R8[0x0]");
+        emit("MOV R8,0x631c");
+        emit("ADD R8,R8,R1 << 0x1");
+        emit("ST.H R8[0x0],R9");
+        emit("CP.W R9,0x7ffe");
+        emit("BR{ge} 0x8001cf70");      // rest/tie: the zero key stays zero
+        emit("MOV R8,0x648c");
+        emit("ADD R8,R8,R1 << 0x0");
+        emit("LD.UB R9,R8[0x0]");
+        emit("MOV R8,0x639c");
+        emit("ADD R8,R8,R1 << 0x0");
+        emit("ST.B R8[0x0],R9");
+        padTo(0x8001cf70);
+        emit("SUB R1,-0x1");
+        emit("RJMP 0x8001cf10");
+        padTo(0x8001cf90);
+        emit("MOV R12,0x6300");
+        emit("MCALL PC[0x8001cfbc]");
+        emit("MOV R8,0x6300");
+        emit("ST.W R8[0xc],R12");
+        emit("LDM SP++,R0,R1,R2,R7,PC");
+        padTo(0x8001cfbc);
+        word(0x8001cc80);
+        finish("persist_pack", 0x8001cfc0);
+
+        // Startup restores ONLY musical data. The boot wrapper clears
+        // transient state first, including after a warm reset.
+        begin(0x8001cfc0);
         emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001cdb8]");  // persist_newest
+        emit("MCALL PC[0x8001d07c]");
         emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001cdb0");
-        emit("MOV R8,0x62e0");
-        emit("ST.B R8[0x1],R11");      // remember where, for the next save
-        emit("ST.W R8[0x4],R10");      // and how far the sequence has got
+        emit("BR{eq} 0x8001d070");
         emit("MOV R0,R12");
-        emit("SUB R0,-0x10");          // the payload
+        emit("MOV R8,0x62e0");
+        emit("ST.B R8[0x1],R11");
+        emit("ST.W R8[0x4],R10");
         emit("MOV R1,0x0");
-        padTo(0x8001cd44);
-        emit("CP.W R1,0xf4");
-        emit("BR{ge} 0x8001cdb0");
-        emit("CP.W R1,0xac");
-        emit("BR{lt} 0x8001cd58");
-        emit("CP.W R1,0xb4");
-        emit("BR{lt} 0x8001cdac");     // the divider's cells: leave them alone
-        padTo(0x8001cd58);
+        padTo(0x8001cfe0);
         emit("ADD R8,R0,R1 << 0x0");
-        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R9,R8[0x10]");
         emit("MOV R8,0x613a");
         emit("ADD R8,R8,R1 << 0x0");
         emit("ST.B R8[0x0],R9");
-        padTo(0x8001cdac);
         emit("SUB R1,-0x1");
-        emit("RJMP 0x8001cd44");
-        padTo(0x8001cdb0);
+        emit("CP.W R1,0x8");
+        emit("BR{lt} 0x8001cfe0");
+        emit("LD.UB R9,R0[0x18]");
+        emit("MOV R8,0x61e0");
+        emit("ST.B R8[0x0],R9");
+        emit("MOV R1,0x0");
+        padTo(0x8001d010);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R9,R8[0x1c]");
+        emit("MOV R8,0x6160");
+        emit("ADD R8,R8,R1 << 0x1");
+        emit("ST.H R8[0x0],R9");
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R9,R8[0x9c]");
+        emit("MOV R8,0x61ee");
+        emit("ADD R8,R8,R1 << 0x0");
+        emit("ST.B R8[0x0],R9");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x40");
+        emit("BR{lt} 0x8001d010");
+        padTo(0x8001d070);
         emit("LDM SP++,R0,R1,R7,PC");
-        padTo(0x8001cdb8);
-        word(0x8001ccc0);             // persist_newest
-        finish("persist_load", 0x8001cdc0);
+        padTo(0x8001d07c);
+        word(0x8001ce00);
+        finish("persist_load", 0x8001d080);
 
-        // Compare a record's payload against live RAM.  R12 = record
-        // address; returns R12 = 0 when they already agree.  This is what
-        // makes "only if it changed" true rather than aspirational, and it
-        // is also the whole of the wear budget: a save that would write the
-        // same bytes back does not spend a cycle.
-        begin(0x8001cdc0);
+        // R12 = record. Compare only its canonical musical payload with
+        // staging; return zero when equal. Pack must precede this call.
+        begin(0x8001d080);
         emit("MOV R9,0x0");
-        padTo(0x8001cdc4);
-        emit("CP.W R9,0xf4");
-        emit("BR{ge} 0x8001cde4");
+        padTo(0x8001d084);
+        emit("CP.W R9,0xcc");
+        emit("BR{ge} 0x8001d0b0");
         emit("ADD R8,R12,R9 << 0x0");
         emit("LD.UB R10,R8[0x10]");
-        emit("MOV R8,0x613a");
+        emit("MOV R8,0x6310");
         emit("ADD R8,R8,R9 << 0x0");
         emit("LD.UB R11,R8[0x0]");
         emit("CP.W R10,R11");
-        emit("BR{ne} 0x8001cdec");
+        emit("BR{ne} 0x8001d0b8");
         emit("SUB R9,-0x1");
-        emit("RJMP 0x8001cdc4");
-        padTo(0x8001cde4);
-        emit("MOV R12,0x0");           // identical
+        emit("RJMP 0x8001d084");
+        padTo(0x8001d0b0);
+        emit("MOV R12,0x0");
         emit("MOV PC,LR");
-        padTo(0x8001cdec);
-        emit("MOV R12,0x1");           // differs
-        emit("MOV PC,LR");
-        finish("persist_same", 0x8001cdf0);
-
-        // Verify a written record by reading it back.  R12 = address;
-        // returns R12 = 0 on a good page.  Nothing else can tell us: the
-        // flash controller reports bad COMMANDS, never a bad cell.
-        begin(0x8001cdf0);
-        emit("STM --SP,R0,R7,LR");
-        emit("MOV R7,SP");
-        emit("MOV R0,R12");
-        emit("MCALL PC[0x8001ce38]");  // persist_valid: header and checksum
-        emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001ce30");
-        emit("MOV R12,R0");
-        emit("MCALL PC[0x8001ce3c]");  // and the payload byte for byte
-        emit("RJMP 0x8001ce34");
-        padTo(0x8001ce30);
+        padTo(0x8001d0b8);
         emit("MOV R12,0x1");
-        padTo(0x8001ce34);
-        emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001ce38);
-        word(0x8001cc20);             // persist_valid
-        word(0x8001cdc0);             // persist_same
-        finish("persist_verify", 0x8001ce40);
+        emit("MOV PC,LR");
+        finish("persist_same", 0x8001d0c0);
 
-        // The save.  Nothing calls this from a gesture: the request flag is
-        // set there and serviced here, off the scan, because an erase plus a
-        // page programme is milliseconds of stalled CPU.
-        begin(0x8001ce40);
-        emit("STM --SP,R0,R1,R2,R3,R7,LR");
-        emit("MOV R7,SP");
-        emit("MCALL PC[0x8001cf70]");  // persist_newest
-        emit("MOV R3,R10");            // the sequence it carries
-        emit("MOV R2,R11");            // and the page it sits on
-        emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001ce60");     // nothing stored yet: write regardless
-        emit("MCALL PC[0x8001cf74]");  // persist_same
-        emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001cf5c");     // UNCHANGED: no write, no wear
-        padTo(0x8001ce60);
-        // Stage the WHOLE record - header and payload - in one 8-byte aligned
-        // buffer, and write it in one go to a PAGE-ALIGNED destination.
-        //
-        // That is the driver's simple path, and the factory takes it too: it
-        // stages its own record at RAM 0x46c8 rather than handing over a
-        // scattered source.  Writing 244 bytes straight out of 0x613a, which
-        // is 2 mod 8, at a destination 0x10 into a page put the driver on its
-        // byte-at-a-time path through a read-modify-write preamble - and on
-        // the second lap that preamble copies the OLD header back into the
-        // buffer before the erase, so the new header is programmed on top of
-        // it and ANDs into nonsense.  One aligned write has neither problem.
-        emit("SUB R3,-0x1");
-        emit("MOV R0,0x62e0");
-        emit("MOV R8,0x6300");
-        emit("LDDPC R9,0x8001cf78");
-        emit("ST.W R8[0x0],R9");       // marker
-        emit("MOV R9,0x1");
-        emit("ST.H R8[0x4],R9");       // version
-        emit("MOV R9,0xf4");
-        emit("ST.H R8[0x6],R9");       // length
-        emit("ST.W R8[0x8],R3");       // sequence
-        emit("MOV R12,0x613a");
-        emit("MOV R11,0xf4");
-        emit("MCALL PC[0x8001cf7c]");  // persist_sum
-        emit("ADD R12,R3");
-        emit("MOV R8,0x6300");
-        emit("ST.W R8[0xc],R12");      // checksum
-        // and the payload beside it, so the driver reads one aligned run.
+        // Byte-for-byte readback of the WHOLE expected record, including
+        // the generation, marker and padding, before and after commit.
+        begin(0x8001d0c0);
         emit("MOV R9,0x0");
-        padTo(0x8001cea0);
-        emit("CP.W R9,0xf4");
-        emit("BR{ge} 0x8001cec0");
-        emit("MOV R8,0x613a");
-        emit("ADD R8,R8,R9 << 0x0");
+        padTo(0x8001d0c4);
+        emit("CP.W R9,0xe0");
+        emit("BR{ge} 0x8001d0f0");
+        emit("ADD R8,R12,R9 << 0x0");
         emit("LD.UB R10,R8[0x0]");
-        emit("MOV R8,0x6310");
+        emit("MOV R8,0x6300");
         emit("ADD R8,R8,R9 << 0x0");
-        emit("ST.B R8[0x0],R10");
+        emit("LD.UB R11,R8[0x0]");
+        emit("CP.W R10,R11");
+        emit("BR{ne} 0x8001d0f8");
         emit("SUB R9,-0x1");
-        emit("RJMP 0x8001cea0");
-        padTo(0x8001cec0);
-        // Try each page in turn, starting after the one in use.
-        emit(StringFormat("MOV R1,0x%x",
-             number("persist_page_count", 8, 2, 64)));
-        padTo(0x8001cec4);
+        emit("RJMP 0x8001d0c4");
+        padTo(0x8001d0f0);
+        emit("MOV R12,0x0");
+        emit("MOV PC,LR");
+        padTo(0x8001d0f8);
+        emit("MOV R12,0x1");
+        emit("MOV PC,LR");
+        finish("persist_verify", 0x8001d100);
+
+        // Called after a changed, completed edit. Return zero on success/no change,
+        // one on failure. Request states: 0 clean, 1 pending, 2 failed.
+        // Failure is latched until another edit, not retried every scan.
+        begin(0x8001d100);
+        emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001d260]");
+        emit("MOV R4,R12");             // preserve the last good address
+        emit("MOV R2,R11");
+        emit("MOV R3,R10");
+        emit("SUB R3,-0x1");
+        emit("CP.W R3,0x0");
+        emit("BR{ne} 0x8001d120");
+        emit("MOV R3,0x1");             // zero is the invalid-generation sentinel
+        padTo(0x8001d120);
+        emit("MOV R12,R3");
+        emit("MCALL PC[0x8001d264]");
+        emit("CP.W R4,0x0");
+        emit("BR{eq} 0x8001d150");
+        emit("MOV R12,R4");
+        emit("MCALL PC[0x8001d268]");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001d248");
+        padTo(0x8001d150);
+        emit(StringFormat("MOV R1,0x%x", number("persist_page_count", 8, 2, 8)));
+        emit("CP.W R4,0x0");
+        emit("BR{eq} 0x8001d160");
+        emit("SUB R1,0x1");             // NEVER erase the newest valid record
+        padTo(0x8001d160);
         emit("CP.W R1,0x0");
-        emit("BR{le} 0x8001cf5c");     // every page refused the write
+        emit("BR{eq} 0x8001d23c");
         emit("SUB R1,0x1");
         emit("SUB R2,-0x1");
-        emit(StringFormat("CP.W R2,0x%x",
-             number("persist_page_count", 8, 2, 64)));
-        emit("BR{lt} 0x8001ced4");
+        emit(StringFormat("CP.W R2,0x%x", number("persist_page_count", 8, 2, 8)));
+        emit("BR{lt} 0x8001d180");
         emit("MOV R2,0x0");
-        padTo(0x8001ced4);
-        emit("MOV R8,R2");
-        emit("LSL R8,0x9");
-        emit("LDDPC R9,0x8001cf80");
-        emit("ADD R8,R9");
-        emit("MOV R0,R8");             // R0 = this page
-        // One write: page-aligned destination, 8-byte aligned source, and a
-        // length that is a multiple of eight.  A power cut part way through
-        // leaves this page failing its checksum, and rotation means the
-        // previous page still holds the last good record.
+        padTo(0x8001d180);
+        emit("MOV R0,R2");
+        emit("LSL R0,0x9");
+        emit("LDDPC R9,0x8001d270");
+        emit("ADD R0,R9");
+        emit("MOV R8,0x6300");
+        emit("MOV R9,-0x1");
+        emit("ST.W R8[0x0],R9");        // reset marker after a failed commit too
         emit("MOV R12,R0");
         emit("MOV R11,0x6300");
-        emit("MOV R10,0x108");         // 264: the record, rounded up to eight
-        emit("MOV R9,0x1");
-        emit("MCALL PC[0x8001cf84]");  // the factory flash writer
+        emit("MOV R10,0xe0");
+        emit("MOV R9,0x1");             // erase, then write UNCOMMITTED body
+        emit("MCALL PC[0x8001d278]");
         emit("MOV R12,R0");
-        emit("MCALL PC[0x8001cf88]");  // persist_verify
+        emit("MCALL PC[0x8001d274]");
         emit("CP.W R12,0x0");
-        emit("BR{ne} 0x8001cea4");     // this page would not take it: next
+        emit("BR{ne} 0x8001d160");
+        emit("MOV R8,0x6300");
+        emit("LDDPC R9,0x8001d26c");
+        emit("ST.W R8[0x0],R9");
+        // Same page-aligned simple driver path, length eight, no erase.
+        // Only the erased marker word CHANGES; version/length and all words
+        // the driver preserves from the page remain bit-for-bit identical.
+        // This is the EEPROM-emulation procedure in UC3B section 14.4.7.
+        emit("MOV R12,R0");
+        emit("MOV R11,0x6300");
+        emit("MOV R10,0x8");
+        emit("MOV R9,0x0");
+        emit("MCALL PC[0x8001d278]");
+        emit("MOV R12,R0");
+        emit("MCALL PC[0x8001d274]");
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x8001d160");
+        emit("MOV R12,R0");
+        emit("MCALL PC[0x8001d27c]");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001d160");
         emit("MOV R8,0x62e0");
         emit("ST.B R8[0x1],R2");
         emit("ST.W R8[0x4],R3");
-        padTo(0x8001cf5c);
+        emit("RJMP 0x8001d248");
+        padTo(0x8001d23c);
+        emit("MOV R12,0x1");
         emit("MOV R8,0x62e0");
-        emit("MOV R9,0x0");
-        emit("ST.B R8[0x0],R9");       // the request is answered either way
-        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
-        padTo(0x8001cf70);
-        word(0x8001ccc0);             // persist_newest
-        word(0x8001cdc0);             // persist_same
-        word(0x32313850);             // '218P'
-        word(0x8001cc00);             // persist_sum
-        word(0x8003e000);             // the rotation's first page
-        word(0x800108fc);             // the factory flash writer
-        word(0x8001cdf0);             // persist_verify
-        finish("persist_save", 0x8001cf8c);
+        emit("MOV R9,0x2");
+        emit("ST.B R8[0x0],R9");
+        emit("RJMP 0x8001d258");
+        padTo(0x8001d248);
+        emit("MOV R12,0x0");
+        emit("MOV R8,0x62e0");
+        emit("ST.B R8[0x0],R12");
+        padTo(0x8001d258);
+        emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
+        padTo(0x8001d260);
+        word(0x8001ce00);
+        word(0x8001ce80);
+        word(0x8001d080);
+        word(0x32313850);
+        word(0x8003e000);
+        word(0x8001d0c0);
+        word(0x800108fc);
+        word(0x8001cce0);
+        finish("persist_save", 0x8001d280);
 
-        // Per scan.  The two triggers are WATCHED here rather than hooked at
-        // the gestures themselves: seq_enter and the preset editor are both
-        // full to the last byte, and an edge seen from the scan is the same
-        // event one scan later.  It also keeps the flash write off the
-        // gesture's own path, which matters more - an erase and a page
-        // programme is milliseconds of stalled CPU.
-        begin(0x8001cf8c);
-        emit("STM --SP,R0,R1,R7,LR");
+        // Capture only completed musical edits into 0x6400..0x64cb.
+        // R12 mask: bits 0..3 = released preset pads, bit 4 = sequence.
+        // Return R12 = changed. Unchanged gestures (including empty clear)
+        // never write even on a blank ring. Mask 0x1f initializes every
+        // snapshot byte at boot; no snapshot survives a warm reset.
+        begin(0x8001d280);
+        emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R2,R12");
+        emit("MOV R0,0x0");
+        emit("MOV R1,0x0");
+        emit("MOV R3,0x6400");
+        padTo(0x8001d294);
+        emit("CP.W R1,0x4");
+        emit("BR{eq} 0x8001d2e0");
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x1");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d2cc");
+        emit("MOV R8,0x613a");
+        emit("ADD R8,R8,R1 << 0x1");
+        emit("LD.UH R9,R8[0x0]");
+        emit("ADD R10,R3,R1 << 0x1");
+        emit("LD.UH R11,R10[0x0]");
+        emit("CP.W R9,R11");
+        emit("BR{eq} 0x8001d2c0");
+        emit("MOV R0,0x1");
+        padTo(0x8001d2c0);
+        emit("ST.H R10[0x0],R9");
+        padTo(0x8001d2cc);
+        emit("LSR R2,0x1");
+        emit("SUB R1,-0x1");
+        emit("RJMP 0x8001d294");
+        padTo(0x8001d2e0);
+        emit("CP.W R2,0x0");
+        emit("BR{eq} 0x8001d3d8");
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R4,R8[0x0]");
+        emit("CP.W R4,0x40");
+        emit("BR{ls} 0x8001d2f8");
+        emit("MOV R4,0x40");
+        padTo(0x8001d2f8);
+        emit("LD.UB R9,R3[0x8]");
+        emit("CP.W R4,R9");
+        emit("BR{eq} 0x8001d308");
+        emit("MOV R0,0x1");
+        padTo(0x8001d308);
+        emit("ST.B R3[0x8],R4");
+        emit("MOV R8,0x0");
+        emit("ST.B R3[0x9],R8");
+        emit("ST.H R3[0xa],R8");
+        emit("MOV R1,0x0");
+        padTo(0x8001d318);
+        emit("CP.W R1,0x40");
+        emit("BR{ge} 0x8001d3d8");
+        emit("MOV R9,0x0");
+        emit("MOV R11,0x0");
+        emit("CP.W R1,R4");
+        emit("BR{ge} 0x8001d350");
+        emit("MOV R8,0x6160");
+        emit("ADD R8,R8,R1 << 0x1");
+        emit("LD.UH R9,R8[0x0]");
+        emit("CP.W R9,0x7ffe");
+        emit("BR{ge} 0x8001d350");
+        emit("MOV R8,0x61ee");
+        emit("ADD R8,R8,R1 << 0x0");
+        emit("LD.UB R11,R8[0x0]");
+        padTo(0x8001d350);
+        emit("ADD R10,R3,R1 << 0x1");
+        emit("LD.UH R8,R10[0xc]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001d366");
+        emit("MOV R0,0x1");
+        padTo(0x8001d366);
+        emit("ST.H R10[0xc],R9");
+        emit("ADD R10,R3,R1 << 0x0");
+        emit("LD.UB R8,R10[0x8c]");
+        emit("CP.W R8,R11");
+        emit("BR{eq} 0x8001d382");
+        emit("MOV R0,0x1");
+        padTo(0x8001d382);
+        emit("ST.B R10[0x8c],R11");
+        emit("SUB R1,-0x1");
+        emit("RJMP 0x8001d318");
+        padTo(0x8001d3d8);
+        emit("MOV R12,R0");
+        emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
+        finish("persist_capture", 0x8001d400);
+
+        // Watch completion of recording/preset edits AND a nonempty-to-empty
+        // sequence transition. A preset's edit flag survives the intermediate
+        // touched-but-not-held level: commit only once that pad is released.
+        // Changed completed gestures commit in this scan, regardless of mode,
+        // held controls, clock input, gate state or CPU timebase.
+        begin(0x8001d400);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,0x62e0");
-        // The restore happens on the first scan, not in the initialiser: the
-        // clear has certainly run by then, and the initialiser's tail has no
-        // room left.  Return straight after it, so what was just put back
-        // primes the shadows next scan instead of reading as a gesture.
-        emit("LD.UB R9,R0[0x1d]");
-        emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001cfb0");
-        emit("MOV R9,0x1");
-        emit("ST.B R0[0x1d],R9");
-        emit("MCALL PC[0x8001d018]");  // persist_load
-        emit("RJMP 0x8001d00c");
-        padTo(0x8001cfb0);
-        // Leaving record mode: the sequencer's mode was 1 and is not now.
+        emit("MOV R2,0x0");
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
         emit("LD.UB R10,R0[0x18]");
         emit("ST.B R0[0x18],R9");
         emit("CP.W R10,0x1");
-        emit("BR{ne} 0x8001cfd0");
+        emit("BR{ne} 0x8001d440");
         emit("CP.W R9,0x1");
-        emit("BR{eq} 0x8001cfd0");
-        emit("MOV R8,0x1");
-        emit("ST.B R0[0x0],R8");
-        padTo(0x8001cfd0);
-        // Leaving a preset's write mode: its following flag was set - the
-        // knob had taken the voltage over, so the voltage really did move -
-        // and the pad has now been released, which clears it.
+        emit("BR{eq} 0x8001d440");
+        emit("MOV R8,0x10");
+        emit("OR R2,R8");
+        padTo(0x8001d440);
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R10,R0[0x2]");
+        emit("ST.B R0[0x2],R9");
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001d470");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001d470");
+        emit("MOV R8,0x10");
+        emit("OR R2,R8");
+        padTo(0x8001d470);
         emit("MOV R1,0x0");
-        padTo(0x8001cfd4);
+        emit("MOV R3,0x1");
+        padTo(0x8001d474);
         emit("CP.W R1,0x4");
-        emit("BR{ge} 0x8001d000");
+        emit("BR{ge} 0x8001d4c0");
         emit("MOV R8,0x614a");
         emit("ADD R8,R8,R1 << 0x0");
         emit("LD.UB R9,R8[0x0]");
         emit("ADD R8,R0,R1 << 0x0");
         emit("LD.UB R10,R8[0x19]");
-        emit("ST.B R8[0x19],R9");
+        emit("OR R9,R10");
+        emit("MOV R10,0x46f0");
+        emit("ADD R10,R10,R1 << 0x0");
+        emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001cffc");
+        emit("BR{ne} 0x8001d4ac");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001cffc");
+        emit("BR{eq} 0x8001d4ac");
+        emit("OR R2,R3");
+        emit("MOV R9,0x0");
+        padTo(0x8001d4ac);
+        emit("ST.B R8[0x19],R9");
+        emit("SUB R1,-0x1");
+        emit("LSL R3,0x1");
+        emit("RJMP 0x8001d474");
+        padTo(0x8001d4c0);
+        emit("CP.W R2,0x0");
+        emit("BR{eq} 0x8001d4e0");
+        emit("MOV R12,R2");
+        emit("MCALL PC[0x8001d518]");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001d4e0");
         emit("MOV R8,0x1");
         emit("ST.B R0[0x0],R8");
-        padTo(0x8001cffc);
-        emit("SUB R1,-0x1");
-        emit("RJMP 0x8001cfd4");
-        padTo(0x8001d000);
-        emit("LD.UB R9,R0[0x0]");
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001d00c");
-        emit("MCALL PC[0x8001d01c]");  // persist_save
-        padTo(0x8001d00c);
-        emit("LDM SP++,R0,R1,R7,PC");
-        padTo(0x8001d018);
-        word(0x8001cd20);             // persist_load, on the first scan
-        word(0x8001ce40);             // persist_save, when a gesture asked
-        finish("persist_tick", 0x8001d020);
+        emit("MCALL PC[0x8001d51c]");
+        padTo(0x8001d4e0);
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001d518);
+        word(0x8001d280);
+        word(0x8001d100);
+        finish("persist_tick", 0x8001d520);
 
-        // The scan already reaches the preset editor through one pool word;
-        // this shim runs the persistence tick beside it, so nothing inside
-        // the crowded caves has to move.
-        begin(0x8001d020);
+        begin(0x8001d520);
+        emit("STM --SP,R7,LR");
+        emit("MCALL PC[0x8001d534]");
+        if (block("seq_chord")) emit("MCALL PC[0x8001d53c]");
+        emit("MCALL PC[0x8001d538]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001d534);
+        word(0x8001ae1c);
+        word(0x8001d400);
+        word(0x8001b180);
+        finish("persist_scan_shim", 0x8001d540);
+
+        // Startup before GPIO interrupts are installed, not a late restore
+        // in the middle of the pitch scan. SRAM can survive reset: always
+        // reset musical/runtime state and reload, even if the init marker
+        // matches. Do not touch the factory's stored strip-mode setting.
+        begin(0x8001d540);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001d034]");  // the preset editor, as before
-        emit("MCALL PC[0x8001d038]");  // and then the tick
+        emit("MCALL PC[0x8001d5b0]");
+        emit("MOV R8,0x0");
+        emit("MOV R10,0x613a");
+        emit("MOV R9,0x7b");
+        padTo(0x8001d558);
+        emit("ST.H R10[0x0],R8");
+        emit("SUB R10,-0x2");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001d558");
+        emit("MOV R10,0x62e0");
+        emit("MOV R9,0xf");
+        padTo(0x8001d56c);
+        emit("ST.H R10[0x0],R8");
+        emit("SUB R10,-0x2");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001d56c");
+        emit("MOV R10,0x62e0");
+        emit("MOV R9,-0x1");
+        emit("ST.B R10[0x1],R9");
+        emit("MCALL PC[0x8001d5b4]");
+        emit("MOV R12,0x1f");
+        emit("MCALL PC[0x8001d5bc]");   // initialize completed-edit snapshot
+        emit("MOV R10,0x62e0");
+        emit("MOV R9,0x1");
+        emit("ST.B R10[0x1d],R9");
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R9,R8[0x0]");
+        emit("ST.B R10[0x2],R9");       // restored length is not a clear gesture
+        emit("MCALL PC[0x8001d5b8]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001d034);
-        word(0x8001ae1c);
-        word(0x8001cf8c);
-        finish("persist_scan_shim", 0x8001d03c);
+        padTo(0x8001d5b0);
+        word(0x8001ab60);
+        word(0x8001cfc0);
+        word(block("clock_capture") ? 0x8001c300 : 0x80007340);
+        word(0x8001d280);
+        finish("persist_boot", 0x8001d5c0);
+
+        // The sequencer owns its run state, not the physical arp switch.
+        // Use the same effective enable for tempo conditioning, factory
+        // start/stop setup, periodic ticks and external-clock dispatch.
+        // Returns R8 = boolean, clobbers only R8/R9. In particular the
+        // clock service keeps R10 (FIFO) and R11 (factory state) live.
+        begin(0x8001d600);
+        emit("MOV R9,0x6154");
+        emit("LD.UB R8,R9[0x4]");
+        emit("CP.W R8,0x2");
+        emit("BR{eq} 0x8001d62c");
+        emit("LDDPC R9,0x8001d638");
+        emit("LD.UB R8,R9[0x340]");
+        emit("LD.UB R9,R9[0x341]");
+        emit("OR R8,R9");
+        emit("MOV PC,LR");
+        padTo(0x8001d62c);
+        emit("MOV R8,0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001d638);
+        word(0x00003560);
+        word(0x8001d600);
+        finish("seq_clock_enabled", 0x8001d640);
+
+        // Every play/stop/clear/record transition goes through seq_enter's
+        // mode-change pool. Preserve its R9/R12 arguments. Finish the strip
+        // swap first, while the old mode is still visible; then publish the
+        // new mode before asking the FACTORY tempo/setup routine to run.
+        // This does not overwrite the physical switch or invent a second
+        // oscillator. Stopping the sequence returns clock ownership to arp.
+        begin(0x8001d640);
+        emit("STM --SP,R0,R1,R2,R7,R9,R12,LR");
+        emit("MOV R7,SP");
+        emit("LD.UB R0,R12[0x4]");
+        emit("MOV R1,R9");
+        emit("MCALL PC[0x8001d768]");    // original strip-mode transition
+        emit("CP.W R0,R1");
+        emit("BR{eq} 0x8001d750");
+        emit("CP.W R1,0x2");
+        emit("BR{ne} 0x8001d670");
+        emit("MCALL PC[0x8001d76c]");    // end any preceding arp note on PLAY
+        padTo(0x8001d670);
+        emit("ST.B R12[0x4],R1");
+        emit("CP.W R0,0x2");
+        emit("BR{eq} 0x8001d688");
+        emit("CP.W R1,0x2");
+        emit("BR{ne} 0x8001d750");
+        padTo(0x8001d688);
+        emit("MFSR R2,SR");
+        emit("SSRF 0x10");
+        emit("MOV R8,0x0");
+        emit("MOV R10,0x60ee");
+        emit("ST.B R10[0x0],R8");       // no old deferred trigger crosses transport
+        if (block("clock_capture")) {
+            emit("MOV R10,0x6234");
+            emit("LD.UB R9,R10[0x0]");
+            emit("ST.B R10[0x1],R9");  // discard pre-start/stop FIFO entries
+            emit("ST.B R10[0x2],R8");
+            emit("ST.B R10[0x3],R8");
+            emit("ST.B R10[-0x1],R8"); // release acquired divider
+            emit("MOV R10,0x61ea");
+            emit("ST.H R10[0x0],R8");
+            emit("ST.H R10[0x2],R8");
+        }
+        emit("MTSR SR,R2");
+        emit("LDDPC R10,0x8001d770");
+        emit("ST.H R10[0x38e],R8");     // start at the first beat, not an old countdown
+        emit("MCALL PC[0x8001d774]");    // rate + factory enable transition/setup
+        padTo(0x8001d750);
+        emit("LDM SP++,R0,R1,R2,R7,R9,R12,PC");
+        padTo(0x8001d768);
+        word(0x8001b6c0);
+        word(0x8001b448);
+        word(0x00003560);
+        word(0x80002b28);
+        finish("seq_transport", 0x8001d780);
 
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the
@@ -4889,9 +5251,13 @@ function assembleProgram() {
         emit("SSRF 0x10");
         emit("MOV R10,0x6234");
         emit("LDDPC R11,0x8001c570");
-        emit("LD.UB R8,R11[0x340]");
-        emit("LD.UB R9,R11[0x341]");
-        emit("OR R8,R9");
+        if (block("seq_clock_enabled")) {
+            emit("MCALL PC[0x8001d63c]");
+        } else {
+            emit("LD.UB R8,R11[0x340]");
+            emit("LD.UB R9,R11[0x341]");
+            emit("OR R8,R9");
+        }
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x8001c4e0");
         emit("LD.UB R8,R10[0x2]");
@@ -5754,7 +6120,7 @@ function assembleProgram() {
         }
         padTo(0x8001a510);
         emit("MCALL PC[0x8001a520]");   // preset voltage editing
-        if (block("seq_chord")) {
+        if (block("seq_chord") && !block("persist")) {
             emit("MCALL PC[0x8001a524]"); // the sequencer's pad chord
         }
         // Clock dequeue runs only from the main loop, never inside a pitch
@@ -5762,9 +6128,9 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x8001a520);
         // With persistence on, the preset editor is reached through a shim
-        // that runs the persistence tick beside it - one word, so nothing in
-        // the crowded caves below has to move.
-        word(block("persist") ? 0x8001d020 : 0x8001ae1c);
+        // that runs editor, sequencer controls and persistence in that order,
+        // so a completed gesture is committed in the same control scan.
+        word(block("persist") ? 0x8001d520 : 0x8001ae1c);
         word(0x8001b180);              // the sequencer chord
         word(0x8001b980);              // the external clock, per scan
         padTo(0x8001a534);
@@ -5892,9 +6258,59 @@ function assembleProgram() {
             // what they protect.
             singlePatch("clock_spike_units", 0x80007888, StringFormat(
                  "MOV R10,0x%x", number("trigger_spike_units", 5, 1, 5)));
+        }
+
+        if (block("clock_capture") || block("persist")) {
             begin(0x80007d8c);
-            word(0x8001c300);
+            word(block("persist") ? 0x8001d540 : 0x8001c300);
             finish("clock_init_pool", 0x80007d90);
+        }
+
+        if (block("seq_clock_enabled")) {
+            // Tempo conditioning must run with arp OFF too; otherwise RATE
+            // and its low-end clock-disable flag would stay stale on PLAY.
+            begin(0x80002b30);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x80002c22");
+            emit("RJMP 0x80002b44");
+            finish("seq_clock_rate_hook", 0x80002b44);
+            // The factory's enable edge detector and setup/teardown agree
+            // with the effective run state, not just the physical switch.
+            begin(0x80002ac4);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x80002ae0");
+            emit("RJMP 0x80002ad8");
+            finish("seq_clock_change_hook", 0x80002ad8);
+            begin(0x80002c2c);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{ne} 0x80002ca6");
+            emit("RJMP 0x80002c48");
+            finish("seq_clock_setup_hook", 0x80002c48);
+            begin(0x80004f86);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x80004fae");
+            emit("RJMP 0x80004f9e");
+            finish("seq_clock_tick_hook", 0x80004f9e);
+            // Clock-divider builds consume GPIO only through their FIFO.
+            // Without it, retain the factory's physical-clock event path.
+            if (!block("clock_capture")) {
+                begin(0x80004e58);
+                emit("MCALL PC[0x8001d63c]");
+                emit("CP.W R8,0x0");
+                emit("BR{eq} 0x8000518a");
+                emit("RJMP 0x80004e72");
+                finish("seq_clock_input_hook", 0x80004e72);
+            }
+            begin(0x80004efc);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8000518e");
+            emit("RJMP 0x80004f16");
+            finish("seq_clock_midi_hook", 0x80004f16);
         }
 
         // Hook: event 13, the trigger LED.  Its own two other reasons to

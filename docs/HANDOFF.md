@@ -1,6 +1,6 @@
 # Handoff — 218e Rewired 2.0
 
-Written 2026-08-27. Branch `2.0`, last commit on that branch. Everything
+Updated 2026-08-28. Branch `2.0`, including working-tree changes. Everything
 below is either in the repo or reproducible from it; nothing here is a memory
 of a conversation.
 
@@ -12,7 +12,8 @@ described below. It explicitly enables both GPIO edges, fixes literal-pool
 fallthrough, latches division independently of interval confidence, and
 serializes note/pitch/trigger output. The requirement is 0.5–200 Hz.
 Run `python3 tools/test_clock.py` against fresh produced firmware.
-This revision still needs the owner's hardware check.
+The owner confirmed that clock fix working on hardware. Persistence and
+independent sequencer transport still need hardware checks.
 
 Phases 0–5 of [PLAN-2.0.md](PLAN-2.0.md) are built and on the owner's
 instrument: `.kbm` keyboard maps and period-aware octave controls, preset
@@ -49,11 +50,11 @@ Then a round of playing notes from the owner, all written up in PLAN-2.0.md:
 the gate is a Buchla trigger now (a 10 V spike that drops to 0 unless a tie
 is holding it), a note after a tie retriggers instead of being slurred into,
 nothing slides with the portamento knob at zero, entering a note in record
-sends a trigger, the pad-4 hold is a second, and the clock divider counts
-milliseconds instead of 5 ms scans so it keeps up with a 780 Hz pulser. An
-uneven clock is passed through undivided, and the run of agreeing intervals
-it takes to believe a rate went from 2 to 5 - measured, not guessed: a run of
-2 divided every uneven clock thrown at it.
+sends a trigger, and the pad-4 hold is a second. Earlier clock experiments
+targeted 780 Hz; the current interrupt-captured implementation targets
+0.5–200 Hz. It passes inputs through until five consistent measured
+intervals establish division, then keeps its divide phase even if intervals
+vary. See [CLOCK.md](CLOCK.md) for the implemented contract.
 
 Then: a knob no longer does its other job while a preset pad is using it, and
 recording sounds what you play into it - the note-on leaves its key for the
@@ -65,16 +66,16 @@ an octave the way it does played ones, and knob 1's blend shuffles which step
 comes next. Knob 1's six note-order zones stay the keyboard's alone - the
 owner's call - so a recorded sequence keeps the order it was played in.
 
-**Not yet on hardware.** The owner flashes and reports; nothing below has
-been played. `strip_halfway_units` is 2048 because 2048 is the middle of the
+**Hardware validation.** The owner flashes and reports. The new persistence
+and transport changes have only been tested in emulation.
+`strip_halfway_units` is 2048 because 2048 is the middle of the
 range the firmware clamps to, and the middle is the rule; it is a build
 number so a strip reading off centre can be told where its own middle is.
 
-**Waiting on the owner: the web page copy.** `web/index.html` around line 154
-still describes pushing the strip one way and the other. It is now wrong, and
-it was left alone deliberately — user-facing wording gets proposed, not
-changed. A replacement is proposed in the session that built this; if that is
-lost, propose a fresh one and wait.
+**User-facing instructions are updated.** `web/index.html` describes the
+strip's two halves and independent sequencer transport: PLAY starts its
+clock even with arp OFF; STOP/CLEAR end sequence playback and return the
+ordinary arpeggiator to the physical switch. RATE retains its normal role.
 
 ## Other open items
 
@@ -90,7 +91,10 @@ lost, propose a fresh one and wait.
   default pending hardware validation. The post-audit version uses a CRC32
   musical-data-only record, verified body followed by a no-erase marker
   commit, and bounded retries that never erase the newest valid page.
-  Edits wait for stopped/off/released idle conditions before writing flash.
+  Changed sequences save on record exit/CLEAR and changed presets on their
+  pad release, with no idle or arp-off gate. A completed-edit snapshot
+  excludes other edits still in progress. Flash saves can briefly disrupt
+  live clock/output timing; they are not gapless background operations.
   Startup always restores stopped and clears transients, including on warm
   reset. The reserved main-array ring is `0x8003e000..0x8003efff`; the User
   Page and factory settings are untouched. DFU erases these records, and
@@ -117,7 +121,9 @@ lost, propose a fresh one and wait.
 - **A factory settings save during a take would persist the borrowed strip mode.**
   Record forces `state+0x20c` to 0 and the save path reads it like any other
   setting. This is separate from musical persistence, which excludes that
-  field and defers saves until recording stops.
+  field and snapshots sequence data only on record exit/CLEAR. A preset
+  release can save during record without saving its borrowed strip mode or
+  unfinished sequence.
 - **Clock multiplication** — deliberately not built; MARF gets it by
   subdividing between pulses, which needs edge prediction. See the plan.
 - **208p oscillator ceiling** — a builder-side warning was noted for later.
@@ -131,7 +137,9 @@ have actually bitten, repeatedly.
 this repo was checked by disassembling the image and emulating those bytes.
 `tools/avr32/sweep.py` builds representative configurations through both toolchains;
 `web/test_configs.py` compares its option matrix against the browser build;
-`web/test_matrix.js` builds 768 combinations. Run all of them.
+`web/test_matrix.js` builds 1,536 combinations, including persistence on/off.
+`tools/test_persistence.py` adds firmware-level power-cut and independent
+sequencer-transport regressions. Run all of them.
 
 **Ghidra will disassemble the whole image for you.** `src/DumpDisassembly.java`
 takes a start, an end and an outfile; the two code runs are

@@ -113,10 +113,11 @@ contract, regression coverage and remaining hardware checks.
 `python3 tools/test_persistence.py` builds all four persistence/sequence/clock
 variants and executes the actual save/load/startup code and factory flash
 wrapper with controller failure and power-cut injection. It also reruns the
-clock suite with edits pending. See [PERSISTENCE.md](PERSISTENCE.md) before
-enabling `persist = true`: saves require about three seconds of stopped,
-arp-off, released-control idle time, and new records do not migrate the
-experimental raw-RAM format.
+clock suite with an unfinished preset held and tests saves during playback.
+With `persist = true`, changed sequences save on record exit/CLEAR and
+changed presets on pad release, without an idle or arp-off requirement.
+Flash saves can briefly disrupt playback. See [PERSISTENCE.md](PERSISTENCE.md)
+for the gesture contract, failure handling and legacy-format limits.
 
 ## macOS tool compatibility
 
@@ -257,7 +258,8 @@ the options into the full internal settings the build has always used.
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 | `knob1`, `knob2`, `knob3`, `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
 | `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
-| `sequencer` | `false` | A 64-step sequencer on the preset pads: hold pad 4 three seconds, then pad 1 records, pad 2 plays, pad 3 stops. The pitch strip enters rests and ties while recording. Playback runs on the arpeggiator's clock. |
+| `sequencer` | `false` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
+| `persist` | `false` | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). |
 | `clock_divide` | `false` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
 
 The options combine freely, with one exception the build enforces:
@@ -428,15 +430,15 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
 | `tools/avr32/sweep.py` | representative configurations, including all four persistence variants, built by both toolchains and compared byte for byte |
 | `web/test_configs.py` | the browser build matches `build.py` across its option/interaction matrix |
-| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, startup/gestures, and clock behavior with saves pending |
-| `web/test_matrix.js` | **all 768 option combinations** built through the guarded path |
+| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, and clock continuation after saves |
+| `web/test_matrix.js` | **1,536 option combinations**, including persistence on/off, built through the guarded path |
 
 Every build, in either toolchain, has to pass four structural checks before it
 produces an image: no two patches overlap, no patch lands on a factory entry
 point (2,665 control transfers are traced), every byte differing from the
 factory image lies inside a declared patch, and the rendered hex re-parses to
-the same bytes. `web/test_matrix.js` runs all 768 combinations through those
-checks in about 40 seconds:
+the same bytes. `web/test_matrix.js` runs all 1,536 combinations through those
+checks:
 
 ```bash
 jsc web/generated.js web/sha256.js web/buildlib.js web/assembler.js \
@@ -653,7 +655,7 @@ rather than arbitrary strings in the dataset.
 
 Everything that builds firmware needs Buchla's stock image, and it is not in
 this repository. Without it the workflow still runs, but the golden build, the
-reproducibility check, the 768-build option matrix and the browser/Python
+reproducibility check, the 1,536-build option matrix and the browser/Python
 comparison all skip — so a green tick covers the flashers, the validators and
 the packaging, and none of the firmware. The notice in the log says so.
 

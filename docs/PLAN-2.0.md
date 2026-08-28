@@ -33,9 +33,9 @@ That contract supersedes the historical sampled-low, rejection-budget,
   (getters at 0x80003624/366e/36b8/3702 switch on knob index).
 - New: four stored values, restored at boot, BOTH consumers read the store.
   Hold pad N + turn knob N to edit (output follows while editing);
-  release queues persistence when enabled. Musical data uses a separate
-  main-array ring, not the factory settings record; see
-  [PERSISTENCE.md](PERSISTENCE.md) for the idle-save policy.
+  release saves changed presets when persistence is enabled. Musical data
+  uses a separate main-array ring, not the factory settings record; see
+  [PERSISTENCE.md](PERSISTENCE.md) for the completed-gesture save policy.
 - While a pad is held and its knob moves, freeze that knob's arp/vibrato
   latch.  Pads 2+3 TOGETHER is the factory latch chord; single holds are
   free.  Remove the factory pad-latch in builds with latching_arp = true.
@@ -175,11 +175,13 @@ That contract supersedes the historical sampled-low, rejection-budget,
   -1, which the arp already reads as nothing this step.  The pitch is swapped
   in at the value hook, after the octave randomiser, so what plays is what was
   recorded plus whatever the pads transpose.
-  CONSEQUENCE, and it needs saying in the page copy: play rides the ARP
-  CLOCK, so the arpeggiator has to be running for the sequence to advance.
-  Forcing the arp engine on from our side was considered and rejected - the
-  factory sets state+0x34c inside a start/stop sequence with its own setup
-  calls, and skipping that setup is not something to do blind.
+  Transport update (2026-08-28): PLAY owns clock enable independently of the
+  arp switch. STOP/CLEAR end that ownership and return to the physical
+  switch's normal behavior. Effective enable is shared by rate conditioning,
+  the factory's change detector/setup, timer dispatch and external clocks.
+  Transport uses the factory setup path, rather than forcing `state+0x34c`.
+  That byte is actually the RATE low-end/internal-clock-disable flag (1
+  disables internal ticks), not the engine's run flag. See [CLOCK.md](CLOCK.md).
   THE KEYBOARD IS NOT SILENCED, which an earlier draft of this section
   claimed it would be.  What actually holds: while playing, held keys no
   longer choose the arp's notes - the sequence's pitches replace the
@@ -745,15 +747,20 @@ Read-back verification precedes and follows commit. The eight-page ring
 never retries its newest valid page. A failed lap latches failure instead
 of looping forever or retrying at scan rate.
 
-Recording completion, preset release after pickup and clearing a nonempty
-sequence queue saves. Flash waits for stopped/off/released idle conditions.
+Recording completion, preset release after pickup and clearing a sequence
+commit changed data in the same control scan, with no idle/arp/clock gate.
+A completed-edit snapshot excludes other held presets and unfinished takes.
+Unchanged gestures do not write, even on empty storage. Flash saves can
+briefly disrupt live clock/output timing.
 Startup restores only musical data before GPIO setup and always starts
 stopped, including after warm reset. Old experimental records are rejected.
 The User Page and factory settings are untouched; DFU erases musical data.
 
 `tools/test_persistence.py` executes the built instructions and factory copy
 wrapper with modeled failures and power cuts, then runs the clock suite
-with saves pending. Physical flash and analog timing still need bench tests.
+with an unfinished preset held. Separate cases exercise release saves during
+playback and clock continuation. Physical flash and analog timing still
+need bench tests.
 
 ### Second audit pass: arithmetic, bounds, budget, and what the hooks destroyed (2026-08-27)
 
@@ -1204,7 +1211,9 @@ touches either one.
 
 **The arp step engine** `0x8000210c`, R12 = the step interval:
 
-- `state+0x34c` gates the whole engine (1 = running).
+- `state+0x34c` disables internal ticks when 1 (RATE at its low end); it
+  does not disable forced external steps. Effective transport enable is
+  separate; see [CLOCK.md](CLOCK.md) for the current sequencer behavior.
 - `state+0x38e` is the countdown; the rhythm randomiser already writes it, and
   the gate-off compare at `0x800021a0` (== 3) is our existing hook.
 - At zero it fires a step.  **`state+0x21a` (held count) must be non-zero or

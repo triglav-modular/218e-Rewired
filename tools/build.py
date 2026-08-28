@@ -881,23 +881,22 @@ RAM_REGIONS = [
     (0x6258, 0x625A, "saturating capture FIFO overrun count"),
     (0x625A, 0x625B, "physical output timestamp valid"),
     (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
-    # Persistence requests coalesce until the instrument is idle. A failed
+    # Completed edit gestures commit immediately. A failed
     # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
     (0x62E0, 0x62E1, "persistence request/result"),
     (0x62E1, 0x62E2, "which rotation page holds the newest record"),
     (0x62E2, 0x62E3, "sequence length last scan, for clear detection"),
     (0x62E4, 0x62E8, "the sequence number that record carries"),
-    (0x62E8, 0x62EC, "idle interval start, COUNT"),
-    (0x62EC, 0x62ED, "idle interval armed"),
     # The scan watches for two gestures ENDING, so it has to remember what
     # they looked like on the previous scan.
     (0x62F8, 0x62F9, "the sequencer mode last scan"),
-    (0x62F9, 0x62FD, "each preset's following flag last scan"),
+    (0x62F9, 0x62FD, "each preset was edited since its last full release"),
     (0x62FD, 0x62FE, "the stored record has been restored this power-up"),
     # The record staged for writing, 8-byte aligned and a multiple of 8 long,
     # so the flash driver takes its simple aligned path - the same reason the
     # factory stages its own record rather than writing from scattered state.
     (0x6300, 0x63E0, "canonical v2 record, staged for body then marker commit"),
+    (0x6400, 0x64CC, "canonical musical payload from completed edit gestures"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1789,18 +1788,22 @@ def main() -> None:
     for name in ("persist_crc", "persist_record_crc", "persist_pack",
                  "persist_valid", "persist_newest", "persist_load",
                  "persist_same", "persist_verify", "persist_save", "persist_tick",
-                 "persist_safe", "persist_boot", "persist_scan_shim", "persist"):
+                 "persist_capture", "persist_boot", "persist_scan_shim", "persist"):
         blocks[name] = keep
     blocks["clock_init_pool"] = div or keep
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
+                 "seq_clock_enabled", "seq_transport", "seq_clock_rate_hook",
+                 "seq_clock_change_hook", "seq_clock_setup_hook", "seq_clock_tick_hook",
+                 "seq_clock_input_hook", "seq_clock_midi_hook",
                  "seq_strip", "seq_gate", "seq_glide", "strip_pool",
                  "seq_gate_clear", "seq_gate_clear_hook",
                  "seq_pulse_drop", "pulse_drop_pool", "seq_next_step",
                  "seq_noteoff", "seq_noteoff_hook",
                  "seq_trigger_led", "seq_trigger_led_hook"):
         blocks[name] = seq
+    blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"
     summary.append(f"  {'knob2.mode':28s} {k2!r}"

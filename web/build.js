@@ -124,6 +124,9 @@ var WEBBUILD = (function () {
         blocks.arp_swing = cfg.knob2.mode === 'swing';
         var seq = !!(cfg.sequencer && cfg.sequencer.on);
         ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
+         'seq_clock_enabled', 'seq_transport', 'seq_clock_rate_hook',
+         'seq_clock_change_hook', 'seq_clock_setup_hook', 'seq_clock_tick_hook',
+         'seq_clock_input_hook', 'seq_clock_midi_hook',
          'seq_strip', 'seq_gate', 'seq_glide', 'strip_pool',
          'seq_gate_clear', 'seq_gate_clear_hook',
          'seq_pulse_drop', 'pulse_drop_pool', 'seq_next_step',
@@ -134,9 +137,10 @@ var WEBBUILD = (function () {
         ['persist_crc', 'persist_record_crc', 'persist_pack',
          'persist_valid', 'persist_newest', 'persist_load',
          'persist_same', 'persist_verify', 'persist_save', 'persist_tick',
-         'persist_safe', 'persist_boot', 'persist_scan_shim', 'persist']
+         'persist_capture', 'persist_boot', 'persist_scan_shim', 'persist']
             .forEach(function (n) { blocks[n] = keep; });
         var div = !!(cfg.clock && cfg.clock.divide);
+        blocks.seq_clock_input_hook = seq && !div;
         ['clock_scan', 'clock_pulse', 'clock_hook',
          'clock_tempo', 'clock_tempo_hook',
          'clock_ms_tick', 'clock_ms_pool',

@@ -10,10 +10,11 @@ import java.util.zip.CRC32;
 public class PersistenceRegression extends GhidraScript {
     static final long S=0x3560, BASE=0x8003e000L;
     static final long CRC=0x8001cc00L, VALID=0x8001cce0L, NEWEST=0x8001ce00L,
-        SAVE=0x8001d100L, SAFE=0x8001d280L, TICK=0x8001d400L,
+        SAVE=0x8001d100L, CAPTURE=0x8001d280L, TICK=0x8001d400L,
         SHIM=0x8001d520L, ENTER=0x8001b660L, SCAN=0x8001a480L;
     EmulatorHelper e;
-    boolean seq, clock, locked, allBad, badCommit;
+    boolean seq, clock, locked, allBad, badCommit, clockExercise;
+    int outputs;
     int checks, writes, erases, programs, stores, cutBytes;
     String cut="";
     long page, sizeFn, clearFn, eraseFn, programFn, errorCell;
@@ -36,6 +37,10 @@ public class PersistenceRegression extends GhidraScript {
     void ret() { jump(reg("LR")); }
     void step() throws Exception {
         long p=pc();
+        if(clockExercise) {
+            if(p==0x80004c64L) { ret(); return; } // dispatch separately driven events
+            if(p==0x800077f8L) { outputs++; w(S+0x354,2,0xfff); ret(); return; }
+        }
         if(p==sizeFn) { e.writeRegister("R12",0x40000); ret(); return; }
         if(p==clearFn) { Arrays.fill(buffer,(byte)255); w(errorCell,4,0); ret(); return; }
         if(p==eraseFn) {
@@ -114,6 +119,12 @@ public class PersistenceRegression extends GhidraScript {
         throw new Exception("instruction budget at "+Long.toHexString(pc()));
     }
     long call(long entry) throws Exception { return call(entry,0x100); }
+    long capture(int mask) throws Exception {
+        e.writeRegister("R12",mask); return call(CAPTURE);
+    }
+    // Low-level flash tests explicitly finish all synthetic edits. Gesture
+    // tests below enter TICK/SHIM and never bypass the firmware's selection.
+    long saveLive() throws Exception { capture(31); return call(SAVE); }
     void time(long ms) { e.writeRegister("COUNT",(ms*25000)&0xffffffffL); }
     void boot() throws Exception { call(0x80007bf4L,0x80007bf8L); }
     void cold() throws Exception {
@@ -133,31 +144,26 @@ public class PersistenceRegression extends GhidraScript {
         sizeFn=r(0x80010e80L,4); clearFn=r(0x80010e84L,4); errorCell=r(0x80010e88L,4);
         eraseFn=r(0x80010e8cL,4); programFn=r(0x80010e90L,4);
         byte[] ff=new byte[4096]; Arrays.fill(ff,(byte)255); e.writeMemory(toAddr(BASE),ff);
-        locked=false; allBad=false; badCommit=false; cut=""; badPages.clear(); targets.clear();
+        locked=false; allBad=false; badCommit=false; clockExercise=false; cut=""; badPages.clear(); targets.clear();
         writes=0; erases=0; programs=0; stores=0; cold();
         check("settings page untouched",r(0x968,4)==0x8003f000L);
     }
     void seed() throws Exception {
         for(int i=0;i<4;i++) { w(0x613a+2*i,2,400+100*i); w(0x6160+2*i,2,500+100*i); w(0x61ee+i,1,i); }
         w(0x61e0,1,4); w(0x62e2,1,4);
-        check("initial save succeeds",call(SAVE)==0&&writes==2&&erases==1&&programs==2);
+        check("initial save succeeds",saveLive()==0&&writes==2&&erases==1&&programs==2);
         check("first slot and generation",call(NEWEST)==BASE&&r(0x62e1,1)==0&&r(0x62e4,4)==1);
     }
-    void idle() {
-        w(S+0x340,2,0); w(S+0x21a,1,0); w(S+0x238,1,0); w(S+0x354,2,0);
-        w(0x6158,1,0); w(0x60ee,1,0); w(0x46f0,4,0); w(0x614a,4,0);
-    }
-    void settle(long start) throws Exception { idle(); time(start); call(TICK); time(start+2601); call(TICK); }
     void basic() throws Exception {
         fresh();
         e.writeMemory(toAddr(0x7000),"123456789".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         e.writeRegister("R12",0xffffffffL); e.writeRegister("R11",0x7000); e.writeRegister("R10",9);
         check("CRC32 standard check vector",(call(CRC)^0xffffffffL)==0xcbf43926L);
-        seed(); check("unchanged skips flash",call(SAVE)==0&&writes==2);
+        seed(); check("unchanged skips flash",saveLive()==0&&writes==2);
         // Musical equality excludes modes, pickup, old steps and rest keys.
         w(0x6158,1,1); w(0x614a,1,1); w(0x61e1,1,3); w(0x6168,2,1234); w(0x61f2,1,12);
-        check("runtime and unused steps do not cause writes",call(SAVE)==0&&writes==2);
-        for(int n=0;n<10;n++) { w(0x613a,2,401+n); check("ring save",call(SAVE)==0); }
+        check("runtime and unused steps do not cause writes",saveLive()==0&&writes==2);
+        for(int n=0;n<10;n++) { w(0x613a,2,401+n); check("ring save",saveLive()==0); }
         check("rotation wraps",r(0x62e1,1)==2&&r(0x62e4,4)==11);
         cold(); check("only musical state restored",r(0x613a,2)==410&&r(0x61e0,1)==4
             &&r(0x6158,1)==0&&r(0x614a,4)==0&&r(0x61e1,1)==0&&r(0x6168,2)==0);
@@ -171,20 +177,22 @@ public class PersistenceRegression extends GhidraScript {
         for(String fault:new String[]{"locked","body","commit"}) {
             fresh(); seed(); w(0x613a,2,901); int before=writes;
             locked=fault.equals("locked"); allBad=fault.equals("body"); badCommit=fault.equals("commit");
-            check("failure returns",call(SAVE)==1);
+            check("failure returns",saveLive()==1);
             check("bounded seven candidate pages",writes-before==(badCommit?14:7)&&r(0x62e0,1)==2);
             check("newest good page never targeted",!targets.subList(before,targets.size()).contains(BASE));
             check("last record survives",call(NEWEST)==BASE);
-            before=writes; settle(3000);
+            before=writes;
             for(int i=0;i<10;i++) { time(6000+i*5); call(TICK); }
             check("failure latched, not retried at scan rate",writes==before);
             locked=false; allBad=false; badCommit=false;
             w(0x62f9,1,1); call(TICK);
+            check("unchanged gesture does not retry failed write",writes==before&&r(0x62e0,1)==2);
+            w(0x613a,2,902); w(0x62f9,1,1); call(TICK);
             check("new edit rearms save",writes==before+2&&r(0x62e0,1)==0);
         }
         fresh(); allBad=true; w(0x613a,2,123);
-        check("empty ring failure returns after eight",call(SAVE)==1&&writes==8&&call(NEWEST)==0);
-        fresh(); seed(); badPages.add(1); w(0x613a,2,402); call(SAVE);
+        check("empty ring failure returns after eight",saveLive()==1&&writes==8&&call(NEWEST)==0);
+        fresh(); seed(); badPages.add(1); w(0x613a,2,402); saveLive();
         check("skip one bad page",writes==5&&call(NEWEST)==BASE+1024);
         println("PASS bounded body/commit/locked failures, last-copy protection, latched retry, bad-page skip");
     }
@@ -194,7 +202,7 @@ public class PersistenceRegression extends GhidraScript {
                 :point.equals("commit-partial")?new int[]{0,1,2,3}:new int[]{0};
             for(int n:lengths) {
                 fresh(); seed(); w(0x613a,2,902); cut=point; cutBytes=n;
-                try { call(SAVE); throw new Exception("power cut not reached: "+point); }
+                try { saveLive(); throw new Exception("power cut not reached: "+point); }
                 catch(PowerCut expected) { /* inspect retained flash at restart */ }
                 cut=""; cold();
                 check("power-cut fallback "+point+"/"+n,r(0x613a,2)==(point.equals("commit")?902:400));
@@ -208,7 +216,7 @@ public class PersistenceRegression extends GhidraScript {
         w(p+12,4,crc.getValue());
     }
     void corruption() throws Exception {
-        fresh(); seed(); w(0x613a,2,0); call(SAVE); long p=BASE+512;
+        fresh(); seed(); w(0x613a,2,0); saveLive(); long p=BASE+512;
         byte[] good=e.readMemory(toAddr(p),512);
         for(int off:new int[]{0,4,6,8,12,16,17,24,25,28,155,156,219}) {
             e.writeMemory(toAddr(p),good); w(p+off,1,r(p+off,1)^1);
@@ -227,68 +235,172 @@ public class PersistenceRegression extends GhidraScript {
         e.writeMemory(toAddr(p),good); w(p+8,4,0xffffffffL); fixCrc(p);
         w(BASE+8,4,0xfffffffeL); fixCrc(BASE);
         check("newest near generation wrap",call(NEWEST)==p);
-        w(0x613a,2,1); call(SAVE);
+        w(0x613a,2,1); saveLive();
         check("wrap skips generation zero",r(0x62e4,4)==1&&call(NEWEST)==BASE+1024);
         cold(); check("wrapped generation restores",r(0x613a,2)==1);
         // Full-length sequence with pitches, rest and tie survives exactly.
         fresh(); for(int i=0;i<64;i++) { w(0x6160+2*i,2,i<62?i*60:i==62?0x7ffe:0x7fff); w(0x61ee+i,1,i%29); }
-        w(0x61e0,1,64); call(SAVE); cold();
+        w(0x61e0,1,64); saveLive(); cold();
         check("64 steps, rest and tie",r(0x61e0,1)==64&&r(0x61dc,2)==0x7ffe&&r(0x61de,2)==0x7fff);
         check("rest/tie keys canonical zero",r(0x622c,2)==0);
         println("PASS CRC/semantic corruption rejection, legacy rejection, generation wrap, 64-step rest/tie");
     }
-    void safety() throws Exception {
-        fresh(); seed(); w(0x613a,2,903); w(0x62e0,1,1);
-        long[][] busy={{S+0x340,1},{S+0x341,1},{S+0x21a,1},{S+0x238,1},{S+0x354,2},
-            {0x6158,1},{0x60ee,1},{0x46f0,1},{0x46f3,1},{0x614a,1},{0x614d,1}};
-        for(long[] v:busy) {
-            idle(); w(v[0],(int)v[1],1); time(5000); call(TICK); time(9000); call(TICK);
-            check("busy input inhibits flash "+Long.toHexString(v[0]),writes==2&&r(0x62e0,1)==1);
+    void gesturePolicy() throws Exception {
+        fresh(); seed();
+        byte[] initial=e.readMemory(toAddr(0x6400),204);
+        for(int i=0;i<4;i++)w(0x613a+2*i,2,450+100*i);
+        w(0x6160,2,999);
+        for(int mask=0;mask<32;mask++) {
+            e.writeMemory(toAddr(0x6400),initial);
+            check("capture reports only selected changes",capture(mask)==(mask==0?0:1));
+            for(int i=0;i<4;i++)check("independent preset mask",r(0x6400+2*i,2)
+                ==400+100*i+((mask&(1<<i))!=0?50:0));
+            check("independent sequence mask",r(0x640c,2)==((mask&16)!=0?999:500));
         }
-        idle(); time(10000); call(TICK); time(12600); call(TICK);
-        check("strict idle interval",writes==2);
-        if(clock) {
-            w(0x623c,4,12599*25000L); time(12601); call(TICK);
-            check("recent external clock inhibits flash",writes==2);
-            time(15200); call(TICK);
-        } else { time(12601); call(TICK); }
-        check("idle eventually commits",writes==4&&r(0x62e0,1)==0);
-        // Both idle and COUNT-minus-last-clock arithmetic must cross wrap.
-        w(0x613a,2,904); w(0x62e0,1,1); w(0x62ec,1,0);
-        time(170000); w(0x623c,4,170000*25000L); call(TICK);
-        time(172601); call(TICK); check("idle COUNT wrap",writes==6);
-        w(0x29cc,4,0); w(0x62e0,1,1); time(180000); call(TICK);
-        check("missing CPU timebase prevents flash",writes==6);
-        println("PASS safe-save gates, exact idle boundary, recent clock, COUNT wrap, missing timebase");
+        // Everything that used to inhibit writes is active. Only pad 1 is
+        // released; pad 2 is still editing. No idle time is advanced.
+        for(int mode:new int[]{0,1,2}) {
+            fresh(); seed(); w(0x6158,1,mode); w(0x62f8,1,mode);
+            w(S+0x340,1,1); w(S+0x341,1,1); w(S+0x21a,1,2); w(S+0x238,1,2);
+            w(S+0x354,2,0xaaa); w(0x60ee,1,1); w(0x46f1,1,2); w(0x614b,1,1);
+            w(0x613a,2,903); w(0x613c,2,904); w(0x62f9,1,1);
+            w(0x623c,4,12345); w(0x29cc,4,0);
+            byte[] clockState=e.readMemory(toAddr(0x6232),0xae);
+            call(TICK);
+            check("release commits immediately while busy, mode "+mode,writes==4&&r(0x62e0,1)==0);
+            long p=call(NEWEST);
+            check("held other pad excluded",r(p+16,2)==903&&r(p+18,2)==500&&r(0x613c,2)==904);
+            check("save preserves musical transport state",r(0x6158,1)==mode&&r(S+0x354,2)==0xaaa
+                &&r(0x60ee,1)==1&&Arrays.equals(clockState,e.readMemory(toAddr(0x6232),0xae)));
+            call(TICK); check("no repeat write on next scan",writes==4);
+        }
+        println("PASS selective capture and immediate saves with arp/record/play, held controls, active gate/clock, no timebase");
+    }
+    void presets() throws Exception {
+        fresh(); seed();
+        for(int i=0;i<4;i++)w(S+0x30a+2*i,2,400+100*i);
+        call(SHIM);
+        w(0x46f0,1,2); call(SHIM); w(0x46f0,1,0); call(SHIM);
+        check("pad tap without a new value never writes",writes==2);
+        w(0x46f0,1,2); w(0x46f1,1,2); w(S+0x30a,2,450); w(S+0x30c,2,550); call(SHIM);
+        check("continuous edits stay in RAM",writes==2&&r(0x613a,2)==450&&r(0x613c,2)==550);
+        w(0x46f0,1,1); call(SHIM);
+        check("still touched is not a full release",writes==2&&r(0x62f9,1)==1);
+        w(0x46f0,1,0); call(SHIM);
+        long p=call(NEWEST);
+        check("only released preset committed",writes==4&&r(p+16,2)==450&&r(p+18,2)==500);
+        w(0x46f1,1,0); call(SHIM); p=call(NEWEST);
+        check("second release commits its new value",writes==6&&r(p+18,2)==550);
+        call(SHIM); check("repeated scans never repeat save",writes==6);
+        w(0x46f2,1,2); w(S+0x30e,2,650); call(SHIM);
+        w(S+0x30e,2,600); call(SHIM); w(0x46f2,1,0); call(SHIM);
+        check("return to old preset value skips flash",writes==6);
+        w(0x46f2,1,2); w(0x46f3,1,2); w(S+0x30e,2,625); w(S+0x310,2,725); call(SHIM);
+        w(0x46f2,2,0); call(SHIM); p=call(NEWEST);
+        check("simultaneous releases coalesce into one record",writes==8&&r(p+20,2)==625&&r(p+22,2)==725);
+        cold(); check("all released preset values survive",r(0x613a,2)==450&&r(0x613c,2)==550
+            &&r(0x613e,2)==625&&r(0x6140,2)==725&&capture(31)==0);
+        fresh(); w(0x46f0,1,2); w(S+0x30a,2,50); call(SHIM);
+        w(S+0x30a,2,0); call(SHIM); w(0x46f0,1,0); call(SHIM);
+        check("unchanged preset never creates a first record",writes==0&&call(NEWEST)==0);
+        println("PASS real pickup/release, partial release, no-op/reverted values, independent and simultaneous pads");
     }
     void gestures() throws Exception {
         if(!seq) return;
         for(int mode:new int[]{0,1,2}) {
             fresh(); seed(); w(0x6158,1,mode); call(TICK);
             e.writeRegister("R11",2); call(ENTER); call(TICK);
-            check("clear queued from mode "+mode,r(0x61e0,1)==0&&r(0x62e0,1)==1&&writes==2);
-            settle(3000); cold(); check("clear survives restart",r(0x61e0,1)==0&&r(0x613a,2)==400);
+            check("clear saved immediately from mode "+mode,r(0x61e0,1)==0&&r(0x62e0,1)==0&&writes==4);
+            cold(); check("clear survives restart",r(0x61e0,1)==0&&r(0x613a,2)==400);
         }
-        fresh(); w(0x61e0,1,1); w(0x6160,2,500);
+        fresh(); seed();
         e.writeRegister("R11",0); call(ENTER); call(TICK);
         check("record borrows strip",r(0x6158,1)==1&&r(S+0x20c,4)==0&&r(0x622e,2)==2);
+        w(0x61e0,1,5); w(0x6168,2,950); w(0x61f2,1,4);
         w(S+0x206,1,1); w(S+0x1fe,2,0); call(0x8001b590L);
         w(0x46f0,1,2); w(S+0x30a,2,333); call(SHIM);
         check("actual preset pickup",r(0x614a,1)==1&&r(0x613a,2)==333);
-        w(0x46f0,1,0); call(SHIM); time(5000); call(TICK);
-        check("preset edit stays pending during record",writes==0&&r(0x62e0,1)==1);
-        e.writeRegister("R11",0); call(ENTER); call(TICK); settle(6000);
-        int length=(int)r(0x61e0,1); check("record exit saved musical data",writes==2);
+        w(0x46f0,1,0); call(SHIM);
+        long p=call(NEWEST);
+        check("preset saves during record without saving unfinished take",writes==4&&r(0x6158,1)==1
+            &&r(p+16,2)==333&&r(p+24,1)==4&&r(0x61e0,1)==5);
+        e.writeRegister("R11",1); call(ENTER); call(TICK);
+        int length=(int)r(0x61e0,1);
+        check("record-to-play saves at once",writes==6&&r(0x6158,1)==2&&r(call(NEWEST)+24,1)==length);
         cold(); call(SCAN);
         check("no phantom rest or recording on startup",r(0x6158,1)==0&&r(0x61e0,1)==length
             &&r(S+0x20c,4)==1&&r(0x622e,2)==0&&r(0x613a,2)==333);
-        println("PASS actual clear gestures (idle/record/play), preset release in record, no phantom restart step");
+
+        fresh(); seed(); w(0x613a,2,777); w(0x614a,1,1); w(0x46f0,1,2);
+        e.writeRegister("R11",0); call(ENTER); call(TICK);
+        e.writeRegister("R11",1); call(ENTER); call(TICK);
+        check("unchanged record exit ignores a held preset edit",writes==2);
+        w(0x614a,1,0); w(0x46f0,1,0); call(TICK);
+        check("held preset later saves on its own release",writes==4&&r(call(NEWEST)+16,2)==777);
+        fresh(); e.writeRegister("R11",2); call(ENTER); call(TICK);
+        e.writeRegister("R11",0); call(ENTER); call(TICK);
+        e.writeRegister("R11",1); call(ENTER); call(TICK);
+        check("empty clear and unchanged take do not create a record",writes==0);
+
+        // Exercise the real scan order: chord edits must be seen by
+        // persistence in THIS scan, while pad 4 remains held and armed.
+        fresh(); seed(); w(0x6154,2,200); w(0x6156,1,1);
+        w(0x46f3,1,2); w(0x46f0,1,2); call(SCAN);
+        check("real scan enters record",r(0x6158,1)==1&&writes==2);
+        w(0x61e0,1,5); w(0x6168,2,999); w(0x61f2,1,5);
+        w(0x46f0,1,0); call(SCAN);
+        w(0x46f1,1,2); call(SCAN);
+        check("record exit saved in same chord scan",r(0x6158,1)==2&&writes==4
+            &&r(call(NEWEST)+24,1)==5&&r(0x46f3,1)==2);
+        w(0x46f1,1,0); call(SCAN); w(0x46f2,1,2); call(SCAN);
+        check("clear saved in same chord scan",r(0x61e0,1)==0&&writes==6&&r(call(NEWEST)+24,1)==0);
+        w(0x46f2,1,0); call(SCAN); w(0x46f2,1,2); call(SCAN);
+        check("repeated empty clear skips flash",writes==6);
+        println("PASS real clear/record-exit saves, unfinished-edit isolation, same-scan chords, no-op gestures and restart");
+    }
+    void edge(long ms,boolean high) throws Exception {
+        time(ms); w(0xffff1060L,4,high?32:0); w(0xffff10d0L,4,32);
+        call(0x800072e4L,0x80007328L); w(0xffff10d0L,4,0);
+    }
+    void serviceAndOutput(long ms) throws Exception {
+        time(ms); call(0x80007c66L,0x80007c6aL);
+        call(0x80004f66L,0x80004faeL);
+        w(0x3210,2,r(S+0x352,2)); call(0x80003236L,0x80003256L);
+    }
+    void playbackSave() throws Exception {
+        if(!clock)return;
+        fresh(); seed(); clockExercise=true; outputs=0;
+        call(0x8000737eL,0x80007386L);
+        w(S+0x340,1,1); w(S+0x21a,1,1); w(S+0x21b,1,1);
+        w(S+0x34a,2,20); w(S+0x38e,2,100); w(S+0x2fc,2,0x420);
+        w(0x2ee0,2,20); w(0x2ee6,2,1023);
+        if(seq)w(0x6158,1,2);
+        else { e.writeRegister("R12",0); call(0x8001a020L); }
+        for(int i=0;i<8;i++) {
+            long ms=10+5*i; edge(ms-2,false); edge(ms,true); serviceAndOutput(ms);
+            check("one physical output per pre-save pulse",outputs==i+1);
+        }
+        w(0x46f0,1,2); w(S+0x30a,2,777); call(SHIM);
+        check("held edit does not write during playback",writes==2);
+        byte[] clockState=e.readMemory(toAddr(0x6232),0xae);
+        w(0x46f0,1,0); call(SHIM);
+        check("released preset commits during playback",writes==4&&r(call(NEWEST)+16,2)==777);
+        check("save leaves captured-clock state intact",Arrays.equals(clockState,e.readMemory(toAddr(0x6232),0xae)));
+        // A modeled scheduling pause, not a claim of physical flash latency.
+        // No ISR events are invented for transitions the CPU could not see.
+        serviceAndOutput(70); check("save cannot invent a catch-up trigger",outputs==8);
+        for(int i=0;i<8;i++) {
+            long ms=80+5*i; edge(ms-2,false); edge(ms,true); serviceAndOutput(ms);
+            check("fresh pulses resume without repeats after save",outputs==9+i);
+        }
+        clockExercise=false;
+        println("PASS actual clock/output before and after a release save; no reset or synthetic catch-up triggers");
     }
     public void run() throws Exception {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
         try {
-            basic(); retries(); powerCuts(); corruption(); safety(); gestures();
+            basic(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
             println("PERSISTENCE REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash/analog testing.");
         } finally { if(e!=null)e.dispose(); }
     }

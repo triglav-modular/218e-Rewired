@@ -149,9 +149,11 @@ def audit_call_pools(image_path) -> list[str]:
 # again for 2.0, which added caves and moved the first-use clear; and again
 # when rests and ties moved to an absolute strip position, which moved the
 # clear once more; and for interrupt-timestamped clock capture, whose FIFO
-# extends that clear through 0x62df. Both assemblers verified this new pin.
+# extends that clear through 0x62df; and for canonical persistence plus
+# independent sequence transport and completed-gesture persistence.
+# Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "1cd71cc077f2469f51b079303007dc19bbb17554e95aa6ae436cb1e5fbf6d122",
+    "historical_config": "108a1e703e21e4274d8395d210b41f07b0dc02979cd9d8f1f926e0edb9f80f7e",
 }
 
 

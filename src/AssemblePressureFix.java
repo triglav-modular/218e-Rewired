@@ -3350,7 +3350,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.B R12[0x4],R9");       // the mode this press leaves behind
         emit("LDM SP++,R7,PC");
         padTo(0x8001b6b0L);
-        word(0x8001b6c0L); // strip_mode_swap(R9 = the mode being entered)
+        word(0x8001d640L); // transport + strip_mode_swap(R9 = new mode)
 
         padTo(0x8001b6c0L);
         // Everything that has to happen because the sequencer's mode is
@@ -3910,8 +3910,9 @@ public class AssemblePressureFix extends GhidraScript {
         // Persistence v2. Only musical data is serialized, never mode,
         // touch history, clock state or knob pickup state. A verified body
         // is committed by programming its still-erased marker word LAST.
-        // Keep the newest valid page out of every retry lap. All flash work
-        // waits for the explicit idle policy in persist_safe.
+        // Keep the newest valid page out of every retry lap. Completed edit
+        // gestures commit immediately, without an idle/clock/arp gate. A
+        // separate musical snapshot excludes other edits still in progress.
         //
         // Header: marker[4], version[2]=2, length[2]=204, generation[4],
         // CRC32[4]. Payload: presets[8], count[1], reserved[3], pitches[128],
@@ -4085,8 +4086,9 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001cce0L);
         finish("persist_newest", 0x8001ce80L);
 
-        // Canonical snapshot, generation in R12. No live state participates
-        // in equality, and inactive steps/rest keys cannot cause extra wear.
+        // Canonical record from COMPLETED edits at 0x6400, generation in R12.
+        // A preset release cannot accidentally commit an unfinished take,
+        // and leaving record cannot commit a different pad still held down.
         begin(0x8001ce80L);
         emit("STM --SP,R0,R1,R2,R7,LR");
         emit("MOV R7,SP");
@@ -4109,7 +4111,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.W R8[0x8],R0");
         emit("MOV R1,0x0");
         padTo(0x8001ced0L);
-        emit("MOV R8,0x613a");
+        emit("MOV R8,0x6400");
         emit("ADD R8,R8,R1 << 0x0");
         emit("LD.UB R9,R8[0x0]");
         emit("MOV R8,0x6310");
@@ -4118,7 +4120,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R1,-0x1");
         emit("CP.W R1,0x8");
         emit("BR{lt} 0x8001ced0");
-        emit("MOV R8,0x61e0");
+        emit("MOV R8,0x6408");
         emit("LD.UB R2,R8[0x0]");
         emit("MOV R9,0x40");
         emit("CP.W R2,R9");
@@ -4131,7 +4133,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001cf10L);
         emit("CP.W R1,R2");
         emit("BR{ge} 0x8001cf90");
-        emit("MOV R8,0x6160");
+        emit("MOV R8,0x640c");
         emit("ADD R8,R8,R1 << 0x1");
         emit("LD.UH R9,R8[0x0]");
         emit("MOV R8,0x631c");
@@ -4139,7 +4141,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R8[0x0],R9");
         emit("CP.W R9,0x7ffe");
         emit("BR{ge} 0x8001cf70");      // rest/tie: the zero key stays zero
-        emit("MOV R8,0x61ee");
+        emit("MOV R8,0x648c");
         emit("ADD R8,R8,R1 << 0x0");
         emit("LD.UB R9,R8[0x0]");
         emit("MOV R8,0x639c");
@@ -4252,7 +4254,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV PC,LR");
         finish("persist_verify", 0x8001d100L);
 
-        // Called only after persist_safe. Return zero on success/no change,
+        // Called after a changed, completed edit. Return zero on success/no change,
         // one on failure. Request states: 0 clean, 1 pending, 2 failed.
         // Failure is latched until another edit, not retried every scan.
         begin(0x8001d100L);
@@ -4352,88 +4354,105 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001cce0L);
         finish("persist_save", 0x8001d280L);
 
-        // No flash access on the musical path: arp OFF (both enable bytes),
-        // sequence STOPPED, no held/touched keys or pads, no gate/deferred
-        // trigger, for >2.6 seconds. Divider builds additionally require
-        // >2.6 seconds since the last captured input. The clock ISR itself
-        // is unchanged. New inputs while the arp is OFF cannot play notes.
-        // R12 returns one when safe; this runs every scan, not just on edits.
+        // Capture only completed musical edits into 0x6400..0x64cb.
+        // R12 mask: bits 0..3 = released preset pads, bit 4 = sequence.
+        // Return R12 = changed. Unchanged gestures (including empty clear)
+        // never write even on a blank ring. Mask 0x1f initializes every
+        // snapshot byte at boot; no snapshot survives a warm reset.
         begin(0x8001d280L);
-        emit("LDDPC R11,0x8001d3fc");
-        emit("LD.UB R8,R11[0x340]");
-        emit("LD.UB R9,R11[0x341]");
-        emit("OR R8,R9");
-        emit("LD.UB R9,R11[0x21a]");
-        emit("OR R8,R9");
-        emit("LD.UB R9,R11[0x238]");
-        emit("OR R8,R9");
-        emit("LD.UH R9,R11[0x354]");
-        emit("OR R8,R9");
-        emit("MOV R10,0x6154");
-        emit("LD.UB R9,R10[0x4]");
-        emit("OR R8,R9");
-        emit("MOV R10,0x60ee");
-        emit("LD.UB R9,R10[0x0]");
-        emit("OR R8,R9");
-        emit("MOV R10,0x46f0");
-        emit("LD.W R9,R10[0x0]");
-        emit("OR R8,R9");
-        emit("MOV R10,0x614a");
-        emit("LD.UH R9,R10[0x0]");
-        emit("OR R8,R9");
-        emit("LD.UH R9,R10[0x2]");
-        emit("OR R8,R9");
+        emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R2,R12");
+        emit("MOV R0,0x0");
+        emit("MOV R1,0x0");
+        emit("MOV R3,0x6400");
+        padTo(0x8001d294L);
+        emit("CP.W R1,0x4");
+        emit("BR{eq} 0x8001d2e0");
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x1");
         emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001d3d0");
-        emit("MOV R8,0x29cc");
-        emit("LD.W R8,R8[0x0]");
-        emit("MOV R9,0x3e8");
-        emit("DIVU R8,R8,R9");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001d3d0");       // no trustworthy CPU timebase: do not save
-        emit("MOV R9,0xa28");
-        emit("MUL R9,R8,R9");
-        emit("MFSR R12,COUNT");
-        emit("MOV R10,0x62e0");
-        emit("LD.UB R8,R10[0xc]");
-        emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001d380");
-        emit("ST.W R10[0x8],R12");
-        emit("MOV R8,0x1");
-        emit("ST.B R10[0xc],R8");
-        emit("RJMP 0x8001d3e0");
-        padTo(0x8001d380L);
-        emit("LD.W R8,R10[0x8]");
-        emit("SUB R8,R12,R8 << 0x0");
-        emit("CP.W R8,R9");
-        emit("BR{ls} 0x8001d3e0");
-        if (block("clock_capture")) {
-            emit("MOV R10,0x6234");
-            emit("LD.W R8,R10[0x8]");
-            emit("SUB R8,R12,R8 << 0x0");
-            emit("CP.W R8,R9");
-            emit("BR{ls} 0x8001d3e0");
-        }
-        emit("MOV R12,0x1");
-        emit("MOV PC,LR");
-        padTo(0x8001d3d0L);
-        emit("MOV R10,0x62e0");
+        emit("BR{eq} 0x8001d2cc");
+        emit("MOV R8,0x613a");
+        emit("ADD R8,R8,R1 << 0x1");
+        emit("LD.UH R9,R8[0x0]");
+        emit("ADD R10,R3,R1 << 0x1");
+        emit("LD.UH R11,R10[0x0]");
+        emit("CP.W R9,R11");
+        emit("BR{eq} 0x8001d2c0");
+        emit("MOV R0,0x1");
+        padTo(0x8001d2c0L);
+        emit("ST.H R10[0x0],R9");
+        padTo(0x8001d2ccL);
+        emit("LSR R2,0x1");
+        emit("SUB R1,-0x1");
+        emit("RJMP 0x8001d294");
+        padTo(0x8001d2e0L);
+        emit("CP.W R2,0x0");
+        emit("BR{eq} 0x8001d3d8");
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R4,R8[0x0]");
+        emit("CP.W R4,0x40");
+        emit("BR{ls} 0x8001d2f8");
+        emit("MOV R4,0x40");
+        padTo(0x8001d2f8L);
+        emit("LD.UB R9,R3[0x8]");
+        emit("CP.W R4,R9");
+        emit("BR{eq} 0x8001d308");
+        emit("MOV R0,0x1");
+        padTo(0x8001d308L);
+        emit("ST.B R3[0x8],R4");
         emit("MOV R8,0x0");
-        emit("ST.B R10[0xc],R8");
-        padTo(0x8001d3e0L);
-        emit("MOV R12,0x0");
-        emit("MOV PC,LR");
-        padTo(0x8001d3fcL);
-        word(0x00003560L);
-        finish("persist_safe", 0x8001d400L);
+        emit("ST.B R3[0x9],R8");
+        emit("ST.H R3[0xa],R8");
+        emit("MOV R1,0x0");
+        padTo(0x8001d318L);
+        emit("CP.W R1,0x40");
+        emit("BR{ge} 0x8001d3d8");
+        emit("MOV R9,0x0");
+        emit("MOV R11,0x0");
+        emit("CP.W R1,R4");
+        emit("BR{ge} 0x8001d350");
+        emit("MOV R8,0x6160");
+        emit("ADD R8,R8,R1 << 0x1");
+        emit("LD.UH R9,R8[0x0]");
+        emit("CP.W R9,0x7ffe");
+        emit("BR{ge} 0x8001d350");
+        emit("MOV R8,0x61ee");
+        emit("ADD R8,R8,R1 << 0x0");
+        emit("LD.UB R11,R8[0x0]");
+        padTo(0x8001d350L);
+        emit("ADD R10,R3,R1 << 0x1");
+        emit("LD.UH R8,R10[0xc]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001d366");
+        emit("MOV R0,0x1");
+        padTo(0x8001d366L);
+        emit("ST.H R10[0xc],R9");
+        emit("ADD R10,R3,R1 << 0x0");
+        emit("LD.UB R8,R10[0x8c]");
+        emit("CP.W R8,R11");
+        emit("BR{eq} 0x8001d382");
+        emit("MOV R0,0x1");
+        padTo(0x8001d382L);
+        emit("ST.B R10[0x8c],R11");
+        emit("SUB R1,-0x1");
+        emit("RJMP 0x8001d318");
+        padTo(0x8001d3d8L);
+        emit("MOV R12,R0");
+        emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
+        finish("persist_capture", 0x8001d400L);
 
         // Watch completion of recording/preset edits AND a nonempty-to-empty
-        // sequence transition. Requests coalesce while busy; a new edit also
-        // re-arms a failed save. All startup shadows are primed by persist_boot.
+        // sequence transition. A preset's edit flag survives the intermediate
+        // touched-but-not-held level: commit only once that pad is released.
+        // Changed completed gestures commit in this scan, regardless of mode,
+        // held controls, clock input, gate state or CPU timebase.
         begin(0x8001d400L);
-        emit("STM --SP,R0,R1,R7,LR");
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,0x62e0");
+        emit("MOV R2,0x0");
         emit("MOV R8,0x6154");
         emit("LD.UB R9,R8[0x4]");
         emit("LD.UB R10,R0[0x18]");
@@ -4442,8 +4461,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ne} 0x8001d440");
         emit("CP.W R9,0x1");
         emit("BR{eq} 0x8001d440");
-        emit("MOV R8,0x1");
-        emit("ST.B R0[0x0],R8");
+        emit("MOV R8,0x10");
+        emit("OR R2,R8");
         padTo(0x8001d440L);
         emit("MOV R8,0x61e0");
         emit("LD.UB R9,R8[0x0]");
@@ -4453,10 +4472,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001d470");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x8001d470");
-        emit("MOV R8,0x1");
-        emit("ST.B R0[0x0],R8");
+        emit("MOV R8,0x10");
+        emit("OR R2,R8");
         padTo(0x8001d470L);
         emit("MOV R1,0x0");
+        emit("MOV R3,0x1");
         padTo(0x8001d474L);
         emit("CP.W R1,0x4");
         emit("BR{ge} 0x8001d4c0");
@@ -4465,26 +4485,33 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R9,R8[0x0]");
         emit("ADD R8,R0,R1 << 0x0");
         emit("LD.UB R10,R8[0x19]");
-        emit("ST.B R8[0x19],R9");
+        emit("OR R9,R10");
+        emit("MOV R10,0x46f0");
+        emit("ADD R10,R10,R1 << 0x0");
+        emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001d4a0");
+        emit("BR{ne} 0x8001d4ac");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001d4a0");
-        emit("MOV R8,0x1");
-        emit("ST.B R0[0x0],R8");
-        padTo(0x8001d4a0L);
+        emit("BR{eq} 0x8001d4ac");
+        emit("OR R2,R3");
+        emit("MOV R9,0x0");
+        padTo(0x8001d4acL);
+        emit("ST.B R8[0x19],R9");
         emit("SUB R1,-0x1");
+        emit("LSL R3,0x1");
         emit("RJMP 0x8001d474");
         padTo(0x8001d4c0L);
+        emit("CP.W R2,0x0");
+        emit("BR{eq} 0x8001d4e0");
+        emit("MOV R12,R2");
         emit("MCALL PC[0x8001d518]");
         emit("CP.W R12,0x0");
         emit("BR{eq} 0x8001d4e0");
-        emit("LD.UB R9,R0[0x0]");
-        emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001d4e0");
+        emit("MOV R8,0x1");
+        emit("ST.B R0[0x0],R8");
         emit("MCALL PC[0x8001d51c]");
         padTo(0x8001d4e0L);
-        emit("LDM SP++,R0,R1,R7,PC");
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
         padTo(0x8001d518L);
         word(0x8001d280L);
         word(0x8001d100L);
@@ -4492,13 +4519,14 @@ public class AssemblePressureFix extends GhidraScript {
 
         begin(0x8001d520L);
         emit("STM --SP,R7,LR");
-        emit("MOV R7,SP");
         emit("MCALL PC[0x8001d534]");
+        if (block("seq_chord")) emit("MCALL PC[0x8001d53c]");
         emit("MCALL PC[0x8001d538]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001d534L);
         word(0x8001ae1cL);
         word(0x8001d400L);
+        word(0x8001b180L);
         finish("persist_scan_shim", 0x8001d540L);
 
         // Startup before GPIO interrupts are installed, not a late restore
@@ -4528,6 +4556,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,-0x1");
         emit("ST.B R10[0x1],R9");
         emit("MCALL PC[0x8001d5b4]");
+        emit("MOV R12,0x1f");
+        emit("MCALL PC[0x8001d5bc]");   // initialize completed-edit snapshot
         emit("MOV R10,0x62e0");
         emit("MOV R9,0x1");
         emit("ST.B R10[0x1d],R9");
@@ -4540,7 +4570,84 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001ab60L);
         word(0x8001cfc0L);
         word(block("clock_capture") ? 0x8001c300L : 0x80007340L);
+        word(0x8001d280L);
         finish("persist_boot", 0x8001d5c0L);
+
+        // The sequencer owns its run state, not the physical arp switch.
+        // Use the same effective enable for tempo conditioning, factory
+        // start/stop setup, periodic ticks and external-clock dispatch.
+        // Returns R8 = boolean, clobbers only R8/R9. In particular the
+        // clock service keeps R10 (FIFO) and R11 (factory state) live.
+        begin(0x8001d600L);
+        emit("MOV R9,0x6154");
+        emit("LD.UB R8,R9[0x4]");
+        emit("CP.W R8,0x2");
+        emit("BR{eq} 0x8001d62c");
+        emit("LDDPC R9,0x8001d638");
+        emit("LD.UB R8,R9[0x340]");
+        emit("LD.UB R9,R9[0x341]");
+        emit("OR R8,R9");
+        emit("MOV PC,LR");
+        padTo(0x8001d62cL);
+        emit("MOV R8,0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001d638L);
+        word(0x00003560L);
+        word(0x8001d600L);
+        finish("seq_clock_enabled", 0x8001d640L);
+
+        // Every play/stop/clear/record transition goes through seq_enter's
+        // mode-change pool. Preserve its R9/R12 arguments. Finish the strip
+        // swap first, while the old mode is still visible; then publish the
+        // new mode before asking the FACTORY tempo/setup routine to run.
+        // This does not overwrite the physical switch or invent a second
+        // oscillator. Stopping the sequence returns clock ownership to arp.
+        begin(0x8001d640L);
+        emit("STM --SP,R0,R1,R2,R7,R9,R12,LR");
+        emit("MOV R7,SP");
+        emit("LD.UB R0,R12[0x4]");
+        emit("MOV R1,R9");
+        emit("MCALL PC[0x8001d768]");    // original strip-mode transition
+        emit("CP.W R0,R1");
+        emit("BR{eq} 0x8001d750");
+        emit("CP.W R1,0x2");
+        emit("BR{ne} 0x8001d670");
+        emit("MCALL PC[0x8001d76c]");    // end any preceding arp note on PLAY
+        padTo(0x8001d670L);
+        emit("ST.B R12[0x4],R1");
+        emit("CP.W R0,0x2");
+        emit("BR{eq} 0x8001d688");
+        emit("CP.W R1,0x2");
+        emit("BR{ne} 0x8001d750");
+        padTo(0x8001d688L);
+        emit("MFSR R2,SR");
+        emit("SSRF 0x10");
+        emit("MOV R8,0x0");
+        emit("MOV R10,0x60ee");
+        emit("ST.B R10[0x0],R8");       // no old deferred trigger crosses transport
+        if (block("clock_capture")) {
+            emit("MOV R10,0x6234");
+            emit("LD.UB R9,R10[0x0]");
+            emit("ST.B R10[0x1],R9");  // discard pre-start/stop FIFO entries
+            emit("ST.B R10[0x2],R8");
+            emit("ST.B R10[0x3],R8");
+            emit("ST.B R10[-0x1],R8"); // release acquired divider
+            emit("MOV R10,0x61ea");
+            emit("ST.H R10[0x0],R8");
+            emit("ST.H R10[0x2],R8");
+        }
+        emit("MTSR SR,R2");
+        emit("LDDPC R10,0x8001d770");
+        emit("ST.H R10[0x38e],R8");     // start at the first beat, not an old countdown
+        emit("MCALL PC[0x8001d774]");    // rate + factory enable transition/setup
+        padTo(0x8001d750L);
+        emit("LDM SP++,R0,R1,R2,R7,R9,R12,PC");
+        padTo(0x8001d768L);
+        word(0x8001b6c0L);
+        word(0x8001b448L);
+        word(0x00003560L);
+        word(0x80002b28L);
+        finish("seq_transport", 0x8001d780L);
 
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the
@@ -4612,9 +4719,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SSRF 0x10");
         emit("MOV R10,0x6234");
         emit("LDDPC R11,0x8001c570");
-        emit("LD.UB R8,R11[0x340]");
-        emit("LD.UB R9,R11[0x341]");
-        emit("OR R8,R9");
+        if (block("seq_clock_enabled")) {
+            emit("MCALL PC[0x8001d63c]");
+        } else {
+            emit("LD.UB R8,R11[0x340]");
+            emit("LD.UB R9,R11[0x341]");
+            emit("OR R8,R9");
+        }
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x8001c4e0");
         emit("LD.UB R8,R10[0x2]");
@@ -5476,7 +5587,7 @@ public class AssemblePressureFix extends GhidraScript {
         }
         padTo(0x8001a510L);
         emit("MCALL PC[0x8001a520]");   // preset voltage editing
-        if (block("seq_chord")) {
+        if (block("seq_chord") && !block("persist")) {
             emit("MCALL PC[0x8001a524]"); // the sequencer's pad chord
         }
         // Clock dequeue runs only from the main loop, never inside a pitch
@@ -5484,8 +5595,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R7,PC");
         padTo(0x8001a520L);
         // With persistence on, the preset editor is reached through a shim
-        // that runs the persistence tick beside it - one word, so nothing in
-        // the crowded caves below has to move.
+        // that runs editor, sequencer controls and persistence in that order,
+        // so a completed gesture is committed in the same control scan.
         word(block("persist") ? 0x8001d520L : 0x8001ae1cL);
         word(0x8001b180L);              // the sequencer chord
         word(0x8001b980L);              // the external clock, per scan
@@ -5620,6 +5731,53 @@ public class AssemblePressureFix extends GhidraScript {
             begin(0x80007d8cL);
             word(block("persist") ? 0x8001d540L : 0x8001c300L);
             finish("clock_init_pool", 0x80007d90L);
+        }
+
+        if (block("seq_clock_enabled")) {
+            // Tempo conditioning must run with arp OFF too; otherwise RATE
+            // and its low-end clock-disable flag would stay stale on PLAY.
+            begin(0x80002b30L);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x80002c22");
+            emit("RJMP 0x80002b44");
+            finish("seq_clock_rate_hook", 0x80002b44L);
+            // The factory's enable edge detector and setup/teardown agree
+            // with the effective run state, not just the physical switch.
+            begin(0x80002ac4L);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x80002ae0");
+            emit("RJMP 0x80002ad8");
+            finish("seq_clock_change_hook", 0x80002ad8L);
+            begin(0x80002c2cL);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{ne} 0x80002ca6");
+            emit("RJMP 0x80002c48");
+            finish("seq_clock_setup_hook", 0x80002c48L);
+            begin(0x80004f86L);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x80004fae");
+            emit("RJMP 0x80004f9e");
+            finish("seq_clock_tick_hook", 0x80004f9eL);
+            // Clock-divider builds consume GPIO only through their FIFO.
+            // Without it, retain the factory's physical-clock event path.
+            if (!block("clock_capture")) {
+                begin(0x80004e58L);
+                emit("MCALL PC[0x8001d63c]");
+                emit("CP.W R8,0x0");
+                emit("BR{eq} 0x8000518a");
+                emit("RJMP 0x80004e72");
+                finish("seq_clock_input_hook", 0x80004e72L);
+            }
+            begin(0x80004efcL);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8000518e");
+            emit("RJMP 0x80004f16");
+            finish("seq_clock_midi_hook", 0x80004f16L);
         }
 
         // Hook: event 13, the trigger LED.  Its own two other reasons to

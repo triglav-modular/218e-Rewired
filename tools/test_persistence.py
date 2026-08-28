@@ -72,6 +72,10 @@ def main() -> None:
                 command += ["-postScript", "PersistenceClockRegression.java", "seq" if "seq" in mode else "arp"]
                 if args.quick:
                     command.append("quick")
+            if "seq" in mode:
+                command += ["-postScript", "SequenceTransportRegression.java", mode]
+                if args.quick:
+                    command.append("quick")
             print(f"Emulating {mode} firmware...", flush=True)
             result = subprocess.run(command, cwd=REPO, text=True, capture_output=True)
             output = result.stdout + result.stderr
@@ -82,7 +86,8 @@ def main() -> None:
                     print(line.split("Regression.java>", 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
             if (result.returncode or "ERROR REPORT SCRIPT ERROR" in output
                     or "PERSISTENCE REGRESSION PASS:" not in output
-                    or ("clock" in mode and "CLOCK REGRESSION PASS:" not in output)):
+                    or ("clock" in mode and "CLOCK REGRESSION PASS:" not in output)
+                    or ("seq" in mode and "SEQUENCE TRANSPORT PASS:" not in output)):
                 raise SystemExit(f"Persistence regression failed; see {log}\n{output[-5000:]}")
     finally:
         for name, data in saved.items():
