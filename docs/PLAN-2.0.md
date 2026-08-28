@@ -10,6 +10,45 @@ That contract supersedes the historical sampled-low, rejection-budget,
 
 ## Features and settled decisions
 
+### Preview and backspace, while recording (2026-08-28)
+
+Two things a bare pad press means while a take is being recorded - bare
+meaning pad 4 is NOT held, so it cannot be confused with the chord.
+
+**Pad 2 previews**: play what is there from the top, once, and stop.  Pad 3
+is a backspace: the last step goes, and the cursor with it, so the next note
+rewrites that slot.
+
+**Backspace ERASES rather than just shortening.**  Dropping the count alone
+would play correctly - the steps past it are never reached - but it leaves
+the old notes in the array for anything that reads past the count, the saved
+record included, and four backspaces followed by one note would carry three
+stale steps into flash.  Each press clears the pitch AND the key of the slot
+it gives up.
+
+**The preview ends where the sequence would otherwise wrap.**  That is the
+only place in the firmware that can see the take run out, so the wrap test
+moved into `seq_preview_step`, which answers with the step to play or -1 to
+sound nothing.  Without a preview in flight it wraps exactly as it always
+did; with one, it clears the flag, hands the sequencer back to recording
+through the same transport the chord uses, and sounds nothing on the way out
+so the ending does not play step 0 again.
+
+**A preview must not look like the end of a take.**  Persistence saves when
+the mode leaves record, and a preview leaves record to play - so it would
+spend an erase, and a stalled CPU, every time you listened back.  The trigger
+now ignores the transition while the preview flag is up.  Leaving record for
+real still saves, because by then the flag is down.
+
+**The press edge is computed once, for both readings.**  It used to sit
+behind the armed test, so a bare press never reached anything; now the edge
+comes first and the armed test only chooses between the chord and these two.
+
+Verified against the built image: 25 scenarios covering the erase, the
+four-in-a-row case, an empty take, preview from a moved cursor, the stop at
+the end, the unchanged wrap when no preview is running, and both pads being
+inert outside record mode.
+
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
   them in lockstep).  Table expression generalised from 12/1200 to map

@@ -153,7 +153,7 @@ def audit_call_pools(image_path) -> list[str]:
 # independent sequence transport and completed-gesture persistence.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "108a1e703e21e4274d8395d210b41f07b0dc02979cd9d8f1f926e0edb9f80f7e",
+    "historical_config": "1b0d779fb7a6f55f650dbf3c45b134b58b0de76acb7ca6b85ffc980870dc35b9",
 }
 
 

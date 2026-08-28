@@ -2980,13 +2980,19 @@ function assembleProgram() {
         emit("ADD R8,R1,R11 << 0x0");
         emit("LD.UB R9,R8[0x6]");       // last scan's
         emit("ST.B R8[0x6],R12");
-        emit("LD.UB R10,R1[0x2]");      // armed?
-        emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001b248");
+        // The press edge first, because BOTH readings of a press need it: a
+        // chord while pad 4 is held, and - while recording - a bare press
+        // meaning preview or backspace.
         emit("CP.W R12,0x2");
         emit("BR{ne} 0x8001b248");
         emit("CP.W R9,0x2");
         emit("BR{eq} 0x8001b248");
+        emit("LD.UB R10,R1[0x2]");      // armed?
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001b226");
+        emit("MCALL PC[0x8001b244]");   // bare: seq_edit decides what it means
+        emit("RJMP 0x8001b248");
+        padTo(0x8001b226);
         // A press, and as many as you like: using the hold does not spend
         // it.  Pad 4 stays held and stays armed until it is let go, so play
         // then stop then clear is three presses inside one hold rather than
@@ -2997,6 +3003,9 @@ function assembleProgram() {
         // slate the flash below writes its own channel onto.
         emit("LD.UB R12,R1[0x5]");
         emit("MCALL PC[0x8001b304]");   // select_pad
+        emit("RJMP 0x8001b248");        // over the pool word, never through it
+        padTo(0x8001b244);
+        word(0x8001d780);              // seq_edit
         padTo(0x8001b248);
         emit("SUB R11,-0x1");
         emit("CP.W R11,0x3");
@@ -4267,6 +4276,14 @@ function assembleProgram() {
         emit("BR{ne} 0x8001d440");
         emit("CP.W R9,0x1");
         emit("BR{eq} 0x8001d440");
+        // Unless it is a PREVIEW.  Pad 2 leaves record mode to play the take
+        // back, and that is the middle of a take rather than the end of one:
+        // saving there would spend an erase, and a stalled CPU, every time
+        // you listened to what you had.
+        emit("MOV R8,0x62fe");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001d440");
         emit("MOV R8,0x10");
         emit("OR R2,R8");
         padTo(0x8001d440);
@@ -4454,6 +4471,94 @@ function assembleProgram() {
         word(0x00003560);
         word(0x80002b28);
         finish("seq_transport", 0x8001d780);
+
+        // A bare pad press while RECORDING - pad 4 not held, so it is not a
+        // chord.  R11 is the pad, 0..2.
+        begin(0x8001d780);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,0x6154");
+        emit("LD.UB R8,R0[0x4]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001d7f8");      // only while recording
+        emit("CP.W R11,0x1");
+        emit("BR{eq} 0x8001d7a0");      // pad 2: hear it back
+        emit("CP.W R11,0x2");
+        emit("BR{eq} 0x8001d7c8");      // pad 3: take the last one back
+        emit("RJMP 0x8001d7f8");
+        padTo(0x8001d7a0);
+        // Preview: play what is there from the top, ONCE.  The end of it is
+        // seq_preview_step's business, which is the only place that can see
+        // the sequence run out before it wraps.
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d7f8");      // nothing recorded, nothing to hear
+        emit("MOV R8,0x0");
+        emit("ST.B R10[0x1],R8");       // from the top
+        emit("MOV R8,0x62fe");
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x0],R9");
+        emit("MOV R12,0x6154");
+        emit("MOV R9,0x2");
+        emit("MCALL PC[0x8001d7fc]");   // the same transport the chord uses
+        emit("ST.B R12[0x4],R9");
+        emit("RJMP 0x8001d7f8");
+        padTo(0x8001d7c8);
+        // Backspace.  Shortening the sequence is what makes it play right,
+        // but the slot is ERASED as well: four presses have to clear four
+        // steps, or anything that reads past the count - the saved record
+        // included - still has the old notes in it.
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d7f8");      // already empty
+        emit("SUB R8,0x1");
+        emit("ST.B R10[0x0],R8");
+        emit("MOV R9,0x0");
+        emit("MOV R12,0x6160");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("ST.H R12[0x0],R9");       // the pitch it held
+        emit("MOV R12,0x61ee");
+        emit("ADD R12,R12,R8 << 0x0");
+        emit("ST.B R12[0x0],R9");       // and the key it was played on
+        padTo(0x8001d7f8);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001d7fc);
+        word(0x8001d640);              // transport + strip_mode_swap
+        finish("seq_edit", 0x8001d800);
+
+        // Which step plays next, asked where the sequence would otherwise
+        // wrap.  Returns R9 = the step, or -1 to sound nothing: a preview
+        // stops at the end instead of going round, and hands the sequencer
+        // back to recording.  R8, R10, R11 and R12 are the caller's.
+        begin(0x8001d800);
+        emit("STM --SP,R7,R8,R10,R11,R12,LR");
+        emit("MOV R7,SP");
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R11,R10[0x0]");
+        emit("LD.UB R9,R10[0x1]");
+        emit("CP.W R9,R11");
+        emit("BR{lt} 0x8001d834");      // still inside: play it
+        emit("MOV R8,0x62fe");
+        emit("LD.UB R12,R8[0x0]");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001d830");      // no preview: wrap, as it always did
+        emit("MOV R12,0x0");
+        emit("ST.B R8[0x0],R12");       // the preview is over
+        emit("MOV R12,0x6154");
+        emit("MOV R9,0x1");
+        emit("MCALL PC[0x8001d838]");
+        emit("ST.B R12[0x4],R9");       // and recording has it back
+        emit("MOV R9,-0x1");            // sounding nothing on the way out
+        emit("RJMP 0x8001d834");
+        padTo(0x8001d830);
+        emit("MOV R9,0x0");
+        padTo(0x8001d834);
+        emit("LDM SP++,R7,R8,R10,R11,R12,PC");
+        padTo(0x8001d838);
+        word(0x8001d640);              // transport + strip_mode_swap
+        finish("seq_preview_step", 0x8001d840);
 
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the
@@ -5046,6 +5151,8 @@ function assembleProgram() {
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");            // nothing recorded: silence
         emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001b408);
+        word(0x8001d800);              // seq_preview_step
         padTo(0x8001b410);
         emit("LDDPC R9,0x8001b430");
         emit("LD.UB R8,R9[0x21a]");

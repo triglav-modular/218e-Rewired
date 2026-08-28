@@ -892,6 +892,9 @@ RAM_REGIONS = [
     (0x62F8, 0x62F9, "the sequencer mode last scan"),
     (0x62F9, 0x62FD, "each preset was edited since its last full release"),
     (0x62FD, 0x62FE, "the stored record has been restored this power-up"),
+    # A preview is a take being listened back to, not a take being
+    # finished: it must not read as leaving record mode.
+    (0x62FE, 0x62FF, "a one-shot preview of the take is playing"),
     # The record staged for writing, 8-byte aligned and a multiple of 8 long,
     # so the flash driver takes its simple aligned path - the same reason the
     # factory stages its own record rather than writing from scattered state.
@@ -1801,7 +1804,8 @@ def main() -> None:
                  "seq_gate_clear", "seq_gate_clear_hook",
                  "seq_pulse_drop", "pulse_drop_pool", "seq_next_step",
                  "seq_noteoff", "seq_noteoff_hook",
-                 "seq_trigger_led", "seq_trigger_led_hook"):
+                 "seq_trigger_led", "seq_trigger_led_hook",
+                 "seq_edit", "seq_preview_step"):
         blocks[name] = seq
     blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
