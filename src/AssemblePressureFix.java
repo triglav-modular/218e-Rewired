@@ -1535,10 +1535,13 @@ public class AssemblePressureFix extends GhidraScript {
         if (feature("alternate_tunings")) {
             emit("MCALL PC[0x8001a340]");      // tuning applier
         }
+        // Preset pickup must own this scan's knob before vibrato reads it.
+        // Otherwise the first movement changes vibrato, then the editor
+        // freezes that already-changed value for the rest of the hold.
+        emit("MCALL PC[0x8001a348]");          // per-scan housekeeping
         if (feature("knob4_vibrato")) {
             emit("MCALL PC[0x8001a344]");      // vibrato engine
         }
-        emit("MCALL PC[0x8001a348]");          // per-scan housekeeping
         if (feature("pressure_ab_switch")) {
             emit("MCALL PC[0x8001a34c]");      // octave-switch shadow sync
         }
@@ -2775,10 +2778,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LSR R2,0x7");             // zone, 0..5
         // Zone 5 is random and zone 2 is mirror, so the knob runs up, down,
         // up-down, as played, backwards, random: the deterministic orders in
-        // a row and the unpredictable one at the end of the travel, rather
-        // than random sitting in the middle of them.  Testing for 5 here is
-        // the whole of it - zone 2 then matches none of the tests and falls
-        // through to the mirror code below, where 5 used to.
+        // a row and the unpredictable one at the end of the travel. Zone 2
+        // falls through to mirror; its direction-update guard below must
+        // use that same zone, not the random zone that used to live here.
         emit("CP.W R2,0x5");
         emit("BR{eq} 0x8001afd0");      // random: the old code
         emit("CP.W R2,0x3");
@@ -2801,93 +2803,17 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ne} 0x8001af20");
         emit("MOV R3,-0x1");
         padTo(0x8001af20L);
-        // Walk out from the last key in R3's direction, wrapping the ends.  29
-        // tries covers every key once, so an empty keyboard falls out rather
-        // than spinning.
-        emit("LD.UB R9,R1[0x34d]");
-        // 0x1c and BR{ge}, not 0x1d and BR{gt}: the same 29 passes, but 0x1d
-        // never appears as a MOV.  It is the off-by-one that puts a key walk
-        // one past the end, and the guard in tools/test.py refuses it on
-        // sight rather than trying to tell a counter from an index.
-        emit("MOV R10,0x1c");
-        padTo(0x8001af30L);
-        emit("ADD R9,R3");
-        emit("CP.W R9,0x1d");
-        emit("BR{lt} 0x8001af3c");
-        emit("MOV R9,0x0");
-        padTo(0x8001af3cL);
-        emit("CP.W R9,0x0");
-        emit("BR{ge} 0x8001af44");
-        emit("MOV R9,0x1c");
-        padTo(0x8001af44L);
-        emit("ADD R8,R0,R9 << 0x0");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x1");
-        emit("BR{eq} 0x8001af58");
-        emit("SUB R10,0x1");
-        emit("BR{ge} 0x8001af30");
-        emit("RJMP 0x8001aff0");
-        padTo(0x8001af58L);
-        // Mirror turns at the outermost HELD key, not at the end of the
-        // keyboard: with three keys down the run has to come back from the
-        // top one, and the ends of the board are nowhere near it.  So look
-        // past where we landed for another held key in the same direction,
-        // and turn only when there is none.
-        emit("CP.W R2,0x5");
-        emit("BR{ne} 0x8001afe0");
-        emit("MOV R11,R9");
-        padTo(0x8001af60L);
-        emit("ADD R11,R3");
-        emit("CP.W R11,0x0");
-        emit("BR{lt} 0x8001af78");
-        emit("CP.W R11,0x1d");
-        emit("BR{ge} 0x8001af78");
-        emit("ADD R8,R0,R11 << 0x0");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x1");
-        emit("BR{eq} 0x8001afe0");
-        emit("RJMP 0x8001af60");
-        padTo(0x8001af78L);
-        emit("MOV R8,0x1");
-        emit("CP.W R3,0x0");
-        emit("BR{lt} 0x8001af84");
-        emit("MOV R8,0x0");
-        padTo(0x8001af84L);
-        emit("MOV R11,0x614e");
-        emit("ST.B R11[0x0],R8");
-        emit("RJMP 0x8001afe0");
-        padTo(0x8001af90L);
-        // Reverse press order: the press list read backwards.  Same list and
-        // the same wrap as the forward walk, stepping the other way.
-        emit("MOV R10,0x6000");
-        emit("LD.UB R8,R10[0x0]");
-        emit("CP.W R8,0x20");
-        emit("BR{ls} 0x8001afa0");
-        emit("MOV R8,0x0");
-        padTo(0x8001afa0L);
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001aff0");
-        emit("LD.UB R9,R1[0x34d]");
-        emit("MOV R3,0x0");
-        padTo(0x8001afaaL);
-        emit("CP.W R3,R8");
-        emit("BR{ge} 0x8001afbc");
-        emit("ADD R11,R10,R3 << 0x0");
-        emit("LD.UB R11,R11[0x1]");
-        emit("CP.W R11,R9");
-        emit("BR{eq} 0x8001afbc");
-        emit("SUB R3,-0x1");
-        emit("RJMP 0x8001afaa");
-        padTo(0x8001afbcL);
-        emit("SUB R3,0x1");
-        emit("CP.W R3,0x0");
-        emit("BR{ge} 0x8001afc8");
-        emit("MOV R3,R8");
-        emit("SUB R3,0x1");
-        padTo(0x8001afc8L);
-        emit("ADD R11,R10,R3 << 0x0");
-        emit("LD.UB R12,R11[0x1]");
+        // A latched slot is not a pitch index: octave stacking can put any
+        // pitch in any slot. Choose by (table + signed stamp, slot) instead.
+        emit("MCALL PC[0x8001b00c]");
         emit("RJMP 0x8001afe8");
+        padTo(0x8001af90L);
+        // History survives release. The bounded reverse walk checks held
+        // flags, just like the forward walk, before returning a note.
+        emit("MCALL PC[0x8001afcc]");
+        emit("RJMP 0x8001afe8");
+        padTo(0x8001afccL);
+        word(0x8001dc60L);
         padTo(0x8001afd0L);
         emit("LDDPC R12,0x8001b004");   // the old random path
         emit("MOV PC,R12");
@@ -2906,7 +2832,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         word(0x8001a0deL); // random, past the blend test
         word(0x8001a150L); // press order
-        finish("arp_order_zones", 0x8001b00cL);
+        word(0x8001da00L); // pitch-aware ascending / descending / mirror
+        finish("arp_order_zones", 0x8001b010L);
 
         // Knob 4 as an octave switch instead of vibrato.
         //
@@ -2923,30 +2850,21 @@ public class AssemblePressureFix extends GhidraScript {
         // Our octave_scale_mul/bias patches sit on that arithmetic already, so
         // trn steps the scale's period rather than a hardcoded 2/1.
         //
-        // Written after the tuning applier in the per-scan chain, which is
-        // what makes it stick: with a tuning installed the applier zeroes the
-        // transpose-mode byte every scan, and this runs later.
-        //
-        // Edit-gated, since knob 4 in edit mode is the pressure curve.
+        // Run both before the ADC event's pitch calculation and after the
+        // tuning applier (which clears the enable byte). The early pass must
+        // predict pickup without consuming the preset editor's release edge.
         begin(0x8001b010L);
-        emit("STM --SP,R7,LR");
-        emit("MOV R7,SP");
-        emit("LDDPC R9,0x8001b04c");
-        emit("LD.UB R8,R9[0x39]");
-        emit("CP.W R8,0x1");
-        emit("BR{eq} 0x8001b048");
-        emit("LD.SH R8,R9[0x310]");
-        emit(String.format("MOV R10,0x%x", number("knob4_zones", 9, 3, 16)));
-        emit("MUL R8,R8,R10");
-        emit("LSR R8,0xa");             // the factory's own steps, or fewer
-        emit("ST.B R9[0x6b],R8");
-        emit("MOV R8,0x1");
-        emit("ST.B R9[0x6a],R8");       // and trn on, every scan
-        padTo(0x8001b048L);
-        emit("LDM SP++,R7,PC");
+        emit("LDDPC R8,0x8001b04c");
+        emit("MOV PC,R8");
         padTo(0x8001b04cL);
-        word(0x00003560L); // global state base
+        word(0x8001d960L);
         finish("knob4_octave_switch", 0x8001b050L);
+
+        if (block("knob4_octave_switch")) {
+            begin(0x800051f0L);
+            word(0x8001d920L);
+            finish("knob4_early_pool", 0x800051f4L);
+        }
 
         // Knob 2 as a bank of step patterns.  A pattern says whether a step
         // sounds, which is not a question about how long the step is, so this
@@ -3324,9 +3242,8 @@ public class AssemblePressureFix extends GhidraScript {
         // Whatever this press means, nothing transient carries into it.
         // Stopping mid-tie used to leave the slide armed, so the first note
         // after restarting held its gate and slid in from nowhere; and a
-        // strip still held when record starts is not a release, so the take
-        // does not open with a rest nobody entered.
-        emit("ST.B R8[0x4],R10");       // 0x61e4, the strip down last scan
+        // strip still held when record starts is blocked until release by
+        // the shared transport below, so it cannot open an unintended rest.
         emit("ST.B R8[0x5],R10");       // 0x61e5, the tie's slide count
         // and the key a note-on left waiting to be heard.  The pad loop runs
         // before the record-sound call in the same scan, so a press that ends
@@ -3487,33 +3404,39 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDDPC R11,0x8001b604");   // global state base
         emit("LD.UB R8,R11[0x206]");    // is the strip touched at all
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b5ac");
+        emit("BR{eq} 0x8001b5b4");
+        // 0 = released, 1 = this touch may produce a step, 2 = a touch
+        // carried across transport. Never re-arm 2 while the finger stays
+        // down; the release clears it without appending anything.
+        emit("LD.UB R8,R10[0x4]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001b5f6");
         emit("MOV R8,0x1");
         emit("ST.B R10[0x4],R8");       // down, and down is what a release needs
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b5acL);
+        padTo(0x8001b5b4L);
         // Up.  One step per release, and every release: three taps at the
         // bottom enter three rests, which is what a bar of them takes.
         emit("LD.UB R8,R10[0x4]");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b5ee");      // it was already up
-        emit("MOV R8,0x0");
-        emit("ST.B R10[0x4],R8");
+        emit("MOV R9,0x0");
+        emit("ST.B R10[0x4],R9");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001b5f6");      // already up, or transport rejected it
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b5ee");      // only record listens to the strip
+        emit("BR{ne} 0x8001b5f6");      // only record listens to the strip
         emit("LD.UB R9,R10[0x0]");
         emit("CP.W R9,0x40");
-        emit("BR{ge} 0x8001b5ee");      // 64 steps and no more
+        emit("BR{ge} 0x8001b5f6");      // 64 steps and no more
         emit("LD.SH R12,R11[0x1fe]");   // where the finger left
         emit(String.format("MOV R8,0x%x",
              number("strip_halfway_units", 2048, 128, 3968)));
         emit("MOV R11,0x2");            // above halfway: a tie
         emit("CP.W R12,R8");
-        emit("BR{ge} 0x8001b5d8");
+        emit("BR{ge} 0x8001b5e0");
         emit("MOV R11,0x1");            // below halfway: a rest
-        padTo(0x8001b5d8L);
+        padTo(0x8001b5e0L);
         // 0x7ffe is a rest and 0x7fff a tie, as a pitch can never be either.
         emit("MOV R8,0x7ffd");
         emit("ADD R8,R8,R11 << 0x0");
@@ -3522,7 +3445,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R12[0x0],R8");
         emit("SUB R9,-0x1");
         emit("ST.B R10[0x0],R9");
-        padTo(0x8001b5eeL);
+        padTo(0x8001b5f6L);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b600L);
         word(0x80002e30L); // bend(position)
@@ -4628,6 +4551,18 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R7,SP");
         emit("LD.UB R0,R12[0x4]");
         emit("MOV R1,R9");
+        // A touch present at any explicit/preview boundary belongs to the
+        // old gesture. Block it until release, including RECORD -> RECORD.
+        // Sample the physical level here: if already up, the first fresh
+        // touch after this transition must remain usable without a dead tap.
+        emit("LDDPC R10,0x8001d770");
+        emit("LD.UB R8,R10[0x206]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d656");
+        emit("MOV R8,0x2");
+        padTo(0x8001d656L);
+        emit("MOV R10,0x61e4");
+        emit("ST.B R10[0x0],R8");
         emit("MCALL PC[0x8001d768]");    // original strip-mode transition
         emit("CP.W R0,R1");
         emit("BR{eq} 0x8001d750");
@@ -4803,14 +4738,14 @@ public class AssemblePressureFix extends GhidraScript {
         finish("seq_preview_start", 0x8001d8e0L);
 
         // Preview transitions bypass seq_enter, so reset the same transient
-        // strip/tie/audition state before the shared mode/clock transition.
+        // tie/audition state before the shared mode/clock transition, which
+        // also rejects any strip touch still held at the boundary.
         // R9/R12 are the transport's arguments and survive unchanged.
         begin(0x8001d8e0L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x61e0");
         emit("MOV R10,0x0");
-        emit("ST.B R8[0x4],R10");
         emit("ST.B R8[0x5],R10");
         emit("ST.H R8[0x50],R10");
         emit("MCALL PC[0x8001d91c]");
@@ -4818,6 +4753,247 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001d91cL);
         word(0x8001d640L);
         finish("seq_preview_transport", 0x8001d920L);
+
+        // ADC event: preserve the factory decoder's other work, then publish
+        // knob-4 ownership BEFORE 0x80003590 consumes the transpose bytes.
+        // The late applier remains necessary after tuning clears the enable.
+        begin(0x8001d920L);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001d94c]");
+        emit("MCALL PC[0x8001d950]");
+        emit("MCALL PC[0x8001d954]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001d94cL);
+        word(0x8001ab60L);
+        word(0x80004a00L);
+        word(0x8001d960L);
+        finish("knob4_early", 0x8001d960L);
+
+        // Read-only pickup prediction. In particular DO NOT clear following
+        // on release: the later persistence shim must still observe that
+        // edge. A released pad resumes the musical role immediately anyway.
+        // While held, exactly the editor's >8-unit movement threshold owns
+        // the first changed scan; following owns every subsequent one.
+        // Global edit owns knob 4's pressure curve, never the live transpose.
+        begin(0x8001d960L);
+        emit("MOV R9,0x3560");
+        emit("MOV R10,0x60f0");
+        emit("LD.UB R8,R9[0x39]");
+        emit("CP.W R8,0x1");
+        emit("BR{eq} 0x8001d9d0");
+        emit("LD.SH R8,R9[0x310]");
+        emit("MOV R11,0x46f3");
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x2");
+        emit("BR{ne} 0x8001d9b0");
+        emit("LD.UB R11,R10[0x5d]");   // following: 0x614d
+        emit("CP.W R11,0x0");
+        emit("BR{ne} 0x8001d9d0");
+        emit("LD.SH R11,R10[0x58]");   // last unheld snapshot: 0x6148
+        emit("SUB R11,R8,R11 << 0x0");
+        emit("CP.W R11,0x8");
+        emit("BR{gt} 0x8001d9d0");
+        emit("CP.W R11,-0x8");
+        emit("BR{lt} 0x8001d9d0");
+        padTo(0x8001d9b0L);
+        emit(String.format("MOV R11,0x%x", number("knob4_zones", 9, 3, 16)));
+        emit("MUL R8,R8,R11");
+        emit("LSR R8,0xa");
+        emit("ST.H R10[0x0],R8");
+        padTo(0x8001d9d0L);
+        emit("LD.UH R8,R10[0x0]");
+        emit("ST.B R9[0x6b],R8");
+        emit("MOV R8,0x1");
+        emit("ST.B R9[0x6a],R8");
+        emit("MOV PC,LR");
+        finish("knob4_owned_transpose", 0x8001da00L);
+
+        // Pitch-ordered selection. R0=held flags, R1=state, R2=zone 0/1/2,
+        // R3=direction +/-1. Scan the 29 slots, tracking min, max and the
+        // nearest rank strictly beyond the previous note in that direction.
+        // A rank packs (signed effective pitch, slot) into one 32-bit value:
+        // equal pitches remain distinct, with a deterministic slot tie-break.
+        // No sorting, allocation, random draws or unbounded search is needed.
+        begin(0x8001da00L);
+        emit("STM --SP,R0,R1,R2,R3,R4,R5,R6,R7,LR");
+        emit("LDDPC R4,0x8001dbf0");    // minimum starts at INT_MAX
+        emit("LDDPC R5,0x8001dbf4");    // maximum starts at INT_MIN
+        emit("LD.UB R12,R1[0x34d]");
+        emit("CP.W R12,0x1d");
+        emit("BR{ge} 0x8001da30");
+        emit("MCALL PC[0x8001dbf8]");
+        emit("MOV R1,R12");
+        emit("RJMP 0x8001da40");
+        padTo(0x8001da30L);
+        emit("MOV R1,R5");             // no previous note: start at an end
+        emit("CP.W R3,0x0");
+        emit("BR{ge} 0x8001da40");
+        emit("MOV R1,R4");
+        padTo(0x8001da40L);
+        // On a mirror retry min/max already contain real ranks; use the
+        // sentinel, not those endpoints, to reset the nearest candidate.
+        emit("LDDPC R6,0x8001dbf0");
+        emit("CP.W R3,0x0");
+        emit("BR{ge} 0x8001da4c");
+        emit("LDDPC R6,0x8001dbf4");
+        padTo(0x8001da4cL);
+        emit("MOV R7,0x0");
+        padTo(0x8001da50L);
+        emit("LD.UB R8,R0[R7 << 0x0]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001daac");
+        emit("MOV R12,R7");
+        emit("MCALL PC[0x8001dbf8]");
+        emit("CP.W R12,R4");
+        emit("BR{ge} 0x8001da68");
+        emit("MOV R4,R12");
+        padTo(0x8001da68L);
+        emit("CP.W R12,R5");
+        emit("BR{le} 0x8001da74");
+        emit("MOV R5,R12");
+        padTo(0x8001da74L);
+        emit("CP.W R3,0x0");
+        emit("BR{lt} 0x8001da90");
+        emit("CP.W R12,R1");
+        emit("BR{le} 0x8001daac");
+        emit("CP.W R12,R6");
+        emit("BR{ge} 0x8001daac");
+        emit("MOV R6,R12");
+        emit("RJMP 0x8001daac");
+        padTo(0x8001da90L);
+        emit("CP.W R12,R1");
+        emit("BR{ge} 0x8001daac");
+        emit("CP.W R12,R6");
+        emit("BR{le} 0x8001daac");
+        emit("MOV R6,R12");
+        padTo(0x8001daacL);
+        emit("SUB R7,-0x1");
+        emit("CP.W R7,0x1d");
+        emit("BR{lt} 0x8001da50");
+        emit("LDDPC R8,0x8001dbf0");
+        emit("CP.W R4,R8");
+        emit("BR{eq} 0x8001db90");      // no held slots
+        emit("CP.W R3,0x0");
+        emit("BR{ge} 0x8001dac8");
+        emit("LDDPC R8,0x8001dbf4");
+        padTo(0x8001dac8L);
+        emit("CP.W R6,R8");
+        emit("BR{ne} 0x8001db20");
+        // Mirror bounces rather than wraps when the current endpoint was
+        // removed or direction changed. At most ONE retry, so one held note
+        // (or all equal pitches) cannot spin. Zones 0/1 wrap straight away.
+        emit("CP.W R2,0x2");
+        emit("BR{ne} 0x8001db00");
+        emit("MOV R2,0x3");
+        emit("MOV R8,0x0");
+        emit("SUB R3,R8,R3 << 0x0");
+        emit("RJMP 0x8001da40");
+        padTo(0x8001db00L);
+        emit("MOV R6,R4");
+        emit("CP.W R3,0x0");
+        emit("BR{ge} 0x8001db20");
+        emit("MOV R6,R5");
+        padTo(0x8001db20L);
+        emit("CP.W R2,0x2");
+        emit("BR{lt} 0x8001db70");
+        emit("MOV R8,0x1");
+        emit("CP.W R3,0x0");
+        emit("BR{ge} 0x8001db34");
+        emit("MOV R8,0x0");
+        padTo(0x8001db34L);
+        emit("CP.W R6,R5");
+        emit("BR{ne} 0x8001db44");
+        emit("MOV R8,0x0");
+        emit("RJMP 0x8001db58");
+        padTo(0x8001db44L);
+        emit("CP.W R6,R4");
+        emit("BR{ne} 0x8001db58");
+        emit("MOV R8,0x1");
+        padTo(0x8001db58L);
+        emit("MOV R9,0x614e");
+        emit("ST.B R9[0x0],R8");
+        padTo(0x8001db70L);
+        emit("BFEXTU R12,R6,0x0,0x5");
+        emit("LDM SP++,R0,R1,R2,R3,R4,R5,R6,R7,PC");
+        padTo(0x8001db90L);
+        emit("MOV R12,-0x1");
+        emit("LDM SP++,R0,R1,R2,R3,R4,R5,R6,R7,PC");
+        padTo(0x8001dbf0L);
+        word(0x7fffffffL);
+        word(0x80000000L);
+        word(0x8001dc00L);
+        finish("arp_pitch_order", 0x8001dc00L);
+
+        // R12=valid slot 0..28 -> signed rank. Only latch mode interprets
+        // stamps; regular/factory arp must ignore old stamps in scratch RAM.
+        // Even the full unsigned-table + signed-stamp range fits after <<5.
+        begin(0x8001dc00L);
+        emit("MOV R8,0x854");
+        emit("LD.UH R9,R8[R12 << 0x1]");
+        if (feature("arp_latch")) {
+            emit("MOV R8,0x3560");
+            emit("LD.UB R8,R8[0x340]");
+            emit("CP.W R8,0x1");
+            emit("BR{ne} 0x8001dc30");
+            emit("MOV R8,0x60a2");
+            emit("LD.SH R8,R8[R12 << 0x1]");
+            emit("ADD R9,R8");
+        }
+        padTo(0x8001dc30L);
+        emit("LSL R9,0x5");
+        emit("ADD R12,R9,R12 << 0x0");
+        emit("MOV PC,LR");
+        finish("arp_pitch_rank", 0x8001dc60L);
+
+        // Reverse press history, bounded by the validated history count.
+        // R0=held flags, R1=state; never index flags using an unchecked entry.
+        begin(0x8001dc60L);
+        emit("STM --SP,R2,R7,LR");
+        emit("MOV R10,0x6000");
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0x20");
+        emit("BR{hi} 0x8001dcd4");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001dcd4");
+        emit("LD.UB R9,R1[0x34d]");
+        emit("MOV R2,0x0");
+        padTo(0x8001dc80L);
+        emit("CP.W R2,R8");
+        emit("BR{ge} 0x8001dc98");
+        emit("ADD R11,R10,R2 << 0x0");
+        emit("LD.UB R11,R11[0x1]");
+        emit("CP.W R11,R9");
+        emit("BR{eq} 0x8001dc98");
+        emit("SUB R2,-0x1");
+        emit("RJMP 0x8001dc80");
+        padTo(0x8001dc98L);
+        emit("MOV R12,R8");
+        padTo(0x8001dc9aL);
+        emit("SUB R2,0x1");
+        emit("BR{ge} 0x8001dca6");
+        emit("MOV R2,R8");
+        emit("SUB R2,0x1");
+        padTo(0x8001dca6L);
+        emit("ADD R11,R10,R2 << 0x0");
+        emit("LD.UB R11,R11[0x1]");
+        emit("CP.W R11,0x1d");
+        emit("BR{ge} 0x8001dcc0");
+        emit("LD.UB R9,R0[R11 << 0x0]");
+        emit("CP.W R9,0x1");
+        emit("BR{eq} 0x8001dccc");
+        padTo(0x8001dcc0L);
+        emit("SUB R12,0x1");
+        emit("BR{ne} 0x8001dc9a");
+        emit("RJMP 0x8001dcd4");
+        padTo(0x8001dcccL);
+        emit("MOV R12,R11");
+        emit("RJMP 0x8001dcda");
+        padTo(0x8001dcd4L);
+        emit("MOV R12,-0x1");
+        padTo(0x8001dcdaL);
+        emit("LDM SP++,R2,R7,PC");
+        finish("arp_reverse_held", 0x8001dce0L);
 
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the

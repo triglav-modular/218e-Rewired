@@ -375,9 +375,20 @@ after the firmware has been flashed and played, not before.
 ```bash
 python3 tools/test.py --golden     # generators, validators, and the golden image
 python3 tools/avr32/sweep.py       # every option both ways, both toolchains
+python3 tools/test_controls.py     # emitted knob roles and strip-gesture ownership
 ```
 
-`sweep.py` builds thirteen configurations twice — once through Ghidra, once
+`test_controls.py` runs default, six-order/transpose, tuned-transpose, and
+lean (factory arp, no sequencer or divider) images with persistence on and
+off. It checks all six note orders, preset-4
+isolation through the actual ADC-event pitch target and DAC path from the
+first knob movement, release-triggered saves, released/unlatched press
+history, and pitch ordering with octave-stacked notes and equal pitches.
+It also checks strip touches across preview and RECORD boundaries.
+Like `test_persistence.py`, it requires Ghidra, models
+peripherals without flashing hardware, and restores shared build metadata.
+
+`sweep.py` builds 26 configurations twice — once through Ghidra, once
 through the JavaScript toolchain — and compares the images. It also asserts
 that every configuration produces a *distinct* image, so a variant that
 silently stopped taking effect cannot pass as agreement.

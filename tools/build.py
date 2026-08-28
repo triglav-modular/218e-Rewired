@@ -806,7 +806,7 @@ RAM_REGIONS = [
     (0x60EA, 0x60EC, "arp knob 3 latch"),
     (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
     (0x60EF, 0x60F0, "previous switch position"),
-    (0x60F0, 0x60F2, "vibrato knob latch"),
+    (0x60F0, 0x60F2, "knob 4 latch: vibrato raw value or transpose zone"),
     # Our own cell, not the factory's state+0x38c: that byte is the factory
     # weighted-random selector's bias parameter, and borrowing it meant a
     # factory-knobs build still had knob 1 writing over a live factory
@@ -943,6 +943,8 @@ FACTORY_CELLS = [
     # build.  Declared so no region of ours can ever move back in.
     (0x3216, 0x3236, "factory 16-tap pressure history"),
     (0x3490, 0x34AD, "per-key touch state"),
+    (0x3599, 0x359A, "state+0x39: global edit mode"),
+    (0x35CA, 0x35CC, "state+0x6a/0x6b: transpose enable and knob zone"),
     (0x3686, 0x36C0, "per-key raw pressure"),
     (0x377B, 0x3798, "state+0x21b: per-slot held flags"),
     # state+0x306: the PORTAMENTO knob, 0..1023.  Six knobs are conditioned
@@ -951,6 +953,7 @@ FACTORY_CELLS = [
     # it is a seven-segment capacitive sensor, and its position is a centroid
     # (0x8000aa98) mapped to state+0x1fe.
     (0x3866, 0x3868, "portamento knob mirror"),
+    (0x3870, 0x3872, "state+0x310: knob 4 mirror"),
     (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
     (0x38B0, 0x38B2, "state+0x350: transpose"),
 ]

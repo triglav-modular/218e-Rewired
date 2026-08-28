@@ -78,14 +78,16 @@ boundaries. The runner also supports sequencer variants without persistence.
   free.  Remove the factory pad-latch in builds with latching_arp = true.
 
 ### 3. Configurable knobs (page options)
-- Knob 1: [six-order zones: asc, desc, random, press, reverse-press,
-  mirror] OR [1.x continuous press->random blend].  BUILT, off by default.
+- Knob 1: [six-order zones: asc, desc, mirror, press, reverse-press,
+  random] OR [1.x continuous press->random blend].  BUILT, off by default.
   [arp_order].knob1_orders = 1 turns the zones on.  The cave at 0x8001aec0
   takes the selector's pool word, keeps the same stack frame as the selector
   it replaces, and jumps into that selector's own code for the random and
-  press-order zones rather than reimplementing them.  Mirror turns at the
-  outermost HELD key, not the end of the keyboard, and its direction lives
-  at RAM 0x614e.
+  press-order zones rather than reimplementing them. Up/down/mirror now
+  compare effective pitches (live table plus signed latch stamp), with slot
+  order breaking ties. Mirror turns at the highest/lowest held pitch; its
+  direction lives at RAM 0x614e. Reverse press order skips released or
+  unlatched history entries. Both searches are bounded.
 - Knob 2: randomness (1.x) | swing | patterns.  ALL THREE BUILT, randomness
   by default; [knob2].mode = "swing" or "patterns".
   Patterns: the 22 CLIX fills are in tools/clix.py, taken from the Clockwork
@@ -110,10 +112,11 @@ boundaries. The runner also supports sequencer variants without persistence.
 - Knob 4: vibrato (1.x) | octave switching.  BUILT, off by default;
   [knob4].octaves = 1.  It drives the factory's OWN trn transpose rather
   than inventing one: knob 4 is the knob trn was always on, which is why
-  remap_knobs retires it.  The cave writes state+0x6b (the amount) and
-  state+0x6a (the mode) once per scan, after the tuning applier, which is
-  what makes it stick - with a tuning installed the applier zeroes 0x6a
-  every scan.
+  remap_knobs retires it. The cave writes state+0x6b (the amount) and
+  state+0x6a (the mode) before the ADC event computes pitch, then reapplies
+  them after the tuning applier clears 0x6a. The early pass predicts preset
+  pickup without consuming its release/save edge, so editing pad 4 freezes
+  actual pitch from the first movement, not only the final stored zone.
   The factory reads that as: value <= 2 means no transpose, then (v-2)
   periods UP - never negative, which is why no clamp is needed.  Nine
   positions on a 2/1, and fewer on a wider period so the reach stays about

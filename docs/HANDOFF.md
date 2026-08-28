@@ -221,6 +221,16 @@ initialiser cave must reach it. SRAM survives a DFU, so anything left out
 starts as whatever the previous image left behind. The clear is a counted
 loop from `0x6100`; its count moved to `0x97` for the borrowed strip mode.
 
+**One harness at a time.**  Every regression driver and every hand-run
+build.py shares `build/` - the images, the logs, and the SHIPPED FLASHERS,
+which each build rewrites with its own image's hash.  Two consequences, both
+of which have actually happened: running the sweep concurrently with another
+harness hashes an image mid-overwrite and reports a phantom duplicate
+("a variant may not be taking effect" - re-run serially before believing
+it); and any hand-run non-default build leaves the flashers pointing at a
+test image, which test.py's flasher guard catches at commit time - rebuild
+the DEFAULT config last, always.
+
 **Repin after every change.** The init marker hashes the settings and the
 assembler source, so any edit — a comment included — moves every image.
 `config/218e.toml`'s `golden_sha256` and `sweep.py`'s `historical_config`

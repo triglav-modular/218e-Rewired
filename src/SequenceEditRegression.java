@@ -36,9 +36,9 @@ public class SequenceEditRegression extends PersistenceRegression {
         w(0x29cc,4,25000000); w(S+0x20c,4,1); time(0);
         w(0xffff1060L,4,0); w(0xffff10d0L,4,0);
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202);
-        w(0x62fe,2,0xa5a5); // prove the non-persistent initializer covers both bytes
+        if(seq)w(0x62fe,2,0xa5a5); // prove the non-persistent initializer covers both bytes
         boot(); call(0x8001ab60L);
-        check("volatile startup clears preview and CLEAR event",r(0x62fe,2)==0&&r(0x6158,1)==0);
+        if(seq)check("volatile startup clears preview and CLEAR event",r(0x62fe,2)==0&&r(0x6158,1)==0);
     }
     void arp(int position) { w(S+0x340,1,position==1?1:0); w(S+0x341,1,position==2?1:0); }
     void setup(int length,boolean internal,int position) throws Exception {
@@ -140,6 +140,51 @@ public class SequenceEditRegression extends PersistenceRegression {
         }
         println("PASS rests/ties including first/final tie and all-silent previews, gate release and no phantom audition");
     }
+    void stripCarry() throws Exception {
+        for(boolean internal:new boolean[]{false,true})for(boolean beforePreview:new boolean[]{false,true})
+            for(int position:new int[]{1000,3000}) {
+                setup(2,internal,0); int before=writes;
+                w(S+0x1fe,2,position);
+                if(beforePreview) { w(S+0x206,1,1); scan(); }
+                // Unlike startPreview(), do not plant synthetic strip state:
+                // this test carries a real sampled touch across transport.
+                bare(1);
+                if(clock)call(0x8000737eL,0x80007386L);
+                w(S+0x34a,2,20); w(0x2ee0,2,20); w(S+0x2fc,2,0x420);
+                if(!beforePreview) { w(S+0x206,1,1); scan(); }
+                if(internal)internalTicks(100);
+                else for(int i=0;i<3;i++)externalBeat();
+                check("held strip survives preview without editing",r(0x6158,1)==1&&r(0x61e0,1)==2);
+                scan(); scan(); w(S+0x206,1,0); scan();
+                check("release of pre-WRITE touch appends nothing",r(0x61e0,1)==2&&writes==before);
+                // Releasing must also re-arm the next touch, with exactly one
+                // rest/tie and no repeats while held or already released.
+                w(S+0x206,1,1); scan(); scan();
+                check("fresh WRITE touch waits for release",r(0x61e0,1)==2);
+                w(S+0x206,1,0); scan(); scan();
+                check("fresh WRITE release appends once",r(0x61e0,1)==3
+                    &&r(0x6164,2)==(position<2048?0x7ffe:0x7fff)&&writes==before);
+            }
+        for(boolean alreadyWriting:new boolean[]{false,true}) {
+            setup(2,false,0);
+            if(!alreadyWriting) { command(1); command(1); }
+            int before=writes;
+            w(S+0x206,1,1); w(S+0x1fe,2,1000); scan(); command(0); scan();
+            w(S+0x206,1,0); scan();
+            check("RECORD rejects a previously held strip",r(0x6158,1)==1&&r(0x61e0,1)==2&&writes==before);
+            w(S+0x206,1,1); scan(); w(S+0x206,1,0); scan();
+            check("RECORD accepts the next fresh strip touch",r(0x61e0,1)==3&&r(0x6164,2)==0x7ffe);
+        }
+        // The automatic end can run between control scans. If the strip was
+        // up at that boundary, a new touch before the next scan is valid.
+        setup(2,false,0); startPreview(); externalBeat(); externalBeat(); now+=20;
+        if(clock) { edge(now-2,false); edge(now,true); serviceAndOutput(now); }
+        else { time(now); call(0x80004e58L,0x800051b0L); pitch(); }
+        check("preview returned before next control scan",r(0x6158,1)==1&&r(S+0x206,1)==0);
+        w(S+0x1fe,2,3000); w(S+0x206,1,1); scan(); w(S+0x206,1,0); scan();
+        check("first post-boundary touch is not swallowed",r(0x61e0,1)==3&&r(0x6164,2)==0x7fff);
+        println("PASS strip ownership across preview/RECORD, both clocks, rest/tie halves, and fresh-touch rearming");
+    }
     void cancellation() throws Exception {
         for(int pad:new int[]{0,1,2}) {
             setup(4,false,0); append(4); int before=writes; startPreview(); externalBeat(); command(pad);
@@ -217,7 +262,7 @@ public class SequenceEditRegression extends PersistenceRegression {
         seq=true; clock=getScriptArgs().length>0&&getScriptArgs()[0].contains("clock");
         persistent=getScriptArgs().length<2||!getScriptArgs()[1].equals("volatile");
         try {
-            previewOnce(); restsAndTies(); cancellation(); unarmedHold(); backspace();
+            previewOnce(); restsAndTies(); stripCarry(); cancellation(); unarmedHold(); backspace();
             println("SEQUENCE EDIT PASS: "+checks+" assertions; clock="+clock+", persist="+persistent
                 +"; emitted firmware with modeled peripherals, no hardware flash.");
         } finally { if(e!=null)e.dispose(); }

@@ -152,10 +152,12 @@ def audit_call_pools(image_path) -> list[str]:
 # clear once more; and for interrupt-timestamped clock capture, whose FIFO
 # extends that clear through 0x62df; and for canonical persistence plus
 # independent sequence transport, completed-gesture persistence, and
-# one-shot preview/explicit CLEAR ownership.
+# one-shot preview/explicit CLEAR ownership, strip gesture boundaries,
+# preset-4 role isolation, the corrected up-down zone, early transpose
+# ownership, held-only reverse history, and pitch-aware note ordering.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "92fd147d463353182184a38fc2ee21186275752ceeacb21ed7cbeb81a5cae0a2",
+    "historical_config": "ff0f3dbe31a608008ecaf7314c3fa79fc4236d730fabcab34d2100a310016190",
 }
 
 

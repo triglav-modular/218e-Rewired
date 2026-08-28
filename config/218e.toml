@@ -109,7 +109,7 @@ pressure_portamento = true
 # With remap_knobs on, each knob can be named individually instead of taking
 # the default role.  Leave a knob out and it keeps that default.
 #   knob1  "order"   press-order-into-random blend (default) | "orders" six
-#          fixed orders: up, down, random, as played, backwards, up-down
+#          fixed orders: up, down, up-down, as played, backwards, random
 #   knob2  "spacing" trigger randomness (default) | "swing" | "patterns"
 #   knob3  "octaves" random octave per note (default)
 #   knob4  "vibrato" depth and rate (default) | "trn" the factory octave switch
@@ -182,7 +182,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "0b0233399a1472635cc3a5dd902cd3c745087f635d676b36139c7192b0c34215"
+golden_sha256  = "519ace8bb2ac37cc615439b0f52eed41c54f68f4ad16c9fe18d814d8a29c5471"
 
 
 [tools]

@@ -74,7 +74,7 @@ Run `python3 tools/test.py --golden` to compare the default build with its
 SHA-256 pin in `config/218e.toml`. The fully specified historical configuration
 has a separate pin in `sweep.py`; both are checked against Ghidra.
 
-- **Encoder**: 7,397 / 7,397 corpus instructions, 47 mnemonics, zero mismatches.
+- **Encoder**: 7,819 / 7,819 corpus instructions, 47 mnemonics, zero mismatches.
 - **Structure**: the transpiled program emits every EXTENT / BLOCK / SKIP /
   listing / PATCH record *identically* to a fresh Ghidra run.
 - **Image**: `tools/avr32/sweep.py` builds **26 configurations** both ways and
