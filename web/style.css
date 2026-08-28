@@ -2082,6 +2082,18 @@ section,
   font-weight: 700;
   color: var(--ink);
 }
+/* The transport marks, on the functions they name.  Drawn rather than typed:
+   as glyphs, ● ▶ ■ come from whichever font has them and ✕ is a letter in
+   some, so none of the four would match the others.  Inline and on the
+   baseline, the way the Windows mark sits in a heading; the explicit box and
+   margin keep the diagram rule further down this sheet off them. */
+.padfig .fn .tr {
+  width: 13px;
+  height: 13px;
+  margin: 0 5px 0 0;
+  display: inline-block;
+  vertical-align: -1px;
+}
 .padfig .sub {
   color: var(--muted);
   font-size: 15px;
@@ -2140,7 +2152,9 @@ section,
    recording state because it is not a pad and does not belong in their row,
    and its two halves are labelled where they actually are. */
 .stripfig {
-  margin-top: 20px;
+  /* 14, as the pads take from their heading: the strip is the same state
+     continuing, not a new one, and 20 read as a break between them. */
+  margin-top: 14px;
 }
 .stripfig .plate {
   position: relative;
