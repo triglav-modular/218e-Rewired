@@ -2033,10 +2033,13 @@ section,
   position: relative;
   display: grid;
   place-items: center;
-  aspect-ratio: 5 / 4;
+  /* The pad on the panel is wide and short - about five to two - not the
+     square-ish plate this first drew.  Measured off the User's Guide's own
+     photograph of the module. */
+  aspect-ratio: 5 / 2;
   width: 100%;
-  max-width: 104px;
-  border-radius: 10px;
+  max-width: 132px;
+  border-radius: 7px;
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--ink);
@@ -2049,10 +2052,12 @@ section,
 /* The LED has to READ as a component, not as a smudge: unlit it is still a
    ring with a face, which is what makes the plate legible as a pad rather
    than as a plain rounded box. */
+/* Top left, where it sits on the module: the prominent dark circle in the
+   corner of every preset pad in the manual's photograph. */
 .padfig .led {
   position: absolute;
-  left: 10px;
-  bottom: 10px;
+  left: 9px;
+  top: 8px;
   width: 11px;
   height: 11px;
   border-radius: 50%;
@@ -2107,4 +2112,61 @@ section,
     grid-template-columns: repeat(2, 1fr);
     gap: 18px 14px;
   }
+}
+
+/* The strip, drawn as it is on the panel: a long plate - about nine to one -
+   with the red sawtooth running through it.  It sits under the pads in the
+   recording state because it is not a pad and does not belong in their row,
+   and its two halves are labelled where they actually are. */
+.stripfig {
+  margin-top: 20px;
+}
+.stripfig .plate {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 9 / 1;
+  /* A floor only for the very narrowest screens: any higher and it stops
+     being nine to one, which is the proportion that makes it read as the
+     strip rather than as a bar. */
+  min-height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+}
+.stripfig .plate svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+/* The half the touch lands in is what decides rest against tie, so the
+   division is drawn rather than described. */
+.stripfig .half {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  left: 50%;
+  background: var(--line);
+}
+.stripfig .halves {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+}
+.stripfig .halves > span {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+.stripfig .halves b {
+  color: var(--ink);
+  font-weight: 700;
+  display: block;
+}
+.stripfig .halves > span + span {
+  text-align: right;
 }
