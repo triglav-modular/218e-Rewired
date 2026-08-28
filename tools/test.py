@@ -906,6 +906,38 @@ def test_overlap_and_range() -> None:
     check("non-overlapping patches apply", (changed, added) == (1, 0), f"{changed},{added}")
 
 
+def test_flashers_expect_the_golden(cfg: dict) -> None:
+    """The shipped flashers must name the DEFAULT image, not a test build.
+
+    Every ordinary build rewrites the flashers with its own image's hash, so
+    a hand-run build of a sequencer or persistence config silently repoints
+    the released flashers at that config.  That reached a commit: they were
+    left expecting a persistence audit build while golden_sha256 named the
+    default one, and the only symptom was the web bundle going stale,
+    because generated.js embeds the flasher scripts.
+
+    The regression harnesses already refuse to run a build that could rewrite
+    the flashers.  This catches the hand-run case, which is how it happened.
+    """
+    print("flashers")
+    golden = cfg["firmware"].get("golden_sha256", "")
+    if not golden:
+        check("a golden to check against", False, "golden_sha256 is not set")
+        return
+    for name, pattern in (("Program218e_v3_Rewired_macOS.command",
+                           r'^EXPECTED_SHA256="([0-9a-f]{64})"'),
+                          ("218e_Rewired_Flasher.bat",
+                           r'^SET "EXPECTED_SHA256=([0-9a-f]{64})"')):
+        path = REPO / name
+        if not path.exists():
+            continue
+        found = re.search(pattern, path.read_text(), re.M)
+        got = found.group(1) if found else "(no EXPECTED_SHA256 line)"
+        check(f"{name} expects the golden image", got == golden,
+              f"it expects {got[:8]}, golden is {golden[:8]} - "
+              f"rebuild the DEFAULT config to put it back")
+
+
 def test_pool_fallthrough() -> None:
     """A literal pool must not sit where code can fall into it.
 
@@ -1107,6 +1139,7 @@ def main() -> None:
     test_migration_and_empty_hand()
     test_filter_equivalence(cfg)
     test_overlap_and_range()
+    test_flashers_expect_the_golden(cfg)
     test_pool_fallthrough()
     test_leaf_with_call()
     test_atomic_replace()
