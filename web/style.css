@@ -865,7 +865,17 @@ td input {
 .knobsel > .knobmap:first-child { margin-top: 0; }
 .knobsel.hidden { display: none; }
 .knobmap {
-  --knob-w: 64px;
+  /* Measured off the User's Guide's cover photograph, the same one the pad's
+     five-to-two came from: the leftmost preset knob is 140px across where the
+     pad beneath it is 178, so a knob is 0.79 of a pad and 104 against the
+     pad's 132.  It was 64, which drew it at under two thirds of its size.
+
+     The leftmost pair on purpose.  The four knobs measure 139, 156, 166 and
+     182 left to right while the four pads hold at 177 to 179 - the knobs
+     stand proud of the panel so they open up as they go off-axis, and the
+     flat pads do not.  Taking a knob and a pad from the same corner of the
+     frame cancels what is left of that. */
+  --knob-w: 104px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   /* stretch, not start: the rules between the columns are drawn on the
@@ -950,7 +960,7 @@ td input {
   margin: 0;
 }
 .knobface b {
-  font-size: 15px;
+  font-size: 19px;
   font-weight: 700;
   color: var(--ink);
 }
