@@ -882,7 +882,26 @@ td input {
   display: grid;
   place-items: center;
   width: var(--knob-w);
+  /* Centred over its column: on the panel the knob sits above the middle of
+     what it controls, and left-aligning a 64px circle over a 157px stack
+     read as though it belonged to whatever was left of it. */
+  margin-inline: auto;
   height: var(--knob-w);
+}
+/* The pattern bank is knob 2's, but it is as wide as the whole block, so it
+   sits under all four rather than inside one - which leaves nothing saying
+   whose it is.  A heading does, in the voice the sequencer card's state
+   headings already use. */
+.patwho {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+.patwho strong {
+  color: var(--ink);
 }
 .knobface svg,
 .knobface b {
