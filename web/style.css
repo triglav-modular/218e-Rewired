@@ -2007,7 +2007,9 @@ section,
    is right on first paint rather than after a script has run. */
 .padmap {
   display: none;
-  margin: 0 0 18px;
+  /* 14 above, as .knobsel takes: both are a figure a tick reveals under its
+     own option, and this one sat flush against the line above it. */
+  margin: 14px 0 18px;
 }
 .group:has(#sequencer:checked) .padmap {
   display: block;
