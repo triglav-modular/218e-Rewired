@@ -2160,7 +2160,7 @@ section,
    so it holds at every width.  It lets the arms run past the top edge, which
    is what the module shows - they meet the edge rather than stopping at it. */
 .stripfig .plate svg g {
-  transform: translateY(-10.5px) scale(2, 1.2);
+  transform: translateY(-10.5px) scale(1.86, 1.2);
 }
 /* The half the touch lands in is what decides rest against tie, so the
    division is drawn rather than described. */
