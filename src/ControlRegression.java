@@ -258,6 +258,16 @@ public class ControlRegression extends SequenceEditRegression {
         // new octave allocates a fresh latch slot; auditioning the physical
         // key re-based off the OLD slot's stamp and sounded the old octave.
         check("audition sounds the pitch it recorded",r(S+0x352,2)==r(0x6162,2));
+        // A third press at the same octave toggles that slot OFF.  The
+        // press is still recorded - it is what was played - and the
+        // audition still sounds the stored pitch: the physical slot's old
+        // stamp, which is where the un-pinned audition fell back to, is
+        // two octaves away.
+        noteUp(0); key(0); sound();
+        check("a toggle-off press is recorded",
+            r(0x61e0,1)==3&&Math.abs((short)r(0x6164,2)-(short)r(0x6162,2))<=1);
+        check("and its audition sounds the stored pitch",
+            r(S+0x21b+1,1)==0&&Math.abs((short)r(S+0x352,2)-(short)r(0x6164,2))<=1);
         // A slot latched and unlatched OUTSIDE the take keeps its stamp;
         // recording that key afterwards must not resurrect it.
         setup(0,false,1); command(2); latchFixture();
@@ -286,7 +296,127 @@ public class ControlRegression extends SequenceEditRegression {
             r(S+0x352,2)==r(0x61e2,2)+(short)r(0x60a0,2));
         octavePad(1); arp(2); sound();
         check("leaving latch mode does not move the step",r(S+0x352,2)==r(0x61e2,2));
-        println("PASS latch recording: fresh press, repeat, reused slot, absolute playback with a held slot");
+        // A one-shot preview auditions the take AS RECORDED: the pad that
+        // transposes playback must not move a preview.
+        arp(1); command(1); command(0); octavePad(3); bare(1);
+        externalBeat(); sound();
+        check("preview ignores the live pad transpose",r(S+0x352,2)==r(0x61e2,2));
+        println("PASS latch recording: fresh press, repeat, toggle-off audition, reused slot, absolute playback, pinned preview");
+    }
+    void recordedOctaves() throws Exception {
+        // The octave switch reaches a recording in EVERY arp position, the
+        // way it reaches the latches: the same key entered at two octaves
+        // is two different recorded pitches, and neutral playback plays
+        // the interval that was played.  With the arp OFF the keyboard
+        // itself sounds the press, so no audition is armed on top of it -
+        // that sent the same MIDI note twice with one note-off to share.
+        for(int position:new int[]{0,2}) {
+            setup(0,false,position); latchFixture(); octavePad(3);
+            key(0); sound();
+            long high=r(0x854,2)+(short)r(0x60a0,2);
+            check("the octave is in the stored pitch, arp position "+position,
+                Math.abs((short)r(0x6160,2)-high)<=1&&r(0x61e0,1)==1);
+            if(position==0)
+                check("the arp OFF keyboard needs no audition",
+                    r(0x6230,2)==0&&r(0x2eed,1)==0);
+            else
+                check("the regular-arp audition sounds the stored pitch",
+                    Math.abs((short)r(S+0x352,2)-(short)r(0x6160,2))<=1);
+            noteUp(0); octavePad(1); key(0); sound(); noteUp(0);
+            check("the neutral repeat stores its own octave",
+                Math.abs((short)r(0x6162,2)-(short)r(0x854,2))<=1);
+            // Neutral playback: the interval as played, absolute steps.
+            command(1); octavePad(1); w(S+0x2fc,2,0x420);
+            externalBeat(); sound();
+            check("playback opens on the recorded octave",r(S+0x352,2)==r(0x6160,2));
+            externalBeat(); sound();
+            check("and descends the played interval",r(S+0x352,2)==r(0x6162,2));
+            // The pad transposes PLAY, and only play: a preview is pinned.
+            octavePad(3); externalBeat(); sound();
+            check("the pad transposes playback",
+                r(S+0x352,2)==r(0x61e2,2)+(short)r(0x60a0,2));
+            command(1); command(0); bare(1); externalBeat(); sound();
+            check("the same pad leaves a preview alone",r(S+0x352,2)==r(0x61e2,2));
+            externalBeat(); externalBeat();
+            if(persistent) {
+                command(0);
+                long page=call(NEWEST);
+                check("the octave take is saved",page!=0&&r(page+24,1)==2);
+                cold();
+                check("and survives a power cycle",
+                    r(0x61e0,1)==2&&Math.abs((short)r(0x6160,2)-high)<=1);
+            }
+        }
+        println("PASS recorded octaves: stored per press in OFF and regular arp, keyboard-only OFF sounding, pinned preview, transposed play");
+    }
+    void capacityAudition() throws Exception {
+        // A press the recorder cannot take must not repaint the pending
+        // audition: at 64 steps the take is full, and the note waiting to
+        // be heard belongs to the last press that was RECORDED.
+        setup(0,false,1); latchFixture(); octavePad(1);
+        w(0x61e0,1,63);
+        key(4);
+        check("step 64 records and arms its audition",
+            r(0x61e0,1)==64&&r(0x6230,2)==5);
+        key(12);
+        check("a rejected press leaves the pending audition alone",
+            r(0x61e0,1)==64&&r(0x6230,2)==5);
+        sound();
+        check("what sounds is what was recorded",
+            Math.abs((short)r(S+0x352,2)-(short)r(0x6160+126,2))<=1);
+        println("PASS full-take audition: a 65th press neither records nor re-aims the pending note");
+    }
+    void pressureOwnership() throws Exception {
+        // A finger's pressure belongs to the note under it.  A repeat
+        // press at a new octave lives in an allocated slot: the pressure
+        // follows it there, and the old note still latched in the
+        // finger's own slot number - nobody's finger - pulls nothing.
+        // In WRITE, where the audition holds the sounding note still -
+        // the same footing the audit's reproduction measured on.
+        setup(0,false,1); latchFixture(); octavePad(3);
+        key(0); sound(); noteUp(0);
+        octavePad(1); key(0); sound();
+        long alone=r(S+0x352,2);
+        w(0x3490,1,2);
+        for(int k=0;k<29;k++)w(0x3686+2*k,2,k==0?900:110);
+        call(0x8001aa10L); w(S+0x306,2,900);
+        for(int i=0;i<50;i++)sound();
+        check("one finger on its own note bends nothing",
+            r(0x60e2,2)==0&&Math.abs((short)r(S+0x352,2)-(short)alone)<=1);
+        // A second finger pulls toward ITS note - downward, which the old
+        // two-octave note still latched in slot 0 would have overwhelmed.
+        key(4); w(0x3490+4,1,2);
+        for(int k=0;k<29;k++)w(0x3686+2*k,2,(k==0||k==4)?900:110);
+        call(0x8001aa10L);
+        for(int i=0;i<50;i++)sound();
+        check("a second finger pulls toward its own note",
+            (short)r(0x60e2,2)<0);
+        w(0x3490,1,0); w(0x3490+4,1,0); call(0x8001aa10L);
+        for(int i=0;i<50;i++)sound();
+        check("release clears the blend",r(0x60e2,2)==0);
+        println("PASS pressure ownership: allocated slots carry their finger's weight, orphaned latches carry none");
+    }
+    void previewBoundaries() throws Exception {
+        // The end of a one-shot preview is a sentinel, not a wrap: no step
+        // follows it, so the last gate falls and the last MIDI note ends,
+        // whatever the take BEGINS with.  An ordinary loop still ties.
+        setup(0,false,0);
+        w(0x6160,2,0x7fff); w(0x6162,2,600); w(0x61e0,1,2); w(0x61e1,1,2);
+        w(0x6158,1,2); w(0x62fe,1,1); w(0x2eed,1,1);
+        call(0x8001b4f0L);
+        check("no tie follows the end of a preview",reg("R8")==3);
+        call(0x8001b8f0L);
+        check("and the sounding note is ended",reg("R12")==1);
+        w(0x62fe,1,0);
+        call(0x8001b4f0L);
+        check("a loop still carries the gate into a leading tie",((int)reg("R8"))<0);
+        call(0x8001b8f0L);
+        check("and holds its MIDI note across the wrap",reg("R12")==0);
+        // Leaving WRITE ends an audition still ringing, note-off included.
+        w(0x6158,1,1); w(0x2eed,1,1); command(0);
+        check("leaving WRITE releases the sounding note",
+            r(0x6158,1)==0&&r(0x2eed,1)==0);
+        println("PASS preview boundaries: sentinel gates, loop wrap ties, WRITE exit releases");
     }
     void recordedBounds() throws Exception {
         // The recorder must never store a pitch the DAC cannot play:
@@ -338,7 +468,19 @@ public class ControlRegression extends SequenceEditRegression {
         check("the transition slews rather than snapping",applied>0&&applied<64);
         for(int i=0;i<50;i++)sound();
         check("and settles at zero",r(0x60e2,2)==0&&r(S+0x358,2)==dac);
-        println("PASS playback ignores live pressure: held keys, release, and a pre-applied blend slewing out");
+        // A glide between steps moves the base every scan; that is the
+        // factory walking, not a note handover, so with the knob engaged
+        // the re-base must fold none of it into the offset or the
+        // conditioner cells - folded steps sent every transition off in
+        // the wrong direction first.
+        w(S+0x306,2,900);
+        for(int i=0;i<10;i++) {
+            w(0x60f4,2,(r(S+0x350,2)+0x10000-15)&0xffff);
+            sound();
+        }
+        check("a walking glide base folds nothing while playing",
+            r(0x60e2,2)==0&&r(0x60f6,2)==0&&r(0x60f8,2)==0);
+        println("PASS playback ignores live pressure: held keys, release, a pre-applied blend slewing out, and no glide re-base");
     }
     void heldPresetEdit() throws Exception {
         // Holding a pad while its knob edits the preset is a voltage
@@ -403,6 +545,10 @@ public class ControlRegression extends SequenceEditRegression {
             if(orders)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq&&!transpose)try { recordedOctaves(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq&&!transpose)try { capacityAudition(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq&&!transpose)try { pressureOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq&&!transpose)try { previewBoundaries(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&transpose)try { recordedBounds(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { playbackPressure(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { heldPresetEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

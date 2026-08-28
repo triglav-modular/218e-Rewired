@@ -140,7 +140,11 @@ pressure_portamento = true
 # physical arp switch's normal mode. With pad 4 released while recording,
 # holding pad 2 for about a third of a second previews the recorded order
 # once and returns to WRITE; holding pad 3 the same way backspaces one
-# step per hold. A quick tap keeps choosing octaves.
+# step per hold, and pad 3 flashes when a step goes. A quick tap keeps
+# choosing octaves. The octave pads reach the recording key by key,
+# whatever the arp switch: each step keeps the octave it was entered at,
+# like the latches. Playback follows the pads on top of that; a preview
+# always plays the take exactly as recorded.
 sequencer = true
 
 # 11. EXTERNAL CLOCK DIVIDE
@@ -184,7 +188,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "5d6954f763cb0e9434bd93d4a63a4c4502a46d49e3ddfbc2d01b8f127ae365fb"
+golden_sha256  = "d2cd36c9e8e1bbaa3feee3a62c6672762d44105e4c86d892bc1e940200c0f487"
 
 
 [tools]

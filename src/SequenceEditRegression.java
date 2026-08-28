@@ -288,11 +288,57 @@ public class SequenceEditRegression extends PersistenceRegression {
         check("a quick tap neither backspaces nor previews",r(0x61e0,1)==2&&r(0x6158,1)==1);
         println("PASS 0/1/4/64 backspaces, press edges, zeroed slots, rest/tie deletion, append reuse, tap-versus-hold, empty-edit save isolation");
     }
+    void previewTieEnd() throws Exception {
+        // A one-shot preview's final note must not tie back into a leading
+        // TIE: cursor==count is the end sentinel, not a wrap, so the last
+        // gate falls on the factory countdown and the last MIDI note ends.
+        // The take that used to hang was [TIE, NOTE].
+        setup(2,false,0); w(0x6160,2,0x7fff); w(0x6162,2,600);
+        startPreview(); externalBeat(); externalBeat();
+        check("the final note is selected and the sentinel stands",
+            r(0x61e1,1)==2&&r(0x62fe,1)==1);
+        call(0x8001b4f0L);
+        check("no tie follows the end of a preview",reg("R8")==3);
+        w(0x2eed,1,1); call(0x8001b8f0L);
+        check("and the note that was sounding is ended",reg("R12")==1);
+        externalBeat();
+        check("the extra beat still closes the preview",
+            r(0x62fe,1)==0&&r(0x6158,1)==1);
+        // An ordinary loop keeps the wraparound tie.
+        command(1); w(0x61e1,1,2);
+        call(0x8001b4f0L);
+        check("a loop still carries the gate into a leading tie",((int)reg("R8"))<0);
+        call(0x8001b8f0L);
+        check("and holds its MIDI note across the wrap",reg("R12")==0);
+        command(1);
+        println("PASS preview tie ending: sentinel drops the last gate and note, loop wrap still ties");
+    }
+    void deleteFlash() throws Exception {
+        // The delete pad says so: a backspace that removes a step starts
+        // the flash countdown, the per-scan service walks it down and
+        // repaints the pads from the truth when it ends.  Deleting
+        // nothing flashes nothing.
+        setup(2,false,0);
+        check("no flash pending",r(0x6502,1)==0);
+        bare(2);
+        long left=r(0x6502,1);
+        check("a real deletion starts the flash",
+            r(0x61e0,1)==1&&left>0x20&&left<=0x30);
+        scan();
+        check("the per-scan service walks it down",r(0x6502,1)==left-1);
+        for(int i=0;i<0x40;i++)scan();
+        check("and it ends",r(0x6502,1)==0);
+        setup(0,false,0); bare(2);
+        check("an empty take deletes nothing and flashes nothing",
+            r(0x61e0,1)==0&&r(0x6502,1)==0);
+        println("PASS delete flash: armed by a real backspace only, decremented per scan, self-clearing");
+    }
     @Override public void run() throws Exception {
         seq=true; clock=getScriptArgs().length>0&&getScriptArgs()[0].contains("clock");
         persistent=getScriptArgs().length<2||!getScriptArgs()[1].equals("volatile");
         try {
             previewOnce(); restsAndTies(); stripCarry(); cancellation(); unarmedHold(); backspace();
+            previewTieEnd(); deleteFlash();
             println("SEQUENCE EDIT PASS: "+checks+" assertions; clock="+clock+", persist="+persistent
                 +"; emitted firmware with modeled peripherals, no hardware flash.");
         } finally { if(e!=null)e.dispose(); }

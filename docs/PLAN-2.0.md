@@ -151,13 +151,15 @@ commands, and the retained-SRAM lean startup.
 A second read-only audit of the corrected build found three interaction
 defects the first round's tests did not reach; all three are fixed.
 
-**The recording audition sounded the wrong slot.**  The recorder can only
+**The recording audition sounded the wrong slot.**  (Mechanism superseded
+2026-08-29 - the audition is pinned to the recorded pitch now; see the
+next audit round.)  The recorder can only
 leave the physical key waiting to be heard, but the latch toggle may
 allocate a DIFFERENT slot for that key - a repeat press at a new octave
 does - and the audition then re-based off the old slot's stamp: the take
 stored 485 while the audition played 1454.  `latch_audition` (0x8001dde0)
-sits between the note-on wrapper and the press-order append; after the
-toggle it re-aims the pending audition (0x6230) at the allocated identity,
+sat between the note-on wrapper and the press-order append; after the
+toggle it re-aimed the pending audition (0x6230) at the allocated identity,
 touching only a pending the recorder armed and only while recording.  The
 recorder still keeps the physical key at 0x61ee for MIDI.
 
@@ -180,6 +182,123 @@ Coverage: latch recording now checks the audition target against the
 recorded step; `playbackPressure` covers held keys, release and a
 pre-applied blend slewing out; the preset-edit scenario covers the
 2 -> 1 -> 2 touch sequence.
+
+### Three more audit rounds, and the octaves a recording keeps (2026-08-29)
+
+Eight further findings arrived in one day, alongside two decisions of the
+owner's: the sequencer records octaves the way the latches hold them, in
+every arp position, with playback following the pads and a preview always
+absolute; and the delete pad flashes when a backspace lands.  Everything
+below is in one batch because the audition findings forced a rebuild of
+the same mechanism the octave decision touches.
+
+**How a sounding pitch is actually derived, probed rather than assumed.**
+The transpose-capture chain re-derives the published pitch EVERY scan
+from the last arp key: `state+0x350` becomes that key's table pitch and
+the latch branch adds its slot's stamp.  The octave-entry swap only feeds
+the base in PLAY; in WRITE it feeds nothing the CV shows.  So re-aiming
+the audition at a slot (the previous round's fix) was aiming the
+derivation, and every path that escaped the re-aim - a toggle-off press,
+a capacity-rejected press - fell back to the physical slot's stale stamp.
+
+**The audition is pinned to the recorded pitch now.**  `seq_record` keeps
+the pitch it just stored at 0x6500 (plus one) beside the pending key at
+0x6230, and the per-scan cave between the re-base shim and the blend
+(`blend_slotmap`, 0x8001de20) publishes exactly that value for as long as
+WRITE lasts and the arp is engaged.  The selector answers the PHYSICAL
+key again, so MIDI names the note the finger pressed - the slot re-aim
+had it naming whatever slot allocation happened to choose.  Only the
+recorder arms the pending pair, so a 65th press can no longer repaint an
+older audition; and a toggle-off press, recorded as played, auditions the
+stored pitch instead of the old octave.  `seq_enter` and the preview
+transport clear the pinned pitch with the other take transients.
+
+**A recording keeps its octave in every arp position.**  The recorded
+pitch is the key table plus the transpose published at 0x60a0,
+unconditionally - the latch-only gate recorded a different take than the
+one played in OFF and regular positions, and the played interval could
+even invert.  With the arp OFF the keyboard itself sounds the press, so
+no audition is armed at all: the audition there duplicated the MIDI Note
+On with only one Note Off to share.  And leaving WRITE (or clearing)
+calls `seq_release` just as leaving PLAY does, so an audition still
+ringing is ended, note-off included.
+
+**Playback follows the pads; a preview never does.**  Play mode already
+added the live pad transpose once on top of absolute steps.  A one-shot
+preview now subtracts the same scan's published transpose back out
+(`blend_slotmap`, gated on 0x62fe), which algebraically pins the
+published pitch to the step's own base - the take auditions exactly as
+recorded, whatever the pads say, and returns to following them the
+moment real playback starts.
+
+**The re-base folds nothing while the sequencer runs.**  The blend
+re-base shim measured old-base-minus-new and folded it into the applied
+offset and the conditioner cells before the blend's own mode gate could
+park anything - and in PLAY the base moves every scan because the factory
+glide is walking between steps, so each transition was first displaced
+the wrong way, knob permitting.  The shim now only measures; the fold
+happens in `blend_slotmap` where 0x6158 == 2 vetoes it.  Base history
+still updates every scan, so returning to live playing measures from the
+current base.
+
+**Pressure lands on the note under the finger.**  The pressure cache is
+indexed by physical key; the blend weighted latch slots by the same
+index, so once a repeat press allocated a different slot, the finger's
+weight stayed on the old note and the new note got none.  The latch
+toggle is now wrapped (`latch_owner`, 0x8001dde0) to write two maps -
+current[key] = slot at 0x6521, owner[slot] = key at 0x6504 - and
+`blend_slotmap` rebuilds a slot-indexed weight table at 0x6540 each scan
+from physically held keys whose maps agree.  A note toggled away under a
+still-held finger fails the agreement and pulls nothing.  The blend's
+weight read just changes base address; non-latch builds keep 0x6100.
+
+**A preview's end is a sentinel, not a wrap.**  `seq_gate` and
+`seq_noteoff` normalised cursor==count to step zero before asking what
+comes next, so a take that BEGINS with a tie held its last preview note
+at the sustain until an extra beat arrived.  Both now answer "nothing
+follows" while 0x62fe is set: the last gate falls on the factory
+countdown and the last MIDI note is ended.  Ordinary loops still tie
+across the wrap.
+
+**The delete pad says so.**  A backspace that removes a step loads a
+48-scan countdown at 0x6502; the per-scan service (`seq_flash`,
+0x8001df30, chained ahead of the record-sound call) blinks channel 2 on
+a faster phase than the mode pads and repaints all four channels from
+the active preset when the count runs out - the same repaint the pad-4
+release path uses.  Deleting from an empty take flashes nothing.
+
+RAM: the 0x6500 block is new - 0x6500 pinned audition pitch (+1), 0x6502
+flash countdown (cleared once by the first-use tail), 0x6503 spare,
+0x6504 owner[29], 0x6521 current[29], 0x6540 slot weights (29
+halfwords, rebuilt before every read).  It first went to 0x6300 and the
+persistent edit suite caught the collision the same day: persistence
+STAGES its 224-byte record at 0x6300..0x63df and snapshots completed
+gestures at 0x6400..0x64cb, neither of which a grep for MOV constants
+below 0x6300 could see.  The block now sits above both, still far below
+the factory stack, which crt0 starts at 0x8000 (literal at 0x80002078);
+every cell is written before it is read or validated before it is
+trusted, so no fill is needed.  The JS encoder gained the
+register-indexed ST.B (sub-opcode 0x0B, verified against the Ghidra
+emission and the corpus).
+
+Coverage: `latchRecording` adds the toggle-off audition and a pinned
+preview; `recordedOctaves` runs OFF and regular positions through
+recording, neutral playback, transposed play, pinned preview and a
+power cycle; `capacityAudition` holds the 65th press away from the
+pending note; `pressureOwnership` proves single-finger invariance and
+that orphaned latches pull nothing; `previewBoundaries` and
+`previewTieEnd` cover the sentinel from both suites; `playbackPressure`
+walks the base with the knob engaged and expects no fold; `deleteFlash`
+covers arming, decrement and self-clearing.
+
+Both new caves are listed with the code they call: `latch_owner` with the
+arp switch's latch blocks, `seq_flash` with the sequencer's.  The default
+build never noticed the omission, because a cave is assembled into unused
+flash whether or not anything reaches it; the config sweep did, on seven
+of its twenty-six builds, where the pool words named a toggle or a chord
+handler that configuration had not emitted.  A block must be gated on the
+same setting as its callee, not on whether the feature it serves is
+interesting - that is what the per-variant call-pool audit is for.
 
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps

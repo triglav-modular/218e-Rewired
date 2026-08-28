@@ -79,7 +79,7 @@ FEATURE_MAP = {
     ),
     "arp.switch":             (
         ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
-         "release_count_guard"],
+         "release_count_guard", "latch_owner"],
         ["arp_latch"],
     ),
     "midi.poly_default":      (
@@ -920,6 +920,17 @@ RAM_REGIONS = [
     # pitch snapshot that was never implemented.
     (0x609A, 0x609C, "latch probe snapshot"),
     (0x6100, 0x613A, "corrected-pressure cache"),
+    # The recording audition's pinned pitch and the delete-pad flash, with
+    # the pressure-ownership maps, above the persistence staging and
+    # snapshot blocks.  Every cell is written before it is read or
+    # validated before it is trusted, so none of this needs the first-use
+    # fill; only the flash countdown gets a one-time clear from the
+    # initialiser tail, because it is read every scan.
+    (0x6500, 0x6502, "the audition's pinned pitch, plus one"),
+    (0x6502, 0x6503, "delete-pad flash countdown, in scans"),
+    (0x6504, 0x6521, "owner: which key's press made each slot's note, plus one"),
+    (0x6521, 0x653E, "current: the slot each key's note lives in, plus one"),
+    (0x6540, 0x657A, "slot-indexed pressure weights, rebuilt per scan"),
 ]
 
 # Factory-owned RAM the patches address absolutely.  Not ours to initialise —
@@ -1824,7 +1835,7 @@ def main() -> None:
                  "seq_trigger_led", "seq_trigger_led_hook",
                  "seq_edit", "seq_preview_step", "seq_command",
                  "seq_preview_next", "seq_preview_start", "seq_preview_transport",
-                 "seq_record_pitch", "seq_hold"):
+                 "seq_record_pitch", "seq_hold", "seq_flash"):
         blocks[name] = seq
     blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")

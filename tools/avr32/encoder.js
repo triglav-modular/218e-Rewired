@@ -472,7 +472,8 @@ var AVR32 = (function () {
     };
     var SYSREG = { 'COUNT': 0x42, 'SR': 0 };
 
-    var INDEXED = { 'LD.SH': 0x04, 'LD.UH': 0x05, 'LD.UB': 0x07, 'ST.H': 0x0A };
+    var INDEXED = { 'LD.SH': 0x04, 'LD.UH': 0x05, 'LD.UB': 0x07, 'ST.H': 0x0A,
+                    'ST.B': 0x0B };
 
     // Compact base+displacement.  The displacement is scaled by the access
     // width, so it must be non-negative, aligned, and inside the field.

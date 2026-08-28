@@ -162,10 +162,16 @@ def audit_call_pools(image_path) -> list[str]:
 # declining the bare-pad hold, and the unconditional first-use fill; and
 # once more for the follow-up: the audition re-aimed at the allocated latch
 # slot, the blend parked during playback, and partial pad touches keeping
-# the preset edit's ownership.
+# the preset edit's ownership; and again for the octave round: recording
+# transposed in every arp position, the audition pinned to its recorded
+# pitch, previews absolute while play follows the pads, pressure routed by
+# slot ownership, the re-base vetoed during playback, preview end sentinels,
+# no arp-OFF double audition, and the delete-pad flash — whose two new
+# caves are gated with the code they call, so a latch-free or sequencer-free
+# build stops emitting them instead of pointing a call pool at erased flash.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "f7cea86c6888439f40e49f76d0a451d883525161c59adff95fe932af67752b44",
+    "historical_config": "85da2428485c0147bdda47f01103b0a6e45bcb7c0c8e7bfb5339bf399d3eb5c5",
 }
 
 
