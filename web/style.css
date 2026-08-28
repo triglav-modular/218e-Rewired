@@ -2232,7 +2232,7 @@ section,
    baseline, the way the Windows mark sits in a heading; the explicit box and
    margin keep the diagram rule further down this sheet off them. */
 .padmap {
-  --tr-w: 13px;
+  --tr-w: 15px;
   --tr-gap: 5px;
 }
 .padmap .tr {
@@ -2266,8 +2266,8 @@ section,
    a size.  3px, not 7: the heading's own .1em of tracking is added after the
    mark as well as after every letter, so the gap reads wider than it is set. */
 .padmap-state h4 .tr {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
   margin-right: 3px;
   vertical-align: 0;
 }
