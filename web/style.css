@@ -878,11 +878,7 @@ td input {
   --knob-w: 104px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  /* stretch, not start: the rules between the columns are drawn on the
-     columns themselves, so they are only the same length if the boxes are.
-     The content stays at the top of each - the flex column below sees to
-     that - and only the box grows. */
-  align-items: stretch;
+  align-items: start;
   gap: 16px;
   margin-top: 10px;
 }
@@ -891,17 +887,6 @@ td input {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-/* One rule per gap, drawn down the middle of it rather than against either
-   column: at -8px it sits half of the 16px gap away from its own edge. */
-.knobfig:not(:first-child)::before {
-  content: "";
-  position: absolute;
-  left: -8px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--line);
 }
 /* The knob, drawn, with its number over the face.  Both layers share one grid
    cell so the number centres on the circle without either being positioned. */
@@ -967,13 +952,63 @@ td input {
 /* The options run down the column now rather than across the row, so the
    count no longer has to fit a shared width: knob 2's three and knob 3's one
    both simply stack. */
+/* One control, divided, rather than a stack of separate buttons: the choices
+   are exclusive, and four boxes with air between them read as four things
+   that could each be on.  The gap closes, the outer edge and corner move to
+   the container, and a hairline separates the rows.  overflow clips the
+   chosen row's fill back to the corner it sits in, so the top and bottom of
+   the control stay round. */
 .knobmap .vpo.knobpick {
   grid-template-columns: minmax(0, 1fr);
   grid-auto-flow: row;
   grid-auto-columns: auto;
-  gap: 8px;
+  gap: 0;
   margin-top: 0;
   max-width: none;
+  /* Mixed from --ink rather than currentColor, which is what the checkout
+     lists use: there the row's colour never moves, here it sweeps on hover,
+     and a rule mixed from it would sweep with it. */
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+/* Divided and outlined the way the shipping and payment lists on the shop's
+   checkout are: the hairline is mixed from the text colour rather than named,
+   the rule sits on the bottom of each row and the last one has none, and the
+   chosen row takes a radius one inside the container's, comes forward, and
+   drops the rule under it - as does the row above it, so nothing crosses the
+   edge of the selection on either side. */
+.knobmap .knobpick button {
+  position: relative;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 0;
+}
+.knobmap .knobpick button:last-child {
+  border-bottom: 0;
+}
+/* The shared button hover paints every border accent, and the only border a
+   row still has is the rule under it - so hovering drew a coloured line
+   between two rows.  The rule holds, whatever the row's state. */
+.knobmap .knobpick button:hover {
+  border-bottom-color: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+/* The type carries the hover instead - but only on a row that is not the
+   chosen one.  The chosen row is dark on accent, and sweeping its type to
+   the accent puts it on its own background. */
+.knobmap .knobpick button:hover:not([aria-pressed=true]) {
+  animation: sweep-ink var(--sweep-pass) forwards;
+}
+/* After the hover rule, so a selection still clears the lines around it. */
+.knobmap .knobpick button[aria-pressed=true] {
+  z-index: 1;
+  border-bottom-color: transparent;
+  border-radius: 7px;
+}
+.knobmap .knobpick button[aria-pressed=true]:hover,
+.knobmap .knobpick button:has(+ button[aria-pressed=true]),
+.knobmap .knobpick button:hover:has(+ button[aria-pressed=true]) {
+  border-bottom-color: transparent;
 }
 /* One row per pattern: a number, the steps, how many before it repeats. */
 /* Patterns can be one line of steps or four, so the number, the length and
@@ -2038,16 +2073,6 @@ section,
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 18px 14px;
   }
-  /* Two across: the rule belongs between the pair, so only the second of
-     each row draws one - on four columns that was every knob but the first,
-     which here would put a line down the left of the second row. */
-  .knobfig:not(:first-child)::before {
-    content: none;
-  }
-  .knobfig:nth-child(even)::before {
-    content: "";
-    left: -7px;
-  }
   /* Sixteen steps beside the number, the length and the remove button leave
      about 100px for the steps here.  The steps take a line of their own, one
      bar of eight to a line, and the two controls sit at the right of the line
@@ -2211,11 +2236,12 @@ section,
   color: var(--ink);
 }
 /* On a state heading the mark sits against 13px uppercase, so it comes down
-   a size and takes the heading's own letter-spacing into account. */
+   a size.  3px, not 7: the heading's own .1em of tracking is added after the
+   mark as well as after every letter, so the gap reads wider than it is set. */
 .padmap-state h4 .tr {
   width: 10px;
   height: 10px;
-  margin-right: 7px;
+  margin-right: 3px;
   vertical-align: 0;
 }
 .padfig .sub {
