@@ -1991,3 +1991,120 @@ section,
     scroll-behavior: auto !important;
   }
 }
+
+/* The step sequencer's pad map.  A pad means one of two things depending on
+   whether pad 4 is down, which a paragraph can only say and a picture can
+   show: the pads are drawn as they sit on the panel - a rounded plate with
+   its LED at the bottom left - once per state, so the two readings can be
+   compared down the column.  Labels are HTML, never text inside a drawing,
+   so nothing is ever scaled out of proportion. */
+.padmap {
+  margin: 0 0 18px;
+}
+.padmap-state + .padmap-state {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.padmap-state h4 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+.padmap-state h4 strong {
+  color: var(--ink);
+}
+.padrow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.padfig {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* The plate: the proportions of the preset pad on the panel, with the LED
+   sitting in its bottom left corner. */
+.padfig .plate {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 5 / 4;
+  width: 100%;
+  max-width: 104px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+}
+.padfig .plate b {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The LED has to READ as a component, not as a smudge: unlit it is still a
+   ring with a face, which is what makes the plate legible as a pad rather
+   than as a plain rounded box. */
+.padfig .led {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #4f4b43;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55),
+              0 0 0 1px rgba(255, 255, 255, .06);
+}
+.padfig .fn {
+  font-weight: 700;
+  color: var(--ink);
+}
+.padfig .sub {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+/* The pad being held is the one the whole gesture hangs off, so it is lit,
+   and its LED blinks the way the firmware blinks it. */
+.padfig.is-held .plate {
+  border-color: var(--accent);
+}
+.padfig .led.blink {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(255, 218, 108, .55);
+  animation: padblink 1.2s steps(1, end) infinite;
+}
+@keyframes padblink {
+  50% {
+    background: #4f4b43;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55),
+                0 0 0 1px rgba(255, 255, 255, .06);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .padfig .led.blink {
+    animation: none;
+  }
+}
+/* A pad that does nothing in this state is dimmed rather than dropped, so
+   the four pads stay in the same places in both rows and the eye can run
+   straight down the column. */
+.padfig.is-off {
+  opacity: .4;
+}
+.padfig.is-off .fn {
+  color: var(--muted);
+}
+/* Narrow: four across becomes two, which keeps the plate big enough to read
+   the number and the LED without squinting. */
+@media (max-width: 640px) {
+  .padrow {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px 14px;
+  }
+}
