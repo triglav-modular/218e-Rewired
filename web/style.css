@@ -2139,8 +2139,13 @@ section,
   letter-spacing: .1em;
   color: var(--muted);
 }
+/* The control's name is one thing, so it does not break across a line:
+   "PAD 4" split after PAD when the heading grew long enough to wrap.  A rule
+   rather than a non-breaking space in the text, so it holds for every name
+   set this way and leaves no invisible character in the copy. */
 .padmap-state h4 strong {
   color: var(--ink);
+  white-space: nowrap;
 }
 /* Columns the width of a pad, not a quarter of the row: at 1fr each column
    was wider than the pad it held, the pad sat at its left, and all four
