@@ -2551,8 +2551,8 @@ function assembleProgram() {
         finish("preset_editor", 0x8001aec0);
 
         // Knob 1 as six note orders instead of one blend.  The knob's travel
-        // is cut into zones - ascending, descending, random, press order,
-        // reverse press order, mirror - and the zone picks how the next key is
+        // is cut into zones - ascending, descending, mirror, press order,
+        // reverse press order, random - and the zone picks how the next key is
         // chosen.  The 1.x behaviour, a continuous blend from press order into
         // randomness, is the other setting; neither is a subset of the other,
         // so the build chooses.
@@ -2579,7 +2579,13 @@ function assembleProgram() {
         emit("MOV R8,0x6");
         emit("MUL R2,R2,R8");
         emit("LSR R2,0x7");             // zone, 0..5
-        emit("CP.W R2,0x2");
+        // Zone 5 is random and zone 2 is mirror, so the knob runs up, down,
+        // up-down, as played, backwards, random: the deterministic orders in
+        // a row and the unpredictable one at the end of the travel, rather
+        // than random sitting in the middle of them.  Testing for 5 here is
+        // the whole of it - zone 2 then matches none of the tests and falls
+        // through to the mirror code below, where 5 used to.
+        emit("CP.W R2,0x5");
         emit("BR{eq} 0x8001afd0");      // random: the old code
         emit("CP.W R2,0x3");
         emit("BR{eq} 0x8001afd8");      // press order: the old code

@@ -1669,8 +1669,8 @@ def main() -> None:
     summary.append(f"  {'portamento.blend_slew_taper':28s} "
                    f"{staper}  ({'knob picks the rate' if staper else 'fixed rate'})")
     # Knob 1: 0 keeps the 1.x blend from press order into randomness, 1 cuts
-    # the travel into six zones - ascending, descending, random, press order,
-    # reverse press order, mirror.
+    # the travel into six zones - ascending, descending, mirror, press order,
+    # reverse press order, random.
     orders = cfg.get("arp_order", {}).get("knob1_orders", 0)
     if isinstance(orders, bool) or not isinstance(orders, int) or orders not in (0, 1):
         raise SystemExit("[arp_order].knob1_orders must be 0 or 1")

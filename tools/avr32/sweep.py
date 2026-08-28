@@ -155,7 +155,7 @@ def audit_call_pools(image_path) -> list[str]:
 # one-shot preview/explicit CLEAR ownership.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "f20cd0d584e1550e2258e3ce08d158abe32f1a0c7c792bd84f971bc613e4909c",
+    "historical_config": "92fd147d463353182184a38fc2ee21186275752ceeacb21ed7cbeb81a5cae0a2",
 }
 
 
