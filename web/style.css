@@ -862,19 +862,36 @@ td input {
    pad map gets, and the block is a figure of the hardware rather than a note
    hanging off the option above. */
 .knobsel { margin: 14px 0 6px; }
+.knobsel > .knobmap:first-child { margin-top: 0; }
 .knobsel.hidden { display: none; }
 .knobmap {
   --knob-w: 64px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: start;
+  /* stretch, not start: the rules between the columns are drawn on the
+     columns themselves, so they are only the same length if the boxes are.
+     The content stays at the top of each - the flex column below sees to
+     that - and only the box grows. */
+  align-items: stretch;
   gap: 16px;
   margin-top: 10px;
 }
 .knobfig {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+/* One rule per gap, drawn down the middle of it rather than against either
+   column: at -8px it sits half of the 16px gap away from its own edge. */
+.knobfig:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
 }
 /* The knob, drawn, with its number over the face.  Both layers share one grid
    cell so the number centres on the circle without either being positioned. */
@@ -891,7 +908,27 @@ td input {
 /* The pattern bank is knob 2's, but it is as wide as the whole block, so it
    sits under all four rather than inside one - which leaves nothing saying
    whose it is.  A heading does, in the voice the sequencer card's state
-   headings already use. */
+   headings already use.
+
+   22 above it, which is what the sequencer card puts between one state and
+   the next: this is a section below the knobs, not the last thing in the
+   column, and at 0 the heading landed hard against the very button that
+   opens it. */
+/* A card inside the card: the bank is one knob's, so it reads as a thing set
+   into the group rather than the next part of it.  The surface the page uses
+   for anything set into a panel - the pad plates, the drop zone - is the
+   page's own bg behind a hairline, and the shadow is the tier .group takes,
+   which is already the "nested card" one. */
+#patternBody {
+  margin-top: 22px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .032),
+              0 1px 2px rgba(0, 0, 0, .10),
+              0 10px 22px -16px rgba(0, 0, 0, .27);
+}
 .patwho {
   margin: 0 0 12px;
   font-size: 13px;
@@ -1990,6 +2027,16 @@ section,
   .knobmap {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 18px 14px;
+  }
+  /* Two across: the rule belongs between the pair, so only the second of
+     each row draws one - on four columns that was every knob but the first,
+     which here would put a line down the left of the second row. */
+  .knobfig:not(:first-child)::before {
+    content: none;
+  }
+  .knobfig:nth-child(even)::before {
+    content: "";
+    left: -7px;
   }
   /* Sixteen steps beside the number, the length and the remove button leave
      about 100px for the steps here.  The steps take a line of their own, one
