@@ -2216,16 +2216,29 @@ section,
 .padfig .fn {
   font-weight: 700;
   color: var(--ink);
+  /* 1.62 is the page's reading line-height, which is loose for a two-word
+     label: at that ratio a wrapped label reads as two separate lines rather
+     than one name. */
+  line-height: 1.25;
+  /* The mark hangs into the margin so a wrapped line starts under the first
+     line's text rather than under the mark.  Measured from the mark itself,
+     so it stays right if the mark's size or gap changes. */
+  padding-left: calc(var(--tr-w) + var(--tr-gap));
+  text-indent: calc(-1 * (var(--tr-w) + var(--tr-gap)));
 }
 /* The transport marks, on the functions they name.  Drawn rather than typed:
    as glyphs, ● ▶ ■ come from whichever font has them and ✕ is a letter in
    some, so none of the four would match the others.  Inline and on the
    baseline, the way the Windows mark sits in a heading; the explicit box and
    margin keep the diagram rule further down this sheet off them. */
+.padmap {
+  --tr-w: 13px;
+  --tr-gap: 5px;
+}
 .padmap .tr {
-  width: 13px;
-  height: 13px;
-  margin: 0 5px 0 0;
+  width: var(--tr-w);
+  height: var(--tr-w);
+  margin: 0 var(--tr-gap) 0 0;
   display: inline-block;
   vertical-align: -1px;
 }
