@@ -254,6 +254,10 @@ public class ControlRegression extends SequenceEditRegression {
         noteUp(0); octavePad(1); key(0); sound();
         check("repeat press records today's octave, not the old stamp",
             r(0x61e0,1)==2&&r(0x6162,2)==r(0x854,2));
+        // The audition must sound what was recorded.  A repeat press at a
+        // new octave allocates a fresh latch slot; auditioning the physical
+        // key re-based off the OLD slot's stamp and sounded the old octave.
+        check("audition sounds the pitch it recorded",r(S+0x352,2)==r(0x6162,2));
         // A slot latched and unlatched OUTSIDE the take keeps its stamp;
         // recording that key afterwards must not resurrect it.
         setup(0,false,1); command(2); latchFixture();
@@ -310,6 +314,32 @@ public class ControlRegression extends SequenceEditRegression {
         check("recorded pitch clamps low",reg("R11")==0);
         println("PASS recorded pitch bounds: DAC-limit take records, saves and restores; both clamp ends");
     }
+    void playbackPressure() throws Exception {
+        // Live key pressure must not bend a playing sequence: in PLAY the
+        // portamento knob means note-to-note time and the keys no longer
+        // choose the notes, so the blend's target parks at zero and any
+        // blend already applied slews away.
+        setup(1,false,2); w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,0);
+        command(1); octavePad(1); w(S+0x2fc,2,0x420); w(S+0x306,2,0);
+        externalBeat(); sound(); long base=r(S+0x352,2), dac=r(S+0x358,2);
+        key(12); w(0x3490+12,1,2);
+        for(int k=0;k<29;k++)w(0x3686+2*k,2,k==12?900:110);
+        call(0x8001aa10L); w(S+0x306,2,900);
+        for(int i=0;i<50;i++)sound();
+        check("held-key pressure leaves the playing step alone",
+            r(S+0x352,2)==base&&r(S+0x358,2)==dac&&r(0x60e2,2)==0);
+        w(0x3490+12,1,0); call(0x8001aa10L);
+        for(int i=0;i<50;i++)sound();
+        check("release changes nothing either",r(S+0x358,2)==dac);
+        // A blend applied before PLAY starts glides out instead of stepping.
+        w(0x60e2,2,64);
+        sound();
+        long applied=r(0x60e2,2);
+        check("the transition slews rather than snapping",applied>0&&applied<64);
+        for(int i=0;i<50;i++)sound();
+        check("and settles at zero",r(0x60e2,2)==0&&r(S+0x358,2)==dac);
+        println("PASS playback ignores live pressure: held keys, release, and a pre-applied blend slewing out");
+    }
     void heldPresetEdit() throws Exception {
         // Holding a pad while its knob edits the preset is a voltage
         // gesture: the editor's following flag declines the bare-pad hold,
@@ -323,6 +353,15 @@ public class ControlRegression extends SequenceEditRegression {
             check("the editor is following the held pad",
                 r(0x614a+pad,1)==1&&r(0x613a+2*pad,2)==600);
             check("a preset edit is not a sequencer command",
+                r(0x6158,1)==1&&r(0x61e0,1)==4&&r(0x62fe,1)==0);
+            // A partial touch (2 -> 1 -> 2) is the same gesture: ownership
+            // holds until the finger truly leaves, so the interrupted hold
+            // cannot rearm and fire mid-edit.
+            w(0x46f0+pad,1,1); controlScan();
+            check("a partial touch keeps the editor's ownership",r(0x614a+pad,1)==1);
+            w(0x46f0+pad,1,2);
+            for(int i=0;i<70;i++)controlScan();
+            check("the interrupted hold still declines",
                 r(0x6158,1)==1&&r(0x61e0,1)==4&&r(0x62fe,1)==0);
             release(pad);
             press(pad,0);
@@ -365,6 +404,7 @@ public class ControlRegression extends SequenceEditRegression {
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&transpose)try { recordedBounds(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(seq)try { playbackPressure(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { heldPresetEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(lean)try { retainedStartup(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);

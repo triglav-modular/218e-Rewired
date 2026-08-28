@@ -159,10 +159,13 @@ def audit_call_pools(image_path) -> list[str]:
 # held preview/backspace, the pad-1 record toggle and preset knob pickup;
 # and again for the audit corrections: recording at today's transpose with
 # clamped pitches, playback without a second latch re-base, preset edits
-# declining the bare-pad hold, and the unconditional first-use fill.
+# declining the bare-pad hold, and the unconditional first-use fill; and
+# once more for the follow-up: the audition re-aimed at the allocated latch
+# slot, the blend parked during playback, and partial pad touches keeping
+# the preset edit's ownership.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "679225781f050f061f88b0f0910bdd255d529522595cca1b127173da41eb635d",
+    "historical_config": "f7cea86c6888439f40e49f76d0a451d883525161c59adff95fe932af67752b44",
 }
 
 

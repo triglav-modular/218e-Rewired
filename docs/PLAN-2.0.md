@@ -146,6 +146,41 @@ repeat, reused slot, absolute playback with a held slot), recorded pitch
 bounds with the persistent save, preset-edit holds against bare-pad
 commands, and the retained-SRAM lean startup.
 
+### The follow-up audit (2026-08-28)
+
+A second read-only audit of the corrected build found three interaction
+defects the first round's tests did not reach; all three are fixed.
+
+**The recording audition sounded the wrong slot.**  The recorder can only
+leave the physical key waiting to be heard, but the latch toggle may
+allocate a DIFFERENT slot for that key - a repeat press at a new octave
+does - and the audition then re-based off the old slot's stamp: the take
+stored 485 while the audition played 1454.  `latch_audition` (0x8001dde0)
+sits between the note-on wrapper and the press-order append; after the
+toggle it re-aims the pending audition (0x6230) at the allocated identity,
+touching only a pending the recorder armed and only while recording.  The
+recorder still keeps the physical key at 0x61ee for MIDI.
+
+**Live pressure bent playing steps.**  The pressure blend gated only on
+the portamento knob's deadzone, so held keys steered a playing sequence's
+pitch while the knob had already reverted to meaning time.  The blend now
+parks its target at zero while 0x6158 reads 2 (PLAY and preview); the
+apply shim slews the applied offset out, so a blend held down when
+playback starts glides away instead of stepping.
+
+**A partial pad touch reopened the hold.**  The preset editor treated any
+touch level other than full (2) as a release, so a flicker to the
+light-touch level (1) cleared the following flag mid-edit, the bare-pad
+hold rearmed, and the second half of the edit previewed or deleted.  The
+editor now treats only touch 0 as a release - ownership, the movement
+snapshot and the stored voltage all hold across partial touches, the same
+gesture boundary persistence already used.
+
+Coverage: latch recording now checks the audition target against the
+recorded step; `playbackPressure` covers held keys, release and a
+pre-applied blend slewing out; the preset-edit scenario covers the
+2 -> 1 -> 2 touch sequence.
+
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
   them in lockstep).  Table expression generalised from 12/1200 to map
@@ -358,7 +393,10 @@ commands, and the retained-SRAM lean startup.
   the notes, so the pressure blend has nothing to steer and the knob would
   otherwise mean nothing at all.  In
   play it reads the factory's own glide table, exactly as a build without the
-  blend does.
+  blend does.  The blend itself enforces this too: while 0x6158 reads 2 its
+  target parks at zero, so live key pressure cannot bend a playing step and
+  a blend already applied when playback starts slews away (the follow-up
+  audit found the contract stated but not enforced).
   A tie SLIDES into the note after it, 303 fashion, rather than stepping to
   it.  The tie arms a two-step count; the step that actually moves the pitch
   spends it, and while it is unspent the glide rate handed to the factory

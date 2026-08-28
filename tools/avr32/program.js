@@ -137,7 +137,7 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         word(0x80005a04); // original note-on initialization
         word(0x00006080); // raw-filter sample count
-        word(0x8001a020); // press-order list append
+        word(0x8001dde0); // latch_audition -> press-order list append
         word(0x8001a930); // pitch-aware latch toggle (stamps on proceed)
         word(0x8001b9d0); // the sequencer's recorder
         finish("note_on_reset_raw_filter", 0x80018d40);
@@ -774,11 +774,19 @@ function assembleProgram() {
         // full 218r curve the threshold would move with pressure and the
         // blend would engage and disengage erratically under the fingers.
         emit("LD.SH R5,R9[0x306]");
+        // While the sequencer PLAYS (or previews), the keys no longer choose
+        // the notes and the knob means time, as documented - so the blend
+        // has nothing to steer and its target parks at zero.  The apply shim
+        // slews the applied offset out, so a blend held down when playback
+        // starts glides away instead of stepping.
+        emit("LD.UB R8,R9[0x2bf8]");    // 0x6158, the sequencer mode
+        emit("CP.W R8,0x2");
+        emit("BR{eq} 0x80019d18");
         // Hard gate: below the knob's deadzone the blend loop never runs at
         // all — multi-finger common-mode sensor inflation can push deltas
         // past any threshold, so "off" must not depend on pressure at all.
         emit("CP.W R5,0x30");
-        emit("BR{lt} 0x80019d20");
+        emit("BR{lt} 0x80019d18");
         emit("MOV R8,0x3ff");
         emit("SUB R5,R8,R5 << 0x0");
         emit("MOV R0,0x0");
@@ -790,11 +798,11 @@ function assembleProgram() {
         // Keys 28..0: the cache and the latch stamps cover 29 slots, and slot
         // 31's stamp address is the blend's own target cell.
         emit("MOV R2,0x1c");
-        padTo(0x80019c90);
+        padTo(0x80019c98);
         emit("ADD R8,R9,R2 << 0x0");
         emit("LD.UB R10,R8[0x21b]");
         emit("CP.W R10,0x1");
-        emit("BR{ne} 0x80019d08");
+        emit("BR{ne} 0x80019d06");
         emit("MOV R8,0x854");
         emit("ADD R8,R8,R2 << 0x1");
         emit("LD.UH R10,R8[0x0]");
@@ -810,32 +818,32 @@ function assembleProgram() {
             emit("MOV R8,0x608e");
             emit("LD.UB R8,R8[0x0]");
             emit("CP.W R8,0x1");
-            emit("BR{ne} 0x80019cc0");
+            emit("BR{ne} 0x80019cc8");
             emit("MOV R8,0x60a2");
             emit("LD.SH R8,R8[R2 << 0x1]");
             emit("ADD R10,R8");
         }
-        padTo(0x80019cc0);
+        padTo(0x80019cc8);
         // The base must sit in the same domain as the contributors: measuring
         // a stamped contributor against an unstamped base published the stamp
         // itself as an offset, which the glide target had already applied.
         emit("CP.W R12,0x0");
-        emit("BR{eq} 0x80019cc8");
+        emit("BR{eq} 0x80019cd0");
         emit("MOV R3,R10");
-        padTo(0x80019cc8);
+        padTo(0x80019cd0);
         emit("MOV R8,0x6100");
         emit("LD.UH R8,R8[R2 << 0x1]");
         emit("CP.W R12,0x0");
-        emit("BR{ne} 0x80019cdc");
+        emit("BR{ne} 0x80019ce0");
         emit("SUB R8,R8,R5 << 0x0");
-        padTo(0x80019cdc);
+        padTo(0x80019ce0);
         emit("CP.W R8,0x0");
-        emit("BR{le} 0x80019d08");
+        emit("BR{le} 0x80019d06");
         emit("LSR R8,0x4");
         emit("CP.W R8,0x3f");
-        emit("BR{ls} 0x80019cf4");
+        emit("BR{ls} 0x80019cf2");
         emit("MOV R8,0x3f");
-        padTo(0x80019cf4);
+        padTo(0x80019cf2);
         emit("MOV R12,R8");
         emit("MUL R12,R12,R8");
         emit("MUL R12,R12,R8");
@@ -847,12 +855,11 @@ function assembleProgram() {
         emit("ADD R0,R12");
         emit("MUL R12,R12,R10");
         emit("ADD R1,R12");
-        padTo(0x80019d08);
+        padTo(0x80019d06);
         emit("SUB R2,0x1");
-        emit("BR{ge} 0x80019c90");
-        padTo(0x80019d10);
+        emit("BR{ge} 0x80019c98");
         emit("CP.W R0,0x0");
-        emit("BR{eq} 0x80019d20");
+        emit("BR{eq} 0x80019d18");
         emit("DIVU R0,R1,R0");
         // Publish X - base as an OFFSET (RAM 0x60e0) instead of folding it
         // into the glide target: the pitch shim adds it after the glide
@@ -860,10 +867,10 @@ function assembleProgram() {
         // knob keeps its classic note-to-note portamento.  Both paths store,
         // so a released chord zeroes the offset within one scan.
         emit("SUB R0,R0,R3 << 0x0");
-        emit("RJMP 0x80019d24");
-        padTo(0x80019d20);
+        emit("RJMP 0x80019d1a");
+        padTo(0x80019d18);
         emit("MOV R0,0x0");
-        padTo(0x80019d24);
+        padTo(0x80019d1a);
         emit("MOV R8,0x60e0");
         emit("ST.H R8[0x0],R0");
         emit("LDDPC R8,0x80019d34");
@@ -2530,7 +2537,7 @@ function assembleProgram() {
         emit("LD.SH R12,R12[0x30a]");
         emit("ADD R10,R1,R0 << 0x0");
         emit("CP.W R8,0x2");
-        emit("BR{ne} 0x8001ae80");
+        emit("BR{ne} 0x8001ae78");
         emit("LD.UB R8,R10[0x10]");
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x8001ae70");
@@ -2549,6 +2556,14 @@ function assembleProgram() {
         emit("ADD R8,R1,R2 << 0x0");
         emit("ST.H R8[0x0],R12");
         emit("RJMP 0x8001ae90");
+        padTo(0x8001ae78);
+        // A partial touch is not a release: ownership, the snapshot and the
+        // stored voltage all hold until the finger truly leaves (touch 0),
+        // the same boundary the persistence gesture uses.  A flicker down
+        // to the light-touch level used to clear following here, and the
+        // bare-pad hold could rearm in the middle of a preset edit.
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001ae90");
         padTo(0x8001ae80);
         emit("ADD R8,R1,R2 << 0x0");
         emit("ST.H R8[0x8],R12");
@@ -4997,6 +5012,38 @@ function assembleProgram() {
         padTo(0x8001ddd4);
         word(0x8001dd80);
         finish("knob_pickup", 0x8001dde0);
+
+        // The note a press just put into the take, re-aimed at the identity
+        // that actually SOUNDS it.  seq_record runs before the latch toggle
+        // and can only leave the physical key waiting to be heard - but the
+        // toggle may allocate a DIFFERENT slot for that key (a repeat press
+        // at a new octave does), and the audition then re-based off the old
+        // slot's stamp and sounded the note that used to live there.  Here,
+        // after the toggle, R12 IS the allocated identity, so the pending
+        // audition is re-aimed at it; the recorder already keeps the
+        // physical key separately (0x61ee) for MIDI.  Only a pending the
+        // recorder armed is touched, and only while recording - a full
+        // take or ordinary live play leaves nothing to re-aim.  Chains to
+        // the press-order append this call used to reach directly.
+        begin(0x8001dde0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,0x6154");
+        emit("LD.UB R8,R9[0x4]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001de00");
+        emit("LD.UH R8,R9[0xdc]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001de00");
+        emit("MOV R8,R12");
+        emit("SUB R8,-0x1");
+        emit("ST.H R9[0xdc],R8");       // 0x6230: the note to hear, plus one
+        padTo(0x8001de00);
+        emit("MCALL PC[0x8001de08]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001de08);
+        word(0x8001a020);              // press-order list append
+        finish("latch_audition", 0x8001de10);
 
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the
