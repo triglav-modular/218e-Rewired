@@ -881,13 +881,14 @@ RAM_REGIONS = [
     (0x6258, 0x625A, "saturating capture FIFO overrun count"),
     (0x625A, 0x625B, "physical output timestamp valid"),
     (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
-    # Persistence.  The request flag is set by a gesture and serviced from
-    # the scan, because a flash write stalls the CPU for milliseconds and
-    # has no business happening inside the gesture that asked for it.
-    (0x62E0, 0x62E1, "a save has been asked for"),
+    # Persistence requests coalesce until the instrument is idle. A failed
+    # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
+    (0x62E0, 0x62E1, "persistence request/result"),
     (0x62E1, 0x62E2, "which rotation page holds the newest record"),
+    (0x62E2, 0x62E3, "sequence length last scan, for clear detection"),
     (0x62E4, 0x62E8, "the sequence number that record carries"),
-    (0x62E8, 0x62F8, "the 16-byte record header, staged for writing"),
+    (0x62E8, 0x62EC, "idle interval start, COUNT"),
+    (0x62EC, 0x62ED, "idle interval armed"),
     # The scan watches for two gestures ENDING, so it has to remember what
     # they looked like on the previous scan.
     (0x62F8, 0x62F9, "the sequencer mode last scan"),
@@ -896,7 +897,7 @@ RAM_REGIONS = [
     # The record staged for writing, 8-byte aligned and a multiple of 8 long,
     # so the flash driver takes its simple aligned path - the same reason the
     # factory stages its own record rather than writing from scattered state.
-    (0x6300, 0x6408, "the whole record, staged for one aligned page write"),
+    (0x6300, 0x63E0, "canonical v2 record, staged for body then marker commit"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1764,11 +1765,11 @@ def main() -> None:
         cfg.get("sequencer", {}).get("clock_max_ms", 2400))
     cfg["_numbers"]["clock_release_ms"] = int(
         cfg.get("sequencer", {}).get("clock_release_ms", 2600))
-    # The trigger spike's length, in scheduler units of (n - 1) milliseconds:
-    # the factory's 3 measured 2 ms on the jack.  5 is the ~4 ms Buchla spike
-    # the owner asked for, and the ceiling the attack-age guards cover.
     cfg["_numbers"]["persist_page_count"] = int(
         cfg.get("persist", {}).get("page_count", 8))
+    # The trigger spike's length, in scheduler units of (n - 1) milliseconds:
+    # the factory's 3 measured 2 ms on the jack. 5 is the ~4 ms Buchla spike
+    # the owner asked for, and the ceiling the attack-age guards cover.
     cfg["_numbers"]["trigger_spike_units"] = int(
         cfg.get("sequencer", {}).get("trigger_spike_units", 5))
     seq = bool(cfg.get("sequencer", {}).get("on"))
@@ -1785,10 +1786,12 @@ def main() -> None:
     blocks["profiler_pool"] = div or features.get("scan_profiler", False)
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
     keep = bool(cfg.get("persist", {}).get("on"))
-    for name in ("persist_sum", "persist_valid", "persist_newest", "persist_load",
+    for name in ("persist_crc", "persist_record_crc", "persist_pack",
+                 "persist_valid", "persist_newest", "persist_load",
                  "persist_same", "persist_verify", "persist_save", "persist_tick",
-                 "persist_scan_shim", "persist"):
+                 "persist_safe", "persist_boot", "persist_scan_shim", "persist"):
         blocks[name] = keep
+    blocks["clock_init_pool"] = div or keep
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",

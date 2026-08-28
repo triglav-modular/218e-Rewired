@@ -98,7 +98,10 @@ pool. It no longer executes the bytes at 0x800021e8 as loads/stores.
 | Long-low qualification banking | 0x8001ca00 |
 | Countdown attack-age guard | 0x8001ca80 |
 
-The planned persistence page 0x8001c000–0x8001c1ff is left untouched.
+The old proposed page at 0x8001c000–0x8001c1ff is still unused. Persistence
+now stores records at 0x8003e000–0x8003efff; see [PERSISTENCE.md](PERSISTENCE.md).
+When enabled, its startup wrapper restores musical data before calling the
+clock initializer above. Pending saves do not run during playback.
 
 | RAM | Meaning |
 | --- | --- |

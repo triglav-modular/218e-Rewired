@@ -146,6 +146,13 @@ sequencer = false
 # MCU input must be low for >250 us before each rising edge; see docs/CLOCK.md.
 clock_divide = false
 
+# Save the remapped preset voltages and sequence across power cycles.
+# Saves wait until the sequence is stopped, the arp is OFF, all controls
+# are released, and the instrument is idle for about three seconds.
+# Clock-divider builds also wait for incoming clocks to stop. DFU updates
+# erase these records. See docs/PERSISTENCE.md for the format and limits.
+persist = false
+
 
 # ---------------------------------------------------------------------------
 # Paths and checksums (not behaviour)

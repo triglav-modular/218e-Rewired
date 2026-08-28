@@ -110,6 +110,14 @@ and emulates the actual ISR, divider and pitch/trigger hooks. It requires
 Ghidra and never flashes a device. See [CLOCK.md](CLOCK.md) for the input
 contract, regression coverage and remaining hardware checks.
 
+`python3 tools/test_persistence.py` builds all four persistence/sequence/clock
+variants and executes the actual save/load/startup code and factory flash
+wrapper with controller failure and power-cut injection. It also reruns the
+clock suite with edits pending. See [PERSISTENCE.md](PERSISTENCE.md) before
+enabling `persist = true`: saves require about three seconds of stopped,
+arp-off, released-control idle time, and new records do not migrate the
+experimental raw-RAM format.
+
 ## macOS tool compatibility
 
 | Tool | Architectures | Minimum macOS |
@@ -418,8 +426,9 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 |---|---|
 | `tools/test.py` | 126 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
-| `tools/avr32/sweep.py` | 22 representative configurations, built by both toolchains and compared byte for byte |
-| `web/test_configs.py` | the browser build matches `build.py` for 16 configurations |
+| `tools/avr32/sweep.py` | representative configurations, including all four persistence variants, built by both toolchains and compared byte for byte |
+| `web/test_configs.py` | the browser build matches `build.py` across its option/interaction matrix |
+| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, startup/gestures, and clock behavior with saves pending |
 | `web/test_matrix.js` | **all 768 option combinations** built through the guarded path |
 
 Every build, in either toolchain, has to pass four structural checks before it

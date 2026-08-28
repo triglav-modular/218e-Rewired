@@ -270,7 +270,7 @@ var AVR32 = (function () {
         },
         // --- ALU -------------------------------------------------------
         {
-            re: /^(ADD|SUB|OR) (\S+),(\S+)$/, fn: function (m) {
+            re: /^(ADD|SUB|OR|EOR) (\S+),(\S+)$/, fn: function (m) {
                 var rd = reg(m[2]), rs = reg(m[3]);
                 return rd === null || rs === null ? null
                      : regreg(REGREG[m[1]], rs, rd);
@@ -404,7 +404,8 @@ var AVR32 = (function () {
 
     // --- ALU -------------------------------------------------------------
     // Compact two-operand sub-opcodes, in the (Rs << 9) | (sub << 4) | Rd form.
-    var REGREG = { 'ADD': 0x0, 'SUB': 0x1, 'CP.W': 0x3, 'OR': 0x4, 'MOV': 0x9 };
+    // EOR format I: AVR32 SLEIGH op4_5=5, also checked by the Ghidra corpus.
+    var REGREG = { 'ADD': 0x0, 'SUB': 0x1, 'CP.W': 0x3, 'OR': 0x4, 'EOR': 0x5, 'MOV': 0x9 };
 
     // Compact one-operand: (op12 << 4) | Rd.
     var UNARY = { 'ABS': 0x5C4, 'CASTU.H': 0x5C7, 'CASTS.H': 0x5C8, 'SR{EQ}': 0x5F0 };

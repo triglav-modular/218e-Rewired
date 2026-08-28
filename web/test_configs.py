@@ -104,8 +104,16 @@ CONFIGS = [
                           {"clock_divide": True}),
     ("persist",           [(r"^sequencer = false", "sequencer = true"),
                            (r"^clock_divide = false", "clock_divide = true"),
-                           (r"^pressure_fix = true", "persist = true\npressure_fix = true")],
+                           (r"^persist = false", "persist = true")],
                           {"sequencer": True, "clock_divide": True, "persist": True}),
+    ("persist_only",      [(r"^persist = false", "persist = true")],
+                          {"persist": True}),
+    ("persist_seq",       [(r"^persist = false", "persist = true"),
+                           (r"^sequencer = false", "sequencer = true")],
+                          {"persist": True, "sequencer": True}),
+    ("persist_clock",     [(r"^persist = false", "persist = true"),
+                           (r"^clock_divide = false", "clock_divide = true")],
+                          {"persist": True, "clock_divide": True}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
                             + ", ".join(['["tunings/BohlenPierce.scl", '

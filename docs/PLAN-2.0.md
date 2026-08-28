@@ -27,15 +27,15 @@ That contract supersedes the historical sampled-low, rejection-budget,
   (24-tet needs <= 10 units; config allows 30 today).
 - Page UI: one optional .kbm beside each .scl slot.
 
-### 2. Decoupled preset voltages  [BUILT, except persistence]
+### 2. Decoupled preset voltages  [BUILT; persistence opt-in]
 - Factory: preset OUTPUT (single jack, active pad selects) and the
   add-to-pitch MIDDLE mode both read the live knob mirrors
   (getters at 0x80003624/366e/36b8/3702 switch on knob index).
 - New: four stored values, restored at boot, BOTH consumers read the store.
   Hold pad N + turn knob N to edit (output follows while editing);
-  release stores.  Persist in the factory settings record (RAM 0x0968,
-  loader 0x8000a264, saver 0x80009fb8 — already called by
-  poly_settings_migration; verify spare bytes in the record).
+  release queues persistence when enabled. Musical data uses a separate
+  main-array ring, not the factory settings record; see
+  [PERSISTENCE.md](PERSISTENCE.md) for the idle-save policy.
 - While a pad is held and its knob moves, freeze that knob's arp/vibrato
   latch.  Pads 2+3 TOGETHER is the factory latch chord; single holds are
   free.  Remove the factory pad-latch in builds with latching_arp = true.
@@ -734,69 +734,26 @@ evidence that it works.
 
 ### Persistence: presets and the sequence survive power-off (2026-08-28)
 
-Built behind `persist`, OFF by default until it has been on hardware.
+Built behind `persist`, OFF by default pending hardware validation. The
+current contract and record layout are in [PERSISTENCE.md](PERSISTENCE.md).
 
-**Where.**  Eight pages from 0x8003e000, in the main array rather than the
-User Page.  The User Page would survive a firmware update, which is why the
-old plan chose it, but the AVR32 UC3 DFU bootloader keeps its ISP
-configuration at the top of that page and erasing it blind would risk the
-recovery path.  The owner's call was that losing settings on a reflash does
-not matter, which makes the main array the cheaper and far safer choice -
-there are ~290 spare pages and the factory already erase-writes that array
-for its own record.
+The audit replaced the original raw-RAM/additive-checksum format with
+version 2: 204 bytes of musical data, CRC32 and a separately programmed
+final commit. Both calls use page-aligned destinations and staging at
+`0x6300`; the second changes only the erased marker word, without erase.
+Read-back verification precedes and follows commit. The eight-page ring
+never retries its newest valid page. A failed lap latches failure instead
+of looping forever or retrying at scan rate.
 
-**The driver takes an erase flag**, which is what the old open item was
-blocked on: `0x800108fc(dest, src, len, erase)`, and at 0x80010e32 a zero
-flag branches past EUP straight to WUP.
+Recording completion, preset release after pickup and clearing a nonempty
+sequence queue saves. Flash waits for stopped/off/released idle conditions.
+Startup restores only musical data before GPIO setup and always starts
+stopped, including after warm reset. Old experimental records are rejected.
+The User Page and factory settings are untouched; DFU erases musical data.
 
-**Rotation.**  Each save goes to the NEXT page, so the previous record is
-still whole while the new one is being written.  The payload goes down first
-WITH the erase and the 16-byte header last, so a power cut between them
-leaves a page with no marker - which the loader ignores, falling back to the
-previous page.  Verified by writing the payload alone and confirming the old
-record still loads.
-
-**Read-back verify**, because nothing else can tell us.  FSR's PROGE and
-LOCKE are COMMAND errors - bad key, busy, locked region - not cell failures,
-so a worn page reports a perfectly successful write and loses the data at
-the next power-up.  Every save re-reads the header, the checksum and all 244
-payload bytes; a page that will not take the write is skipped and the next
-one tried, up to a full lap.
-
-**Only if it changed** is the payload comparison, not the gesture: a save
-whose bytes already match the stored record does not spend a cycle.  That is
-the entire wear budget, and it makes the triggers free to be generous.
-
-**The triggers are watched, not hooked.**  seq_enter and the preset editor
-are both full to the last byte, and an edge seen from the 5 ms scan is the
-same event one scan later - with the flash write off the gesture's own path,
-which matters more, since an erase plus a page programme is milliseconds of
-stalled CPU.  Leaving record mode is the sequencer's mode going from 1 to
-anything else.  A preset is its FOLLOWING FLAG falling back to zero: that
-flag is only set when the knob moved far enough to take the voltage over, so
-it already means "this one really did change".
-
-**What is not restored.**  The clock divider's own live cells, payload
-offsets 0xac..0xb4.  Its lock belongs to the instrument in front of you, not
-to the last time it was switched off.
-
-**The first build of this saved nothing, and the reason is worth keeping.**
-It wrote 244 bytes straight out of RAM 0x613a - which is 2 mod 8 - to a
-destination 0x10 into a page, then the header separately.  That is the flash
-driver's DIFFICULT path: a destination that is not page-aligned sends it
-through a read-modify-write preamble, and a source that is not 8-byte aligned
-takes it off LD.D and onto byte-at-a-time collection.  The factory does not
-write that way either - it stages its own record at RAM 0x46c8 first, which
-is the hint that was there to be read.  And on the second lap the preamble
-would have copied the OLD header back into the buffer before the erase, so
-the new one would be programmed on top of it and AND into nonsense.
-
-Now: the whole record is staged at 0x6300, 8-byte aligned and rounded to 264
-bytes, and goes down in ONE write to a page-aligned destination.  The
-emulation asserts that contract on every call, so this cannot come back.
-
-22 scenarios against the built image's bytes with the flash driver modelled
-- erase sets 0xff, programming only clears bits, as NOR flash behaves.
+`tools/test_persistence.py` executes the built instructions and factory copy
+wrapper with modeled failures and power cuts, then runs the clock suite
+with saves pending. Physical flash and analog timing still need bench tests.
 
 ### Second audit pass: arithmetic, bounds, budget, and what the hooks destroyed (2026-08-27)
 
@@ -1372,7 +1329,10 @@ use.  What is missing is the gesture.
 - Verified by emulating the shipped bytes: eight cases including the pickup
   problem and jitter under a held pad.
 
-Still to come: persistence, and it is blocked on one fact.
+Historical planning note (superseded 2026-08-28): the driver erase flag was
+resolved by disassembly, and persistence now uses a different main-array
+region. The proposed diagnostic below is not needed or part of the current
+workflow. See [PERSISTENCE.md](PERSISTENCE.md).
 
 WRITE ON RELEASE, never on the follow path: the store tracks the knob in RAM
 while the pad is down, so one gesture is one write.  That is what keeps flash

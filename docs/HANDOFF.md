@@ -86,53 +86,18 @@ lost, propose a fresh one and wait.
   and nothing here is ever tested against hardware.  Archaeology pointers
   are in the plan's DFU section if the owner ever wants it chased.
 
-- **Preset persistence** — the blocking question is ANSWERED, by reading the
-  driver rather than probing hardware. `0x800108fc(dest, src, len, flag)`
-  takes an ERASE FLAG as its fourth argument: at `0x80010e32` a zero flag
-  branches straight past the erase, and a non-zero one calls `0x800108a8`
-  (FLASHC command 0xe, EUP, erase user page) before `0x800108e4` (command
-  0xd, WUP, write user page). The main-array path is the same shape with EP
-  and WP. So the driver can erase, on request.
-  What is now the real blocker is WHERE. The plan settled on the User Page
-  because the application never touches it — but the application is not the
-  only user of that page: the AVR32 UC3 USB DFU bootloader keeps its ISP
-  configuration words at the top of it. Erasing the page blind would risk
-  the recovery path, which is the one thing here that must never break.
-  Neither hex carries User Page bytes, so its contents have to be read off
-  the instrument before anything erases it, and the save must read-merge-
-  write the whole 512 bytes rather than erase and write only our region.
-  The alternative is a spare main-array page — there are ~290 free ones —
-  which carries no bootloader risk but is wiped by every DFU update. The
-  owner has said that is not a concern, which makes it the cheaper choice.
-  **Wear is not a constraint, and the datasheet says why.** AT32UC3B
-  32059L Table 28-30: `NFARRAY` Flash Array Write/Erase cycle **100K**, and
-  `TFDR` Flash Data Retention Time **15 Year** — so RETENTION binds before
-  endurance does at anything under about 18 saves a day (100,000 / 15 years).
-  Retention is NOT a shelf life for the instrument, and this note should not
-  be read as one. It is measured from when a PAGE WAS LAST PROGRAMMED, so
-  every DFU flash restarts it for the firmware and every save restarts it for
-  the settings; the datasheet states it with no conditions at all, and the
-  feature list calls it a "capability", which by convention means after the
-  full cycle count at rated temperature — the worst case, not a bench synth's.
-  The failure mode if it were ever reached is a bit flip that reflashing
-  repairs, not a dead instrument.
-  Read the table carefully before quoting it: 100K sits in the *Max.* column
-  and the 15 years in *Typ.*, so neither is written as a guaranteed minimum.
-  Table 28-29 puts page programming at 4 ms, which is the CPU stall a save
-  costs. The one way to make wear real is saving from a scan-rate path: 200
-  a second would spend 100K cycles in eight minutes, so saves must be an
-  explicit gesture, and skipped entirely when the payload has not changed.
-  **A save must verify by reading back, because the hardware cannot tell you
-  it failed.** FSR's two error bits are COMMAND errors, not cell failures:
-  32059L 14.5 sets PROGE for a bad key, an invalid command, or a command
-  issued while another is running, and LOCKE for writing a locked or
-  BOOTPROT-protected region. There is no "the write did not take" bit, so a
-  worn page reports success and the data is gone at the next power-up. Read
-  the page back and compare; the driver already wraps the cheap form at
-  `0x800107d0` - QPR, whose result is FSR bit 5, QPRR, documented as 1 when
-  the page is erased. And wear-out ends nothing: with ~290 free pages,
-  moving to a fresh one is a build number, and rotating from the start
-  multiplies the ceiling by the size of the rotation.
+- **Preset/sequence persistence** — implemented behind `persist`, off by
+  default pending hardware validation. The post-audit version uses a CRC32
+  musical-data-only record, verified body followed by a no-erase marker
+  commit, and bounded retries that never erase the newest valid page.
+  Edits wait for stopped/off/released idle conditions before writing flash.
+  Startup always restores stopped and clears transients, including on warm
+  reset. The reserved main-array ring is `0x8003e000..0x8003efff`; the User
+  Page and factory settings are untouched. DFU erases these records, and
+  old experimental records are not migrated. See [PERSISTENCE.md](PERSISTENCE.md)
+  for the save gesture/timing contract, record layout, failure states and
+  `tools/test_persistence.py` regression coverage. Remaining work is bench
+  validation of save/power-cycle behavior and physical flash failures.
 - **Settings over MIDI** — feasibility done (dispatcher event 32 at
   `0x80004fc2` carries an incoming message with both data bytes). The cost is
   that build numbers are compiled as immediates, so each one moved to
@@ -149,9 +114,10 @@ lost, propose a fresh one and wait.
   builds set it to `trigger_spike_units` (5); the owner measured the result
   at 4.2 ms on the jack — the model holds, the 0.2 ms being the analog
   edge. Bounded at 5: the attack-age guards cover exactly four milliseconds.
-- **A settings save during a take would persist the borrowed strip mode.**
+- **A factory settings save during a take would persist the borrowed strip mode.**
   Record forces `state+0x20c` to 0 and the save path reads it like any other
-  setting. Nothing guards it, and nothing is likely to hit it.
+  setting. This is separate from musical persistence, which excludes that
+  field and defers saves until recording stops.
 - **Clock multiplication** — deliberately not built; MARF gets it by
   subdividing between pulses, which needs edge prediction. See the plan.
 - **208p oscillator ceiling** — a builder-side warning was noted for later.
@@ -163,8 +129,8 @@ have actually bitten, repeatedly.
 
 **Verify against the built image, not the source.** Every firmware claim in
 this repo was checked by disassembling the image and emulating those bytes.
-`tools/avr32/sweep.py` builds 22 configurations through both toolchains;
-`web/test_configs.py` compares 16 against the browser build;
+`tools/avr32/sweep.py` builds representative configurations through both toolchains;
+`web/test_configs.py` compares its option matrix against the browser build;
 `web/test_matrix.js` builds 768 combinations. Run all of them.
 
 **Ghidra will disassemble the whole image for you.** `src/DumpDisassembly.java`

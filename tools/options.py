@@ -250,11 +250,6 @@ def expand(options: dict) -> dict:
                         # factory's 3 measured 2 ms; 5 is the ~4 ms Buchla
                         # spike, and the attack-age guards' ceiling.
                         "trigger_spike_units": 5,
-                        # How many flash pages the saved record rotates
-                        # through.  Each save goes to the next, so the
-                        # previous record is intact while the new one is
-                        # written, and a worn page is simply skipped.
-                        "persist_page_count": 8,
                         # 0 = fire with the pitch store. Higher settings
                         # deliberately lower maximum sustainable output rate.
                         "clock_settle_scans": 0,
@@ -264,6 +259,8 @@ def expand(options: dict) -> dict:
     # The arp rate knob divides an external clock once one is locked.
     cfg["clock"] = {"divide": bool(want("clock_divide", False))}
     cfg["persist"] = {"on": bool(want("persist", False)),
+                      # Reserved main-array pages; never include settings
+                      # at 0x8003f000. The newest valid page is not retried.
                       "page_count": 8}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
     cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
