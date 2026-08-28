@@ -142,17 +142,13 @@
         <div class="group">
           <h3>Step sequencer</h3>
           <label class="opt"><input type="checkbox" id="sequencer">
-            <span><span class="t">Step sequencer</span><br>
+            <span><span class="t">Enable step sequencer</span><br>
               <span class="d">Sixty-four steps, recorded and played from the preset pads.
-                The Arpeggiator <strong>RATE</strong> sets the tempo.</span></span></label>
+                The arpeggiator <strong>RATE</strong> sets the tempo.</span></span></label>
 
-          <p class="d muted section-note">A pad does one of two things depending on whether
-            <strong>pad 4</strong> is down. Hold it until it blinks to reach the transport;
-            let it go and pads 2 and 3 edit the take you are recording.</p>
-
-          <div class="padmap">
+          <div class="padmap" id="padmap">
             <div class="padmap-state">
-              <h4>Holding <strong>pad 4</strong> until it blinks</h4>
+              <h4>Hold <strong>pad 4</strong> until it blinks</h4>
               <div class="padrow">
                 <div class="padfig">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>1</b></span>
@@ -172,19 +168,16 @@
                 <div class="padfig is-held">
                   <span class="plate" aria-hidden="true"><i class="led blink"></i><b>4</b></span>
                   <span class="fn">Held</span>
-                  <span class="sub">Keep holding: play, stop and clear are
-                    three presses inside one hold</span>
                 </div>
               </div>
             </div>
 
             <div class="padmap-state">
-              <h4>On its own, while recording &mdash; <strong>pad 4</strong> released</h4>
+              <h4>While recording</h4>
               <div class="padrow">
                 <div class="padfig is-off">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>1</b></span>
                   <span class="fn">&mdash;</span>
-                  <span class="sub">Nothing</span>
                 </div>
                 <div class="padfig">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>2</b></span>
@@ -195,25 +188,23 @@
                 <div class="padfig">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>3</b></span>
                   <span class="fn">Backspace</span>
-                  <span class="sub">Erases the last step and steps back, so the
-                    next note rewrites it</span>
+                  <span class="sub">Erases the last step and steps back</span>
                 </div>
                 <div class="padfig is-off">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>4</b></span>
                   <span class="fn">&mdash;</span>
-                  <span class="sub">Nothing</span>
                 </div>
               </div>
 
               <div class="stripfig">
                 <span class="plate" aria-hidden="true">
                   <svg viewBox="0 0 360 40" preserveAspectRatio="none" focusable="false">
-                    <g fill="none" stroke="#8d3b3b" stroke-width="2.5"
+                    <g fill="none" stroke="#292928" stroke-width="1.6"
                        stroke-linecap="round" stroke-linejoin="round"
                        vector-effect="non-scaling-stroke">
-                      <path d="M8 3 L103 20 L8 37"/>
-                      <path d="M126 3 L221 20 L126 37"/>
-                      <path d="M244 3 L339 20 L244 37"/>
+                      <path d="M39 1 L105 20 L39 39"/>
+                      <path d="M144 1 L211 20 L144 39"/>
+                      <path d="M255 1 L322 20 L255 39"/>
                     </g>
                   </svg>
                   <i class="half"></i>
@@ -228,9 +219,6 @@
             </div>
           </div>
 
-          <p class="d muted section-note">Releasing <strong>pad 4</strong> ends the chord, not
-            recording or playback. Pads 2 and 3 only edit while a take is being recorded;
-            stopped or playing back, they do nothing on their own.</p>
         </div>
 
         <div class="group">

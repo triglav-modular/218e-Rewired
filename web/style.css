@@ -1249,7 +1249,10 @@ strong {
   gap: 4px;
   padding: 14px 20px;
   border-radius: 12px;
-  border: 1px solid var(--line);
+  /* --line is right for a divider but disappears as an outline: an unchosen
+     option was a card you had to hunt for.  Muted at a fifth reads as an
+     edge without competing with the accent on the chosen one. */
+  border: 1px solid rgba(157, 154, 147, .22);
   background: transparent;
   color: var(--ink);
   text-transform: none;
@@ -1998,8 +2001,16 @@ section,
    its LED at the bottom left - once per state, so the two readings can be
    compared down the column.  Labels are HTML, never text inside a drawing,
    so nothing is ever scaled out of proportion. */
+/* The pad map explains a feature that is not in the build unless the
+   sequencer is, so it appears with the option rather than beside it.  Done
+   in CSS off the checkbox itself: there is no state to keep in step, and it
+   is right on first paint rather than after a script has run. */
 .padmap {
+  display: none;
   margin: 0 0 18px;
+}
+.group:has(#sequencer:checked) .padmap {
+  display: block;
 }
 .padmap-state + .padmap-state {
   margin-top: 22px;
@@ -2125,11 +2136,14 @@ section,
   position: relative;
   display: block;
   width: 100%;
-  aspect-ratio: 9 / 1;
+  /* Measured off the module: 598 by 55, which is eleven to one, not the nine
+     this first drew.  The pad beside it is 122 by 49 - almost exactly five
+     to two - so the two are drawn to the same rule. */
+  aspect-ratio: 11 / 1;
   /* A floor only for the very narrowest screens: any higher and it stops
-     being nine to one, which is the proportion that makes it read as the
+     being eleven to one, which is the proportion that makes it read as the
      strip rather than as a bar. */
-  min-height: 30px;
+  min-height: 26px;
   border-radius: 7px;
   border: 1px solid var(--line);
   background: var(--bg);
