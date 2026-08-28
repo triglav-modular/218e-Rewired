@@ -1644,12 +1644,14 @@ function assembleProgram() {
         // A knob does one thing at a time.  Holding a preset pad and turning
         // its knob sets that pad's voltage, and while it is doing that the
         // knob's OTHER job has to stand still - setting preset voltage 2 was
-        // also winding the arp's rhythm randomness up with it.  The editor
-        // already says when it is happening: 0x614a + pad is set for exactly
-        // as long as that pad's voltage is following its knob.  Per knob, not
-        // all of them, so holding pad 1 does not freeze knobs 2 and 3.
-        emit("MOV R12,0x614a");
-        emit("LD.UB R9,R12[0x0]");
+        // also winding the arp's rhythm randomness up with it.  Per knob, not
+        // all of them, so holding pad 1 does not freeze knobs 2 and 3.  The
+        // knob_pickup helper answers "hold or follow": it holds while the
+        // editor owns the knob AND afterwards, until the knob has moved
+        // again - releasing the pad used to snap the frozen value straight
+        // to wherever the edit had left the knob standing.
+        emit("MOV R11,0x0");
+        emit("MCALL PC[0x8001ddd4]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x80019d6a");
         emit("LD.SH R8,R10[0x30a]");
@@ -1657,14 +1659,16 @@ function assembleProgram() {
         emit("MOV R11,0x60f2");
         emit("ST.B R11[0x0],R8");
         padTo(0x80019d6a);
-        emit("LD.UB R9,R12[0x1]");
+        emit("MOV R11,0x1");
+        emit("MCALL PC[0x8001ddd4]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x80019d7e");
         emit("LD.SH R8,R10[0x30c]");
         emit("MOV R11,0x60e6");
         emit("ST.H R11[0x0],R8");
         padTo(0x80019d7e);
-        emit("LD.UB R9,R12[0x2]");
+        emit("MOV R11,0x2");
+        emit("MCALL PC[0x8001ddd4]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x80019d94");
         emit("LD.SH R8,R10[0x30e]");
@@ -3633,15 +3637,19 @@ function assembleProgram() {
         // The press edge first, because BOTH readings of a press need it: a
         // chord while pad 4 is held, and - while recording - a bare press
         // meaning preview or backspace.
+        // The bare reading is watched EVERY scan, held or not, because it is
+        // a hold that means something now and the count has to clear when
+        // the finger comes off.  The chord still wants the press edge.
+        emit("LD.UB R10,R1[0x2]");      // armed?
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001b21e");
+        emit("MCALL PC[0x8001b244]");   // bare: seq_hold counts, then acts
+        emit("RJMP 0x8001b248");
+        padTo(0x8001b21e);
         emit("CP.W R12,0x2");
         emit("BR{ne} 0x8001b248");
         emit("CP.W R9,0x2");
         emit("BR{eq} 0x8001b248");
-        emit("LD.UB R10,R1[0x2]");      // armed?
-        emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001b226");
-        emit("MCALL PC[0x8001b244]");   // bare: seq_edit decides what it means
-        emit("RJMP 0x8001b248");
         padTo(0x8001b226);
         // A press, and as many as you like: using the hold does not spend
         // it.  Pad 4 stays held and stays armed until it is let go, so play
@@ -3655,7 +3663,7 @@ function assembleProgram() {
         emit("MCALL PC[0x8001b304]");   // select_pad
         emit("RJMP 0x8001b248");        // over the pool word, never through it
         padTo(0x8001b244);
-        word(0x8001d780);              // seq_edit
+        word(0x8001dd20);              // seq_hold
         padTo(0x8001b248);
         emit("SUB R11,-0x1");
         emit("CP.W R11,0x3");
@@ -3788,6 +3796,14 @@ function assembleProgram() {
         // Record APPENDS.  It used to wipe, which made going back for one
         // more note mean playing the whole thing again; clearing is pad 3's
         // job and saying so once is enough.
+        //
+        // And pad 1 TOGGLES, the way pad 2 does: pressing it again inside the
+        // same hold ends the take rather than leaving record mode reachable
+        // only by starting playback or clearing.  The stop it wants is pad
+        // 2's, three instructions further down, so it borrows that.
+        emit("LD.UB R9,R12[0x4]");
+        emit("CP.W R9,0x1");
+        emit("BR{eq} 0x8001b698");      // already recording: stop
         emit("MOV R9,0x1");
         emit("RJMP 0x8001b6a4");
         padTo(0x8001b684);
@@ -4269,6 +4285,18 @@ function assembleProgram() {
         emit("BR{ls} 0x8001c2f0");      // unsigned refractory, including COUNT wrap
         padTo(0x8001c290);
         emit("ST.W R10[0x8],R12");      // accepted physical edge, not dispatch time
+        // And the millisecond count beside it.  The release below is timed
+        // from the 1 ms task rather than from COUNT: COUNT is scaled by the
+        // CPU-frequency word at RAM 0x29cc, which says 25 MHz, and on the
+        // instrument a nominal 2600 ms release was expiring in well under a
+        // second - the ratio a wrong frequency gives.  The 1 ms task is
+        // demonstrably right, because every tempo and hold time on the panel
+        // is, so the release counts its ticks and cannot inherit that error.
+        // The halfword wraps every 65 s; the subtraction is masked.
+        emit("MOV R9,0x61e6");
+        emit("LD.UH R9,R9[0x0]");
+        emit("MOV R11,0x62f6");
+        emit("ST.H R11[0x0],R9");
         emit("MOV R9,0x1");
         emit("ST.B R10[0x2],R9");
         emit("LD.UB R8,R10[0x0]");
@@ -5304,24 +5332,30 @@ function assembleProgram() {
 
         // Read-only pickup prediction. In particular DO NOT clear following
         // on release: the later persistence shim must still observe that
-        // edge. A released pad resumes the musical role immediately anyway.
-        // While held, exactly the editor's >8-unit movement threshold owns
-        // the first changed scan; following owns every subsequent one.
+        // edge. The knob_pickup helper decides hold-or-follow: it stamps
+        // where the knob is while the editor owns it, then keeps holding the
+        // zone until the knob has moved again - a released pad used to hand
+        // the zone straight to wherever the edit left the knob standing.
+        // While held with no edit begun, exactly the editor's >8-unit
+        // movement threshold owns the first changed scan.
         // Global edit owns knob 4's pressure curve, never the live transpose.
         begin(0x8001d960);
+        emit("MOV R12,LR");             // this leaf now calls, so LR parks here
         emit("MOV R9,0x3560");
         emit("MOV R10,0x60f0");
         emit("LD.UB R8,R9[0x39]");
         emit("CP.W R8,0x1");
         emit("BR{eq} 0x8001d9d0");
+        emit("MOV R11,0x3");
+        emit("MCALL PC[0x8001d9e0]");
+        emit("CP.W R9,0x0");
+        emit("MOV R9,0x3560");          // restore; MOV leaves the flags alone
+        emit("BR{ne} 0x8001d9d0");      // the edit, or its parked aftermath, holds
         emit("LD.SH R8,R9[0x310]");
         emit("MOV R11,0x46f3");
         emit("LD.UB R11,R11[0x0]");
         emit("CP.W R11,0x2");
         emit("BR{ne} 0x8001d9b0");
-        emit("LD.UB R11,R10[0x5d]");   // following: 0x614d
-        emit("CP.W R11,0x0");
-        emit("BR{ne} 0x8001d9d0");
         emit("LD.SH R11,R10[0x58]");   // last unheld snapshot: 0x6148
         emit("SUB R11,R8,R11 << 0x0");
         emit("CP.W R11,0x8");
@@ -5338,7 +5372,9 @@ function assembleProgram() {
         emit("ST.B R9[0x6b],R8");
         emit("MOV R8,0x1");
         emit("ST.B R9[0x6a],R8");
-        emit("MOV PC,LR");
+        emit("MOV PC,R12");
+        padTo(0x8001d9e0);
+        word(0x8001dd80);
         finish("knob4_owned_transpose", 0x8001da00);
 
         // Pitch-ordered selection. R0=held flags, R1=state, R2=zone 0/1/2,
@@ -5527,6 +5563,133 @@ function assembleProgram() {
         emit("LDM SP++,R2,R7,PC");
         finish("arp_reverse_held", 0x8001dce0);
 
+        // The pitch a key actually SOUNDS.  R12 = key, returns R11, and R12
+        // is left as the caller had it.  A leaf, and it must stay one.
+        //
+        // With the latching arp the key table is only half the answer: an
+        // octave-displaced latch keeps its displacement in the signed stamp
+        // at 0x60a2, and the arp adds it when it plays.  Recording read the
+        // table alone, so entering record from a latched chord wrote those
+        // notes back at their undisplaced octave and the take disagreed with
+        // what had just been sounding.  This is the sum arp_pitch_rank ranks
+        // by, so recorder and selector now agree what a key is worth.
+        begin(0x8001dce0);
+        emit("MOV R11,0x854");
+        emit("ADD R11,R11,R12 << 0x1");
+        emit("LD.SH R11,R11[0x0]");
+        emit("MOV R8,0x3560");
+        emit("LD.UB R8,R8[0x340]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001dd00");      // not latching: the table is the pitch
+        emit("MOV R8,0x60a2");
+        emit("LD.SH R8,R8[R12 << 0x1]");
+        emit("ADD R11,R8");
+        padTo(0x8001dd00);
+        emit("MOV PC,LR");
+        finish("seq_record_pitch", 0x8001dd20);
+
+        // A bare pad 2 or 3 must be HELD before it means preview or
+        // backspace.  Those pads have another job - with ADD TO PITCH set to
+        // octaves they choose one - and a press edge stole it, so octave 3
+        // could not be chosen without deleting a note.  A tap now belongs to
+        // whatever else the pad does; only a hold reaches seq_edit.
+        //
+        // R11 = pad 0..2, R12 = this scan's touch level.  Called EVERY scan,
+        // held or not, so the count clears on release.  It fires once: the
+        // count saturates one past the threshold and waits for the release.
+        begin(0x8001dd20);
+        emit("STM --SP,R7,R11,LR");
+        emit("MOV R7,SP");
+        emit("CP.W R11,0x0");
+        emit("BR{eq} 0x8001dd74");      // pad 1 is neither preview nor backspace:
+                                        // count nothing, so a preset hold on it
+                                        // cannot churn state other code watches
+        emit("MOV R10,0x625c");
+        emit("MOV R9,R11");
+        emit("SUB R9,-0x1");            // this pad, plus one
+        emit("CP.W R12,0x2");
+        emit("BR{ne} 0x8001dd44");      // not held
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001dd54");      // still the same hold: count on
+        emit("ST.B R10[0x0],R9");       // a new hold starts here
+        emit("MOV R8,0x1");             // and this scan is the first of it
+        emit("ST.B R10[0x1],R8");
+        emit("RJMP 0x8001dd74");
+        padTo(0x8001dd44);
+        // Released.  Only this pad's own hold is cleared, so a finger coming
+        // off one pad cannot cancel another's count.
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,R9");
+        emit("BR{ne} 0x8001dd74");
+        emit("MOV R8,0x0");
+        emit("ST.B R10[0x0],R8");
+        emit("ST.B R10[0x1],R8");
+        emit("RJMP 0x8001dd74");
+        padTo(0x8001dd54);
+        emit("LD.UB R8,R10[0x1]");
+        emit(StringFormat("CP.W R8,0x%x",
+             number("seq_edit_hold_scans", 60, 2, 250)));
+        emit("BR{ge} 0x8001dd74");      // already fired; wait for the release
+        emit("SUB R8,-0x1");
+        emit("ST.B R10[0x1],R8");
+        emit(StringFormat("CP.W R8,0x%x",
+             number("seq_edit_hold_scans", 60, 2, 250)));
+        emit("BR{lt} 0x8001dd74");      // not long enough yet
+        emit("MCALL PC[0x8001dd78]");   // long enough: seq_edit acts
+        padTo(0x8001dd74);
+        emit("LDM SP++,R7,R11,PC");
+        padTo(0x8001dd78);
+        word(0x8001d780);              // seq_edit
+        finish("seq_hold", 0x8001dd80);
+
+        // Soft pickup for the knobs the preset editor borrows.  R11 = which
+        // knob; the answer comes back in R9, nonzero while the knob's other
+        // job must hold its value.  While the
+        // editor owns the knob (0x614a + knob set) this stamps where the
+        // knob is, stored plus one so the initialiser's zero fill reads as
+        // "nothing parked"; afterwards the parked stamp keeps holding until
+        // the knob moves past the editor's own 8-unit threshold, so leaving
+        // preset-set mode no longer snaps the musical value to wherever the
+        // edit left the knob.  Clobbers R8; preserves R10, R11 and R12.
+        // The knob mirrors are read off their absolute address, not a passed
+        // base, so the callers stay register-for-register drop-ins.
+        begin(0x8001dd80);
+        emit("MOV R9,0x614a");
+        emit("LD.UB R9,R9[R11 << 0x0]");
+        emit("MOV R8,0x386a");          // state+0x30a: the first knob mirror
+        emit("LD.SH R8,R8[R11 << 0x1]");    // where the knob is right now
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001dda4");
+        emit("SUB R8,-0x1");            // the edit owns the knob: remember where
+        emit("MOV R9,0x62e8");
+        emit("ST.H R9[R11 << 0x1],R8");
+        emit("MOV R9,0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001dda4);
+        emit("MOV R9,0x62e8");
+        emit("LD.SH R9,R9[R11 << 0x1]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001ddd0");      // nothing parked: follow
+        emit("SUB R9,0x1");             // the raw the edit ended at
+        emit("SUB R9,R8,R9 << 0x0");    // how far the knob has come since
+        emit("CP.W R9,0x8");
+        emit("BR{gt} 0x8001ddc4");
+        emit("CP.W R9,-0x8");
+        emit("BR{lt} 0x8001ddc4");
+        emit("MOV R9,0x1");             // still parked: keep holding
+        emit("MOV PC,LR");
+        padTo(0x8001ddc4);
+        emit("MOV R9,0x62e8");          // the hand is back: let go
+        emit("MOV R8,0x0");
+        emit("ST.H R9[R11 << 0x1],R8");
+        padTo(0x8001ddd0);
+        emit("MOV R9,0x0");
+        emit("MOV PC,LR");
+        padTo(0x8001ddd4);
+        word(0x8001dd80);
+        finish("knob_pickup", 0x8001dde0);
+
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the
         // FIFO explicitly even if the common first-use marker already matches.
@@ -5609,10 +5772,15 @@ function assembleProgram() {
         emit("LD.UB R8,R10[0x2]");
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x8001c540");
-        emit("LD.W R8,R10[0x8]");
-        emit("MFSR R9,COUNT");
+        // Milliseconds, not COUNT cycles - see the stamp in the capture ISR.
+        emit("MOV R8,0x62f6");
+        emit("LD.UH R8,R8[0x0]");
+        emit("MOV R9,0x61e6");
+        emit("LD.UH R9,R9[0x0]");
         emit("SUB R8,R9,R8 << 0x0");
-        emit("LD.W R9,R10[0x1c]");
+        emit("CASTU.H R8");             // wrap-safe across the 65 s halfword
+        emit(StringFormat("MOV R9,0x%x",
+             number("clock_release_ms", 2600, 100, 32000)));
         emit("CP.W R8,R9");
         emit("BR{hi} 0x8001c4e0");
         emit("LD.UB R8,R10[0x3]");
@@ -6000,9 +6168,8 @@ function assembleProgram() {
         emit("LD.UB R9,R10[0x0]");
         emit("CP.W R9,0x40");           // 64 steps and no more
         emit("BR{ge} 0x8001ba20");
-        emit("MOV R11,0x854");          // the live key table
-        emit("ADD R11,R11,R12 << 0x1");
-        emit("LD.SH R11,R11[0x0]");
+        // The pitch this key SOUNDS, latch stamp included.
+        emit("MCALL PC[0x8001ba24]");   // seq_record_pitch -> R11
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R9 << 0x1");
         emit("ST.H R8[0x0],R11");
@@ -6030,6 +6197,8 @@ function assembleProgram() {
         emit("SUB R12,0x1");            // and left as the caller had it
         padTo(0x8001ba20);
         emit("LDM SP++,R7,PC");
+        padTo(0x8001ba24);
+        word(0x8001dce0);              // seq_record_pitch
         finish("seq_record", 0x8001ba28);
 
         // Play, at the arp's own note selection.  The arp asks which key to
@@ -6314,9 +6483,11 @@ function assembleProgram() {
         emit("CP.W R8,0x1");
         emit("BR{eq} 0x8001a374");
         // and not while pad 4 is using knob 4 to set its own voltage - the
-        // same rule the other three knobs answer to.
-        emit("MOV R9,0x614d");
-        emit("LD.UB R9,R9[0x0]");
+        // same rule the other three knobs answer to, through the same
+        // knob_pickup helper, so the latch also stays parked after the edit
+        // until the knob moves again instead of snapping to it on release.
+        emit("MOV R11,0x3");
+        emit("MCALL PC[0x8001ddd4]");
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x8001a374");
         emit("LD.SH R8,R10[0x310]");

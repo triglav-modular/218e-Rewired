@@ -878,14 +878,22 @@ RAM_REGIONS = [
     (0x6238, 0x6244, "low, accepted and consumed COUNT timestamps"),
     (0x6244, 0x6254, "cycles/ms, low qualification, refractory and release"),
     (0x6254, 0x6258, "last physical output COUNT timestamp"),
+    # A bare pad press has to be HELD to mean preview or backspace: a quick
+    # tap still belongs to whatever else the pad does, which is how octave 3
+    # became impossible to choose without deleting a note.
     (0x6258, 0x625A, "saturating capture FIFO overrun count"),
     (0x625A, 0x625B, "physical output timestamp valid"),
+    (0x625C, 0x625D, "which pad a bare hold is counting, plus one"),
+    (0x625D, 0x625E, "how many scans it has been held"),
     (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
     # Completed edit gestures commit immediately. A failed
     # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
     (0x62E0, 0x62E1, "persistence request/result"),
     (0x62E1, 0x62E2, "which rotation page holds the newest record"),
     (0x62E4, 0x62E8, "the sequence number that record carries"),
+    # One stamp per knob, the raw ADC value plus one; zero means no edit has
+    # parked anything and the knob's other job may follow it live.
+    (0x62E8, 0x62F0, "where each preset edit left its knob, plus one"),
     # The scan watches for two gestures ENDING, so it has to remember what
     # they looked like on the previous scan.
     (0x62F8, 0x62F9, "logical sequencer mode last scan, preview counts as WRITE"),
@@ -895,6 +903,10 @@ RAM_REGIONS = [
     # finished: it must not read as leaving record mode.
     (0x62FE, 0x62FF, "a one-shot preview of the take is playing"),
     (0x62FF, 0x6300, "explicit CLEAR event awaiting persistence scan"),
+    # The release is timed from the 1 ms task, not from COUNT: COUNT is
+    # scaled by the CPU-frequency word, and on the instrument a nominal
+    # 2600 ms release expired in well under a second.
+    (0x62F6, 0x62F8, "the millisecond count at the last accepted edge"),
     # The record staged for writing, 8-byte aligned and a multiple of 8 long,
     # so the flash driver takes its simple aligned path - the same reason the
     # factory stages its own record rather than writing from scattered state.
@@ -953,7 +965,7 @@ FACTORY_CELLS = [
     # it is a seven-segment capacitive sensor, and its position is a centroid
     # (0x8000aa98) mapped to state+0x1fe.
     (0x3866, 0x3868, "portamento knob mirror"),
-    (0x3870, 0x3872, "state+0x310: knob 4 mirror"),
+    (0x386A, 0x3872, "state+0x30a..0x310: the four preset knob mirrors"),
     (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
     (0x38B0, 0x38B2, "state+0x350: transpose"),
 ]
@@ -1770,6 +1782,8 @@ def main() -> None:
         cfg.get("sequencer", {}).get("clock_max_ms", 2400))
     cfg["_numbers"]["clock_release_ms"] = int(
         cfg.get("sequencer", {}).get("clock_release_ms", 2600))
+    cfg["_numbers"]["seq_edit_hold_scans"] = int(
+        cfg.get("sequencer", {}).get("seq_edit_hold_scans", 60))
     cfg["_numbers"]["persist_page_count"] = int(
         cfg.get("persist", {}).get("page_count", 8))
     # The trigger spike's length, in scheduler units of (n - 1) milliseconds:
@@ -1809,7 +1823,8 @@ def main() -> None:
                  "seq_noteoff", "seq_noteoff_hook",
                  "seq_trigger_led", "seq_trigger_led_hook",
                  "seq_edit", "seq_preview_step", "seq_command",
-                 "seq_preview_next", "seq_preview_start", "seq_preview_transport"):
+                 "seq_preview_next", "seq_preview_start", "seq_preview_transport",
+                 "seq_record_pitch", "seq_hold"):
         blocks[name] = seq
     blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")

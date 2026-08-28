@@ -47,6 +47,49 @@ run by `tools/test_persistence.py`: real pad scans, internal/external clocks,
 looping, cancellation, arming edges, repeated delete, and save/restart
 boundaries. The runner also supports sequencer variants without persistence.
 
+### Field fixes from the first persistence build (2026-08-28)
+
+Five behaviors, all reported from the instrument, all in one image:
+
+**The clock release is timed in milliseconds now.**  The 2.6 s hand-back to
+the internal clock was counted in COUNT cycles scaled by the CPU-frequency
+word at RAM 0x29cc - and on the instrument that word makes the conversion
+wrong, so the release fired in well under a second.  The capture ISR stamps
+the factory 1 ms counter (0x61e6) into 0x62f6 at each accepted edge, and
+`clock_service` compares against that, wrap-safe across the 65 s halfword.
+`clock_release_ms` stays a number, default 2600.
+
+**Recording from a latching arpeggiator captures the sounding pitch.**
+`seq_record` recorded the key table's pitch; a latched key can carry an
+octave stamp (0x60a2 table) on top, so the take came back an octave off.
+`seq_record_pitch` (0x8001dce0) returns table pitch plus, in latch mode
+only, the slot's stamp - the same sum the arp plays.
+
+**Preview and backspace want a deliberate hold.**  A bare tap on pad 2 or 3
+also means "octave 2" or "octave 3", so an instant fire made octave 3
+unselectable without deleting a note.  `seq_hold` (0x8001dd20) counts scans
+a bare pad has been held (0x625c/0x625d) and fires `seq_edit` exactly once
+when the count reaches `seq_edit_hold_scans` (default 60, about a third
+of a second).
+Release re-arms; the chord path is untouched.
+
+**Pad 4 + pad 1 leaves record mode.**  Pad 1 in the chord now TOGGLES: from
+idle or play it enters record as before, and from record it runs pad 2's
+stop path, which finishes the take and saves it.  Reusing the stop three
+instructions below cost one NOP of the enter cave's slack.
+
+**Leaving preset-set mode no longer snaps the knob's other job.**  The
+per-knob freeze already held the arp mirrors (0x60f2/0x60e6/0x60ea) and the
+knob-4 transpose zone (0x60f0) while 0x614a+pad said the editor owned the
+knob - but the first scan after release wrote the live raw straight into
+the mirror.  `knob_pickup` (0x8001dd80, shared by all four sites) stamps
+where the edit leaves each knob (0x62e8, raw plus one so the initialiser's
+zero fill reads as "nothing parked") and answers hold-or-follow: the mirror
+stays put until the knob moves past the editor's own 8-unit threshold.
+Knob 4's held-pad pickup prediction is unchanged; a parked stamp also stops
+a bare pad touch from snapping the zone.  Verified by emulating the shipped
+bytes: 25 cases across all four knobs, thresholds exact in both directions.
+
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
   them in lockstep).  Table expression generalised from 12/1200 to map

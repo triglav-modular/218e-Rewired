@@ -52,9 +52,12 @@ public class ControlRegression extends SequenceEditRegression {
                 }
             }
             w(0x46f3,1,0); musicalScan();
-            check("release resumes actual transpose in this ADC event",r(S+0x352,2)!=target
-                &&r(S+0x358,2)!=dac&&r(0x614d,1)==0);
+            check("release keeps actual transpose parked until the knob moves",r(S+0x352,2)==target
+                &&r(S+0x358,2)==dac&&r(0x614d,1)==0);
             check("early ownership check preserves release-save edge",persistent?writes>before:writes==before);
+            w(S+0x310,2,initial==200?909:191); musicalScan();
+            check("the knob moving resumes transpose in this ADC event",r(S+0x352,2)!=target
+                &&r(S+0x358,2)!=dac);
             target=r(S+0x352,2); dac=r(S+0x358,2);
             w(S+0x39,1,1); w(S+0x310,2,initial); musicalScan();
             check("global edit freezes actual transpose output",r(S+0x352,2)==target&&r(S+0x358,2)==dac);
@@ -87,7 +90,12 @@ public class ControlRegression extends SequenceEditRegression {
                 if(transpose)check("transpose remains enabled during preset edit",r(S+0x6a,1)==1);
             }
             w(0x46f3,1,0); controlScan();
-            check("pad release returns knob ownership",r(0x614d,1)==0&&setting()==setting(direction==1?1023:0));
+            int parked=direction==1?1023:0;
+            check("pad release keeps the parked knob frozen",r(0x614d,1)==0&&setting()==setting(initial));
+            w(S+0x310,2,parked+8*direction*-1); controlScan();
+            check("eight units from the parked spot is still frozen",setting()==setting(initial));
+            w(S+0x310,2,parked+9*direction*-1); controlScan();
+            check("the knob moving returns its role",setting()==setting(parked+9*direction*-1));
             // Editing another pad must not freeze knob 4.
             w(0x46f0,1,2); w(S+0x30a,2,600); w(S+0x310,2,500); controlScan();
             check("preset isolation is per knob",r(0x614a,1)==1&&setting()==setting(500));

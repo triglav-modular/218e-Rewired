@@ -250,6 +250,11 @@ def expand(options: dict) -> dict:
                         # factory's 3 measured 2 ms; 5 is the ~4 ms Buchla
                         # spike, and the attack-age guards' ceiling.
                         "trigger_spike_units": 5,
+                        # How long a bare pad 2 or 3 must be HELD before it
+                        # previews or backspaces, in ~5 ms scans.  60 is about
+                        # a third of a second: long enough that a tap still
+                        # belongs to whatever else the pad does.
+                        "seq_edit_hold_scans": 60,
                         # 0 = fire with the pitch store. Higher settings
                         # deliberately lower maximum sustainable output rate.
                         "clock_settle_scans": 0,

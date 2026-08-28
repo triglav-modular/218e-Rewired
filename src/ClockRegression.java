@@ -80,6 +80,9 @@ public class ClockRegression extends GhidraScript {
     void time(long us) {
         nowUs=us;
         e.writeRegister("COUNT", ((us * frequency) / 1000000L) & 0xffffffffL);
+        // The 1 ms scheduled task increments 0x61e6 on hardware; the release
+        // is timed against it (not COUNT), so the model must advance it too.
+        w(0x61e6,2,(us/1000L)&0xffffL);
     }
     void fresh(int divisor, int hz) throws Exception {
         if (e != null) e.dispose();

@@ -119,7 +119,7 @@ var BUILDLIB = (function () {
                           clock_min_ms: 4, clock_lock_pulses: 5,
                           clock_settle_scans: 0, clock_rearm_us: 250,
                           clock_max_ms: 2400, clock_release_ms: 2600,
-                          trigger_spike_units: 5 };
+                          trigger_spike_units: 5, seq_edit_hold_scans: 60 };
         cfg.persist = { on: !!want('persist', false), page_count: 8 };
         cfg.clock = { divide: !!want('clock_divide', true) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
@@ -616,6 +616,7 @@ var BUILDLIB = (function () {
             clock_max_ms: (cfg.sequencer && cfg.sequencer.clock_max_ms) || 2400,
             clock_release_ms: (cfg.sequencer && cfg.sequencer.clock_release_ms) || 2600,
             trigger_spike_units: (cfg.sequencer && cfg.sequencer.trigger_spike_units) || 5,
+            seq_edit_hold_scans: (cfg.sequencer && cfg.sequencer.seq_edit_hold_scans) || 60,
             persist_page_count: (cfg.persist && cfg.persist.page_count) || 8,
             chord_hold_scans: (cfg.sequencer && cfg.sequencer.chord_hold_scans) || 200,
             pattern_count: patternBank(cfg).masks.length

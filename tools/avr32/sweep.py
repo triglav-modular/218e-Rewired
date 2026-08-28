@@ -154,10 +154,12 @@ def audit_call_pools(image_path) -> list[str]:
 # independent sequence transport, completed-gesture persistence, and
 # one-shot preview/explicit CLEAR ownership, strip gesture boundaries,
 # preset-4 role isolation, the corrected up-down zone, early transpose
-# ownership, held-only reverse history, and pitch-aware note ordering.
+# ownership, held-only reverse history, and pitch-aware note ordering; and
+# for the millisecond-timed clock release, latch-aware sequence recording,
+# held preview/backspace, the pad-1 record toggle and preset knob pickup.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "ff0f3dbe31a608008ecaf7314c3fa79fc4236d730fabcab34d2100a310016190",
+    "historical_config": "730549cc4c5bc8f4598c3eb196ee9e3619a882cfb429655c0aa467bdcf62de50",
 }
 
 

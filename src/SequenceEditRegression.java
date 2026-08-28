@@ -55,7 +55,15 @@ public class SequenceEditRegression extends PersistenceRegression {
     void scan() throws Exception { call(SCAN); }
     void press(int pad,int pad4) throws Exception { w(0x46f3,1,pad4); w(0x46f0+pad,1,2); scan(); }
     void release(int pad) throws Exception { w(0x46f0+pad,1,0); scan(); }
-    void bare(int pad) throws Exception { press(pad,0); release(pad); }
+    void bare(int pad) throws Exception {
+        // A bare pad must be HELD to mean preview or backspace: seq_hold
+        // fires once when the count reaches seq_edit_hold_scans (default 60,
+        // the arming scan included), so the gesture is 60 scans then release.
+        press(pad,0);
+        for(int i=0;i<59;i++) scan();
+        release(pad);
+    }
+    void tap(int pad) throws Exception { press(pad,0); release(pad); }
     void command(int pad) throws Exception {
         // Fixture establishes an already-armed hold. The action traverses
         // the real press edge, command and persistence scan order.
@@ -79,10 +87,16 @@ public class SequenceEditRegression extends PersistenceRegression {
         }
     }
     void startPreview() throws Exception {
-        // Pad processing must clear a moved cursor and leftover audition/
-        // strip/tie state before the same scan can sound a phantom note.
+        // Arm the bare hold, then plant a moved cursor and leftover audition/
+        // strip/tie state on the scan BEFORE the hold fires: pad processing
+        // must clear them before the firing scan can sound a phantom note.
+        // Planted any earlier they are live state, and the write-mode scans
+        // inside the hold would legitimately record the pending audition.
+        press(1,0);
+        for(int i=0;i<58;i++) scan();
         w(0x61e1,1,3); w(0x61e4,1,1); w(0x61e5,1,4); w(0x6230,2,5);
-        bare(1);
+        scan();
+        release(1);
         check("bare pad 2 starts at top",r(0x6158,1)==2&&r(0x62fe,1)==1&&r(0x61e1,1)==0);
         check("preview clears pending audition and strip/tie history",r(0x6230,2)==0&&r(0x61e4,2)==0);
         if(clock)call(0x8000737eL,0x80007386L);
@@ -171,7 +185,17 @@ public class SequenceEditRegression extends PersistenceRegression {
             int before=writes;
             w(S+0x206,1,1); w(S+0x1fe,2,1000); scan(); command(0); scan();
             w(S+0x206,1,0); scan();
-            check("RECORD rejects a previously held strip",r(0x6158,1)==1&&r(0x61e0,1)==2&&writes==before);
+            if(alreadyWriting) {
+                // Pad 1 TOGGLES: from WRITE it finishes the take, and the
+                // strip that was down through the exit still appends nothing
+                // (unchanged take, so no flash either).
+                check("RECORD toggle leaves WRITE, held strip appends nothing",
+                    r(0x6158,1)==0&&r(0x61e0,1)==2&&writes==before);
+                command(0);
+                check("RECORD toggle re-enters with the take kept",r(0x6158,1)==1&&r(0x61e0,1)==2);
+            } else {
+                check("RECORD rejects a previously held strip",r(0x6158,1)==1&&r(0x61e0,1)==2&&writes==before);
+            }
             w(S+0x206,1,1); scan(); w(S+0x206,1,0); scan();
             check("RECORD accepts the next fresh strip touch",r(0x61e0,1)==3&&r(0x6164,2)==0x7ffe);
         }
@@ -227,6 +251,9 @@ public class SequenceEditRegression extends PersistenceRegression {
             setup(length,false,0); int before=writes;
             for(int left=length;left>0;left--) {
                 int slot=left-1; press(2,0);
+                for(int i=0;i<58;i++) scan();
+                check("59 held scans do not backspace yet",r(0x61e0,1)==left);
+                scan();
                 check("one backspace removes one whole slot",r(0x61e0,1)==slot
                     &&r(0x6160+2*slot,2)==0&&r(0x61ee+slot,1)==0);
                 scan(); scan(); check("held pad does not autorepeat",r(0x61e0,1)==slot); release(2);
@@ -256,7 +283,10 @@ public class SequenceEditRegression extends PersistenceRegression {
         setup(4,false,0); w(0x6164,2,0x7ffe); w(0x6166,2,0x7fff);
         bare(2); bare(2); check("rest and tie can both be backspaced",r(0x61e0,1)==2&&r(0x6164,4)==0);
         append(6); check("append reuses freed slot",r(0x61e0,1)==3&&r(0x61f0,1)==6);
-        println("PASS 0/1/4/64 backspaces, press edges, zeroed slots, rest/tie deletion, append reuse, empty-edit save isolation");
+        // The hold requirement itself: a tap is an octave choice, not an edit.
+        setup(2,false,0); tap(2); tap(1);
+        check("a quick tap neither backspaces nor previews",r(0x61e0,1)==2&&r(0x6158,1)==1);
+        println("PASS 0/1/4/64 backspaces, press edges, zeroed slots, rest/tie deletion, append reuse, tap-versus-hold, empty-edit save isolation");
     }
     @Override public void run() throws Exception {
         seq=true; clock=getScriptArgs().length>0&&getScriptArgs()[0].contains("clock");

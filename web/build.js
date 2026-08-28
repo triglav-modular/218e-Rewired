@@ -133,7 +133,8 @@ var WEBBUILD = (function () {
          'seq_noteoff', 'seq_noteoff_hook',
          'seq_trigger_led', 'seq_trigger_led_hook',
          'seq_edit', 'seq_preview_step', 'seq_command',
-         'seq_preview_next', 'seq_preview_start', 'seq_preview_transport']
+         'seq_preview_next', 'seq_preview_start', 'seq_preview_transport',
+         'seq_record_pitch', 'seq_hold']
             .forEach(function (n) { blocks[n] = seq; });
         var keep = !!(cfg.persist && cfg.persist.on);
         ['persist_crc', 'persist_record_crc', 'persist_pack',

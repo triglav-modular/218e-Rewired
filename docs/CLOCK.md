@@ -151,6 +151,11 @@ unfinished edits do not write.
 | 0x6254 / 0x625a | Last physical output stamp / valid flag |
 | 0x6258 | Saturating FIFO-overrun count |
 | 0x6260–0x62df | Timestamp FIFO |
+| 0x62f6 | Millisecond count at the last accepted edge |
+
+The 2600 ms release is measured against the factory 1 ms counter (0x61e6),
+not COUNT: COUNT is scaled by the CPU-frequency word at 0x29cc, which made
+the release fire in under a second on the instrument.
 
 ## Repeatable checks
 
