@@ -2350,6 +2350,12 @@ section,
   /* 14, as the pads take from their heading: the strip is the same state
      continuing, not a new one, and 20 read as a break between them. */
   margin-top: 14px;
+  /* The plate's border, named so the captions below can be inset by the same
+     amount.  It is drawn in --line, which is 8 from the card behind it where
+     the fill is 31 - so the eye reads the strip as starting where the fill
+     does, one pixel inside the box, and captions aligned to the box sat a
+     pixel outside the strip. */
+  --strip-edge: 1px;
 }
 .stripfig .plate {
   position: relative;
@@ -2364,7 +2370,7 @@ section,
      strip rather than as a bar. */
   min-height: 26px;
   border-radius: 7px;
-  border: 1px solid var(--line);
+  border: var(--strip-edge) solid var(--line);
   background: var(--bg);
   overflow: hidden;
 }
@@ -2399,6 +2405,7 @@ section,
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-top: 8px;
+  padding-inline: var(--strip-edge);
 }
 .stripfig .halves > span {
   color: var(--muted);
