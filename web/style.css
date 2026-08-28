@@ -2240,7 +2240,11 @@ section,
   height: var(--tr-w);
   margin: 0 var(--tr-gap) 0 0;
   display: inline-block;
-  vertical-align: -1px;
+  /* Set so the mark's ink centres on the label's cap height rather than its
+     box sitting on the baseline: the ink is the middle half of the box, so
+     the box has to hang below the line for the two centres to meet.  Cap
+     height measured off the face at 16px, not assumed. */
+  vertical-align: -1.5px;
 }
 /* Coloured by what each one does, not decoratively: record takes the page's
    own red, which is also what the LED lights, play the ok green, and stop
@@ -2269,7 +2273,9 @@ section,
   width: 11px;
   height: 11px;
   margin-right: 3px;
-  vertical-align: 0;
+  /* Its own figure: 11px of mark against 13px uppercase, where the label's
+     is 15 against 16 mixed-case. */
+  vertical-align: -0.8px;
 }
 .padfig .sub {
   color: var(--muted);
