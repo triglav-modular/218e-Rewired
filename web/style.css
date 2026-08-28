@@ -2155,14 +2155,24 @@ section,
   width: 100%;
   height: 100%;
 }
+/* Sizing the chevrons off the panel put them a shade high and short once the
+   viewBox was stretched to the plate; this is the correction, in user units
+   so it holds at every width.  It lets the arms run past the top edge, which
+   is what the module shows - they meet the edge rather than stopping at it. */
+.stripfig .plate svg g {
+  transform: translateY(-10.5px) scaleY(1.2);
+}
 /* The half the touch lands in is what decides rest against tie, so the
    division is drawn rather than described. */
 .stripfig .half {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
+  width: 6px;
+  /* Centred on the middle, not starting at it: at six wide the difference
+     is three pixels of a strip whose whole point is which half you touched. */
   left: 50%;
+  transform: translateX(-50%);
   background: var(--line);
 }
 .stripfig .halves {
