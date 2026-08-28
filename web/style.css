@@ -2180,11 +2180,12 @@ section,
   display: inline-block;
   vertical-align: -1px;
 }
-/* Coloured by what each one does, not decoratively: record takes the LED's
-   page's own red, which is also what the LED lights, play the ok green,
-   stop the accent,
-   and clear takes --bad, which is already the colour of the clear button on
-   the tuning slots. */
+/* Coloured by what each one does, not decoratively: record takes the page's
+   own red, which is also what the LED lights, play the ok green, stop the
+   accent, and clear takes --bad, which is already the colour of the clear
+   button on the tuning slots.  The class sits on a span around the mark AND
+   the word it names, so the two are never a different colour from each
+   other; the svg draws in currentColor and follows. */
 .padmap .tr-rec {
   color: var(--bad);
 }

@@ -80,7 +80,7 @@
           <label class="opt"><input type="checkbox" id="latching_arp" checked>
             <span><span class="t">Latching arpeggiator</span><br>
               <span class="d">Arpeggiator switch remapped to <strong>latch</strong> — <strong>regular</strong> — <strong>off</strong>.</span></span></label>
-          <label class="opt"><input type="checkbox" id="clock_divide">
+          <label class="opt"><input type="checkbox" id="clock_divide" checked>
             <span><span class="t">Clock divider</span><br>
               <span class="d">With a steady clock patched in, the <strong>rate knob</strong> becomes a
                 clock divider.</span></span></label>
@@ -138,7 +138,7 @@
 
         <div class="group">
           <h3>Step sequencer</h3>
-          <label class="opt"><input type="checkbox" id="sequencer">
+          <label class="opt"><input type="checkbox" id="sequencer" checked>
             <span><span class="t">Enable step sequencer</span><br>
               <span class="d">Sixty-four steps, recorded and played from the preset pads.
                 The <strong>rate knob</strong> sets the tempo.</span></span></label>
@@ -149,17 +149,17 @@
               <div class="padrow">
                 <div class="padfig">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>1</b></span>
-                  <span class="fn"><svg class="tr tr-rec" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>Record</span>
+                  <span class="fn"><span class="tr-rec"><svg class="tr" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>Record</span></span>
                   <span class="sub">Play the keyboard to enter steps</span>
                 </div>
                 <div class="padfig">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>2</b></span>
-                  <span class="fn"><svg class="tr tr-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 4.6 19 12 7 19.4Z"/></svg>Play / <svg class="tr tr-stop" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6.6" y="6.6" width="10.8" height="10.8" rx="1.4" fill="currentColor"/></svg>Stop</span>
+                  <span class="fn"><span class="tr-play"><svg class="tr" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 4.6 19 12 7 19.4Z"/></svg>Play</span> / <span class="tr-stop"><svg class="tr" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6.6" y="6.6" width="10.8" height="10.8" rx="1.4" fill="currentColor"/></svg>Stop</span></span>
                   <span class="sub">The sequence loops until you stop it</span>
                 </div>
                 <div class="padfig">
                   <span class="plate" aria-hidden="true"><i class="led"></i><b>3</b></span>
-                  <span class="fn"><svg class="tr tr-clear" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" d="M6.6 6.6 17.4 17.4M17.4 6.6 6.6 17.4"/></svg>Clear</span>
+                  <span class="fn"><span class="tr-clear"><svg class="tr" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" d="M6.6 6.6 17.4 17.4M17.4 6.6 6.6 17.4"/></svg>Clear</span></span>
                   <span class="sub">Erases the sequence</span>
                 </div>
                 <div class="padfig is-held">
