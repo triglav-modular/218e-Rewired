@@ -525,10 +525,19 @@ label.opt input {
   font-weight: 700;
   display: inline-block;
 }
+/* The description takes the row rather than hugging its longest line.  As an
+   inline-block it shrank to its widest line, which for a description with a
+   forced break in it is that line exactly - so the sentence sat with nothing
+   to spare and the next pixel of narrowing broke it in two.  Filling the row
+   changes nothing for a description that already ran the width. */
+label.opt > span {
+  flex: 1;
+  min-width: 0;
+}
 .opt .d {
   color: var(--muted);
   font-size: 16px;
-  display: inline-block;
+  display: block;
 }
 .drop {
   border: 1px dashed #4a4740;
