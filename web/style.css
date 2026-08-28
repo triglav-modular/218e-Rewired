@@ -2006,6 +2006,10 @@ section,
    in CSS off the checkbox itself: there is no state to keep in step, and it
    is right on first paint rather than after a script has run. */
 .padmap {
+  /* The pad's own width, shared by the plate that draws one and the row that
+     places four: as two numbers they drifted, and the drift showed up as the
+     row's slack piling behind the last pad. */
+  --pad-w: 132px;
   display: none;
   /* 14 above, as .knobsel takes: both are a figure a tick reveals under its
      own option, and this one sat flush against the line above it. */
@@ -2030,9 +2034,15 @@ section,
 .padmap-state h4 strong {
   color: var(--ink);
 }
+/* Columns the width of a pad, not a quarter of the row: at 1fr each column
+   was wider than the pad it held, the pad sat at its left, and all four
+   slacks collected into one gap after the fourth.  space-between spends that
+   slack between the pads instead, so the row starts and ends flush.  minmax
+   lets them shrink when the row cannot hold four at full width. */
 .padrow {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, var(--pad-w)));
+  justify-content: space-between;
   gap: 16px;
 }
 .padfig {
@@ -2051,7 +2061,7 @@ section,
      photograph of the module. */
   aspect-ratio: 5 / 2;
   width: 100%;
-  max-width: 132px;
+  max-width: var(--pad-w);
   border-radius: 7px;
   border: 1px solid var(--line);
   background: var(--bg);
@@ -2069,7 +2079,10 @@ section,
    corner of every preset pad in the manual's photograph. */
 .padfig .led {
   position: absolute;
-  left: 9px;
+  /* Equal from both edges, so the LED sits on the corner's diagonal rather
+     than a pixel off it.  8, the tighter of the two it had: at 9 the gap
+     starts to read against a plate only 7px round at the corner. */
+  left: 8px;
   top: 8px;
   width: 11px;
   height: 11px;
@@ -2087,12 +2100,37 @@ section,
    some, so none of the four would match the others.  Inline and on the
    baseline, the way the Windows mark sits in a heading; the explicit box and
    margin keep the diagram rule further down this sheet off them. */
-.padfig .fn .tr {
+.padmap .tr {
   width: 13px;
   height: 13px;
   margin: 0 5px 0 0;
   display: inline-block;
   vertical-align: -1px;
+}
+/* Coloured by what each one does, not decoratively: record takes the LED's
+   page's own red, which is also what the LED lights, play the ok green,
+   stop the accent,
+   and clear takes --bad, which is already the colour of the clear button on
+   the tuning slots. */
+.padmap .tr-rec {
+  color: var(--bad);
+}
+.padmap .tr-play {
+  color: var(--ok);
+}
+.padmap .tr-stop {
+  color: var(--accent);
+}
+.padmap .tr-clear {
+  color: var(--bad);
+}
+/* On a state heading the mark sits against 13px uppercase, so it comes down
+   a size and takes the heading's own letter-spacing into account. */
+.padmap-state h4 .tr {
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  vertical-align: 0;
 }
 .padfig .sub {
   color: var(--muted);
@@ -2105,8 +2143,10 @@ section,
   border-color: var(--accent);
 }
 .padfig .led.blink {
-  background: var(--accent);
-  box-shadow: 0 0 8px rgba(255, 218, 108, .55);
+  background: var(--bad);
+  /* Mixed from --bad rather than written out, so a red that moves in the
+     theme takes its own glow with it. */
+  box-shadow: 0 0 8px color-mix(in srgb, var(--bad) 55%, transparent);
   animation: padblink 1.2s steps(1, end) infinite;
 }
 @keyframes padblink {
@@ -2142,7 +2182,7 @@ section,
    the number and the LED without squinting. */
 @media (max-width: 640px) {
   .padrow {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, var(--pad-w)));
     gap: 18px 14px;
   }
 }
