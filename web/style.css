@@ -2240,11 +2240,12 @@ section,
   height: var(--tr-w);
   margin: 0 var(--tr-gap) 0 0;
   display: inline-block;
-  /* Set so the mark's ink centres on the label's cap height rather than its
-     box sitting on the baseline: the ink is the middle half of the box, so
-     the box has to hang below the line for the two centres to meet.  Cap
-     height measured off the face at 16px, not assumed. */
-  vertical-align: -1.5px;
+  /* The ink centres on the x-height, not the cap height: the label is
+     mixed case, so the body of the word sits between the baseline and the
+     x-line and a mark levelled with the capitals rides above it.  The ink is
+     the middle half of the box, so the box hangs 3.5px below the line to put
+     its centre on 8.00px of x-height, measured off the face at 16px. */
+  vertical-align: -3.5px;
 }
 /* Coloured by what each one does, not decoratively: record takes the page's
    own red, which is also what the LED lights, play the ok green, and stop
@@ -2273,9 +2274,11 @@ section,
   width: 11px;
   height: 11px;
   margin-right: 3px;
-  /* Its own figure: 11px of mark against 13px uppercase, where the label's
-     is 15 against 16 mixed-case. */
-  vertical-align: -0.8px;
+  /* The one that stays on the cap height, because this heading is
+     text-transform: uppercase - there is no lowercase body to centre on, so
+     the caps are what the mark has to level with.  11px of mark against
+     9.23px of cap at 13px. */
+  vertical-align: -0.88px;
 }
 .padfig .sub {
   color: var(--muted);
