@@ -25,6 +25,27 @@ on:
     # main.  The page workflow deliberately does NOT: the live site deploys
     # from main only, or an unfinished 2.0 would publish itself.
     branches: [main, '2.0']
+    # The page's own presentation files, which nothing here reads: generate.py
+    # writes generated.js and assembler.js out of tools/avr32 and config and
+    # never opens the page, test_configs.py loads only the build JavaScript,
+    # and no test reads the markup, the stylesheet or an image.  A run of this
+    # workflow is nine minutes of firmware and macOS build, and a day of copy
+    # edits spent it nine times over.
+    #
+    # A denylist, not an allowlist: a file added anywhere else still builds.
+    # Naming what must run is the hole the Windows flasher's filter documents,
+    # where a new helper went unlisted and its run never started.
+    #
+    # Only the push trigger.  Pull requests stay unfiltered, so the checks a
+    # merge is judged on are never the ones that quietly did not run.
+    paths-ignore:
+      - 'web/index.html'
+      - 'web/style.css'
+      - 'web/app.js'
+      - 'web/icons/**'
+      - 'web/images/**'
+      - 'web/fonts/**'
+      - 'web/README.md'
   pull_request:
   workflow_dispatch:
 
