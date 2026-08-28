@@ -2181,9 +2181,11 @@ section,
   vertical-align: -1px;
 }
 /* Coloured by what each one does, not decoratively: record takes the page's
-   own red, which is also what the LED lights, play the ok green, stop the
-   accent, and clear takes --bad, which is already the colour of the clear
-   button on the tuning slots.  The class sits on a span around the mark AND
+   own red, which is also what the LED lights, play the ok green, and stop
+   the accent.  Clear stays ink: red would have read as the warning red this
+   page uses for what cannot be undone, and clearing a sequence you are in
+   the middle of recording is not that.  The class sits on a span around the
+   mark AND
    the word it names, so the two are never a different colour from each
    other; the svg draws in currentColor and follows. */
 .padmap .tr-rec {
@@ -2196,7 +2198,7 @@ section,
   color: var(--accent);
 }
 .padmap .tr-clear {
-  color: var(--bad);
+  color: var(--ink);
 }
 /* On a state heading the mark sits against 13px uppercase, so it comes down
    a size and takes the heading's own letter-spacing into account. */
