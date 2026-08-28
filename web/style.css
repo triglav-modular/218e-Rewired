@@ -2109,8 +2109,16 @@ section,
 }
 /* A pad that does nothing in this state is dimmed rather than dropped, so
    the four pads stay in the same places in both rows and the eye can run
-   straight down the column. */
-.padfig.is-off {
+   straight down the column.  Dimmed PART BY PART rather than with opacity on
+   the whole figure: pad 1 does nothing to the take while recording, but its
+   LED is blinking the whole time, and a parent's opacity is not something a
+   child can climb back out of. */
+.padfig.is-off .plate {
+  border-color: rgba(46, 46, 43, .55);
+}
+.padfig.is-off .plate b,
+.padfig.is-off .fn,
+.padfig.is-off .sub {
   opacity: .4;
 }
 .padfig.is-off .fn {
