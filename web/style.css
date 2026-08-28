@@ -2254,6 +2254,14 @@ section,
    mark AND
    the word it names, so the two are never a different colour from each
    other; the svg draws in currentColor and follows. */
+/* The triangles and the arrow read smaller and sit higher than a circle or a
+   square drawn to the same box - open shapes carry their weight off-centre,
+   and a point has no edge to line up.  A slightly bigger box and a little
+   further down, by eye rather than by the arithmetic the others follow. */
+.padmap .tr-optical {
+  --tr-w: 16px;
+  vertical-align: -3px;
+}
 .padmap .tr-rec {
   color: var(--bad);
 }
