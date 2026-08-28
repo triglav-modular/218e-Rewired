@@ -94,26 +94,28 @@ CONFIGS = [
     ("knob2_swing",       [(r"^remap_knobs = true",
                             'remap_knobs = true\nknob2 = "swing"')],
                           {"knob2": "swing"}),
-    # The sequencer adds a cave and a per-scan call, so both builders have to
-    # agree about the housekeeping chain as well as the cave itself.
-    ("sequencer",         [(r"^sequencer = false", "sequencer = true")],
-                          {"sequencer": True}),
-    # The divider takes a factory dispatcher case and adds a per-scan call, so
-    # both builders have to agree about the housekeeping chain too.
-    ("clock_divide",      [(r"^clock_divide = false", "clock_divide = true")],
-                          {"clock_divide": True}),
-    ("persist",           [(r"^sequencer = false", "sequencer = true"),
-                           (r"^clock_divide = false", "clock_divide = true"),
-                           (r"^persist = false", "persist = true")],
-                          {"sequencer": True, "clock_divide": True, "persist": True}),
-    ("persist_only",      [(r"^persist = false", "persist = true")],
+    # Both ship ON now, so the configuration worth pinning is the one that
+    # turns them OFF: that is the build whose housekeeping chain loses a call,
+    # and the one the defaults no longer cover.
+    ("sequencer_off",     [(r"^sequencer = true", "sequencer = false")],
+                          {"sequencer": False}),
+    ("clock_divide_off",  [(r"^clock_divide = true", "clock_divide = false")],
+                          {"clock_divide": False}),
+    ("both_off",          [(r"^sequencer = true", "sequencer = false"),
+                           (r"^clock_divide = true", "clock_divide = false")],
+                          {"sequencer": False, "clock_divide": False}),
+    ("persist",           [(r"^persist = false", "persist = true")],
                           {"persist": True}),
+    ("persist_only",      [(r"^persist = false", "persist = true"),
+                           (r"^sequencer = true", "sequencer = false"),
+                           (r"^clock_divide = true", "clock_divide = false")],
+                          {"persist": True, "sequencer": False, "clock_divide": False}),
     ("persist_seq",       [(r"^persist = false", "persist = true"),
-                           (r"^sequencer = false", "sequencer = true")],
-                          {"persist": True, "sequencer": True}),
+                           (r"^clock_divide = true", "clock_divide = false")],
+                          {"persist": True, "clock_divide": False}),
     ("persist_clock",     [(r"^persist = false", "persist = true"),
-                           (r"^clock_divide = false", "clock_divide = true")],
-                          {"persist": True, "clock_divide": True}),
+                           (r"^sequencer = true", "sequencer = false")],
+                          {"persist": True, "sequencer": False}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
                             + ", ".join(['["tunings/BohlenPierce.scl", '

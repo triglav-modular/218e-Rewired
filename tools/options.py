@@ -229,7 +229,7 @@ def expand(options: dict) -> dict:
     # is the range the factory clamps state+0x1fe to.  2048 is the middle, and
     # the middle is the rule; the number is here so a strip that reads off
     # centre can be told where its own middle is.
-    cfg["sequencer"] = {"on": bool(want("sequencer", False)),
+    cfg["sequencer"] = {"on": bool(want("sequencer", True)),
                         "strip_halfway_units": 2048,
                         # How far a tie slides into the note after it, on the
                         # factory's own 0..1024 glide scale.  Another number
@@ -257,7 +257,7 @@ def expand(options: dict) -> dict:
                         # anything, in ~5 ms scans.  200 is a second.
                         "chord_hold_scans": 200}
     # The arp rate knob divides an external clock once one is locked.
-    cfg["clock"] = {"divide": bool(want("clock_divide", False))}
+    cfg["clock"] = {"divide": bool(want("clock_divide", True))}
     cfg["persist"] = {"on": bool(want("persist", False)),
                       # Reserved main-array pages; never include settings
                       # at 0x8003f000. The newest valid page is not retried.

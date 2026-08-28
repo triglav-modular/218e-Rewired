@@ -139,7 +139,7 @@ pressure_portamento = true
 # Stopping returns the keyboard to the physical arp switch's normal mode.
 # With pad 4 released while recording, pad 2 previews the recorded order
 # once and returns to WRITE; pad 3 backspaces one step per press.
-sequencer = false
+sequencer = true
 
 # 11. EXTERNAL CLOCK DIVIDE
 # With a steady clock patched in, the arpeggiator RATE knob becomes a divider
@@ -147,7 +147,7 @@ sequencer = false
 # acquires after five consistent measured intervals and releases after more
 # than 2.6 seconds without an input. Target range: 0.5–200 Hz. The conditioned
 # MCU input must be low for >250 us before each rising edge; see docs/CLOCK.md.
-clock_divide = false
+clock_divide = true
 
 # Save the remapped preset voltages and sequence across power cycles.
 # Save a changed sequence when leaving record or clearing it; save a
@@ -182,7 +182,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "9efd500bbb7cf3750d38030ab86b76ba49a0d3841cd9edf1123fb74ae6a205ea"
+golden_sha256  = "4987629bc12ca013cda522f25182bbdc6b0966fb190389bf5d40d903a4b9d0a7"
 
 
 [tools]

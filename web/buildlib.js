@@ -114,14 +114,14 @@ var BUILDLIB = (function () {
             cfg.knobs[k] = role === 'factory' ? 'factory' : live[k];
         });
         // The sequencer's controls live on a pad chord, so it needs the pads.
-        cfg.sequencer = { on: !!want('sequencer', false), strip_halfway_units: 2048,
+        cfg.sequencer = { on: !!want('sequencer', true), strip_halfway_units: 2048,
                           tie_glide_rate: 60, chord_hold_scans: 200,
                           clock_min_ms: 4, clock_lock_pulses: 5,
                           clock_settle_scans: 0, clock_rearm_us: 250,
                           clock_max_ms: 2400, clock_release_ms: 2600,
                           trigger_spike_units: 5 };
         cfg.persist = { on: !!want('persist', false), page_count: 8 };
-        cfg.clock = { divide: !!want('clock_divide', false) };
+        cfg.clock = { divide: !!want('clock_divide', true) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
         cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing')

@@ -59,18 +59,21 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     # both were told the same wrong thing, and the emulations called each cave
     # directly rather than through its hook.  This sweep is the only check
     # that builds every one of them through Ghidra.
-    ("sequencer",             [(r"^sequencer = false", "sequencer = true")]),
-    ("clock_divide",          [(r"^clock_divide = false", "clock_divide = true")]),
-    ("sequencer_and_clock",   [(r"^sequencer = false", "sequencer = true"),
-                               (r"^clock_divide = false", "clock_divide = true")]),
-    ("persist_only",          [(r"^persist = false", "persist = true")]),
+    # Both ship ON, so the variants worth building are the ones that turn
+    # them OFF - those are the images the defaults no longer cover, and the
+    # ones whose housekeeping chain loses a call.
+    ("sequencer_off",         [(r"^sequencer = true", "sequencer = false")]),
+    ("clock_divide_off",      [(r"^clock_divide = true", "clock_divide = false")]),
+    ("seq_and_clock_off",     [(r"^sequencer = true", "sequencer = false"),
+                               (r"^clock_divide = true", "clock_divide = false")]),
+    ("persist_only",          [(r"^persist = false", "persist = true"),
+                               (r"^sequencer = true", "sequencer = false"),
+                               (r"^clock_divide = true", "clock_divide = false")]),
     ("persist_sequencer",     [(r"^persist = false", "persist = true"),
-                               (r"^sequencer = false", "sequencer = true")]),
+                               (r"^clock_divide = true", "clock_divide = false")]),
     ("persist_clock",         [(r"^persist = false", "persist = true"),
-                               (r"^clock_divide = false", "clock_divide = true")]),
-    ("persist_seq_clock",     [(r"^persist = false", "persist = true"),
-                               (r"^sequencer = false", "sequencer = true"),
-                               (r"^clock_divide = false", "clock_divide = true")]),
+                               (r"^sequencer = true", "sequencer = false")]),
+    ("persist_seq_clock",     [(r"^persist = false", "persist = true")]),
     ("knob_roles",            [(r"^remap_knobs = true",
                                'remap_knobs = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
     ("knob2_swing",           [(r"^remap_knobs = true", 'remap_knobs = true\nknob2 = "swing"')]),
@@ -83,9 +86,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                'alternate_tunings = [' + ', '.join(
                                    ['["tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm"]'] * 3)
                                + ']')]),
-    ("everything_on",         [(r"^sequencer = false", "sequencer = true"),
-                               (r"^clock_divide = false", "clock_divide = true"),
-                               (r"^persist = false", "persist = true"),
+    ("everything_on",         [(r"^persist = false", "persist = true"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"'),
                                (r"^alternate_tunings = false",
@@ -154,7 +155,7 @@ def audit_call_pools(image_path) -> list[str]:
 # one-shot preview/explicit CLEAR ownership.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "0cb5611ffa75da8cd02dab9b0141195abf55ff29117c5728601eb097fde33981",
+    "historical_config": "f20cd0d584e1550e2258e3ce08d158abe32f1a0c7c792bd84f971bc613e4909c",
 }
 
 
