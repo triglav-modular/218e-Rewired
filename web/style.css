@@ -857,34 +857,57 @@ td input {
   display: flex;
   gap: 6px;
 }
-/* One row per preset knob: its name, then what it can be set to.  The
-   buttons are the volts-per-octave control, reused. */
-.knobsel { margin: 14px 0 6px 34px; }
+/* Four knobs across, as they sit on the panel, each with what it can be set
+   to stacked underneath it.  No indent: the four columns want the width the
+   pad map gets, and the block is a figure of the hardware rather than a note
+   hanging off the option above. */
+.knobsel { margin: 14px 0 6px; }
 .knobsel.hidden { display: none; }
-.knobrow {
+.knobmap {
+  --knob-w: 64px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  margin-top: 10px;
+}
+.knobfig {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 5px 0;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 10px;
 }
-.knobname {
-  width: 62px;
-  flex: none;
-  font-size: 14px;
-  color: var(--muted);
+/* The knob, drawn, with its number over the face.  Both layers share one grid
+   cell so the number centres on the circle without either being positioned. */
+.knobface {
+  display: grid;
+  place-items: center;
+  width: var(--knob-w);
+  height: var(--knob-w);
 }
-/* Knob 2 has three options where the others have two, and knob 3 has one, so
-   the shared two-column grid fits none of them.  One column per option
-   instead, whatever the count, each free to shrink below its longest label -
-   without that the row pushes the page sideways.  The ceiling is the width
-   two options have, so knob 3's lone one does not stretch across the row. */
-.vpo.knobpick {
-  flex: 1;
-  min-width: 0;
-  grid-template-columns: none;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 210px);
+.knobface svg,
+.knobface b {
+  grid-area: 1 / 1;
+}
+.knobface svg {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+.knobface b {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+/* The options run down the column now rather than across the row, so the
+   count no longer has to fit a shared width: knob 2's three and knob 3's one
+   both simply stack. */
+.knobmap .vpo.knobpick {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  gap: 8px;
+  margin-top: 0;
+  max-width: none;
 }
 /* One row per pattern: a number, the steps, how many before it repeats. */
 /* Patterns can be one line of steps or four, so the number, the length and
@@ -1943,27 +1966,11 @@ section,
   .row {
     gap: 10px;
   }
-  /* The knob name sits beside its options on a wide screen; on a phone that
-     column, and the indent the whole block carries, leave the options about
-     120px each - narrower than their labels.  The name goes above them
-     instead, and the block gives up its indent, so the options get the width
-     of the page. */
-  .knobsel {
-    margin-left: 0;
-  }
-  .knobrow {
-    display: block;
-    padding-bottom: 10px;
-  }
-  .knobname {
-    display: block;
-    width: auto;
-  }
-  /* Three options side by side leave 70px each at this width.  Stacked. */
-  .vpo.knobpick {
-    grid-auto-flow: row;
-    grid-auto-columns: auto;
-    grid-template-columns: minmax(0, 1fr);
+  /* Four knobs across leave about 70px a column at this width, which is
+     narrower than any of their labels.  Two across, as the pads do. */
+  .knobmap {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 14px;
   }
   /* Sixteen steps beside the number, the length and the remove button leave
      about 100px for the steps here.  The steps take a line of their own, one
