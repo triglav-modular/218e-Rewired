@@ -95,3 +95,4 @@ private/
 
 # The FCP video kit lives in its own private repo (fcp/ is a nested checkout).
 fcp/
+/.claude/handoff

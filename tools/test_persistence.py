@@ -22,6 +22,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt")
+# Ghidra ends every run with the JVM banner and its Unsafe warnings on stderr,
+# so a plain tail of the captured output never reaches the failure.
+NOISE = re.compile(r"^(WARNING: |openjdk version|OpenJDK |Picked up |WARN  Uninitialized memory read)")
+
+
+def excerpt(output: str) -> str:
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if "SCRIPT ERROR" in line:
+            return "\n".join(lines[index:index + 25])
+    return "\n".join(line for line in lines if not NOISE.match(line))[-5000:]
 
 
 def main() -> None:
@@ -91,11 +102,17 @@ def main() -> None:
             for line in output.splitlines():
                 if "Regression.java>" in line:
                     print(line.split("Regression.java>", 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
-            if (result.returncode or "ERROR REPORT SCRIPT ERROR" in output
-                    or (not args.no_persist and "PERSISTENCE REGRESSION PASS:" not in output)
-                    or (not args.no_persist and "clock" in mode and "CLOCK REGRESSION PASS:" not in output)
-                    or ("seq" in mode and ("SEQUENCE TRANSPORT PASS:" not in output or "SEQUENCE EDIT PASS:" not in output))):
-                raise SystemExit(f"Persistence regression failed; see {log}\n{output[-5000:]}")
+            expected = []
+            if not args.no_persist:
+                expected.append("PERSISTENCE REGRESSION PASS:")
+                if "clock" in mode:
+                    expected.append("CLOCK REGRESSION PASS:")
+            if "seq" in mode:
+                expected += ["SEQUENCE TRANSPORT PASS:", "SEQUENCE EDIT PASS:"]
+            missing = [marker.rstrip(":") for marker in expected if marker not in output]
+            if result.returncode or "ERROR REPORT SCRIPT ERROR" in output or missing:
+                why = "no " + ", ".join(missing) if missing else "script error"
+                raise SystemExit(f"Persistence regression failed: {mode}, {why}; see {log}\n{excerpt(output)}")
     finally:
         for name, data in saved.items():
             path = build / name
