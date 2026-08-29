@@ -1528,6 +1528,12 @@ strong {
 .section-note:last-of-type {
     margin-bottom: 20px;
 }
+/* Two notes under one toggle are a single thought carried over a line break,
+   not two paragraphs, so they keep the paragraph's own rhythm instead of the
+   10 that separates the standalone notes below the box. */
+.opt-toggle p.section-note:has(+ p.section-note) {
+  margin-bottom: 0;
+}
 .field-label {
   font-weight: 600;
 }
