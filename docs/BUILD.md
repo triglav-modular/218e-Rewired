@@ -662,6 +662,86 @@ what the page can actually send, so the worst case is noise in the numbers
 rather than arbitrary strings in the dataset.
 
 
+## Watching buchla.com
+
+This repository is a patch onto a named stock version, so a new stock version
+is work rather than only news. The worker checks once a day, at 06:17 UTC, and
+sends one mail when something moves.
+
+The 218e v3 download is the hard one to watch. Its filename carries no version
+— `firmwarefiles/218ev3-Firmware-Flashing.zip` — and the page linking it prints
+none either, so a release looks like the same URL answering with different
+bytes and nothing about the link says so. What says so is the answer to a
+`HEAD`: `etag`, `last-modified` and `content-length` all move when the file is
+replaced. That is the whole poll, and on the ordinary day it transfers no body
+at all.
+
+Only once something has moved is the zip opened, and even then not downloaded.
+The origin sends `accept-ranges`, and a zip keeps its index in its last bytes,
+so 64 KB off the end carries the central directory of all 81 entries — which
+gives both the `.hex` names and where `changelog.txt` sits. A second range read
+of about 2.5 KB brings the changelog itself, and the mail quotes the sections
+newer than the version already known about. The 48 MB is never fetched to find
+out that it changed.
+
+Two things inside the zip say the version, and they are checked against each
+other: the `.hex` filename (`218eV3_v369_DFU.hex` is v36.9) and the changelog's
+own headings. The other modules need none of this — their filenames carry the
+version, so `218Ev309.zip` → `218Ev311.zip` is a new link on the download page
+rather than new bytes behind an old one, and the page's file list is compared
+as a set.
+
+The baseline lives in the `COUNTS` namespace under `watch:buchla`, which is not
+in any range the download counts are read back by, and unlike those it never
+expires. It ships seeded with what the live site answered on 29 August 2026, so
+a release between that deploy and the first tick is still caught rather than
+quietly absorbed into a baseline the first run invented.
+
+**The failure that matters** is the watch itself breaking, because silence is
+also what "Buchla has released nothing" looks like. A failed check leaves the
+baseline alone and is counted; seven in a row send a mail saying so. One bad
+afternoon is not worth waking anyone for, and a year of a dead watch is.
+
+### Setting it up
+
+The domain has to be onboarded onto Email Sending before any of this delivers.
+Dashboard → **Compute & AI** → **Email Service** → **Email Sending** → **Onboard
+Domain**, which adds the SPF and DKIM records itself. As of August 2026 the API
+answers `Unauthorized [code: 2036]` for an account that has not been onboarded,
+which is what `wrangler email sending list` reports rather than an empty list.
+
+Then the recipient, which is a secret rather than a variable in `wrangler.toml`
+because this repository is public and the address is the one thing in it worth
+keeping out:
+
+```bash
+npx wrangler secret put WATCH_TO
+```
+
+```bash
+npx wrangler deploy
+```
+
+The cron trigger and the `send_email` binding are both declared in
+`wrangler.toml`, so the deploy carries them. Without the binding, or without
+`WATCH_TO`, the run fails loudly in the logs — the one thing it must never do
+is quietly succeed at watching nothing.
+
+To exercise it without waiting for 06:17:
+
+```bash
+npx wrangler dev --test-scheduled
+```
+
+```bash
+curl "http://localhost:8787/__scheduled?cron=17+6+*+*+*"
+```
+
+`node tools/test_watch.mjs` covers the shapes offline — the release, the
+re-upload that is not one, the new file on the page, a send that failed, and
+the run of failed checks that has to end in a mail.
+
+
 ## Giving CI the factory image
 
 Everything that builds firmware needs Buchla's stock image, and it is not in

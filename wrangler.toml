@@ -53,3 +53,19 @@ id = "3a37ad22a6a64dfcb8a3a5469b414728"
 # survive a deploy, so it is declared.
 [observability]
 enabled = true
+
+# The tick behind the buchla.com watch in deploy/worker.js.  Once a day is as
+# often as a firmware release is worth checking for, and 06:17 rather than the
+# top of an hour because cron triggers queue behind everyone else's midnight.
+[triggers]
+crons = ["17 6 * * *"]
+
+# What the watch sends through.  Email Sending has to be enabled on the zone
+# before this delivers anything - see "Watching buchla.com" in docs/BUILD.md
+# for that and for the secret this needs alongside it.
+#
+# Deliberately unrestricted: a destination_address here would pin the one
+# thing that must not be in a public repository, so where the mail goes is a
+# secret the worker reads instead.
+[[send_email]]
+name = "EMAIL"
