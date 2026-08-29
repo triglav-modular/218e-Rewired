@@ -42,6 +42,7 @@ on:
       - 'deploy/worker.js'
       - 'tools/test_worker.mjs'
       - 'tools/test_watch.mjs'
+      - 'tools/watch-buchla.mjs'
       - 'wrangler.toml'
       - 'Program218e_v3_Rewired_macOS.command'
       - '218e_Rewired_Flasher.bat'

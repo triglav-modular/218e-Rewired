@@ -665,8 +665,11 @@ rather than arbitrary strings in the dataset.
 ## Watching buchla.com
 
 This repository is a patch onto a named stock version, so a new stock version
-is work rather than only news. The worker checks once a day, at 06:17 UTC, and
-sends one mail when something moves.
+is work rather than only news. `.github/workflows/buchla-watch.yml` checks once
+a day at 06:17 UTC and opens an issue when something moves — which is how the
+notice reaches a mailbox, since GitHub already mails what it opens. That is one
+fewer credential, one fewer service and one fewer thing that can quietly stop
+working than any mail path this repository could own.
 
 The 218e v3 download is the hard one to watch. Its filename carries no version
 — `firmwarefiles/218ev3-Firmware-Flashing.zip` — and the page linking it prints
@@ -680,9 +683,9 @@ Only once something has moved is the zip opened, and even then not downloaded.
 The origin sends `accept-ranges`, and a zip keeps its index in its last bytes,
 so 64 KB off the end carries the central directory of all 81 entries — which
 gives both the `.hex` names and where `changelog.txt` sits. A second range read
-of about 2.5 KB brings the changelog itself, and the mail quotes the sections
-newer than the version already known about. The 48 MB is never fetched to find
-out that it changed.
+of about 2.5 KB brings the changelog, and the issue quotes the sections newer
+than the version already known about. The 48 MB is never fetched to find out
+that it changed.
 
 Two things inside the zip say the version, and they are checked against each
 other: the `.hex` filename (`218eV3_v369_DFU.hex` is v36.9) and the changelog's
@@ -691,55 +694,59 @@ version, so `218Ev309.zip` → `218Ev311.zip` is a new link on the download page
 rather than new bytes behind an old one, and the page's file list is compared
 as a set.
 
-The baseline lives in the `COUNTS` namespace under `watch:buchla`, which is not
-in any range the download counts are read back by, and unlike those it never
-expires. It ships seeded with what the live site answered on 29 August 2026, so
-a release between that deploy and the first tick is still caught rather than
-quietly absorbed into a baseline the first run invented.
+The baseline is `firmware/buchla-watch.json`, committed back by the workflow
+when it moves. It ships seeded with what the live site answered on 29 August
+2026, so a release between that commit and the first run is still caught rather
+than quietly absorbed into a baseline the first run invented.
 
 **The failure that matters** is the watch itself breaking, because silence is
 also what "Buchla has released nothing" looks like. A failed check leaves the
-baseline alone and is counted; seven in a row send a mail saying so. One bad
-afternoon is not worth waking anyone for, and a year of a dead watch is.
+baseline alone and is counted; every seventh consecutive failure opens an issue
+saying so — every seventh rather than only the seventh, so an alarm lost to a
+bad delivery comes back a week later instead of never. The job deliberately
+exits zero on a failed check: GitHub mails the owner whenever a scheduled
+workflow fails, and a bad afternoon at buchla.com would otherwise send a mail a
+day and drown the one notice that matters.
 
-### Setting it up
+### Two things it depends on
 
-The domain has to be onboarded onto Email Sending before any of this delivers.
-Dashboard → **Compute & AI** → **Email Service** → **Email Sending** → **Onboard
-Domain**, which adds the SPF and DKIM records itself. As of August 2026 the API
-answers `Unauthorized [code: 2036]` for an account that has not been onboarded,
-which is what `wrangler email sending list` reports rather than an empty list.
+GitHub only ever runs a scheduled workflow **from the default branch**, so this
+watches nothing until it is on `main`.
 
-Then the recipient, which is a secret rather than a variable in `wrangler.toml`
-because this repository is public and the address is the one thing in it worth
-keeping out:
+GitHub also disables a schedule on a public repository after **60 days with no
+repository activity**, warning the owner by mail first. The baseline commit is
+activity whenever buchla.com moves, but a genuinely quiet year is genuinely
+quiet — so that warning mail is the one not to ignore.
+
+### Why not a mail of its own
+
+The detection first ran in the Cloudflare worker, which was the natural home:
+it is already deployed and does not need this Mac awake. Cloudflare Email
+Sending turned out to need the Workers **Paid** plan, and the API answers
+`Unauthorized [code: 2036]` on a free account rather than saying so.
+
+The free alternative is the older `send_email` binding, which rides on Email
+**Routing** — but enabling that rewrites the zone's MX records, and
+`triglavmodular.hu` points at iCloud. It would have traded a firmware
+notification for the domain's inbound mail.
+
+`tools/watch-buchla.mjs` holds all of it and knows nothing about where the
+notice goes: `watch()` is handed somewhere to keep the baseline and something
+to send with. `tools/watch-buchla-run.mjs` binds those to a file and a GitHub
+issue. Anything else — a mail, a webhook, the WordPress site's own
+`wp_mail()` — is that one function, not a rewrite.
+
+### Checking it
 
 ```bash
-npx wrangler secret put WATCH_TO
+node tools/test_watch.mjs
 ```
 
-```bash
-npx wrangler deploy
-```
-
-The cron trigger and the `send_email` binding are both declared in
-`wrangler.toml`, so the deploy carries them. Without the binding, or without
-`WATCH_TO`, the run fails loudly in the logs — the one thing it must never do
-is quietly succeed at watching nothing.
-
-To exercise it without waiting for 06:17:
-
-```bash
-npx wrangler dev --test-scheduled
-```
-
-```bash
-curl "http://localhost:8787/__scheduled?cron=17+6+*+*+*"
-```
-
-`node tools/test_watch.mjs` covers the shapes offline — the release, the
-re-upload that is not one, the new file on the page, a send that failed, and
-the run of failed checks that has to end in a mail.
+covers the shapes offline against a zip it builds itself: the release, the
+re-upload that is not one, the new file on the page, a notice that failed, and
+the run of failed checks that has to end in an issue rather than in silence.
+The workflow also has `workflow_dispatch`, so it can be run by hand from the
+Actions tab without waiting for 06:17.
 
 
 ## Giving CI the factory image

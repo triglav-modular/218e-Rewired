@@ -2,20 +2,12 @@
 //
 // What it has to get right is not the happy path - that was read off the live
 // site before any of it was written - but the days either side of it: the
-// ordinary day when nothing moved and no mail is owed, the release, the
+// ordinary day when nothing moved and no notice is owed, the release, the
 // re-upload that is not a release, and every way the check can fail without
-// the failure passing for silence.  A watch that mails every day is as broken
-// as one that never mails, so both directions are pinned here.
-import { readFileSync } from 'node:fs';
+// the failure passing for silence.  A watch that speaks every day is as broken
+// as one that never says anything, so both directions are pinned here.
 import { deflateRawSync, crc32 } from 'node:zlib';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, '..', 'deploy', 'worker.js'), 'utf8');
-const worker = (await import(
-  'data:text/javascript;base64,' + Buffer.from(source).toString('base64')
-)).default;
+import { watch, SEED as SHIPPED } from './watch-buchla.mjs';
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -107,7 +99,7 @@ const FILES_53 = Array.from({ length: 52 }, (_, i) => `mod${i}.zip`)
 // The site, as far as the worker can tell.  Ranges are served off the zip
 // buffer exactly as the origin serves them, 206 and all, so the worker's
 // window arithmetic is exercised rather than assumed.
-function site({ zip, files, etag, modified, headStatus = 200, pageStatus = 200 }) {
+function site({ zip, files, etag, modified, length, headStatus = 200, pageStatus = 200 }) {
   const calls = { head: 0, page: 0, ranges: 0, bytes: 0 };
   globalThis.fetch = async (url, init) => {
     const u = String(url);
@@ -119,7 +111,8 @@ function site({ zip, files, etag, modified, headStatus = 200, pageStatus = 200 }
     if ((init && init.method) === 'HEAD') {
       calls.head++;
       return new Response(null, { status: headStatus, headers: {
-        etag, 'last-modified': modified, 'content-length': String(zip.length) } });
+        etag, 'last-modified': modified,
+        'content-length': String(length === undefined ? zip.length : length) } });
     }
     const range = /bytes=(\d+)-(\d+)/.exec((init.headers || {}).range || '');
     calls.ranges++;
@@ -131,26 +124,23 @@ function site({ zip, files, etag, modified, headStatus = 200, pageStatus = 200 }
   return calls;
 }
 
-// The namespace, and the mail the worker thinks it sent.
+// Somewhere to keep the baseline, and something to send with.  Both are the
+// seams the real run swaps for a file and a GitHub issue.
 function fakeEnv(stored) {
   const sent = [];
-  const kv = new Map(stored ? [[
-    'watch:buchla', JSON.stringify(stored)]] : []);
+  let held = stored ? JSON.parse(JSON.stringify(stored)) : null;
   return {
-    sent, kv,
-    WATCH_TO: 'owner@example.invalid',
-    EMAIL: { send: async (m) => { sent.push(m); } },
-    COUNTS: {
-      get: async (k, t) => {
-        const v = kv.get(k);
-        return v === undefined ? null : (t === 'json' ? JSON.parse(v) : v);
-      },
-      put: async (k, v) => { kv.set(k, v); },
+    sent,
+    get held() { return held; },
+    state: {
+      read: async () => held,
+      write: async (v) => { held = JSON.parse(JSON.stringify(v)); },
     },
+    notify: async (subject, text) => { sent.push({ subject, text }); },
   };
 }
-const state = (env) => JSON.parse(env.kv.get('watch:buchla'));
-const tick = (env) => worker.scheduled({}, env, { waitUntil: () => {} });
+const state = (env) => env.held;
+const tick = (env) => watch({ state: env.state, notify: env.notify });
 
 // The baseline the worker ships with, so a test can say "nothing has changed
 // since the deploy" without restating it.
@@ -175,21 +165,39 @@ console.log('The watch on buchla.com');
 }
 
 {
+  // The first quiet run has nothing stored yet, so it says nothing but does
+  // record the file list - otherwise the seed's digest would be all there was
+  // to compare against for ever, and a new file could be noticed but never
+  // named.
+  // With nothing stored, watch() compares against the seed the module ships -
+  // which carries a digest and no filenames, so until a run writes the list
+  // down a new file on the page can be noticed but never named.  Whatever the
+  // first run decides to say, it has to leave that list behind.
+  check('the shipped seed carries no file list', !Array.isArray(SHIPPED.files));
+  const env = fakeEnv(null);
+  site({ zip: SEED_ZIP, files: FILES_53, etag: SHIPPED.etag,
+         modified: SHIPPED.modified, length: SHIPPED.length });
+  await tick(env);
+  check('the first run stores the file list',
+        Array.isArray(state(env).files) && state(env).files.length === 53);
+}
+
+{
   // The release.
   const zip = zipFor('37.0', CHANGELOG_370);
   const env = fakeEnv(SEED);
   const calls = site({ zip, files: FILES_53, etag: '"new"',
                        modified: 'Mon, 01 Jun 2026 09:00:00 GMT' });
   await tick(env);
-  check('a new firmware sends one mail', env.sent.length === 1);
-  const mail = env.sent[0] || {};
+  check('a new firmware sends one notice', env.sent.length === 1);
+  const notice = env.sent[0] || {};
   check('the subject carries both versions',
-        mail.subject === 'Buchla 218e v3 firmware 36.9 -> 37.0', mail.subject);
+        notice.subject === 'Buchla 218e v3 firmware 36.9 -> 37.0', notice.subject);
   check('the body quotes only the new changelog section',
-        mail.text.includes('the release this watch exists to catch')
-        && !mail.text.includes('something older'));
+        notice.text.includes('the release this watch exists to catch')
+        && !notice.text.includes('something older'));
   check('and says the patch has to be rebased',
-        /rebasing it/.test(mail.text));
+        /rebasing it/.test(notice.text));
   check('the new version becomes the baseline', state(env).version === '37.0');
   // The point of the range reads: a 48 MB file is never fetched to learn this.
   check('the zip is read in kilobytes, not megabytes',
@@ -239,15 +247,15 @@ console.log('The watch on buchla.com');
 }
 
 {
-  // Nothing is emailed twice.  The second day sees the baseline the first day
+  // Nothing is reported twice.  The second day sees the baseline the first day
   // wrote, not the seed.
   const zip = zipFor('37.0', CHANGELOG_370);
   const env = fakeEnv(SEED);
   site({ zip, files: FILES_53, etag: '"new"', modified: 'Mon, 01 Jun 2026 09:00:00 GMT' });
   await tick(env);
   await tick(env);
-  check('the same release is not mailed twice', env.sent.length === 1,
-        `${env.sent.length} mails`);
+  check('the same release is not reported twice', env.sent.length === 1,
+        `${env.sent.length} notices`);
 }
 
 {
@@ -255,10 +263,10 @@ console.log('The watch on buchla.com');
   // release is swallowed by the baseline and never mentioned again.
   const zip = zipFor('37.0', CHANGELOG_370);
   const env = fakeEnv(SEED);
-  env.EMAIL.send = async () => { throw new Error('the mail bounced'); };
+  env.notify = async () => { throw new Error('the notice could not be delivered'); };
   site({ zip, files: FILES_53, etag: '"new"', modified: 'Mon, 01 Jun 2026 09:00:00 GMT' });
   await tick(env).catch(() => {});
-  check('a failed send leaves the old baseline in place',
+  check('a notice that failed leaves the old baseline in place',
         state(env).version === '36.9' && state(env).etag === '"seed"');
 }
 
@@ -280,13 +288,13 @@ console.log('The watch on buchla.com');
   await tick(env).catch(() => {});
   await tick(env).catch(() => {});
   check('and does not repeat every day after that', env.sent.length === 1,
-        `${env.sent.length} mails`);
+        `${env.sent.length} notices`);
   // But it does say it again a week later.  The alarm is the only thing
   // standing between a broken watch and years of silence, so it must not be
   // spent on a single delivery that might itself have failed.
   for (let day = 10; day <= 14; day++) await tick(env).catch(() => {});
   check('the alarm comes back a week later', env.sent.length === 2,
-        `${env.sent.length} mails after 14 failed days`);
+        `${env.sent.length} notices after 14 failed days`);
   check('a failed check never moves the baseline',
         state(env).version === '36.9' && state(env).etag === '"seed"');
 }
@@ -316,34 +324,23 @@ console.log('The watch on buchla.com');
     return ranged(url, init);
   };
   await tick(env);
-  check('an origin that ignores range still produces a mail', env.sent.length === 1);
-  check('and the mail says the version could not be read',
+  check('an origin that ignores range still produces a notice', env.sent.length === 1);
+  check('and the notice says the version could not be read',
         /could not be\s+read/.test((env.sent[0].text || '').replace(/\n/g, ' ')),
         env.sent[0] && env.sent[0].subject);
 }
 
 {
-  // Both bindings are configured by hand outside this repository, so their
-  // absence is a real state - and each has to fail loudly rather than quietly
-  // do nothing, because quietly doing nothing is indistinguishable from
-  // working.
+  // A baseline that cannot be read is not an excuse to start from the seed
+  // and announce a release that was already reported.  It fails the run.
   const env = fakeEnv(SEED);
   site({ zip: SEED_ZIP, files: FILES_53, etag: '"new"', modified: 'x' });
-  delete env.COUNTS;
+  env.state.read = async () => { throw new Error('the baseline is unreadable'); };
   let threw = null;
   await tick(env).catch(e => { threw = e; });
-  check('no namespace fails the run rather than mailing daily for ever',
-        threw !== null && /baseline/.test(threw.message), threw && threw.message);
-
-  const env2 = fakeEnv(SEED);
-  site({ zip: zipFor('37.0', CHANGELOG_370), files: FILES_53,
-         etag: '"new"', modified: 'x' });
-  delete env2.WATCH_TO;
-  threw = null;
-  await tick(env2).catch(e => { threw = e; });
-  check('no recipient fails the run', threw !== null && /WATCH_TO/.test(threw.message));
-  check('and does not record the change as reported',
-        state(env2).version === '36.9');
+  check('an unreadable baseline fails the run rather than guessing',
+        threw !== null && /unreadable/.test(threw.message), threw && threw.message);
+  check('and sends nothing', env.sent.length === 0);
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
