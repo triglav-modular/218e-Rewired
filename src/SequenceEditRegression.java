@@ -331,7 +331,12 @@ public class SequenceEditRegression extends PersistenceRegression {
         setup(0,false,0); bare(2);
         check("an empty take deletes nothing and flashes nothing",
             r(0x61e0,1)==0&&r(0x6502,1)==0);
-        println("PASS delete flash: armed by a real backspace only, decremented per scan, self-clearing");
+        // Custom SRAM survives warm reset/DFU.  The build marker survives
+        // with it, so first-use initialisation cannot be the only place this
+        // transient is cleared.
+        w(0x6502,1,0x30); boot();
+        check("warm restart cancels a delete flash",r(0x6502,1)==0);
+        println("PASS delete flash: armed by a real backspace only, decremented per scan, self-clearing and restart-safe");
     }
     @Override public void run() throws Exception {
         seq=true; clock=getScriptArgs().length>0&&getScriptArgs()[0].contains("clock");

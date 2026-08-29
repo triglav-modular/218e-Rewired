@@ -175,7 +175,7 @@ def audit_call_pools(image_path) -> list[str]:
 # persistence joined the shipped defaults — which this anchor carries too.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "7d7e04a784f4a77bb2984e9f9f6aaac6585dfebbb7b025c5e24a6eba21eaafcc",
+    "historical_config": "de57f0243017901a6d252f16518895b2ca590345f5a51f5e0e84c35db2f05156",
 }
 
 

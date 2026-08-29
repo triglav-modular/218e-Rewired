@@ -394,7 +394,37 @@ public class ControlRegression extends SequenceEditRegression {
         w(0x3490,1,0); w(0x3490+4,1,0); call(0x8001aa10L);
         for(int i=0;i<50;i++)sound();
         check("release clears the blend",r(0x60e2,2)==0);
-        println("PASS pressure ownership: allocated slots carry their finger's weight, orphaned latches carry none");
+
+        // One physical key can own several octave-latched slots.  Toggling
+        // an OLDER one off must clear this press's current ownership instead
+        // of leaving the finger attached to a different surviving octave.
+        setup(0,false,1); command(0); latchFixture();
+        octavePad(3); key(0); sound(); noteUp(0); // slot 0, high
+        octavePad(1); key(0); sound(); noteUp(0); // slot 1, neutral
+        key(4); sound();                           // another held note/anchor
+        octavePad(3); key(0); sound();             // remove older slot 0
+        w(0x3490,1,2); w(0x3490+4,1,2);
+        for(int k=0;k<29;k++)w(0x3686+2*k,2,(k==0||k==4)?900:110);
+        call(0x8001aa10L); w(S+0x306,2,900);
+        for(int i=0;i<50;i++)sound();
+        check("older octave is removed while the other latches remain",
+            r(S+0x21b,1)==0&&r(S+0x21c,1)==1&&r(S+0x21f,1)==1);
+        check("older toggle clears the physical key's current slot",r(0x6521,1)==0);
+        check("only the genuinely held note receives pressure",
+            r(0x6542,2)==0&&r(0x6548,2)>0);
+        short olderToggleTarget=(short)r(0x60e0,2);
+        short olderToggleBlend=(short)r(0x60e2,2);
+        // Change only the removed key's pressure.  The still-held key 4 can
+        // legitimately steer from the current sounding anchor, so its blend
+        // need not be zero; the orphaned key 0 must have no influence on
+        // either the raw target or the settled applied offset.
+        w(0x3686,2,200);
+        call(0x8001aa10L); w(S+0x306,2,900);
+        for(int i=0;i<50;i++)sound();
+        check("the removed note cannot bend a surviving octave",
+            (short)r(0x60e0,2)==olderToggleTarget&&
+            Math.abs((short)r(0x60e2,2)-olderToggleBlend)<=1);
+        println("PASS pressure ownership: allocated slots carry their finger's weight, orphaned and older-toggle latches carry none");
     }
     void previewBoundaries() throws Exception {
         // The end of a one-shot preview is a sentinel, not a wrap: no step

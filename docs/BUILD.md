@@ -258,9 +258,9 @@ the options into the full internal settings the build has always used.
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 | `knob1`, `knob2`, `knob3`, `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
 | `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
-| `sequencer` | `false` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
-| `persist` | `false` | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). |
-| `clock_divide` | `false` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
+| `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
+| `persist` | `true` | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). |
+| `clock_divide` | `true` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
 
 The options combine freely, with one exception the build enforces:
 **pressure-based portamento needs the pressure response fix**. The blend

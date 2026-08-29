@@ -2846,18 +2846,18 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("arp_swing", 0x8001b164);
 
-        // The sequencer's controls, on a pad chord.  Hold pad 4 for three
-        // seconds to arm - its light blinks - then, still holding it, press
+        // The sequencer's controls, on a pad chord.  Hold pad 4 for about one
+        // second to arm - its light blinks - then, still holding it, press
         // pad 1 to record, pad 2 to play, pad 3 to stop.  The add-to-pitch
         // toggle is not involved: it keeps selecting octaves, preset voltage
         // or none exactly as the factory does.
         //
-        // Three seconds because pad 4 with another pad is an ordinary thing
+        // A deliberate hold because pad 4 with another pad is an ordinary thing
         // to do, and a bare chord would fire by accident.  The arm dies with
         // the hold, so it can never outlive the gesture that made it.
         //
         // RAM off one base at 0x6154: +0 hold counter (halfword; scans are
-        // ~5 ms, so three seconds is 600 of them), +2 armed, +3 selected,
+        // ~5 ms, so one second is 200 of them), +2 armed, +3 selected,
         // +4 mode, +5 the pad to hold the selection at, +6..8 last scan's
         // touch levels for pads 1-3, +0xa a free-running blink counter.
         // One counter drives every blink this firmware adds, so they share a
@@ -4386,7 +4386,7 @@ function assembleProgram() {
         emit("MCALL PC[0x8001d5b8]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001d5b0);
-        word(0x8001ab60);
+        word(block("seq_restart_init") ? 0x8001df80 : 0x8001ab60);
         word(0x8001cfc0);
         word(block("clock_capture") ? 0x8001c300 : 0x80007340);
         word(0x8001d280);
@@ -5043,30 +5043,35 @@ function assembleProgram() {
         // and per slot, which key's press made its note; the pressure pass
         // reads them back so a finger's weight lands on the note under it,
         // not on whatever older note still occupies the finger's own slot
-        // number.  A toggle-OFF answers -1 and maps nothing: the note is
-        // gone, and its held flag already takes it out of the blend.
+        // number.  A toggle-OFF answers -1. Clear current[key] in that case:
+        // one physical key may own several octave-latched slots, and removing
+        // an older one must not leave this still-held press weighting a
+        // different surviving octave. A full-latch rejection follows the
+        // same rule: this press made no note, so it owns no pressure target.
         begin(0x8001dde0);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");
-        emit("MCALL PC[0x8001de18]");   // the toggle itself
-        emit("CP.W R12,-0x1");
-        emit("BR{eq} 0x8001de14");
-        emit("CP.W R12,0x1c");
-        emit("BR{hi} 0x8001de14");
-        emit("CP.W R0,0x1c");
-        emit("BR{hi} 0x8001de14");
+        emit("MCALL PC[0x8001de1c]");   // the toggle itself
+        emit("CP.W R12,0x0");
+        emit("BR{lt} 0x8001de08");
         emit("MOV R9,0x6521");
-        emit("MOV R8,R12");
-        emit("SUB R8,-0x1");
-        emit("ST.B R9[R0 << 0x0],R8");  // current[key] = slot, plus one
-        emit("MOV R9,0x6504");
-        emit("MOV R8,R0");
-        emit("SUB R8,-0x1");
-        emit("ST.B R9[R12 << 0x0],R8"); // owner[slot] = key, plus one
-        padTo(0x8001de14);
-        emit("LDM SP++,R0,R7,PC");
+        emit("SUB R12,-0x1");
+        emit("ST.B R9[R0 << 0x0],R12"); // current[key] = slot, plus one
+        emit("SUB R12,0x1");            // restore the toggle's return
+        emit("SUB R9,0x1d");            // 0x6504: owner[]
+        emit("SUB R0,-0x1");
+        emit("ST.B R9[R12 << 0x0],R0"); // owner[slot] = key, plus one
+        emit("RJMP 0x8001de18");
+        padTo(0x8001de08);
+        emit("CP.W R0,0x1c");
+        emit("BR{hi} 0x8001de18");      // invalid key: no indexed write
+        emit("MOV R9,0x6521");
+        emit("MOV R8,0x0");
+        emit("ST.B R9[R0 << 0x0],R8");  // rejected/toggled press owns nothing
         padTo(0x8001de18);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001de1c);
         word(0x8001a930);              // pitch-aware latch toggle
         finish("latch_owner", 0x8001de20);
 
@@ -5241,6 +5246,34 @@ function assembleProgram() {
         word(0x8001b2c0);              // seq_record_sound
         finish("seq_flash", 0x8001df80);
 
+        // Same-image warm restart/DFU keeps custom SRAM and its first-use
+        // marker. Clear the delete-flash transient on every real startup,
+        // then let the shared first-use bootstrap do any image migration.
+        // Persistence and clock startup both call this wrapper; a sequencer
+        // build without either reaches it through seq_boot below.
+        begin(0x8001df80);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001dfa0]");
+        emit("MOV R8,0x0");
+        emit("MOV R9,0x6502");
+        emit("ST.B R9[0x0],R8");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001dfa0);
+        word(0x8001ab60);
+        finish("seq_restart_init", 0x8001dfa8);
+
+        begin(0x8001dfa8);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001dfc4]");
+        emit("MCALL PC[0x8001dfc8]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001dfc4);
+        word(0x8001df80);
+        word(0x80007340);
+        finish("seq_boot", 0x8001dfd0);
+
         // Called at 0x80007bf4 while the factory has interrupts masked, BEFORE
         // enabling the input. SRAM survives warm restart and DFU: reset the
         // FIFO explicitly even if the common first-use marker already matches.
@@ -5249,7 +5282,8 @@ function assembleProgram() {
         begin(0x8001c300);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001ac80]");
+        emit(block("seq_restart_init")
+            ? "MCALL PC[0x8001dfc4]" : "MCALL PC[0x8001ac80]");
         emit("MOV R8,0x0");
         emit("MOV R10,0x6232");
         emit("MOV R9,0x56");
@@ -6356,9 +6390,10 @@ function assembleProgram() {
                  "MOV R10,0x%x", number("trigger_spike_units", 5, 1, 5)));
         }
 
-        if (block("clock_capture") || block("persist")) {
+        if (block("clock_capture") || block("persist") || block("seq_boot")) {
             begin(0x80007d8c);
-            word(block("persist") ? 0x8001d540 : 0x8001c300);
+            word(block("persist") ? 0x8001d540
+                 : block("clock_capture") ? 0x8001c300 : 0x8001dfa8);
             finish("clock_init_pool", 0x80007d90);
         }
 

@@ -272,7 +272,7 @@ the active preset when the count runs out - the same repaint the pad-4
 release path uses.  Deleting from an empty take flashes nothing.
 
 RAM: the 0x6500 block is new - 0x6500 pinned audition pitch (+1), 0x6502
-flash countdown (cleared once by the first-use tail), 0x6503 spare,
+flash countdown (cleared by both first-use migration and every startup), 0x6503 spare,
 0x6504 owner[29], 0x6521 current[29], 0x6540 slot weights (29
 halfwords, rebuilt before every read).  It first went to 0x6300 and the
 persistent edit suite caught the collision the same day: persistence
@@ -435,7 +435,7 @@ in a constant will mislead the next person who changes the mapping.
   the adder-source chord that replaced it, which is what needed a forcing
   point in the pitch adder.  None of that exists now.  The pitch adder is
   untouched, and so is every preset behaviour built in phase 2.)
-- **The sequencer lives on the pad 4 hold.**  Hold pad 4 for three seconds
+- **The sequencer lives on the pad 4 hold.**  Hold pad 4 for one second
   to arm - pad 4's light blinks - then, still holding it, press:
     - pad 1: RECORD
     - pad 2: PLAY
@@ -448,13 +448,13 @@ in a constant will mislead the next person who changes the mapping.
   replaces, only the meaning of the three pads is different: the pad touch
   array at RAM 0x46f0 is read every scan by the preset editor cave, so this
   is a hold counter plus an edge test - pad 1/2/3 going 0->2 while pad 4 has
-  been at 2 for 600 scans.  Scans are ~5 ms, so three seconds is ~600 of
+  been at 2 for 200 scans.  Scans are ~5 ms, so one second is ~200 of
   them: a HALFWORD counter, not a byte.
   Rules: the arm lives only while pad 4 stays held - releasing it disarms and
   zeroes the counter, so an arm can never outlive the gesture that made it.
   The selecting press is EATEN: it must not also select an octave or a pad.
   Pad 4's own press is an ordinary selection throughout, with nothing armed
-  for the first three seconds.  A pad-4 hold that has MOVED ITS KNOB does not
+  for the first second.  A pad-4 hold that has MOVED ITS KNOB does not
   arm - the editor already flags that pad as following, and a careful preset
   edit is exactly what a long hold looks like.  None of these is the factory
   pads-2+3 latch, which our-latch builds remove anyway.

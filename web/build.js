@@ -134,7 +134,8 @@ var WEBBUILD = (function () {
          'seq_trigger_led', 'seq_trigger_led_hook',
          'seq_edit', 'seq_preview_step', 'seq_command',
          'seq_preview_next', 'seq_preview_start', 'seq_preview_transport',
-         'seq_record_pitch', 'seq_hold', 'seq_flash']
+         'seq_record_pitch', 'seq_hold', 'seq_flash',
+         'seq_restart_init', 'seq_boot']
             .forEach(function (n) { blocks[n] = seq; });
         var keep = !!(cfg.persist && cfg.persist.on);
         ['persist_crc', 'persist_record_crc', 'persist_pack',
@@ -153,7 +154,7 @@ var WEBBUILD = (function () {
          'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard',
          'clock_spike_units']
             .forEach(function (n) { blocks[n] = div; });
-        blocks.clock_init_pool = div || keep;
+        blocks.clock_init_pool = div || keep || seq;
         blocks.profiler_pool = div || !!features.scan_profiler;
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';

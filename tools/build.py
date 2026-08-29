@@ -924,8 +924,8 @@ RAM_REGIONS = [
     # the pressure-ownership maps, above the persistence staging and
     # snapshot blocks.  Every cell is written before it is read or
     # validated before it is trusted, so none of this needs the first-use
-    # fill; only the flash countdown gets a one-time clear from the
-    # initialiser tail, because it is read every scan.
+    # fill.  The flash countdown is also cleared by the startup wrapper,
+    # because SRAM survives a same-image warm restart.
     (0x6500, 0x6502, "the audition's pinned pitch, plus one"),
     (0x6502, 0x6503, "delete-pad flash countdown, in scans"),
     (0x6504, 0x6521, "owner: which key's press made each slot's note, plus one"),
@@ -1821,7 +1821,7 @@ def main() -> None:
                  "persist_same", "persist_verify", "persist_save", "persist_tick",
                  "persist_capture", "persist_boot", "persist_scan_shim", "persist"):
         blocks[name] = keep
-    blocks["clock_init_pool"] = div or keep
+    blocks["clock_init_pool"] = div or keep or seq
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
@@ -1835,7 +1835,8 @@ def main() -> None:
                  "seq_trigger_led", "seq_trigger_led_hook",
                  "seq_edit", "seq_preview_step", "seq_command",
                  "seq_preview_next", "seq_preview_start", "seq_preview_transport",
-                 "seq_record_pitch", "seq_hold", "seq_flash"):
+                 "seq_record_pitch", "seq_hold", "seq_flash",
+                 "seq_restart_init", "seq_boot"):
         blocks[name] = seq
     blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
