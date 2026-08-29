@@ -138,8 +138,12 @@ The audit also modelled the external-clock timebase and could not confirm
 on hardware that COUNT and the factory CPU-frequency word (RAM 0x29cc)
 agree; only the release timeout is measured in milliseconds, while low
 qualification, refractory time, period acquisition and attack spacing
-still trust that word.  Measuring COUNT against the millisecond counter on
-the instrument is the outstanding check.
+still trust that word.  The owner reported the divider timeout fixed on the
+instrument on 2026-08-29, which closes the symptom that motivated this — a
+divide that locked at 0.5-1 Hz with /8.  The direct measurement of COUNT
+against the millisecond counter was not what was reported, so the word is
+still trusted rather than verified; nothing observed on hardware now
+contradicts it.
 
 Coverage: `ControlRegression.java` gained latch recording (fresh press,
 repeat, reused slot, absolute playback with a held slot), recorded pitch
@@ -323,11 +327,13 @@ its neighbour: `MOV R11,0x3ff` replaces `MOV R12,0x0`, and `MOV R12,R11`
 takes the four bytes the old fall-through spent on padding.
 
 **Persistence ships on.**  `persist` defaulted false in both toolchains
-pending hardware validation; it defaults true now, so a build from the web
-page keeps its presets and its sequence across power-off.  The caveat that
-kept it off is unchanged and still worth knowing: flash programming blocks
-execution from flash, so a save landing during a running clock can miss
-incoming edges.  Nothing about the format or the commit path moved.
+pending hardware validation; the owner validated it on the instrument on
+2026-08-29, so it defaults true and a build from the web page keeps its
+presets and its sequence across power-off.  The caveat that kept it off is
+unchanged and still worth knowing - flash programming blocks execution from
+flash, so a save landing during a running clock can miss incoming edges -
+but the owner accepts those dropped edges in this context.  Nothing about
+the format or the commit path moved.
 
 The four `persist_*` sweep rows and the four in `web/test_configs.py` became
 the `volatile_*` rows, for the reason the comment beside them already gave -

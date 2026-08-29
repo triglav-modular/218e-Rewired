@@ -35,7 +35,10 @@ edits. Simultaneous completions share one record commit.
 
 Flash programming temporarily blocks execution from flash; playback,
 output timing and incoming edge capture can pause during the save.
-Consequently, saves during a running clock can miss edges. The capture ISR,
+Consequently, saves during a running clock can miss edges. The owner
+validated this on the instrument on 2026-08-29 and accepts the dropped
+edges: a save happens at the end of a deliberate gesture, which is not a
+moment anyone is counting pulses through. The capture ISR,
 its thresholds and queued clock state are unchanged, and firmware does not
 invent replacement edges. This is immediate gesture saving, **not** a
 gapless background writer; see section 14.5 of the

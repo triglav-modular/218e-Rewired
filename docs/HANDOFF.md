@@ -12,8 +12,10 @@ described below. It explicitly enables both GPIO edges, fixes literal-pool
 fallthrough, latches division independently of interval confidence, and
 serializes note/pitch/trigger output. The requirement is 0.5–200 Hz.
 Run `python3 tools/test_clock.py` against fresh produced firmware.
-The owner confirmed that clock fix working on hardware. Persistence and
-independent sequencer transport still need hardware checks.
+The owner confirmed that clock fix working on hardware, and on 2026-08-29
+that the divider timeout is fixed there too. Persistence was validated on
+the instrument the same day. Independent sequencer transport still needs a
+hardware check.
 
 Phases 0–5 of [PLAN-2.0.md](PLAN-2.0.md) are built and on the owner's
 instrument: `.kbm` keyboard maps and period-aware octave controls, preset
@@ -66,8 +68,10 @@ an octave the way it does played ones, and knob 1's blend shuffles which step
 comes next. Knob 1's six note-order zones stay the keyboard's alone - the
 owner's call - so a recorded sequence keeps the order it was played in.
 
-**Hardware validation.** The owner flashes and reports. The new persistence
-and transport changes have only been tested in emulation.
+**Hardware validation.** The owner flashes and reports. Persistence was
+validated on the instrument on 2026-08-29, including its dropped edges
+during a save, which the owner accepts. The transport changes have still
+only been tested in emulation.
 `strip_halfway_units` is 2048 because 2048 is the middle of the
 range the firmware clamps to, and the middle is the rule; it is a build
 number so a strip reading off centre can be told where its own middle is.
@@ -87,8 +91,9 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   and nothing here is ever tested against hardware.  Archaeology pointers
   are in the plan's DFU section if the owner ever wants it chased.
 
-- **Preset/sequence persistence** — implemented behind `persist`, off by
-  default pending hardware validation. The post-audit version uses a CRC32
+- **Preset/sequence persistence** — implemented behind `persist`, on by
+  default since 2026-08-29 and validated on the instrument. The post-audit
+  version uses a CRC32
   musical-data-only record, verified body followed by a no-erase marker
   commit, and bounded retries that never erase the newest valid page.
   Changed sequences save on record exit/CLEAR and changed presets on their
