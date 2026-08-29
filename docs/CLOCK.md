@@ -38,9 +38,18 @@ At the default settings:
   flush rather than the 5 ms pitch scan. Measured on the emitted firmware,
   the edge-to-rise delay was uniform over a whole scan period — 0 to 4.8 ms,
   with no fixed component — because the gate's fall was already scheduled
-  from the edge itself while its rise waited for the next scan. Setting
-  `clock_settle_scans` above zero asks for a wait in scans and returns the
-  step to the scan, at the old timing.
+  from the edge itself while its rise waited for the next scan. It now
+  measures 0.8 ms peak to peak.
+- The **internal clock's beat holds the same bound**, and so does an
+  external beat with a settle configured. A settle is a wait for the output
+  RC, not for the scan grid: the flush stages the pitch at once, the
+  millisecond timer spends the wait, and a later flush raises the gate. The
+  wait itself is unchanged — `gate_settle_scans` and `clock_settle_scans`
+  still mean the same number of scan periods — but it no longer rounds the
+  trigger up to the next scan boundary. Measured: the internal beat went
+  from 5–10 ms with 4 ms of spread to a fixed 5 ms settle with none.
+  A key played with the arp and the sequencer both off is not a beat; its
+  latency is the player's own and it stays on the scan as before.
 
 - The RATE knob's raw channel is clamped to 0x3ff before the divisor is
   derived, as the factory clamps it at every read - the raw cell exceeds
@@ -127,6 +136,15 @@ trigger back on the 5 ms scan with the fast-trigger cave emitted but
 unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
 configuration and holds it to the same 1 ms bound.
 
+The claim byte at 0x625b says which of those the flush is holding: 1 to
+fire on this tick, 2 to stage the pitch and start a settle, 3 while that
+settle runs. Under 2 and 3 the countdown at 0x60ee is MILLISECONDS rather
+than scans — `clock_settle` writes it that way when it sets the claim, the
+1 ms task spends it, and `clock_output` leaves the whole step alone so the
+scan cannot read those milliseconds as scans and spend them five times
+over. If the glide declines the step the claim is dropped and 0x60ee is
+handed back a scan count, which is exactly what declining asked for.
+
 The flush path stages the step's own pitch through the calibration
 remap **entered past the per-scan chain at its head** — the tuning applier,
 the housekeeping and the vibrato engine all advance once per scan and must not
@@ -188,7 +206,7 @@ unfinished edits do not write.
 | 0x6244–0x6253 | Cycle-based timing constants |
 | 0x6254 / 0x625a | Last physical output stamp / valid flag |
 | 0x6258 | Saturating FIFO-overrun count |
-| 0x625b | The step's trigger is claimable by the 1 kHz flush |
+| 0x625b | Flush claim: 0 none, 1 fire now, 2 stage then settle, 3 settling |
 | 0x6260–0x62df | Timestamp FIFO |
 | 0x62f6 | Millisecond count at the last accepted edge |
 
@@ -199,22 +217,36 @@ the release fire in under a second on the instrument.
 ## Repeatable checks
 
 ```sh
-python3 tools/test_clock.py            # seq, arp and pressure-off
+python3 tools/test_clock.py            # five builds; see below
 python3 tools/test_persistence.py
 python3 tools/avr32/sweep.py
 python3 web/test_configs.py
 python3 tools/test.py --golden
 ```
 
-The first command builds fresh clock-only and clock+sequencer images without
-rewriting the flashers, then executes their bytes using ClockRegression.java.
+The first command builds five images without rewriting the flashers, then
+executes their bytes using ClockRegression.java. Three carry the shipped
+timing — clock-only, clock+sequencer, and the `pressure_fix = false` build
+that turns output smoothing off while leaving clock division on. The other
+two exist for the trigger's jitter bound alone and run the jitter tests only:
+`settle-scans` builds `clock_settle_scans = 1` and `no-gate-settle` builds
+`gate_settle_scans = 0`, the two settings that used to decide whether the
+trigger rode the flush at all. Neither settle is a build option — both are
+constants in tools/options.py — so the driver edits the constant around the
+build and restores it in a finally, dropping tools/__pycache__ with it: the
+edit changes one digit, so the file keeps its length, and a same-second
+restore would otherwise leave CPython holding stale bytecode and every later
+build in the run silently using the wrong constant.
 It checks ISR hooks, register/stack preservation, gate ownership, chatter,
 spent lows, duty/phase sensitivity, delayed dispatch, ordered pitch output,
 division under jitter, timeout, FIFO overflow, COUNT wrap, warm restart and
 rests/ties. Startup, main-loop and 1 ms callback pointers are exercised too,
 as is the 1 kHz DAC flush through the dispatcher's own jump-table entry.
 It also measures edge-to-rise jitter across a locked clock walked over the
-scan grid, checks the pitch the flush stages is the one a later scan reaches,
+scan grid and beat-to-rise jitter across an internal tempo walked over the
+same grid, asks the firmware what settle it was built with rather than
+assuming it, checks a key played with the arp and sequencer off is not
+claimed, checks the pitch the flush stages is the one a later scan reaches,
 checks the flush leaves the per-scan vibrato chain alone, and runs a whole
 clock with the scan before the flush and again with it after.
 Missing completion markers and emulator instruction-budget exhaustion fail

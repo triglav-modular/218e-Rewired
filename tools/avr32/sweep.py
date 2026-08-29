@@ -177,7 +177,7 @@ def audit_call_pools(image_path) -> list[str]:
 # that are still under a finger.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "9c636291cc90aaa9f8ac9279e7e38e48716adc6779eb361a9880ce2fc18497bc",
+    "historical_config": "1a5b811063915867467e7defe7b938904b85a16c72300e4bf8b2bdd0b69a91b8",
 }
 
 

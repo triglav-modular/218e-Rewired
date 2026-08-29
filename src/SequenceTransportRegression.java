@@ -89,7 +89,12 @@ public class SequenceTransportRegression extends ClockRegression {
     void ticks(long start,int count) throws Exception {
         for(int i=1;i<=count;i++) {
             long t=start+i*1000L;
-            if(clock) { bank(t); service(t); }
+            // The 1 kHz DAC flush is dispatched by the same main loop as the
+            // scan and runs far more often; leaving it out of the model was
+            // harmless while the pitch scan alone completed a step, but the
+            // beat's settle is spent by the millisecond timer now and its
+            // gate goes out on the flush, so both have to be here.
+            if(clock) { bank(t); service(t); flush(t); }
             internal(t); if(i%5==0)scan(t);
         }
     }

@@ -81,7 +81,16 @@ public class SequenceEditRegression extends PersistenceRegression {
     void internalTicks(int count) throws Exception {
         for(int i=0;i<count;i++) {
             time(++now);
-            if(clock)call(0x80007c66L,0x80007c6aL);
+            if(clock) {
+                call(0x80007c66L,0x80007c6aL);
+                // The 1 ms task and the 1 kHz DAC flush. Both are dispatched
+                // on hardware every millisecond and neither was modelled
+                // here, which was harmless while the pitch scan alone
+                // completed a beat: the beat's settle is spent by the timer
+                // now and its gate goes out on the flush.
+                e.writeRegister("R12",0x7010); call(r(0x80007da0L,4),0x100);
+                call(r(0x8001485cL,4),0x80004f66L);
+            }
             call(0x80004f66L,0x80004faeL);
             if(now%5==0) { pitch(); scan(); }
         }

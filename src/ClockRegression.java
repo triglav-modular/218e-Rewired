@@ -15,6 +15,7 @@ public class ClockRegression extends GhidraScript {
     final List<Integer> pitches = new ArrayList<>();
     final List<Integer> dac = new ArrayList<>();
     final List<Long> outputTimes = new ArrayList<>();
+    final List<Long> beatTimes = new ArrayList<>();
 
     long pc() { return e.getExecutionAddress().getOffset(); }
     void jump(long p) { e.writeRegister(e.getPCRegister(), p); }
@@ -59,7 +60,7 @@ public class ClockRegression extends GhidraScript {
             return;
         }
         if (pc() == 0x8001c914L) advances++;
-        if (pc() == 0x800022deL && periodic) periodicAdvances++;
+        if (pc() == 0x800022deL && periodic) { periodicAdvances++; beatTimes.add(nowUs); }
         int ins = (int)r(pc(),2);
         // Installed AVR32 SLEIGH mis-models BFINS: it inserts the field at the
         // wrong bit offset (0x7f into bits 8..15 where bit 24 was asked for).
@@ -144,7 +145,7 @@ public class ClockRegression extends GhidraScript {
         w(GPIO+0xc4,4,32); w(0xffff1c08L,4,1);
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202); // SPI TX ready/empty
         advances=0; periodicAdvances=0; periodic=false;
-        pitches.clear(); dac.clear(); outputTimes.clear();
+        pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear();
     }
     void irq(long us, boolean high) throws Exception {
         time(us);
@@ -189,10 +190,22 @@ public class ClockRegression extends GhidraScript {
         call(0x80004f66L,0x80004faeL);
         periodic=false;
     }
+    // Let a step that has been selected actually complete. Which context
+    // finishes it depends on the build: with no settle configured the next
+    // flush does, with one configured the flush stages the pitch and the 1 ms
+    // timer spends the wait before a later flush raises the gate, and if the
+    // glide declines the whole thing the pitch scan still does. Ticking all
+    // three for a few milliseconds covers every one of those.
+    void finishStep(long until) throws Exception {
+        for (long tick=((nowUs/1000)+1)*1000; tick<=until; tick+=1000) {
+            bank(tick); service(tick); flush(tick);
+            if (tick%5000==0) scan(tick);
+        }
+    }
     void abiAndNoise() throws Exception {
         fresh(1,25000000);
         e.writeRegister("R0",0x685b); e.writeRegister("R1",0x12345678);
-        irq(10000,true); service(10000); scan(15000);
+        irq(10000,true); service(10000); finishStep(25000);
         check("no literal-pool register corruption", e.readRegister("R1").longValue()==0x12345678);
         check("callee-saved R0 preserved", e.readRegister("R0").longValue()==0x685b);
         check("one actual note/trigger", advances==1 && outputTimes.size()==1);
@@ -205,15 +218,15 @@ public class ClockRegression extends GhidraScript {
             irq(50000+i*2000,false); irq(50100+i*2000,true); service(nowUs);
         }
         check("no fail-open after repeated chatter", advances==1 && outputTimes.size()==1);
-        irq(80000,false); irq(81000,true); service(81000); scan(85000);
+        irq(80000,false); irq(81000,true); service(81000); finishStep(95000);
         check("fresh qualified low recovers immediately", advances==2 && outputTimes.size()==2);
-        irq(85100,false); irq(85200,true); service(85200);
+        irq(95100,false); irq(95200,true); service(95200);
         check("low interval cannot be reused", advances==2);
         // Event 10 is no longer an unqualified ingress.
         call(0x80004e58L,0x800051b0L);
         check("synthetic legacy event cannot step", advances==2);
         for (long sr : new long[]{0,0x10000}) {
-            e.writeRegister("SR",sr); service(86000);
+            e.writeRegister("SR",sr); service(96000);
             check("caller interrupt mask preserved", (e.readRegister("SR").longValue()&0x10000)==sr);
         }
         e.writeRegister("SR",0);
@@ -560,11 +573,115 @@ public class ClockRegression extends GhidraScript {
               reg(11)==0x407e5000L && reg(10)==0);
         println("PASS bit-field instructions and factory soft-float");
     }
+    // The internal clock's beat is the factory tempo path inside event 17,
+    // not a GPIO edge, so clock_settle takes its "no external clock" branch:
+    // a wait of gate_settle_scans+1 SCANS, and no claim on the 1 kHz flush.
+    // The wait itself is a measured RC fact and stays - the output pole is
+    // tau 0.9 ms, so a gate raised with the pitch store sits 132 cents short
+    // on an octave jump. What it should not ALSO cost is the scan grid: the
+    // settle is milliseconds, and quantising it to 5 ms scans is the whole
+    // of the beat's jitter. Walk the tempo across that grid and measure.
+    void internalJitter() throws Exception {
+        // Ask the FIRMWARE what settle this build was configured with rather
+        // than assuming the default: drive clock_settle once on the internal
+        // branch and read what it left. Claim 2 means the flush holds the
+        // gate and 0x60ee is that hold in milliseconds; claim 1 means there
+        // is nothing to hold and the gate goes out on the next flush.
+        fresh(1,25000000);
+        w(0x6236,1,0); w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
+        call(0x8001c700L,0x100);
+        final int claim=(int)r(0x625b,1);
+        final int settleMs=claim==2 ? (int)r(0x60ee,1) : 0;
+        check("the internal beat is claimed by the flush however it is built",
+              claim==1 || claim==2);
+        println("internal settle this build asks for: "+settleMs+" ms (claim "+claim+")");
+        fresh(1,25000000);
+        // 26 ms is a whole number of milliseconds and NOT a multiple of the
+        // 5 ms scan, so successive beats land on every phase of the grid.
+        w(S+0x34a,2,26); w(S+0x38e,2,1);
+        for (long tick=10000; tick<=760000; tick+=1000) {
+            bank(tick); service(tick); internal(tick); flush(tick);
+            if (tick%5000==0) scan(tick);
+        }
+        // ...and again with the scan AHEAD of the flush. The claim is dropped
+        // by whichever context completes the step, so a scan that reaches a
+        // beat first must fire it once and leave nothing for the flush; the
+        // count below is what catches a second spike if it does not.
+        int beforeBeats=beatTimes.size(), beforeOut=outputTimes.size();
+        for (long tick=761000; tick<=1200000; tick+=1000) {
+            bank(tick); service(tick); internal(tick);
+            if (tick%5000==0) scan(tick);
+            flush(tick);
+        }
+        check("scan before flush: still one trigger per internal beat",
+              beatTimes.size()-beforeBeats>=10
+              && outputTimes.size()-beforeOut==beatTimes.size()-beforeBeats);
+        check("jitter fixture is the INTERNAL clock, no external presence",
+              r(0x6236,1)==0 && r(0x6233,1)==0 && periodicAdvances>=20);
+        check("one trigger per internal beat",
+              outputTimes.size()==beatTimes.size() && beatTimes.size()>=20);
+        long lo=Long.MAX_VALUE, hi=Long.MIN_VALUE;
+        StringBuilder each=new StringBuilder();
+        for (int i=5;i<beforeBeats;i++) {
+            long delay=outputTimes.get(i)-beatTimes.get(i);
+            lo=Math.min(lo,delay); hi=Math.max(hi,delay);
+            each.append(" ").append(delay);
+        }
+        println("internal beat to trigger us, beats 5..."+(beforeBeats-1)+":"+each);
+        println("internal beat to trigger: min="+lo+" max="+hi+" spread="+(hi-lo)+" us");
+        // The settle is not given up to buy the promptness.
+        check("every internal beat still gets its full "+settleMs+" ms settle",
+              lo>=settleMs*1000L);
+        // The target is 1-2 ms peak to peak, on every build, on both clocks.
+        check("internal trigger jitter within one flush tick", hi-lo<=2000);
+        println("PASS internal clock trigger jitter "+(hi-lo)+" us peak to peak");
+    }
+    // clock_settle is reached from the arp's own advance AND from three
+    // key-scan sites, and both take the "no external clock" branch. Only the
+    // BEAT is claimed for the flush: with the arp and the sequencer both off
+    // the note is a key under a finger, its latency is the player's own, and
+    // it is left on the scan exactly as it was. Drive the routine at both
+    // settings and check which of them arms.
+    void keyboardKeepsTheScan() throws Exception {
+        fresh(1,25000000);
+        w(0x6236,1,0); w(0x60ee,1,0); w(0x625b,1,0);
+        w(S+0x340,1,0); w(S+0x341,1,0);
+        call(0x8001c700L,0x100);
+        // Unclaimed, the countdown is what it always was: SCANS, one more
+        // than the settle asked for, and the pitch scan is what spends it.
+        // The count itself depends on the build; that it is the SCAN's does
+        // not, and the claim being clear is what says so.
+        check("a key with the arp and sequencer off is not claimed by the flush",
+              r(0x625b,1)==0 && r(0x60ee,1)>=1);
+        // Claimed, the flush owns it: claim 1 fires on the next flush, claim
+        // 2 stages the pitch and holds the gate for the settle -- and then
+        // the countdown is that settle in MILLISECONDS, not in scans.
+        w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
+        call(0x8001c700L,0x100);
+        int beatClaim=(int)r(0x625b,1);
+        check("the internal beat is claimed by the flush, however built",
+              beatClaim==1 || beatClaim==2);
+        check("a claim that holds the gate carries a wait to hold it for",
+              beatClaim!=2 || r(0x60ee,1)>=1);
+        w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,0); w(S+0x341,1,1);
+        call(0x8001c700L,0x100);
+        check("a playing sequence is a beat too", r(0x625b,1)==beatClaim);
+        println("PASS the keyboard alone keeps the scan; the beat takes the flush");
+    }
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
         try {
-            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
-            if (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick"))
+            // The settle variants exist to hold the TRIGGER to its bound at
+            // settings the shipped build does not use. The rest of the suite
+            // is fixture-timed for the shipped settle and says nothing extra
+            // under them, so those builds run the jitter set alone.
+            boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
+            if (jitterOnly) {
+                bitFieldInstructions(); riseJitter(); internalJitter(); keyboardKeepsTheScan();
+            } else {
+            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            }
+            if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})
                 for (double duty : new double[]{0.1,0.5,0.75,0.9})
                     for (int phase : new int[]{0,250}) square(hz,duty,phase);

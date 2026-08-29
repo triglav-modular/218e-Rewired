@@ -3399,6 +3399,23 @@ function assembleProgram() {
         emit("LD.UH R9,R8[0x0]");
         emit("SUB R9,-0x1");
         emit("ST.H R8[0x0],R9");
+        if (twoPhaseBeat()) {
+            // The beat's settle is milliseconds, so it is spent here, on the
+            // 1 ms timer, and not on the 5 ms scan that used to quantise it.
+            // Only while the flush owns the step (claim 3); at every other
+            // moment 0x60ee is the scan's own countdown and is not ours.
+            emit("MOV R8,0x625b");
+            emit("LD.UB R9,R8[0x0]");
+            emit("CP.W R9,0x3");
+            emit("BR{ne} 0x8001bb9c");
+            emit("MOV R8,0x60ee");
+            emit("LD.UB R9,R8[0x0]");
+            emit("CP.W R9,0x0");
+            emit("BR{eq} 0x8001bb9c");
+            emit("SUB R9,0x1");
+            emit("ST.B R8[0x0],R9");
+            padTo(0x8001bb9c);
+        }
         emit("MCALL PC[0x8001bbb8]");   // bank a long low before COUNT wraps
         emit("MOV R12,R0");
         emit("MCALL PC[0x8001bbbc]");
@@ -5456,6 +5473,19 @@ function assembleProgram() {
         begin(0x8001c600);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
+        // The guard above moves the fire label along by the eight bytes it
+        // costs; everything after 0x8001c66c is where it always was.
+        var outFire = twoPhaseBeat() ? 0x8001c650 : 0x8001c648;
+        if (twoPhaseBeat()) {
+            // While the flush owns the step (claim 2 or 3) 0x60ee counts
+            // MILLISECONDS, and the scan reading them as scans would spend
+            // the settle five times over and raise the gate itself.  Leave
+            // the whole step alone; the flush is the one holding it.
+            emit("MOV R8,0x625b");
+            emit("LD.UB R9,R8[0x0]");
+            emit("CP.W R9,0x1");
+            emit("BR{hi} 0x8001c688");
+        }
         emit("MOV R10,0x6234");
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
@@ -5465,10 +5495,10 @@ function assembleProgram() {
         emit("BR{gt} 0x8001c66c");
         emit("LD.UB R9,R10[0x3]");
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001c648");
+        emit(StringFormat("BR{eq} 0x%x", outFire));
         emit("LD.UB R9,R10[0x26]");
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001c648");
+        emit(StringFormat("BR{eq} 0x%x", outFire));
         emit("LD.W R9,R10[0x20]");
         emit("MFSR R11,COUNT");
         emit("SUB R9,R11,R9 << 0x0");
@@ -5477,7 +5507,7 @@ function assembleProgram() {
         emit("SUB R11,0x1");
         emit("CP.W R9,R11");
         emit("BR{ls} 0x8001c688");
-        padTo(0x8001c648);
+        padTo(outFire);
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");
         emit("MCALL PC[0x8001c6b0]");
@@ -5544,12 +5574,41 @@ function assembleProgram() {
         // Called from a tail-jump, not a call: R8..R12 and LR are the
         // interpolator's scratch already, R7 is saved here.
         begin(0x8001c100);
-        emit("STM --SP,R7,LR");
+        // Two-phase moves every label after the glide guard along by 0x20 and
+        // takes the block out to 0x8001c200, which is free.  Without it every
+        // address below is the one that shipped, so that build is unchanged.
+        var fastFire = twoPhaseBeat() ? 0x8001c150 : 0x8001c14c;
+        var fastClear = twoPhaseBeat() ? 0x8001c15c : 0x8001c14c;
+        var fastJoin = twoPhaseBeat() ? 0x8001c168 : 0x8001c14c;
+        var fastClampLow = twoPhaseBeat() ? 0x8001c17c : 0x8001c166;
+        var fastClampHigh = twoPhaseBeat() ? 0x8001c188 : 0x8001c172;
+        var fastStage = twoPhaseBeat() ? 0x8001c198 : 0x8001c180;
+        var fastDecline = 0x8001c1c0;
+        var fastExit = twoPhaseBeat() ? 0x8001c1d4 : 0x8001c1c8;
+        var fastPool = twoPhaseBeat() ? 0x8001c1d8 : 0x8001c1d0;
+        // R0 carries the CLAIM through the staging below, which needs every
+        // one of R8..R12: 1 fires here and now, 2 stages the pitch and starts
+        // the settle, 3 is that settle having run out.  R0 is callee-saved,
+        // so it joins the frame rather than being borrowed.
+        if (twoPhaseBeat()) emit("STM --SP,R0,R7,LR"); else emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x625b");
-        emit("LD.UB R9,R8[0x0]");
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001c1c8");      // nothing armed
+        if (twoPhaseBeat()) emit("LD.UB R0,R8[0x0]"); else emit("LD.UB R9,R8[0x0]");
+        if (twoPhaseBeat()) emit("CP.W R0,0x0"); else emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", fastExit));   // nothing armed
+        if (twoPhaseBeat()) {
+            // Claim 3 is a settle already running: the pitch went out on an
+            // earlier flush and the gate is waiting on the millisecond timer,
+            // which is not us.  When it does run out the gate still owes the
+            // attack-age guard below, so this rejoins rather than jumping.
+            emit("CP.W R0,0x3");
+            emit("BR{ne} 0x8001c11e");
+            emit("MOV R9,0x60ee");
+            emit("LD.UB R9,R9[0x0]");
+            emit("CP.W R9,0x0");
+            emit(StringFormat("BR{ne} 0x%x", fastExit));
+            padTo(0x8001c11e);
+        }
         // The same 4 ms attack-age guard the scan path applies: a spike must
         // not be stacked under one the factory countdown is still holding.
         // Staying armed retries on the next tick rather than dropping a beat.
@@ -5564,8 +5623,16 @@ function assembleProgram() {
         emit("LSL R11,0x2");
         emit("SUB R11,0x1");
         emit("CP.W R9,R11");
-        emit("BR{ls} 0x8001c1c8");
+        emit(StringFormat("BR{ls} 0x%x", fastExit));
         padTo(0x8001c140);
+        if (twoPhaseBeat()) {
+            // A settle that has run out has already been through the guard
+            // below, five milliseconds ago, and its pitch is already in the
+            // DAC.  Only the gate is left, so nothing here may decline it -
+            // a decline now would strand the note with no trigger at all.
+            emit("CP.W R0,0x3");
+            emit(StringFormat("BR{eq} 0x%x", fastFire));
+        }
         // The glide has to be snapping for this to reach the same answer the
         // scan would.  The fast path stages the step's TARGET; the scan
         // stages wherever the glide engine has got to.  At the fastest rate
@@ -5575,12 +5642,32 @@ function assembleProgram() {
         emit("MOV R9,0x2eee");
         emit("LD.SH R9,R9[0x0]");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001c1c0");
+        emit(StringFormat("BR{ne} 0x%x", fastDecline));
+        // Only two-phase needs a label here; without it the fire path simply
+        // follows the guard, exactly as the shipped block does.
+        if (twoPhaseBeat()) padTo(fastFire);
+        if (twoPhaseBeat()) {
+            // Claim 2 is the beat's FIRST flush: the pitch goes out below and
+            // the countdown becomes MILLISECONDS, for the 1 ms timer to spend
+            // while the output RC travels.  Claim 1 and claim 3 both fire
+            // outright, so both clear the claim and the countdown together.
+            // 0x60ee already holds this path's wait in MILLISECONDS -
+            // clock_settle put it there when it set the claim, external or
+            // internal - so there is nothing to convert here.  Marking the
+            // claim as settling hands that countdown to the 1 ms timer.
+            emit("CP.W R0,0x2");
+            emit(StringFormat("BR{ne} 0x%x", fastClear));
+            emit("MOV R9,0x3");
+            emit("ST.B R8[0x0],R9");
+            emit(StringFormat("RJMP 0x%x", fastJoin));
+            padTo(fastClear);
+        }
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");        // consume the arm
         emit("MOV R8,0x60ee");
         emit("ST.B R8[0x0],R9");        // and the scan's countdown with it
-        emit("LDDPC R10,0x8001c1d0");
+        if (twoPhaseBeat()) padTo(fastJoin);
+        emit(StringFormat("LDDPC R10,0x%x", fastPool));
         emit("LD.SH R12,R10[0x352]");   // the step's own pitch TARGET
         // The bend strip's offset, which the 200 Hz scan adds to the target
         // at 0x800031f4 before clamping the result into 0x3210.  Leaving it
@@ -5593,14 +5680,14 @@ function assembleProgram() {
         // and the scan's own clamp, both ends, so what is staged here cannot
         // leave the range 0x3210 is held to.
         emit("CP.W R12,0x0");
-        emit("BR{ge} 0x8001c166");
+        emit(StringFormat("BR{ge} 0x%x", fastClampLow));
         emit("MOV R12,0x0");
-        padTo(0x8001c166);
+        padTo(fastClampLow);
         emit("MOV R11,0xfff");
         emit("CP.W R12,R11");
-        emit("BR{le} 0x8001c172");
+        emit(StringFormat("BR{le} 0x%x", fastClampHigh));
         emit("MOV R12,R11");
-        padTo(0x8001c172);
+        padTo(fastClampHigh);
         if (feature("pressure_blend")) {
             // The offset the conditioner last applied, so the value staged
             // here is the one the scan would stage.  Reading it advances
@@ -5609,12 +5696,18 @@ function assembleProgram() {
             emit("LD.SH R11,R11[0x0]");
             emit("ADD R12,R11");
             emit("CP.W R12,0x0");
-            emit("BR{ge} 0x8001c180");
+            emit(StringFormat("BR{ge} 0x%x", fastStage));
             emit("MOV R12,0x0");
         }
-        padTo(0x8001c180);
-        emit("MCALL PC[0x8001c1d4]");   // pitch first, into DAC slot 2
-        emit("MCALL PC[0x8001c1d8]");   // then the gate, into slot 0
+        padTo(fastStage);
+        emit(StringFormat("MCALL PC[0x%x]", fastPool + 4));  // pitch, slot 2
+        if (twoPhaseBeat()) {
+            // Phase A ends here.  The CV now has the whole settle to travel
+            // before the gate follows it out on a later flush.
+            emit("CP.W R0,0x2");
+            emit(StringFormat("BR{eq} 0x%x", fastExit));
+        }
+        emit(StringFormat("MCALL PC[0x%x]", fastPool + 8));  // gate, slot 0
         emit("MOV R10,0x6234");
         emit("MFSR R9,COUNT");
         emit("ST.W R10[0x20],R9");
@@ -5622,17 +5715,29 @@ function assembleProgram() {
         emit("ST.B R10[0x26],R9");
         emit("MOV R9,0x0");
         emit("ST.B R10[0x3],R9");       // the step is complete
-        emit("RJMP 0x8001c1c8");
-        padTo(0x8001c1c0);
+        emit(StringFormat("RJMP 0x%x", fastExit));
+        padTo(fastDecline);
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");        // disarm only; 0x60ee still fires it
-        padTo(0x8001c1c8);
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001c1d0);
+        if (twoPhaseBeat()) {
+            // ...except under claim 2, where 0x60ee is holding milliseconds
+            // the scan would read as scans and spend five times over.  Hand
+            // it a scan count instead: the next scan takes the step, which is
+            // exactly what declining the glide asked for.  Claim 3 never
+            // arrives here - a settle that has run out skips the guard.
+            emit("CP.W R0,0x1");
+            emit(StringFormat("BR{eq} 0x%x", fastExit));
+            emit("MOV R8,0x60ee");
+            emit("MOV R9,0x1");
+            emit("ST.B R8[0x0],R9");
+        }
+        padTo(fastExit);
+        if (twoPhaseBeat()) emit("LDM SP++,R0,R7,PC"); else emit("LDM SP++,R7,PC");
+        padTo(fastPool);
         word(0x00003560); // global state base
         word(0x8001c0e0); // remap, minus the per-scan chain
         word(0x800077f8); // real pulse-high routine
-        finish("clock_fast_trigger", 0x8001c1e0);
+        finish("clock_fast_trigger", twoPhaseBeat() ? 0x8001c1f0 : 0x8001c1e0);
 
         // Ending a take has to end the NOTE, not just the mode.  The
         // sequencer's note is started and stopped by the arp's step function,
@@ -6202,17 +6307,27 @@ function assembleProgram() {
         emit("MOV R10,0x6236");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        emit("BR{eq} 0x8001c756");
+        // No external clock: the internal beat and a bare keyboard note both
+        // arrive here.  The tail at 0x8001c780 sorts them out; without the
+        // two-phase claim built, both go straight to the scan as before.
+        if (twoPhaseBeat()) emit("BR{eq} 0x8001c780"); else emit("BR{eq} 0x8001c756");
         emit(StringFormat("MOV R9,0x%x",
             number("clock_settle_scans", 0, 0, 3) + 1));
-        // A clock is present, so the fast trigger may take this step off the
+        // A clock is present, so the fast trigger takes this step off the
         // scan.  Both claims are set; the first context to reach the step
-        // clears the other.  A settle wait was asked for in SCANS, so when
-        // one is configured the scan keeps the step and this is not armed.
-        if (block("clock_fast_trigger") && number("clock_settle_scans", 0, 0, 3) == 0) {
+        // clears the other.  A settle asked for in SCANS no longer hands the
+        // step back to the scan - the flush stages the pitch and holds the
+        // gate for the same wait, counted in milliseconds, so the wait costs
+        // what it is for and not the 5 ms grid it used to be rounded to.
+        if (twoPhaseBeat()) {
             emit("MOV R10,0x625b");
-            emit("MOV R11,0x1");
+            emit(StringFormat("MOV R11,0x%x",
+                 claimFor(number("clock_settle_scans", 0, 0, 3))));
             emit("ST.B R10[0x0],R11");
+            if (number("clock_settle_scans", 0, 0, 3) > 0) {
+                emit(StringFormat("MOV R9,0x%x",
+                     settleMsFor(number("clock_settle_scans", 0, 0, 3))));
+            }
         }
         padTo(0x8001c756);
         emit("ST.B R8[0x0],R9");
@@ -6220,7 +6335,34 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x8001c778);
         word(0x80002440);
-        finish("clock_settle", 0x8001c780);
+        if (twoPhaseBeat()) {
+            // The internal clock's beat, not the player's finger.  With the
+            // arp or the sequencer running the note has already been chosen,
+            // so the wait below belongs to the output RC and nothing else -
+            // claim the step for the flush and let it hold the gate for the
+            // settle in MILLISECONDS.  A key pressed with both switched off
+            // is a different thing: its latency is the player's own, and it
+            // is left on the scan exactly as it was.
+            padTo(0x8001c780);
+            emit("LDDPC R11,0x8001c7b8");
+            emit("LD.UB R12,R11[0x340]");
+            emit("LD.UB R11,R11[0x341]");
+            emit("OR R12,R11");
+            emit("CP.W R12,0x0");
+            emit("BR{eq} 0x8001c756");
+            emit("MOV R10,0x625b");
+            emit(StringFormat("MOV R11,0x%x",
+                 claimFor(number("gate_settle_scans", 1, 0, 3))));
+            emit("ST.B R10[0x0],R11");
+            if (number("gate_settle_scans", 1, 0, 3) > 0) {
+                emit(StringFormat("MOV R9,0x%x",
+                     settleMsFor(number("gate_settle_scans", 1, 0, 3))));
+            }
+            emit("RJMP 0x8001c756");
+            padTo(0x8001c7b8);
+            word(0x00003560); // global state base
+        }
+        finish("clock_settle", twoPhaseBeat() ? 0x8001c7c0 : 0x8001c780);
 
         // The pitch the arp is about to sound.  While the sequencer plays that
         // is the step's own pitch; otherwise it is whatever the keyboard
