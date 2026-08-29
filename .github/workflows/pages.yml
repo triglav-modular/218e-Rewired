@@ -41,8 +41,6 @@ on:
       - 'tools/sync-site.py'
       - 'deploy/worker.js'
       - 'tools/test_worker.mjs'
-      - 'tools/test_watch.mjs'
-      - 'tools/watch-buchla.mjs'
       - 'wrangler.toml'
       - 'Program218e_v3_Rewired_macOS.command'
       - '218e_Rewired_Flasher.bat'
@@ -127,15 +125,6 @@ jobs:
           # It is a public, unauthenticated endpoint - it has to be, the page
           # is public - so the field checks are the whole defence.
           node tools/test_worker.mjs
-
-      - name: The watch on buchla.com reports a release exactly once
-        run: |
-          # Nothing here can tell whether the watch is still working - it
-          # fails by going quiet, which is what it looks like when it works.
-          # So the shapes it has to get right are pinned instead: the release,
-          # the re-upload that is not one, and the run of failed checks that
-          # has to end in a mail rather than in silence.
-          node tools/test_watch.mjs
 
       - name: Stage the site
         run: |
