@@ -34,6 +34,13 @@ At the default settings:
   `clock_settle_scans=0`. Additional settle scans reduce that ceiling.
   Dispatcher stalls can add latency; a finite queue cannot absorb an
   indefinite stall or a sustained rate above its output capacity.
+- The trigger **rises within 1 ms of the accepted edge**, on the 1 kHz DAC
+  flush rather than the 5 ms pitch scan. Measured on the emitted firmware,
+  the edge-to-rise delay was uniform over a whole scan period — 0 to 4.8 ms,
+  with no fixed component — because the gate's fall was already scheduled
+  from the edge itself while its rise waited for the next scan. Setting
+  `clock_settle_scans` above zero asks for a wait in scans and returns the
+  step to the scan, at the old timing.
 
 - The RATE knob's raw channel is clamped to 0x3ff before the divisor is
   derived, as the factory clamps it at every read - the raw cell exceeds
@@ -107,6 +114,19 @@ saturating overrun counter without overwriting unread entries or waiting.
 Startup clears both queued edges and any pre-restart deferred trigger,
 including a warm restart with the same initialization marker.
 
+When a clock is present, `clock_settle` marks the step claimable by the 1 kHz
+DAC flush as well as by the pitch scan, and whichever context completes it
+drops the other's claim: nothing orders those two dispatcher events within a
+millisecond, and without that the scan could fire and the flush fire again
+behind it. The flush path stages the step's own pitch through the calibration
+remap **entered past the per-scan chain at its head** — the tuning applier,
+the housekeeping and the vibrato engine all advance once per scan and must not
+be run at 1 kHz — and then raises the gate, so pitch and trigger reach the DAC
+in the same flush. It takes the step only while the glide is snapping; with a
+real portamento time the scan's value and the target disagree, so the beat
+goes back to the scan rather than have its pitch jump. The 4 ms attack-age
+guard applies to both paths, and staying claimed retries on the next tick.
+
 Each selected output step owns its pitch scan and deferred trigger until
 completion. A later beat cannot overwrite it. Rests and ties complete their
 slot without manufacturing a trigger. Gate-low occurs only when a selected
@@ -134,6 +154,8 @@ pool. It no longer executes the bytes at 0x800021e8 as loads/stores.
 | Period acquisition / latched division | 0x8001c800 |
 | Long-low qualification banking | 0x8001ca00 |
 | Countdown attack-age guard | 0x8001ca80 |
+| Remap without the per-scan chain | 0x8001c0e0 |
+| Trigger rise, on the 1 kHz flush | 0x8001c100 |
 
 The old proposed page at 0x8001c000–0x8001c1ff is still unused. Persistence
 now stores records at 0x8003e000–0x8003efff; see [PERSISTENCE.md](PERSISTENCE.md).
@@ -151,6 +173,7 @@ unfinished edits do not write.
 | 0x6244–0x6253 | Cycle-based timing constants |
 | 0x6254 / 0x625a | Last physical output stamp / valid flag |
 | 0x6258 | Saturating FIFO-overrun count |
+| 0x625b | The step's trigger is claimable by the 1 kHz flush |
 | 0x6260–0x62df | Timestamp FIFO |
 | 0x62f6 | Millisecond count at the last accepted edge |
 
@@ -173,7 +196,12 @@ rewriting the flashers, then executes their bytes using ClockRegression.java.
 It checks ISR hooks, register/stack preservation, gate ownership, chatter,
 spent lows, duty/phase sensitivity, delayed dispatch, ordered pitch output,
 division under jitter, timeout, FIFO overflow, COUNT wrap, warm restart and
-rests/ties. Startup, main-loop and 1 ms callback pointers are exercised too.
+rests/ties. Startup, main-loop and 1 ms callback pointers are exercised too,
+as is the 1 kHz DAC flush through the dispatcher's own jump-table entry.
+It also measures edge-to-rise jitter across a locked clock walked over the
+scan grid, checks the pitch the flush stages is the one a later scan reaches,
+checks the flush leaves the per-scan vibrato chain alone, and runs a whole
+clock with the scan before the flush and again with it after.
 Missing completion markers and emulator instruction-budget exhaustion fail
 the run, even if Ghidra itself exits zero.
 

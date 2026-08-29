@@ -143,6 +143,15 @@ public class ClockRegression extends GhidraScript {
         call(r(0x80007da0L,4),0x100); // real 1 ms callback pointer
         check("1 ms callback chained once", callbacks==before+1);
     }
+    // The 1 kHz DAC flush, entered the way the dispatcher enters it: through
+    // jump-table entry 17, which this firmware repoints at the interpolator
+    // cave. Stop where the cave hands back to the factory handler; the SPI
+    // transfer and the factory event-17 tempo path are separate boundaries
+    // (the latter is what internal() drives).
+    void flush(long us) throws Exception {
+        time(us);
+        call(r(0x8001485cL,4),0x80004f66L);
+    }
     void scan(long us) throws Exception {
         time(us);
         // Zero-portamento fixture: supply the selected pitch to the real
@@ -203,7 +212,7 @@ public class ClockRegression extends GhidraScript {
                     if (fall<=nowUs) fall=10000+phase+Math.round((edges+duty)*1000000.0/hz);
                 }
             }
-            bank(tick); service(tick); internal(tick);
+            bank(tick); service(tick); internal(tick); flush(tick);
             if (tick%5000==0) scan(tick);
             if (!outputTimes.isEmpty() && tick-outputTimes.get(outputTimes.size()-1)<3000)
                 check("range attack survives first 3 ms", r(S+0x354,2)==0xfff);
@@ -235,6 +244,104 @@ public class ClockRegression extends GhidraScript {
         check("pitch DAC updated between notes", !sequencer || (dac.get(0)<dac.get(1) && dac.get(1)<dac.get(2)));
         println("PASS delayed dispatch: three edges, three ordered pitches/triggers");
     }
+    // Walk a steady, locked clock across the 5 ms scan grid and measure the
+    // spread of accepted-edge-to-trigger-rise delays. The fall is scheduled
+    // from the edge itself; the rise used to come from the 5 ms pitch scan,
+    // which put it anywhere in that period - measured here at 0..4800 us,
+    // uniform, with no fixed component. It now rides the 1 kHz DAC flush, so
+    // one tick is the whole budget.
+    void riseJitter() throws Exception {
+        fresh(1,25000000);
+        final long period=26200;   // whole 5 ms scans plus 200 us of walk
+        final int warm=10, beats=35;
+        final List<Long> edges=new ArrayList<>();
+        final List<Integer> staged=new ArrayList<>(), rescanned=new ArrayList<>();
+        boolean pending=false;
+        long rise=10000, fall=rise+period/2, end=10000+period*beats+20000;
+        for (long tick=10000; tick<=end; tick+=1000) {
+            while (Math.min(rise,fall)<=tick) {
+                if (rise<=fall) {
+                    if (edges.size()>=beats) { rise=end+period; continue; }
+                    irq(rise,true); edges.add(rise); rise+=period;
+                } else {
+                    irq(fall,false); fall+=period;
+                }
+            }
+            bank(tick); service(tick);
+            int before=outputTimes.size();
+            long phase=r(0x6024,2), depth=r(0x6026,2), offset=r(0x6028,2);
+            flush(tick);
+            if (outputTimes.size()>before) {
+                // The fast path enters the remap PAST its per-scan chain. If
+                // it ever entered at the top instead, the vibrato engine
+                // would run at 1 kHz and its rate would quintuple.
+                check("fast trigger leaves the per-scan vibrato chain alone",
+                      r(0x6024,2)==phase && r(0x6026,2)==depth && r(0x6028,2)==offset);
+                staged.add((int)r(S+0x358,2));
+                pending=true;
+            }
+            if (tick%5000==0) {
+                scan(tick);
+                // Same DAC word the 5 ms scan reaches, or the pitch would
+                // step at the scan boundary after every trigger.
+                if (pending) { rescanned.add((int)r(S+0x358,2)); pending=false; }
+            }
+        }
+        check("jitter fixture is a locked /1 clock, one output per edge",
+              r(0x6233,1)==1 && r(0x6236,1)==1
+              && edges.size()==beats && outputTimes.size()==beats);
+        long lo=Long.MAX_VALUE, hi=Long.MIN_VALUE;
+        StringBuilder each=new StringBuilder();
+        for (int i=warm;i<beats;i++) {
+            long delay=outputTimes.get(i)-edges.get(i);
+            lo=Math.min(lo,delay); hi=Math.max(hi,delay);
+            each.append(" ").append(delay);
+        }
+        println("rise delay us, beats "+warm+".."+(beats-1)+":"+each);
+        println("edge to trigger: min="+lo+" max="+hi+" spread="+(hi-lo)+" us");
+        check("every trigger's pitch was re-checked by a later scan",
+              rescanned.size()>=beats-1 && staged.size()==beats);
+        for (int i=0;i<rescanned.size();i++)
+            check("staged pitch "+i+" survives the scan: "
+                  +staged.get(i)+" vs "+rescanned.get(i),
+                  staged.get(i).equals(rescanned.get(i)));
+        check("trigger rise jitter within one 1 kHz tick of the edge", hi-lo<=1000);
+        println("PASS trigger rise jitter "+(hi-lo)+" us peak to peak");
+    }
+    // The pitch scan and the 1 kHz DAC flush are separate dispatcher events
+    // and nothing orders them within a millisecond. Run a whole clock both
+    // ways round: every edge must produce exactly one trigger either way.
+    void scanFlushOrder() throws Exception {
+        for (boolean scanFirst : new boolean[]{true,false}) {
+            fresh(1,25000000);
+            long period=26200;
+            int beats=12;
+            long rise=10000, fall=rise+period/2, end=10000+period*beats+20000;
+            int edges=0;
+            for (long t=10000; t<=end; t+=1000) {
+                while (Math.min(rise,fall)<=t) {
+                    if (rise<=fall) {
+                        if (edges>=beats) { rise=end+period; continue; }
+                        irq(rise,true); edges++; rise+=period;
+                    } else { irq(fall,false); fall+=period; }
+                }
+                bank(t); service(t);
+                if (scanFirst) {
+                    if (t%5000==0) scan(t);
+                    flush(t);
+                } else {
+                    flush(t);
+                    if (t%5000==0) scan(t);
+                }
+            }
+            check("one trigger per edge with the "
+                  +(scanFirst?"scan":"flush")+" first: "
+                  +edges+" edges, "+outputTimes.size()+" outputs",
+                  edges==beats && advances==beats && outputTimes.size()==beats);
+        }
+        println("PASS one trigger per edge whichever of scan and flush runs first");
+    }
+
     void divideAndSlow() throws Exception {
         for (int divisor : new int[]{1,2,8}) {
             fresh(divisor,25000000);
@@ -345,7 +452,7 @@ public class ClockRegression extends GhidraScript {
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
         try {
-            abiAndNoise(); dispatchJitter(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            abiAndNoise(); dispatchJitter(); riseJitter(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             if (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick"))
             for (int hz : new int[]{10,150,180,199,200})
                 for (double duty : new double[]{0.1,0.5,0.75,0.9})

@@ -2247,13 +2247,22 @@ function assembleProgram() {
         emit("ST.H R9[0x0],R10");
         padTo(0x8001a680);
         emit("ST.H R12[0x356],R8");
+        // The trigger's rise rides out on this same flush, one slot along.
+        // Staged here, before the hand-back, so pitch and gate reach the DAC
+        // in the same millisecond - which is the whole point of moving it.
+        if (block("clock_fast_trigger")) {
+            emit("MCALL PC[0x8001a698]");
+        }
         padTo(0x8001a688);
         emit("LDDPC R12,0x8001a694");
         emit("MOV PC,R12");             // on into the factory flush handler
         padTo(0x8001a690);
         word(0x00003560); // global state base
         word(0x80004f66); // factory event-17 case
-        finish("dac_interpolator", 0x8001a698);
+        if (block("clock_fast_trigger")) {
+            word(0x8001c100); // the clock's fast trigger
+        }
+        finish("dac_interpolator", 0x8001a69c);
 
         // Dispatcher jump-table entry 17 (DAC flush) -> interpolator.
         begin(0x8001485c);
@@ -6197,12 +6206,126 @@ function assembleProgram() {
         padTo(0x8001c678);
         emit("MOV R9,0x0");
         emit("ST.B R10[0x3],R9");       // a rest/tie completes here too
+        // The scan and the 1 kHz flush are separate dispatcher events and
+        // nothing orders them within a millisecond.  Whichever of them
+        // completes the step drops the other's claim on it, or a scan that
+        // got there first would fire, and the flush would fire again behind
+        // it.  Reached only once the step is done: the attack-age retry
+        // branches past this and leaves both claims standing.
+        if (block("clock_fast_trigger")) {
+            emit("MOV R8,0x625b");
+            emit("ST.B R8[0x0],R9");
+        }
         padTo(0x8001c688);
         emit("LDM SP++,R7,PC");
         padTo(0x8001c6b0);
         word(0x800077f8);
         word(0x8001c600);
         finish("clock_output", 0x8001c6c0);
+
+        // The pitch remap, entered PAST the per-scan chain at its head.
+        // 0x80019980 opens with a call to 0x8001a2e8 - the tuning applier,
+        // the per-scan housekeeping and the VIBRATO ENGINE - every one of
+        // which advances state once per scan.  The fast trigger below runs at
+        // 1 kHz, so it enters at 0x8001998e and takes only the arithmetic:
+        // the vibrato OFFSET the engine last computed, the calibration table,
+        // and the stores to DAC slot 2 and the last-sent mirror.  Entering
+        // there means building the frame the remap's own tail returns from.
+        begin(0x8001c0e0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R8,0x8001c0ec");
+        emit("MOV PC,R8");
+        padTo(0x8001c0ec);
+        word(0x8001998e); // pitch_remap_calibration, minus its chain
+        finish("clock_remap_bare", 0x8001c0f0);
+
+        // The trigger's rise, moved off the 5 ms pitch scan and onto the 1 kHz
+        // DAC flush.  Measured on the emitted firmware, the delay from an
+        // accepted edge to the physical spike was uniform over a whole scan
+        // period - 0 to 4.8 ms, with no fixed component to trim.  The gate's
+        // FALL was already on the edge itself, which is why the scope showed
+        // a rock-steady drop followed by a wandering rise.
+        //
+        // clock_settle arms the byte at 0x625b beside the countdown it
+        // already sets; whichever of the two contexts reaches the step first
+        // fires it and clears the other's claim, so the trigger can never go
+        // out twice.  This one is reached from the DAC-flush cave every
+        // millisecond and takes the step whenever it may.
+        //
+        // Called from a tail-jump, not a call: R8..R12 and LR are the
+        // interpolator's scratch already, R7 is saved here.
+        begin(0x8001c100);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x625b");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c1c8");      // nothing armed
+        // The same 4 ms attack-age guard the scan path applies: a spike must
+        // not be stacked under one the factory countdown is still holding.
+        // Staying armed retries on the next tick rather than dropping a beat.
+        emit("MOV R10,0x6234");
+        emit("LD.UB R9,R10[0x26]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001c140");
+        emit("LD.W R9,R10[0x20]");
+        emit("MFSR R11,COUNT");
+        emit("SUB R9,R11,R9 << 0x0");
+        emit("LD.W R11,R10[0x10]");
+        emit("LSL R11,0x2");
+        emit("SUB R11,0x1");
+        emit("CP.W R9,R11");
+        emit("BR{ls} 0x8001c1c8");
+        padTo(0x8001c140);
+        // The glide has to be snapping for this to reach the same answer the
+        // scan would.  The fast path stages the step's TARGET; the scan
+        // stages wherever the glide engine has got to.  At the fastest rate
+        // those agree to well under one DAC count, and a blend build forces
+        // that rate.  With a real portamento time they do not agree, so the
+        // beat goes back to the scan rather than have its pitch jump.
+        emit("MOV R9,0x2eee");
+        emit("LD.SH R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001c1c0");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // consume the arm
+        emit("MOV R8,0x60ee");
+        emit("ST.B R8[0x0],R9");        // and the scan's countdown with it
+        emit("LDDPC R12,0x8001c1d0");
+        emit("LD.SH R12,R12[0x352]");   // the step's own pitch
+        if (feature("pressure_blend")) {
+            // The offset the conditioner last applied, so the value staged
+            // here is the one the scan would stage.  Reading it advances
+            // nothing: the filter and its slew both live in the scan.
+            emit("MOV R11,0x60e2");
+            emit("LD.SH R11,R11[0x0]");
+            emit("ADD R12,R11");
+            emit("CP.W R12,0x0");
+            emit("BR{ge} 0x8001c180");
+            emit("MOV R12,0x0");
+        }
+        padTo(0x8001c180);
+        emit("MCALL PC[0x8001c1d4]");   // pitch first, into DAC slot 2
+        emit("MCALL PC[0x8001c1d8]");   // then the gate, into slot 0
+        emit("MOV R10,0x6234");
+        emit("MFSR R9,COUNT");
+        emit("ST.W R10[0x20],R9");
+        emit("MOV R9,0x1");
+        emit("ST.B R10[0x26],R9");
+        emit("MOV R9,0x0");
+        emit("ST.B R10[0x3],R9");       // the step is complete
+        emit("RJMP 0x8001c1c8");
+        padTo(0x8001c1c0);
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // disarm only; 0x60ee still fires it
+        padTo(0x8001c1c8);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001c1d0);
+        word(0x00003560); // global state base
+        word(0x8001c0e0); // remap, minus the per-scan chain
+        word(0x800077f8); // real pulse-high routine
+        finish("clock_fast_trigger", 0x8001c1e0);
 
         // Ending a take has to end the NOTE, not just the mode.  The
         // sequencer's note is started and stopped by the arp's step function,
@@ -6775,6 +6898,15 @@ function assembleProgram() {
         emit("BR{eq} 0x8001c756");
         emit(StringFormat("MOV R9,0x%x",
             number("clock_settle_scans", 0, 0, 3) + 1));
+        // A clock is present, so the fast trigger may take this step off the
+        // scan.  Both claims are set; the first context to reach the step
+        // clears the other.  A settle wait was asked for in SCANS, so when
+        // one is configured the scan keeps the step and this is not armed.
+        if (block("clock_fast_trigger") && number("clock_settle_scans", 0, 0, 3) == 0) {
+            emit("MOV R10,0x625b");
+            emit("MOV R11,0x1");
+            emit("ST.B R10[0x0],R11");
+        }
         padTo(0x8001c756);
         emit("ST.B R8[0x0],R9");
         padTo(0x8001c760);

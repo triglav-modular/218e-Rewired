@@ -152,7 +152,7 @@ var WEBBUILD = (function () {
          'clock_capture', 'clock_irq_hook', 'clock_irq_pool',
          'clock_edge_mode', 'clock_init', 'clock_init_pool',
          'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard',
-         'clock_spike_units']
+         'clock_spike_units', 'clock_fast_trigger', 'clock_remap_bare']
             .forEach(function (n) { blocks[n] = div; });
         blocks.clock_init_pool = div || keep || seq;
         blocks.profiler_pool = div || !!features.scan_profiler;

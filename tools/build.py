@@ -883,6 +883,10 @@ RAM_REGIONS = [
     # became impossible to choose without deleting a note.
     (0x6258, 0x625A, "saturating capture FIFO overrun count"),
     (0x625A, 0x625B, "physical output timestamp valid"),
+    # Set beside the scan's countdown when a clock is present, cleared by
+    # whichever context takes the step. Inside the 0x6232..0x62E0 block the
+    # startup initialiser zeroes, so a warm restart cannot fire a stale one.
+    (0x625B, 0x625C, "the step's trigger is claimable by the 1 kHz flush"),
     (0x625C, 0x625D, "which pad a bare hold is counting, plus one"),
     (0x625D, 0x625E, "how many scans it has been held"),
     (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
@@ -1811,7 +1815,7 @@ def main() -> None:
                  "clock_capture", "clock_irq_hook", "clock_irq_pool",
                  "clock_edge_mode", "clock_init", "clock_init_pool",
                  "clock_service", "clock_output", "clock_low_age", "clock_attack_guard",
-                 "clock_spike_units"):
+                 "clock_spike_units", "clock_fast_trigger", "clock_remap_bare"):
         blocks[name] = div
     blocks["profiler_pool"] = div or features.get("scan_profiler", False)
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
