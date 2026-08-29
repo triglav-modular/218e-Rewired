@@ -707,6 +707,16 @@ public class ClockRegression extends GhidraScript {
     // overflowed: a loop that cannot drain its posts is not a model of an
     // instrument that plays.
     long[] loopModel(int loopHz, int competingHz) throws Exception {
+        return loopModel(loopHz,competingHz,loopHz);
+    }
+
+    // serviceHz is the rate clock_service actually polls the FIFO, which
+    // the instrument has now shown is NOT the dispatcher's rate: the
+    // internal beat raises its gate on the same event 17 and arrives with
+    // 216 us of period jitter, so the flush is punctual. Only the external
+    // path goes through the FIFO, so a dequeue slower than the flush shows
+    // up on the external clock alone -- exactly the split measured.
+    long[] loopModel(int loopHz, int competingHz, int serviceHz) throws Exception {
         fresh(1,25000000);
         final long period=26200;   // whole 5 ms scans plus 200 us of walk
         final int warm=6, beats=20;
@@ -717,11 +727,14 @@ public class ClockRegression extends GhidraScript {
         long tTimer=10000, tLoop=10000;
         final long competeUs=competingHz>0?1000000L/competingHz:0;
         long tCompete=competeUs>0?10000:Long.MAX_VALUE;
+        final long serviceUs=1000000L/serviceHz;
+        long tService=10000;
         boolean overflow=false;
         while (tTimer<=end || tLoop<=end) {
             long t=Math.min(Math.min(tTimer<=end?tTimer:Long.MAX_VALUE,
                                      tLoop<=end?tLoop:Long.MAX_VALUE),
-                            tCompete<=end?tCompete:Long.MAX_VALUE);
+                   Math.min(tCompete<=end?tCompete:Long.MAX_VALUE,
+                            tService<=end?tService:Long.MAX_VALUE));
             while (Math.min(rise,fall)<=t) {
                 if (rise<=fall) {
                     if (edges.size()>=beats) { rise=end+period; continue; }
@@ -741,8 +754,11 @@ public class ClockRegression extends GhidraScript {
                 if (ring.size()>=32) overflow=true; else ring.add(0);
                 tCompete+=competeUs;
             }
+            if (t==tService) {
+                service(t);                    // the FIFO dequeue, on its own rate
+                tService+=serviceUs;
+            }
             if (t==tLoop) {
-                service(t);                    // clock_service, once per pass
                 if (!ring.isEmpty()) {         // the dispatcher takes exactly one
                     int ev=ring.remove(0);
                     // A foreign handler costs the trigger its slot; the
@@ -791,6 +807,24 @@ public class ClockRegression extends GhidraScript {
                         +(near?"   <== reproduces the instrument":""));
                 widest=Math.max(widest,m[2]);
             }
+        }
+        println("  models reproducing all three hardware moments: "+matches);
+        // The instrument says the flush is punctual and only the external
+        // clock spreads.  The FIFO dequeue is the one stage the internal beat
+        // never uses, so sweep it alone against a 1 kHz dispatcher.
+        println("dequeue-starved model: dispatcher punctual at 1 kHz,"
+                +" clock_service polling slower");
+        for (int serviceHz : new int[]{1000,600,400,300,250,200}) {
+            long[] m=loopModel(2000,0,serviceHz);
+            if (m==null) { println("  service "+serviceHz+" Hz: lost an output"); continue; }
+            boolean near=Math.abs(m[0]-HW_MIN)<=HW_MIN/4+100
+                      && Math.abs(m[3]-HW_MEAN)<=HW_MEAN/4
+                      && Math.abs(m[1]-HW_MAX)<=HW_MAX/4;
+            if (near) matches++;
+            println("  service "+serviceHz+" Hz ("+(1000000/serviceHz)+" us): min="+m[0]
+                    +" max="+m[1]+" spread="+m[2]+" mean="+m[3]+" us"
+                    +(near?"   <== reproduces the instrument":""));
+            widest=Math.max(widest,m[2]);
         }
         println("  models reproducing all three hardware moments: "+matches);
         // The whole point of the model is that it must be ABLE to show a

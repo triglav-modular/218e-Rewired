@@ -139,6 +139,14 @@ trigger back on the 5 ms scan with the fast-trigger cave emitted but
 unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
 configuration and holds it to the same 1 ms bound.
 
+**The measurement below contradicts the premise of the next paragraph.** It
+argues the dequeue already runs at least as often as event 17 is dispatched,
+so moving it onto the flush would make it rarer. The instrument says event 17
+is punctual at 1 kHz while the dequeue polls near 250–300 Hz, which makes the
+move more frequent, not less. The paragraph is kept as written because the
+decision it records is the owner's to revisit, not because its reasoning
+still stands.
+
 Moving the FIFO dequeue itself onto the flush was considered and is wrong.
 The factory dispatcher at 0x80004c64 takes ONE event from its 32-entry ring
 (0x8001030c) and returns; every jump-table arm ends in `BR{al} 0x800051b0`.
@@ -312,10 +320,25 @@ which no playing instrument does. Event-queue depth is therefore a real
 term but a small one — it cannot account for 3.36 ms, and the cause of the
 measured spread is still unidentified.
 
-The discriminating measurement not yet taken is the **internal** clock's
-jitter on hardware. The internal beat never touches edge qualification or
-the FIFO, so if it spreads too, the cause is downstream of both clock
-paths; if it stays tight, the cause is in the external edge-to-claim path.
+That measurement has now been taken. Internal clock at ~25 Hz, gate period
+over n=500: mean 40.93 ms, min 40.77 ms, max 42.33 ms, sigma **216 us** — a
+tight core with rare late outliers, against the 1.47 ms sigma a trigger
+carrying the external spread would have produced. The internal beat raises
+its gate on the same event 17, so **the flush and the dispatcher are
+punctual**; the spread belongs to the external path alone.
+
+The one stage the internal beat never uses is the FIFO dequeue in
+`clock_service`. `loopModelJitter()`'s second sweep holds the dispatcher
+punctual at 1 kHz and starves only that dequeue: at 250–300 Hz it produces
+min 200–400 us, max 3.6 ms, spread 3.2–3.6 ms, bracketing the instrument's
+258 us / 3.62 ms / 3.36 ms. The dequeue appears to poll at roughly the 5 ms
+scan cadence rather than at 1 kHz.
+
+Two honest limits on that. It is a model calibrated to the measurement, not
+a direct observation of either rate; and the model's mean (1.9–2.1 ms) sits
+above the instrument's 1.55 ms, because the model polls on a perfectly
+regular grid while a real main loop does not. The scale and the mechanism
+fit; the shape is not fully reproduced.
 
 On hardware, compare input and output edge counts at 0.5, 10, 150, 180,
 199 and 200 Hz using both sources; exercise /1, /2 and /8, tempo changes,
