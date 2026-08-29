@@ -174,10 +174,12 @@ def audit_call_pools(image_path) -> list[str]:
 # and once more when the divider knob was reversed so /1 sits at zero, and
 # persistence joined the shipped defaults — which this anchor carries too.
 # and again when leaving the latch switch position stopped releasing keys
-# that are still under a finger.
+# that are still under a finger; and again when the FIFO dequeue moved off
+# the main-loop wrapper onto the 1 ms tick, which is a change of WHERE the
+# dequeue runs and so moves every block after it.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "1a5b811063915867467e7defe7b938904b85a16c72300e4bf8b2bdd0b69a91b8",
+    "historical_config": "82789d9780a8005a01c0210fa84317d70e4bd59b2d0c540e09e06dde1a92d080",
 }
 
 

@@ -205,28 +205,28 @@ public class ClockRegression extends GhidraScript {
     void abiAndNoise() throws Exception {
         fresh(1,25000000);
         e.writeRegister("R0",0x685b); e.writeRegister("R1",0x12345678);
-        irq(10000,true); service(10000); finishStep(25000);
+        irq(10000,true); bank(10000); finishStep(25000);
         check("no literal-pool register corruption", e.readRegister("R1").longValue()==0x12345678);
         check("callee-saved R0 preserved", e.readRegister("R0").longValue()==0x685b);
         check("one actual note/trigger", advances==1 && outputTimes.size()==1);
         w(S+0x354,2,0xfff);
         for (int i=0;i<12;i++) {
-            irq(20000+i*2000,true); service(nowUs);
+            irq(20000+i*2000,true); bank(nowUs);
             check("unqualified high cannot clear gate", r(S+0x354,2)==0xfff);
         }
         for (int i=0;i<12;i++) {
-            irq(50000+i*2000,false); irq(50100+i*2000,true); service(nowUs);
+            irq(50000+i*2000,false); irq(50100+i*2000,true); bank(nowUs);
         }
         check("no fail-open after repeated chatter", advances==1 && outputTimes.size()==1);
-        irq(80000,false); irq(81000,true); service(81000); finishStep(95000);
+        irq(80000,false); irq(81000,true); bank(81000); finishStep(95000);
         check("fresh qualified low recovers immediately", advances==2 && outputTimes.size()==2);
-        irq(95100,false); irq(95200,true); service(95200);
+        irq(95100,false); irq(95200,true); bank(95200);
         check("low interval cannot be reused", advances==2);
         // Event 10 is no longer an unqualified ingress.
         call(0x80004e58L,0x800051b0L);
         check("synthetic legacy event cannot step", advances==2);
         for (long sr : new long[]{0,0x10000}) {
-            e.writeRegister("SR",sr); service(96000);
+            e.writeRegister("SR",sr); bank(96000);
             check("caller interrupt mask preserved", (e.readRegister("SR").longValue()&0x10000)==sr);
         }
         e.writeRegister("SR",0);
@@ -262,19 +262,19 @@ public class ClockRegression extends GhidraScript {
     }
     void dispatchJitter() throws Exception {
         fresh(1,25000000);
-        irq(1004000,true); service(1004000); scan(1005000);
+        irq(1004000,true); bank(1004000); scan(1005000);
         irq(1006500,false); irq(1009000,true);
-        scan(1010000); service(1011000);
+        scan(1010000); bank(1011000);
         internal(1011000);
         irq(1011500,false); internal(1012000); internal(1013000);
-        irq(1014000,true); service(1014000); internal(1014000);
+        irq(1014000,true); bank(1014000); internal(1014000);
         scan(1015000); internal(1015000);
         check("factory countdown cannot cut a just-emitted attack", r(S+0x354,2)==0xfff);
-        service(1016000); internal(1016000); internal(1017000);
+        bank(1016000); internal(1016000); internal(1017000);
         check("queued step cannot truncate previous attack", advances==2 && r(S+0x354,2)==0xfff);
         internal(1018000); internal(1019000);
         check("deferred countdown gate-off still happens", r(S+0x354,2)==0);
-        service(1019000); scan(1020000);
+        bank(1019000); scan(1020000);
         check("jitter does not merge outputs", advances==3 && outputTimes.size()==3);
         check("period is edge time, not dispatch time", r(0x61ea,2)==5);
         if (sequencer) check("jitter preserves pitches", pitches.equals(List.of(485,525,565)));
@@ -440,37 +440,37 @@ public class ClockRegression extends GhidraScript {
             // acquisition's intentional initial /1 pulses.
             long t=10000;
             for (int i=0;i<8;i++) {
-                irq(t,true); service(t); scan(t+5000); irq(t+50000,false); t+=100000;
+                irq(t,true); bank(t); scan(t+5000); irq(t+50000,false); t+=100000;
             }
             check("clock acquired", r(0x6233,1)==1);
             w(0x61ed,1,0);
             int before=advances, outBefore=outputTimes.size();
             for (int i=0;i<16;i++) {
-                irq(t,true); service(t); scan(t+5000); irq(t+50000,false); t+=100000;
+                irq(t,true); bank(t); scan(t+5000); irq(t+50000,false); t+=100000;
             }
             check("exact /"+divisor, advances-before==16/divisor && outputTimes.size()-outBefore==16/divisor);
         }
         fresh(8,25000000);
-        irq(1000000,true); service(1000000); scan(1005000);
+        irq(1000000,true); bank(1000000); scan(1005000);
         w(0x61ec,1,5); w(0x6233,1,1); w(0x61ed,1,3); w(0x61ea,2,100);
         int before=advances; long t=1000000;
         for (int interval : new int[]{115,150,100,100,100}) {
             irq(t+10000,false); t+=interval*1000;
-            irq(t,true); service(t); scan(t+5000);
+            irq(t,true); bank(t); scan(t+5000);
             check("divider remains latched through disagreement", r(0x6233,1)==1);
         }
         check("jitter retains /8 phase", advances-before==1);
         fresh(1,25000000);
         t=10000;
         for (int i=0;i<9;i++) {
-            irq(t,true); service(t); scan(t+5000);
+            irq(t,true); bank(t); scan(t+5000);
             irq(t+1000000,false);
-            service(t+2000000);
+            bank(t+2000000);
             check("0.5 Hz presence does not time out", r(0x6236,1)==1);
             t+=2001000;
         }
         check("0.5 Hz + jitter clock remains acquired", r(0x6233,1)==1 && advances==9 && outputTimes.size()==9);
-        service(t+700000);
+        bank(t+700000);
         check("absence releases divider and confidence", r(0x6236,1)==0 && r(0x6233,1)==0 && r(0x61ec,1)==0);
         w(S+0x38e,2,0); internal(t+701000);
         check("internal clock resumes after release", periodicAdvances>0);
@@ -480,13 +480,13 @@ public class ClockRegression extends GhidraScript {
         fresh(1,25000000);
         for (int i=0;i<40;i++) { irq(10000+i*5000,true); irq(12500+i*5000,false); }
         check("bounded FIFO reports overflow", r(0x6258,2)==9 && r(0x6234,1)==31 && r(0x6235,1)==0);
-        for (int i=0;i<31;i++) { service(225000+i*5000); scan(225000+i*5000); }
+        for (int i=0;i<31;i++) { bank(225000+i*5000); scan(225000+i*5000); }
         check("overflow preserved every queued entry", advances==31 && outputTimes.size()==31);
         check("FIFO drained safely", r(0x6234,1)==r(0x6235,1));
         fresh(1,60000000);
         long start=0xffffffffL*1000000L/frequency-2000;
-        irq(start,true); service(start); scan(start+1000);
-        irq(start+2500,false); irq(start+5000,true); service(start+5000); scan(start+6000);
+        irq(start,true); bank(start); scan(start+1000);
+        irq(start+2500,false); irq(start+5000,true); bank(start+5000); scan(start+6000);
         check("COUNT wrap keeps 5 ms interval", r(0x61ea,2)==5 && advances==2 && outputTimes.size()==2);
         println("PASS bounded FIFO overrun/drain and COUNT wrap at 60 MHz");
     }
@@ -495,7 +495,7 @@ public class ClockRegression extends GhidraScript {
         bank(1000);
         check("continuous long low banked", r(0x6232,1)==2);
         long wrapped=0x100000000L*1000000L/frequency+100;
-        irq(wrapped,true); service(wrapped); scan(wrapped+5000);
+        irq(wrapped,true); bank(wrapped); scan(wrapped+5000);
         check("first pulse after idle COUNT wrap is kept", advances==1 && outputTimes.size()==1);
         w(GPIO+0x60,4,0); bank(wrapped+6000);
         check("spent low cannot be re-banked", r(0x6232,1)==0);
@@ -503,33 +503,33 @@ public class ClockRegression extends GhidraScript {
         w(GPIO+0xd0,4,32); bank(wrapped+8000);
         check("pending transition cannot qualify low", r(0x6232,1)==1);
         fresh(1,25000000);
-        irq(10000,true); service(10000); scan(15000);
-        service(3000000); irq(3001000,false);
+        irq(10000,true); bank(10000); scan(15000);
+        bank(3000000); irq(3001000,false);
         bank(3002000);
-        irq(100000000,true); service(100000000); scan(100005000);
+        irq(100000000,true); bank(100000000); scan(100005000);
         check("long output age is unsigned", advances==2 && outputTimes.size()==2);
         if (sequencer) {
             fresh(1,25000000);
             w(0x61e0,1,4);
             w(0x6160,2,485); w(0x6162,2,0x7fff);
             w(0x6164,2,525); w(0x6166,2,0x7ffe);
-            irq(10000,true); service(10000); scan(15000);
+            irq(10000,true); bank(10000); scan(15000);
             w(S+0x354,2,0x7ff); // factory spike has fallen to sustain
-            irq(60000,false); irq(110000,true); service(110000);
+            irq(60000,false); irq(110000,true); bank(110000);
             check("tie's input does not cut gate", r(S+0x354,2)==0x7ff);
             scan(115000);
             check("tie does not add a trigger", outputTimes.size()==1 && r(0x6237,1)==0);
-            irq(160000,false); irq(210000,true); service(210000);
+            irq(160000,false); irq(210000,true); bank(210000);
             check("note after tie explicitly retriggers", r(S+0x354,2)==0 && r(0x60ee,1)==1);
             scan(215000);
-            irq(260000,false); irq(310000,true); service(310000); scan(315000);
+            irq(260000,false); irq(310000,true); bank(310000); scan(315000);
             check("rest completes without a trigger", outputTimes.size()==2 && r(0x6237,1)==0);
         }
         println("PASS long-idle qualification, pending-edge race, rests/ties");
     }
     void warmRestart() throws Exception {
         fresh(1,25000000);
-        irq(10000,true); service(10000);
+        irq(10000,true); bank(10000);
         check("restart fixture has an in-flight trigger", r(0x60ee,1)==1 && r(0x6237,1)==1);
         w(0x6234,1,7); w(0x6235,1,5); w(0x6258,2,29);
         w(GPIO+0x60,4,0); time(11000);
@@ -879,7 +879,8 @@ public class ClockRegression extends GhidraScript {
         // clock spreads.  The FIFO dequeue is the one stage the internal beat
         // never uses, so sweep it alone against a 1 kHz dispatcher.
         println("dequeue-starved model: dispatcher punctual at 1 kHz,"
-                +" clock_service polling slower");
+                +" main-loop wrapper polling slower");
+        long starvedWidest=0;
         for (int serviceHz : new int[]{1000,600,400,300,250,200}) {
             long[] m=loopModel(2000,0,serviceHz);
             if (m==null) { println("  service "+serviceHz+" Hz: lost an output"); continue; }
@@ -891,8 +892,17 @@ public class ClockRegression extends GhidraScript {
                     +" max="+m[1]+" spread="+m[2]+" mean="+m[3]+" us"
                     +(near?"   <== reproduces the instrument":""));
             widest=Math.max(widest,m[2]);
+            starvedWidest=Math.max(starvedWidest,m[2]);
         }
         println("  models reproducing all three hardware moments: "+matches);
+        // The dequeue rides the 1 ms tick now, so starving the main loop must
+        // not reach the trigger at all. Before the move this sweep ran to
+        // 4.2 ms at 200 Hz and reproduced the instrument's 3.36 ms; if it ever
+        // widens again, the dequeue has gone back onto the main loop.
+        check("starving the main-loop wrapper cannot widen the trigger: "
+              +starvedWidest+" us", starvedWidest<=1000);
+        println("PASS dequeue is off the main loop: starving it 1000..200 Hz "
+                +"leaves the trigger at "+starvedWidest+" us");
         // The whole point of the model is that it must be ABLE to show a
         // spread the 1 ms fixture cannot.  If every modeled loop rate still
         // lands inside one flush tick then this test is as blind as the one

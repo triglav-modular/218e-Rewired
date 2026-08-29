@@ -3640,25 +3640,49 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MCALL PC[0x8001bbb8]");   // bank a long low before COUNT wraps
         emit("MOV R12,R0");
         emit("MCALL PC[0x8001bbbc]");
+        // The FIFO dequeue lives HERE, not on the main loop.  Measured on the
+        // instrument: an external edge waited 3.36 ms peak to peak with the
+        // dequeue on the main loop, and the same spread survived a settle that
+        // re-times the gate on this very timer -- so the wait was upstream of
+        // the claim, in how long the entry sat in the FIFO.  The internal beat,
+        // which never queues, showed 216 us.  This tick is the fastest context
+        // that already exists and is demonstrably punctual: it is where the
+        // beat's settle is spent in milliseconds, and that settle measured
+        // fixed.  Placed after the factory hook so R0's task argument has
+        // already gone into R12; clock_service must not disturb the frame.
+        // ONE consumer only -- the FIFO is single-producer/single-consumer and
+        // the main-loop wrapper below no longer calls this.
+        emit("MCALL PC[0x8001bbc0]");   // clock_service, at 1 kHz
         emit("LDM SP++,R0,R7,PC");
         padTo(0x8001bbb8L);
         word(0x8001ca00L);
         word(0x800076b0L);
-        finish("clock_ms_tick", 0x8001bbc0L);
+        word(0x8001c400L);              // clock_service
+        finish("clock_ms_tick", 0x8001bbc4L);
 
-        // Main-loop wrapper, NOT a pitch-remap callback. Take at most one
-        // queued edge before the factory dispatcher. A sounding step holds
-        // its slot until its pitch has been stored and its trigger emitted.
-        // Consequently a delayed dispatcher cannot merge two notes into one
-        // pending-trigger flag, or compute a new note inside an old remap.
+        // Main-loop wrapper, NOT a pitch-remap callback. It chains to the
+        // factory dispatcher and nothing else.
+        //
+        // It used to take one queued edge first. That is where the external
+        // clock's jitter was: this wrapper runs once per main-loop pass, and
+        // the instrument measured an edge waiting 3.36 ms peak to peak to be
+        // picked up, flat-topped rather than tail-heavy -- a slow poll, not a
+        // busy board. The dequeue now runs on the 1 ms tick above. A sounding
+        // step still holds its slot until its pitch has been stored and its
+        // trigger emitted, so a delayed dispatcher still cannot merge two
+        // notes into one pending-trigger flag or compute a new note inside an
+        // old remap; that invariant lives in the step, not in this wrapper.
+        //
+        // The pool word for clock_service is deliberately NOT reclaimed: the
+        // second MCALL reads PC[0x8001b9c0], and shifting the dispatcher word
+        // down would move every address in this block for no gain.
         begin(0x8001b980L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001b9bc]");
         emit("MCALL PC[0x8001b9c0]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001b9bcL);
-        word(0x8001c400L); // clock_service
+        word(0x8001c400L); // clock_service, now called from clock_ms_tick
         word(feature("scan_profiler") ? 0x8001a540L : 0x80004c64L);
         finish("clock_scan", 0x8001b9c4L);
 
