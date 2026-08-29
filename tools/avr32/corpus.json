@@ -6,7 +6,7 @@
 "build/assemble.log",
 "build/assemble.nomulti.log"
 ],
-"count": 8282,
+"count": 8281,
 "entries": [
 {
 "addr": "80014300",
@@ -17056,8 +17056,8 @@
 },
 {
 "addr": "8001ab6c",
-"text": "MOV R11,0x1e85",
-"bytes": "e06b1e85",
+"text": "MOV R11,0xe6f6",
+"bytes": "e06be6f6",
 "width": 4
 },
 {
@@ -18124,8 +18124,8 @@
 },
 {
 "addr": "8001ad1c",
-"text": "MOV R11,0x1e85",
-"bytes": "e06b1e85",
+"text": "MOV R11,0xe6f6",
+"bytes": "e06be6f6",
 "width": 4
 },
 {
@@ -22984,15 +22984,21 @@
 },
 {
 "addr": "8001bba6",
-"text": "MCALL PC[0x8001bbc0]",
-"bytes": "f01f0007",
+"text": "LDM SP++,R0,R7,PC",
+"bytes": "e3cd8081",
 "width": 4
 },
 {
 "addr": "8001bbaa",
-"text": "LDM SP++,R0,R7,PC",
-"bytes": "e3cd8081",
-"width": 4
+"text": "NOP",
+"bytes": "d703",
+"width": 2
+},
+{
+"addr": "8001bbac",
+"text": "NOP",
+"bytes": "d703",
+"width": 2
 },
 {
 "addr": "8001bbae",
@@ -23037,12 +23043,6 @@
 "width": 4
 },
 {
-"addr": "8001bbc0",
-"text": ".word 0x8001c400",
-"bytes": "8001c400",
-"width": 4
-},
-{
 "addr": "8001b980",
 "text": "STM --SP,R7,LR",
 "bytes": "ebcd4080",
@@ -23056,27 +23056,21 @@
 },
 {
 "addr": "8001b986",
-"text": "MCALL PC[0x8001b9c0]",
-"bytes": "f01f000f",
+"text": "MCALL PC[0x8001b9bc]",
+"bytes": "f01f000e",
 "width": 4
 },
 {
 "addr": "8001b98a",
-"text": "LDM SP++,R7,PC",
-"bytes": "e3cd8080",
+"text": "MCALL PC[0x8001b9c0]",
+"bytes": "f01f000e",
 "width": 4
 },
 {
 "addr": "8001b98e",
-"text": "NOP",
-"bytes": "d703",
-"width": 2
-},
-{
-"addr": "8001b990",
-"text": "NOP",
-"bytes": "d703",
-"width": 2
+"text": "LDM SP++,R7,PC",
+"bytes": "e3cd8080",
+"width": 4
 },
 {
 "addr": "8001b992",
@@ -49701,5 +49695,5 @@
 "width": 4
 }
 ],
-"program_sha256": "d15303c1f601803b020e75264dc59e91ad8fdb46853a30eb9ddd66100f6a2e7f"
+"program_sha256": "1f9ce4d9bd81eabcdf32eb8ff9dd636d2e17157bd87441b54461fa8fc0dddf09"
 }

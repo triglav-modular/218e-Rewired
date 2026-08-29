@@ -76,7 +76,7 @@ public class SequenceTransportRegression extends ClockRegression {
             // external ownership before counting the input/output sweep,
             // otherwise its 250 us phase case counts a legitimate internal
             // beat before the FIRST external edge as an extra input pulse.
-            irq(1000,true); bank(1000); scan(5000); irq(6000,false);
+            irq(1000,true); service(1000); scan(5000); irq(6000,false);
             w(0x61e1,1,0);
         }
         selected=0; advances=0; periodicAdvances=0; periodic=false;
@@ -144,14 +144,14 @@ public class SequenceTransportRegression extends ClockRegression {
     }
     void restart() throws Exception {
         fresh(1,25000000);
-        irq(10000,true); bank(10000); scan(15000);
+        irq(10000,true); service(10000); scan(15000);
         irq(20000,false); irq(30000,true); // queued, not dispatched
         w(0x60ee,1,1); button(1);
-        int before=outputTimes.size(); bank(31000); scan(35000);
+        int before=outputTimes.size(); service(31000); scan(35000);
         check("no queued beat after STOP",outputTimes.size()==before&&r(0x6237,1)==0);
         button(1); check("restart begins at first step",r(0x61e1,1)==0);
-        bank(36000); scan(40000); check("restart cannot replay old FIFO",outputTimes.size()==before);
-        irq(41000,false); irq(50000,true); bank(50000); scan(55000);
+        service(36000); scan(40000); check("restart cannot replay old FIFO",outputTimes.size()==before);
+        irq(41000,false); irq(50000,true); service(50000); scan(55000);
         check("first new edge after restart plays first step",outputTimes.size()==before+1&&pitches.get(before)==485);
         println("PASS external STOP/restart discards pending output and stale FIFO beats");
     }

@@ -379,14 +379,7 @@ public class PersistenceRegression extends GhidraScript {
         call(0x800072e4L,0x80007328L); w(0xffff10d0L,4,0);
     }
     void serviceAndOutput(long ms) throws Exception {
-        time(ms);
-        // The 1 ms task, which is where the FIFO dequeue lives. It used to sit
-        // on the main-loop hook below; the instrument measured 3.36 ms of
-        // trigger spread waiting for that loop, so it moved to this timer.
-        // SequenceEditRegression already drove this tick for the beat's
-        // settle; this fixture did not, and without it no edge is consumed.
-        e.writeRegister("R12",0x7010); call(r(0x80007da0L,4),0x100);
-        call(0x80007c66L,0x80007c6aL);
+        time(ms); call(0x80007c66L,0x80007c6aL);
         call(0x80004f66L,0x80004faeL);
         call(0x800031b8L,0x80003256L);
     }

@@ -119,7 +119,7 @@ embedded in the filter.
 
 Accepted edge timestamps enter a single-producer/single-consumer FIFO with
 31 usable entries. The ISR does not clear the output gate, call a DAC driver,
-or post event 10. The dequeue and timeout use a short critical section
+or post event 10. Main-loop dequeue and timeout use a short critical section
 that restores the caller's original SR; note selection and DAC work happen
 afterwards. If full, the FIFO drops the newest edge and increments a
 saturating overrun counter without overwriting unread entries or waiting.
@@ -139,41 +139,23 @@ trigger back on the 5 ms scan with the fast-trigger cave emitted but
 unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
 configuration and holds it to the same 1 ms bound.
 
-**The dequeue no longer runs on the main loop.** It is called from the 1 ms
-tick at `0x8001bb70`, after the factory hook so `R0`'s task argument has
-already gone into `R12`. The main-loop wrapper at `0x8001b980` now chains to
-the factory dispatcher and nothing else. There is still exactly ONE consumer:
-the FIFO is single-producer/single-consumer, and adding a second caller
-rather than moving the one would race the consumer index at `0x6235`.
+**The measurements above contradict the premise of the next paragraph.** It
+argues the dequeue already runs at least as often as event 17 is dispatched,
+so moving it onto the flush would make it rarer. The instrument says event 17
+is punctual at 1 kHz while the dequeue polls near 250–300 Hz, which makes the
+move more frequent, not less. The paragraph is kept as written because the
+decision it records is the owner's to revisit, not because its reasoning
+still stands.
 
-This reverses a decision recorded at `65b6a4f`, on measurement rather than on
-reasoning. That decision argued: the factory dispatcher at 0x80004c64 takes
-ONE event from its 32-entry ring (0x8001030c) and returns, every jump-table
-arm ends in `BR{al} 0x800051b0`, and the main loop at 0x80007c5a calls
-`clock_service` and then that dispatcher once each per iteration — so the
-dequeue already ran at least as often as event 17 was dispatched, and moving
-it could only make it rarer.
-
-The premise was wrong. On the instrument event 17 is dispatched punctually
-while the main loop polls near 250–300 Hz, so the two were never the same
-rate and the move makes the dequeue more frequent, not less. Three
-measurements establish it: the internal beat, which never queues, showed
-216 us of period jitter where the external clock showed 3.36 ms; the spread
-did not follow the scan when `scan_period_ms` was doubled; and it survived a
-`clock_settle_scans = 1` re-timing that would have absorbed anything
-downstream of the claim.
-
-What the old paragraph got right is still true and still bounds the result:
-the DAC transfer happens in the factory event-17 handler, which reads
-state+0x354 at 0x80004fae, so nothing staged earlier moves the edge. Event
-17's own dispatch remains the floor. The change removes the wait in front of
-it, not the floor itself.
-
-`loopModelJitter()` guards the reversal. Starving the main-loop wrapper from
-1000 Hz down to 200 Hz used to widen the trigger to 4.2 ms and reproduce the
-instrument's 3.36 ms; it now leaves it at 800 us at every rate, and the test
-asserts that. If the dequeue ever goes back on the main loop, that assertion
-names it.
+Moving the FIFO dequeue itself onto the flush was considered and is wrong.
+The factory dispatcher at 0x80004c64 takes ONE event from its 32-entry ring
+(0x8001030c) and returns; every jump-table arm ends in `BR{al} 0x800051b0`.
+The main loop at 0x80007c5a calls `clock_service` and then that dispatcher,
+once each, per iteration — so the dequeue already runs at least as often as
+event 17 is dispatched, and moving it would make it rarer. What is left of
+the trigger's latency is event-queue depth, and that is a floor either way:
+the DAC transfer itself happens in the factory event-17 handler, which reads
+state+0x354 at 0x80004fae, so nothing staged earlier moves the edge.
 
 The claim byte at 0x625b says which of those the flush is holding: 1 to
 fire on this tick, 2 to stage the pitch and start a settle, 3 while that
@@ -217,8 +199,7 @@ pool. It no longer executes the bytes at 0x800021e8 as loads/stores.
 | Code | Address |
 | --- | --- |
 | GPIO ISR hook | 0x800072ee |
-| Main-loop wrapper (dispatcher chain only) | 0x8001b980 |
-| 1 ms tick, where the FIFO dequeue runs | 0x8001bb70 |
+| Main-loop clock wrapper | 0x8001b980 |
 | Edge capture | 0x8001c200 |
 | Masked startup initialization | 0x8001c300 |
 | FIFO service / timeout | 0x8001c400 |
