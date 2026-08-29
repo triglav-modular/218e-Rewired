@@ -149,7 +149,7 @@ sequencer = true
 
 # 11. EXTERNAL CLOCK DIVIDE
 # With a steady clock patched in, the arpeggiator RATE knob becomes a divider
-# instead: every pulse at the fast end, one in eight at the slow end.  It
+# instead: every pulse with the knob at zero, one in eight at the top.  It
 # acquires after five consistent measured intervals and releases after more
 # than 2.6 seconds without an input. Target range: 0.5–200 Hz. The conditioned
 # MCU input must be low for >250 us before each rising edge; see docs/CLOCK.md.
@@ -162,7 +162,7 @@ clock_divide = true
 # Explicit STOP during preview or the CLEAR chord finishes/saves the take.
 # Flash writes can briefly interrupt playback/capture. DFU updates erase
 # these records. See docs/PERSISTENCE.md for the format and limits.
-persist = false
+persist = true
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "d2cd36c9e8e1bbaa3feee3a62c6672762d44105e4c86d892bc1e940200c0f487"
+golden_sha256  = "b487271fc5f815f8f1865621839283ce42fe5ec637d1142b0cf32ab2bc6b813d"
 
 
 [tools]

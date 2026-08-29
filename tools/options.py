@@ -263,7 +263,7 @@ def expand(options: dict) -> dict:
                         "chord_hold_scans": 200}
     # The arp rate knob divides an external clock once one is locked.
     cfg["clock"] = {"divide": bool(want("clock_divide", True))}
-    cfg["persist"] = {"on": bool(want("persist", False)),
+    cfg["persist"] = {"on": bool(want("persist", True)),
                       # Reserved main-array pages; never include settings
                       # at 0x8003f000. The newest valid page is not retried.
                       "page_count": 8}

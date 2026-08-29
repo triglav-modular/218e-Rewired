@@ -24,7 +24,8 @@ At the default settings:
   transitions never move the accepted-edge timestamp or touch the gate.
 - Five consistent measured intervals acquire division. Before acquisition,
   qualified inputs pass at /1. After acquisition, the RATE knob selects /1
-  through /8, and interval disagreement cannot reset the divide phase.
+  through /8 — /1 at zero, /8 at the top — and interval disagreement cannot
+  reset the divide phase.
 - An absence longer than **2600 ms**, or switching the arp off while the
   sequencer is not playing, releases division. Period acquisition accepts
   intervals up to 2400 ms, leaving margin around the 2000 ms lower-frequency

@@ -372,7 +372,7 @@ public class PersistenceRegression extends GhidraScript {
         fresh(); seed(); clockExercise=true; outputs=0;
         call(0x8000737eL,0x80007386L);
         w(S+0x340,1,1); w(S+0x21a,1,1); w(S+0x21b,1,1);
-        w(S+0x34a,2,20); w(S+0x38e,2,100); w(S+0x2fc,2,0x420);
+        w(S+0x34a,2,20); w(S+0x38e,2,100); w(S+0x2fc,2,0);
         w(0x2ee0,2,20); w(0x2ee6,2,1023);
         if(seq)w(0x6158,1,2);
         else { e.writeRegister("R12",0); call(0x8001a020L); }

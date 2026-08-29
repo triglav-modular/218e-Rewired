@@ -3664,24 +3664,25 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001c8d0");
         emit("LDDPC R11,0x8001c9e0");
         emit("LD.SH R11,R11[0x2fc]");   // RATE knob itself, not knob-plus-CV
+        // The knob reads straight through: zero is /1, the top is /8, so the
+        // divider counts up the way the printed scale does.
         // CLAMPED, the way the factory clamps this channel at every single
         // read (0x800079e0 ends by storing the 0x3ff bound over anything
-        // larger).  The raw cell exceeds 0x3ff at the top of the knob, and
-        // unclamped that made 0x3ff - knob NEGATIVE - the logical shift then
-        // turned it into a divisor in the millions, and every pulse was
-        // swallowed.  Dead /1 precisely at the fast end, steady /2../8
-        // everywhere else; and on the sampler build, whose formula was the
-        // same, the channel jittering across 0x3ff dropped triggers at
-        // random at max rate.
-        // Clamped on the far side of the subtraction, where the compact
-        // branch conditions live: a difference that went negative becomes
-        // zero, which is the /1 the top of the knob means.
+        // larger).  The raw cell exceeds 0x3ff at the top of the knob, which
+        // is where /8 now lives, and unclamped the shift would carry it past
+        // /8 into a divisor the lock never asked for - the same over-range
+        // that used to silence /1 when the knob's ends were the other way
+        // round, and that jittered triggers at random on the sampler build.
+        // The subtraction survives only as that test: it goes negative
+        // exactly when the raw cell is over the bound, and the compact branch
+        // conditions live on the far side of it.
         emit("MOV R12,0x3ff");
         emit("SUB R12,R12,R11 << 0x0");
         emit("CP.W R12,0x0");
-        emit("BR{ge} 0x8001c8c8");
-        emit("MOV R12,0x0");
-        padTo(0x8001c8c8L);
+        emit("BR{ge} 0x8001c8ca");
+        emit("MOV R11,0x3ff");
+        padTo(0x8001c8caL);
+        emit("MOV R12,R11");
         emit("LSR R12,0x7");
         emit("SUB R12,-0x1");           // /1 .. /8
         padTo(0x8001c8d0L);

@@ -103,11 +103,12 @@ public class ClockRegression extends GhidraScript {
         check("both edge mode explicitly selected", r(GPIO+0xa8,4)==32 && r(GPIO+0xb8,4)==32);
         w(S+0x340,1,1); w(S+0x21a,1,1); w(S+0x21b,1,1);
         w(S+0x34a,2,20); w(S+0x38e,2,100);
-        // Divisor 1 is written OVER-RANGE on purpose: the raw channel reads
+        // Divisor 8 is written OVER-RANGE on purpose: the raw channel reads
         // past 0x3ff at the top of the knob (the factory clamps it at every
-        // read, 0x800079e0), and unclamped that made the divisor negative-
-        // huge and silenced /1 on the instrument while /2../8 played on.
-        w(S+0x2fc,2,divisor==1?0x420:1023-(divisor-1)*128);
+        // read, 0x800079e0), and the top of the knob is /8 now.  Unclamped
+        // the shift carries straight past /8; before the ends were swapped
+        // the same over-range silenced /1 while /2../8 played on.
+        w(S+0x2fc,2,divisor==8?0x420:(divisor-1)*128);
         w(0x2ee0,2,20); w(0x2ee6,2,1023);
         if (sequencer) {
             w(0x6158,1,2); w(0x61e0,1,16);

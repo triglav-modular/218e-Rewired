@@ -114,7 +114,7 @@ public class ControlRegression extends SequenceEditRegression {
             w(S+0x21b+key,1,1); e.writeRegister("R12",key); call(0x8001a020L);
         }
         w(S+0x34d,1,4); w(S+0x30a,2,zone*176+40); w(0x614e,1,direction);
-        w(S+0x2fc,2,0x420); // /1 even after acquisition
+        w(S+0x2fc,2,0); // /1 even after acquisition: zero is the fast end now
     }
     void noteOrders() throws Exception {
         // Non-sorted press order distinguishes the pitch walks from the
@@ -150,7 +150,7 @@ public class ControlRegression extends SequenceEditRegression {
             for(int k:new int[]{4,14,9})key(k);
             e.writeRegister("R12",14); call(position==1?0x80018d00L:0x8001a280L);
             check("real release/unlatch removes target",r(S+0x21b+14,1)==0&&r(S+0x21a,1)==2);
-            w(S+0x34d,1,9); w(S+0x30a,2,zone*176+40); w(S+0x2fc,2,0x420);
+            w(S+0x34d,1,9); w(S+0x30a,2,zone*176+40); w(S+0x2fc,2,0);
             for(int i=0;i<6;i++) {
                 externalBeat(); int k=(int)r(S+0x34d,1);
                 check("press order skips removed history: position="+position+" zone="+zone,
@@ -182,7 +182,7 @@ public class ControlRegression extends SequenceEditRegression {
             w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,200); controlScan();
             octavePad(1); key(0); octavePad(3); key(6); octavePad(1); key(12);
             check("fixture stamps pitches out of key-slot order",rank(0,true)<rank(12,true)&&rank(12,true)<rank(6,true));
-            w(S+0x34d,1,0); w(S+0x30a,2,zone*176+40); w(S+0x2fc,2,0x420); w(0x614e,1,1);
+            w(S+0x34d,1,0); w(S+0x30a,2,zone*176+40); w(S+0x2fc,2,0); w(0x614e,1,1);
             for(int k:expected[zone]) {
                 externalBeat(); call(0x80003590L); pitch();
                 check("order follows real latched pitch zone="+zone+" expected="+k,r(S+0x34d,1)==k);
@@ -287,7 +287,7 @@ public class ControlRegression extends SequenceEditRegression {
             r(0x61e0,1)==3&&r(S+0x21b,1)==1);
         check("repeat presses record the absolute pitch",
             Math.abs((short)r(0x6162,2)-wanted)<=1&&Math.abs((short)r(0x6164,2)-wanted)<=1);
-        command(1); octavePad(1); w(S+0x2fc,2,0x420);
+        command(1); octavePad(1); w(S+0x2fc,2,0);
         externalBeat(); sound(); externalBeat(); sound();
         check("playback in latch mode plays the step it recorded",
             r(S+0x352,2)==r(0x61e2,2));
@@ -326,7 +326,7 @@ public class ControlRegression extends SequenceEditRegression {
             check("the neutral repeat stores its own octave",
                 Math.abs((short)r(0x6162,2)-(short)r(0x854,2))<=1);
             // Neutral playback: the interval as played, absolute steps.
-            command(1); octavePad(1); w(S+0x2fc,2,0x420);
+            command(1); octavePad(1); w(S+0x2fc,2,0);
             externalBeat(); sound();
             check("playback opens on the recorded octave",r(S+0x352,2)==r(0x6160,2));
             externalBeat(); sound();
@@ -450,7 +450,7 @@ public class ControlRegression extends SequenceEditRegression {
         // choose the notes, so the blend's target parks at zero and any
         // blend already applied slews away.
         setup(1,false,2); w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,0);
-        command(1); octavePad(1); w(S+0x2fc,2,0x420); w(S+0x306,2,0);
+        command(1); octavePad(1); w(S+0x2fc,2,0); w(S+0x306,2,0);
         externalBeat(); sound(); long base=r(S+0x352,2), dac=r(S+0x358,2);
         key(12); w(0x3490+12,1,2);
         for(int k=0;k<29;k++)w(0x3686+2*k,2,k==12?900:110);

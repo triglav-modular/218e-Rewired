@@ -300,6 +300,51 @@ handler that configuration had not emitted.  A block must be gated on the
 same setting as its callee, not on whether the feature it serves is
 interesting - that is what the per-variant call-pool audit is for.
 
+### The divider knob reversed, and persistence in the defaults (2026-08-29)
+
+Two decisions of the owner's, after a longer question about whether to cut
+build options at all.  The options stay: keeping them costs nothing, because
+the sweep and the regression suites are what build the off configurations,
+and those are the only thing that can catch a cave gated on the wrong
+setting - the bug found the same day, where a cave was assembled into unused
+flash whether or not anything reached it.  What changed is which way the
+defaults point.
+
+**The rate knob counts up now.**  In divider mode the knob read
+`((0x3ff - knob) >> 7) + 1`, so /1 sat at the top and /8 at zero.  It reads
+`(knob >> 7) + 1` instead: /1 at zero, /8 at the top, the way the printed
+scale runs.  The clamp had to move with it.  The raw channel overshoots
+0x3ff at the top of the knob - the factory re-clamps this channel at every
+read - and that end is /8 now, so unclamped the shift would carry straight
+past /8.  The subtraction survives only as the over-range test, because it
+goes negative exactly when the raw cell is over the bound and the compact
+branch conditions live on that side of it.  The region is byte-exact against
+its neighbour: `MOV R11,0x3ff` replaces `MOV R12,0x0`, and `MOV R12,R11`
+takes the four bytes the old fall-through spent on padding.
+
+**Persistence ships on.**  `persist` defaulted false in both toolchains
+pending hardware validation; it defaults true now, so a build from the web
+page keeps its presets and its sequence across power-off.  The caveat that
+kept it off is unchanged and still worth knowing: flash programming blocks
+execution from flash, so a save landing during a running clock can miss
+incoming edges.  Nothing about the format or the commit path moved.
+
+The four `persist_*` sweep rows and the four in `web/test_configs.py` became
+the `volatile_*` rows, for the reason the comment beside them already gave -
+the configurations worth building are the ones the defaults no longer cover.
+`ClockRegression.fresh` writes the over-range knob value for /8 rather than
+/1 for the same reason, and that swap is what proves the suite can see the
+direction at all: the old formula against the new firmware fails `exact /1`.
+
+Nine fixtures across the three other suites had the old direction baked in
+as a magic number - `w(S+0x2fc,2,0x420)`, an over-range write whose comment
+read "/1 even after acquisition".  They are externally clocked, so what they
+wanted was "do not divide"; that is written 0 now.  They are worth naming
+because they failed loudly and in the wrong place: the arp note-order zones
+came back wrong, which reads as a broken selector rather than a divider
+running eight times too slow.  A fixture that encodes a mapping's direction
+in a constant will mislead the next person who changes the mapping.
+
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
   them in lockstep).  Table expression generalised from 12/1200 to map
@@ -1032,8 +1077,8 @@ evidence that it works.
 
 ### Persistence: presets and the sequence survive power-off (2026-08-28)
 
-Built behind `persist`, OFF by default pending hardware validation. The
-current contract and record layout are in [PERSISTENCE.md](PERSISTENCE.md).
+Built behind `persist`, ON by default since 2026-08-29. The current
+contract and record layout are in [PERSISTENCE.md](PERSISTENCE.md).
 
 The audit replaced the original raw-RAM/additive-checksum format with
 version 2: 204 bytes of musical data, CRC32 and a separately programmed

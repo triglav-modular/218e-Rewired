@@ -120,7 +120,7 @@ var BUILDLIB = (function () {
                           clock_settle_scans: 0, clock_rearm_us: 250,
                           clock_max_ms: 2400, clock_release_ms: 2600,
                           trigger_spike_units: 5, seq_edit_hold_scans: 60 };
-        cfg.persist = { on: !!want('persist', false), page_count: 8 };
+        cfg.persist = { on: !!want('persist', true), page_count: 8 };
         cfg.clock = { divide: !!want('clock_divide', true) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;

@@ -59,21 +59,24 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     # both were told the same wrong thing, and the emulations called each cave
     # directly rather than through its hook.  This sweep is the only check
     # that builds every one of them through Ghidra.
-    # Both ship ON, so the variants worth building are the ones that turn
-    # them OFF - those are the images the defaults no longer cover, and the
-    # ones whose housekeeping chain loses a call.
+    # All three ship ON, so the variants worth building are the ones that
+    # turn them OFF - those are the images the defaults no longer cover, and
+    # the ones whose housekeeping chain loses a call.  Persistence joined the
+    # defaults after the divider knob was reversed, which is why the four
+    # rows below read "volatile" rather than "persist": the combination that
+    # needs proving is the one nobody gets by accident.
     ("sequencer_off",         [(r"^sequencer = true", "sequencer = false")]),
     ("clock_divide_off",      [(r"^clock_divide = true", "clock_divide = false")]),
     ("seq_and_clock_off",     [(r"^sequencer = true", "sequencer = false"),
                                (r"^clock_divide = true", "clock_divide = false")]),
-    ("persist_only",          [(r"^persist = false", "persist = true"),
+    ("volatile_bare",         [(r"^persist = true", "persist = false"),
                                (r"^sequencer = true", "sequencer = false"),
                                (r"^clock_divide = true", "clock_divide = false")]),
-    ("persist_sequencer",     [(r"^persist = false", "persist = true"),
+    ("volatile_sequencer",    [(r"^persist = true", "persist = false"),
                                (r"^clock_divide = true", "clock_divide = false")]),
-    ("persist_clock",         [(r"^persist = false", "persist = true"),
+    ("volatile_clock",        [(r"^persist = true", "persist = false"),
                                (r"^sequencer = true", "sequencer = false")]),
-    ("persist_seq_clock",     [(r"^persist = false", "persist = true")]),
+    ("volatile_only",         [(r"^persist = true", "persist = false")]),
     ("knob_roles",            [(r"^remap_knobs = true",
                                'remap_knobs = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
     ("knob2_swing",           [(r"^remap_knobs = true", 'remap_knobs = true\nknob2 = "swing"')]),
@@ -86,8 +89,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                'alternate_tunings = [' + ', '.join(
                                    ['["tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm"]'] * 3)
                                + ']')]),
-    ("everything_on",         [(r"^persist = false", "persist = true"),
-                               (r"^pitch_correction = false",
+    ("everything_on",         [(r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"'),
                                (r"^alternate_tunings = false",
                                 'alternate_tunings = ["tunings/12TET.scl"]')]),
@@ -168,10 +170,12 @@ def audit_call_pools(image_path) -> list[str]:
 # slot ownership, the re-base vetoed during playback, preview end sentinels,
 # no arp-OFF double audition, and the delete-pad flash — whose two new
 # caves are gated with the code they call, so a latch-free or sequencer-free
-# build stops emitting them instead of pointing a call pool at erased flash.
+# build stops emitting them instead of pointing a call pool at erased flash;
+# and once more when the divider knob was reversed so /1 sits at zero, and
+# persistence joined the shipped defaults — which this anchor carries too.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "85da2428485c0147bdda47f01103b0a6e45bcb7c0c8e7bfb5339bf399d3eb5c5",
+    "historical_config": "7d7e04a784f4a77bb2984e9f9f6aaac6585dfebbb7b025c5e24a6eba21eaafcc",
 }
 
 

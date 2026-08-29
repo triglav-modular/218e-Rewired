@@ -100,7 +100,7 @@ public class SequenceEditRegression extends PersistenceRegression {
         check("bare pad 2 starts at top",r(0x6158,1)==2&&r(0x62fe,1)==1&&r(0x61e1,1)==0);
         check("preview clears pending audition and strip/tie history",r(0x6230,2)==0&&r(0x61e4,2)==0);
         if(clock)call(0x8000737eL,0x80007386L);
-        w(S+0x34a,2,20); w(0x2ee0,2,20); w(S+0x2fc,2,0x420);
+        w(S+0x34a,2,20); w(0x2ee0,2,20); w(S+0x2fc,2,0);
         resetTrace();
     }
     void previewOnce() throws Exception {
@@ -164,7 +164,7 @@ public class SequenceEditRegression extends PersistenceRegression {
                 // this test carries a real sampled touch across transport.
                 bare(1);
                 if(clock)call(0x8000737eL,0x80007386L);
-                w(S+0x34a,2,20); w(0x2ee0,2,20); w(S+0x2fc,2,0x420);
+                w(S+0x34a,2,20); w(0x2ee0,2,20); w(S+0x2fc,2,0);
                 if(!beforePreview) { w(S+0x206,1,1); scan(); }
                 if(internal)internalTicks(100);
                 else for(int i=0;i<3;i++)externalBeat();
