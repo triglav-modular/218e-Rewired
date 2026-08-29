@@ -139,13 +139,11 @@ trigger back on the 5 ms scan with the fast-trigger cave emitted but
 unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
 configuration and holds it to the same 1 ms bound.
 
-**The measurements above contradict the premise of the next paragraph.** It
-argues the dequeue already runs at least as often as event 17 is dispatched,
-so moving it onto the flush would make it rarer. The instrument says event 17
-is punctual at 1 kHz while the dequeue polls near 250–300 Hz, which makes the
-move more frequent, not less. The paragraph is kept as written because the
-decision it records is the owner's to revisit, not because its reasoning
-still stands.
+**The premise of the next paragraph is still unverified, but its conclusion
+has now been tested directly.** The dequeue was moved onto the 1 ms tick and
+measured; the jitter did not change, and the move was reverted. Whatever the
+relative rates are, moving the dequeue does not help. See **What the harness
+cannot measure** below for the measurements.
 
 Moving the FIFO dequeue itself onto the flush was considered and is wrong.
 The factory dispatcher at 0x80004c64 takes ONE event from its 32-entry ring
@@ -390,20 +388,38 @@ min 0.17 against 0.26, mean 1.47 against 1.55, max 3.56 against 3.62, range
 3.39 against 3.36, sigma 1.06 against 1.04. Every moment matches within
 sampling noise.
 
-**The jitter passed through the settle untouched, so it is upstream of the
-claim.** Anything between the claim and the gate — the flush, the
-dispatcher, the DAC transfer — is excluded, because re-timing there would
-have absorbed it. What is left is the path from the GPIO ISR's timestamp to
-`clock_settle`: the FIFO, its dequeue in `clock_service`, and note
-selection. The ISR timestamps the edge at interrupt time, so qualification
-cannot contribute variable delay to the timestamp itself; the variable term
-is how long the entry waits before `clock_service` picks it up.
+**This experiment proves less than it first appears, and the reading below
+was wrong.** It was taken as showing the jitter is upstream of the claim,
+because a downstream re-timing would have absorbed it. The settle is a
+countdown STARTED at the claim and spent by the timer, so it adds a delay
+relative to the claim; it does not align the rise to an absolute grid.
+Variance before the claim passes through it, and so does variance after it.
+Inserting a constant offset cannot localise a variable one.
 
-That is the dequeue, and it is now supported by three independent
-measurements rather than by a model: the internal beat carries no such
-spread and never uses the FIFO; the spread does not follow the scan; and the
-spread survives a downstream re-timing. The model's 250-300 Hz fit remains a
-fit, but what it is fitting is no longer in question.
+What the experiment does establish is worth keeping. The minimum was 5.17 ms
+for a nominal 5 ms settle — five decrements of `0x60ee` by the 1 ms task —
+which could not be under about 16 ms if that task ran near 300 Hz. **The 1 ms
+task is punctual.**
+
+### The dequeue move, and its null result
+
+Acting on the mistaken reading above, the dequeue was moved off the main-loop
+wrapper onto that 1 ms tick and measured at image `82789d97`: min 337 us,
+mean 1.67 ms, max 3.74 ms, sigma 957 us, n=200. Range 3.40 ms against the
+3.36 ms it was meant to fix. **No change.** Combined with the punctual 1 ms
+task, that is direct evidence the dequeue wait was never the term, and the
+change was reverted at `554283a`.
+
+### What the trigger's pulse width excludes
+
+If the DAC transfer in the factory event-17 handler were dispatched on a
+coarse grid, an asynchronous external edge would wait a random fraction of it
+while an in-phase internal beat waited a constant — which would fit every
+row above. The spike's rise and fall both go out on that transfer, so its
+WIDTH reads the grid directly. Measured on the internal clock: mean 4.66 ms,
+min 4.51, max 4.90, sigma 182 us — a range of 390 us, and the external clock
+about the same. A 3.4 ms grid would have produced a bimodal width spanning
+3.4 ms. **The transfer is fine-grained, and identical on both sources.**
 
 Two honest limits on the dequeue model. It is a model calibrated to the
 measurement, not
