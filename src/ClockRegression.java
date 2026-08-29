@@ -18,6 +18,9 @@ public class ClockRegression extends GhidraScript {
 
     long pc() { return e.getExecutionAddress().getOffset(); }
     void jump(long p) { e.writeRegister(e.getPCRegister(), p); }
+    static String regName(int n) { return n==13?"SP":n==14?"LR":n==15?"PC":"R"+n; }
+    long reg(int n) { return e.readRegister(regName(n)).longValue() & 0xffffffffL; }
+    void setReg(int n, long v) { e.writeRegister(regName(n), v); }
     void w(long a, int n, long v) { e.writeMemoryValue(toAddr(a), n, v); }
     long r(long a, int n) {
         long v = 0;
@@ -57,8 +60,28 @@ public class ClockRegression extends GhidraScript {
         }
         if (pc() == 0x8001c914L) advances++;
         if (pc() == 0x800022deL && periodic) periodicAdvances++;
-        // Installed AVR32 SLEIGH lacks the branch p-code for MOV PC,Rs.
         int ins = (int)r(pc(),2);
+        // Installed AVR32 SLEIGH mis-models BFINS: it inserts the field at the
+        // wrong bit offset (0x7f into bits 8..15 where bit 24 was asked for).
+        // Nothing we assemble uses BFINS, but 195 factory sites do, including
+        // __floatunsisf -- so every glide step returned rubbish, the slew never
+        // moved off zero and the pitch scan remapped 0 on every note. BFEXTU
+        // and BFEXTS next door are correct and are left to SLEIGH; the three
+        // share 0xe1d0 | Rd<<9 | Rs and differ only in the second halfword,
+        // which is opcode<<10 | bp<<5 | width. No site uses width 0 or runs
+        // bp+width past 32. bitFieldInstructions() asserts all of this.
+        if ((ins & 0xe1f0) == 0xe1d0 && (int)r(pc()+2,2)>>10 == 0x34) {
+            int lo = (int)r(pc()+2,2);
+            int bp = (lo>>5)&0x1f, width = lo&0x1f, rd = (ins>>9)&0xf;
+            long mask = ((1L<<width)-1) << bp;
+            long v = ((reg(rd) & ~mask) | ((reg(ins&0xf)<<bp) & mask)) & 0xffffffffL;
+            setReg(rd, v);
+            e.writeRegister("Z", v==0 ? 1 : 0);
+            e.writeRegister("N", (v>>>31)&1);
+            jump(pc()+4);
+            return;
+        }
+        // Installed AVR32 SLEIGH lacks the branch p-code for MOV PC,Rs.
         if ((ins & 0xe1ff) == 0x009f) {
             int n = (ins >> 9) & 15;
             jump(e.readRegister(n==13 ? "SP" : n==14 ? "LR" : n==15 ? "PC" : "R"+n).longValue());
@@ -152,13 +175,14 @@ public class ClockRegression extends GhidraScript {
         time(us);
         call(r(0x8001485cL,4),0x80004f66L);
     }
+    // The 200 Hz pitch pass, entered at the head of the block that computes
+    // the pitch word: glide-rate lookup, slew engine, bend offset, clamp,
+    // then our store hook and the remap. Nothing here may supply 0x3210 --
+    // the harness cannot tell a right pitch from a wrong one if the fixture
+    // is what put the value there.
     void scan(long us) throws Exception {
         time(us);
-        // Zero-portamento fixture: supply the selected pitch to the real
-        // remap/DAC-slot/output hook. The factory floating-point glide and
-        // analog RC are not modeled by this clock regression.
-        w(0x3210,2,r(S+0x352,2));
-        call(0x80003236L,0x80003256L);
+        call(0x800031b8L,0x80003256L);
     }
     void internal(long us) throws Exception {
         time(us); periodic=true;
@@ -301,12 +325,66 @@ public class ClockRegression extends GhidraScript {
         println("edge to trigger: min="+lo+" max="+hi+" spread="+(hi-lo)+" us");
         check("every trigger's pitch was re-checked by a later scan",
               rescanned.size()>=beats-1 && staged.size()==beats);
+        // The scan runs the real glide, whose fastest rate covers 99.946% of
+        // the remaining distance per scan, so the first scan after a step
+        // lands a fraction of a raw count short of the target: measured at 1
+        // DAC count over this fixture's 40-count steps, 0 in arp mode. One
+        // count is the hardware quantisation floor, so that is the tightest
+        // this can be. A pitch the fast path got structurally wrong is far
+        // outside it -- see bendMissingFromFastTrigger, which diverges by 60.
         for (int i=0;i<rescanned.size();i++)
-            check("staged pitch "+i+" survives the scan: "
-                  +staged.get(i)+" vs "+rescanned.get(i),
-                  staged.get(i).equals(rescanned.get(i)));
+            check("staged pitch "+i+" survives the scan within the glide's "
+                  +"residual: "+staged.get(i)+" vs "+rescanned.get(i),
+                  Math.abs(staged.get(i)-rescanned.get(i))<=1);
         check("trigger rise jitter within one 1 kHz tick of the edge", hi-lo<=1000);
         println("PASS trigger rise jitter "+(hi-lo)+" us peak to peak");
+    }
+    // Drive a locked /1 clock with the bend strip at a given offset and return
+    // {the DAC word the fast trigger staged, the DAC word the next scan left}.
+    int[] fastVersusScan(int bend) throws Exception {
+        fresh(1,25000000);
+        w(S+0x216,2,bend);
+        final long period=26200;
+        long rise=10000, fall=rise+period/2, end=10000+period*14;
+        int beats=0; Integer staged=null, rescanned=null; boolean pending=false;
+        for (long tick=10000; tick<=end; tick+=1000) {
+            while (Math.min(rise,fall)<=tick) {
+                if (rise<=fall) { irq(rise,true); beats++; rise+=period; }
+                else { irq(fall,false); fall+=period; }
+            }
+            bank(tick); service(tick);
+            int before=outputTimes.size();
+            flush(tick);
+            if (outputTimes.size()>before && beats>=10 && staged==null) {
+                staged=(int)r(S+0x358,2); pending=true;
+            }
+            if (tick%5000==0) {
+                scan(tick);
+                if (pending) { rescanned=(int)r(S+0x358,2); pending=false; }
+            }
+        }
+        check("bend fixture produced a fast rise and a later scan, bend="+bend,
+              staged!=null && rescanned!=null);
+        return new int[]{staged, rescanned};
+    }
+    // The fast trigger remaps state+0x352, the pitch TARGET the pressure_blend
+    // cave writes. The 200 Hz scan remaps slew(state+0x352) + state+0x216, the
+    // bend strip's offset. Touch the strip and the two disagree, and the DAC
+    // holds the fast path's number until the next scan overwrites it - up to
+    // 5 ms of wrong pitch under every trigger, which is the bleed the
+    // instrument shows. The centred case is the control: it proves the
+    // divergence below is the bend and not the fixture.
+    void bendMissingFromFastTrigger() throws Exception {
+        int[] flat = fastVersusScan(0);
+        check("with the strip centred the fast trigger and the scan agree: "
+              +flat[0]+" vs "+flat[1], flat[0]==flat[1]);
+        int[] bent = fastVersusScan(60);
+        println("bend +60: fast trigger staged "+bent[0]
+                +", the next scan corrected it to "+bent[1]);
+        check("KNOWN DEFECT, the fast trigger stages a bend-less pitch; the "
+              +"pitch-ownership restructure must make these two equal: "
+              +bent[0]+" vs "+bent[1], bent[0]!=bent[1]);
+        println("PASS bend divergence between the fast trigger and the scan");
     }
     // The pitch scan and the 1 kHz DAC flush are separate dispatcher events
     // and nothing orders them within a millisecond. Run a whole clock both
@@ -449,10 +527,45 @@ public class ClockRegression extends GhidraScript {
         check("warm restart cannot emit a stale trigger", outputTimes.isEmpty());
         println("PASS warm restart clears queued and pending clock work");
     }
+    // Step the three bit-field forms where the factory actually uses them and
+    // check them against hand-computed results: BFINS through the workaround
+    // in step(), BFEXTU and BFEXTS as SLEIGH executes them. If a later Ghidra
+    // fixes BFINS, or breaks one of the other two, the glide silently returns
+    // rubbish again -- so assert all three rather than trust them.
+    void bitFieldInstructions() throws Exception {
+        fresh(1,25000000);
+        e.writeRegister("SP",0x7800); e.writeRegister("LR",0x100);
+        // BFINS R12,R10,0x18,0x8 -- __floatunsisf placing an exponent. This is
+        // the one SLEIGH gets wrong; without the workaround it yields 0x7f00.
+        e.writeRegister("R12",0x01000000L); e.writeRegister("R10",0x7fL);
+        jump(0x800133f8L); step();
+        check("BFINS inserts at bit 24 and leaves the rest", reg(12)==0x7f000000L);
+        // BFEXTU R9,R11,0x18,0x8 -- __extendsfdf2 taking a float's exponent.
+        e.writeRegister("R11",0x87e50000L); e.writeRegister("R9",0xdeadbeefL);
+        jump(0x80013476L); step();
+        check("BFEXTU extracts bits 24..31", reg(9)==0x87);
+        // BFEXTS R9,R8,0x0,0x10 -- the slew tail narrowing its result to int16.
+        e.writeRegister("R8",0x1234ffffL); e.writeRegister("R9",0xdeadbeefL);
+        jump(0x8000c104L); step();
+        check("BFEXTS sign-extends a negative halfword", reg(9)==0xffffffffL);
+        e.writeRegister("R8",0x12347fffL); e.writeRegister("R9",0xdeadbeefL);
+        jump(0x8000c104L); step();
+        check("BFEXTS leaves a positive halfword alone", reg(9)==0x7fff);
+        // End to end: the soft-float library the glide runs on, exact IEEE.
+        e.writeRegister("R12",485); call(0x800133c4L,0x100);
+        check("__floatunsisf(485) == 43f28000", reg(12)==0x43f28000L);
+        e.writeRegister("R12",0x40000000L); e.writeRegister("R11",0x40400000L);
+        call(0x8001326cL,0x100);
+        check("__mulsf3(2.0,3.0) == 40c00000", reg(12)==0x40c00000L);
+        e.writeRegister("R12",0x43f28000L); call(0x8001346cL,0x100);
+        check("__extendsfdf2(485.0) == 407e5000:00000000",
+              reg(11)==0x407e5000L && reg(10)==0);
+        println("PASS bit-field instructions and factory soft-float");
+    }
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
         try {
-            abiAndNoise(); dispatchJitter(); riseJitter(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); bendMissingFromFastTrigger(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             if (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick"))
             for (int hz : new int[]{10,150,180,199,200})
                 for (double duty : new double[]{0.1,0.5,0.75,0.9})
