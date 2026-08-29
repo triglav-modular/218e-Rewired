@@ -164,7 +164,12 @@ var WEBBUILD = (function () {
              'pressure_vibrato_pool'].forEach(function (n) { blocks[n] = false; });
         }
         var smoothing = cfg.pressure.output_smoothing;
-        ['dac_interpolator', 'dac_flush_pool', 'pressure_target_redirect']
+        // The event-17 wrapper is shared between pressure smoothing and the
+        // clock's trigger rise, so it exists for either; dac_interpolate is
+        // the pressure half alone.  Mirrors tools/build.py.
+        ['dac_interpolator', 'dac_flush_pool']
+            .forEach(function (n) { blocks[n] = !!smoothing || div; });
+        ['dac_interpolate', 'pressure_target_redirect']
             .forEach(function (n) { blocks[n] = !!smoothing; });
         return { blocks: blocks, features: features };
     }

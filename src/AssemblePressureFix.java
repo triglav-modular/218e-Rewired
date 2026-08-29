@@ -1663,8 +1663,16 @@ public class AssemblePressureFix extends GhidraScript {
         // Shared first-use initialisation makes a separate byte marker here
         // unnecessary and guarantees the target, snapshot, counter and DAC
         // slot become valid atomically before any of them is read.
+        // The cave is the event-17 wrapper, and TWO things want it: the
+        // pressure interpolation below, and the clock's trigger rise.  It is
+        // built whenever either is on, and each half is conditional, because
+        // a build can have one without the other - `pressure_fix = false`
+        // sets smoothing to zero while clock division stays on, and hooking
+        // this only for smoothing left the trigger back on the 5 ms scan
+        // with the fast-trigger cave emitted but unreachable.
         begin(0x8001a600L);
         emit("MCALL PC[0x8001ac80]");
+        if (block("dac_interpolate")) {
         emit("MOV R10,0x6036");
         emit("LD.SH R11,R10[0x0]");     // target
         emit("CP.W R11,0x0");
@@ -1714,6 +1722,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R9[0x0],R10");
         padTo(0x8001a680L);
         emit("ST.H R12[0x356],R8");
+        } else {
+            // No smoothing: the scan writes the pressure DAC slot itself and
+            // the target, snapshot and counter above are never maintained.
+            // Nothing here may read or write them.
+            emit("RJMP 0x8001a684");
+        }
+        padTo(0x8001a684L);
         // The trigger's rise rides out on this same flush, one slot along.
         // Staged here, before the hand-back, so pitch and gate reach the DAC
         // in the same millisecond - which is the whole point of moving it.

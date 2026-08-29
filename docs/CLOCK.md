@@ -118,7 +118,16 @@ When a clock is present, `clock_settle` marks the step claimable by the 1 kHz
 DAC flush as well as by the pitch scan, and whichever context completes it
 drops the other's claim: nothing orders those two dispatcher events within a
 millisecond, and without that the scan could fire and the flush fire again
-behind it. The flush path stages the step's own pitch through the calibration
+behind it. The event-17 wrapper at `0x8001a600` is shared: pressure smoothing runs its
+interpolation there and the clock raises its trigger there, so the wrapper is
+built whenever **either** is enabled and each half is conditional. That matters
+because `pressure_fix = false` sets output smoothing to zero while leaving
+clock division on — gating the whole wrapper on smoothing put that build's
+trigger back on the 5 ms scan with the fast-trigger cave emitted but
+unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
+configuration and holds it to the same 1 ms bound.
+
+The flush path stages the step's own pitch through the calibration
 remap **entered past the per-scan chain at its head** — the tuning applier,
 the housekeeping and the vibrato engine all advance once per scan and must not
 be run at 1 kHz — and then raises the gate, so pitch and trigger reach the DAC
@@ -184,7 +193,7 @@ the release fire in under a second on the instrument.
 ## Repeatable checks
 
 ```sh
-python3 tools/test_clock.py
+python3 tools/test_clock.py            # seq, arp and pressure-off
 python3 tools/test_persistence.py
 python3 tools/avr32/sweep.py
 python3 web/test_configs.py

@@ -3,6 +3,7 @@
 
     python3 tools/test_clock.py
     python3 tools/test_clock.py --mode seq --quick
+    python3 tools/test_clock.py --mode pressure-off
 
 Requires the AVR32 Ghidra language used by the reference assembler. Logs,
 test configurations, images and a private Ghidra project stay in build/.
@@ -23,7 +24,9 @@ REPO = Path(__file__).resolve().parent.parent
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("seq", "arp", "both"), default="both")
+    parser.add_argument("--mode",
+                        choices=("seq", "arp", "pressure-off", "all", "both"),
+                        default="all")
     parser.add_argument("--quick", action="store_true", help="skip the frequency/duty sweep")
     parser.add_argument("--ghidra", type=Path)
     args = parser.parse_args()
@@ -39,10 +42,24 @@ def main() -> None:
     (REPO / "build").mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="clock-regression-", dir=REPO / "build"))
     print(f"Artifacts: {work}", flush=True)
-    modes = ("seq", "arp") if args.mode == "both" else (args.mode,)
+    if args.mode == "all":
+        modes = ("seq", "arp", "pressure-off")
+    elif args.mode == "both":
+        modes = ("seq", "arp")
+    else:
+        modes = (args.mode,)
     for mode in modes:
         text = base
-        for option, value in (("clock_divide", "true"), ("sequencer", str(mode == "seq").lower())):
+        # pressure-off is the same clock as arp, built the way `pressure_fix
+        # = false` builds it. The trigger's rise shares the event-17 wrapper
+        # with the pressure interpolator, and that build turns smoothing off
+        # while leaving clock division on - so it is the configuration where
+        # the wrapper can go missing under the fix and take it with it.
+        options = [("clock_divide", "true"),
+                   ("sequencer", str(mode == "seq").lower())]
+        if mode == "pressure-off":
+            options += [("pressure_fix", "false"), ("pressure_portamento", "false")]
+        for option, value in options:
             text, n = re.subn(rf"^{option} = (?:true|false)$", f"{option} = {value}", text, flags=re.M)
             if n != 1:
                 raise SystemExit(f"Cannot set {option} in regression config")
@@ -63,7 +80,8 @@ def main() -> None:
         print(f"Emulating {mode} firmware...", flush=True)
         command = [str(headless), str(work), "clock", "-import", str(image),
                    "-processor", "avr32:BE:32:default", "-noanalysis",
-                   "-scriptPath", str(REPO / "src"), "-postScript", "ClockRegression.java", mode]
+                   "-scriptPath", str(REPO / "src"), "-postScript", "ClockRegression.java",
+                   "seq" if mode == "seq" else "arp"]
         if args.quick:
             command.append("quick")
         result = subprocess.run(command, cwd=REPO, text=True, capture_output=True)

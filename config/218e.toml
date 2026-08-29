@@ -188,7 +188,7 @@ version        = "2.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "dd0606eda4ebc39d753665051e32841fdfedc693928e248b04e88448bd53d465"
+golden_sha256  = "4d3899214e61b47fbf2d46596f10b378993e9dc4d78d57debbd80f2c01b65312"
 
 
 [tools]

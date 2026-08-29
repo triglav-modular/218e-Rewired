@@ -1847,7 +1847,15 @@ def main() -> None:
     blocks["arp_swing"] = k2 == "swing"
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
-    for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
+    # The event-17 wrapper is shared: pressure smoothing runs its
+    # interpolation there, and clock division raises the trigger there. It has
+    # to exist for either. `dac_interpolate` is the pressure half alone -
+    # pressure_fix off sets smoothing to zero while clock division stays on,
+    # and gating the whole wrapper on smoothing left that build's trigger back
+    # on the 5 ms scan with the fast-trigger cave unreachable.
+    for name in ("dac_interpolator", "dac_flush_pool"):
+        blocks[name] = bool(smoothing) or div
+    for name in ("dac_interpolate", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "
                    f"{smoothing if smoothing else 'off'!r}")
