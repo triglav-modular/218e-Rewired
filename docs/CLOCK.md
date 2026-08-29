@@ -136,6 +136,16 @@ trigger back on the 5 ms scan with the fast-trigger cave emitted but
 unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
 configuration and holds it to the same 1 ms bound.
 
+Moving the FIFO dequeue itself onto the flush was considered and is wrong.
+The factory dispatcher at 0x80004c64 takes ONE event from its 32-entry ring
+(0x8001030c) and returns; every jump-table arm ends in `BR{al} 0x800051b0`.
+The main loop at 0x80007c5a calls `clock_service` and then that dispatcher,
+once each, per iteration — so the dequeue already runs at least as often as
+event 17 is dispatched, and moving it would make it rarer. What is left of
+the trigger's latency is event-queue depth, and that is a floor either way:
+the DAC transfer itself happens in the factory event-17 handler, which reads
+state+0x354 at 0x80004fae, so nothing staged earlier moves the edge.
+
 The claim byte at 0x625b says which of those the flush is holding: 1 to
 fire on this tick, 2 to stage the pitch and start a settle, 3 while that
 settle runs. Under 2 and 3 the countdown at 0x60ee is MILLISECONDS rather
