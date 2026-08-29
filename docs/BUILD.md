@@ -665,11 +665,26 @@ rather than arbitrary strings in the dataset.
 ## Watching buchla.com
 
 This repository is a patch onto a named stock version, so a new stock version
-is work rather than only news. `.github/workflows/buchla-watch.yml` checks once
-a day at 06:17 UTC and opens an issue when something moves — which is how the
-notice reaches a mailbox, since GitHub already mails what it opens. That is one
-fewer credential, one fewer service and one fewer thing that can quietly stop
-working than any mail path this repository could own.
+is work rather than only news. A private repository,
+[buchla-firmware-watch](https://github.com/triglav-modular/buchla-firmware-watch),
+runs the check once a day and opens an issue there when something moves —
+GitHub mails what it opens, so that issue is the notification. The code it runs
+is developed and tested here, in `tools/watch-buchla.mjs`, and copied there.
+
+### Why it is somewhere else, and private
+
+GitHub disables a scheduled workflow on a **public** repository after 60 days
+with no repository activity. This watch exists for exactly the years when
+nothing is happening, so it must not be one of the things that goes quiet.
+Private repositories are not subject to that rule, and `GITHUB_TOKEN` is minted
+per run, so there is no credential to rotate either.
+
+The copy is deliberate rather than a cross-repository checkout: a watch meant
+to sit untouched for years should not break because a path moved here. CI over
+there runs this repository's own `tools/test_watch.mjs` against its copy, so
+drift shows up as a red tick rather than as silence.
+
+### How a release is detected
 
 The 218e v3 download is the hard one to watch. Its filename carries no version
 — `firmwarefiles/218ev3-Firmware-Flashing.zip` — and the page linking it prints
@@ -689,52 +704,65 @@ that it changed.
 
 Two things inside the zip say the version, and they are checked against each
 other: the `.hex` filename (`218eV3_v369_DFU.hex` is v36.9) and the changelog's
-own headings. The other modules need none of this — their filenames carry the
-version, so `218Ev309.zip` → `218Ev311.zip` is a new link on the download page
-rather than new bytes behind an old one, and the page's file list is compared
-as a set.
+own headings.
 
-The baseline is `firmware/buchla-watch.json`, committed back by the workflow
-when it moves. It ships seeded with what the live site answered on 29 August
-2026, so a release between that commit and the first run is still caught rather
-than quietly absorbed into a baseline the first run invented.
+### What does not work, and why
 
-**The failure that matters** is the watch itself breaking, because silence is
-also what "Buchla has released nothing" looks like. A failed check leaves the
-baseline alone and is counted; every seventh consecutive failure opens an issue
-saying so — every seventh rather than only the seventh, so an alarm lost to a
-bad delivery comes back a week later instead of never. The job deliberately
-exits zero on a failed check: GitHub mails the owner whenever a scheduled
-workflow fails, and a bad afternoon at buchla.com would otherwise send a mail a
-day and drown the one notice that matters.
+The download page cannot be read from CI. buchla.com sits behind Flywheel,
+which serves the zip's `HEAD` to a GitHub runner but answers `422` with an
+empty body for `/download/`. That is the runner's address rather than its
+headers: five header sets were probed from a runner — none at all, a bot
+user-agent, a full browser fingerprint and two in between — and all five were
+refused identically, while the same code from a laptop gets `200`.
 
-### Two things it depends on
+That page is the second, independent signal, and the only one that covers the
+**other** modules, whose versions are in their filenames (`218Ev309.zip` →
+`218Ev311.zip`) so a release there is a new link rather than new bytes. So
+those are currently unwatched. The 218e v3 — the one this repository is patched
+onto, and the only one whose version is hidden inside a zip — is unaffected.
 
-GitHub only ever runs a scheduled workflow **from the default branch**, so this
-watches nothing until it is on `main`.
+The two signals therefore fail apart on purpose. A page that cannot be read
+keeps the list it last saw rather than throwing it away and reporting all 53 as
+new, does not count as a failed check, and says so once per outage rather than
+every week, because from a datacenter address this is a standing condition and
+a notice that repeats until someone fixes something unfixable is one that gets
+filtered — which would take the notice that matters with it. It is still
+attempted daily and picks itself up if that ever changes.
 
-GitHub also disables a schedule on a public repository after **60 days with no
-repository activity**, warning the owner by mail first. The baseline commit is
-activity whenever buchla.com moves, but a genuinely quiet year is genuinely
-quiet — so that warning mail is the one not to ignore.
+Fixing it properly means fetching that page from an address Buchla will serve:
+a free Cloudflare Worker on `triglavmodular.hu` proxying just that one URL for
+the runner would do it, if the other modules are ever worth the endpoint.
+
+### The failure that matters
+
+The watch itself breaking, because silence is also what "Buchla has released
+nothing" looks like. A failed check leaves the baseline alone and is counted;
+every seventh consecutive failure opens an issue — every seventh rather than
+only the seventh, so an alarm lost to a bad delivery comes back a week later
+instead of never. The job deliberately exits zero on a failed check: GitHub
+mails on every scheduled-workflow failure, and a bad afternoon at buchla.com
+would otherwise send a mail a day and drown the one notice that matters.
+
+The baseline carries that count, which is why it is committed back rather than
+cached — without it every run would start from zero and the alarm would never
+reach seven.
 
 ### Why not a mail of its own
 
 The detection first ran in the Cloudflare worker, which was the natural home:
-it is already deployed and does not need this Mac awake. Cloudflare Email
-Sending turned out to need the Workers **Paid** plan, and the API answers
-`Unauthorized [code: 2036]` on a free account rather than saying so.
+already deployed, and not needing this Mac awake. Cloudflare Email Sending
+turned out to need the Workers **Paid** plan, and the API answers `Unauthorized
+[code: 2036]` on a free account rather than saying so. The free alternative is
+the older `send_email` binding, but that rides on Email **Routing**, and
+enabling it rewrites the zone's MX records — `triglavmodular.hu` points at
+iCloud, so it would have traded a firmware notification for the domain's
+inbound mail.
 
-The free alternative is the older `send_email` binding, which rides on Email
-**Routing** — but enabling that rewrites the zone's MX records, and
-`triglavmodular.hu` points at iCloud. It would have traded a firmware
-notification for the domain's inbound mail.
-
-`tools/watch-buchla.mjs` holds all of it and knows nothing about where the
-notice goes: `watch()` is handed somewhere to keep the baseline and something
-to send with. `tools/watch-buchla-run.mjs` binds those to a file and a GitHub
-issue. Anything else — a mail, a webhook, the WordPress site's own
-`wp_mail()` — is that one function, not a rewrite.
+`watch()` is handed somewhere to keep the baseline and something to send with,
+and knows nothing else. That is what made moving it a new caller rather than a
+rewrite, and it is what makes any other delivery — a mail, a webhook, the
+WordPress site's own `wp_mail()`, which `post-smtp` already routes through a
+real relay — one function rather than a rewrite.
 
 ### Checking it
 
@@ -743,10 +771,10 @@ node tools/test_watch.mjs
 ```
 
 covers the shapes offline against a zip it builds itself: the release, the
-re-upload that is not one, the new file on the page, a notice that failed, and
-the run of failed checks that has to end in an issue rather than in silence.
-The workflow also has `workflow_dispatch`, so it can be run by hand from the
-Actions tab without waiting for 06:17.
+re-upload that is not one, the new file on the page, the page that cannot be
+read, a notice that failed, and the run of failed checks that has to end in an
+issue rather than in silence. The watch workflow also has `workflow_dispatch`,
+so it can be run by hand without waiting for 06:17 UTC.
 
 
 ## Giving CI the factory image

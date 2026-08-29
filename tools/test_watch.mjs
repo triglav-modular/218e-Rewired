@@ -276,7 +276,7 @@ console.log('The watch on buchla.com');
   // watch looks like - but one bad afternoon is not worth a mail either.
   const env = fakeEnv(SEED);
   site({ zip: SEED_ZIP, files: FILES_53, etag: SEED.etag,
-         modified: SEED.modified, pageStatus: 500 });
+         modified: SEED.modified, headStatus: 500 });
   for (let day = 1; day <= 6; day++) await tick(env).catch(() => {});
   check('six failed days stay quiet', env.sent.length === 0);
   check('but are counted', state(env).failures === 6, String(state(env).failures));
@@ -297,6 +297,52 @@ console.log('The watch on buchla.com');
         `${env.sent.length} notices after 14 failed days`);
   check('a failed check never moves the baseline',
         state(env).version === '36.9' && state(env).etag === '"seed"');
+}
+
+{
+  // buchla.com sits behind a bot filter, and the page is the half it turns
+  // away - a datacenter address got 422 there while the zip answered fine.
+  // That must not blind the 218e v3 watch, and must not pass for "no other
+  // module was updated" either.
+  const env = fakeEnv(SEED);
+  site({ zip: SEED_ZIP, files: FILES_53, etag: SEED.etag,
+         modified: SEED.modified, pageStatus: 422 });
+  for (let day = 1; day <= 6; day++) await tick(env);
+  check('an unreadable page is not a failed check', state(env).failures === 0);
+  check('and stays quiet at first', env.sent.length === 0);
+  check('but is counted separately', state(env).pageFailures === 6,
+        String(state(env).pageFailures));
+  check('and the list it last saw is kept, not thrown away',
+        Array.isArray(state(env).files) && state(env).files.length === 53);
+  await tick(env);
+  check('the seventh day says the page has stopped being readable',
+        env.sent.length === 1
+        && /download page has not been readable/.test(env.sent[0].subject),
+        env.sent[0] && env.sent[0].subject);
+  check('and says the other modules are the ones going unwatched',
+        /other module/.test(env.sent[0].text));
+  // From a datacenter address this is standing, not a fault.  Saying it every
+  // week for ever is how a notice gets filtered into a folder nobody reads -
+  // and this mailbox has to stay worth opening for the one that matters.
+  for (let day = 8; day <= 21; day++) await tick(env);
+  check('and does not say it again every week', env.sent.length === 1,
+        `${env.sent.length} notices over three weeks`);
+  check('though the count keeps rising', state(env).pageFailures === 21,
+        String(state(env).pageFailures));
+}
+
+{
+  // The release still has to get through while the page is blocked, because
+  // the zip is a signal of its own and the one this repository is patched onto.
+  const env = fakeEnv(SEED);
+  site({ zip: zipFor('37.0', CHANGELOG_370), files: FILES_53, etag: '"new"',
+         modified: 'Mon, 01 Jun 2026 09:00:00 GMT', pageStatus: 422 });
+  await tick(env);
+  check('a release is reported even with the page unreadable',
+        env.sent.length === 1
+        && env.sent[0].subject === 'Buchla 218e v3 firmware 36.9 -> 37.0',
+        env.sent[0] && env.sent[0].subject);
+  check('and the version still moves', state(env).version === '37.0');
 }
 
 {

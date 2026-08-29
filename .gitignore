@@ -63,11 +63,6 @@ changelog.txt
 config/local.toml
 firmware/*.hex
 firmware/INSTALLED.txt
-# Everything else in firmware/ is Buchla's image or a build of it, and
-# ignored.  The watch's baseline is neither - it is the record of what
-# buchla.com last answered, and losing it to a broader rule later would
-# silently re-arm the watch against a release it had already reported.
-!firmware/buchla-watch.json
 ghidra_project/
 otherfirmware/
 web/*.hex

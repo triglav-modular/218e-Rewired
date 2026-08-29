@@ -8,7 +8,13 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { watch } from './watch-buchla.mjs';
 
-const STATE = new URL('../firmware/buchla-watch.json', import.meta.url);
+// Where the baseline sits.  Given rather than assumed, because the schedule
+// that runs this does not live in the same repository as the code: a public
+// repository's schedule is switched off after 60 days without activity, and a
+// watch that exists for the quiet years cannot be one of the things that goes
+// quiet.  See "Watching buchla.com" in docs/BUILD.md.
+const STATE = new URL(process.env.WATCH_STATE || 'buchla-watch.json',
+                      `file://${process.cwd()}/`);
 
 const state = {
   async read() {

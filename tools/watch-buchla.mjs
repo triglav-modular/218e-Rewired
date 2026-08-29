@@ -38,6 +38,17 @@ const WINDOW = 65536;
 // like when it is working perfectly.
 export const QUIET = 7;
 
+// buchla.com sits behind Flywheel, which turns down requests that arrive
+// looking like nothing in particular - a datacenter address with a bare
+// runtime's default user-agent answered 422 where the same code from a laptop
+// got 200.  Saying plainly what this is and where it comes from is both what
+// got it through and the polite thing for something that calls once a day.
+const HEADERS = {
+  'user-agent': 'buchla-firmware-watch/1 (+https://github.com/triglav-modular/218e-Rewired; daily check for new stock firmware)',
+  'accept': '*/*',
+  'accept-language': 'en',
+};
+
 // Where the watch starts from, read from the live site on 29 August 2026.
 // Written out rather than left for the first run to discover, because a
 // baseline the first run invents cannot report a change that happened before
@@ -63,7 +74,7 @@ async function sha256(text) {
 // anything else is a failed read rather than something to parse, because a
 // 200 here is the whole 48 MB arriving where a few KB were expected.
 async function slice(url, from, to) {
-  const res = await fetch(url, { headers: { range: `bytes=${from}-${to}` } });
+  const res = await fetch(url, { headers: { ...HEADERS, range: `bytes=${from}-${to}` } });
   if (res.status !== 206) throw new Error(`range read answered ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -161,18 +172,36 @@ export function notesSince(changelog, known) {
 // failure anywhere in it is one failure rather than a half-finished
 // comparison.
 async function look() {
-  const head = await fetch(ZIP, { method: 'HEAD' });
+  const head = await fetch(ZIP, { method: 'HEAD', headers: HEADERS });
   if (!head.ok) throw new Error(`HEAD answered ${head.status}`);
-  const page = await fetch(PAGE);
-  if (!page.ok) throw new Error(`the download page answered ${page.status}`);
-  const files = filesOf(await page.text());
-  if (!files.length) throw new Error('the download page linked no firmware at all');
-  return {
+  const outside = {
     etag: head.headers.get('etag') || '',
     modified: head.headers.get('last-modified') || '',
     length: head.headers.get('content-length') || '',
+  };
+
+  // The page is a second, independent signal - it is how the other modules
+  // are watched, since their version is in the filename.  It is also the half
+  // more likely to be turned away, so it is allowed to fail without taking
+  // the 218e v3 down with it.  Not silently: `pageError` is carried into the
+  // baseline and alarms on its own schedule, because a page that has quietly
+  // stopped being read looks exactly like a page where nothing is happening.
+  let files = null, pageError = null;
+  try {
+    const page = await fetch(PAGE, { headers: HEADERS });
+    if (!page.ok) throw new Error(`answered ${page.status}`);
+    const found = filesOf(await page.text());
+    if (!found.length) throw new Error('linked no firmware at all');
+    files = found;
+  } catch (e) {
+    pageError = e.message;
+  }
+
+  return {
+    ...outside,
     files,
-    digest: await sha256(files.join('\n')),
+    pageError,
+    digest: files ? await sha256(files.join('\n')) : null,
   };
 }
 
@@ -231,19 +260,57 @@ export async function watch({ state, notify }) {
   // where there is not.  The list is the better comparison because it can also
   // say which file appeared; the digest exists so that the very first run,
   // before any list has been stored, can still tell that the page has moved.
-  const listed = Array.isArray(was.files)
+  // A page that could not be read this time compares against nothing.
+  const listed = now.files !== null && (Array.isArray(was.files)
     ? now.files.join('\n') !== was.files.join('\n')
-    : now.digest !== was.digest;
+    : now.digest !== was.digest);
 
-  const next = { ...now, version: was.version, failures: 0 };
+  // Counted separately from a check that failed outright, because this one
+  // has not stopped the 218e v3 from being watched - only the other modules.
+  const pageFailures = now.pageError ? (was.pageFailures || 0) + 1 : 0;
 
-  if (!moved && !listed) {
+  // What the page last said survives a day it could not be read, so a blocked
+  // afternoon does not throw away the list and then report all 53 as new.
+  const next = {
+    etag: now.etag,
+    modified: now.modified,
+    length: now.length,
+    files: now.files || was.files,
+    digest: now.files ? now.digest : was.digest,
+    version: was.version,
+    failures: 0,
+    pageFailures,
+  };
+
+  // The page going quiet is its own alarm on its own schedule.  Silence here
+  // reads exactly like "no other module has been updated", which is why it
+  // cannot simply be swallowed - but it is not worth a notice on the first
+  // afternoon Flywheel decides this looks like a robot.
+  //
+  // Once per outage, not once a week for ever: from a datacenter address this
+  // is a standing condition rather than a fault, and a notice that repeats
+  // until someone fixes something unfixable is one that gets filtered.  The
+  // count resets on the first page that reads, so a later outage says so
+  // again.  Unlike the failed-check alarm below, this one cannot be lost to a
+  // failed send - the count only advances when the state is written, and that
+  // happens after the notices have gone.
+  const pageAlarm = now.pageError && pageFailures === QUIET
+    ? [`Buchla download page has not been readable for ${pageFailures} days`,
+       `The 218e v3 zip is still being watched - only the download page is `
+       + `not.\n\nThat page is how every other module is watched, since their `
+       + `version is\nin the filename, so those are currently unwatched.  The `
+       + `last error was:\n\n    ${now.pageError}\n\n    ${PAGE}\n`]
+    : null;
+
+  if (!moved && !listed && !pageAlarm) {
     // Nothing happened, which is almost every day, and a quiet year should be
     // a quiet history - so the baseline is rewritten only when it would
     // actually differ.  The first run is the exception: the seed carries a
     // digest and no filenames, and until the list itself is stored a new file
     // on the page can be noticed but not named.
-    if (!stored || was.failures) await state.write(next);
+    if (!stored || was.failures || pageFailures !== (was.pageFailures || 0)) {
+      await state.write(next);
+    }
     return null;
   }
 
@@ -298,10 +365,11 @@ export async function watch({ state, notify }) {
     lines.push('', `    ${PAGE}`);
   }
 
-  await notify(subject, lines.join('\n') + '\n');
+  if (subject) await notify(subject, lines.join('\n') + '\n');
+  if (pageAlarm) await notify(pageAlarm[0], pageAlarm[1]);
   // Written only after the notice is away.  One that threw leaves the old
   // baseline in place, so tomorrow reports the same change rather than
   // swallowing it.
   await state.write(next);
-  return subject;
+  return subject || pageAlarm[0];
 }
