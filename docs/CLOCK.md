@@ -324,8 +324,11 @@ That measurement has now been taken. Internal clock at ~25 Hz, gate period
 over n=500: mean 40.93 ms, min 40.77 ms, max 42.33 ms, sigma **216 us** — a
 tight core with rare late outliers, against the 1.47 ms sigma a trigger
 carrying the external spread would have produced. The internal beat raises
-its gate on the same event 17, so **the flush and the dispatcher are
-punctual**; the spread belongs to the external path alone.
+its gate on the same event 17, so the shared path adds no significant
+**variable** delay and the spread belongs to the external path alone. Note
+the limit of that inference: period jitter cancels a constant offset, so it
+says nothing about a fixed delay the shared path may add. It bounds the
+jitter, not the latency.
 
 The one stage the internal beat never uses is the FIFO dequeue in
 `clock_service`. `loopModelJitter()`'s second sweep holds the dispatcher
@@ -344,7 +347,38 @@ pass, so the decline is unreachable there and the portamento knob does not
 enter the external jitter. That is what makes the scan-rate experiment below
 interpretable: only one mechanism is left to scale with the scan.
 
-Two honest limits on that. It is a model calibrated to the measurement, not
+### The scan-rate experiment, and what it refuted
+
+A build with `scan_period_ms = 10` instead of 5 (image `6113f63f`, verified
+at `0x80007c0c` as `MOV R10,0xa`) was flashed and measured. Had the dequeue
+polled at the scan's cadence the spread should have doubled to about 6.7 ms.
+It did not move: range 3.28 ms against 3.36 ms, max 3.59 ms against 3.62 ms
+(n=500: mean 1.11 ms, sigma 833 us).
+
+The ceiling is therefore **not** derived from the scan. What did change is
+the mean, down from 1.55 ms to 1.10 ms, the distribution skewing earlier
+(mean at 0.24 of the range, from 0.38). Halving the event-2 post rate
+removed about 450 us of average delay, which is the queueing term at the
+size the model predicted — small.
+
+Two terms, then: a small scan-dependent queueing delay, and a larger
+scan-independent one setting a hard ceiling near 3.6 ms. The experiment
+refutes only that the dequeue's rate follows the scan. It does not refute
+that the dequeue is the slow stage — the main loop may iterate near 300 Hz
+for reasons unrelated to the scan, and the internal-versus-external split
+that isolates the dequeue is untouched by this result.
+
+The 4 ms attack-age guard at `0x8001ca80` was considered for that ceiling
+and rejected on the code rather than on the fit. Its bound is exactly right:
+`0x6244` holds cycles per millisecond, `LSL R11,0x2` makes four, and the
+trigger declines and retries while the last output is younger than that. But
+`0x6254` is stamped only on the two trigger-fire paths, so at 13–35 Hz the
+previous output is 28–76 ms old and the guard cannot bite. The matching
+ceiling is a coincidence, recorded here so the next reader does not spend
+the same hour on it.
+
+Two honest limits on the dequeue model. It is a model calibrated to the
+measurement, not
 a direct observation of either rate; and the model's mean (1.9–2.1 ms) sits
 above the instrument's 1.55 ms, because the model polls on a perfectly
 regular grid while a real main loop does not. The scale and the mechanism
