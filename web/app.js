@@ -1304,18 +1304,45 @@
         });
     });
 
-    // The changelog, from the same generated data the package's
-    // changelog.txt ships - version lines become headings.
+    // The changelog, from the same generated data the package's changelog.txt
+    // ships.  That file is plain text - "2.0 (2026-08-29)" opening a release,
+    // "- " opening an entry - and this turns it into headings and real list
+    // items, so the panel gets hanging bullets rather than a run of dashes
+    // held together by white-space: pre-line.
     (function () {
-        var body = $('chlogBody'), btn = $('chlogBtn');
+        var body = $('chlogBody'), btn = $('chlogBtn'), list = null;
         GEN.changelog.split('\n').forEach(function (line) {
             if (!line.trim()) return;
-            var el = /^\d+\.\d+/.test(line)
-                ? document.createElement('strong')
-                : document.createElement('span');
-            el.textContent = line;
-            body.appendChild(el);
-            body.appendChild(document.createTextNode('\n'));
+            var head = /^(\d+\.\d+(?:\.\d+)?)\s*(?:\((.+)\))?\s*$/.exec(line);
+            if (head) {
+                var rel = document.createElement('div');
+                rel.className = 'chlog-rel';
+                var h = document.createElement('h4');
+                h.className = 'chlog-ver';
+                h.appendChild(document.createTextNode(head[1]));
+                if (head[2]) {
+                    var when = document.createElement('span');
+                    when.className = 'chlog-date';
+                    when.textContent = head[2];
+                    h.appendChild(when);
+                }
+                list = document.createElement('ul');
+                list.className = 'chlog-list';
+                rel.appendChild(h);
+                rel.appendChild(list);
+                body.appendChild(rel);
+                return;
+            }
+            // A line before any version heading would have nowhere to go, so
+            // it opens an unlabelled list rather than being dropped.
+            if (!list) {
+                list = document.createElement('ul');
+                list.className = 'chlog-list';
+                body.appendChild(list);
+            }
+            var li = document.createElement('li');
+            li.textContent = line.replace(/^[-\u2013\u2014]\s*/, '');
+            list.appendChild(li);
         });
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
