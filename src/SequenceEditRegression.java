@@ -7,7 +7,7 @@ public class SequenceEditRegression extends PersistenceRegression {
     boolean persistent=true;
     long now, toDoubleFn, mulDoubleFn, toIntFn;
     int previewCalls;
-    final List<Integer> selected=new ArrayList<>(), heard=new ArrayList<>();
+    final List<Integer> selected=new ArrayList<>(), heard=new ArrayList<>(), sounded=new ArrayList<>();
 
     @Override void step() throws Exception {
         long p=pc(), lr=reg("LR");
@@ -18,7 +18,10 @@ public class SequenceEditRegression extends PersistenceRegression {
         if(p==toIntFn&&lr==0x80002beeL) { e.writeRegister("R12",(int)getDouble(10)); ret(); return; }
         if(p==0x8001d800L)previewCalls++;
         if(p==0x8001b38aL)selected.add((int)reg("R9"));
-        if(p==0x800077f8L&&clockExercise)heard.add((int)r(0x61e2,2));
+        if(p==0x800077f8L&&clockExercise) {
+            heard.add((int)r(0x61e2,2));
+            sounded.add((int)r(S+0x358,2));
+        }
         if(!persistent&&p==0x800108fcL)throw new Exception("flash entered with persistence disabled");
         super.step();
     }
@@ -51,7 +54,7 @@ public class SequenceEditRegression extends PersistenceRegression {
         command(0); resetTrace();
         check("fixture enters WRITE via real chord",r(0x6158,1)==1&&r(S+0x20c,4)==0);
     }
-    void resetTrace() { outputs=0; previewCalls=0; selected.clear(); heard.clear(); }
+    void resetTrace() { outputs=0; previewCalls=0; selected.clear(); heard.clear(); sounded.clear(); }
     void scan() throws Exception { call(SCAN); }
     void press(int pad,int pad4) throws Exception { w(0x46f3,1,pad4); w(0x46f0+pad,1,2); scan(); }
     void release(int pad) throws Exception { w(0x46f0+pad,1,0); scan(); }
@@ -71,7 +74,7 @@ public class SequenceEditRegression extends PersistenceRegression {
         release(pad); w(0x46f3,1,0); scan();
     }
     void append(int key) throws Exception { e.writeRegister("R12",key); call(0x8001b9d0L); scan(); }
-    void pitch() throws Exception { w(0x3210,2,r(S+0x352,2)); call(0x80003236L,0x80003256L); }
+    void pitch() throws Exception { call(0x800031b8L,0x80003256L); }
     void externalBeat() throws Exception {
         now+=20;
         if(clock) { edge(now-2,false); edge(now,true); serviceAndOutput(now); }
@@ -121,7 +124,11 @@ public class SequenceEditRegression extends PersistenceRegression {
                 else for(int i=0;i<length+3;i++)externalBeat();
                 check("finite preview "+length+" internal="+internal+" switch="+position,
                     selected.size()==length&&outputs==length&&r(0x6158,1)==1&&r(0x62fe,1)==0);
-                for(int i=0;i<length;i++)check("recorded preview order",selected.get(i)==i&&heard.get(i)==500+40*i);
+                for(int i=0;i<length;i++) {
+                    check("recorded preview order",selected.get(i)==i&&heard.get(i)==500+40*i);
+                    check("recorded preview pitch reaches the DAC",
+                        sounded.get(i)>0&&(i==0||sounded.get(i)>sounded.get(i-1)));
+                }
                 check("preview exercised full BLEND latch",r(0x60f2,1)==127);
                 check("preview boundary reached by selector",previewCalls>=length+1);
                 check("preview leaves WRITE open, no flash",writes==before&&r(0x61e0,1)==length);

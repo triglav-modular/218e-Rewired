@@ -25,6 +25,9 @@ public class PersistenceRegression extends GhidraScript {
 
     long pc() { return e.getExecutionAddress().getOffset(); }
     void jump(long v) { e.writeRegister(e.getPCRegister(),v); }
+    static String regName(int n) { return n==13?"SP":n==14?"LR":n==15?"PC":"R"+n; }
+    long reg(int n) { return reg(regName(n)); }
+    void setReg(int n,long v) { e.writeRegister(regName(n),v); }
     long reg(String n) { return e.readRegister(n).longValue()&0xffffffffL; }
     void w(long a,int n,long v) { e.writeMemoryValue(toAddr(a),n,v); }
     long r(long a,int n) {
@@ -103,8 +106,21 @@ public class PersistenceRegression extends GhidraScript {
             ||p==0x80008104L||p==0x80007efcL) { ret(); return; }
         if(p==0x80002456L) { jump(0x8000245aL); return; }
         if(p==0x80007572L) { jump(0x80007576L); return; }
-        // The installed SLEIGH omits the MOV PC,Rs branch p-code.
         int ins=(int)r(p,2);
+        // The installed AVR32 SLEIGH inserts BFINS at the wrong bit offset.
+        // The real pitch pass reaches factory soft-float sites that depend on
+        // it, so model the instruction here instead of supplying its result
+        // through a synthetic 0x3210 pitch fixture.
+        if((ins&0xe1f0)==0xe1d0&&(int)r(p+2,2)>>10==0x34) {
+            int lo=(int)r(p+2,2);
+            int bp=(lo>>5)&0x1f, width=lo&0x1f, rd=(ins>>9)&0xf;
+            long mask=((1L<<width)-1)<<bp;
+            long v=((reg(rd)&~mask)|((reg(ins&0xf)<<bp)&mask))&0xffffffffL;
+            setReg(rd,v);
+            e.writeRegister("Z",v==0?1:0); e.writeRegister("N",(v>>>31)&1);
+            jump(p+4); return;
+        }
+        // The installed SLEIGH omits the MOV PC,Rs branch p-code.
         if((ins&0xe1ff)==0x009f) {
             int n=(ins>>9)&15; jump(reg(n==13?"SP":n==14?"LR":n==15?"PC":"R"+n)); return;
         }
@@ -365,7 +381,7 @@ public class PersistenceRegression extends GhidraScript {
     void serviceAndOutput(long ms) throws Exception {
         time(ms); call(0x80007c66L,0x80007c6aL);
         call(0x80004f66L,0x80004faeL);
-        w(0x3210,2,r(S+0x352,2)); call(0x80003236L,0x80003256L);
+        call(0x800031b8L,0x80003256L);
     }
     void playbackSave() throws Exception {
         if(!clock)return;

@@ -270,13 +270,16 @@ the physical arp OFF; persistence's own clock sweep keeps the arp ON and
 a changed preset held. Separate tests save on release and check clock
 continuation after a modeled pause, not physical flash timing.
 
-The harness supplies a zero-portamento pitch result and runs the actual
-remap/DAC-slot/output hook. It models peripheral boundaries and does not
-validate analog settling, interrupt response latency on a loaded board,
-factory floating-point glide, or the electrical waveform at the jack.
-The transport harness also models the three unchanged factory soft-float
-calls in tempo conversion; its enable gates, raw-input conditioning, rate
-table lookup and setup/teardown execute from the firmware image.
+The clock, persistence and sequence-edit harnesses run the actual factory
+pitch pass: glide-rate lookup, floating-point slew, bend, clamp, remap,
+DAC-slot write and output hook. Ghidra 12.1.3's AVR32 SLEIGH inserts `BFINS`
+at the wrong bit offset, so the harnesses model that instruction themselves;
+the factory code around it still executes from the emitted image. They model
+peripheral boundaries and do not validate analog settling, interrupt response
+latency on a loaded board, or the electrical waveform at the jack. The
+transport harness also models the three unchanged factory soft-float calls in
+tempo conversion; its enable gates, raw-input conditioning, rate table lookup
+and setup/teardown execute from the firmware image.
 
 On hardware, compare input and output edge counts at 0.5, 10, 150, 180,
 199 and 200 Hz using both sources; exercise /1, /2 and /8, tempo changes,
