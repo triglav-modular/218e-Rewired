@@ -343,7 +343,7 @@ public class ClockRegression extends GhidraScript {
     // {the DAC word the fast trigger staged, the DAC word the next scan left}.
     int[] fastVersusScan(int bend) throws Exception {
         fresh(1,25000000);
-        w(S+0x216,2,bend);
+        w(S+0x216,2,bend & 0xffff);
         final long period=26200;
         long rise=10000, fall=rise+period/2, end=10000+period*14;
         int beats=0; Integer staged=null, rescanned=null; boolean pending=false;
@@ -367,24 +367,22 @@ public class ClockRegression extends GhidraScript {
               staged!=null && rescanned!=null);
         return new int[]{staged, rescanned};
     }
-    // The fast trigger remaps state+0x352, the pitch TARGET the pressure_blend
-    // cave writes. The 200 Hz scan remaps slew(state+0x352) + state+0x216, the
-    // bend strip's offset. Touch the strip and the two disagree, and the DAC
-    // holds the fast path's number until the next scan overwrites it - up to
-    // 5 ms of wrong pitch under every trigger, which is the bleed the
-    // instrument shows. The centred case is the control: it proves the
-    // divergence below is the bend and not the fixture.
-    void bendMissingFromFastTrigger() throws Exception {
-        int[] flat = fastVersusScan(0);
-        check("with the strip centred the fast trigger and the scan agree: "
-              +flat[0]+" vs "+flat[1], flat[0]==flat[1]);
-        int[] bent = fastVersusScan(60);
-        println("bend +60: fast trigger staged "+bent[0]
-                +", the next scan corrected it to "+bent[1]);
-        check("KNOWN DEFECT, the fast trigger stages a bend-less pitch; the "
-              +"pitch-ownership restructure must make these two equal: "
-              +bent[0]+" vs "+bent[1], bent[0]!=bent[1]);
-        println("PASS bend divergence between the fast trigger and the scan");
+    // The fast trigger stages the step's pitch on the 1 kHz flush; the 200 Hz
+    // scan reaches its own answer up to 5 ms later. They have to be the same
+    // DAC word, or every trigger drops a wrong pitch under the gate until the
+    // scan overwrites it - which is the bleed the instrument showed when the
+    // fast path staged state+0x352 without the bend strip's offset. The
+    // centred case is the control; the pushed cases carry the defect, and the
+    // last two drive the sum past each end of the scan's clamp.
+    void bendAgreesWithTheScan() throws Exception {
+        for (int bend : new int[]{0, 60, -240, 4000, -600}) {
+            int[] r = fastVersusScan(bend);
+            println("bend "+bend+": fast trigger staged "+r[0]
+                    +", the scan reached "+r[1]);
+            check("the fast trigger and the scan stage the same DAC word at "
+                  +"bend "+bend+": "+r[0]+" vs "+r[1], r[0]==r[1]);
+        }
+        println("PASS fast trigger and scan agree across the bend range");
     }
     // The pitch scan and the 1 kHz DAC flush are separate dispatcher events
     // and nothing orders them within a millisecond. Run a whole clock both
@@ -565,7 +563,7 @@ public class ClockRegression extends GhidraScript {
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
         try {
-            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); bendMissingFromFastTrigger(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             if (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick"))
             for (int hz : new int[]{10,150,180,199,200})
                 for (double duty : new double[]{0.1,0.5,0.75,0.9})

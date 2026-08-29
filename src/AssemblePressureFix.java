@@ -5774,8 +5774,27 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.B R8[0x0],R9");        // consume the arm
         emit("MOV R8,0x60ee");
         emit("ST.B R8[0x0],R9");        // and the scan's countdown with it
-        emit("LDDPC R12,0x8001c1d0");
-        emit("LD.SH R12,R12[0x352]");   // the step's own pitch
+        emit("LDDPC R10,0x8001c1d0");
+        emit("LD.SH R12,R10[0x352]");   // the step's own pitch TARGET
+        // The bend strip's offset, which the 200 Hz scan adds to the target
+        // at 0x800031f4 before clamping the result into 0x3210.  Leaving it
+        // out was the pitch bleed: the fast path drove DAC slot 2 to a
+        // bend-less note under every trigger and the scan only corrected it
+        // up to 5 ms later.  Reading the cell advances nothing - bend()
+        // maintains it from the strip's own pass, not from the pitch scan.
+        emit("LD.SH R11,R10[0x216]");
+        emit("ADD R12,R11");
+        // and the scan's own clamp, both ends, so what is staged here cannot
+        // leave the range 0x3210 is held to.
+        emit("CP.W R12,0x0");
+        emit("BR{ge} 0x8001c166");
+        emit("MOV R12,0x0");
+        padTo(0x8001c166L);
+        emit("MOV R11,0xfff");
+        emit("CP.W R12,R11");
+        emit("BR{le} 0x8001c172");
+        emit("MOV R12,R11");
+        padTo(0x8001c172L);
         if (feature("pressure_blend")) {
             // The offset the conditioner last applied, so the value staged
             // here is the one the scan would stage.  Reading it advances

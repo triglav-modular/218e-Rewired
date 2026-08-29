@@ -131,7 +131,13 @@ The flush path stages the step's own pitch through the calibration
 remap **entered past the per-scan chain at its head** — the tuning applier,
 the housekeeping and the vibrato engine all advance once per scan and must not
 be run at 1 kHz — and then raises the gate, so pitch and trigger reach the DAC
-in the same flush. It takes the step only while the glide is snapping; with a
+in the same flush. The staged word is the step's target plus the bend strip's
+offset at `state+0x216`, clamped to 0..0xfff — the same two terms the scan
+adds and the same clamp it applies, so the two paths reach the same DAC word.
+Omitting the bend was a pitch defect on the instrument: the flush drove slot 2
+to a bend-less note under every trigger and the scan only corrected it up to
+5 ms later, which is heard as the clock bleeding into the pitch output.
+It takes the step only while the glide is snapping; with a
 real portamento time the scan's value and the target disagree, so the beat
 goes back to the scan rather than have its pitch jump. The 4 ms attack-age
 guard applies to both paths, and staying claimed retries on the next tick.
