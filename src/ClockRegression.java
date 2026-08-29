@@ -349,8 +349,10 @@ public class ClockRegression extends GhidraScript {
             check("staged pitch "+i+" survives the scan within the glide's "
                   +"residual: "+staged.get(i)+" vs "+rescanned.get(i),
                   Math.abs(staged.get(i)-rescanned.get(i))<=1);
-        check("trigger rise jitter within one 1 kHz tick of the edge", hi-lo<=1000);
-        println("PASS trigger rise jitter "+(hi-lo)+" us peak to peak");
+        check("under a 1 ms fixture the trigger rides the flush claim, not the "
+              +"5 ms scan (fixture-bounded: NOT a hardware jitter figure)", hi-lo<=1000);
+        println("PASS trigger on the flush claim, "+(hi-lo)+" us under a 1 ms "
+                +"fixture -- see loopModelJitter for the queue term");
     }
     // Drive a locked /1 clock with the bend strip at a given offset and return
     // {the DAC word the fast trigger staged, the DAC word the next scan left}.
@@ -633,7 +635,8 @@ public class ClockRegression extends GhidraScript {
         check("every internal beat still gets its full "+settleMs+" ms settle",
               lo>=settleMs*1000L);
         // The target is 1-2 ms peak to peak, on every build, on both clocks.
-        check("internal trigger jitter within one flush tick", hi-lo<=2000);
+        check("under a 1 ms fixture the internal beat rides the flush claim "
+              +"(fixture-bounded: NOT a hardware jitter figure)", hi-lo<=2000);
         println("PASS internal clock trigger jitter "+(hi-lo)+" us peak to peak");
     }
     // clock_settle is reached from the arp's own advance AND from three
@@ -668,6 +671,137 @@ public class ClockRegression extends GhidraScript {
         check("a playing sequence is a beat too", r(0x625b,1)==beatClaim);
         println("PASS the keyboard alone keeps the scan; the beat takes the flush");
     }
+    // ---- The factory main loop, modeled -----------------------------------
+    //
+    // riseJitter() and internalJitter() above drive service() and flush()
+    // every 1000 us, so the spread they measure cannot exceed one tick
+    // whatever the firmware does.  What they prove is that the trigger takes
+    // the flush CLAIM instead of waiting for the 5 ms pitch scan; they were
+    // never a measurement of its latency, and the bounds they assert are the
+    // fixture's tick rather than the firmware's behaviour.
+    //
+    // The instrument runs no 1 kHz loop.  0x80007c5a calls clock_service and
+    // then the factory dispatcher at 0x80004c64, which takes ONE event from
+    // its 32-entry ring per pass.  Event 17 is POSTED at 1 kHz by the timer
+    // and the 200 Hz pitch pass is a separate ring event, so 1200 posts per
+    // second compete for one pop per pass and the trigger waits behind
+    // whatever is ahead of it.  That queue depth is the floor docs/CLOCK.md
+    // names as all that is left of the trigger's latency, and the 1 ms
+    // fixture sets it to zero.
+    //
+    // Hardware for comparison -- image 1a5b8110, external clock, n=1150:
+    // min 258 us, mean 1.55 ms, max 3.62 ms, sigma 1.04 ms, so 3.36 ms peak
+    // to peak.  Identical for a square wave and a descending saw, and not
+    // Gaussian (range/sigma 3.23 where noise at that count gives ~6.5), so
+    // the spread is not analog and not the input conditioning.
+    static final int EV_FLUSH = 17, EV_SCAN = 3;
+
+    // competingHz is the factory traffic this harness cannot execute -- MIDI,
+    // USB, the keyboard scan, pressure -- posted into the same ring.  Only the
+    // SLOT is modeled, not the handler's run time, so this is a lower bound on
+    // what real traffic costs the trigger.  It is a free parameter precisely
+    // because nothing in the repo pins it; the sweep exists to find what value
+    // reproduces the instrument, not to assert one.
+    //
+    // {min, max, spread, mean, outputs} in microseconds, or null if the ring
+    // overflowed: a loop that cannot drain its posts is not a model of an
+    // instrument that plays.
+    long[] loopModel(int loopHz, int competingHz) throws Exception {
+        fresh(1,25000000);
+        final long period=26200;   // whole 5 ms scans plus 200 us of walk
+        final int warm=6, beats=20;
+        final long loopUs=1000000L/loopHz;
+        final List<Integer> ring=new ArrayList<>();
+        final List<Long> edges=new ArrayList<>();
+        long rise=10000, fall=rise+period/2, end=10000+period*beats+20000;
+        long tTimer=10000, tLoop=10000;
+        final long competeUs=competingHz>0?1000000L/competingHz:0;
+        long tCompete=competeUs>0?10000:Long.MAX_VALUE;
+        boolean overflow=false;
+        while (tTimer<=end || tLoop<=end) {
+            long t=Math.min(Math.min(tTimer<=end?tTimer:Long.MAX_VALUE,
+                                     tLoop<=end?tLoop:Long.MAX_VALUE),
+                            tCompete<=end?tCompete:Long.MAX_VALUE);
+            while (Math.min(rise,fall)<=t) {
+                if (rise<=fall) {
+                    if (edges.size()>=beats) { rise=end+period; continue; }
+                    irq(rise,true); edges.add(rise); rise+=period;
+                } else { irq(fall,false); fall+=period; }
+            }
+            if (t==tTimer) {
+                bank(t);
+                // The timer POSTS; it does not dispatch.
+                if (ring.size()>=32) overflow=true; else ring.add(EV_FLUSH);
+                if (t%5000==0) {
+                    if (ring.size()>=32) overflow=true; else ring.add(EV_SCAN);
+                }
+                tTimer+=1000;
+            }
+            if (t==tCompete) {
+                if (ring.size()>=32) overflow=true; else ring.add(0);
+                tCompete+=competeUs;
+            }
+            if (t==tLoop) {
+                service(t);                    // clock_service, once per pass
+                if (!ring.isEmpty()) {         // the dispatcher takes exactly one
+                    int ev=ring.remove(0);
+                    // A foreign handler costs the trigger its slot; the
+                    // harness cannot run the factory's, so it costs only that.
+                    if (ev==EV_FLUSH) flush(t); else if (ev==EV_SCAN) scan(t);
+                }
+                tLoop+=loopUs;
+            }
+        }
+        if (overflow) return null;
+        if (outputTimes.size()<beats || edges.size()<beats) return null;
+        long lo=Long.MAX_VALUE, hi=Long.MIN_VALUE, sum=0;
+        int n=0;
+        for (int i=warm;i<beats;i++) {
+            long delay=outputTimes.get(i)-edges.get(i);
+            lo=Math.min(lo,delay); hi=Math.max(hi,delay); sum+=delay; n++;
+        }
+        return new long[]{lo,hi,hi-lo,sum/n,outputTimes.size()};
+    }
+
+    // Hardware, image 1a5b8110, n=1150.
+    static final long HW_MIN=258, HW_MEAN=1550, HW_MAX=3620;
+
+    void loopModelJitter() throws Exception {
+        println("main-loop model: one dispatcher pop per pass; hardware was"
+                +" min="+HW_MIN+" mean="+HW_MEAN+" max="+HW_MAX+" us");
+        long widest=0;
+        int matches=0;
+        for (int loopHz : new int[]{2500,2000,1600,1400}) {
+            for (int competingHz : new int[]{0,400,800,1200}) {
+                long[] m=loopModel(loopHz,competingHz);
+                if (m==null) {
+                    println("  loop "+loopHz+" Hz + "+competingHz+" Hz other:"
+                            +" ring overflowed or lost an output");
+                    continue;
+                }
+                // Within 25% on all three moments: close enough to say the
+                // queue reproduces the instrument, loose enough not to
+                // pretend a four-parameter model is a measurement.
+                boolean near=Math.abs(m[0]-HW_MIN)<=HW_MIN/4+100
+                          && Math.abs(m[3]-HW_MEAN)<=HW_MEAN/4
+                          && Math.abs(m[1]-HW_MAX)<=HW_MAX/4;
+                if (near) matches++;
+                println("  loop "+loopHz+" Hz + "+competingHz+" Hz other: min="+m[0]
+                        +" max="+m[1]+" spread="+m[2]+" mean="+m[3]+" us"
+                        +(near?"   <== reproduces the instrument":""));
+                widest=Math.max(widest,m[2]);
+            }
+        }
+        println("  models reproducing all three hardware moments: "+matches);
+        // The whole point of the model is that it must be ABLE to show a
+        // spread the 1 ms fixture cannot.  If every modeled loop rate still
+        // lands inside one flush tick then this test is as blind as the one
+        // it supplements, and the instrument's 3.36 ms has no explanation
+        // here -- which is a finding about the model, not a pass.
+        check("the loop model can exceed the 1 ms fixture's bound", widest>1000);
+        println("PASS main-loop model, widest spread "+widest+" us");
+    }
+
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
         try {
@@ -677,9 +811,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); riseJitter(); internalJitter(); keyboardKeepsTheScan();
+                bitFieldInstructions(); riseJitter(); internalJitter(); loopModelJitter(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})

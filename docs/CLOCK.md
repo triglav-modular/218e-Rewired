@@ -38,16 +38,19 @@ At the default settings:
   flush rather than the 5 ms pitch scan. Measured on the emitted firmware,
   the edge-to-rise delay was uniform over a whole scan period — 0 to 4.8 ms,
   with no fixed component — because the gate's fall was already scheduled
-  from the edge itself while its rise waited for the next scan. It now
-  measures 0.8 ms peak to peak.
+  from the edge itself while its rise waited for the next scan. Under the
+  1 ms emulation fixture it now measures 0.8 ms peak to peak, but that
+  figure is the fixture's tick rate and not a hardware bound; see
+  **What the harness cannot measure** below.
 - The **internal clock's beat holds the same bound**, and so does an
   external beat with a settle configured. A settle is a wait for the output
   RC, not for the scan grid: the flush stages the pitch at once, the
   millisecond timer spends the wait, and a later flush raises the gate. The
   wait itself is unchanged — `gate_settle_scans` and `clock_settle_scans`
   still mean the same number of scan periods — but it no longer rounds the
-  trigger up to the next scan boundary. Measured: the internal beat went
-  from 5–10 ms with 4 ms of spread to a fixed 5 ms settle with none.
+  trigger up to the next scan boundary. Under the same fixture the internal
+  beat went from 5–10 ms with 4 ms of spread to a fixed 5 ms settle with
+  none; the same caveat applies.
   A key played with the arp and the sequencer both off is not a beat; its
   latency is the player's own and it stays on the scan as before.
 
@@ -280,6 +283,39 @@ latency on a loaded board, or the electrical waveform at the jack. The
 transport harness also models the three unchanged factory soft-float calls in
 tempo conversion; its enable gates, raw-input conditioning, rate table lookup
 and setup/teardown execute from the firmware image.
+
+## What the harness cannot measure
+
+`riseJitter()` and `internalJitter()` drive `service()` and `flush()` every
+1000 us, so the spread they report cannot exceed one tick whatever the
+firmware does. They establish that the trigger takes the flush **claim**
+instead of waiting for the 5 ms scan. They are not a latency measurement,
+and the 0.8 ms and 0 ms figures above must not be quoted as hardware
+numbers.
+
+Measured on the instrument, image `1a5b8110`, external clock, n=1150:
+min 258 us, mean 1.55 ms, max 3.62 ms, sigma 1.04 ms — **3.36 ms peak to
+peak**, against a 1–2 ms target. Identical for a square wave and a
+descending saw, and not Gaussian (range/sigma 3.23 where noise at that
+count gives about 6.5), so the spread is neither analog nor the input
+conditioning. It is flat-topped with its mean at 0.38 of the range, which
+is a discrete step count, not a continuous delay.
+
+`loopModelJitter()` models the structure this section blames for the
+remaining latency: the timer POSTS event 17 at 1 kHz, the 200 Hz pitch pass
+is a separate ring event, and the factory dispatcher takes ONE event per
+main-loop pass. Swept over main-loop rates and added ring traffic, **none of
+the sixteen models reproduces the instrument**, and the reason is
+structural: below saturation the ring drains and the spread stays near one
+loop period (widest seen 1.5 ms), and above it the 32-entry ring overflows,
+which no playing instrument does. Event-queue depth is therefore a real
+term but a small one — it cannot account for 3.36 ms, and the cause of the
+measured spread is still unidentified.
+
+The discriminating measurement not yet taken is the **internal** clock's
+jitter on hardware. The internal beat never touches edge qualification or
+the FIFO, so if it spreads too, the cause is downstream of both clock
+paths; if it stays tight, the cause is in the external edge-to-claim path.
 
 On hardware, compare input and output edge counts at 0.5, 10, 150, 180,
 199 and 200 Hz using both sources; exercise /1, /2 and /8, tempo changes,
