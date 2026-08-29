@@ -139,7 +139,7 @@ trigger back on the 5 ms scan with the fast-trigger cave emitted but
 unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
 configuration and holds it to the same 1 ms bound.
 
-**The measurement below contradicts the premise of the next paragraph.** It
+**The measurements above contradict the premise of the next paragraph.** It
 argues the dequeue already runs at least as often as event 17 is dispatched,
 so moving it onto the flush would make it rarer. The instrument says event 17
 is punctual at 1 kHz while the dequeue polls near 250–300 Hz, which makes the
@@ -376,6 +376,34 @@ trigger declines and retries while the last output is younger than that. But
 previous output is 28–76 ms old and the guard cannot bite. The matching
 ceiling is a coincidence, recorded here so the next reader does not spend
 the same hour on it.
+
+### The settle experiment, and what it settled
+
+`clock_settle_scans = 1` (image `ec525515`) puts the external beat on claim
+2: the flush stages the pitch, the millisecond timer spends a 5 ms settle,
+and a later flush raises the gate. The rise is therefore re-timed onto the
+1 ms timer, downstream of the claim. Measured, n=300: min 5.17 ms, mean
+6.47 ms, max 8.56 ms, sigma 1.06 ms.
+
+Subtract the settle and it is the same distribution as the shipped build:
+min 0.17 against 0.26, mean 1.47 against 1.55, max 3.56 against 3.62, range
+3.39 against 3.36, sigma 1.06 against 1.04. Every moment matches within
+sampling noise.
+
+**The jitter passed through the settle untouched, so it is upstream of the
+claim.** Anything between the claim and the gate — the flush, the
+dispatcher, the DAC transfer — is excluded, because re-timing there would
+have absorbed it. What is left is the path from the GPIO ISR's timestamp to
+`clock_settle`: the FIFO, its dequeue in `clock_service`, and note
+selection. The ISR timestamps the edge at interrupt time, so qualification
+cannot contribute variable delay to the timestamp itself; the variable term
+is how long the entry waits before `clock_service` picks it up.
+
+That is the dequeue, and it is now supported by three independent
+measurements rather than by a model: the internal beat carries no such
+spread and never uses the FIFO; the spread does not follow the scan; and the
+spread survives a downstream re-timing. The model's 250-300 Hz fit remains a
+fit, but what it is fitting is no longer in question.
 
 Two honest limits on the dequeue model. It is a model calibrated to the
 measurement, not
