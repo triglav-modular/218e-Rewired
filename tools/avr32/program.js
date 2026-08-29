@@ -6224,7 +6224,27 @@ function assembleProgram() {
         emit("LDDPC R10,0x8001a534");
         padTo(0x8001a4dc);
         if (feature("arp_latch")) {
-            // Leaving the latch switch position releases every latched key.
+            // Leaving the latch switch position releases the keys the latch
+            // was holding - and ONLY those.  A key still under a finger is
+            // still being played, so the arpeggiator has to keep running on
+            // it until it is physically let go.
+            //
+            // The factory already knows which those are.  It keeps two
+            // parallel structures: the note pair at state+0x21a/0x21b, which
+            // the latch deliberately holds open past the release, and the
+            // touch-scan pair at state+0x238/0x239, which tracks fingers and
+            // nothing else - 0x80005b6a sets a key's touch flag on contact
+            // and 0x80005edc clears it on lift, neither of them latch-aware.
+            // So while latched the two disagree exactly on the latched-but-
+            // released keys, and the note flags this transition should end up
+            // with ARE the touch flags.
+            //
+            // Copying the flag across is cheaper than testing it, because the
+            // touch flag is 0 or 1 and so doubles as the survivor's increment.
+            // The count is re-derived from the flags rather than copied from
+            // 0x238: release_count_guard refuses to decrement a count whose
+            // flag is already clear, so a count that disagrees with its own
+            // flags can never walk back down.
             emit("LD.UB R8,R10[0x340]");
             // Mirror the latch position where the blend can read it cheaply.
             emit("MOV R9,0x608e");
@@ -6236,17 +6256,18 @@ function assembleProgram() {
             emit("BR{ne} 0x8001a510");
             emit("CP.W R8,0x1");
             emit("BR{eq} 0x8001a510");
-            emit("MOV R9,0x0");
-            emit("ST.B R10[0x21a],R9");
+            emit("MOV R8,0x0");            // keys still physically down
             // 0..28, the real extent of the array.  Clearing 32 zeroed the
             // same three bytes of adjacent state the selector was misreading.
             emit("MOV R9,0x1c");
-            padTo(0x8001a500);
+            padTo(0x8001a4fa);
             emit("ADD R12,R10,R9 << 0x0");
-            emit("MOV R8,0x0");
-            emit("ST.B R12[0x21b],R8");
+            emit("LD.UB R11,R12[0x239]");  // finger on this key?
+            emit("ST.B R12[0x21b],R11");   // held := touched
+            emit("ADD R8,R11");
             emit("SUB R9,0x1");
-            emit("BR{ge} 0x8001a500");
+            emit("BR{ge} 0x8001a4fa");
+            emit("ST.B R10[0x21a],R8");
         }
         padTo(0x8001a510);
         emit("MCALL PC[0x8001a520]");   // preset voltage editing

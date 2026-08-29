@@ -167,6 +167,60 @@ public class ControlRegression extends SequenceEditRegression {
         check("reverse rejects invalid history count",select(4,255)==-1);
         println("PASS forward/reverse after real release"+(lean?"":" and unlatch")+"; empty and corrupt history bounded");
     }
+    // The factory touch scan, which is what actually knows where the
+    // fingers are: 0x80005b6a on contact, 0x80005edc on lift.  Neither is
+    // latch-aware, so they stay true across the switch while the note pair
+    // is deliberately held open by the latch.
+    void touchOn(int k) throws Exception { e.writeRegister("R12",k); call(0x80005b6aL); }
+    void touchOff(int k) throws Exception {
+        e.writeRegister("R12",k); e.writeRegister("R11",0); call(0x80005edcL);
+    }
+    void latchExitHold() throws Exception {
+        // Leaving latch with a key still under a finger keeps the arp on it.
+        // Both destinations, because the switch leaves latch in two
+        // directions and a key held through either is still being played.
+        for(int destination:new int[]{0,2}) {
+            setup(0,false,0); command(1); command(1);
+            touchOn(9); touchOn(4);
+            check("both keys register as held and as touched",
+                r(S+0x21a,1)==2&&r(S+0x238,1)==2
+                &&r(S+0x21b+9,1)==1&&r(S+0x239+9,1)==1);
+            arp(1); controlScan();
+            touchOff(4);
+            check("the latch holds a lifted key open, the touch scan does not",
+                r(S+0x21b+4,1)==1&&r(S+0x239+4,1)==0&&r(S+0x21a,1)==2);
+            arp(destination); controlScan();
+            check("leaving latch drops the released key: destination="+destination,
+                r(S+0x21b+4,1)==0);
+            check("leaving latch keeps the key still under a finger: destination="+destination,
+                r(S+0x21b+9,1)==1&&r(S+0x21a,1)==1);
+            // The count has to agree with the flags it was rebuilt from, or
+            // release_count_guard can never walk it back down again.
+            touchOff(9);
+            check("the surviving key still releases cleanly: destination="+destination,
+                r(S+0x21b+9,1)==0&&r(S+0x21a,1)==0&&r(S+0x239+9,1)==0);
+        }
+        // Nothing under a finger: leaving latch still releases everything,
+        // which is the behaviour the latch has always had.
+        setup(0,false,0); command(1); command(1);
+        touchOn(9); arp(1); controlScan(); touchOff(9);
+        check("a fully released latch still holds its keys",r(S+0x21a,1)==1);
+        arp(0); controlScan();
+        check("and leaving latch with no finger down clears them",
+            r(S+0x21a,1)==0&&r(S+0x21b+9,1)==0);
+        // And the selector keeps running on the survivor, which is the
+        // symptom the report was actually about.
+        setup(0,false,0); command(1); command(1);
+        touchOn(9); touchOn(4); arp(1); controlScan(); touchOff(4);
+        arp(0); controlScan();
+        w(S+0x34d,1,9); w(S+0x30a,2,40); w(S+0x2fc,2,0);
+        for(int i=0;i<4;i++) {
+            externalBeat();
+            check("the arp keeps advancing on the held key after leaving latch",
+                r(S+0x34d,1)==9);
+        }
+        println("PASS leaving latch keeps keys still under a finger, releases the rest, and the arp keeps running");
+    }
     int select(int zone,int last) throws Exception {
         w(S+0x34d,1,last); w(0x60f2,1,(zone*128+5)/6);
         e.writeRegister("R12",S+0x21b); call(0x8001aec0L);
@@ -573,6 +627,7 @@ public class ControlRegression extends SequenceEditRegression {
             if(orders)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(!lean)try { latchExitHold(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { recordedOctaves(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

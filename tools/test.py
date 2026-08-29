@@ -749,12 +749,19 @@ def test_held_flag_bounds() -> None:
     check("the arp candidate scan stops at key 28", scan and scan[0] == "1d",
           f"scans 0..0x{scan[0] if scan else '?'}")
 
+    # The latch exit copies the touch flags over the held flags rather than
+    # zeroing them, so a key still under a finger keeps playing; the bound is
+    # what matters here either way, and reading past 28 would hand the
+    # selector three bytes of unrelated state as held keys.
     housekeeping = cave("0x8001a480L", "scan_housekeeping")
-    clear = re.search(r'emit\("MOV R9,0x([0-9a-f]+)"\);\s*\n\s*padTo\(0x8001a500L\)',
-                      housekeeping)
-    check("the latch-exit clear stops at key 28",
-          clear is not None and clear.group(1) == "1c",
-          f"clears 0..0x{clear.group(1) if clear else '?'}")
+    walk = re.search(r'emit\("MOV R9,0x([0-9a-f]+)"\);\s*\n\s*padTo\(0x8001a4faL\)',
+                     housekeeping)
+    check("the latch-exit walk stops at key 28",
+          walk is not None and walk.group(1) == "1c",
+          f"walks 0..0x{walk.group(1) if walk else '?'}")
+    check("the latch exit keeps physically-held keys",
+          'emit("LD.UB R11,R12[0x239]");' in housekeeping
+          and 'emit("ST.B R12[0x21b],R11");' in housekeeping)
 
     # The press-order path is bounded by the list's own length rather than a
     # key count, but every candidate it returns is re-checked against the held

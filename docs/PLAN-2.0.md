@@ -351,6 +351,43 @@ came back wrong, which reads as a broken selector rather than a divider
 running eight times too slow.  A fixture that encodes a mapping's direction
 in a constant will mislead the next person who changes the mapping.
 
+### Leaving latch keeps the keys still under a finger (2026-08-29)
+
+Reported: hold a key, switch to latch, switch back to the arpeggiator, and
+the arpeggiator stops instead of carrying on until the key is let go.
+
+The latch-exit watch in `scan_housekeeping` fired on the switch leaving
+position 1 and did `state[0x21a] = 0; for (k = 28..0) state[0x21b+k] = 0` -
+every held flag, with nothing to separate a key the latch was holding from
+one a finger is still on.  So the arp lost its last key and had nothing to
+play.
+
+The firmware already knew the difference.  The factory keeps two parallel
+structures: the note pair at `state+0x21a/0x21b`, which the latch
+deliberately holds open past a physical release, and the touch-scan pair at
+`state+0x238/0x239`, which `0x80005b6a` sets on contact and `0x80005edc`
+clears on lift - neither of them latch-aware.  While latched the two
+disagree on exactly the latched-but-released keys, so the flags this
+transition should end with ARE the touch flags.  Probed rather than reasoned
+about: latch keys 4 and 9, lift 4, and `note` reads {4,9} while `touch`
+reads {9}.
+
+The loop copies instead of clearing, which costs nothing - the touch flag is
+0 or 1 and so doubles as the survivor's increment - and stays byte-exact in
+the same region.  The count is rebuilt from the flags rather than copied
+from `0x238`, because `release_count_guard` refuses to decrement a count
+whose flag is already clear: a count that disagrees with its own flags could
+never walk back down.
+
+`latchExitHold` covers both switch destinations, the all-released case that
+must still clear everything, the surviving key releasing cleanly afterwards,
+and the arp still advancing on it.  It fails against the unfixed firmware,
+which is the only evidence that it tests anything.  `tools/test.py`'s
+structural guard moved with the loop: it still pins the 0..28 bound, whose
+point is that reading further hands the selector three bytes of unrelated
+state as held keys, and gained a check that the touch flag is what gets
+copied.
+
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
   them in lockstep).  Table expression generalised from 12/1200 to map

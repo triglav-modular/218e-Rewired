@@ -173,9 +173,11 @@ def audit_call_pools(image_path) -> list[str]:
 # build stops emitting them instead of pointing a call pool at erased flash;
 # and once more when the divider knob was reversed so /1 sits at zero, and
 # persistence joined the shipped defaults — which this anchor carries too.
+# and again when leaving the latch switch position stopped releasing keys
+# that are still under a finger.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "de57f0243017901a6d252f16518895b2ca590345f5a51f5e0e84c35db2f05156",
+    "historical_config": "63f9b210dea487faa354c87f6d8706720f3defe750f9445288c6505ede5796c4",
 }
 
 
