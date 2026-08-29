@@ -334,6 +334,16 @@ min 200–400 us, max 3.6 ms, spread 3.2–3.6 ms, bracketing the instrument's
 258 us / 3.62 ms / 3.36 ms. The dequeue appears to poll at roughly the 5 ms
 scan cadence rather than at 1 kHz.
 
+A second blind spot turned up alongside the first. The fast path declines
+when `0x2eee != 0` -- a real portamento time -- and sends the beat back to
+the 5 ms scan, but no jitter test ever set that cell, so every figure here
+is for a snapping glide. `declinedGlideJitter()` now states the glide's
+condition alongside the jitter. In a `pressure_blend` build the scan derives
+`0x2eee = 0` from every source tried and zeroes a written value on the next
+pass, so the decline is unreachable there and the portamento knob does not
+enter the external jitter. That is what makes the scan-rate experiment below
+interpretable: only one mechanism is left to scale with the scan.
+
 Two honest limits on that. It is a model calibrated to the measurement, not
 a direct observation of either rate; and the model's mean (1.9–2.1 ms) sits
 above the instrument's 1.55 ms, because the model polls on a perfectly

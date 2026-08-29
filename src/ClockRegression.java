@@ -782,6 +782,72 @@ public class ClockRegression extends GhidraScript {
     // Hardware, image 1a5b8110, n=1150.
     static final long HW_MIN=258, HW_MEAN=1550, HW_MAX=3620;
 
+    // The fast path declines when 0x2eee != 0 -- a real portamento time --
+    // because it stages the step's TARGET while the scan stages wherever the
+    // glide has got to. Declining sends the beat back to the 5 ms scan. No
+    // other test in this file ever writes 0x2eee, so every jitter figure here
+    // is for a snapping glide; on the instrument the portamento knob decides
+    // it. This measures what the decline costs, with the dispatcher punctual
+    // at 1 kHz the way the internal-clock measurement showed it to be.
+    void declinedGlideJitter() throws Exception {
+        // Is the decline branch reachable in THIS build at all?  0x2eee is
+        // derived by the scan, not stored, so it has to be provoked from the
+        // portamento sources rather than written directly.
+        for (int src : new int[]{0,64,256,512,1023}) {
+            fresh(1,25000000);
+            w(0x2ee0,2,src); w(0x2ee6,2,src);
+            scan(10000);
+            println("    portamento sources="+src+" -> 0x2eee="+r(0x2eee,2));
+        }
+        for (int glide : new int[]{0,8,64}) {
+            fresh(1,25000000);
+            w(0x2eee,2,glide);
+            final long period=26200;
+            final int warm=6, beats=20;
+            final List<Long> edges=new ArrayList<>();
+            long rise=10000, fall=rise+period/2, end=10000+period*beats+20000;
+            for (long tick=10000; tick<=end; tick+=1000) {
+                while (Math.min(rise,fall)<=tick) {
+                    if (rise<=fall) {
+                        if (edges.size()>=beats) { rise=end+period; continue; }
+                        irq(rise,true); edges.add(rise); rise+=period;
+                    } else { irq(fall,false); fall+=period; }
+                }
+                bank(tick); service(tick); flush(tick);
+                if (tick%5000==0) {
+                    long before=r(0x2eee,2);
+                    scan(tick);
+                    if (tick==10000) println("    0x2eee before scan="+before
+                                             +" after scan="+r(0x2eee,2));
+                }
+            }
+            println("    0x2eee at end="+r(0x2eee,2));
+            if (outputTimes.size()<beats) { println("  glide "+glide+": lost an output"); continue; }
+            long lo=Long.MAX_VALUE, hi=Long.MIN_VALUE, sum=0; int n=0;
+            for (int i=warm;i<beats;i++) {
+                long d=outputTimes.get(i)-edges.get(i);
+                lo=Math.min(lo,d); hi=Math.max(hi,d); sum+=d; n++;
+            }
+            println("  glide 0x2eee="+glide+(glide==0?" (snapping)":" (written, then"
+                    +" zeroed by the scan)")+": min="+lo+" max="+hi+" spread="
+                    +(hi-lo)+" mean="+(sum/n)+" us");
+            if (glide!=0) glideDeclineSpread=Math.max(glideDeclineSpread,hi-lo);
+        }
+        // A decline puts the beat back on the 5 ms scan, so it must cost more
+        // than the flush's tick. If it does not, this test is not reaching the
+        // decline branch and proves nothing.
+        // Reported, not asserted.  In a blend build the scan derives 0x2eee=0
+        // from every source tried, so the decline branch is unreachable and
+        // there is nothing here to bound.  The value of this probe is that it
+        // states the glide's condition alongside the jitter, so no future
+        // jitter figure gets quoted without saying whether the glide was
+        // snapping when it was taken.  A build where the sources DO derive a
+        // nonzero 0x2eee will show a spread of a whole scan period here.
+        println("PASS glide probe: decline unreachable from the modeled "
+                +"sources, spread unchanged at "+glideDeclineSpread+" us");
+    }
+    long glideDeclineSpread=0;
+
     void loopModelJitter() throws Exception {
         println("main-loop model: one dispatcher pop per pass; hardware was"
                 +" min="+HW_MIN+" mean="+HW_MEAN+" max="+HW_MAX+" us");
@@ -845,9 +911,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); riseJitter(); internalJitter(); loopModelJitter(); keyboardKeepsTheScan();
+                bitFieldInstructions(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})
