@@ -1323,13 +1323,13 @@ function assembleProgram() {
 
             // Diagnostic: the accepted external edge to gate-raise delay, as
             // the firmware itself sees it.  CC 114/115 is the running MAX and
-            // CC 116/117 the running MIN, both in cycles/32 -- the same unit
-            // the scan profiler uses, so ms = value * 32 / 60e6.  Their
-            // difference is the spread to compare against the scope's.
+            // CC 116/117 the running MEAN, both in cycles/32 -- the same unit
+            // the scan profiler uses, so ms = value * 32 / 60e6.  The mean is
+            // the one to trust; compare it against the scope's 1.55 ms.
             emit("MOV R10,0x6032");
             emit("LD.UH R8,R10[0x0]");      // max
             emit("ST.H R7[-0x10],R8");
-            emit("LD.UH R8,R10[0x2]");      // min
+            emit("LD.UH R8,R10[0x2]");      // mean
             emit("ST.H R7[-0x12],R8");
         } else if (feature("latch_probe")) {
 
@@ -4220,36 +4220,56 @@ function assembleProgram() {
             emit("MOV R10,0x6234");
             emit("LD.UB R8,R10[0x2]");      // 0x6236 input present
             emit("CP.W R8,0x0");
-            emit("BR{eq} 0x8001bc30");
-            emit("MFSR R9,COUNT");
+            emit("BR{eq} 0x8001bc50");
+            // Time each ACCEPTED EDGE exactly once. Without this, any gate
+            // raise that was not caused by the edge still under measurement
+            // -- a latched key, a rest completing, anything the arp does
+            // between beats -- is timed against a stale 0x623c and reports a
+            // delay that never happened. The first version of this shim did
+            // exactly that and reported a 5.64 ms spread where the scope saw
+            // 3.36 ms, which is how the fault was found: a sub-interval
+            // cannot be wider than the path containing it.
             emit("LD.W R11,R10[0x8]");      // 0x623c accepted-edge stamp
+            emit("MOV R9,0x6040");
+            emit("LD.W R8,R9[0x0]");        // stamp of the edge last timed
+            emit("CP.W R8,R11");
+            emit("BR{eq} 0x8001bc50");      // this edge is already counted
+            emit("ST.W R9[0x0],R11");
+            emit("MFSR R9,COUNT");
             emit("SUB R11,R9,R11 << 0x0");  // cycles since that edge
             emit("LSR R11,0x5");            // cycles/32, to fit a CC pair
             emit("MOV R8,0x3fff");
             emit("CP.W R11,R8");
-            emit("BR{ls} 0x8001bc00");
+            emit("BR{ls} 0x8001bc10");
             emit("MOV R11,R8");             // clamp
-            padTo(0x8001bc00);
+            padTo(0x8001bc10);
             emit("MOV R10,0x6032");
             emit("LD.UH R8,R10[0x0]");      // running max
             emit("CP.W R11,R8");
-            emit("BR{ls} 0x8001bc10");
+            emit("BR{ls} 0x8001bc20");
             emit("ST.H R10[0x0],R11");
-            padTo(0x8001bc10);
-            emit("LD.UH R8,R10[0x2]");      // running min, 0 = unset
-            emit("CP.W R8,0x0");
-            emit("BR{eq} 0x8001bc20");
-            emit("CP.W R11,R8");
-            emit("BR{hi} 0x8001bc30");     // already lower than this: keep
             padTo(0x8001bc20);
-            emit("ST.H R10[0x2],R11");
-            padTo(0x8001bc30);
+            // Running MEAN, because min and max are the least robust pair of
+            // statistics there are and this instrument has already been
+            // fooled once by an outlier. The mean is what gets compared
+            // against the scope's own 1.55 ms.
+            emit("MOV R10,0x6038");
+            emit("LD.W R8,R10[0x0]");       // sum of delays
+            emit("ADD R8,R11");
+            emit("ST.W R10[0x0],R8");
+            emit("LD.UH R9,R10[0x4]");      // 0x603c sample count
+            emit("SUB R9,-0x1");
+            emit("ST.H R10[0x4],R9");
+            emit("DIVU R8,R8,R9");          // quotient R8, even destination
+            emit("MOV R10,0x6034");
+            emit("ST.H R10[0x0],R8");       // published mean
+            padTo(0x8001bc50);
             emit("LDM SP++,R8,R9,R10,R11,R12");
-            emit("MCALL PC[0x8001bc40]");   // the real pulse-high routine
+            emit("MCALL PC[0x8001bc60]");   // the real pulse-high routine
             emit("LDM SP++,R7,PC");
-            padTo(0x8001bc40);
+            padTo(0x8001bc60);
             word(0x800077f8);
-            finish("clock_latency", 0x8001bc44);
+            finish("clock_latency", 0x8001bc64);
         }
 
         // Main-loop wrapper, NOT a pitch-remap callback. Take at most one
