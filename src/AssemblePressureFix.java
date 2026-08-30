@@ -670,9 +670,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB SP,0x18");
         emit("ST.H R7[-0x2],R12");       // final 12-bit output
         emit("LDDPC R10,0x80019930");    // global state
-        emit("LD.UB R8,R10[0x39]");      // edit-mode flag
-        emit("CP.W R8,0x1");
-        emit("BR{ne} 0x80019910");
+        if (!feature("clock_latency")) {
+            // The clock-latency build has to report while a clock is running
+            // and a key is held, which is not edit mode.  USB MIDI is still
+            // required; only the edit-mode gate is lifted, and only for that
+            // diagnostic.
+            emit("LD.UB R8,R10[0x39]");      // edit-mode flag
+            emit("CP.W R8,0x1");
+            emit("BR{ne} 0x80019910");
+        }
         emit("LD.UB R8,R10[0x349]");     // USB MIDI enabled
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x80019910");
@@ -785,6 +791,18 @@ public class AssemblePressureFix extends GhidraScript {
             emit("LD.UH R8,R10[0x0]");
             emit("ST.H R7[-0x10],R8");
             emit("LD.UH R8,R10[0x2]");
+            emit("ST.H R7[-0x12],R8");
+        } else if (feature("clock_latency")) {
+
+            // Diagnostic: the accepted external edge to gate-raise delay, as
+            // the firmware itself sees it.  CC 114/115 is the running MAX and
+            // CC 116/117 the running MIN, both in cycles/32 -- the same unit
+            // the scan profiler uses, so ms = value * 32 / 60e6.  Their
+            // difference is the spread to compare against the scope's.
+            emit("MOV R10,0x6032");
+            emit("LD.UH R8,R10[0x0]");      // max
+            emit("ST.H R7[-0x10],R8");
+            emit("LD.UH R8,R10[0x2]");      // min
             emit("ST.H R7[-0x12],R8");
         } else if (feature("latch_probe")) {
 
@@ -3646,6 +3664,67 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x800076b0L);
         finish("clock_ms_tick", 0x8001bbc0L);
 
+        // Clock-latency diagnostic.  Both gate-raise paths reach the factory
+        // pulse-high routine through a pool word; this build repoints both at
+        // the shim below, so nothing is added at either call site.  It stamps
+        // COUNT against the accepted-edge stamp the GPIO ISR wrote at 0x623c,
+        // keeps a running min and max in cycles/32, and tail-calls the real
+        // routine.  Fully transparent: R8-R12 are saved around the
+        // measurement because the callee's argument convention is the factory
+        // routine's, not ours.
+        //
+        // This is the one split no other measurement reaches. The instrument
+        // shows 3.3-3.4 ms of edge-to-gate spread that is invariant to the
+        // scan period, to the settle, to where the dequeue runs, and whose
+        // output stage is fine-grained on both clock sources.  Everything
+        // between the ISR stamp and the gate is timed here.  If this reports
+        // the full 3.4 ms, the delay is inside the firmware after the stamp.
+        // If it reports far less, the delay is BEFORE the stamp -- interrupt
+        // latency or input conditioning -- which no firmware change reaches.
+        //
+        // Guarded on 0x6236 so only external-clock beats are timed; an
+        // internal beat leaves 0x623c stale and would report nonsense.
+        // Min/max are running, not windowed: power-cycle to reset.
+        if (block("clock_latency")) {
+            begin(0x8001bbc0L);
+            emit("STM --SP,R7,LR");
+            emit("MOV R7,SP");
+            emit("STM --SP,R8,R9,R10,R11,R12");
+            emit("MOV R10,0x6234");
+            emit("LD.UB R8,R10[0x2]");      // 0x6236 input present
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8001bc30");
+            emit("MFSR R9,COUNT");
+            emit("LD.W R11,R10[0x8]");      // 0x623c accepted-edge stamp
+            emit("SUB R11,R9,R11 << 0x0");  // cycles since that edge
+            emit("LSR R11,0x5");            // cycles/32, to fit a CC pair
+            emit("MOV R8,0x3fff");
+            emit("CP.W R11,R8");
+            emit("BR{ls} 0x8001bc00");
+            emit("MOV R11,R8");             // clamp
+            padTo(0x8001bc00L);
+            emit("MOV R10,0x6032");
+            emit("LD.UH R8,R10[0x0]");      // running max
+            emit("CP.W R11,R8");
+            emit("BR{ls} 0x8001bc10");
+            emit("ST.H R10[0x0],R11");
+            padTo(0x8001bc10L);
+            emit("LD.UH R8,R10[0x2]");      // running min, 0 = unset
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8001bc20");
+            emit("CP.W R11,R8");
+            emit("BR{hi} 0x8001bc30");     // already lower than this: keep
+            padTo(0x8001bc20L);
+            emit("ST.H R10[0x2],R11");
+            padTo(0x8001bc30L);
+            emit("LDM SP++,R8,R9,R10,R11,R12");
+            emit("MCALL PC[0x8001bc40]");   // the real pulse-high routine
+            emit("LDM SP++,R7,PC");
+            padTo(0x8001bc40L);
+            word(0x800077f8L);
+            finish("clock_latency", 0x8001bc44L);
+        }
+
         // Main-loop wrapper, NOT a pitch-remap callback. Take at most one
         // queued edge before the factory dispatcher. A sounding step holds
         // its slot until its pitch has been stored and its trigger emitted.
@@ -5758,7 +5837,9 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001c688L);
         emit("LDM SP++,R7,PC");
         padTo(0x8001c6b0L);
-        word(0x800077f8L);
+        // Diagnostic builds route the gate through the latency shim, which
+        // stamps the delay and tail-calls the real routine.
+        word(block("clock_latency") ? 0x8001bbc0L : 0x800077f8L);
         word(0x8001c600L);
         finish("clock_output", 0x8001c6c0L);
 
@@ -5957,7 +6038,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(fastPool);
         word(0x00003560L); // global state base
         word(0x8001c0e0L); // remap, minus the per-scan chain
-        word(0x800077f8L); // real pulse-high routine
+        word(block("clock_latency") ? 0x8001bbc0L : 0x800077f8L);
         finish("clock_fast_trigger", twoPhaseBeat() ? 0x8001c1f0L : 0x8001c1e0L);
 
         // Ending a take has to end the NOTE, not just the mode.  The

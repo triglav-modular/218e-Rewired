@@ -233,6 +233,33 @@ The 2600 ms release is measured against the factory 1 ms counter (0x61e6),
 not COUNT: COUNT is scaled by the CPU-frequency word at 0x29cc, which made
 the release fire in under a second on the instrument.
 
+## Measuring the delay from inside the firmware
+
+`[diagnostics].clock_latency = true` builds a shim at `0x8001bbc0` that both
+gate-raise paths reach through their existing pool words — the scan path's at
+`0x8001c6b0` and the fast path's at `fastPool + 8`, both of which held
+`0x800077f8` — so no instruction is added at either call site. The shim
+stamps COUNT against the accepted-edge stamp at `0x623c`, keeps a running min
+and max in cycles/32 at `0x6032`/`0x6034`, and tail-calls the real pulse-high
+routine with R8–R12 saved around the measurement.
+
+Those two cells go out on the telemetry frame's scan-component fields, and
+`tools/clock_latency_report.py` decodes a readout CSV into milliseconds. The
+build also lifts the edit-mode gate on telemetry, since a clock running is
+not edit mode; USB MIDI is still required and a key must be held, because the
+frame is sent from the pressure path.
+
+This is the one split no external measurement reaches. Everything between the
+ISR's stamp and the gate is timed. A spread near the scope's 3.36 ms puts the
+delay inside the firmware after the stamp; a much smaller one puts it before
+the stamp, in interrupt latency or input conditioning, where no firmware
+change reaches it.
+
+Compiled in but switched off, the option moves four bytes of the shipped
+image — the initialization marker at `0x8001ab6e` and `0x8001ad1e`, which
+hashes the assembler source. Nothing else changes, and both pins were moved
+for those four bytes alone.
+
 ## Repeatable checks
 
 ```sh

@@ -94,6 +94,7 @@ FEATURE_MAP = {
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
+    "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
     "diagnostics.latch_probe": ([], ["latch_probe"]),
     "diagnostics.pressure_ab_switch": (
@@ -117,6 +118,7 @@ ENABLED_WHEN = {
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
+    "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
     "diagnostics.latch_probe": True,
     "diagnostics.pressure_ab_switch": True,
@@ -1467,7 +1469,8 @@ def main() -> None:
                  "octave_scale_mul", "octave_scale_bias"):
         blocks[name] = (cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
                         != cfg["tuning"]["units_per_octave"])
-    claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe")
+    claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe",
+                          "clock_latency")
               if features.get(n)]
     if len(claims) > 1:
         raise SystemExit(

@@ -174,10 +174,13 @@ def audit_call_pools(image_path) -> list[str]:
 # and once more when the divider knob was reversed so /1 sits at zero, and
 # persistence joined the shipped defaults — which this anchor carries too.
 # and again when leaving the latch switch position stopped releasing keys
-# that are still under a finger.
+# that are still under a finger; and again for the clock_latency diagnostic,
+# which moves only the four marker bytes when it is off -- the marker hashes
+# the assembler source, so adding the option repins even though no shipped
+# behaviour changed.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "1a5b811063915867467e7defe7b938904b85a16c72300e4bf8b2bdd0b69a91b8",
+    "historical_config": "7c1373ae0da1a0e871416981de3ae3589238c7762b0c95236e961e718397e6a7",
 }
 
 

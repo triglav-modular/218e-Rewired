@@ -30,7 +30,8 @@ REPO = Path(__file__).resolve().parent.parent
 # options in config/218e.toml override the few fields they name.  Not a
 # user surface — edit the option set in build.py, not these constants.
 INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
-    'diagnostics': {   'factory_gain_shift': 3,
+    'diagnostics': {   'clock_latency': False,
+                       'factory_gain_shift': 3,
                        'latch_probe': False,
                        'pressure_ab_switch': False,
                        'scan_profiler': False,
