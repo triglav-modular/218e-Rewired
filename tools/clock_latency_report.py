@@ -7,8 +7,17 @@ telemetry fields, which the readout tool labels with their pressure names:
     scan_component_a = running MAX accepted-edge-to-gate delay, cycles/32
     scan_component_b = running MEAN of the same, cycles/32
 
-Both are measured by the firmware itself, from the COUNT stamp the GPIO ISR
-wrote at 0x623c to COUNT at the gate raise, once per accepted edge.
+Both are measured by the firmware itself, from the COUNT stamp of the edge
+the dequeue is acting on (0x6240) to COUNT at the gate raise, once per
+consumed edge.
+
+A sample too large for the 14-bit field is DISCARDED -- dropped from the max,
+the sum and the count alike -- rather than clamped into the max. It only gets
+that large when the beat waited behind a drained backlog, which is a
+different population from the delay being measured, and clamping let one such
+beat publish 16383 as the max for the rest of the power-up. So the figures
+below describe beats that were not stalled, and a stall costs its own
+measurement rather than the session's.
 
 Both are RUNNING figures accumulated since power-up, so the last frame of a
 file already holds that session's final values -- there is nothing to
@@ -64,7 +73,22 @@ def main() -> None:
             continue
         hi, avg = last
         print(f"  mean edge->gate   {avg:6d} units   {ms(avg):5.2f} ms")
-        print(f"  max  edge->gate   {hi:6d} units   {ms(hi):5.2f} ms\n")
+        print(f"  max  edge->gate   {hi:6d} units   {ms(hi):5.2f} ms")
+        if hi == 0x3fff:
+            # The firmware discards anything that will not fit, so this value
+            # can no longer be produced by clamping. Reaching it exactly means
+            # either a real sample that happens to land on the ceiling, or an
+            # image built before the discard -- worth saying rather than
+            # printing 8.74 ms as if it were a measurement.
+            print("  ^ exactly the 0x3fff ceiling. A build with the clamp"
+                  " published this for any")
+            print("    stalled beat; check the image is a current one before"
+                  " trusting the max.")
+        if avg > hi:
+            print("  ^ the mean is ABOVE the max, which is impossible."
+                  " The accumulators did not")
+            print("    start from zero -- power-cycle and capture again.")
+        print()
     print("These cover only what happens AFTER the ISR stamped the edge.")
     print()
     print("Compare them ONLY against a scope reading taken during THIS capture.")

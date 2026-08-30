@@ -229,6 +229,11 @@ unfinished edits do not write.
 | 0x6260–0x62df | Timestamp FIFO |
 | 0x62f6 | Millisecond count at the last accepted edge |
 
+With `[diagnostics].clock_latency`, `0x6032` running max / `0x6034` published
+mean / `0x6038` sum / `0x603c` sample count / `0x6040` stamp of the edge last
+timed, all cleared by the startup initialiser. `scan_profiler` claims the
+same five; see above.
+
 The 2600 ms release is measured against the factory 1 ms counter (0x61e6),
 not COUNT: COUNT is scaled by the CPU-frequency word at 0x29cc, which made
 the release fire in under a second on the instrument.
@@ -254,6 +259,63 @@ ISR's stamp and the gate is timed. A spread near the scope's 3.36 ms puts the
 delay inside the firmware after the stamp; a much smaller one puts it before
 the stamp, in interrupt latency or input conditioning, where no firmware
 change reaches it.
+
+### What it answered
+
+**The delay is spent after the stamp, inside the firmware.** The whole path
+on the scope under telemetry load was 1.6 ms mean; the firmware's own view of
+its accepted edge to the gate raise was 1.42 ms mean over 509 frames. About
+0.18 ms, 11%, is spent before the stamp. **Interrupt latency and input
+conditioning are exonerated**: this is firmware time, not a hardware floor.
+
+Read that pair with its limit in view. The 1.6 ms scope figure came from a
+capture on image `47b7a75d` and the 1.42 ms telemetry figure from a later one
+on `44ff1b4c`. The two builds differ only in the startup clearing below, so
+the comparison holds, but it is not one simultaneous capture and a
+simultaneous one has not yet been taken.
+
+### What the reported figures are, and what they are not
+
+The MEAN is the figure to read. Two faults have been fixed in the MAX, and
+both were found the same way -- a part cannot exceed the whole.
+
+The shim times against `0x6240`, the stamp of the edge the dequeue is
+actually acting on, **not** `0x623c`, the ISR's newest accepted stamp.
+`0x623c` is whatever the input has done since, so with any queue depth at all
+it charges a beat's gate raise to an edge that did not cause it.
+
+A sample too large for the 14-bit field is DISCARDED -- dropped from the max,
+the sum and the count alike -- rather than clamped into the max. Clamping is
+what published `16383`, exactly `0x3fff`, on the instrument: one beat that
+waited behind a drained backlog claimed 8.74 ms for a path whose whole span
+is under four, and a max is the one statistic a single sample destroys for
+the rest of the power-up. `latencyIgnoresABacklog()` in ClockRegression.java
+holds both properties. It was negative-controlled: with the old shim restored
+the same test publishes `16383` where the fixed one publishes 781 units, so
+it reproduces the instrument's own number rather than merely failing.
+
+`tools/test_clock.py --mode latency` builds the diagnostic so that test and
+`latencyCellsCleared()` run against a real image. Without it both detect an
+ordinary build and skip, which is not a test.
+
+The accumulators are cleared by the startup initialiser. On the instrument
+they came up holding old RAM and the published mean came out ABOVE the
+published max; the harness could not have caught it, because `fresh()` zeroes
+RAM 0x0-0x8000 and those cells only ever started clean in emulation.
+
+`scan_profiler` claims the same five cells -- `0x6032`, `0x6034`, `0x6038`,
+`0x603c`, `0x6040` -- with its own `0x3fff` clamp on `0x6032`, and its
+dispatcher wrapper runs whenever it is on. A build carrying both would
+publish the profiler's clamped worst dispatch through the telemetry fields
+the latency reader decodes, and the reader could not tell. `tools/build.py`
+refuses that build: any two of `scan_profiler`, `telemetry_smoothing`,
+`latch_probe` and `clock_latency` are rejected as claiming the same two
+telemetry fields. Enable one at a time.
+
+The browser toolchain has no equivalent refusal -- `web/generate.py` reads
+`INTERNAL_DEFAULTS` without passing through `build.py` -- so the two
+assemblers disagree about which configurations are legal. That is being
+fixed on `claude/clock-diag-alias`, which is not merged here.
 
 Compiled in but switched off, the option moves four bytes of the shipped
 image — the initialization marker at `0x8001ab6e` and `0x8001ad1e`, which

@@ -58,11 +58,36 @@ def settle_constant(key: str, value: int):
         rewrite(original)
 
 
+@contextlib.contextmanager
+def diagnostic_flag(key: str):
+    """Build with one diagnostics flag on, then put it back.
+
+    The diagnostics are not among the seven options a config carries, so
+    expand() never sees them from a file - the only way to build one is to
+    edit the default.  Without this the two clock-latency tests detect an
+    ordinary image and skip, which is not a test.
+    """
+    original = OPTIONS_PY.read_text()
+    patched, n = re.subn(rf"(['\"]){key}\1: False", f"\\g<1>{key}\\g<1>: True", original)
+    if n != 1:
+        raise SystemExit(f"Cannot find the {key} flag in tools/options.py")
+
+    def rewrite(text: str) -> None:
+        OPTIONS_PY.write_text(text)
+        shutil.rmtree(OPTIONS_PY.parent / "__pycache__", ignore_errors=True)
+
+    try:
+        rewrite(patched)
+        yield
+    finally:
+        rewrite(original)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode",
                         choices=("seq", "arp", "pressure-off", "settle-scans",
-                                 "no-gate-settle", "all", "both"),
+                                 "no-gate-settle", "latency", "all", "both"),
                         default="all")
     parser.add_argument("--quick", action="store_true", help="skip the frequency/duty sweep")
     parser.add_argument("--ghidra", type=Path)
@@ -80,7 +105,8 @@ def main() -> None:
     work = Path(tempfile.mkdtemp(prefix="clock-regression-", dir=REPO / "build"))
     print(f"Artifacts: {work}", flush=True)
     if args.mode == "all":
-        modes = ("seq", "arp", "pressure-off", "settle-scans", "no-gate-settle")
+        modes = ("seq", "arp", "pressure-off", "settle-scans",
+                 "no-gate-settle", "latency")
     elif args.mode == "both":
         modes = ("seq", "arp")
     else:
@@ -113,6 +139,10 @@ def main() -> None:
             settle = settle_constant("clock_settle_scans", 1)
         elif mode == "no-gate-settle":
             settle = settle_constant("gate_settle_scans", 0)
+        elif mode == "latency":
+            # The clock-latency diagnostic, so its own two tests run against
+            # a real image instead of detecting an ordinary one and skipping.
+            settle = diagnostic_flag("clock_latency")
         image = work / f"clock-{mode}.hex"
         text, n = re.subn(r'^output_hex\s*=\s*"[^"]*"', f'output_hex = "{image}"', text, flags=re.M)
         if n != 1:
@@ -136,7 +166,7 @@ def main() -> None:
                    "seq" if mode == "seq" else "arp"]
         if args.quick:
             command.append("quick")
-        if mode in ("settle-scans", "no-gate-settle"):
+        if mode in ("settle-scans", "no-gate-settle", "latency"):
             command.append("jitter")
         result = subprocess.run(command, cwd=REPO, text=True, capture_output=True)
         output = result.stdout + result.stderr

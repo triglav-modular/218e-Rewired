@@ -928,6 +928,48 @@ public class ClockRegression extends GhidraScript {
         println("PASS clock-latency accumulators start from zero");
     }
 
+    // The diagnostic publishes a MAX, and a max is precisely the statistic one
+    // mis-attributed sample destroys for a whole session. The instrument
+    // published 16383 -- 0x3fff exactly, the encoding ceiling -- so at least
+    // one sample claimed 8.74 ms or more for a path whose whole span is under
+    // four. A drained backlog is where that comes from: queued edges raise
+    // their gates long after the input has moved on, and the first version
+    // timed them against 0x623c, the ISR's NEWEST accepted stamp, which by
+    // then belongs to an edge that did not cause the raise.
+    //
+    // Two changes, both checked here. The shim now times against 0x6240, the
+    // stamp of the edge the dequeue is actually acting on, and a sample that
+    // will not fit the field is DISCARDED rather than clamped into the max.
+    // So a stall may cost its own measurement; it can no longer peg the
+    // figure the owner reads for the rest of the power-up.
+    void latencyIgnoresABacklog() throws Exception {
+        fresh(1,25000000);
+        if (r(0x8001c6b0L,4)!=0x8001bbc0L) {
+            println("SKIP backlogged latency: not a diagnostic build");
+            return;
+        }
+        long t=10000;
+        for (int i=0;i<4;i++) {
+            irq(t,true); service(t); finishStep(t+9000); irq(t+50000,false); t+=100000;
+        }
+        long settled=r(0x6032,2), samples=r(0x603c,2);
+        check("ordinary beats are timed at all", samples>0 && settled>0);
+        check("an ordinary beat is nowhere near the ceiling", settled<0x3fff);
+        // Queue more edges than the main loop takes, then drain them all at
+        // once, the way a flash write or any other stall makes it drain.
+        for (int i=0;i<40;i++) { irq(t+i*5000,true); irq(t+2500+i*5000,false); }
+        check("the backlog really did overrun the FIFO", r(0x6258,2)>0);
+        long drain=t+400000;
+        for (int i=0;i<31;i++) { service(drain+i*5000); scan(drain+i*5000); }
+        println("  after the drain: max "+r(0x6032,2)+" units, was "+settled);
+        check("a drained backlog does not move the published max",
+              r(0x6032,2)==settled);
+        check("the max never publishes the 0x3fff ceiling", r(0x6032,2)!=0x3fff);
+        check("the mean stays inside the max", r(0x6034,2)<=r(0x6032,2));
+        println("PASS backlogged edges discarded; max "+r(0x6032,2)
+                +" mean "+r(0x6034,2)+" units over "+r(0x603c,2)+" samples");
+    }
+
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
         try {
@@ -937,9 +979,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); latencyCellsCleared(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
+                bitFieldInstructions(); latencyCellsCleared(); latencyIgnoresABacklog(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); latencyCellsCleared(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); latencyCellsCleared(); latencyIgnoresABacklog(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})

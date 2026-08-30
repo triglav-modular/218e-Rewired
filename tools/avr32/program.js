@@ -3446,9 +3446,12 @@ function assembleProgram() {
         // Clock-latency diagnostic.  Both gate-raise paths reach the factory
         // pulse-high routine through a pool word; this build repoints both at
         // the shim below, so nothing is added at either call site.  It stamps
-        // COUNT against the accepted-edge stamp the GPIO ISR wrote at 0x623c,
-        // keeps a running min and max in cycles/32, and tail-calls the real
-        // routine.  Fully transparent: R8-R12 are saved around the
+        // COUNT against the stamp of the edge the dequeue is actually acting
+        // on (0x6240), keeps a running max and mean in cycles/32, and
+        // tail-calls the real routine.  NOT the ISR's newest accepted stamp
+        // at 0x623c: that is whatever the input has done since, so with any
+        // queue depth at all it charges a beat's gate raise to an edge that
+        // did not cause it.  Fully transparent: R8-R12 are saved around the
         // measurement because the callee's argument convention is the factory
         // routine's, not ours.
         //
@@ -3462,8 +3465,8 @@ function assembleProgram() {
         // latency or input conditioning -- which no firmware change reaches.
         //
         // Guarded on 0x6236 so only external-clock beats are timed; an
-        // internal beat leaves 0x623c stale and would report nonsense.
-        // Min/max are running, not windowed: power-cycle to reset.
+        // internal beat leaves 0x6240 stale and would report nonsense.
+        // Max/mean are running, not windowed: power-cycle to reset.
         if (block("clock_latency")) {
             begin(0x8001bbc0);
             emit("STM --SP,R7,LR");
@@ -3473,15 +3476,15 @@ function assembleProgram() {
             emit("LD.UB R8,R10[0x2]");      // 0x6236 input present
             emit("CP.W R8,0x0");
             emit("BR{eq} 0x8001bc50");
-            // Time each ACCEPTED EDGE exactly once. Without this, any gate
+            // Time each CONSUMED EDGE exactly once. Without this, any gate
             // raise that was not caused by the edge still under measurement
             // -- a latched key, a rest completing, anything the arp does
-            // between beats -- is timed against a stale 0x623c and reports a
+            // between beats -- is timed against a stale stamp and reports a
             // delay that never happened. The first version of this shim did
             // exactly that and reported a 5.64 ms spread where the scope saw
             // 3.36 ms, which is how the fault was found: a sub-interval
             // cannot be wider than the path containing it.
-            emit("LD.W R11,R10[0x8]");      // 0x623c accepted-edge stamp
+            emit("LD.W R11,R10[0xc]");      // 0x6240 stamp of the edge in flight
             emit("MOV R9,0x6040");
             emit("LD.W R8,R9[0x0]");        // stamp of the edge last timed
             emit("CP.W R8,R11");
@@ -3490,10 +3493,17 @@ function assembleProgram() {
             emit("MFSR R9,COUNT");
             emit("SUB R11,R9,R11 << 0x0");  // cycles since that edge
             emit("LSR R11,0x5");            // cycles/32, to fit a CC pair
+            // Out of range is DISCARDED, not clamped. Clamping wrote 0x3fff
+            // into the max, and a max is the one statistic a single bad
+            // sample destroys for the rest of the session -- the instrument
+            // published exactly 16383 for that reason. A sample only gets
+            // here above 8.74 ms if the beat waited behind a drained
+            // backlog, which is a different population from the delay this
+            // is measuring. 0x6040 is already updated, so a discarded edge
+            // is not retried against a later gate raise.
             emit("MOV R8,0x3fff");
             emit("CP.W R11,R8");
-            emit("BR{ls} 0x8001bc10");
-            emit("MOV R11,R8");             // clamp
+            emit("BR{hi} 0x8001bc50");
             padTo(0x8001bc10);
             emit("MOV R10,0x6032");
             emit("LD.UH R8,R10[0x0]");      // running max

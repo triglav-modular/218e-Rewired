@@ -180,7 +180,7 @@ def audit_call_pools(image_path) -> list[str]:
 # behaviour changed.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "dc5af9300a3c5a2823bed52758144d29a98ebd3d2fe43f81f8a9091486a8aab5",
+    "historical_config": "afd2b7e9e7dba4fd65fd39eb101d5c3e24ad95c7a9a8f5ff084f32144ed310fd",
 }
 
 
