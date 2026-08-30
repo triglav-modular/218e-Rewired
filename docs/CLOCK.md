@@ -312,10 +312,14 @@ refuses that build: any two of `scan_profiler`, `telemetry_smoothing`,
 `latch_probe` and `clock_latency` are rejected as claiming the same two
 telemetry fields. Enable one at a time.
 
-The browser toolchain has no equivalent refusal -- `web/generate.py` reads
-`INTERNAL_DEFAULTS` without passing through `build.py` -- so the two
-assemblers disagree about which configurations are legal. That is being
-fixed on `claude/clock-diag-alias`, which is not merged here.
+**Until `claude/clock-diag-alias` merges**, that refusal is the command-line
+build's alone. `web/generate.py` reads `INTERNAL_DEFAULTS` into the browser
+bundle without passing through `build.py`, and nothing on the JS side checks
+the claims, so the two assemblers disagree about which configurations are
+legal -- and `sweep.py` pins images on the premise that both verify them.
+The branch closes it by moving the check to module scope in
+`tools/options.py`, which `web/generate.py` imports; check whether it has
+landed before repeating the paragraph above, because it inverts when it does.
 
 Compiled in but switched off, the option moves four bytes of the shipped
 image — the initialization marker at `0x8001ab6e` and `0x8001ad1e`, which
