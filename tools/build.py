@@ -1796,6 +1796,8 @@ def main() -> None:
         cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
     cfg["_numbers"]["clock_settle_scans"] = int(
         cfg.get("sequencer", {}).get("clock_settle_scans", 0))
+    cfg["_numbers"]["clock_deadline_ms"] = int(
+        cfg.get("sequencer", {}).get("clock_deadline_ms", 4))
     cfg["_numbers"]["clock_rearm_us"] = int(
         cfg.get("sequencer", {}).get("clock_rearm_us", 250))
     cfg["_numbers"]["clock_max_ms"] = int(
@@ -1820,7 +1822,8 @@ def main() -> None:
                  "clock_capture", "clock_irq_hook", "clock_irq_pool",
                  "clock_edge_mode", "clock_init", "clock_init_pool",
                  "clock_service", "clock_output", "clock_low_age", "clock_attack_guard",
-                 "clock_spike_units", "clock_fast_trigger", "clock_remap_bare"):
+                 "clock_spike_units", "clock_fast_trigger", "clock_remap_bare",
+                 "clock_deadline"):
         blocks[name] = div
     blocks["profiler_pool"] = div or features.get("scan_profiler", False)
     summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")

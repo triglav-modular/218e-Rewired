@@ -3421,12 +3421,19 @@ function assembleProgram() {
         if (twoPhaseBeat()) {
             // The beat's settle is milliseconds, so it is spent here, on the
             // 1 ms timer, and not on the 5 ms scan that used to quantise it.
-            // Only while the flush owns the step (claim 3); at every other
-            // moment 0x60ee is the scan's own countdown and is not ours.
+            // Only while the flush owns the step; at every other moment
+            // 0x60ee is the scan's own countdown and is not ours.
+            //
+            // Claim 2 counts as well as claim 3, which it did not used to.
+            // Under 3 alone the wait did not begin until phase A had run, so
+            // a whole dispatch sat between the claim and the first decrement
+            // and the internal beat's nominal 5 ms measured 6.  Claim 1 is
+            // still not ours: there 0x60ee is a SCAN count and spending it at
+            // 1 kHz would fire the scan's own deferred pulse five times over.
             emit("MOV R8,0x625b");
             emit("LD.UB R9,R8[0x0]");
-            emit("CP.W R9,0x3");
-            emit("BR{ne} 0x8001bb9c");
+            emit("CP.W R9,0x2");
+            emit("BR{lt} 0x8001bb9c");
             emit("MOV R8,0x60ee");
             emit("LD.UB R9,R8[0x0]");
             emit("CP.W R9,0x0");
@@ -4723,6 +4730,14 @@ function assembleProgram() {
         emit("MOV R8,0x0");
         emit("MOV R10,0x60ee");
         emit("ST.B R10[0x0],R8");       // no old deferred trigger crosses transport
+        if (block("clock_fast_trigger")) {
+            // Nor an old flush CLAIM.  Without a deadline only a beat with a
+            // settle configured was ever left holding one; with one every
+            // external beat is, so a claim surviving the transition would put
+            // a trigger out after the transport had stopped.
+            emit("MOV R10,0x625b");
+            emit("ST.B R10[0x0],R8");
+        }
         if (block("clock_capture")) {
             emit("MOV R10,0x6234");
             emit("LD.UB R9,R10[0x0]");
@@ -5788,6 +5803,118 @@ function assembleProgram() {
         word(0x8001c600);
         finish("clock_output", 0x8001c6c0);
 
+        // The external beat's DEADLINE.  Measured on the instrument, max
+        // edge-to-claim was 3.60 ms and max edge-to-gate 3.61: essentially
+        // the whole of the external tail is spent upstream of the claim, so
+        // a wait counted FROM the claim cannot reach it and a settle
+        // expressed in scans reaches it least of all.  A wait counted from
+        // the EDGE can - a beat that arrived quickly waits longer, a beat
+        // that was held up waits less, and both gate at edge + D.
+        //
+        // Computed HERE, at phase A, and not in clock_settle, because the
+        // countdown is only spent once the claim reads 3.  A deadline
+        // written at the claim would have the phase-A dispatch added back
+        // on top of it, which is the term this is trying to remove.
+        //
+        // A LEAF: reached by MCALL from the flush, returns with MOV PC,LR and
+        // calls nothing.  R8-R12 are the interpolator's scratch at that point
+        // and are free.  Returns R12 = the wait left in 0x60ee, zero meaning
+        // the caller should gate on this same flush.
+        begin(0x8001bd40);
+        emit("MOV R8,0x6236");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bdc0");      // internal beat: its wait is an RC fact
+        // The deadline PLUS any configured settle, not the larger of the two.
+        // The settle is a wait for the output RC that starts when the pitch is
+        // staged, so it is measured from phase A and carries phase A's own
+        // variability; taking max(D, settle) let a settle longer than D
+        // swallow the deadline whole and put every bit of the upstream jitter
+        // straight back on the gate.  Measured that way, clock_settle_scans=1
+        // still ran 800..4200 us across the dequeue-starved sweep -- exactly
+        // the distribution the deadline exists to flatten.  Added, the target
+        // stays edge-relative and the floor below only catches beats so late
+        // that the RC wait is all that is left of it.
+        emit(StringFormat("MOV R12,0x%x",
+             deadlineMs() + settleMsFor(number("clock_settle_scans", 0, 0, 3))));
+        // Bounded by half the acquired period.  At the contract's 200 Hz
+        // ceiling a 4 ms deadline is most of a beat, and a deadline longer
+        // than the beat itself would hold this gate under the next edge's.
+        emit("MOV R9,0x61ea");
+        emit("LD.UH R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001bdd8");      // nothing acquired yet: no deadline
+        emit("LSR R9,0x1");
+        emit("CP.W R12,R9");
+        emit("BR{ls} 0x8001bd64");
+        emit("MOV R12,R9");
+        padTo(0x8001bd64);
+        // What the path has already spent, in whole milliseconds.  Repeated
+        // subtraction rather than DIVU: the count is bounded by D, so this is
+        // a handful of iterations at worst and no divide runs at 1 kHz.
+        emit("MOV R9,0x6234");
+        emit("LD.W R9,R9[0xc]");        // 0x6240, the edge this step is acting on
+        emit("MFSR R10,COUNT");
+        emit("SUB R9,R10,R9 << 0x0");   // wrap-safe cycles since that edge
+        emit("MOV R10,0x6244");
+        emit("LD.W R10,R10[0x0]");      // cycles per millisecond
+        padTo(0x8001bd80);
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001bd94");      // the deadline is already spent
+        // Reversed operands so the test is UNSIGNED: R9 is a COUNT difference
+        // and the assembler takes {hi} but not {lo}.
+        emit("CP.W R10,R9");
+        emit("BR{hi} 0x8001bd94");      // less than a millisecond left to charge
+        emit("SUB R9,R9,R10 << 0x0");
+        emit("SUB R12,0x1");
+        emit("RJMP 0x8001bd80");
+        padTo(0x8001bd94);
+        // A configured settle is a FLOOR under the deadline, not an addition
+        // to it: the output RC needs that wait whether or not the beat was
+        // late, and a late beat has already spent its deadline elsewhere.
+        if (settleMsFor(number("clock_settle_scans", 0, 0, 3)) > 0) {
+            emit(StringFormat("MOV R9,0x%x",
+                 settleMsFor(number("clock_settle_scans", 0, 0, 3))));
+            emit("CP.W R12,R9");
+            emit("BR{hi} 0x8001bda0");
+            emit("MOV R12,R9");
+        }
+        padTo(0x8001bda0);
+        emit("MOV R9,0x60ee");
+        emit("ST.B R9[0x0],R12");
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x8001bdd0");
+        // Nothing left to wait.  Drop the claim so the caller gates on THIS
+        // flush instead of a dispatch later - the same thing claim 1 does,
+        // reached from a deadline that turned out to be already spent.
+        emit("MOV R9,0x625b");
+        emit("ST.B R9[0x0],R12");
+        emit("RJMP 0x8001bdd0");
+        padTo(0x8001bdc0);
+        // The internal beat has no accepted edge to be late against.  Its
+        // wait is the output RC and clock_settle has already written it, so
+        // this only reports it - and lets the shared tail above gate now if
+        // the 1 ms task has already spent it, which it can, since the
+        // countdown starts at the claim rather than here.
+        emit("MOV R9,0x60ee");
+        emit("LD.UB R12,R9[0x0]");
+        emit("RJMP 0x8001bda0");
+        padTo(0x8001bdd0);
+        emit("MOV PC,LR");
+        padTo(0x8001bdd8);
+        // No period acquired.  An unlocked clock has no steady period to be
+        // steady against, and the deadline exists to take the jitter off one
+        // that has.  It also must not apply here: before acquisition the full
+        // deadline plus the 4 ms attack guard exceeds a 200 Hz period, so the
+        // top of the range would back its FIFO up while it was still locking
+        // -- and acquisition happens at the dequeue, so the backlog would
+        // throttle the very thing that clears it.  The settle floor below
+        // still applies; a beat with no settle configured gates as it always
+        // did.
+        emit("MOV R12,0x0");
+        emit("RJMP 0x8001bd94");
+        finish("clock_deadline", 0x8001bde0);
+
         // The pitch remap, entered PAST the per-scan chain at its head.
         // 0x80019980 opens with a call to 0x8001a2e8 - the tuning applier,
         // the per-scan housekeeping and the VIBRATO ENGINE - every one of
@@ -5830,9 +5957,16 @@ function assembleProgram() {
         var fastClampLow = twoPhaseBeat() ? 0x8001c17c : 0x8001c166;
         var fastClampHigh = twoPhaseBeat() ? 0x8001c188 : 0x8001c172;
         var fastStage = twoPhaseBeat() ? 0x8001c198 : 0x8001c180;
-        var fastDecline = 0x8001c1c0;
-        var fastExit = twoPhaseBeat() ? 0x8001c1d4 : 0x8001c1c8;
-        var fastPool = twoPhaseBeat() ? 0x8001c1d8 : 0x8001c1d0;
+        // The deadline call costs eight bytes in the cave and a fourth pool
+        // word, so everything from the decline on moves along by 0x10.  The
+        // block still ends short of clock_capture at 0x8001c200.
+        var deadline = deadlineMs() > 0;
+        var fastGate = 0x8001c1b8;
+        var fastDecline = deadline ? 0x8001c1d8 : 0x8001c1c0;
+        var fastExit = twoPhaseBeat() ? (deadline ? 0x8001c1ec : 0x8001c1d4)
+                                        : 0x8001c1c8;
+        var fastPool = twoPhaseBeat() ? (deadline ? 0x8001c1f0 : 0x8001c1d8)
+                                        : 0x8001c1d0;
         // R0 carries the CLAIM through the staging below, which needs every
         // one of R8..R12: 1 fires here and now, 2 stages the pitch and starts
         // the settle, 3 is that settle having run out.  R0 is callee-saved,
@@ -5952,7 +6086,20 @@ function assembleProgram() {
             // Phase A ends here.  The CV now has the whole settle to travel
             // before the gate follows it out on a later flush.
             emit("CP.W R0,0x2");
-            emit(StringFormat("BR{eq} 0x%x", fastExit));
+            if (deadline) {
+                // ...except that how long that is, is only decidable HERE.
+                // clock_deadline sizes the wait from the accepted edge and
+                // returns zero when it has already gone by, in which case the
+                // gate belongs on this flush after all and the claim it just
+                // dropped says so.
+                emit(StringFormat("BR{ne} 0x%x", fastGate));
+                emit(StringFormat("MCALL PC[0x%x]", fastPool + 12));
+                emit("CP.W R12,0x0");
+                emit(StringFormat("BR{ne} 0x%x", fastExit));
+                padTo(fastGate);
+            } else {
+                emit(StringFormat("BR{eq} 0x%x", fastExit));
+            }
         }
         emit(StringFormat("MCALL PC[0x%x]", fastPool + 8));  // gate, slot 0
         emit("MOV R10,0x6234");
@@ -5984,7 +6131,11 @@ function assembleProgram() {
         word(0x00003560); // global state base
         word(0x8001c0e0); // remap, minus the per-scan chain
         word(block("clock_latency") ? 0x8001bbc0 : 0x800077f8);
-        finish("clock_fast_trigger", twoPhaseBeat() ? 0x8001c1f0 : 0x8001c1e0);
+        if (deadline) word(0x8001bd40); // the deadline, sized from the edge
+        // Four pool words take the block right up to clock_capture, which
+        // begins at 0x8001c200.  There is no room for a fifth.
+        finish("clock_fast_trigger",
+               twoPhaseBeat() ? (deadline ? 0x8001c200 : 0x8001c1f0) : 0x8001c1e0);
 
         // Ending a take has to end the NOTE, not just the mode.  The
         // sequencer's note is started and stopped by the arp's step function,
@@ -6048,6 +6199,10 @@ function assembleProgram() {
         emit("MOV R8,0x60ee");
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");        // and no deferred pulse outlives the stop
+        // The flush CLAIM is cleared by seq_transport at 0x8001d688, beside
+        // where that routine drops the FIFO and the in-flight flag, and not
+        // here: this cave is packed to the byte, and this was never the full
+        // discard path anyway - it leaves 0x6237 and the queue alone too.
         emit("LDM SP++,R0,R1,R7,R9,R12,PC");
         padTo(0x8001b4d0);
         word(0x00003560); // global state base
@@ -6576,8 +6731,13 @@ function assembleProgram() {
         // what it is for and not the 5 ms grid it used to be rounded to.
         if (twoPhaseBeat()) {
             emit("MOV R10,0x625b");
+            // With a deadline the external beat is ALWAYS held: the wait is
+            // not known here, it is sized at phase A from this edge's own
+            // stamp, so the claim has to be the one that holds the gate even
+            // when no settle was configured.
             emit(StringFormat("MOV R11,0x%x",
-                 claimFor(number("clock_settle_scans", 0, 0, 3))));
+                 deadlineMs() > 0 ? 2
+                                  : claimFor(number("clock_settle_scans", 0, 0, 3))));
             emit("ST.B R10[0x0],R11");
             if (feature("clock_latency")) {
                 // Split the diagnostic at the first moment the selected
@@ -6592,7 +6752,12 @@ function assembleProgram() {
                 emit("MOV R11,0x6044");
                 emit("ST.H R11[0x0],R10");
             }
-            if (number("clock_settle_scans", 0, 0, 3) > 0) {
+            if (deadlineMs() > 0) {
+                // Zero, deliberately.  The 1 ms task skips a zero countdown,
+                // so nothing is spent between here and phase A - which is
+                // exactly the gap the deadline exists to stop measuring.
+                emit("MOV R9,0x0");
+            } else if (number("clock_settle_scans", 0, 0, 3) > 0) {
                 emit(StringFormat("MOV R9,0x%x",
                      settleMsFor(number("clock_settle_scans", 0, 0, 3))));
             }

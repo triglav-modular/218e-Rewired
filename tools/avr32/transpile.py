@@ -40,8 +40,10 @@ def transpile_line(line: str, state: dict) -> str:
 
     # int[] name = table("x");   ->   var name = table("x");
     line = re.sub(r"^(\s*)int\[\]\s+(\w+)\s*=", r"\1var \2 =", line)
-    # final int X = ... / int X = ... / long X = ...   ->   var X = ...
-    line = re.sub(r"^(\s*)(?:final\s+)?(?:int|long)\s+(\w+)\s*=", r"\1var \2 =", line)
+    # final int X = ... / int X = ... / long X = ... / boolean X = ...
+    #   ->   var X = ...
+    line = re.sub(r"^(\s*)(?:final\s+)?(?:int|long|boolean)\s+(\w+)\s*=",
+                  r"\1var \2 =", line)
 
     # for (int v : sine) {  ->  indexed loop with the element bound inside,
     # so the body's own closing brace still closes the loop.

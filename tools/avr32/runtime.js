@@ -79,6 +79,13 @@ var RT = (function () {
         return settleScans * number('scan_period_ms', 5, 1, 20);
     }
 
+    // Mirrors deadlineMs() in the Java: how long after the ACCEPTED EDGE the
+    // external trigger goes out. Zero builds the cave but never calls it,
+    // which is the fire-on-the-next-flush behaviour that shipped.
+    function deadlineMs() {
+        return twoPhaseBeat() ? number('clock_deadline_ms', 4, 0, 8) : 0;
+    }
+
     function table(name) {
         var raw = (cfg['table.' + name] || '').trim();
         if (raw === '') throw new Error('Missing table in build config: ' + name);
@@ -181,7 +188,7 @@ var RT = (function () {
         init: init, output: function () { return out; }, fmt: fmt,
         on: on, block: block, feature: feature, number: number,
         twoPhaseBeat: twoPhaseBeat, claimFor: claimFor,
-        settleMsFor: settleMsFor,
+        settleMsFor: settleMsFor, deadlineMs: deadlineMs,
         table: table, emitTable: emitTable, begin: begin, emit: emit,
         word: word, halfword: halfword, padTo: padTo, finish: finish,
         singlePatch: singlePatch, wordPatch: wordPatch, fixedPatch: fixedPatch,
@@ -192,7 +199,7 @@ var RT = (function () {
 // The transpiled program calls these bare, exactly as the Java does.
 var block = RT.block, feature = RT.feature, number = RT.number, table = RT.table,
     twoPhaseBeat = RT.twoPhaseBeat, claimFor = RT.claimFor,
-    settleMsFor = RT.settleMsFor,
+    settleMsFor = RT.settleMsFor, deadlineMs = RT.deadlineMs,
     emitTable = RT.emitTable, begin = RT.begin, emit = RT.emit, word = RT.word,
     halfword = RT.halfword, padTo = RT.padTo, finish = RT.finish,
     singlePatch = RT.singlePatch, wordPatch = RT.wordPatch,

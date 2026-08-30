@@ -34,8 +34,15 @@ At the default settings:
   `clock_settle_scans=0`. Additional settle scans reduce that ceiling.
   Dispatcher stalls can add latency; a finite queue cannot absorb an
   indefinite stall or a sustained rate above its output capacity.
-- The trigger **rises within 1 ms of the accepted edge**, on the 1 kHz DAC
-  flush rather than the 5 ms pitch scan. Measured on the emitted firmware,
+- The trigger rises a **fixed `clock_deadline_ms` (default 4 ms) after the
+  accepted edge**, on the 1 kHz DAC flush rather than the 5 ms pitch scan.
+  The deadline buys jitter with latency: the path from edge to claim measured
+  0.3-3.6 ms on the instrument and that variation used to reach the gate,
+  where now it is absorbed. A beat that overruns the deadline gates at once
+  and keeps the older behaviour. `clock_deadline_ms = 0` turns it off. The
+  deadline is bounded at build time by half the acquired period, so a fast
+  clock is not swallowed by it. Before the deadline the trigger
+  **rose within 1 ms of the accepted edge**, on the same flush. Measured on the emitted firmware,
   the edge-to-rise delay was uniform over a whole scan period — 0 to 4.8 ms,
   with no fixed component — because the gate's fall was already scheduled
   from the edge itself while its rise waited for the next scan. Under the
@@ -208,6 +215,7 @@ pool. It no longer executes the bytes at 0x800021e8 as loads/stores.
 | Countdown attack-age guard | 0x8001ca80 |
 | Remap without the per-scan chain | 0x8001c0e0 |
 | Trigger rise, on the 1 kHz flush | 0x8001c100 |
+| Deadline, sized from the accepted edge | 0x8001bd40 |
 
 The old proposed page at 0x8001c000–0x8001c1ff is still unused. Persistence
 now stores records at 0x8003e000–0x8003efff; see [PERSISTENCE.md](PERSISTENCE.md).
@@ -407,6 +415,265 @@ floor is about 1 ms rather than the 0.8 ms tier. And the deadline has to be
 bounded by the acquired period: at the contract's 200 Hz ceiling a 4 ms
 deadline is most of a beat.
 
+### Where the internal beat's settle actually starts
+
+The internal capture above measured claim-to-gate at min 4.23 ms, max 8.54 ms
+against a 5 ms nominal settle, and that looked impossible: a countdown of
+whole milliseconds cannot spread 4.31 ms. The premise was wrong. **The settle
+does not start at the claim.**
+
+Three pieces of the code decide this, and they were traced rather than
+assumed.
+
+`clock_ms_tick` spends `0x60ee` only while `0x625b` reads 3. Nothing writes 3
+except `clock_fast_trigger`'s phase A. So the countdown does not begin until
+an event-17 dispatch has run.
+
+`clock_settle` is reached for the internal beat from the arp advance, which
+the factory runs at `0x80004f66`, and the fast trigger runs in the wrapper at
+`0x8001a684` — earlier in the same dispatch. The claim is therefore made
+*after* the only context that could act on it has already gone by, so phase A
+is at minimum one whole dispatch away.
+
+Event 17 is not the timer. The timer POSTS it into the 32-entry ring at
+`0x8001030c`; the main loop at `0x80007c5a` pops ONE event per pass. The
+countdown is punctual, but both phases queue.
+
+So claim-to-gate contains **two dispatches, not one**:
+
+| | |
+|---|---|
+| claim, in the factory half of dispatch *k* | `clock_settle` writes claim 2, `0x60ee` = 5, stamps `0x62f0` |
+| dispatch *k+1* | phase A stages the pitch, claim ← 3 — the countdown starts here |
+| 4.0–5.0 ms | five decrements by the punctual 1 ms task, at an arbitrary phase against it |
+| next dispatch after that | phase B raises the gate |
+
+`settleStartsAtPhaseA()` in `ClockRegression.java` proves this without a
+model: it claims a beat, then runs ten milliseconds of the 1 ms task with no
+dispatch at all and finds `0x60ee` untouched at 5 and the claim still 2. One
+dispatch later the claim is 3 and the countdown starts falling. Withholding
+the dispatches puts claim-to-gate at 22 ms for a nominal 5 ms settle.
+
+**The nominal is 6 ms, not 5.** `internalDispatchModel()` runs the internal
+beat through the same ring model `loopModel()` uses for the external one, and
+every configuration that does not overflow returns a mean of 5.96–6.00 ms.
+
+#### The specific suspicion, refuted
+
+`clock_output` really does leave a claimed step alone on every path. The
+guard is the first thing in the function after the frame — `LD.UB` of
+`0x625b`, `CP.W 0x1`, `BR{hi}` to the return — so claims 2 and 3 exit before
+any other branch is reached. The pitch scan cannot complete a step the flush
+has claimed, and the 5 ms scan grid is not what is adding the milliseconds.
+The assertion in **What changed** holds; this is not a defect in the
+two-phase claim.
+
+The glide decline is ruled out too, for this build specifically. A decline
+would hand the beat back to the 5 ms scan and cost up to a scan period, but
+`declinedGlideJitter()` shows that in a blend build the scan derives
+`0x2eee = 0` from every portamento source, so the branch is unreachable — and
+`pressure_portamento = true` is the shipped default and the owner's
+configuration. The sequencer's own glide (`seq_glide`) can write a nonzero
+rate, but the capture was the arp.
+
+#### What the model does not explain
+
+Queueing alone tops out at **1.43 ms** of spread before the ring overflows,
+against 4.31 ms on the instrument. No modeled loop rate brackets both
+hardware bounds. That is a shortfall of a factor of three and should be
+stated as one.
+
+It is not, however, an inconsistency. The structure spans the measured range
+exactly as it stands:
+
+| | |
+|---|---|
+| floor | ~4.0 ms — five decrements with phase A landing just before a tick, and both dispatch waits near zero, which a ring already holding two posted flushes gives |
+| ceiling | ~5.0 ms of countdown plus the two dispatch waits |
+
+Observed min 4.23 ms sits just above that floor. To reach the 8.54 ms
+maximum the two waits need to sum to about 3.5 ms — roughly 1.75 ms each,
+which is the same order as the 3.60 ms maximum the external path already
+measures upstream of its claim. Nothing here is out of range.
+
+What the model cannot do is REACH those waits, and the reason is stated in
+`loopModel`'s own comment: it models the dispatch SLOT and not the handler's
+run time. A real event-17 pop runs the interpolator, the fast trigger, the
+factory flush and the arp advance before the next pop can happen; the model
+charges none of that. So the model establishes the mean and the mechanism,
+and is the wrong instrument for the tail. **This is a limit of the model, not
+evidence against the mechanism** — and equally, not evidence for it.
+
+One separate weakness, found while tracing and worth recording even though
+the figures above do not require it. The external half of the shim times each
+CONSUMED EDGE exactly once, using `0x6040`, because otherwise a gate raise
+that no edge caused gets charged to a stale stamp — that guard was added
+after the first shim reported a 5.64 ms spread where the scope saw 3.36 ms.
+**The internal half has no equivalent.** It consumes `0x62f0` on ANY gate
+raise, so a latched key, a rest completing, or anything else the arp does
+between beats will take an outstanding claim's stamp and publish the interval
+to a gate belonging to a different step. Capture 2 recorded 731 frames with a
+key held and the arp running, which is the quietest case for this, but the
+internal figures carry no guard that says so.
+
+#### The measurement this was thought to contradict
+
+The internal figures were read as irreconcilable with the scope-measured
+internal gate period (min 40.77, mean 40.93, max 42.33 ms). They are not, and
+the doc already contained the matching number.
+
+**The settle experiment** below put the EXTERNAL beat on claim 2 — the same
+two-phase path, the same 5 ms settle — and measured n=300: min 5.17 ms, mean
+6.47 ms, max **8.56 ms**. The internal capture reads min 4.23, max **8.54**.
+Those are the same distribution, on a different source, from an independent
+image. The 8.5 ms maximum is a property of the claim-2 path, not an anomaly
+of the internal clock, and the modeled 6 ms nominal sits right on the 6.47 ms
+mean that experiment measured.
+
+The period does not have to track claim-to-gate one for one either. Gate *n*
+lands on the dispatch grid and so does gate *n+1*; their difference carries
+one grid jitter differenced, while claim-to-gate carries two dispatch waits
+plus the countdown's phase. Nothing requires them to be equal.
+
+So neither hardware measurement is stale, and the reading that the internal
+clock "only looked as if it met target" is not supported. What is left open
+is narrower, and it is what capture 2's scope repeat (still to be taken) is
+for: whether the gate-to-gate period really does stay inside 1.6 ms while
+claim-to-gate spreads 4.31 ms. If it does, the two are measuring different
+things exactly as argued above. If it does not, the internal clock misses
+target as badly as the external one and the period figure in **What the
+harness cannot measure** is the stale number after all.
+
+## The deadline, and what it changed
+
+The tail is upstream of the claim: max edge-to-claim 3.60 ms against max
+edge-to-gate 3.61 ms. So a wait counted **from the claim** cannot reach it,
+however long it is, and a wait counted **from the edge** absorbs it exactly —
+a beat that arrived quickly waits longer, a beat that was held up waits less,
+and both gate at edge + D.
+
+`clock_deadline` at `0x8001bd40` does that sizing. Three changes carry it.
+
+**The wait is computed at phase A, not at the claim.** `clock_settle` sets
+claim 2 and leaves `0x60ee` at zero; `clock_fast_trigger` calls
+`clock_deadline` once the pitch is staged, and it writes
+`max(D - age, settle)` where `age` is `(COUNT - 0x6240) / 0x6244` in whole
+milliseconds by repeated subtraction — bounded by D, so no divide runs at
+1 kHz. Computing it at the claim instead would have had the phase-A dispatch
+added straight back on top, which is the term being removed.
+
+**A deadline already spent gates now.** `clock_deadline` returns the wait it
+wrote; zero means it dropped the claim as well, and the caller falls through
+to the gate on that same flush rather than costing another dispatch. Beats
+that overran the deadline therefore keep exactly today's latency — they do
+not get worse.
+
+**The 1 ms task counts under claim 2, not only claim 3.** This is the
+separate fault the internal capture exposed: nothing writes claim 3 except
+phase A, so the wait did not begin until a dispatch had run, and a nominal
+5 ms settle measured 6. Claim 1 is still not the timer's — there `0x60ee` is
+a SCAN count, and spending it at 1 kHz would fire the scan's deferred pulse
+five times over.
+
+**A configured settle is ADDED to the deadline, not maxed with it.** The
+settle is a wait for the output RC and it starts when the pitch is staged, so
+it is measured from phase A and carries phase A's variability. Taking
+`max(D, settle)` let a settle longer than D swallow the deadline whole:
+measured that way, `clock_settle_scans = 1` still ran 800-4200 us across the
+dequeue-starved sweep, which is the distribution before the fix. Added, the
+target stays edge-relative -- that build now runs flat at 800 us, at
+edge + 9 ms -- and the floor only catches beats so late that the RC wait is
+all that is left of the deadline.
+
+**D is bounded by half the acquired period, and does not apply at all before
+one is acquired.** At the contract's 200 Hz ceiling a 4 ms deadline is most
+of a beat, and a deadline longer than the beat would hold this gate under the
+next edge's. The unlocked case is separate and was found on the bench of the
+emulator rather than reasoned out: before acquisition the full deadline plus
+`clock_service`'s 4 ms attack guard exceeds a 200 Hz period, so the FIFO
+backs up while the clock is still locking -- and since acquisition happens at
+the dequeue, the backlog throttles the very thing that would clear it. An
+unlocked clock has no steady period to be steady against, so it keeps the
+older behaviour and gates as soon as it can.
+
+**The claim is cleared on transport changes.** `seq_transport` at
+`0x8001d688` drops it beside where it drops `0x60ee`, the FIFO and the
+in-flight flag. Without a deadline only a beat with a settle configured ever
+held a claim; with one every external beat does, so a claim surviving a STOP
+would put a trigger out after the transport had stopped. `seq_release` does
+not clear it -- that cave is packed to the byte, and it was never the full
+discard path anyway, leaving `0x6237` and the queue alone too.
+
+`clock_deadline_ms` defaults to **4** — the next whole millisecond above the
+3.60 ms maximum. Zero restores the previous behaviour exactly: the block is
+still assembled, but no pool word reaches it and `clock_settle` goes back to
+`claimFor(clock_settle_scans)`.
+
+### What it measures, in the model
+
+`loopModelJitter()` and `internalDispatchModel()` before and after, same
+model, same configurations. These are model microseconds: `loopModel` charges
+the dispatch SLOT and not the handler's run time, so the absolute figures are
+a lower bound. The comparison is like for like.
+
+The dequeue-starved sweep is the clearest of them, because its whole point
+was that a slower `clock_service` widened the spread:
+
+| clock_service | before | after |
+|---|---:|---:|
+| 1000 Hz | 800 us | 800 us |
+| 600 Hz | 2000 | 800 |
+| 400 Hz | 2200 | 800 |
+| 300 Hz | 3200 | 800 |
+| 250 Hz | 3600 | 800 |
+| 200 Hz | 4200 | 800 |
+
+**Flat.** The `clock_settle_scans = 1` build is flat at 800 us too, at
+edge + 9 ms, once the settle is added rather than maxed. How long the dequeue took no longer reaches the gate, which is the
+property the deadline was built for and the one no previous change had.
+
+Across the loop-rate sweep the widest external spread went from 4200 us to
+1775 us, and the mean settled at about 4.3 ms — the deadline itself. The
+internal beat went from a 5961-6000 us mean for a nominal 5000 us settle to
+4962 us, and its widest spread from 1428 us to 714 us.
+
+**The trade is latency for jitter, and it is not free.** Every clocked
+trigger now goes out about 4 ms after its edge instead of 0.3-3.6 ms after
+it. That is the point — a constant offset is not jitter — but it is a real
+4 ms, it is audible against a tight external sequencer, and `0` turns it off.
+
+### What is NOT verified
+
+No hardware. The instrument figures quoted throughout are from before this
+change, and the model that says the fix works is the same model whose tail
+could not reproduce the instrument in the first place. What the model does
+establish is structural and holds regardless of its absolute scale: the gate
+is now placed relative to the edge, so terms upstream of the claim cannot
+reach it. The flat dequeue row is that property, measured.
+
+The floor stays about 1 ms rather than the 0.8 ms tier, for the reason
+already recorded: `0x60ee` counts whole milliseconds and the physical edge
+goes out on an event-17 DAC transfer, so the gate rides the first transfer at
+or after the countdown expires whoever raises it.
+
+### Two consequences worth knowing
+
+**The scan can no longer complete an external step.** With a deadline the
+beat is claim 2 throughout, and `clock_output` leaves claims above 1 alone.
+That is deliberate: a scan reaching the step first would gate it on the 5 ms
+grid, which is the jitter being removed. It costs nothing on the instrument —
+the scan is event 3 out of the same 32-entry ring as event 17, so a
+dispatcher not running the flush is not running the scan either — but four
+regression fixtures were relying on it, having driven `service()` and
+`scan()` without ever flushing or ticking the 1 ms timer. They now drive
+whole dispatches.
+
+**The no-dequeue window is wider.** `clock_service` refuses to dequeue while
+a pulse is pending, and a deadline is pending for as long as it runs, so the
+next edge waits a few milliseconds longer than it used to. The main loop
+retries every pass, so this costs latency on the next beat and not a beat.
+The period bound is what keeps it from mattering at the top of the range.
+
 ## Repeatable checks
 
 ```sh
@@ -565,10 +832,17 @@ sampling noise.
 **This experiment proves less than it first appears, and the reading below
 was wrong.** It was taken as showing the jitter is upstream of the claim,
 because a downstream re-timing would have absorbed it. The settle is a
-countdown STARTED at the claim and spent by the timer, so it adds a delay
-relative to the claim; it does not align the rise to an absolute grid.
-Variance before the claim passes through it, and so does variance after it.
-Inserting a constant offset cannot localise a variable one.
+countdown spent by the timer, so it adds a delay relative to the claim; it
+does not align the rise to an absolute grid. Variance before the claim passes
+through it, and so does variance after it. Inserting a constant offset cannot
+localise a variable one.
+
+That countdown is NOT started at the claim, which an earlier version of this
+paragraph said and which the internal capture later disproved: it starts at
+phase A, one event-17 dispatch later. See **Where the internal beat's settle
+actually starts** above. The three figures here are the external clock's
+measurement of exactly that path, and they are what the internal capture
+should be compared against.
 
 What the experiment does establish is worth keeping. The minimum was 5.17 ms
 for a nominal 5 ms settle — five decrements of `0x60ee` by the 1 ms task —

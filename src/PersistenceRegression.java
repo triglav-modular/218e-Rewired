@@ -35,7 +35,10 @@ public class PersistenceRegression extends GhidraScript {
     }
     void check(String name,boolean ok) throws Exception {
         checks++; if(!ok) throw new Exception("FAIL "+name+" PC="+Long.toHexString(pc())
-            +" writes="+writes+" request="+r(0x62e0,1));
+            +" writes="+writes+" request="+r(0x62e0,1)
+            +" outputs="+outputs+" claim="+r(0x625b,1)+" pending="+r(0x60ee,1)
+            +" busy="+r(0x6237,1)+" head/tail="+r(0x6234,1)+"/"+r(0x6235,1)
+            +" period="+r(0x61ea,2));
     }
     void ret() { jump(reg("LR")); }
     void step() throws Exception {
@@ -382,6 +385,29 @@ public class PersistenceRegression extends GhidraScript {
         time(ms); call(0x80007c66L,0x80007c6aL);
         call(0x80004f66L,0x80004faeL);
         call(0x800031b8L,0x80003256L);
+        // The trigger rides the 1 kHz DAC flush, and with a deadline built it
+        // is held a further couple of milliseconds so the gate lands a fixed
+        // time after the ACCEPTED EDGE. Neither the flush nor the 1 ms timer
+        // that spends that wait was driven here at all -- this called only
+        // the FACTORY half of event 17 and skipped the wrapper the fast
+        // trigger lives in -- so the gate could never go out. Two more
+        // milliseconds of the whole loop, which is what the instrument would
+        // have run in them, and still clear of the next edge at ms+3.
+        runLoop(ms+1,ms+2);
+    }
+    // The 1 ms timer and a whole event-17 dispatch, per millisecond: the parts
+    // of the main loop that COMPLETE a claimed step. serviceAndOutput above
+    // drove neither -- it called only the factory half of event 17, skipping
+    // the wrapper the fast trigger lives in -- so nothing could ever gate.
+    void runLoop(long from,long to) throws Exception {
+        for (long t=from;t<=to;t++) {
+            time(t);
+            e.writeRegister("R12",0x7010);
+            call(r(0x80007da0L,4),0x100);          // the 1 ms task
+            call(0x80007c66L,0x80007c6aL);         // clock_service, every pass
+            call(r(0x8001485cL,4),0x80004f66L);    // event 17, the wrapper half
+            call(0x80004f66L,0x80004faeL);         // event 17, the factory half
+        }
     }
     void playbackSave() throws Exception {
         if(!clock)return;
@@ -394,8 +420,15 @@ public class PersistenceRegression extends GhidraScript {
         else { e.writeRegister("R12",0); call(0x8001a020L); }
         for(int i=0;i<8;i++) {
             long ms=10+5*i; edge(ms-2,false); edge(ms,true); serviceAndOutput(ms);
-            check("one physical output per pre-save pulse",outputs==i+1);
+            // A deadline places the gate a fixed time after the EDGE, and
+            // before a period is acquired that is the full clock_deadline_ms
+            // -- which at this 200 Hz fixture outlasts the 5 ms window the
+            // pulse arrived in. What must never happen, deadline or not, is a
+            // SECOND gate for one pulse.
+            check("no pre-save pulse gates twice",outputs<=i+1);
         }
+        runLoop(50,60);
+        check("one physical output per pre-save pulse",outputs==8);
         w(0x46f0,1,2); w(S+0x30a,2,777); call(SHIM);
         check("held edit does not write during playback",writes==2);
         byte[] clockState=e.readMemory(toAddr(0x6232),0xae);
@@ -407,8 +440,10 @@ public class PersistenceRegression extends GhidraScript {
         serviceAndOutput(70); check("save cannot invent a catch-up trigger",outputs==8);
         for(int i=0;i<8;i++) {
             long ms=80+5*i; edge(ms-2,false); edge(ms,true); serviceAndOutput(ms);
-            check("fresh pulses resume without repeats after save",outputs==9+i);
+            check("no post-save pulse gates twice",outputs<=9+i);
         }
+        runLoop(120,130);
+        check("fresh pulses resume without repeats after save",outputs==16);
         clockExercise=false;
         println("PASS actual clock/output before and after a release save; no reset or synthetic catch-up triggers");
     }

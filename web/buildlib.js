@@ -117,7 +117,8 @@ var BUILDLIB = (function () {
         cfg.sequencer = { on: !!want('sequencer', true), strip_halfway_units: 2048,
                           tie_glide_rate: 60, chord_hold_scans: 200,
                           clock_min_ms: 4, clock_lock_pulses: 5,
-                          clock_settle_scans: 0, clock_rearm_us: 250,
+                          clock_settle_scans: 0, clock_deadline_ms: 4,
+                          clock_rearm_us: 250,
                           clock_max_ms: 2400, clock_release_ms: 2600,
                           trigger_spike_units: 5, seq_edit_hold_scans: 60 };
         cfg.persist = { on: !!want('persist', true), page_count: 8 };
@@ -612,6 +613,11 @@ var BUILDLIB = (function () {
             clock_min_ms: (cfg.sequencer && cfg.sequencer.clock_min_ms) || 4,
             clock_lock_pulses: (cfg.sequencer && cfg.sequencer.clock_lock_pulses) || 5,
             clock_settle_scans: (cfg.sequencer && cfg.sequencer.clock_settle_scans) || 0,
+            // Not `|| 4`: zero is a real setting here -- it turns the deadline
+            // off -- and the truthiness default would quietly turn it back on.
+            clock_deadline_ms: (cfg.sequencer
+                                && cfg.sequencer.clock_deadline_ms !== undefined)
+                               ? cfg.sequencer.clock_deadline_ms : 4,
             clock_rearm_us: (cfg.sequencer && cfg.sequencer.clock_rearm_us) || 250,
             clock_max_ms: (cfg.sequencer && cfg.sequencer.clock_max_ms) || 2400,
             clock_release_ms: (cfg.sequencer && cfg.sequencer.clock_release_ms) || 2600,

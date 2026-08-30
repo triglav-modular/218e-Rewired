@@ -77,7 +77,15 @@ public class SequenceEditRegression extends PersistenceRegression {
     void pitch() throws Exception { call(0x800031b8L,0x80003256L); }
     void externalBeat() throws Exception {
         now+=20;
-        if(clock) { edge(now-2,false); edge(now,true); serviceAndOutput(now); }
+        if(clock) {
+            edge(now-2,false); edge(now,true); serviceAndOutput(now);
+            // Beats are 20 ms apart here, and a deadline places the gate a
+            // few milliseconds after the EDGE -- past the two milliseconds
+            // serviceAndOutput can afford at its own 5 ms fixture. Without
+            // these the beat never gates, the preview never reaches its end,
+            // and 0x62fe is left set for the next test to trip over.
+            runLoop(now+3,now+10);
+        }
         else { time(now); call(0x80004e58L,0x800051b0L); pitch(); }
         pitch(); scan();
     }
@@ -104,12 +112,21 @@ public class SequenceEditRegression extends PersistenceRegression {
         // must clear them before the firing scan can sound a phantom note.
         // Planted any earlier they are live state, and the write-mode scans
         // inside the hold would legitimately record the pending audition.
+        // Start the gesture from a KNOWN hold state. seq_hold counts on at
+        // 0x625d while the same pad stays down, so a count left behind by an
+        // earlier gesture makes this one fire early -- and the plant below
+        // has to land on the scan immediately before it fires, or it is live
+        // state the write-mode scans inside the hold legitimately record.
+        w(0x625c,1,0); w(0x625d,1,0);
         press(1,0);
         for(int i=0;i<58;i++) scan();
         w(0x61e1,1,3); w(0x61e4,1,1); w(0x61e5,1,4); w(0x6230,2,5);
+        check("the plant lands before the hold fires",r(0x62fe,1)==0);
         scan();
         release(1);
-        check("bare pad 2 starts at top",r(0x6158,1)==2&&r(0x62fe,1)==1&&r(0x61e1,1)==0);
+        check("bare pad 2 starts playback",r(0x6158,1)==2);
+        check("bare pad 2 marks a preview",r(0x62fe,1)==1);
+        check("bare pad 2 starts at top",r(0x61e1,1)==0);
         check("preview clears pending audition and strip/tie history",r(0x6230,2)==0&&r(0x61e4,2)==0);
         if(clock)call(0x8000737eL,0x80007386L);
         w(S+0x34a,2,20); w(0x2ee0,2,20); w(S+0x2fc,2,0);

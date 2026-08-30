@@ -292,6 +292,15 @@ def expand(options: dict) -> dict:
                         # 0 = fire with the pitch store. Higher settings
                         # deliberately lower maximum sustainable output rate.
                         "clock_settle_scans": 0,
+                        # How long after the ACCEPTED EDGE the external
+                        # trigger goes out, in milliseconds. The path from
+                        # edge to claim measured 3.60 ms at worst on the
+                        # instrument, so 4 clears it: every beat then gates at
+                        # edge + 4 ms instead of edge + whatever it cost.
+                        # Buys jitter with latency, and 0 turns it off and
+                        # restores the fire-on-the-next-flush behaviour.
+                        # Bounded at build time by half the acquired period.
+                        "clock_deadline_ms": 4,
                         # How long pad 4 has to be held before pads 1-3 mean
                         # anything, in ~5 ms scans.  200 is a second.
                         "chord_hold_scans": 200}
