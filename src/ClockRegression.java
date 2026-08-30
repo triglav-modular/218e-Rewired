@@ -935,12 +935,22 @@ public class ClockRegression extends GhidraScript {
         println("PASS clock-latency accumulators start from zero");
     }
 
-    // Split one diagnostic sample at clock_settle.  The fixture gives the FIFO
+    // Split diagnostic samples at clock_settle.  The fixture gives the FIFO
     // 750 us before service/note selection claims the step and another 1250 us
     // before the flush raises the gate, so both boundaries have independent,
-    // exact expectations.  Then corrupt the per-step claim age so it lands
-    // after the gate: that negative control must be discarded, proving the
-    // ordering guard is exercised rather than merely asserted in the test.
+    // exact expectations.
+    //
+    // Then three beats that a single sample cannot distinguish.  This shim
+    // published MEANS until the mean split was taken on hardware; the cells,
+    // the units, the ordering guard and the one-sample expectations above are
+    // identical either way, so a test that feeds one beat passes unchanged
+    // against either firmware.  A smaller beat is what separates them: it
+    // drags a mean down and leaves a maximum alone.  A larger beat then has
+    // to move both cells, or they are merely latched by the first sample.
+    //
+    // Finally, corrupt the per-step claim age so it lands after the gate:
+    // that negative control must be discarded, proving the ordering guard is
+    // exercised rather than merely asserted in the test.
     void latencySplitsAtClaim() throws Exception {
         fresh(1,25000000);
         if (r(0x8001c6b0L,4)!=0x8001bbc0L) {
@@ -954,25 +964,124 @@ public class ClockRegression extends GhidraScript {
               r(0x6044,2)==wantClaim);
         flush(12000);
         long wantTotal=((2000L*frequency)/1000000L)>>5;
-        check("split means share one completed sample", r(0x603c,2)==1);
-        check("published edge-to-claim mean reaches the claim boundary",
+        check("both maxima share one completed sample", r(0x603c,2)==1);
+        check("published edge-to-claim maximum reaches the claim boundary",
               r(0x6032,2)==wantClaim);
-        check("published edge-to-gate mean reaches the physical gate call",
+        check("published edge-to-gate maximum reaches the physical gate call",
               r(0x6034,2)==wantTotal);
         check("claim-to-gate is the remainder of the directly measured path",
               r(0x6034,2)-r(0x6032,2)==wantTotal-wantClaim);
 
+        // Smaller on both boundaries: a mean would fall, a maximum holds.
+        irq(50000,false); irq(60000,true); service(60400); flush(61000);
+        check("a smaller beat is counted", r(0x603c,2)==2);
+        check("a smaller beat does not move the claim maximum",
+              r(0x6032,2)==wantClaim);
+        check("a smaller beat does not move the whole-path maximum",
+              r(0x6034,2)==wantTotal);
+
+        // Larger on both boundaries: both cells must follow it up.
+        irq(100000,false); irq(110000,true); service(111200); flush(113000);
+        long wantClaim2=((1200L*frequency)/1000000L)>>5;
+        long wantTotal2=((3000L*frequency)/1000000L)>>5;
+        check("a larger beat is counted", r(0x603c,2)==3);
+        check("a larger beat raises the claim maximum",
+              r(0x6032,2)==wantClaim2);
+        check("a larger beat raises the whole-path maximum",
+              r(0x6034,2)==wantTotal2);
+
         long samples=r(0x603c,2), upstream=r(0x6032,2), total=r(0x6034,2);
-        irq(50000,false); irq(60000,true); service(60750);
+        irq(150000,false); irq(160000,true); service(160750);
         w(0x6044,2,0x3fff);              // negative control: claim after gate
         int before=outputTimes.size();
-        flush(62000);
+        flush(162000);
         check("negative control still raises the physical gate",
               outputTimes.size()==before+1);
-        check("claim-after-gate negative control is rejected from both means",
+        check("claim-after-gate negative control is rejected from both maxima",
               r(0x603c,2)==samples && r(0x6032,2)==upstream
               && r(0x6034,2)==total);
-        println("PASS latency split at claim; negative control discarded");
+        println("PASS latency maxima track at the claim; "
+                +"smaller beat held, larger beat followed, control discarded");
+    }
+
+    // The internal beat has no accepted edge -- 0x6240 belongs to the external
+    // path and is stale here -- so the shim times it from the claim stamp
+    // clock_settle leaves at 0x62f0, and publishes the MINIMUM and MAXIMUM of
+    // claim-to-gate rather than a whole path it cannot see.  That pair is the
+    // shared downstream half measured on a source carrying none of the FIFO,
+    // clock_service or note selection the external path spends before its
+    // claim, which is the half a deadline computed at the claim cannot fix.
+    //
+    // Then the reason those cells are cleared on a source change.  The bench
+    // procedure holds a key BEFORE starting the external clock, so the arp
+    // beats internally first and leaves its claim-to-gate samples in the very
+    // cells the external capture then accumulates into.  A maximum never comes
+    // back down, so without the reset the external figures would quietly carry
+    // an internal population -- and with this build's 5 ms internal settle the
+    // internal samples are the LARGER ones, so they would win outright.
+    void latencyTimesTheInternalBeat() throws Exception {
+        fresh(1,25000000);
+        if (r(0x8001c6b0L,4)!=0x8001bbc0L) {
+            println("SKIP internal-beat latency: not a diagnostic build");
+            return;
+        }
+        w(S+0x34a,2,26); w(S+0x38e,2,1); w(S+0x340,1,1);
+        for (long tick=10000; tick<=400000; tick+=1000) {
+            bank(tick); service(tick); internal(tick); flush(tick);
+            if (tick%5000==0) scan(tick);
+        }
+        long samples=r(0x603c,2), lo=r(0x6032,2), hi=r(0x6034,2);
+        check("no external presence during the internal capture",
+              r(0x6236,1)==0);
+        check("internal beats are timed at all", samples>0 && hi>0);
+        check("the internal minimum is a real sample, not the cleared cell",
+              lo>0);
+        check("internal minimum does not exceed internal maximum", lo<=hi);
+        check("internal claim-to-gate fits the published field", hi<0x3fff);
+        println("  internal claim-to-gate: min="+lo+" max="+hi+" units over "
+                +samples+" samples");
+
+        // One settle repeated at a punctual fixture cannot separate a minimum
+        // from a maximum -- both cells hold the same number above.  Drive one
+        // more beat and doctor its claim stamp between the claim and the gate,
+        // the way the external negative control doctors 0x6044, so this beat
+        // is genuinely SHORTER than every real one before it.
+        internal(405000);
+        w(0x62f0,4,((408000L-2000L)*frequency)/1000000L);
+        for (long tick=406000; tick<=415000; tick+=1000) {
+            bank(tick); flush(tick);
+            if (tick%5000==0) scan(tick);
+        }
+        check("a shorter internal sample lowers the published minimum",
+              r(0x6032,2)<lo);
+        check("a shorter internal sample leaves the published maximum",
+              r(0x6034,2)==hi);
+        println("  after the short beat: min="+r(0x6032,2)+" max="+r(0x6034,2));
+
+        // The external clock arrives mid-session, exactly as the protocol has
+        // it arrive.  Let the internal step in flight finish first -- without
+        // that the edge below lands on a busy step and never reaches a gate.
+        for (long tick=416000; tick<=460000; tick+=1000) {
+            bank(tick); service(tick); flush(tick);
+            if (tick%5000==0) scan(tick);
+        }
+        long internalMax=r(0x6034,2);
+        irq(500000,true);
+        service(500750);
+        flush(502000);
+        long wantClaim=((750L*frequency)/1000000L)>>5;
+        long wantTotal=((2000L*frequency)/1000000L)>>5;
+        check("an external edge is now the source", r(0x6236,1)!=0);
+        check("the source change restarts the count at its own first sample",
+              r(0x603c,2)==1);
+        check("the external claim maximum carries no internal sample",
+              r(0x6032,2)==wantClaim);
+        check("the external whole-path maximum carries no internal sample",
+              r(0x6034,2)==wantTotal);
+        check("the internal maximum really was the larger of the two, so the "
+              +"reset is what removed it", internalMax>wantTotal);
+        println("PASS internal beat timed from its claim; "
+                +"source change clears the pair");
     }
 
     // A mis-attributed sample used to destroy the published maximum for a
@@ -1007,11 +1116,11 @@ public class ClockRegression extends GhidraScript {
         check("the backlog really did overrun the FIFO", r(0x6258,2)>0);
         long drain=t+400000;
         for (int i=0;i<31;i++) { service(drain+i*5000); scan(drain+i*5000); }
-        println("  after the drain: claim/total means "+r(0x6032,2)+"/"
+        println("  after the drain: claim/total maxima "+r(0x6032,2)+"/"
                 +r(0x6034,2)+" units, were "+settledClaim+"/"+settledTotal);
-        check("a drained backlog moves neither published mean",
+        check("a drained backlog moves neither published maximum",
               r(0x6032,2)==settledClaim && r(0x6034,2)==settledTotal);
-        println("PASS backlogged edges discarded; claim/total means "
+        println("PASS backlogged edges discarded; claim/total maxima "
                 +r(0x6032,2)+"/"+r(0x6034,2)+" units over "
                 +r(0x603c,2)+" samples");
     }
@@ -1025,9 +1134,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyIgnoresABacklog(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
+                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyIgnoresABacklog(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})

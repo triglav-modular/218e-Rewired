@@ -901,7 +901,7 @@ RAM_REGIONS = [
     # One stamp per knob, the raw ADC value plus one; zero means no edit has
     # parked anything and the knob's other job may follow it live.
     (0x62E8, 0x62F0, "where each preset edit left its knob, plus one"),
-    (0x62F0, 0x62F4, "clock-latency edge-to-claim sum"),
+    (0x62F0, 0x62F4, "clock-latency internal-beat claim stamp"),
     # The scan watches for two gestures ENDING, so it has to remember what
     # they looked like on the previous scan.
     (0x62F8, 0x62F9, "logical sequencer mode last scan, preview counts as WRITE"),

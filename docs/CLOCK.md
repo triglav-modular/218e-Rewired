@@ -229,11 +229,12 @@ unfinished edits do not write.
 | 0x6260–0x62df | Timestamp FIFO |
 | 0x62f6 | Millisecond count at the last accepted edge |
 
-With `[diagnostics].clock_latency`, `0x6032` published edge-to-claim mean /
-`0x6034` published edge-to-gate mean / `0x6038` whole-path sum / `0x603c`
-shared sample count / `0x6040` stamp of the edge last timed / `0x6044` the
-current step's edge-to-claim age / `0x62f0` edge-to-claim sum, all cleared by
-the startup initialiser. `scan_profiler` shares the original five cells; see
+With `[diagnostics].clock_latency`, `0x6032` and `0x6034` published pair —
+max edge-to-claim / max edge-to-gate with a clock present, min / max
+claim-to-gate without one / `0x6038` the source those cells belong to /
+`0x603c` shared sample count / `0x6040` stamp of the edge last timed /
+`0x6044` the current step's edge-to-claim age / `0x62f0` the internal beat's
+claim stamp, all cleared by the startup initialiser. `scan_profiler` shares the original five cells; see
 above.
 
 The 2600 ms release is measured against the factory 1 ms counter (0x61e6),
@@ -248,9 +249,15 @@ gate-raise paths reach through their existing pool words — the scan path's at
 `0x800077f8` — so no instruction is added at either call site. The shim
 stamps COUNT against the consumed-edge stamp at `0x6240`. `clock_settle` also
 records the age when the selected external step becomes claimable by the
-1 kHz flush. The shim publishes running edge-to-claim and edge-to-gate means
-in cycles/32 at `0x6032`/`0x6034`, and tail-calls the real pulse-high routine
-with R8–R12 saved around the measurement.
+1 kHz flush. The shim publishes edge-to-claim and edge-to-gate MAXIMA in
+cycles/32 at `0x6032`/`0x6034`, and tail-calls the real pulse-high routine
+with R8–R12 saved around the measurement. It also times the INTERNAL beat,
+which has no accepted edge: `clock_settle` stamps `0x62f0` when the internal
+beat claims the step, and the shim publishes the minimum and maximum of that
+claim-to-gate instead. `0x6236` selects which pair the cells hold, and a
+change of source clears them — without that the bench procedure, which has a
+key held and therefore arping before the clock starts, would leave internal
+samples inside the external maxima that follow.
 
 Those two cells go out on the telemetry frame's scan-component fields, and
 `tools/clock_latency_report.py` decodes a readout CSV into milliseconds. The
@@ -259,10 +266,12 @@ not edit mode; USB MIDI is still required and a key must be held, because the
 frame is sent from the pressure path.
 
 This makes two splits no external measurement reaches. Edge-to-claim contains
-the FIFO wait, `clock_service` and factory note selection. Claim-to-gate — the
-whole mean minus the claim mean — contains the wait for the flush, pitch remap
-and gate call. Everything between the ISR stamp and the gate remains measured
-directly by edge-to-gate; it is not reconstructed from two rounded means.
+the FIFO wait, `clock_service` and factory note selection; the remainder
+contains the wait for the flush, pitch remap and gate call. Under the maxima
+build that remainder is NOT the difference of the two published cells: they
+are independent maxima and need not come from the same beat. The internal
+pair measures the remainder directly instead, on a source that spends nothing
+before its claim.
 
 ### What it answered
 
@@ -341,6 +350,62 @@ Compiled in but switched off, the option moves four bytes of the shipped
 image — the initialization marker at `0x8001ab6e` and `0x8001ad1e`, which
 hashes the assembler source. Nothing else changes, and both pins were moved
 for those four bytes alone.
+
+### What the split answered, and why it now reports maxima
+
+Measured on the instrument 2026-08-30, owner configuration, 1233 of 1254
+frames carrying a measurement, against a simultaneous scope mean of 1.61 ms:
+
+| | ms | share of post-stamp |
+|---|---:|---:|
+| edge to claim | 0.77 | 56% |
+| claim to gate | 0.60 | 44% |
+| edge to gate (measured whole) | 1.37 | — |
+| before the ISR stamp (scope − whole) | 0.24 | — |
+
+The running means had converged: over the last quarter of the run
+edge-to-claim moved 1433→1450 units and edge-to-gate 2568→2613, about 1%.
+The discard guard sits at 8.74 ms, well above the 3.62 ms ceiling, so no tail
+beat was dropped from these means.
+
+**The mean is spent roughly evenly, and that closed the question the means
+could answer.** No single dominant term: 0.77 ms of FIFO, `clock_service` and
+note selection, then 0.60 ms of flush wait, remap and gate. Note that 0.60 ms
+is about what pure 1 kHz flush quantization would cost on its own — an
+asynchronous claim waits 0.50 ms on average for the next tick — leaving
+roughly 0.10 ms of actual downstream work. That is an inference from a mean,
+not a measurement: 0.6 ms of genuine work reads identically.
+
+**It could not touch the tail, which is the whole problem.** The target is a
+1–2 ms maximum and the instrument measures 3.36 ms peak to peak. A mean of
+1.37 ms says nothing about where a 3.62 ms outlier came from, and every
+structural suspect has already been refuted by direct experiment: the scan,
+the dequeue wait, coarse-grained DAC dispatch and the attack-age guard.
+
+One further suspect is eliminated here on the code rather than the bench. The
+pitch-ordered selector at `0x8001da00` was the one thing in edge-to-claim that
+could plausibly produce the doc's flat-topped, discrete-step distribution. It
+cannot: it is a fixed 29-slot scan, roughly three instructions per unheld slot
+plus one rank call per held key, with no sorting and no unbounded search. Even
+ten keys held is a few hundred instructions — single-digit microseconds at
+60 MHz, three orders of magnitude short of 3.4 ms.
+
+So the same two boundaries are now published as maxima, and the internal beat
+is timed too. The pair decides between two different fixes. If max
+edge-to-claim approaches max edge-to-gate the tail is upstream of the claim,
+and a settle computed from the accepted-edge stamp — rather than counted from
+the claim, which is what `clock_settle_scans` does today and why the settle
+experiment could not localise anything — absorbs it, sized at max
+edge-to-claim. If max edge-to-claim sits well below, the tail is downstream
+and no deadline computed at the claim reaches it.
+
+Two limits on that fix, worth stating before the measurement rather than
+after. `0x60ee` is counted down in whole milliseconds by the 1 ms task and the
+claim lands at an arbitrary phase against it, which is why a nominal 5 ms
+settle measured 5.17 ms minimum; that phase survives any deadline, so the
+floor is about 1 ms rather than the 0.8 ms tier. And the deadline has to be
+bounded by the acquired period: at the contract's 200 Hz ceiling a 4 ms
+deadline is most of a beat.
 
 ## Repeatable checks
 

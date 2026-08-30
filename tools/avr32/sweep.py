@@ -177,10 +177,13 @@ def audit_call_pools(image_path) -> list[str]:
 # that are still under a finger; and again for the clock_latency diagnostic,
 # which moves only the four marker bytes when it is off -- the marker hashes
 # the assembler source, so adding the option repins even though no shipped
-# behaviour changed.
+# behaviour changed; and again when that diagnostic went from publishing
+# running means to publishing maxima and learned to time the internal beat,
+# which is once more a diagnostic-only change to a shipped image that carries
+# none of it.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "e1fc114b7a63db32a2a74fb373b366439cfa8592e4f67d3706ec73eb22e50c96",
+    "historical_config": "3d4c184f761734af2856bc42c121a75060ecf74d7d990472775f01ff9719a8ed",
 }
 
 

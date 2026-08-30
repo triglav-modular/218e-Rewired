@@ -3669,7 +3669,7 @@ public class AssemblePressureFix extends GhidraScript {
         // pulse-high routine through a pool word; this build repoints both at
         // the shim below, so nothing is added at either call site.  It stamps
         // COUNT against the stamp of the edge the dequeue is actually acting
-        // on (0x6240), keeps running edge-to-claim and edge-to-gate means in
+        // on (0x6240), keeps running edge-to-claim and edge-to-gate MAXIMA in
         // cycles/32, and tail-calls the real routine.  NOT the ISR's newest
         // accepted stamp
         // at 0x623c: that is whatever the input has done since, so with any
@@ -3678,16 +3678,28 @@ public class AssemblePressureFix extends GhidraScript {
         // measurement because the callee's argument convention is the factory
         // routine's, not ours.
         //
-        // These are the splits no external measurement reaches.  The earlier
-        // whole-path mean established that roughly 1.42 ms of the 1.6 ms scope
-        // path lies after the ISR stamp.  The claim boundary now divides
-        // that firmware mean between FIFO/service/note selection and the later
-        // flush/remap/gate path.  The scope-minus-whole remainder is still the
-        // time before the stamp, where no firmware change reaches it.
+        // These are the splits no external measurement reaches, and this
+        // build reports their MAXIMA.  The mean split has been taken: on
+        // 2026-08-30, against a simultaneous 1.61 ms scope mean, the
+        // instrument reported 0.77 ms edge-to-claim, 0.60 ms claim-to-gate
+        // and 1.37 ms edge-to-gate, leaving 0.24 ms before the stamp.  That
+        // settled where the average goes and could not touch the open
+        // question, which is a TAIL: 3.36 ms peak to peak against a 1-2 ms
+        // target, flat-topped rather than Gaussian.  A mean cannot localise
+        // an outlier, so the same two boundaries are now published as
+        // maxima.
         //
-        // Guarded on 0x6236 so only external-clock beats are timed; an
-        // internal beat leaves 0x6240 stale and would report nonsense.
-        // Both means are running, not windowed: power-cycle to reset.
+        // 0x6236 selects which source the two cells describe, and a CHANGE
+        // of source clears them.  Without that the published figures mix two
+        // populations in the ordinary bench procedure: the protocol has the
+        // owner hold a key before starting the clock, so the arp beats
+        // internally first, and those small claim-to-gate samples would sit
+        // inside the external maxima that the clock then accumulates.  Since
+        // a maximum never comes back down, the reset is what makes the pair
+        // belong to the source being captured.
+        //
+        // Both maxima are running, not windowed: power-cycle to reset, or
+        // change source, which is the same thing to these cells.
         if (block("clock_latency")) {
             begin(0x8001bbc0L);
             emit("STM --SP,R7,LR");
@@ -3695,8 +3707,23 @@ public class AssemblePressureFix extends GhidraScript {
             emit("STM --SP,R8,R9,R10,R11,R12");
             emit("MOV R10,0x6234");
             emit("LD.UB R8,R10[0x2]");      // 0x6236 input present
+            // Which source the published cells currently describe.  0x6038 is
+            // the old running-sum word, freed when this shim stopped
+            // publishing means, and the startup initialiser already clears it.
+            emit("MOV R9,0x6038");
+            emit("LD.UB R12,R9[0x0]");
+            emit("CP.W R12,R8");
+            emit("BR{eq} 0x8001bbf0");
+            emit("ST.B R9[0x0],R8");        // remember the new source
+            emit("MOV R12,0x0");
+            emit("ST.H R9[0x4],R12");       // 0x603c sample count
+            emit("MOV R9,0x6032");
+            emit("ST.H R9[0x0],R12");
+            emit("MOV R9,0x6034");
+            emit("ST.H R9[0x0],R12");
+            padTo(0x8001bbf0L);
             emit("CP.W R8,0x0");
-            emit("BR{eq} 0x8001bc90");
+            emit("BR{eq} 0x8001bcb0");      // no clock: time the internal beat
             // Time each CONSUMED EDGE exactly once. Without this, any gate
             // raise that was not caused by the edge still under measurement
             // -- a latched key, a rest completing, anything the arp does
@@ -3734,41 +3761,115 @@ public class AssemblePressureFix extends GhidraScript {
             emit("LD.UH R12,R10[0x0]");      // edge -> claim, cycles/32
             emit("CP.W R12,R11");
             emit("BR{hi} 0x8001bc90");
-            // Accumulate edge-to-claim separately.  The shared sample count
-            // below makes the two published means cover exactly the same beats.
-            emit("MOV R10,0x62f0");
-            emit("LD.W R8,R10[0x0]");
-            emit("ADD R8,R12");
-            emit("ST.W R10[0x0],R8");
-            // Running whole-path mean.  Means, rather than a max, are what can
-            // be compared honestly with the simultaneous scope capture.
+            // Count the sample.  Both maxima are drawn from exactly this
+            // set of beats, so the count is what says how much of a session
+            // a pair of maxima actually saw -- a maximum over four beats and
+            // a maximum over four thousand read identically otherwise.
             emit("MOV R10,0x6038");
-            emit("LD.W R8,R10[0x0]");       // sum of delays
-            emit("ADD R8,R11");
-            emit("ST.W R10[0x0],R8");
             emit("LD.UH R9,R10[0x4]");      // 0x603c sample count
             emit("SUB R9,-0x1");
             emit("ST.H R10[0x4],R9");
-            emit("DIVU R8,R8,R9");          // quotient R8, even destination
-            emit("MOV R10,0x6034");
-            emit("ST.H R10[0x0],R8");       // published edge -> gate mean
-            // DIVU writes the remainder to the odd register beside its even
-            // destination, so the first division consumed R9. Reload the
-            // shared count before dividing the edge-to-claim sum.
-            emit("MOV R10,0x6038");
-            emit("LD.UH R9,R10[0x4]");
-            emit("MOV R10,0x62f0");
-            emit("LD.W R8,R10[0x0]");       // edge -> claim sum
-            emit("DIVU R8,R8,R9");
+            // Running MAXIMUM edge-to-claim.  This is also the number that
+            // sizes a deadline: a settle computed from the edge stamp has to
+            // clear the worst claim the path ever produces, or the beats
+            // that overrun it keep exactly today's jitter.
             emit("MOV R10,0x6032");
-            emit("ST.H R10[0x0],R8");       // published edge -> claim mean
+            emit("LD.UH R8,R10[0x0]");
+            emit("CP.W R12,R8");
+            emit("BR{ls} 0x8001bc50");
+            emit("ST.H R10[0x0],R12");      // published max edge -> claim
+            padTo(0x8001bc50L);
+            // Running MAXIMUM edge-to-gate, tracked independently rather
+            // than latched beside whichever beat set the claim maximum.  The
+            // independent pair answers what a co-occurring pair cannot: a
+            // claim maximum far below the whole-path maximum puts the tail
+            // DOWNSTREAM of the claim, where a deadline computed at the
+            // claim cannot reach it and the fix it would size is the wrong
+            // fix.  This one also carries the capture's own validity check --
+            // the scope's maximum minus this is the pre-stamp remainder,
+            // which the mean capture put at 0.24 ms and which cannot come
+            // out negative from a matched window.
+            emit("MOV R10,0x6034");
+            emit("LD.UH R8,R10[0x0]");
+            emit("CP.W R11,R8");
+            emit("BR{ls} 0x8001bc90");
+            emit("ST.H R10[0x0],R11");      // published max edge -> gate
             padTo(0x8001bc90L);
             emit("LDM SP++,R8,R9,R10,R11,R12");
             emit("MCALL PC[0x8001bca0]");   // the real pulse-high routine
             emit("LDM SP++,R7,PC");
             padTo(0x8001bca0L);
             word(0x800077f8L);
-            finish("clock_latency", 0x8001bca4L);
+            // The INTERNAL beat, which the external half above cannot touch:
+            // it has no accepted edge, so 0x6240 is stale and edge-to-gate is
+            // meaningless for it.  What it does share is everything DOWNSTREAM
+            // of the claim -- the same flush, the same remap, the same gate
+            // call -- so timing its claim-to-gate measures the shared half on
+            // a source that carries none of the FIFO, clock_service or note
+            // selection the external path spends before the claim.
+            //
+            // That is the half a deadline computed at the claim cannot fix, so
+            // its spread is the floor any such fix has to live above, measured
+            // here independently of the external path that motivated it.
+            //
+            // Published in the same two cells: no external capture and no
+            // internal capture can be running at once, since 0x6236 selects
+            // between them, and the reader is told which one it is holding.
+            // 0x6032 becomes the MINIMUM and 0x6034 the MAXIMUM, so their
+            // difference is the spread the owner is chasing rather than a
+            // ceiling that a single constant offset would also raise.
+            //
+            // clock_settle stamps 0x62f0 when the internal beat claims the
+            // step; this consumes the stamp by zeroing it, so each claim is
+            // timed exactly once and a gate raise with no fresh claim behind
+            // it -- a rest, a latched key, anything the arp does between beats
+            // -- is skipped rather than timed against a stale stamp.  A COUNT
+            // that lands on exactly zero costs that one beat its measurement,
+            // which is the same trade the out-of-range discard already makes.
+            padTo(0x8001bcb0L);
+            emit("MOV R10,0x62f0");
+            emit("LD.W R11,R10[0x0]");      // internal claim stamp
+            emit("CP.W R11,0x0");
+            emit("BR{eq} 0x8001bc90");      // no fresh claim behind this gate
+            emit("MOV R9,0x0");
+            emit("ST.W R10[0x0],R9");       // consume it
+            emit("MFSR R9,COUNT");
+            emit("SUB R11,R9,R11 << 0x0");  // cycles since the claim
+            emit("LSR R11,0x5");            // cycles/32, same units as above
+            emit("MOV R8,0x3fff");
+            emit("CP.W R11,R8");
+            emit("BR{hi} 0x8001bc90");      // discarded, not clamped
+            emit("MOV R10,0x6038");
+            emit("LD.UH R9,R10[0x4]");      // 0x603c sample count, shared
+            emit("SUB R9,-0x1");
+            emit("ST.H R10[0x4],R9");
+            // The first sample seeds both cells.  A minimum cannot start from
+            // the zero the startup initialiser leaves, and cannot use that
+            // zero as its own "unset" marker either: a genuine claim-to-gate
+            // of zero would then be overwritten by every later beat and the
+            // published minimum would climb away from the real one.  The
+            // shared count is what says which sample this is.
+            emit("CP.W R9,0x1");
+            emit("BR{ne} 0x8001bd00");
+            emit("MOV R10,0x6032");
+            emit("ST.H R10[0x0],R11");
+            emit("MOV R10,0x6034");
+            emit("ST.H R10[0x0],R11");
+            emit("RJMP 0x8001bc90");
+            padTo(0x8001bd00L);
+            emit("MOV R10,0x6032");
+            emit("LD.UH R8,R10[0x0]");
+            emit("CP.W R8,R11");
+            emit("BR{ls} 0x8001bd20");      // current <= new: not a minimum
+            emit("ST.H R10[0x0],R11");      // published min claim -> gate
+            padTo(0x8001bd20L);
+            emit("MOV R10,0x6034");
+            emit("LD.UH R8,R10[0x0]");
+            emit("CP.W R11,R8");
+            emit("BR{ls} 0x8001bc90");
+            emit("ST.H R10[0x0],R11");      // published max claim -> gate
+            emit("RJMP 0x8001bc90");
+            finish("clock_latency", 0x8001bd40L);
         }
 
         // Main-loop wrapper, NOT a pitch-remap callback. Take at most one
@@ -6742,6 +6843,18 @@ public class AssemblePressureFix extends GhidraScript {
             emit(String.format("MOV R11,0x%x",
                  claimFor(number("gate_settle_scans", 1, 0, 3))));
             emit("ST.B R10[0x0],R11");
+            if (feature("clock_latency")) {
+                // The internal beat's own claim moment, the counterpart of the
+                // edge-to-claim age the external arm stores at 0x6044.  An
+                // absolute stamp rather than an age: there is no earlier
+                // boundary to take an age against, and the shim subtracts it
+                // from COUNT at the gate.  R8 still holds 0x60ee and R9 the
+                // countdown that settleStore is about to write, so only
+                // R10-R12 are free here.
+                emit("MFSR R10,COUNT");
+                emit("MOV R11,0x62f0");
+                emit("ST.W R11[0x0],R10");
+            }
             if (number("gate_settle_scans", 1, 0, 3) > 0) {
                 emit(String.format("MOV R9,0x%x",
                      settleMsFor(number("gate_settle_scans", 1, 0, 3))));
