@@ -824,6 +824,7 @@ RAM_REGIONS = [
     (0x6032, 0x6036, "profiler reports"),
     (0x6036, 0x6038, "interpolator target"),
     (0x6038, 0x6044, "profiler accumulators"),
+    (0x6044, 0x6046, "clock-latency edge-to-claim age"),
     (0x6046, 0x604C, "octave-switch shadow"),
     (0x604C, 0x604E, "octave-switch boot counter"),
     (0x6050, 0x6080, "pressure history taps"),
@@ -900,6 +901,7 @@ RAM_REGIONS = [
     # One stamp per knob, the raw ADC value plus one; zero means no edit has
     # parked anything and the knob's other job may follow it live.
     (0x62E8, 0x62F0, "where each preset edit left its knob, plus one"),
+    (0x62F0, 0x62F4, "clock-latency edge-to-claim sum"),
     # The scan watches for two gestures ENDING, so it has to remember what
     # they looked like on the previous scan.
     (0x62F8, 0x62F9, "logical sequencer mode last scan, preview counts as WRITE"),

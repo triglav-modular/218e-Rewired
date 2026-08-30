@@ -229,10 +229,12 @@ unfinished edits do not write.
 | 0x6260–0x62df | Timestamp FIFO |
 | 0x62f6 | Millisecond count at the last accepted edge |
 
-With `[diagnostics].clock_latency`, `0x6032` running max / `0x6034` published
-mean / `0x6038` sum / `0x603c` sample count / `0x6040` stamp of the edge last
-timed, all cleared by the startup initialiser. `scan_profiler` claims the
-same five; see above.
+With `[diagnostics].clock_latency`, `0x6032` published edge-to-claim mean /
+`0x6034` published edge-to-gate mean / `0x6038` whole-path sum / `0x603c`
+shared sample count / `0x6040` stamp of the edge last timed / `0x6044` the
+current step's edge-to-claim age / `0x62f0` edge-to-claim sum, all cleared by
+the startup initialiser. `scan_profiler` shares the original five cells; see
+above.
 
 The 2600 ms release is measured against the factory 1 ms counter (0x61e6),
 not COUNT: COUNT is scaled by the CPU-frequency word at 0x29cc, which made
@@ -244,9 +246,11 @@ the release fire in under a second on the instrument.
 gate-raise paths reach through their existing pool words — the scan path's at
 `0x8001c6b0` and the fast path's at `fastPool + 8`, both of which held
 `0x800077f8` — so no instruction is added at either call site. The shim
-stamps COUNT against the accepted-edge stamp at `0x623c`, keeps a running min
-and max in cycles/32 at `0x6032`/`0x6034`, and tail-calls the real pulse-high
-routine with R8–R12 saved around the measurement.
+stamps COUNT against the consumed-edge stamp at `0x6240`. `clock_settle` also
+records the age when the selected external step becomes claimable by the
+1 kHz flush. The shim publishes running edge-to-claim and edge-to-gate means
+in cycles/32 at `0x6032`/`0x6034`, and tail-calls the real pulse-high routine
+with R8–R12 saved around the measurement.
 
 Those two cells go out on the telemetry frame's scan-component fields, and
 `tools/clock_latency_report.py` decodes a readout CSV into milliseconds. The
@@ -254,11 +258,11 @@ build also lifts the edit-mode gate on telemetry, since a clock running is
 not edit mode; USB MIDI is still required and a key must be held, because the
 frame is sent from the pressure path.
 
-This is the one split no external measurement reaches. Everything between the
-ISR's stamp and the gate is timed. A spread near the scope's 3.36 ms puts the
-delay inside the firmware after the stamp; a much smaller one puts it before
-the stamp, in interrupt latency or input conditioning, where no firmware
-change reaches it.
+This makes two splits no external measurement reaches. Edge-to-claim contains
+the FIFO wait, `clock_service` and factory note selection. Claim-to-gate — the
+whole mean minus the claim mean — contains the wait for the flush, pitch remap
+and gate call. Everything between the ISR stamp and the gate remains measured
+directly by edge-to-gate; it is not reconstructed from two rounded means.
 
 ### What it answered
 
@@ -276,32 +280,39 @@ simultaneous one has not yet been taken.
 
 ### What the reported figures are, and what they are not
 
-The MEAN is the figure to read. Two faults have been fixed in the MAX, and
-both were found the same way -- a part cannot exceed the whole.
+Both fields are running MEANS over the same accepted samples. The historical
+MAX was removed to make room for the boundary that localises the delay; it was
+the least robust statistic and had already been invalidated twice by one bad
+sample.
 
 The shim times against `0x6240`, the stamp of the edge the dequeue is
 actually acting on, **not** `0x623c`, the ISR's newest accepted stamp.
 `0x623c` is whatever the input has done since, so with any queue depth at all
 it charges a beat's gate raise to an edge that did not cause it.
 
-A sample too large for the 14-bit field is DISCARDED -- dropped from the max,
-the sum and the count alike -- rather than clamped into the max. Clamping is
-what published `16383`, exactly `0x3fff`, on the instrument: one beat that
-waited behind a drained backlog claimed 8.74 ms for a path whose whole span
-is under four, and a max is the one statistic a single sample destroys for
-the rest of the power-up. `latencyIgnoresABacklog()` in ClockRegression.java
-holds both properties. It was negative-controlled: with the old shim restored
-the same test publishes `16383` where the fixed one publishes 781 units, so
-it reproduces the instrument's own number rather than merely failing.
+A whole-path sample too large for the 14-bit field is DISCARDED from both
+sums and their shared count. Clamping is what the older MAX diagnostic used
+to publish as `16383`, exactly `0x3fff`: one beat behind a drained backlog
+claimed 8.74 ms for a path whose whole span is under four. The edge is marked
+timed before validation, so a discarded sample cannot retry against an
+unrelated later gate.
+
+The edge-to-claim boundary must be no greater than its edge-to-gate sample.
+If it is not, neither sum nor the count moves. `latencySplitsAtClaim()` checks
+both exact boundaries in the emitted image, then negative-controls that guard
+by forcing the claim after the gate and proving the physical gate still rises
+while both means reject the sample. `latencyIgnoresABacklog()` separately
+proves a drained FIFO backlog moves neither mean.
 
 `tools/test_clock.py --mode latency` builds the diagnostic so that test and
 `latencyCellsCleared()` run against a real image. Without it both detect an
 ordinary build and skip, which is not a test.
 
-The accumulators are cleared by the startup initialiser. On the instrument
-they came up holding old RAM and the published mean came out ABOVE the
-published max; the harness could not have caught it, because `fresh()` zeroes
-RAM 0x0-0x8000 and those cells only ever started clean in emulation.
+The accumulators are cleared by the startup initialiser. On the instrument an
+older build came up holding old RAM and its published mean exceeded its MAX;
+the harness could not have caught it, because `fresh()` zeroes RAM 0x0-0x8000
+and those cells only ever started clean in emulation. `latencyCellsCleared()`
+now seeds every whole-path and split cell before invoking the real startup.
 
 `scan_profiler` claims the same five cells -- `0x6032`, `0x6034`, `0x6038`,
 `0x603c`, `0x6040` -- with its own `0x3fff` clamp on `0x6032`, and its
@@ -426,12 +437,12 @@ the limit of that inference: period jitter cancels a constant offset, so it
 says nothing about a fixed delay the shared path may add. It bounds the
 jitter, not the latency.
 
-The one stage the internal beat never uses is the FIFO dequeue in
-`clock_service`. `loopModelJitter()`'s second sweep holds the dispatcher
-punctual at 1 kHz and starves only that dequeue: at 250–300 Hz it produces
-min 200–400 us, max 3.6 ms, spread 3.2–3.6 ms, bracketing the instrument's
-258 us / 3.62 ms / 3.36 ms. The dequeue appears to poll at roughly the 5 ms
-scan cadence rather than at 1 kHz.
+`loopModelJitter()` can reproduce the scale only by artificially starving
+`clock_service`: at 250–300 Hz that model produces min 200–400 us, max 3.6 ms
+and spread 3.2–3.6 ms. It is a calibrated hypothesis, not a measurement, and
+the dequeue move below directly refuted its proposed wait. What remains unique
+to the external path is the work from FIFO entry through `clock_service` and
+factory note selection until `clock_settle` claims the selected note.
 
 A second blind spot turned up alongside the first. The fast path declines
 when `0x2eee != 0` -- a real portamento time -- and sends the beat back to
@@ -458,11 +469,11 @@ removed about 450 us of average delay, which is the queueing term at the
 size the model predicted — small.
 
 Two terms, then: a small scan-dependent queueing delay, and a larger
-scan-independent one setting a hard ceiling near 3.6 ms. The experiment
-refutes only that the dequeue's rate follows the scan. It does not refute
-that the dequeue is the slow stage — the main loop may iterate near 300 Hz
-for reasons unrelated to the scan, and the internal-versus-external split
-that isolates the dequeue is untouched by this result.
+scan-independent one setting a hard ceiling near 3.6 ms. This experiment
+refuted the scan as the source of that ceiling; the later dequeue move also
+refuted waiting for `clock_service` to run. It did not localise the synchronous
+work after dequeue or the sequence from FIFO entry through note selection to
+`clock_settle`; that is the boundary the split diagnostic now measures.
 
 The 4 ms attack-age guard at `0x8001ca80` was considered for that ceiling
 and rejected on the code rather than on the fit. Its bound is exactly right:
@@ -519,12 +530,11 @@ min 4.51, max 4.90, sigma 182 us — a range of 390 us, and the external clock
 about the same. A 3.4 ms grid would have produced a bimodal width spanning
 3.4 ms. **The transfer is fine-grained, and identical on both sources.**
 
-Two honest limits on the dequeue model. It is a model calibrated to the
-measurement, not
-a direct observation of either rate; and the model's mean (1.9–2.1 ms) sits
-above the instrument's 1.55 ms, because the model polls on a perfectly
-regular grid while a real main loop does not. The scale and the mechanism
-fit; the shape is not fully reproduced.
+Two honest limits on the historical dequeue model. It is calibrated to the
+measurement rather than a direct observation of either rate, and its mean
+(1.9–2.1 ms) sits above the instrument's 1.55 ms because it polls on a
+perfectly regular grid where a real main loop does not. Its scale fit; its
+shape did not, and the direct dequeue move overruled it.
 
 On hardware, compare input and output edge counts at 0.5, 10, 150, 180,
 199 and 200 Hz using both sources; exercise /1, /2 and /8, tempo changes,

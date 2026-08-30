@@ -794,15 +794,16 @@ public class AssemblePressureFix extends GhidraScript {
             emit("ST.H R7[-0x12],R8");
         } else if (feature("clock_latency")) {
 
-            // Diagnostic: the accepted external edge to gate-raise delay, as
-            // the firmware itself sees it.  CC 114/115 is the running MAX and
-            // CC 116/117 the running MEAN, both in cycles/32 -- the same unit
-            // the scan profiler uses, so ms = value * 32 / 60e6.  The mean is
-            // the one to trust; compare it against the scope's 1.55 ms.
+            // Diagnostic: split the accepted external edge-to-gate path at the
+            // moment clock_settle claims the selected note for the 1 kHz flush.
+            // CC 114/115 is the running MEAN edge-to-claim delay and CC 116/117
+            // the running MEAN edge-to-gate delay, both in cycles/32.  Their
+            // difference is claim-to-gate; the whole-path mean remains directly
+            // measured rather than reconstructed from rounded component means.
             emit("MOV R10,0x6032");
-            emit("LD.UH R8,R10[0x0]");      // max
+            emit("LD.UH R8,R10[0x0]");      // edge -> claim mean
             emit("ST.H R7[-0x10],R8");
-            emit("LD.UH R8,R10[0x2]");      // mean
+            emit("LD.UH R8,R10[0x2]");      // edge -> gate mean
             emit("ST.H R7[-0x12],R8");
         } else if (feature("latch_probe")) {
 
@@ -3668,26 +3669,25 @@ public class AssemblePressureFix extends GhidraScript {
         // pulse-high routine through a pool word; this build repoints both at
         // the shim below, so nothing is added at either call site.  It stamps
         // COUNT against the stamp of the edge the dequeue is actually acting
-        // on (0x6240), keeps a running max and mean in cycles/32, and
-        // tail-calls the real routine.  NOT the ISR's newest accepted stamp
+        // on (0x6240), keeps running edge-to-claim and edge-to-gate means in
+        // cycles/32, and tail-calls the real routine.  NOT the ISR's newest
+        // accepted stamp
         // at 0x623c: that is whatever the input has done since, so with any
         // queue depth at all it charges a beat's gate raise to an edge that
         // did not cause it.  Fully transparent: R8-R12 are saved around the
         // measurement because the callee's argument convention is the factory
         // routine's, not ours.
         //
-        // This is the one split no other measurement reaches. The instrument
-        // shows 3.3-3.4 ms of edge-to-gate spread that is invariant to the
-        // scan period, to the settle, to where the dequeue runs, and whose
-        // output stage is fine-grained on both clock sources.  Everything
-        // between the ISR stamp and the gate is timed here.  If this reports
-        // the full 3.4 ms, the delay is inside the firmware after the stamp.
-        // If it reports far less, the delay is BEFORE the stamp -- interrupt
-        // latency or input conditioning -- which no firmware change reaches.
+        // These are the splits no external measurement reaches.  The earlier
+        // whole-path mean established that roughly 1.42 ms of the 1.6 ms scope
+        // path lies after the ISR stamp.  The claim boundary now divides
+        // that firmware mean between FIFO/service/note selection and the later
+        // flush/remap/gate path.  The scope-minus-whole remainder is still the
+        // time before the stamp, where no firmware change reaches it.
         //
         // Guarded on 0x6236 so only external-clock beats are timed; an
         // internal beat leaves 0x6240 stale and would report nonsense.
-        // Max/mean are running, not windowed: power-cycle to reset.
+        // Both means are running, not windowed: power-cycle to reset.
         if (block("clock_latency")) {
             begin(0x8001bbc0L);
             emit("STM --SP,R7,LR");
@@ -3696,7 +3696,7 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MOV R10,0x6234");
             emit("LD.UB R8,R10[0x2]");      // 0x6236 input present
             emit("CP.W R8,0x0");
-            emit("BR{eq} 0x8001bc50");
+            emit("BR{eq} 0x8001bc90");
             // Time each CONSUMED EDGE exactly once. Without this, any gate
             // raise that was not caused by the edge still under measurement
             // -- a latched key, a rest completing, anything the arp does
@@ -3709,7 +3709,7 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MOV R9,0x6040");
             emit("LD.W R8,R9[0x0]");        // stamp of the edge last timed
             emit("CP.W R8,R11");
-            emit("BR{eq} 0x8001bc50");      // this edge is already counted
+            emit("BR{eq} 0x8001bc90");      // this edge is already counted
             emit("ST.W R9[0x0],R11");
             emit("MFSR R9,COUNT");
             emit("SUB R11,R9,R11 << 0x0");  // cycles since that edge
@@ -3724,18 +3724,24 @@ public class AssemblePressureFix extends GhidraScript {
             // is not retried against a later gate raise.
             emit("MOV R8,0x3fff");
             emit("CP.W R11,R8");
-            emit("BR{hi} 0x8001bc50");
-            padTo(0x8001bc10L);
-            emit("MOV R10,0x6032");
-            emit("LD.UH R8,R10[0x0]");      // running max
-            emit("CP.W R11,R8");
-            emit("BR{ls} 0x8001bc20");
-            emit("ST.H R10[0x0],R11");
-            padTo(0x8001bc20L);
-            // Running MEAN, because min and max are the least robust pair of
-            // statistics there are and this instrument has already been
-            // fooled once by an outlier. The mean is what gets compared
-            // against the scope's own 1.55 ms.
+            emit("BR{hi} 0x8001bc90");
+            // clock_settle stamps edge-to-claim in the same units.  It must be
+            // no larger than the whole edge-to-gate sample; if it is, the two
+            // boundaries do not belong to the same step and neither mean may
+            // be updated.  The edge has already been marked as timed, so a bad
+            // sample cannot be retried against a later, unrelated gate raise.
+            emit("MOV R10,0x6044");
+            emit("LD.UH R12,R10[0x0]");      // edge -> claim, cycles/32
+            emit("CP.W R12,R11");
+            emit("BR{hi} 0x8001bc90");
+            // Accumulate edge-to-claim separately.  The shared sample count
+            // below makes the two published means cover exactly the same beats.
+            emit("MOV R10,0x62f0");
+            emit("LD.W R8,R10[0x0]");
+            emit("ADD R8,R12");
+            emit("ST.W R10[0x0],R8");
+            // Running whole-path mean.  Means, rather than a max, are what can
+            // be compared honestly with the simultaneous scope capture.
             emit("MOV R10,0x6038");
             emit("LD.W R8,R10[0x0]");       // sum of delays
             emit("ADD R8,R11");
@@ -3745,14 +3751,24 @@ public class AssemblePressureFix extends GhidraScript {
             emit("ST.H R10[0x4],R9");
             emit("DIVU R8,R8,R9");          // quotient R8, even destination
             emit("MOV R10,0x6034");
-            emit("ST.H R10[0x0],R8");       // published mean
-            padTo(0x8001bc50L);
+            emit("ST.H R10[0x0],R8");       // published edge -> gate mean
+            // DIVU writes the remainder to the odd register beside its even
+            // destination, so the first division consumed R9. Reload the
+            // shared count before dividing the edge-to-claim sum.
+            emit("MOV R10,0x6038");
+            emit("LD.UH R9,R10[0x4]");
+            emit("MOV R10,0x62f0");
+            emit("LD.W R8,R10[0x0]");       // edge -> claim sum
+            emit("DIVU R8,R8,R9");
+            emit("MOV R10,0x6032");
+            emit("ST.H R10[0x0],R8");       // published edge -> claim mean
+            padTo(0x8001bc90L);
             emit("LDM SP++,R8,R9,R10,R11,R12");
-            emit("MCALL PC[0x8001bc60]");   // the real pulse-high routine
+            emit("MCALL PC[0x8001bca0]");   // the real pulse-high routine
             emit("LDM SP++,R7,PC");
-            padTo(0x8001bc60L);
+            padTo(0x8001bca0L);
             word(0x800077f8L);
-            finish("clock_latency", 0x8001bc64L);
+            finish("clock_latency", 0x8001bca4L);
         }
 
         // Main-loop wrapper, NOT a pitch-remap callback. Take at most one
@@ -5678,11 +5694,14 @@ public class AssemblePressureFix extends GhidraScript {
             // zeroes RAM 0..0x8000 before every test, so these cells only
             // ever started clean there.
             emit("MOV R10,0x6032");
-            emit("ST.H R10[0x0],R8");   // running max
-            emit("ST.H R10[0x2],R8");   // published mean
-            emit("ST.W R10[0x6],R8");   // 0x6038 sum of delays
+            emit("ST.H R10[0x0],R8");   // published edge -> claim mean
+            emit("ST.H R10[0x2],R8");   // published edge -> gate mean
+            emit("ST.W R10[0x6],R8");   // 0x6038 edge -> gate sum
             emit("ST.H R10[0xa],R8");   // 0x603c sample count
             emit("ST.W R10[0xe],R8");   // 0x6040 stamp of the edge last timed
+            emit("ST.H R10[0x12],R8");  // 0x6044 edge -> claim for this step
+            emit("MOV R10,0x62f0");
+            emit("ST.W R10[0x0],R8");   // edge -> claim sum
         }
         emit("MOV R10,0x6244");
         emit("MOV R8,0x29cc");
@@ -6637,17 +6656,24 @@ public class AssemblePressureFix extends GhidraScript {
         // The divider and the sequencer's rest/tie decision have already run.
         // This is a non-leaf: preserve LR across the physical gate-off call.
         begin(0x8001c700L);
+        long latencyShift = feature("clock_latency") ? 0x20L : 0;
+        long settleStore = 0x8001c756L + latencyShift;
+        long settleExit = 0x8001c760L + latencyShift;
+        long settleGatePool = 0x8001c778L + latencyShift;
+        long settleInternal = 0x8001c780L + latencyShift;
+        long settleStatePool = 0x8001c7b8L + latencyShift;
+        long settleEnd = 0x8001c7c0L + latencyShift;
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001c760");
+        emit(String.format("BR{ne} 0x%x", settleExit));
         emit("MOV R10,0x6237");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
         emit("BR{eq} 0x8001c730");
-        emit("MCALL PC[0x8001c778]");
+        emit(String.format("MCALL PC[0x%x]", settleGatePool));
         padTo(0x8001c730L);
         emit("MOV R8,0x60ee");
         emit(String.format("MOV R9,0x%x",
@@ -6658,7 +6684,8 @@ public class AssemblePressureFix extends GhidraScript {
         // No external clock: the internal beat and a bare keyboard note both
         // arrive here.  The tail at 0x8001c780 sorts them out; without the
         // two-phase claim built, both go straight to the scan as before.
-        if (twoPhaseBeat()) emit("BR{eq} 0x8001c780"); else emit("BR{eq} 0x8001c756");
+        if (twoPhaseBeat()) emit(String.format("BR{eq} 0x%x", settleInternal));
+        else emit(String.format("BR{eq} 0x%x", settleStore));
         emit(String.format("MOV R9,0x%x",
             number("clock_settle_scans", 0, 0, 3) + 1));
         // A clock is present, so the fast trigger takes this step off the
@@ -6672,16 +6699,29 @@ public class AssemblePressureFix extends GhidraScript {
             emit(String.format("MOV R11,0x%x",
                  claimFor(number("clock_settle_scans", 0, 0, 3))));
             emit("ST.B R10[0x0],R11");
+            if (feature("clock_latency")) {
+                // Split the diagnostic at the first moment the selected
+                // external step is claimable by the flush.  Store the age,
+                // not another absolute stamp, so the gate shim can reject a
+                // boundary that somehow lands after the gate it accompanies.
+                emit("MOV R10,0x6234");
+                emit("LD.W R10,R10[0xc]");  // consumed edge stamp, 0x6240
+                emit("MFSR R11,COUNT");
+                emit("SUB R10,R11,R10 << 0x0");
+                emit("LSR R10,0x5");
+                emit("MOV R11,0x6044");
+                emit("ST.H R11[0x0],R10");
+            }
             if (number("clock_settle_scans", 0, 0, 3) > 0) {
                 emit(String.format("MOV R9,0x%x",
                      settleMsFor(number("clock_settle_scans", 0, 0, 3))));
             }
         }
-        padTo(0x8001c756L);
+        padTo(settleStore);
         emit("ST.B R8[0x0],R9");
-        padTo(0x8001c760L);
+        padTo(settleExit);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001c778L);
+        padTo(settleGatePool);
         word(0x80002440L);
         if (twoPhaseBeat()) {
             // The internal clock's beat, not the player's finger.  With the
@@ -6691,13 +6731,13 @@ public class AssemblePressureFix extends GhidraScript {
             // settle in MILLISECONDS.  A key pressed with both switched off
             // is a different thing: its latency is the player's own, and it
             // is left on the scan exactly as it was.
-            padTo(0x8001c780L);
-            emit("LDDPC R11,0x8001c7b8");
+            padTo(settleInternal);
+            emit(String.format("LDDPC R11,0x%x", settleStatePool));
             emit("LD.UB R12,R11[0x340]");
             emit("LD.UB R11,R11[0x341]");
             emit("OR R12,R11");
             emit("CP.W R12,0x0");
-            emit("BR{eq} 0x8001c756");
+            emit(String.format("BR{eq} 0x%x", settleStore));
             emit("MOV R10,0x625b");
             emit(String.format("MOV R11,0x%x",
                  claimFor(number("gate_settle_scans", 1, 0, 3))));
@@ -6706,11 +6746,12 @@ public class AssemblePressureFix extends GhidraScript {
                 emit(String.format("MOV R9,0x%x",
                      settleMsFor(number("gate_settle_scans", 1, 0, 3))));
             }
-            emit("RJMP 0x8001c756");
-            padTo(0x8001c7b8L);
+            if (feature("clock_latency")) emit("RJMP 0x8001c776");
+            else emit("RJMP 0x8001c756");
+            padTo(settleStatePool);
             word(0x00003560L); // global state base
         }
-        finish("clock_settle", twoPhaseBeat() ? 0x8001c7c0L : 0x8001c780L);
+        finish("clock_settle", twoPhaseBeat() ? settleEnd : settleInternal);
 
         // The pitch the arp is about to sound.  While the sequencer plays that
         // is the step's own pitch; otherwise it is whatever the keyboard

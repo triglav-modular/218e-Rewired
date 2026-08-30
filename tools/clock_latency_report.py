@@ -4,34 +4,35 @@
 The `diagnostics.clock_latency` build repurposes the two scan-component
 telemetry fields, which the readout tool labels with their pressure names:
 
-    scan_component_a = running MAX accepted-edge-to-gate delay, cycles/32
-    scan_component_b = running MEAN of the same, cycles/32
+    scan_component_a = running MEAN accepted-edge-to-claim delay, cycles/32
+    scan_component_b = running MEAN accepted-edge-to-gate delay, cycles/32
 
-Both are measured by the firmware itself, from the COUNT stamp of the edge
-the dequeue is acting on (0x6240) to COUNT at the gate raise, once per
-consumed edge.
+The split is the moment clock_settle makes the selected external step
+claimable by the 1 kHz flush.  The first mean therefore covers FIFO wait,
+clock_service and note selection.  Subtracting it from the second covers the
+flush/remap/gate remainder.  Both use the COUNT stamp of the edge the dequeue
+is acting on (0x6240), once per consumed edge.
 
-A sample too large for the 14-bit field is DISCARDED -- dropped from the max,
-the sum and the count alike -- rather than clamped into the max. It only gets
-that large when the beat waited behind a drained backlog, which is a
-different population from the delay being measured, and clamping let one such
-beat publish 16383 as the max for the rest of the power-up. So the figures
-below describe beats that were not stalled, and a stall costs its own
-measurement rather than the session's.
+A whole-path sample too large for the 14-bit field is DISCARDED from both sums
+and their shared count. It only gets that large when the beat waited behind a
+drained backlog, which is a different population from the delay being
+measured. So the figures below describe beats that were not stalled, and a
+stall costs its own measurement rather than the session's.
 
 Both are RUNNING figures accumulated since power-up, so the last frame of a
 file already holds that session's final values -- there is nothing to
-aggregate. Each file is a separate session and is reported separately;
-combining them across a power cycle, or across firmware builds, is
-meaningless. Pass one file unless you want them compared.
+aggregate. Combining files across a power cycle or firmware build is
+meaningless, so this tool accepts exactly one CSV.
 
-    python3 tools/clock_latency_report.py LEM218_PressureReadout_<newest>.csv
+    python3 tools/clock_latency_report.py LEM218_PressureReadout_<exact>.csv
+    python3 tools/clock_latency_report.py <exact.csv> --scope-mean-ms 1.60
 
-The MEAN is the figure to trust. A max is a single sample and one outlier
-moves it.
+The optional scope mean must come from the same start/stop window.  It lets the
+tool report the pre-ISR-stamp remainder without inviting comparison with an
+older scope session.
 """
+import argparse
 import csv
-import sys
 from pathlib import Path
 
 CPU_HZ = 60_000_000        # the instrument's CPU frequency word at RAM 0x29cc
@@ -57,38 +58,37 @@ def session(path: Path):
 
 
 def main() -> None:
-    paths = [Path(a) for a in sys.argv[1:]]
-    if not paths:
-        raise SystemExit(__doc__)
-    if len(paths) > 1:
-        print(f"{len(paths)} files: each is a separate session, reported separately.")
-        print("Only compare them if you know they are the same firmware.\n")
-    for path in paths:
-        last, rows = session(path)
-        print(f"{path.name}   ({rows} frames)")
-        if last is None:
-            print("  no beat was ever timed. The firmware only times beats while an")
-            print("  external clock is present (RAM 0x6236), and the telemetry frame")
-            print("  only goes out while a key is held. Check both.\n")
-            continue
-        hi, avg = last
-        print(f"  mean edge->gate   {avg:6d} units   {ms(avg):5.2f} ms")
-        print(f"  max  edge->gate   {hi:6d} units   {ms(hi):5.2f} ms")
-        if hi == 0x3fff:
-            # The firmware discards anything that will not fit, so this value
-            # can no longer be produced by clamping. Reaching it exactly means
-            # either a real sample that happens to land on the ceiling, or an
-            # image built before the discard -- worth saying rather than
-            # printing 8.74 ms as if it were a measurement.
-            print("  ^ exactly the 0x3fff ceiling. A build with the clamp"
-                  " published this for any")
-            print("    stalled beat; check the image is a current one before"
-                  " trusting the max.")
-        if avg > hi:
-            print("  ^ the mean is ABOVE the max, which is impossible."
-                  " The accumulators did not")
-            print("    start from zero -- power-cycle and capture again.")
-        print()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("csv", type=Path, help="the one CSV from this capture")
+    parser.add_argument("--scope-mean-ms", type=float,
+                        help="scope input-to-trigger mean from the same window")
+    args = parser.parse_args()
+    path = args.csv
+    last, rows = session(path)
+    print(f"{path.name}   ({rows} frames)")
+    if last is None:
+        raise SystemExit(
+            "  no beat was ever timed. The firmware only times beats while an\n"
+            "  external clock is present (RAM 0x6236), and the telemetry frame\n"
+            "  only goes out while a key is held. Check both.")
+    claim, total = last
+    if claim > total:
+        raise SystemExit(
+            f"  impossible split: edge->claim {claim} exceeds edge->gate {total}.\n"
+            "  Power-cycle and confirm the image and CSV belong to this diagnostic.")
+    downstream = total - claim
+    print(f"  mean edge->claim  {claim:6d} units   {ms(claim):5.2f} ms")
+    print(f"  mean claim->gate  {downstream:6d} units   {ms(downstream):5.2f} ms")
+    print(f"  mean edge->gate   {total:6d} units   {ms(total):5.2f} ms")
+    if args.scope_mean_ms is not None:
+        before_stamp = args.scope_mean_ms - ms(total)
+        print(f"  mean before stamp                   {before_stamp:5.2f} ms"
+              "   (scope - edge->gate)")
+        if before_stamp < 0:
+            print("  ^ negative is impossible: the scope mean is not from this"
+                  " capture, or the")
+            print("    scope/telemetry windows were not started and stopped together.")
+    print()
     print("These cover only what happens AFTER the ISR stamped the edge.")
     print()
     print("Compare them ONLY against a scope reading taken during THIS capture.")
@@ -98,7 +98,7 @@ def main() -> None:
     print("build measures a busier board than the scope runs did. A mean above")
     print("the unloaded scope figure means the extra load, not a longer path.")
     print()
-    print("With a simultaneous scope reading, mean_scope - mean_here is the")
+    print("With a simultaneous scope reading, mean_scope - mean_edge_to_gate is the")
     print("time spent BEFORE the ISR stamp -- interrupt latency and input")
     print("conditioning, which no firmware change reaches.")
 

@@ -685,9 +685,10 @@ public class ClockRegression extends GhidraScript {
     // its 32-entry ring per pass.  Event 17 is POSTED at 1 kHz by the timer
     // and the 200 Hz pitch pass is a separate ring event, so 1200 posts per
     // second compete for one pop per pass and the trigger waits behind
-    // whatever is ahead of it.  That queue depth is the floor docs/CLOCK.md
-    // names as all that is left of the trigger's latency, and the 1 ms
-    // fixture sets it to zero.
+    // whatever is ahead of it. Queue depth is one real term, but the scan-rate
+    // experiment bounded it as small and moving the dequeue onto the punctual
+    // 1 ms task did not change the hardware distribution. The fixture sets
+    // both waits to zero and cannot localise synchronous note selection.
     //
     // Hardware for comparison -- image 1a5b8110, external clock, n=1150:
     // min 258 us, mean 1.55 ms, max 3.62 ms, sigma 1.04 ms, so 3.36 ms peak
@@ -710,12 +711,11 @@ public class ClockRegression extends GhidraScript {
         return loopModel(loopHz,competingHz,loopHz);
     }
 
-    // serviceHz is the rate clock_service actually polls the FIFO, which
-    // the instrument has now shown is NOT the dispatcher's rate: the
-    // internal beat raises its gate on the same event 17 and arrives with
-    // 216 us of period jitter, so the flush is punctual. Only the external
-    // path goes through the FIFO, so a dequeue slower than the flush shows
-    // up on the external clock alone -- exactly the split measured.
+    // serviceHz is an artificial rate for clock_service polling the FIFO.
+    // This sweep once motivated moving the dequeue to the 1 ms task because a
+    // 250-300 Hz value reproduces the scale. Hardware directly refuted that
+    // wait: the move left the 3.4 ms range unchanged. Keep the sweep as the
+    // honest limit of the model, not as evidence that this is the real rate.
     long[] loopModel(int loopHz, int competingHz, int serviceHz) throws Exception {
         fresh(1,25000000);
         final long period=26200;   // whole 5 ms scans plus 200 us of walk
@@ -925,7 +925,8 @@ public class ClockRegression extends GhidraScript {
             println("SKIP clock-latency cells: not a diagnostic build");
             return;
         }
-        long[] cells={0x6032,0x6034,0x6038,0x603a,0x603c,0x6040,0x6042};
+        long[] cells={0x6032,0x6034,0x6038,0x603a,0x603c,0x6040,0x6042,
+                      0x6044,0x62f0,0x62f2};
         for (long a : cells) w(a,2,0xbeef);
         call(0x80007bf4L,0x80007bf8L);   // the real startup hook
         for (long a : cells)
@@ -934,14 +935,50 @@ public class ClockRegression extends GhidraScript {
         println("PASS clock-latency accumulators start from zero");
     }
 
-    // The diagnostic publishes a MAX, and a max is precisely the statistic one
-    // mis-attributed sample destroys for a whole session. The instrument
-    // published 16383 -- 0x3fff exactly, the encoding ceiling -- so at least
-    // one sample claimed 8.74 ms or more for a path whose whole span is under
-    // four. A drained backlog is where that comes from: queued edges raise
-    // their gates long after the input has moved on, and the first version
-    // timed them against 0x623c, the ISR's NEWEST accepted stamp, which by
-    // then belongs to an edge that did not cause the raise.
+    // Split one diagnostic sample at clock_settle.  The fixture gives the FIFO
+    // 750 us before service/note selection claims the step and another 1250 us
+    // before the flush raises the gate, so both boundaries have independent,
+    // exact expectations.  Then corrupt the per-step claim age so it lands
+    // after the gate: that negative control must be discarded, proving the
+    // ordering guard is exercised rather than merely asserted in the test.
+    void latencySplitsAtClaim() throws Exception {
+        fresh(1,25000000);
+        if (r(0x8001c6b0L,4)!=0x8001bbc0L) {
+            println("SKIP split clock latency: not a diagnostic build");
+            return;
+        }
+        irq(10000,true);
+        service(10750);
+        long wantClaim=((750L*frequency)/1000000L)>>5;
+        check("claim stamp measures edge through note selection",
+              r(0x6044,2)==wantClaim);
+        flush(12000);
+        long wantTotal=((2000L*frequency)/1000000L)>>5;
+        check("split means share one completed sample", r(0x603c,2)==1);
+        check("published edge-to-claim mean reaches the claim boundary",
+              r(0x6032,2)==wantClaim);
+        check("published edge-to-gate mean reaches the physical gate call",
+              r(0x6034,2)==wantTotal);
+        check("claim-to-gate is the remainder of the directly measured path",
+              r(0x6034,2)-r(0x6032,2)==wantTotal-wantClaim);
+
+        long samples=r(0x603c,2), upstream=r(0x6032,2), total=r(0x6034,2);
+        irq(50000,false); irq(60000,true); service(60750);
+        w(0x6044,2,0x3fff);              // negative control: claim after gate
+        int before=outputTimes.size();
+        flush(62000);
+        check("negative control still raises the physical gate",
+              outputTimes.size()==before+1);
+        check("claim-after-gate negative control is rejected from both means",
+              r(0x603c,2)==samples && r(0x6032,2)==upstream
+              && r(0x6034,2)==total);
+        println("PASS latency split at claim; negative control discarded");
+    }
+
+    // A mis-attributed sample used to destroy the published maximum for a
+    // whole session. The instrument published 16383 -- 0x3fff exactly --
+    // because the first version timed a drained backlog against 0x623c, the
+    // ISR's NEWEST accepted stamp, which belonged to another edge.
     //
     // Two changes, both checked here. The shim now times against 0x6240, the
     // stamp of the edge the dequeue is actually acting on, and a sample that
@@ -958,22 +995,25 @@ public class ClockRegression extends GhidraScript {
         for (int i=0;i<4;i++) {
             irq(t,true); service(t); finishStep(t+9000); irq(t+50000,false); t+=100000;
         }
-        long settled=r(0x6032,2), samples=r(0x603c,2);
-        check("ordinary beats are timed at all", samples>0 && settled>0);
-        check("an ordinary beat is nowhere near the ceiling", settled<0x3fff);
+        long settledClaim=r(0x6032,2), settledTotal=r(0x6034,2);
+        long samples=r(0x603c,2);
+        check("ordinary beats are timed at all",
+              samples>0 && settledTotal>0);
+        check("the claim boundary is inside the whole path",
+              settledClaim<=settledTotal && settledTotal<0x3fff);
         // Queue more edges than the main loop takes, then drain them all at
         // once, the way a flash write or any other stall makes it drain.
         for (int i=0;i<40;i++) { irq(t+i*5000,true); irq(t+2500+i*5000,false); }
         check("the backlog really did overrun the FIFO", r(0x6258,2)>0);
         long drain=t+400000;
         for (int i=0;i<31;i++) { service(drain+i*5000); scan(drain+i*5000); }
-        println("  after the drain: max "+r(0x6032,2)+" units, was "+settled);
-        check("a drained backlog does not move the published max",
-              r(0x6032,2)==settled);
-        check("the max never publishes the 0x3fff ceiling", r(0x6032,2)!=0x3fff);
-        check("the mean stays inside the max", r(0x6034,2)<=r(0x6032,2));
-        println("PASS backlogged edges discarded; max "+r(0x6032,2)
-                +" mean "+r(0x6034,2)+" units over "+r(0x603c,2)+" samples");
+        println("  after the drain: claim/total means "+r(0x6032,2)+"/"
+                +r(0x6034,2)+" units, were "+settledClaim+"/"+settledTotal);
+        check("a drained backlog moves neither published mean",
+              r(0x6032,2)==settledClaim && r(0x6034,2)==settledTotal);
+        println("PASS backlogged edges discarded; claim/total means "
+                +r(0x6032,2)+"/"+r(0x6034,2)+" units over "
+                +r(0x603c,2)+" samples");
     }
 
     public void run() throws Exception {
@@ -985,9 +1025,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); latencyCellsCleared(); latencyIgnoresABacklog(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
+                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyIgnoresABacklog(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); latencyCellsCleared(); latencyIgnoresABacklog(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyIgnoresABacklog(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})
