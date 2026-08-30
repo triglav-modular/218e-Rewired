@@ -5437,6 +5437,22 @@ function assembleProgram() {
         emit("ST.H R10[0x6],R8");       // presence confidence / divide phase
         emit("MOV R10,0x60ee");
         emit("ST.B R10[0x0],R8");       // no pre-restart deferred trigger survives
+        if (block("clock_latency")) {
+            // The diagnostic's accumulators are OUTSIDE the 0x6232..0x62df
+            // sweep above, and nothing else clears them. On the instrument
+            // they came up holding whatever was in RAM, so the running sum
+            // and count were seeded with garbage and the published mean came
+            // out ABOVE the published max -- which is how the fault was
+            // found. The emulator could not have caught it: the harness
+            // zeroes RAM 0..0x8000 before every test, so these cells only
+            // ever started clean there.
+            emit("MOV R10,0x6032");
+            emit("ST.H R10[0x0],R8");   // running max
+            emit("ST.H R10[0x2],R8");   // published mean
+            emit("ST.W R10[0x6],R8");   // 0x6038 sum of delays
+            emit("ST.H R10[0xa],R8");   // 0x603c sample count
+            emit("ST.W R10[0xe],R8");   // 0x6040 stamp of the edge last timed
+        }
         emit("MOV R10,0x6244");
         emit("MOV R8,0x29cc");
         emit("LD.W R8,R8[0x0]");

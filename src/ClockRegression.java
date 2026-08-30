@@ -902,6 +902,32 @@ public class ClockRegression extends GhidraScript {
         println("PASS main-loop model, widest spread "+widest+" us");
     }
 
+    // The clock-latency diagnostic's accumulators sit OUTSIDE the
+    // 0x6232..0x62df sweep the startup initialiser runs, and nothing else
+    // clears them. On the instrument they came up holding old RAM, so the
+    // running sum and count were seeded with garbage and the published mean
+    // came out ABOVE the published max. Nothing here could have caught that:
+    // fresh() zeroes RAM 0..0x8000 before every test, so these cells only
+    // ever started clean. This seeds them deliberately and re-runs startup.
+    //
+    // Detected from the emitted image rather than a build flag: the scan
+    // path's gate pool at 0x8001c6b0 names the shim only in a diagnostic
+    // build, so an ordinary build skips this without pretending to pass.
+    void latencyCellsCleared() throws Exception {
+        fresh(1,25000000);
+        if (r(0x8001c6b0L,4)!=0x8001bbc0L) {
+            println("SKIP clock-latency cells: not a diagnostic build");
+            return;
+        }
+        long[] cells={0x6032,0x6034,0x6038,0x603a,0x603c,0x6040,0x6042};
+        for (long a : cells) w(a,2,0xbeef);
+        call(0x80007bf4L,0x80007bf8L);   // the real startup hook
+        for (long a : cells)
+            check("clock-latency cell 0x"+Long.toHexString(a)
+                  +" cleared at startup", r(a,2)==0);
+        println("PASS clock-latency accumulators start from zero");
+    }
+
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
         try {
@@ -911,9 +937,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
+                bitFieldInstructions(); latencyCellsCleared(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); latencyCellsCleared(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})
