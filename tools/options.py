@@ -83,6 +83,39 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                                'tunings/12TET.scl'],
                   'units_per_octave': 484}}
 
+# The four diagnostics below all publish through the same telemetry pair, and
+# scan_profiler and clock_latency additionally share the five RAM cells behind
+# it: 0x6032, 0x6034, 0x6038, 0x603c, 0x6040.  In a build with both, the clock
+# wrapper's dispatcher is routed through the profiler, so the profiler's window
+# rollover overwrites the latency shim's running max, mean, sum, count and
+# last-timed stamp; the selection in AssemblePressureFix reaches scan_profiler
+# first, so tools/clock_latency_report.py would decode the profiler's clamped
+# worst dispatch and print it as an edge-to-gate delay with nothing to show
+# that it is the wrong number.
+#
+# The check belongs here rather than only in tools/build.py because
+# web/generate.py reads this table straight into the browser bundle without
+# going through build.py, and the JavaScript toolchain has no equivalent
+# refusal - a diagnostic pair that build.py rejects would otherwise still be
+# buildable in the browser.
+_TELEMETRY_CLAIMS = ("scan_profiler", "telemetry_smoothing", "latch_probe",
+                     "clock_latency")
+
+
+def _check_internal_diagnostics() -> None:
+    diag = INTERNAL_DEFAULTS["diagnostics"]
+    on = [n for n in _TELEMETRY_CLAIMS if diag.get(n)]
+    if len(on) > 1:
+        raise SystemExit(
+            "tools/options.py: " + " and ".join(on) + " claim the same telemetry "
+            "fields; enable one at a time.\n"
+            "  scan_profiler and clock_latency also share RAM 0x6032-0x6042, "
+            "and the profiler wins,\n  so the latency report would carry the "
+            "profiler's numbers under its own name.")
+
+
+_check_internal_diagnostics()
+
 # A flat pitch ramp: no per-key correction, every semitone exactly 100 cents.
 # 79 rows, matching what the firmware reads (semitones 0..78).
 FLAT_CALIBRATION = REPO / "build" / "_flat_pitch_calibration.csv"

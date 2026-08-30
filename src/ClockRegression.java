@@ -913,6 +913,12 @@ public class ClockRegression extends GhidraScript {
     // Detected from the emitted image rather than a build flag: the scan
     // path's gate pool at 0x8001c6b0 names the shim only in a diagnostic
     // build, so an ordinary build skips this without pretending to pass.
+    //
+    // The scan profiler keeps its accumulators in these same cells and says
+    // it needs no initialisation, which is the opposite requirement. Both
+    // statements hold because the two are never in one build: tools/options.py
+    // refuses that pair, since the profiler would also overwrite the numbers
+    // this diagnostic publishes.
     void latencyCellsCleared() throws Exception {
         fresh(1,25000000);
         if (r(0x8001c6b0L,4)!=0x8001bbc0L) {
