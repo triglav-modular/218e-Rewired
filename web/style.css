@@ -373,14 +373,20 @@ h1 {
   margin: 0;
   letter-spacing: -.015em;
 }
+/* Positioned so the changelog panel can hang off the paragraph rather than
+   off the pill inside it.  The pill sits wherever the sentence ends, which on
+   a narrow window is close enough to the right edge that a panel anchored to
+   it would open off-screen; the paragraph's own edges are the content
+   column's, at every width. */
 .sub {
+  position: relative;
   color: var(--muted);
   margin: 0 0 44px;
   font-size: 18px;
 }
 /* The version comes from the same GEN.version the flashers are stamped with,
    so the page can never advertise a release the build does not produce. */
-.chlog { position: relative; display: inline-block; }
+.chlog { display: inline-block; }
 .chlog-pill {
   background: none;
   cursor: pointer;
@@ -388,25 +394,87 @@ h1 {
   color: var(--muted);
 }
 .chlog-pill[aria-expanded="true"], .chlog-pill:hover { color: var(--accent); }
+/* The panel holds every release, so it is sized to be read rather than
+   glanced at: wide enough for an entry to take two lines at most, and capped
+   against the viewport so a long entry cannot push the page sideways on a
+   phone.  Four releases overflow a short window, hence the scroll. */
 .chlog-body {
   display: block;
   position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
+  top: calc(100% + 18px);
+  /* Centred on the pill, which only script can do: the offset depends on where
+     the sentence ends, and CSS centring on the pill would hang a 420 panel
+     over the edge of a phone.  centreChangelog() writes the left, clamped to
+     the paragraph; until it runs, the paragraph's right edge is the fallback,
+     and it is the same guarantee the left edge was - the content column's, at
+     every width.  The containing block stays the paragraph either way, so the
+     percentage sizing and the off-screen guard are unchanged. */
+  right: 0;
+  left: var(--chlog-left, auto);
   z-index: 10;
-  min-width: 300px;
-  padding: 12px 16px;
+  width: max-content;
+  min-width: min(300px, 100%);
+  max-width: min(420px, 100%);
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 18px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: var(--panel);
   font-size: 14px;
   line-height: 1.5;
-  white-space: pre-line;
   text-transform: none;
   letter-spacing: normal;
 }
-.chlog-body strong { color: var(--accent); }
 .chlog-body.hidden { display: none; }
+/* A rule between releases, not around them: the entries are the content and
+   a box each would make four cards out of one list. */
+.chlog-rel + .chlog-rel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+/* The page's label treatment, as the option headings use it.  The date sits
+   on the same baseline in muted, so the version stays the thing being read. */
+.chlog-ver {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.chlog-date {
+  color: var(--muted);
+  font-weight: 400;
+  letter-spacing: .06em;
+}
+.chlog-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chlog-list li {
+  position: relative;
+  padding-left: 16px;
+}
+.chlog-list li + li { margin-top: 6px; }
+/* Drawn rather than a list marker, so a wrapped entry hangs off the dot
+   instead of running back under it.  The offset centres the dot on the first
+   line: half the line box, less half the dot. */
+.chlog-list li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: calc((1.5em - 5px) / 2);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .ver {
   display: inline-block;
   margin-left: 10px;
@@ -525,10 +593,19 @@ label.opt input {
   font-weight: 700;
   display: inline-block;
 }
+/* The description takes the row rather than hugging its longest line.  As an
+   inline-block it shrank to its widest line, which for a description with a
+   forced break in it is that line exactly - so the sentence sat with nothing
+   to spare and the next pixel of narrowing broke it in two.  Filling the row
+   changes nothing for a description that already ran the width. */
+label.opt > span {
+  flex: 1;
+  min-width: 0;
+}
 .opt .d {
   color: var(--muted);
   font-size: 16px;
-  display: inline-block;
+  display: block;
 }
 .drop {
   border: 1px dashed #4a4740;
@@ -831,6 +908,17 @@ td input {
   font-family: var(--mono);
   font-size: 15px;
   min-width: 0;
+  /* A slot can carry a scale, a keyboard mapping and the anchor note at
+     once, which is more than one line holds: they wrap instead of being
+     clipped, and only the filename itself still ellipses. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.slot .what .fname {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -845,6 +933,351 @@ td input {
   grid-row: 1;
   display: flex;
   gap: 6px;
+}
+/* Four knobs across, as they sit on the panel, each with what it can be set
+   to stacked underneath it.  No indent: the four columns want the width the
+   pad map gets, and the block is a figure of the hardware rather than a note
+   hanging off the option above. */
+.knobsel { margin: 14px 0 6px; }
+.knobsel > .knobmap:first-child { margin-top: 0; }
+.knobsel.hidden { display: none; }
+.knobmap {
+  /* Measured off the User's Guide's cover photograph, the same one the pad's
+     five-to-two came from: the leftmost preset knob is 140px across where the
+     pad beneath it is 178, so a knob is 0.79 of a pad and 104 against the
+     pad's 132.  It was 64, which drew it at under two thirds of its size.
+
+     The leftmost pair on purpose.  The four knobs measure 139, 156, 166 and
+     182 left to right while the four pads hold at 177 to 179 - the knobs
+     stand proud of the panel so they open up as they go off-axis, and the
+     flat pads do not.  Taking a knob and a pad from the same corner of the
+     frame cancels what is left of that. */
+  --knob-w: 104px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  margin-top: 10px;
+}
+.knobfig {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The knob, drawn, with its number over the face.  Both layers share one grid
+   cell so the number centres on the circle without either being positioned. */
+.knobface {
+  display: grid;
+  place-items: center;
+  width: var(--knob-w);
+  /* Centred over its column: on the panel the knob sits above the middle of
+     what it controls, and left-aligning a 64px circle over a 157px stack
+     read as though it belonged to whatever was left of it. */
+  margin-inline: auto;
+  height: var(--knob-w);
+}
+/* The pattern bank is knob 2's, but it is as wide as the whole block, so it
+   sits under all four rather than inside one - which leaves nothing saying
+   whose it is.  A heading does, in the voice the sequencer card's state
+   headings already use.
+
+   22 above it, which is what the sequencer card puts between one state and
+   the next: this is a section below the knobs, not the last thing in the
+   column, and at 0 the heading landed hard against the very button that
+   opens it. */
+/* A card inside the card: the bank is one knob's, so it reads as a thing set
+   into the group rather than the next part of it.  The surface the page uses
+   for anything set into a panel - the pad plates, the drop zone - is the
+   page's own bg behind a hairline, and the shadow is the tier .group takes,
+   which is already the "nested card" one. */
+#patternBody {
+  margin-top: 22px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .032),
+              0 1px 2px rgba(0, 0, 0, .10),
+              0 10px 22px -16px rgba(0, 0, 0, .27);
+}
+.patwho {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+.patwho strong {
+  color: var(--ink);
+}
+.knobface svg,
+.knobface b {
+  grid-area: 1 / 1;
+}
+.knobface svg {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+.knobface b {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--ink);
+}
+/* The options run down the column now rather than across the row, so the
+   count no longer has to fit a shared width: knob 2's three and knob 3's one
+   both simply stack. */
+/* One control, divided, rather than a stack of separate buttons: the choices
+   are exclusive, and four boxes with air between them read as four things
+   that could each be on.  The gap closes, the outer edge and corner move to
+   the container, and a hairline separates the rows.  overflow clips the
+   chosen row's fill back to the corner it sits in, so the top and bottom of
+   the control stay round. */
+.knobmap .vpo.knobpick {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  gap: 0;
+  margin-top: 0;
+  max-width: none;
+  /* Mixed from --ink rather than currentColor, which is what the checkout
+     lists use: there the row's colour never moves, here it sweeps on hover,
+     and a rule mixed from it would sweep with it. */
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+/* Divided and outlined the way the shipping and payment lists on the shop's
+   checkout are: the hairline is mixed from the text colour rather than named,
+   the rule sits on the bottom of each row and the last one has none, and the
+   chosen row takes a radius one inside the container's, comes forward, and
+   drops the rule under it - as does the row above it, so nothing crosses the
+   edge of the selection on either side. */
+.knobmap .knobpick button {
+  position: relative;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 0;
+}
+.knobmap .knobpick button:last-child {
+  border-bottom: 0;
+}
+/* The shared button hover paints every border accent, and the only border a
+   row still has is the rule under it - so hovering drew a coloured line
+   between two rows.  The rule holds, whatever the row's state. */
+.knobmap .knobpick button:hover {
+  border-bottom-color: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+/* The type carries the hover instead - but only on a row that is not the
+   chosen one.  The chosen row is dark on accent, and sweeping its type to
+   the accent puts it on its own background. */
+.knobmap .knobpick button:hover:not([aria-pressed=true]) {
+  animation: sweep-ink var(--sweep-pass) forwards;
+}
+/* After the hover rule, so a selection still clears the lines around it. */
+.knobmap .knobpick button[aria-pressed=true] {
+  z-index: 1;
+  border-bottom-color: transparent;
+  border-radius: 7px;
+}
+.knobmap .knobpick button[aria-pressed=true]:hover,
+.knobmap .knobpick button:has(+ button[aria-pressed=true]),
+.knobmap .knobpick button:hover:has(+ button[aria-pressed=true]) {
+  border-bottom-color: transparent;
+}
+/* One row per pattern: a number, the steps, how many before it repeats. */
+/* Patterns can be one line of steps or four, so the number, the length and
+   the remove button line up with the FIRST line rather than floating to the
+   middle of however many a pattern happens to have. */
+.pat {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 0;
+}
+/* A long pattern is several lines of steps, and those lines sit 4px apart.
+   Without more than that between one pattern and the next, twenty-two of them
+   read as one field of squares rather than twenty-two patterns. */
+.pat + .pat {
+  border-top: 1px solid rgba(157, 154, 147, .2);
+}
+/* The number, the length and the remove button are all one step-row tall, so
+   top-aligning the row puts all three on the centre line of the first row of
+   steps whether the pattern runs to one line or four. */
+.patnum {
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+/* Groups are as long as the pattern's own length divides evenly, so they are
+   not all the same width and cannot be laid on fixed columns: they run along
+   the line and wrap when the next one will not fit. */
+.patgrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  flex: 1;
+  min-width: 0;
+}
+/* Ungrouped, the steps are the row's own items and take the step spacing. */
+.patgrid.ungrouped {
+  gap: 4px 3px;
+}
+.patbar {
+  display: flex;
+  gap: 3px;
+}
+/* A rest is an empty step, not an absent one: it needs an edge you can see
+   against the panel, or the pattern reads as ending wherever its last hit
+   was.  Every fourth carries a brighter one, so the bar is countable. */
+.patgrid .step {
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.patgrid .step.beat { border-color: var(--ink); }
+.patgrid .step.on { background: var(--accent); border-color: var(--accent); }
+.patgrid .step:hover { border-color: var(--accent2); }
+/* The field and its arrows read as one control. */
+.patlenbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+}
+.patlen {
+  width: 34px;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border-radius: 8px;
+  /* The same edge the steps carry - against the panel, --line is no edge. */
+  border: 1px solid var(--muted);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+/* The browser's own arrows are drawn in the platform's colours, which on this
+   background is no colour at all.  Ours replace them. */
+.patlen::-webkit-outer-spin-button,
+.patlen::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.patsteps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.patstep {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 10px;
+  padding: 0;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+}
+.patstep svg {
+  width: 9px;
+  height: 9px;
+  margin: 0;
+}
+.patstep:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.patctl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.patctl button {
+  padding: 8px 14px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: .04em;
+}
+/* line-height alone left the cross sitting on the baseline near the bottom of
+   the pill; centring it is the flex container's job. */
+.pat .clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  line-height: 0;
+}
+.pat .clear svg { width: 15px; height: 15px; margin: 0; }
+
+/* A slot's keyboard mapping, and the way to take it off again. */
+.kbmchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  font-size: 12px;
+  vertical-align: 1px;
+}
+.slot .what .kbmchip button {
+  padding: 0 4px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  line-height: 1;
+  cursor: pointer;
+}
+.slot .what .kbmchip button:hover { background: none; }
+.kbmchip button:hover { color: var(--accent2); }
+/* A scale whose degree count is not twelve does nothing until it is mapped. */
+.kbmneed {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--accent2);
+}
+/* The mapping button says what it takes; the icon buttons beside it are
+   square, so it sets its own padding and gets its line-height back. */
+.slot .ctl button.kbmbtn {
+  padding: 8px 14px;
+  font-size: 13px;
+  line-height: 1.1;
+  text-transform: none;
+  letter-spacing: .04em;
+}
+/* The mapping button reads as set once a mapping is on the slot. */
+.slot .ctl button.mapped {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .slot .ctl button {
   padding: 8px 16px;
@@ -1017,7 +1450,10 @@ strong {
   gap: 4px;
   padding: 14px 20px;
   border-radius: 12px;
-  border: 1px solid var(--line);
+  /* --line is right for a divider but disappears as an outline: an unchosen
+     option was a card you had to hunt for.  Muted at a fifth reads as an
+     edge without competing with the accent on the chosen one. */
+  border: 1px solid rgba(157, 154, 147, .22);
   background: transparent;
   color: var(--ink);
   text-transform: none;
@@ -1058,6 +1494,69 @@ strong {
 .vpo button[aria-pressed=true]:hover .why {
   color: #171716;
   opacity: .7;
+}
+/* The volts-per-octave pair as one divided rectangle: the same control the
+   knob rows are, laid across instead of down, so a choice between two reads
+   as a choice rather than two cards that happen to sit together.  Full width
+   because the row is the choice - 430 of a 780 column left it stranded. */
+.vpo.rowpick {
+  gap: 0;
+  max-width: none;
+  /* The field row is a flex, and a grid inside one shrink-wraps to its
+     content: dropping the max-width alone left it at 483 of 676. */
+  flex: 1;
+  min-width: 0;
+  /* Mixed from --ink rather than currentColor, as the knob rows are: here the
+     colour sweeps on hover, and a rule mixed from it would sweep with it. */
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.vpo.rowpick button {
+  position: relative;
+  border: 0;
+  border-right: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 0;
+}
+.vpo.rowpick button:last-child {
+  border-right: 0;
+}
+/* The shared button hover paints every border accent, and the only border a
+   segment still has is the rule beside it - so hovering drew a coloured line
+   down the middle.  The rule holds, whatever the segment's state. */
+.vpo.rowpick button:hover {
+  border-right-color: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+/* sweep-edge animates border-color, and an animation outranks every static
+   rule above - so pinning border-right-color was not enough on its own and
+   the line came back the moment a segment was hovered.  The type carries the
+   hover instead, as it does on the knob rows, and only on a segment that is
+   not the chosen one: the chosen one is dark on accent, and sweeping its type
+   to the accent would put it on its own background. */
+.vpo.rowpick button:hover:not([aria-pressed=true]) {
+  animation: sweep-ink var(--sweep-pass) forwards;
+}
+/* After the hover rule, so a selection still clears the line beside it. */
+.vpo.rowpick button[aria-pressed=true] {
+  z-index: 1;
+  border-right-color: transparent;
+  border-radius: 7px;
+}
+.vpo.rowpick button[aria-pressed=true]:hover,
+.vpo.rowpick button:has(+ button[aria-pressed=true]),
+.vpo.rowpick button:hover:has(+ button[aria-pressed=true]) {
+  border-right-color: transparent;
+}
+/* A segment's corners have to move with its fill.  The button transition
+   carries background over .15s but leaves border-radius to switch outright,
+   so the moment a choice moved the outgoing segment lost its corners while
+   its colour was still there - a square block of accent for 150ms, which is
+   the flash.  Same list as the button rule with border-radius added: the
+   shorthand replaces rather than extends, so the rest has to be restated. */
+.vpo.rowpick button,
+.knobmap .knobpick button {
+  transition: background .15s, color .15s, border-color .15s,
+              border-radius .15s, transform .08s;
 }
 /* --- the offsets laid out as the keyboard they describe -------------------- */
 .kbdwrap {
@@ -1159,6 +1658,12 @@ strong {
 }
 .section-note:last-of-type {
     margin-bottom: 20px;
+}
+/* Two notes under one toggle are a single thought carried over a line break,
+   not two paragraphs, so they keep the paragraph's own rhythm instead of the
+   10 that separates the standalone notes below the box. */
+.opt-toggle p.section-note:has(+ p.section-note) {
+  margin-bottom: 0;
 }
 .field-label {
   font-weight: 600;
@@ -1643,6 +2148,17 @@ section,
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, .30),
               inset 0 -1px 0 rgba(255, 255, 255, .03);
 }
+/* The changelog panel floats over the page rather than sitting in it, so it
+   carries more than a card does: the wide soft one reads as distance from the
+   surface behind, over the lift the cards take.  The light along the bottom
+   edge is the keyboard's, the page's mark for a well with more inside it than
+   shows.  One declaration, because a second box-shadow would replace this
+   rather than add to it. */
+.chlog-body {
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .03),
+              0 1px 42px rgba(0, 0, 0, .4),
+              0 16px 36px -20px rgba(0, 0, 0, .36);
+}
 
 /* Narrow screens.  Last in the sheet on purpose: these share specificity
    with the rules they override, so order is what decides. */
@@ -1708,6 +2224,26 @@ section,
   .row {
     gap: 10px;
   }
+  /* Four knobs across leave about 70px a column at this width, which is
+     narrower than any of their labels.  Two across, as the pads do. */
+  .knobmap {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 14px;
+  }
+  /* Sixteen steps beside the number, the length and the remove button leave
+     about 100px for the steps here.  The steps take a line of their own, one
+     bar of eight to a line, and the two controls sit at the right of the line
+     above them. */
+  .pat {
+    flex-wrap: wrap;
+  }
+  .patgrid {
+    order: 3;
+    flex: 0 0 100%;
+  }
+  .patlen {
+    margin-left: auto;
+  }
 }
 
 /* One switch for everything above.  The banana keeps its own rule further up
@@ -1722,4 +2258,321 @@ section,
     transition-duration: .001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* The step sequencer's pad map.  A pad means one of two things depending on
+   whether pad 4 is down, which a paragraph can only say and a picture can
+   show: the pads are drawn as they sit on the panel - a rounded plate with
+   its LED at the bottom left - once per state, so the two readings can be
+   compared down the column.  Labels are HTML, never text inside a drawing,
+   so nothing is ever scaled out of proportion. */
+/* The pad map explains a feature that is not in the build unless the
+   sequencer is, so it appears with the option rather than beside it.  Done
+   in CSS off the checkbox itself: there is no state to keep in step, and it
+   is right on first paint rather than after a script has run. */
+.padmap {
+  /* The pad's own width, shared by the plate that draws one and the row that
+     places four: as two numbers they drifted, and the drift showed up as the
+     row's slack piling behind the last pad. */
+  --pad-w: 132px;
+  display: none;
+  /* 14 above, as .knobsel takes: both are a figure a tick reveals under its
+     own option, and this one sat flush against the line above it. */
+  margin: 14px 0 18px;
+}
+.group:has(#sequencer:checked) .padmap {
+  display: block;
+}
+.padmap-state + .padmap-state {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.padmap-state h4 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+/* The control's name is one thing, so it does not break across a line:
+   "PAD 4" split after PAD when the heading grew long enough to wrap.  A rule
+   rather than a non-breaking space in the text, so it holds for every name
+   set this way and leaves no invisible character in the copy. */
+.padmap-state h4 strong {
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* Columns the width of a pad, not a quarter of the row: at 1fr each column
+   was wider than the pad it held, the pad sat at its left, and all four
+   slacks collected into one gap after the fourth.  space-between spends that
+   slack between the pads instead, so the row starts and ends flush.  minmax
+   lets them shrink when the row cannot hold four at full width. */
+.padrow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, var(--pad-w)));
+  justify-content: space-between;
+  gap: 16px;
+}
+.padfig {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* The plate: the proportions of the preset pad on the panel, with the LED
+   sitting in its bottom left corner. */
+.padfig .plate {
+  position: relative;
+  display: grid;
+  place-items: center;
+  /* The pad on the panel is wide and short - about five to two - not the
+     square-ish plate this first drew.  Measured off the User's Guide's own
+     photograph of the module. */
+  aspect-ratio: 5 / 2;
+  width: 100%;
+  max-width: var(--pad-w);
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+}
+.padfig .plate b {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The LED has to READ as a component, not as a smudge: unlit it is still a
+   ring with a face, which is what makes the plate legible as a pad rather
+   than as a plain rounded box. */
+/* Top left, where it sits on the module: the prominent dark circle in the
+   corner of every preset pad in the manual's photograph. */
+.padfig .led {
+  position: absolute;
+  /* Equal from both edges, so the LED sits on the corner's diagonal rather
+     than a pixel off it.  8, the tighter of the two it had: at 9 the gap
+     starts to read against a plate only 7px round at the corner. */
+  left: 8px;
+  top: 8px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #4f4b43;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55),
+              0 0 0 1px rgba(255, 255, 255, .06);
+}
+.padfig .fn {
+  font-weight: 700;
+  color: var(--ink);
+  /* 1.62 is the page's reading line-height, which is loose for a two-word
+     label: at that ratio a wrapped label reads as two separate lines rather
+     than one name. */
+  line-height: 1.25;
+  /* The mark hangs into the margin so a wrapped line starts under the first
+     line's text rather than under the mark.  Measured from the mark itself,
+     so it stays right if the mark's size or gap changes. */
+  padding-left: calc(var(--tr-w) + var(--tr-gap));
+  text-indent: calc(-1 * (var(--tr-w) + var(--tr-gap)));
+}
+/* The hang is there to clear a mark, so a label without one keeps neither
+   half of it.  Both labels that carry no mark were a word long while it
+   stayed invisible; the first one to wrap indented its second line 18 to
+   clear a mark that was never in front of it. */
+.padfig .fn:not(:has(.tr)) {
+  padding-left: 0;
+  text-indent: 0;
+}
+/* The transport marks, on the functions they name.  Drawn rather than typed:
+   as glyphs, ● ▶ ■ come from whichever font has them and ✕ is a letter in
+   some, so none of the four would match the others.  Inline and on the
+   baseline, the way the Windows mark sits in a heading; the explicit box and
+   margin keep the diagram rule further down this sheet off them. */
+.padmap {
+  --tr-w: 15px;
+  --tr-gap: 3px;
+}
+.padmap .tr {
+  width: var(--tr-w);
+  height: var(--tr-w);
+  margin: 0 var(--tr-gap) 0 0;
+  display: inline-block;
+  /* Set by eye, and it lands between the two figures: the ink centres 5.0px
+     above the baseline where the x-height's middle is 4.0 and the capitals'
+     is 5.68.  Nearer the x-height, which is what a mark beside a mixed-case
+     word wants, but not sitting all the way down on it. */
+  vertical-align: -2.5px;
+}
+/* Coloured by what each one does, not decoratively: record takes the page's
+   own red, which is also what the LED lights, play the ok green, and stop
+   the accent.  Clear stays ink: red would have read as the warning red this
+   page uses for what cannot be undone, and clearing a sequence you are in
+   the middle of recording is not that.  The class sits on a span around the
+   mark AND
+   the word it names, so the two are never a different colour from each
+   other; the svg draws in currentColor and follows. */
+/* The triangles and the arrow read smaller and sit higher than a circle or a
+   square drawn to the same box - open shapes carry their weight off-centre,
+   and a point has no edge to line up.  A slightly bigger box and a little
+   further down, by eye rather than by the arithmetic the others follow. */
+.padmap .tr-optical {
+  --tr-w: 16px;
+  vertical-align: -3px;
+}
+.padmap .tr-rec {
+  color: var(--bad);
+}
+.padmap .tr-play {
+  color: var(--ok);
+}
+.padmap .tr-stop {
+  color: var(--accent);
+}
+.padmap .tr-clear {
+  color: var(--ink);
+}
+/* On a state heading the mark sits against 13px uppercase, so it comes down
+   a size.  3px, not 7: the heading's own .1em of tracking is added after the
+   mark as well as after every letter, so the gap reads wider than it is set. */
+.padmap-state h4 .tr {
+  width: 11px;
+  height: 11px;
+  margin-right: 3px;
+  /* The one that stays on the cap height, because this heading is
+     text-transform: uppercase - there is no lowercase body to centre on, so
+     the caps are what the mark has to level with.  11px of mark against
+     9.23px of cap at 13px. */
+  vertical-align: -0.88px;
+}
+.padfig .sub {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+/* The pad being held is the one the whole gesture hangs off, so it is lit,
+   and its LED blinks the way the firmware blinks it. */
+.padfig.is-held .plate {
+  border-color: var(--accent);
+}
+.padfig .led.blink {
+  background: var(--bad);
+  /* Mixed from --bad rather than written out, so a red that moves in the
+     theme takes its own glow with it. */
+  box-shadow: 0 0 8px color-mix(in srgb, var(--bad) 55%, transparent);
+  animation: padblink 1.2s steps(1, end) infinite;
+}
+@keyframes padblink {
+  50% {
+    background: #4f4b43;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55),
+                0 0 0 1px rgba(255, 255, 255, .06);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .padfig .led.blink {
+    animation: none;
+  }
+}
+/* A pad that does nothing in this state is dimmed rather than dropped, so
+   the four pads stay in the same places in both rows and the eye can run
+   straight down the column.  Dimmed PART BY PART rather than with opacity on
+   the whole figure: pad 1 does nothing to the take while recording, but its
+   LED is blinking the whole time, and a parent's opacity is not something a
+   child can climb back out of. */
+.padfig.is-off .plate {
+  border-color: rgba(46, 46, 43, .55);
+}
+.padfig.is-off .plate b,
+.padfig.is-off .fn,
+.padfig.is-off .sub {
+  opacity: .4;
+}
+.padfig.is-off .fn {
+  color: var(--muted);
+}
+/* Narrow: four across becomes two, which keeps the plate big enough to read
+   the number and the LED without squinting. */
+@media (max-width: 640px) {
+  .padrow {
+    grid-template-columns: repeat(2, minmax(0, var(--pad-w)));
+    gap: 18px 14px;
+  }
+}
+
+/* The strip, drawn as it is on the panel: a long plate - about nine to one -
+   with the red sawtooth running through it.  It sits under the pads in the
+   recording state because it is not a pad and does not belong in their row,
+   and its two halves are labelled where they actually are. */
+.stripfig {
+  /* 14, as the pads take from their heading: the strip is the same state
+     continuing, not a new one, and 20 read as a break between them. */
+  margin-top: 14px;
+  /* The plate's border, named so the captions below can be inset by the same
+     amount.  It is drawn in --line, which is 8 from the card behind it where
+     the fill is 31 - so the eye reads the strip as starting where the fill
+     does, one pixel inside the box, and captions aligned to the box sat a
+     pixel outside the strip. */
+  --strip-edge: 1px;
+}
+.stripfig .plate {
+  position: relative;
+  display: block;
+  width: 100%;
+  /* Measured off the module: 598 by 55, which is eleven to one, not the nine
+     this first drew.  The pad beside it is 122 by 49 - almost exactly five
+     to two - so the two are drawn to the same rule. */
+  aspect-ratio: 11 / 1;
+  /* A floor only for the very narrowest screens: any higher and it stops
+     being eleven to one, which is the proportion that makes it read as the
+     strip rather than as a bar. */
+  min-height: 26px;
+  border-radius: 7px;
+  border: var(--strip-edge) solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+}
+.stripfig .plate svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+/* Sizing the chevrons off the panel put them a shade high and short once the
+   viewBox was stretched to the plate; this is the correction, in user units
+   so it holds at every width.  It lets the arms run past the top edge, which
+   is what the module shows - they meet the edge rather than stopping at it. */
+.stripfig .plate svg g {
+  transform: translateY(-10.5px) scale(1.86, 1.2);
+}
+/* The half the touch lands in is what decides rest against tie, so the
+   division is drawn rather than described. */
+.stripfig .half {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  /* Centred on the middle, not starting at it: at six wide the difference
+     is three pixels of a strip whose whole point is which half you touched. */
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--line);
+}
+.stripfig .halves {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+  padding-inline: var(--strip-edge);
+}
+.stripfig .halves > span {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+.stripfig .halves b {
+  color: var(--ink);
+  font-weight: 700;
+  display: block;
+}
+.stripfig .halves > span + span {
+  text-align: right;
 }

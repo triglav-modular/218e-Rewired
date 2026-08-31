@@ -23,11 +23,11 @@ mkdir -p "$WORK_DIR" 2>/dev/null
 LOG_FILE="$WORK_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"; printf "\033[?25h"' EXIT
-EXPECTED_SHA256="5ea2ba82dcf9403a8b4e10faa88dc957c5e597ad61fc5feb3879ae745faf64cd"
+EXPECTED_SHA256="87246bb2f852b24b71e31f73cfcd9e7caf9aa8d53e728b8e235edfbd029961de"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 1.2.0 (5ea2ba82)"
+FIRMWARE_VERSION="Rewired 2.0.0 (87246bb2)"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
@@ -1066,9 +1066,21 @@ fi
 ok "dfu-programmer runs"
 
 step "Putting the instrument into DFU"
-if check_dfu_device; then
-    log "MIDI port was unavailable, but the 218e V3 is already in DFU mode."
-else
+# The jump to the bootloader sometimes detaches from USB and never
+# re-attaches: ioreg then shows no 218e and no AT32UC3B at all, and only a
+# power cycle brings the instrument back (in application mode - nothing was
+# written).  Observed repeatedly on real hardware, and intermittent.  So a
+# failed re-enumeration is not the end: the script asks for a power cycle,
+# waits for the instrument to reappear on MIDI, and sends the DFU request
+# again, up to four attempts in all.
+DFU_ATTEMPTS=4
+attempt=1
+while :; do
+    if check_dfu_device; then
+        log "The 218e V3 is in DFU mode."
+        break
+    fi
+
     midi_ports="$("$SENDMIDI" list 2>&1)"
     midi_list_status=$?
     printf '%s\n' "$midi_ports" >> "$LOG_FILE"
@@ -1076,7 +1088,7 @@ else
         fail "The 218e V3 CoreMIDI output port is unavailable. Nothing was erased; power-cycle the 218e V3, reconnect USB directly, and retry."
     fi
 
-    log "Asking the 218e V3 to enter DFU mode over MIDI."
+    log "Asking the 218e V3 to enter DFU mode over MIDI (attempt ${attempt}/${DFU_ATTEMPTS})."
     sysex_output="$("$SENDMIDI" dev 218e syx 0 2 55 2 1 1 2>&1)"
     sysex_status=$?
     printf '%s\n' "$sysex_output" >> "$LOG_FILE"
@@ -1085,25 +1097,67 @@ else
         fail "SendMIDI could not deliver the DFU request. Nothing was erased; power-cycle the 218e V3 and retry."
     fi
     log "DFU SysEx delivered; waiting up to 60 seconds for USB re-enumeration."
-fi
 
-if ! wait_for_dfu_device; then
+    wait_for_dfu_device && break
+
     if check_218_usb_device; then
         fail "The 218e V3 stayed in application mode after the DFU request. Nothing was erased; power-cycle it and retry."
-    else
-        # The SysEx was delivered, so the instrument has almost certainly left
-        # application mode even though the DFU device never appeared.  Say so:
-        # a silent keyboard with no MIDI port looks far worse than it is.
-        echo
-        echo "  The 218e V3 accepted the request and is most likely sitting in DFU"
-        echo "  mode now, which is why it has disappeared from MIDI."
+    fi
+
+    if [ "$attempt" -ge "$DFU_ATTEMPTS" ]; then
         echo
         echo "  Nothing was erased, and nothing was written."
         echo "  ${C_BOLD}Power-cycle the instrument and it will come back up normally.${C_RESET}"
         echo
-        fail "The AT32UC3B DFU device did not appear on USB. Reconnect USB directly, avoid hubs, and retry."
+        fail "The AT32UC3B DFU device did not appear on USB after ${DFU_ATTEMPTS} attempts. Reconnect USB directly, avoid hubs, and retry."
     fi
-fi
+
+    # Vanished from USB entirely: the request was accepted, the instrument
+    # detached, and the bootloader never re-attached.  A power cycle
+    # recovers it, and the retry loop takes it from there.
+    echo
+    echo "  The DFU device did not appear on USB. The 218e V3 accepted the"
+    echo "  request and detached, but the bootloader did not re-attach —"
+    echo "  this happens now and then, and nothing was erased or written."
+    echo
+    echo "  ${C_BOLD}Power-cycle the 218e V3 now.${C_RESET} It will come back up normally,"
+    echo "  and this script will ask it to enter DFU again as soon as it"
+    echo "  reappears (attempt $((attempt + 1)) of ${DFU_ATTEMPTS})."
+    echo
+    log "DFU device absent and 218e gone from USB; waiting for a power cycle (attempt ${attempt}/${DFU_ATTEMPTS} failed)."
+
+    waited=0
+    came_back=0
+    while [ "$waited" -lt 300 ]; do
+        if check_dfu_device; then
+            came_back=2
+            break
+        fi
+        if "$SENDMIDI" list 2>/dev/null | grep -q "218e"; then
+            came_back=1
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+        case "$waited" in
+            30|60|120|180|240)
+                log "Still waiting for the power-cycled 218e V3 (${waited}/300 seconds)."
+                ;;
+        esac
+    done
+    if [ "$came_back" -eq 2 ]; then
+        log "The AT32UC3B DFU device appeared while waiting."
+        break
+    fi
+    if [ "$came_back" -eq 0 ]; then
+        fail "The 218e V3 did not reappear within 5 minutes. Nothing was erased; power-cycle it and rerun this script."
+    fi
+    ok "The 218e V3 is back — asking it again"
+    # CoreMIDI registration can trail the port listing; a beat of settling
+    # keeps the re-sent SysEx from racing it.
+    sleep 2
+    attempt=$((attempt + 1))
+done
 DFU_SESSION_ACTIVE=1
 log "AT32UC3B DFU device detected."
 

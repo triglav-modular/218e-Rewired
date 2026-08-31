@@ -11,7 +11,12 @@ keyboard.
 - **Arpeggiator controls** (random octave walk, random tempo, random note order)
 - **Global pressure-responsive vibrato**
 
-- **Alternate tunings** switched from edit mode. 
+- **Step sequencer**, 64 steps with rests, ties and 303-style slides,
+  recorded and played from the preset pads.
+- **External clock divide** — the arpeggiator rate knob divides a patched-in
+  clock, /1 to /8.
+- **Alternate tunings** switched from edit mode, including **Scala keyboard
+  maps** and scales that repeat at something other than the octave.
 - **Per-note pitch calibration.**
 - **Selectable volts per octave**
 
@@ -51,7 +56,7 @@ after an interrupted flash. The second writes nothing.
 
 | Control | What it does |
 |---|---|
-| Knob 1 | Scales the whole pressure window, 0.50x–1.14x. Lower reaches full output sooner. |
+| Knob 1 | Scales the whole pressure window, 1.21x–0.70x clockwise, unity at 4.1 of 10. |
 | Key 28 / Key 27 | Tuning slot select. LEDs: *rem-en* = slot 0, *trn* = slot 1, both dark = slot 2. |
 
 
@@ -69,7 +74,7 @@ python3 tools/build.py --no-ghidra          # writes build/
 python3 tools/test.py --golden              # rebuild and compare
 ```
 
-Python 3.11+; Ghidra 12.x only if you drop `--no-ghidra`. The seven options
+Python 3.11+; Ghidra 12.x only if you drop `--no-ghidra`. The options
 live in [`config/218e.toml`](config/218e.toml), and `tools/avr32/` holds a
 second, Ghidra-free toolchain that assembles the same firmware in JavaScript —
 `tools/avr32/sweep.py` builds every option both ways and checks the images
@@ -80,8 +85,9 @@ match. See [`docs/BUILD.md`](docs/BUILD.md).
 ## Layout
 
 ```
-config/       the seven options — the only file you normally edit
-tunings/      Scala files (12 degrees, 2/1 octave)
+config/       the options — the only file you normally edit
+tunings/      Scala files, with .kbm keyboard maps where the degree
+              count is not 12 or the period is not the octave
 calibration/  measured per-key tracking error — instrument-specific
 src/          Ghidra scripts: the AVR32 assembler and verification tools
 tools/        build.py, and avr32/ — the Ghidra-free build

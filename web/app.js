@@ -6,7 +6,9 @@
 
     var $ = function (id) { return document.getElementById(id); };
     var state = { factoryText: null, factoryMtime: null, slots: null,
-                  calibration: null, result: null };
+                  calibration: null, result: null, patterns: [] };
+    // What each preset knob is set to; the buttons below drive it.
+    var knobRole = { knob1: 'order', knob2: 'spacing', knob3: 'octaves', knob4: 'vibrato' };
 
     function download(text, name, type) {
         var a = document.createElement('a');
@@ -198,6 +200,131 @@
         return svg;
     }
 
+    // The .kbm picker is shared; this says whose button opened it.
+    var mapTarget = -1;
+
+    // Knob 2's pattern bank.  A row per pattern, a cell per step: the grid is
+    // the honest shape for something whose meaning is which steps sound, and
+    // the text form beside it is what people paste to each other.
+    function patternText(p) {
+        return p.text.slice(0, p.length);
+    }
+    // How many steps to a group.  The largest divisor of the length that is
+    // still a group worth reading - up to eight, and never so small that the
+    // pattern becomes a row of pairs - or the whole length when nothing
+    // divides it evenly.
+    function barSize(length) {
+        for (var n = Math.min(8, length); n >= 3; n--) {
+            if (length % n === 0) return n;
+        }
+        return length;
+    }
+
+    function renderPatterns() {
+        var list = $('patList');
+        list.textContent = '';
+        state.patterns.forEach(function (p, i) {
+            var row = document.createElement('div');
+            row.className = 'pat';
+
+            var n = document.createElement('span');
+            n.className = 'patnum';
+            n.textContent = (i + 1);
+            row.appendChild(n);
+
+            // Grouped so the groups come out even: 16 as 8 and 8, 10 as 5 and
+            // 5, 9 as three 3s.  A length with no such division - 11, 13, 22 -
+            // is left as one run rather than broken up unevenly.
+            var grid = document.createElement('span');
+            grid.className = 'patgrid';
+            var bars = barSize(p.length);
+            // A length nothing divides - 26, say - has no groups to draw, and
+            // a single group that long cannot wrap: it would run out under the
+            // length field.  Those steps go straight into the row and wrap
+            // wherever they run out of line.
+            var grouped = bars <= 8;
+            if (!grouped) grid.className += ' ungrouped';
+            // The marked step counts the group, not a fixed four: at groups of
+            // five, every fourth step cuts across them.  It marks each group's
+            // first step, which is what a wrapped line loses - the gap that
+            // separates groups is not there at the start of a line.  Ungrouped
+            // lengths have no group to count, so the mark is a plain ruler.
+            var beat = grouped ? bars : 4;
+            var bar = grid;
+            for (var k = 0; k < p.length; k++) {
+                (function (step) {
+                    if (grouped && step % bars === 0) {
+                        bar = document.createElement('span');
+                        bar.className = 'patbar';
+                        grid.appendChild(bar);
+                    }
+                    var cell = document.createElement('button');
+                    cell.type = 'button';
+                    cell.className = 'step' + (p.text[step] !== '.' ? ' on' : '')
+                        + (step % beat === 0 ? ' beat' : '');
+                    cell.title = 'step ' + (step + 1);
+                    cell.addEventListener('click', function () {
+                        var t = p.text.split('');
+                        t[step] = t[step] === '.' ? 'x' : '.';
+                        p.text = t.join('');
+                        renderPatterns(); invalidate();
+                    });
+                    bar.appendChild(cell);
+                })(k);
+            }
+            row.appendChild(grid);
+
+            // The number keeps its field, but not the browser's own up and
+            // down arrows: those are drawn in the platform's colours and are
+            // all but invisible on this background.  Ours are the same
+            // chevrons the rest of the page uses.
+            var lenbox = document.createElement('span');
+            lenbox.className = 'patlenbox';
+            var len = document.createElement('input');
+            len.type = 'number'; len.min = 1; len.max = 32; len.value = p.length;
+            len.className = 'patlen'; len.title = 'steps before it repeats';
+            function setLength(v) {
+                v = Math.max(1, Math.min(32, v || 1));
+                while (p.text.length < v) p.text += '.';
+                p.length = v;
+                renderPatterns(); invalidate();
+            }
+            len.addEventListener('change', function () {
+                setLength(parseInt(len.value, 10));
+            });
+            lenbox.appendChild(len);
+
+            var steppers = document.createElement('span');
+            steppers.className = 'patsteps';
+            [['up', 1], ['down', -1]].forEach(function (pair) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'patstep';
+                b.title = pair[1] > 0 ? 'one step longer' : 'one step shorter';
+                b.appendChild(icon(pair[0]));
+                b.addEventListener('click', function () {
+                    setLength(p.length + pair[1]);
+                });
+                steppers.appendChild(b);
+            });
+            lenbox.appendChild(steppers);
+            row.appendChild(lenbox);
+
+            var x = document.createElement('button');
+            x.type = 'button'; x.className = 'clear'; x.title = 'remove this pattern';
+            x.appendChild(icon('clear'));
+            x.addEventListener('click', function () {
+                state.patterns.splice(i, 1);
+                renderPatterns(); invalidate();
+            });
+            row.appendChild(x);
+            list.appendChild(row);
+        });
+        $('patternBody').classList.toggle(
+            'hidden', !$('remap_knobs').checked || knobRole.knob2 !== 'patterns');
+        $('patAdd').disabled = state.patterns.length >= 32;
+    }
+
     function renderSlots() {
         var host = $('slots');
         host.innerHTML = '';
@@ -221,20 +348,67 @@
                 // grid in every slot, which is why switching tuning never
                 // moves the note the 208 was trimmed to.  Worth showing: it is
                 // computed here, not baked into the file.
-                var shift = '';
+                var anchorChip = '', anchorTip = '', mapShape = '';
                 try {
-                    var cents = BUILDLIB.parseScala(entry.text, entry.name);
-                    var off = BUILDLIB.anchorOffset(cents, 9);
-                    shift = '  ' + (off >= 0 ? '+' : '') + off.toFixed(2) + 'c';
+                    // Resolved through the same function web/build.js uses, so
+                    // what the page says about a slot cannot drift from what
+                    // the build does with it.
+                    var scale = BUILDLIB.slotScale(entry);
+                    var usable = scale.degrees || scale.cents.length - 1 === 12;
+                    if (scale.degrees) mapShape = scale.degrees.length + ' keys/oct';
+                    var period = usable ? scale.cents[scale.formal] : 1200.0;
+                    // The build drops the anchor when the scale does not repeat
+                    // at the octave: pinning one key to its 12-TET pitch says
+                    // nothing about a scale that has no place on that grid, so
+                    // degree 0 keeps the bottom key instead.  Reporting the
+                    // offset anyway named a shift no image ever carried.
+                    if (!usable) {
+                        // Not buildable yet - the slot's own warning says why.
+                    } else if (Math.abs(period - 1200.0) > 0.001) {
+                        anchorChip = 'bottom key anchored';
+                        anchorTip = 'anchored on the bottom key';
+                    } else {
+                        var offset = BUILDLIB.anchorOffset(
+                            scale.cents, 9, scale.degrees, period);
+                        var shift = '  ' + (offset >= 0 ? '+' : '')
+                            + offset.toFixed(2) + 'c';
+                        anchorChip = 'A anchored' + shift;
+                        anchorTip = 'anchored on A by' + shift;
+                    }
                 } catch (e) { /* already reported on load */ }
-                what.textContent = entry.name;
-                what.title = entry.name + (shift ? ': anchored on A by' + shift : '');
-                if (shift) {
+                var fname = document.createElement('span');
+                fname.className = 'fname';
+                fname.textContent = entry.name;
+                what.appendChild(fname);
+                what.title = entry.name + (entry.kbmName ? ' mapped by ' + entry.kbmName : '') +
+                    (anchorTip ? ': ' + anchorTip : '');
+                if (entry.kbmName) {
+                    var chip = document.createElement('span');
+                    chip.className = 'kbmchip';
+                    chip.textContent = entry.kbmName;
+                    var off = document.createElement('button');
+                    off.textContent = '\u00d7';
+                    off.title = 'remove this keyboard mapping';
+                    off.addEventListener('click', function () {
+                        delete entry.kbmName; delete entry.kbmText;
+                        renderSlots(); invalidate();
+                    });
+                    chip.appendChild(off);
+                    what.appendChild(chip);
+                }
+                if (anchorChip) {
                     var tag = document.createElement('span');
                     tag.className = 'muted';
                     tag.style.cssText = 'font-family:inherit;font-size:11px;margin-left:8px';
-                    tag.textContent = 'A anchored' + shift;
+                    tag.textContent = anchorChip +
+                        (mapShape ? ' · ' + mapShape : '');
                     what.appendChild(tag);
+                }
+                if (entry.needsMap && !entry.kbmText) {
+                    var warn = document.createElement('span');
+                    warn.className = 'kbmneed';
+                    warn.textContent = 'needs a keyboard mapping';
+                    what.appendChild(warn);
                 }
             } else {
                 what.textContent = 'factory temperament';
@@ -255,6 +429,22 @@
                 });
                 ctl.appendChild(b);
             });
+            // Each scale carries its own mapping button, because a .kbm
+            // belongs to one scale and nothing about the file says which.
+            var m = document.createElement('button');
+            m.textContent = '.kbm';
+            m.disabled = !entry;
+            m.className = 'kbmbtn' + (entry && entry.kbmText ? ' mapped' : '');
+            m.title = !entry ? 'no scale in this slot'
+                : entry.kbmText ? 'replace ' + entry.kbmName + ' — the keyboard mapping'
+                : 'add a keyboard mapping (.kbm) for ' + entry.name;
+            m.addEventListener('click', function () {
+                mapTarget = i;
+                $('kbm').value = '';   // re-picking the same file must still fire
+                $('kbm').click();
+            });
+            ctl.appendChild(m);
+
             var x = document.createElement('button');
             x.className = 'clear';
             x.appendChild(icon('clear')); x.title = 'clear this slot';
@@ -276,12 +466,102 @@
             : 'all three slots factory';
     }
 
+    // A mapping is validated against the scale it is being attached to: the
+    // degree it names has to exist in THAT scale, so the file alone cannot
+    // say whether it is good.
+    $('kbm').addEventListener('change', function (e) {
+        var f = e.target.files && e.target.files[0];
+        var slot = state.slots[mapTarget];
+        if (!f || !slot) return;
+        var r = new FileReader();
+        r.onload = function () {
+            try {
+                var cents = BUILDLIB.parseScala(slot.text, slot.name, true);
+                BUILDLIB.parseKbm(r.result, f.name, cents);
+            } catch (err) {
+                msg($('sclMsg'), 'bad', err.message);
+                return;
+            }
+            slot.kbmName = f.name;
+            slot.kbmText = r.result;
+            msg($('sclMsg'), '', '');
+            renderSlots(); invalidate();
+        };
+        r.onerror = function () { msg($('sclMsg'), 'bad', f.name + ': could not be read'); };
+        r.readAsText(f);
+    });
+
+    // The pattern bank's own controls.
+    $('patAdd').addEventListener('click', function () {
+        if (state.patterns.length >= 32) return;
+        // A copy of the last row: a bank is usually variations on something,
+        // and a variation starts from what it varies.  The first one has
+        // nothing to copy, so it gets a plain four-to-the-floor.
+        var last = state.patterns[state.patterns.length - 1];
+        state.patterns.push(last
+            ? { text: last.text, length: last.length }
+            : { text: 'x...x...x...x...', length: 16 });
+        renderPatterns(); invalidate();
+    });
+    $('patClix').addEventListener('click', function () {
+        state.patterns = GEN.clix.map(function (mask) {
+            var t = '';
+            for (var i = 0; i < 32; i++) t += (mask >>> i) & 1 ? 'x' : '.';
+            return { text: t, length: 32 };
+        });
+        renderPatterns(); invalidate();
+    });
+    $('patCopy').addEventListener('click', function () {
+        download(state.patterns.map(patternText).join('\n') + '\n',
+                 'patterns.txt', 'text/plain');
+    });
+    $('patPaste').addEventListener('click', function () { $('patFile').click(); });
+    $('patFile').addEventListener('change', function (e) {
+        var file = e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        var r = new FileReader();
+        r.onload = function () { readPatterns(String(r.result)); };
+        r.readAsText(file);
+    });
+    // One pattern per line; a dot is a rest and anything else a hit, which is
+    // how these get written down and passed around.
+    function readPatterns(text) {
+        var rows = text.split(/[\r\n]+/).map(function (l) {
+            return l.replace(/\s+/g, '');
+        }).filter(function (l) { return l.length; });
+        var bad = rows.filter(function (l) {
+            return l.length > 32 || !/[^.]/.test(l);
+        });
+        if (!rows.length || bad.length) {
+            msg($('buildMsg'), 'bad', !rows.length
+                ? 'Nothing to read there.'
+                : 'Each line needs 1 to 32 steps and at least one hit: '
+                  + JSON.stringify(bad[0]));
+            return;
+        }
+        if (rows.length > 32) {
+            msg($('buildMsg'), 'bad', rows.length + ' patterns; the bank holds 32.');
+            return;
+        }
+        state.patterns = rows.map(function (l) {
+            var t = l.replace(/[^.]/g, 'x');
+            return { text: t + '.'.repeat(32 - t.length), length: t.length };
+        });
+        msg($('buildMsg'), '', state.patterns.length + ' patterns read.');
+        renderPatterns(); invalidate();
+    }
+
     $('sclPick').addEventListener('click', function () { $('scl').click(); });
     $('scl').addEventListener('change', function (e) {
         var files = Array.prototype.slice.call(e.target.files);
         var problems = [];
         var pending = files.length;
         if (!pending) return;
+        // Every file is read before any is placed: a .kbm has to find its
+        // scale, and a multi-select hands them over in whatever order the
+        // browser likes.  Scales take slots first, then each map is paired
+        // with the scale of the same name, or with the first mapless slot.
         files.forEach(function (f) {
             var r = new FileReader();
             r.onload = function () {
@@ -290,12 +570,21 @@
                     // Validate now, so a bad scale is caught while it is still
                     // obvious which file it was.
                     BUILDLIB.parseScala(entry.text, entry.name);
-                    var free = state.slots.indexOf(null);
-                    if (free < 0) problems.push(f.name + ': all three slots are full');
-                    else state.slots[free] = entry;
                 } catch (err) {
-                    problems.push(err.message);
+                    // A count other than twelve is not wrong, only unfinished:
+                    // a keyboard mapping decides what the keys do with it.  Any
+                    // other complaint is a real one.
+                    try {
+                        BUILDLIB.parseScala(entry.text, entry.name, true);
+                        entry.needsMap = true;
+                    } catch (fatal) {
+                        problems.push(fatal.message);
+                        return;
+                    }
                 }
+                var free = state.slots.indexOf(null);
+                if (free < 0) { problems.push(f.name + ': all three slots are full'); return; }
+                state.slots[free] = entry;
             };
             r.onerror = function () {
                 problems.push(f.name + ': could not be read');
@@ -554,6 +843,15 @@
         var o = {
             latching_arp: $('latching_arp').checked,
             remap_knobs: $('remap_knobs').checked,
+            sequencer: $('sequencer').checked,
+            clock_divide: $('clock_divide').checked,
+            knob1: $('remap_knobs').checked ? knobRole.knob1 : 'factory',
+            knob2: $('remap_knobs').checked ? knobRole.knob2 : 'factory',
+            knob3: $('remap_knobs').checked ? knobRole.knob3 : 'factory',
+            knob4: $('remap_knobs').checked ? knobRole.knob4 : 'factory',
+            arp_patterns: ($('remap_knobs').checked && knobRole.knob2 === 'patterns')
+                ? state.patterns.map(function (p) { return [p.text, p.length]; })
+                : null,
             pressure_fix: $('pressure_fix').checked,
             pressure_portamento: $('pressure_portamento').checked,
             volts_per_octave: vpo
@@ -583,7 +881,8 @@
         if (!fix.checked) porta.checked = false;
     }
     $('pressure_fix').addEventListener('change', syncPortamento);
-    ['latching_arp', 'remap_knobs', 'pressure_fix', 'pressure_portamento']
+    ['latching_arp', 'remap_knobs', 'sequencer', 'clock_divide',
+     'pressure_fix', 'pressure_portamento']
         .forEach(function (id) {
             $(id).addEventListener('change', invalidate);
         });
@@ -741,7 +1040,8 @@
     function describe(o) {
         var lines = [
             'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
-            'Knobs 1-4: ' + (o.remap_knobs ? 'remapped' : 'factory'),
+            'Knobs 1-4: ' + [o.knob1, o.knob2, o.knob3, o.knob4].join(', '),
+            'Sequencer: ' + (o.sequencer ? 'on' : 'off'),
             'Pressure: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
             'Scaling: ' + o.volts_per_octave + ' V/octave',
@@ -993,24 +1293,93 @@
     // build result, not in the masthead.
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
 
-    // The changelog, from the same generated data the package's
-    // changelog.txt ships - version lines become headings.
+    // Each preset knob picks its own role, the same control the volts-per-
+    // octave choice uses.  The pattern editor belongs to knob 2 and only
+    // appears when that knob is set to patterns.
+    $('remap_knobs').addEventListener('change', function () {
+        $('knobsel').classList.toggle('hidden', !$('remap_knobs').checked);
+        renderPatterns();
+    });
+    $('knobsel').classList.toggle('hidden', !$('remap_knobs').checked);
+    ['knob1', 'knob2', 'knob3', 'knob4'].forEach(function (id) {
+        Array.prototype.forEach.call($(id).children, function (b) {
+            b.addEventListener('click', function () {
+                knobRole[id] = b.dataset.v;
+                Array.prototype.forEach.call($(id).children, function (o) {
+                    o.setAttribute('aria-pressed', String(o === b));
+                });
+                if (id === 'knob2' && b.dataset.v === 'patterns'
+                        && !state.patterns.length) {
+                    state.patterns = [{ text: 'x...x...x...x...', length: 16 }];
+                }
+                renderPatterns();
+                invalidate();
+            });
+        });
+    });
+
+    // The changelog, from the same generated data the package's changelog.txt
+    // ships.  That file is plain text - "2.0 (2026-08-29)" opening a release,
+    // "- " opening an entry - and this turns it into headings and real list
+    // items, so the panel gets hanging bullets rather than a run of dashes
+    // held together by white-space: pre-line.
     (function () {
-        var body = $('chlogBody'), btn = $('chlogBtn');
+        var body = $('chlogBody'), btn = $('chlogBtn'), list = null;
         GEN.changelog.split('\n').forEach(function (line) {
             if (!line.trim()) return;
-            var el = /^\d+\.\d+/.test(line)
-                ? document.createElement('strong')
-                : document.createElement('span');
-            el.textContent = line;
-            body.appendChild(el);
-            body.appendChild(document.createTextNode('\n'));
+            var head = /^(\d+\.\d+(?:\.\d+)?)\s*(?:\((.+)\))?\s*$/.exec(line);
+            if (head) {
+                var rel = document.createElement('div');
+                rel.className = 'chlog-rel';
+                var h = document.createElement('h4');
+                h.className = 'chlog-ver';
+                h.appendChild(document.createTextNode(head[1]));
+                if (head[2]) {
+                    var when = document.createElement('span');
+                    when.className = 'chlog-date';
+                    when.textContent = head[2];
+                    h.appendChild(when);
+                }
+                list = document.createElement('ul');
+                list.className = 'chlog-list';
+                rel.appendChild(h);
+                rel.appendChild(list);
+                body.appendChild(rel);
+                return;
+            }
+            // A line before any version heading would have nowhere to go, so
+            // it opens an unlabelled list rather than being dropped.
+            if (!list) {
+                list = document.createElement('ul');
+                list.className = 'chlog-list';
+                body.appendChild(list);
+            }
+            var li = document.createElement('li');
+            li.textContent = line.replace(/^[-\u2013\u2014]\s*/, '');
+            list.appendChild(li);
         });
+        // Centre the panel on the pill, then pull it back inside the paragraph
+        // if that hung it over an edge.  The paragraph is the content column,
+        // so a panel within it is on-screen at every width.  Measured rather
+        // than assumed: the pill sits wherever the sentence ends, which moves
+        // with the wrap.  Setting right as well as left would stretch it.
+        function centreChangelog() {
+            if (body.classList.contains('hidden')) return;
+            var sub = body.offsetParent;
+            if (!sub) return;
+            var room = sub.clientWidth - body.offsetWidth;
+            var want = btn.offsetLeft + btn.offsetWidth / 2 - body.offsetWidth / 2;
+            body.style.setProperty('--chlog-left',
+                Math.round(Math.max(0, Math.min(want, room))) + 'px');
+            body.style.right = 'auto';
+        }
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
             var open = body.classList.toggle('hidden');
             btn.setAttribute('aria-expanded', String(!open));
+            centreChangelog();
         });
+        window.addEventListener('resize', centreChangelog);
         document.addEventListener('click', function () {
             body.classList.add('hidden');
             btn.setAttribute('aria-expanded', 'false');
@@ -1018,6 +1387,7 @@
         body.addEventListener('click', function (e) { e.stopPropagation(); });
     })();
 
+    renderPatterns();
     renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
     bindDashes(document.body);
 })();

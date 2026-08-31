@@ -96,11 +96,85 @@ var BUILDLIB = (function () {
         }
         cfg.portamento.pressure_blend = blend;
         cfg.portamento.zero_snap = blend;
+
+        // Each knob's role, expanded the same way tools/options.py does.
+        var ROLES = { knob1: ['order', 'orders', 'factory'],
+                      knob2: ['spacing', 'swing', 'patterns', 'factory'],
+                      knob3: ['octaves', 'factory'],
+                      knob4: ['vibrato', 'trn', 'factory'] };
+        var roles = {};
+        Object.keys(ROLES).forEach(function (k) {
+            var role = want(k, null);
+            if (role === null) role = remap ? ROLES[k][0] : 'factory';
+            if (ROLES[k].indexOf(role) < 0) {
+                throw new Error(k + ' = ' + JSON.stringify(role) + ' is not one of '
+                                + ROLES[k].join(', '));
+            }
+            roles[k] = role;
+            cfg.knobs[k] = role === 'factory' ? 'factory' : live[k];
+        });
+        // The sequencer's controls live on a pad chord, so it needs the pads.
+        cfg.sequencer = { on: !!want('sequencer', true), strip_halfway_units: 2048,
+                          tie_glide_rate: 60, chord_hold_scans: 200,
+                          clock_min_ms: 4, clock_lock_pulses: 5,
+                          clock_settle_scans: 0, clock_deadline_ms: 4,
+                          clock_rearm_us: 250,
+                          clock_max_ms: 2400, clock_release_ms: 2600,
+                          trigger_spike_units: 5, seq_edit_hold_scans: 60 };
+        cfg.persist = { on: !!want('persist', true), page_count: 8 };
+        cfg.clock = { divide: !!want('clock_divide', true) };
+        cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
+        cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
+        cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing')
+            ? roles.knob2 : 'randomness';
+        var patterns = want('arp_patterns', null);
+        if (patterns) {
+            if (patterns.length) {
+                var masks = [], lengths = [];
+                patterns.forEach(function (entry, i) {
+                    var text = entry, length = null;
+                    if (Object.prototype.toString.call(entry) === '[object Array]') {
+                        if (entry.length !== 2) {
+                            throw new Error('arp_patterns[' + i + '] as a pair must be '
+                                            + '["x.x.x...", length]');
+                        }
+                        text = entry[0]; length = entry[1];
+                    }
+                    if (typeof text !== 'string') {
+                        throw new Error('arp_patterns[' + i + '] must be a string of steps');
+                    }
+                    var steps = text.replace(/\s+/g, '');
+                    if (!(steps.length >= 1 && steps.length <= 32)) {
+                        throw new Error('arp_patterns[' + i + '] has ' + steps.length
+                                        + ' steps; it must have 1 to 32');
+                    }
+                    var mask = 0;
+                    for (var k = 0; k < steps.length; k++) {
+                        if (steps[k] !== '.') mask += Math.pow(2, k);
+                    }
+                    if (mask === 0) {
+                        throw new Error('arp_patterns[' + i + '] is all rests — '
+                                        + 'it would never sound');
+                    }
+                    if (length === null) length = steps.length;
+                    if (!(length >= 1 && length <= 32 && length === Math.floor(length))) {
+                        throw new Error('arp_patterns[' + i
+                                        + '] length must be a whole number 1..32');
+                    }
+                    masks.push(mask); lengths.push(length);
+                });
+                cfg.knob2.patterns = masks;
+                cfg.knob2.lengths = lengths;
+            }
+        }
         return cfg;
     }
 
     // --- generators (tools/build.py) ------------------------------------
-    function parseScala(text, name) {
+    // mapped: any degree count, and the whole list including the final degree,
+    // because a .kbm then says which degree each key takes and which one is
+    // the period.  Mirrors parse_scala(mapped=) in tools/build.py.
+    function parseScala(text, name, mapped) {
         // Same shape as tools/build.py parse_scala: comments out first,
         // then the first remaining line is the description BY POSITION -
         // the format allows it to be blank, so it must never be filtered.
@@ -135,8 +209,25 @@ var BUILDLIB = (function () {
             // CLI gives.
             if (tok.indexOf('.') >= 0) value = Number(tok);
             else {
-                var p = tok.split('/');
-                var ratio = p.length > 1 ? Number(p[0]) / Number(p[1]) : Number(p[0]);
+                // The .scl format: "Ratios are written with a slash, and only
+                // one", an integer with neither is that integer over 1, and
+                // "negative ratios are meaningless and should give a read
+                // error".  This used to divide the first two parts and drop
+                // the rest, so "3/2/9" built a fifth here while tools/build.py
+                // refused the file outright.
+                var parts = tok.split('/');
+                var whole = parts.length <= 2 && parts.every(function (t) {
+                    return /^[+-]?[0-9]+$/.test(t);
+                });
+                var ratio = whole
+                    ? (parts.length > 1 ? Number(parts[0]) / Number(parts[1])
+                                        : Number(parts[0]))
+                    : NaN;
+                if (!(ratio > 0) || !isFinite(ratio)) {
+                    throw new Error(name + ': degree ' + (index + 1) + ' is ' +
+                        JSON.stringify(tok) + ' — a ratio is one whole number, ' +
+                        'or two separated by a single slash, and must be above zero');
+                }
                 value = 1200.0 * Math.log(ratio) / Math.LN2;
             }
             // Every check below this is a comparison, and every comparison
@@ -149,20 +240,182 @@ var BUILDLIB = (function () {
             }
             cents.push(value);
         });
-        if (count !== 12) {
+        if (count !== 12 && !mapped) {
             throw new Error(name + ': ' + count + ': the key table repeats every ' +
-                            'octave, so a 12-note scale is required');
+                            'octave, so a 12-note scale is required, or a .kbm to map it');
         }
         for (var i = 1; i < cents.length; i++) {
             if (cents[i] <= cents[i - 1]) {
                 throw new Error(name + ': degrees are not strictly ascending');
             }
         }
-        if (Math.abs(cents[cents.length - 1] - 1200.0) > 0.001) {
-            throw new Error(name + ': last degree is ' + cents[cents.length - 1].toFixed(3) +
-                            ' cents, not a 2/1 octave');
-        }
+        if (mapped) return cents;
         return cents.slice(0, 12);
+    }
+
+    // One tuning slot, resolved the way tools/build.py resolves it: the whole
+    // scale, the map's degree list when the slot has a .kbm, and which degree
+    // is the period.  Both the octave arithmetic and the key tables read the
+    // slot through here, so they cannot disagree about where a scale repeats.
+    //
+    // parseScala is asked for the FULL scale either way.  Truncating an
+    // unmapped one to twelve entries threw degree 12 - the period - away, and
+    // every reader then fell back to 1200 cents: a twelve-note scale that
+    // repeats somewhere else built a descending jump at each twelve-key
+    // boundary and octave controls that stepped the wrong interval.  The
+    // twelve-degree requirement is a separate rule; tablesFor in build.js
+    // applies it, the way tools/build.py applies it beside its own call.
+    function slotScale(slot) {
+        var cents = parseScala(slot.text, slot.name, true);
+        if (!slot.kbmText) return { cents: cents, degrees: null, formal: 12 };
+        var map = parseKbm(slot.kbmText, slot.kbmName, cents);
+        return { cents: cents, degrees: map.degrees, formal: map.formal };
+    }
+
+    // The interval one step of the octave controls covers, in cents.  The
+    // 1200 fallback is tools/build.py's probe, not a default: it stands in
+    // for a scale too short to declare a period, which the twelve-degree
+    // rule refuses a moment later with a message about the real fault.
+    function slotPeriod(slot) {
+        var scale = slotScale(slot);
+        return scale.cents.length > scale.formal ? scale.cents[scale.formal] : 1200.0;
+    }
+
+    // The 29 keys the instrument actually has.  Entries 29..31 exist because
+    // the table is 32 long, but no key reaches them.
+    var REAL_KEYS = 29;
+
+    // The factory's trn transposes by ([state+0x6b] - 2) periods: nine
+    // positions, -2 to +6.  A latched note keeps the transpose it was pressed
+    // at, so two sounding notes can sit up to eight periods apart, and the
+    // arp's octave randomiser adds one more either way.  The exact width stops
+    // mattering well before that: a transpose only brings two keys together
+    // while it is smaller than the span of the table, so widening the sweep
+    // cannot lower the answer.  Same value in tools/build.py, and every
+    // shipped tuning measures the same at +-2 as at +-32.
+    var TRANSPOSE_STEPS = 8;
+
+    // What the runtime transpose can differ by between the press that latches
+    // a note and the press meant to release it, in DAC units.  The transpose
+    // is an exact multiple of the period, but the two paths that publish it to
+    // 0x60A0 do not agree to the unit - one carries base_units, one
+    // octave_units, and base_units is octave_units plus one.  A probe measured
+    // exactly that: 485 stored against 484 live.  Same value, same reason, in
+    // tools/build.py.
+    var TRANSPOSE_SLACK = 1;
+
+    // The instrument's own transpose, in periods: the factory's trn steps
+    // ([state+0x6b] - 2) of them, so an untransposed entry can be carried six
+    // periods up.  The downward direction is not checked - the base sits one
+    // period above nothing, and the factory's range checks hold it below that.
+    var TRANSPOSE_UP = 6;
+
+    // A pitch is carried through signed 16-bit storage and loads.  Above this
+    // it comes back negative and falls to the DAC floor - the bottom of the
+    // range rather than the top, which no clamp can correct.
+    var MAX_PITCH = 0x7FFF;
+
+    // The real keys' pitches in cents, before the table quantises them.
+    function idealKeyPitches(cents, degrees, period, offset) {
+        var out = [];
+        for (var k = 0; k < REAL_KEYS; k++) {
+            out.push((degrees ? keyPitch(cents, degrees, period, k)
+                              : period * Math.floor(k / 12) + cents[k % 12]) + offset);
+        }
+        return out;
+    }
+
+    // How close two DIFFERENT sounding pitches ever get, in DAC units, over
+    // every slot; null when no slot carries a key table.  Mirrors
+    // min_key_spacing in tools/build.py, including the transpose sweep: the
+    // latch matches table[key] + transpose and a latched note keeps the
+    // transpose it was pressed at, so a map can be comfortably spaced across
+    // the keyboard and still put two notes within the tolerance once one of
+    // them is an octave away.  A pair whose IDEAL pitches coincide under some
+    // transpose is the same note and is skipped - that test is on the cents,
+    // not the emitted units, because rounding can leave such a pair a unit or
+    // two apart, which is what the tolerance is there to absorb.
+    function minKeySpacing(slots) {
+        var closest = null;
+        slots.forEach(function (slot) {
+            var ideal = slot.ideal, table = slot.table;
+            for (var a = 0; a < ideal.length; a++) {
+                for (var n = -TRANSPOSE_STEPS; n <= TRANSPOSE_STEPS; n++) {
+                    var shifted = ideal[a] + n * slot.periodCents;
+                    var emitted = table[a] + n * slot.periodUnits;
+                    for (var b = 0; b < ideal.length; b++) {
+                        if (Math.abs(shifted - ideal[b]) < 1e-9) continue;
+                        var gap = Math.abs(emitted - table[b]);
+                        if (closest === null || gap < closest) closest = gap;
+                    }
+                }
+            }
+        });
+        return closest;
+    }
+
+    // The same refusal tools/build.py makes: a tuning whose notes sit closer
+    // together than the latch can tell apart builds an instrument where
+    // pressing one note releases another.  The page has no field for the
+    // tolerance, so the message names what the page user can actually change.
+    function checkLatchSpacing(cfg, slots) {
+        if (get(cfg, 'arp.switch') !== 'latch') return;
+        var tolerance = cfg.arp.latch_match_tolerance;
+        var closest = minKeySpacing(slots);
+        // The table's gap is the nominal one and the runtime's is up to
+        // TRANSPOSE_SLACK smaller, so the spacing has to clear the tolerance by
+        // that much.  Comparing the nominal gap alone built an image where the
+        // second note cleared the first.
+        if (closest === null || tolerance + TRANSPOSE_SLACK < closest) return;
+        throw new Error('the closest two different keys in this tuning are ' +
+            closest + ' units apart (' + Math.round(closest * 2.48) + ' cents), ' +
+            'and the latching arpeggiator treats anything within ' + tolerance +
+            ' units as the same note — with the transpose moving by up to ' +
+            TRANSPOSE_SLACK + ' unit between the press that latches a note and ' +
+            'the press meant to release it, pressing one of them would release ' +
+            'the other. Use a coarser scale, or a .kbm that maps fewer degrees ' +
+            'onto the keyboard.');
+    }
+
+    // Two faults at the two ends, and they are not the same fault.  Below zero
+    // the entry is stored as a halfword and the latch match and the pitch
+    // ranking read it back unsigned, so -39 comes back as 65497 and they
+    // compare a pitch 65,536 units from the one that sounds.  Above MAX_PITCH
+    // the signed load turns the pitch negative and the note drops to the
+    // floor.  Between the DAC ceiling and MAX_PITCH there is no fault: the
+    // pitch path clamps, so the note is flat rather than wrong.
+    function checkTableRange(name, table, periodUnits) {
+        // Only the keys that exist.  Entries 29..31 are emitted because the
+        // table is 32 long, and no key reaches them, so a pitch they hold is
+        // not one the instrument can be made to play.
+        table = table.slice(0, REAL_KEYS);
+        var low = Math.min.apply(null, table);
+        if (low < 0) {
+            throw new Error(name + ': key table entry ' + low + ' is below ' +
+                'zero — the anchor has pushed the bottom of this scale under ' +
+                'the instrument\'s lowest pitch. The firmware reads the table ' +
+                'unsigned, so that entry would come back as ' + (low >>> 0 & 0xFFFF) +
+                ' and the latch would compare a note that never sounds. Use a ' +
+                'scale or mapping whose keys stay above the bottom, or an ' +
+                'anchor key the map does not carry more than an octave above it.');
+        }
+        // The transpose is what makes this more than a check on the table: an
+        // entry can sit under the limit and cross it the moment the player
+        // steps the octave up, which is a note that plays at the bottom of the
+        // range instead of the top.
+        var top = Math.max.apply(null, table);
+        var reach = top + TRANSPOSE_UP * periodUnits;
+        if (reach > MAX_PITCH) {
+            throw new Error(name + ': key ' + table.indexOf(top) + ' reaches ' +
+                reach + ' once the octave controls are stepped up (' + top +
+                ' in the table, plus ' + TRANSPOSE_UP + ' periods of ' +
+                periodUnits + '), and the firmware carries a pitch as a signed ' +
+                '16-bit value — past ' + MAX_PITCH + ' it comes back negative ' +
+                'and the note drops to the bottom of the range instead of the ' +
+                'top. This scale\'s period spans ' + periodUnits + ' units, so ' +
+                'the keyboard runs out of pitch before it runs out of keys: use ' +
+                'a mapping with more degrees to the period, or a smaller period.');
+        }
     }
 
     // Python's round() is banker's rounding, but every call site here adds 0.5
@@ -181,24 +434,126 @@ var BUILDLIB = (function () {
         return out;
     }
 
+    // Scala keyboard mapping.  Same contract as parse_kbm in tools/build.py:
+    // seven header values then one line per map position, 'x' or blank for a
+    // position that sounds nothing.  The four MIDI-keyboard fields are read
+    // to prove the file is well formed and then ignored - this instrument has
+    // no note numbers and takes its absolute pitch from the 208's trimmer.
+    // Unmapped positions take the nearest mapped position's degree, ties low.
+    function parseKbm(text, name, cents) {
+        var degreeCount = cents.length - 1;
+        var raw = text.split('\n').filter(function (l) {
+            return l.replace(/^\s+/, '').charAt(0) !== '!';
+        });
+        var header = [], index = 0;
+        while (index < raw.length && header.length < 7) {
+            var token = raw[index].trim();
+            index += 1;
+            if (token) header.push(token.split(/\s+/)[0]);
+        }
+        if (header.length < 7) {
+            throw new Error(name + ': not a Scala keyboard mapping — needs seven ' +
+                            'header values, found ' + header.length);
+        }
+        var names = ['map size', 'first MIDI note', 'last MIDI note', 'middle note',
+                     'reference note', 'reference frequency', 'formal octave degree'];
+        var values = [];
+        for (var h = 0; h < 7; h++) {
+            var value = Number(header[h]);
+            var wantsInt = h !== 5;
+            if (!isFinite(value) || (wantsInt && value !== Math.floor(value))) {
+                throw new Error(name + ': ' + names[h] + ' is ' +
+                                JSON.stringify(header[h]) + ', which is not a number');
+            }
+            values.push(value);
+        }
+        var size = values[0], refHz = values[5], formal = values[6];
+        if (!(refHz > 0)) {
+            throw new Error(name + ': reference frequency must be above zero');
+        }
+        if (size < 0) {
+            throw new Error(name + ': map size is ' + size + ', which is negative');
+        }
+        if (!(formal >= 1 && formal <= degreeCount)) {
+            throw new Error(name + ': formal octave degree is ' + formal +
+                            ', but the scale has ' + degreeCount +
+                            ' degrees — it must name one of them');
+        }
+        if (size === 0) {
+            var linear = [];
+            for (var d = 0; d < degreeCount; d++) linear.push(d);
+            return { degrees: linear, formal: formal };
+        }
+        // The .kbm format: "At the end, unmapped keys may be left out."  A map
+        // may stop short of its own size and the positions after it are
+        // unmapped, so a short map is a legal file, not a truncated one.  Both
+        // builders refused these; the counts they reported did not even agree,
+        // because splitting on newlines leaves the browser a trailing empty
+        // line the CLI never sees.  Padding removes the count from the picture.
+        var entries = raw.slice(index, index + size);
+        while (entries.length < size) entries.push('');
+        var degrees = [];
+        for (var position = 0; position < size; position++) {
+            var line = entries[position].trim();
+            if (!line || line.charAt(0) === 'x' || line.charAt(0) === 'X') {
+                degrees.push(null);
+                continue;
+            }
+            var degree = Number(line.split(/\s+/)[0]);
+            if (!isFinite(degree) || degree !== Math.floor(degree)) {
+                throw new Error(name + ': position ' + position + ' is ' +
+                                JSON.stringify(line) +
+                                " — a scale degree or 'x' for unmapped");
+            }
+            if (!(degree >= 0 && degree <= degreeCount)) {
+                throw new Error(name + ': position ' + position + ' names degree ' +
+                                degree + ', but the scale has degrees 0..' + degreeCount);
+            }
+            degrees.push(degree);
+        }
+        var mappedAt = [];
+        degrees.forEach(function (d, i) { if (d !== null) mappedAt.push(i); });
+        if (!mappedAt.length) throw new Error(name + ': every position is unmapped');
+        var filled = degrees.map(function (d, position) {
+            if (d !== null) return d;
+            var best = mappedAt[0];
+            mappedAt.forEach(function (i) {
+                if (Math.abs(i - position) < Math.abs(best - position)) best = i;
+            });
+            return degrees[best];
+        });
+        return { degrees: filled, formal: formal };
+    }
+
+    // Where a key sounds, in cents above the bottom key.
+    function keyPitch(cents, degrees, period, key) {
+        return period * Math.floor(key / degrees.length) +
+               cents[degrees[key % degrees.length]];
+    }
+
     // Cents to shift a scale so reference_key lands on the 12-TET grid, so the
     // note the 208 is tuned to sits in the same place in every slot.
-    function anchorOffset(cents, referenceKey) {
+    function anchorOffset(cents, referenceKey, degrees, period) {
         if (!(referenceKey >= 0 && referenceKey <= 11)) {
             throw new Error('reference_key must be 0..11 (0 = C, 9 = A)');
         }
-        return 100.0 * referenceKey - cents[referenceKey];
+        if (!degrees) return 100.0 * referenceKey - cents[referenceKey];
+        return 100.0 * referenceKey - keyPitch(cents, degrees, period, referenceKey);
     }
 
     // offset is added inside the expression, in the same position as build.py:
     // floating-point addition is not associative, so shifting the cents array
     // beforehand could differ in the last bit and move a quantised entry.
-    function tuningTable(cents, base, perOctave, offset) {
+    function tuningTable(cents, base, perOctave, offset, degrees, period) {
         offset = offset || 0.0;
         var out = [];
         for (var k = 0; k < 32; k++) {
-            out.push(base + Math.floor(
-                (1200 * Math.floor(k / 12) + cents[k % 12] + offset) * perOctave / 1200 + 0.5));
+            // cents[12] is the scale's own octave; every scale that was legal
+            // before declares 1200 there, so unmapped tables do not move.
+            var span = cents.length > 12 ? cents[12] : 1200.0;
+            var pitch = degrees ? keyPitch(cents, degrees, period, k)
+                                : span * Math.floor(k / 12) + cents[k % 12];
+            out.push(base + Math.floor((pitch + offset) * perOctave / 1200 + 0.5));
         }
         return out;
     }
@@ -360,6 +715,60 @@ var BUILDLIB = (function () {
         return { blocks: blocks, features: features };
     }
 
+    // How big one step of the octave controls is, in DAC units: the period
+    // every slot repeats at.  Mirrors tools/build.py, including the refusal
+    // when the slots disagree - there is one set of octave controls.
+    function octaveUnits(cfg) {
+        var per = cfg.tuning.units_per_octave, seen = {};
+        (cfg._tunings || []).forEach(function (slot) {
+            if (slot === 'factory') { seen[per] = true; return; }
+            seen[floorHalf(slotPeriod(slot) * per / 1200)] = true;
+        });
+        var keys = Object.keys(seen);
+        if (keys.length > 1) {
+            throw new Error('the tuning slots disagree about the period: ' +
+                keys.join(' and ') + ' units — the octave controls step one ' +
+                'period, and there is one set of them for the whole instrument');
+        }
+        return keys.length ? Number(keys[0]) : per;
+    }
+
+    // The bottom key sits one period above nothing, so the switch's lowest
+    // position still lands above zero.  485 for a 2/1, which is what every
+    // octave build already has.
+    function baseUnits(cfg) { return octaveUnits(cfg) + 1; }
+
+    // Knob 2's bank, the same choice tools/build.py makes: whatever the config
+    // names, or the CLIX fills when it names nothing.
+    function patternBank(cfg) {
+        if (cfg.knob2.mode !== 'patterns') return { masks: [0], lengths: [32] };
+        var masks = (cfg.knob2.patterns && cfg.knob2.patterns.length)
+            ? cfg.knob2.patterns.slice() : GEN.clix.slice();
+        var lengths = (cfg.knob2.lengths && cfg.knob2.lengths.length)
+            ? cfg.knob2.lengths.slice() : masks.map(function () { return 32; });
+        if (lengths.length !== masks.length) {
+            throw new Error('knob2.lengths must have one entry per pattern');
+        }
+        // Same limit tools/build.py sets.  Without it the only thing stopping
+        // a 33rd pattern was the assembler running out of table, which says
+        // "Code crossed target" at the page user instead of what is wrong.
+        if (!(masks.length >= 1 && masks.length <= 32)) {
+            throw new Error('knob2.patterns: give one to 32 patterns');
+        }
+        masks.forEach(function (m, i) {
+            if (!(m >= 0 && m <= 0xFFFFFFFF)) {
+                throw new Error('knob2.patterns[' + i + '] must be a 32-bit mask');
+            }
+            if (m === 0) {
+                throw new Error('knob2.patterns[' + i + '] is empty — it would never sound');
+            }
+            if (!(lengths[i] >= 1 && lengths[i] <= 32)) {
+                throw new Error('knob2.lengths[' + i + '] must be 1..32');
+            }
+        });
+        return { masks: masks, lengths: lengths };
+    }
+
     function computeNumbers(cfg) {
         var calib = cfg.pressure.calibration;
         var numbers = {
@@ -376,7 +785,32 @@ var BUILDLIB = (function () {
             curve_knob_steps: (cfg.pressure.curve.knob_max_level === undefined
                                ? 31 : cfg.pressure.curve.knob_max_level) + 1,
             resolution_bits: cfg.pressure.resolution_bits,
-            multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0
+            multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0,
+            octave_units: octaveUnits(cfg),
+            knob1_orders: cfg.arp_order.knob1_orders,
+            knob4_octaves: cfg.knob4.octaves,
+            knob4_zones: 3 + Math.max(1, Math.floor(
+                (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg))),
+            knob2_patterns: cfg.knob2.mode === 'patterns' ? 1 : 0,
+            knob2_swing: cfg.knob2.mode === 'swing' ? 1 : 0,
+            strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
+            tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
+            clock_min_ms: (cfg.sequencer && cfg.sequencer.clock_min_ms) || 4,
+            clock_lock_pulses: (cfg.sequencer && cfg.sequencer.clock_lock_pulses) || 5,
+            clock_settle_scans: (cfg.sequencer && cfg.sequencer.clock_settle_scans) || 0,
+            // Not `|| 4`: zero is a real setting here -- it turns the deadline
+            // off -- and the truthiness default would quietly turn it back on.
+            clock_deadline_ms: (cfg.sequencer
+                                && cfg.sequencer.clock_deadline_ms !== undefined)
+                               ? cfg.sequencer.clock_deadline_ms : 4,
+            clock_rearm_us: (cfg.sequencer && cfg.sequencer.clock_rearm_us) || 250,
+            clock_max_ms: (cfg.sequencer && cfg.sequencer.clock_max_ms) || 2400,
+            clock_release_ms: (cfg.sequencer && cfg.sequencer.clock_release_ms) || 2600,
+            trigger_spike_units: (cfg.sequencer && cfg.sequencer.trigger_spike_units) || 5,
+            seq_edit_hold_scans: (cfg.sequencer && cfg.sequencer.seq_edit_hold_scans) || 60,
+            persist_page_count: (cfg.persist && cfg.persist.page_count) || 8,
+            chord_hold_scans: (cfg.sequencer && cfg.sequencer.chord_hold_scans) || 200,
+            pattern_count: patternBank(cfg).masks.length
         };
         var span = calib.trim_span;
         if (span !== 128 && span !== 256 && span !== 512) {
@@ -462,11 +896,17 @@ var BUILDLIB = (function () {
 
     return {
         pyRepr: pyRepr, reprSortedItems: reprSortedItems, expand: expand,
-        parseScala: parseScala, factoryTuning: factoryTuning,
+        parseScala: parseScala, parseKbm: parseKbm, keyPitch: keyPitch,
+        factoryTuning: factoryTuning,
         tuningTable: tuningTable, anchorOffset: anchorOffset, pressureCurve: pressureCurve,
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
+        baseUnits: baseUnits, patternBank: patternBank,
+        slotScale: slotScale, slotPeriod: slotPeriod,
+        idealKeyPitches: idealKeyPitches,
+        minKeySpacing: minKeySpacing, checkLatchSpacing: checkLatchSpacing,
+        checkTableRange: checkTableRange,
         initMarker: initMarker, writeProperties: writeProperties, get: get
     };
 })();

@@ -61,6 +61,9 @@ var AVR32 = (function () {
         { re: /^\.word (-?0x[0-9a-fA-F]+)$/, fn: function (m) { return word(imm(m[1]) >>> 0); } },
 
         { re: /^NOP$/, fn: function () { return half(0xD703); } },
+        // Proven against the factory's interrupt mask instructions and the
+        // Ghidra clock regression build. Do not accept other SR bit numbers.
+        { re: /^SSRF 0x10$/, fn: function () { return half(0xD303); } },
 
         // --- MOV -------------------------------------------------------
         // Compact imm8 is SIGNED: 0xa0 (160) does not fit and goes extended,
@@ -78,9 +81,15 @@ var AVR32 = (function () {
                 // every 16-bit-immediate MOV shows is just this form with the
                 // upper five bits zero.
                 //
-                // Only non-negative values are accepted: every extended MOV in
-                // the corpus is positive, negatives all fitting the compact
-                // signed imm8, so a negative imm21 would be an unproven guess.
+                // Negatives are accepted as imm21 too, two's complement in the
+                // same scattered field.  This was refused while nothing proved
+                // it: the corpus held no negative extended MOV, every negative
+                // in it fitting the compact signed imm8.  The base image
+                // settles it - the factory's own octave-down offset at
+                // 0x80003776 is MOV R8,-0x1e4 encoded fe78fe1c, and the
+                // formula below reproduces those four bytes exactly - and a
+                // build now emits one, so the corpus covers it from here on.
+                if (v < 0 && v >= -0x200000) v += 0x200000;
                 if (v >= 0 && v <= 0x1FFFFF) {
                     var up = (v >> 16) & 0x1F;
                     var hi = 0xE0600000 + ((up >> 1) * 0x02000000) +
@@ -261,7 +270,7 @@ var AVR32 = (function () {
         },
         // --- ALU -------------------------------------------------------
         {
-            re: /^(ADD|SUB|OR) (\S+),(\S+)$/, fn: function (m) {
+            re: /^(ADD|SUB|RSUB|OR|EOR) (\S+),(\S+)$/, fn: function (m) {
                 var rd = reg(m[2]), rs = reg(m[3]);
                 return rd === null || rs === null ? null
                      : regreg(REGREG[m[1]], rs, rd);
@@ -314,12 +323,17 @@ var AVR32 = (function () {
             }
         },
         {
-            // System-register read.  Only COUNT is proven; any other register
-            // name returns null rather than an invented number.
+            // System-register read; COUNT and SR are verified against Ghidra.
             re: /^MFSR (\S+),(\w+)$/, fn: function (m) {
                 var rd = reg(m[1]), sysreg = SYSREG[m[2]];
                 if (rd === null || sysreg === undefined) return null;
                 return extended(0xE1B, rd, sysreg);
+            }
+        },
+        {
+            re: /^MTSR SR,(\S+)$/, fn: function (m) {
+                var rs = reg(m[1]);
+                return rs === null ? null : extended(0xE3B, rs, 0);
             }
         },
         {
@@ -390,7 +404,8 @@ var AVR32 = (function () {
 
     // --- ALU -------------------------------------------------------------
     // Compact two-operand sub-opcodes, in the (Rs << 9) | (sub << 4) | Rd form.
-    var REGREG = { 'ADD': 0x0, 'SUB': 0x1, 'CP.W': 0x3, 'OR': 0x4, 'MOV': 0x9 };
+    // EOR format I: AVR32 SLEIGH op4_5=5, also checked by the Ghidra corpus.
+    var REGREG = { 'ADD': 0x0, 'SUB': 0x1, 'RSUB': 0x2, 'CP.W': 0x3, 'OR': 0x4, 'EOR': 0x5, 'MOV': 0x9 };
 
     // Compact one-operand: (op12 << 4) | Rd.
     var UNARY = { 'ABS': 0x5C4, 'CASTU.H': 0x5C7, 'CASTS.H': 0x5C8, 'SR{EQ}': 0x5F0 };
@@ -448,16 +463,17 @@ var AVR32 = (function () {
     // Encoding tables for the load/store families, derived from the corpus.
     var DISP_COMPACT = {
         'LD.UB': [0, 24, 1, 7], 'LD.W': [3, 0, 4, 31], 'LD.SH': [4, 0, 2, 7],
-        'LD.UH': [4, 8, 2, 7], 'ST.W': [4, 16, 4, 7], 'ST.H': [5, 0, 2, 7],
+        'LD.UH': [4, 8, 2, 7], 'ST.W': [4, 16, 4, 15], 'ST.H': [5, 0, 2, 7],
         'ST.B': [5, 8, 1, 7]
     };
     var DISP_EXTENDED = {
         'LD.W': 15, 'LD.SH': 16, 'LD.UH': 17, 'LD.UB': 19,
         'ST.W': 20, 'ST.H': 21, 'ST.B': 22
     };
-    var SYSREG = { 'COUNT': 0x42 };
+    var SYSREG = { 'COUNT': 0x42, 'SR': 0 };
 
-    var INDEXED = { 'LD.SH': 0x04, 'LD.UH': 0x05, 'LD.UB': 0x07, 'ST.H': 0x0A };
+    var INDEXED = { 'LD.SH': 0x04, 'LD.UH': 0x05, 'LD.UB': 0x07, 'ST.H': 0x0A,
+                    'ST.B': 0x0B };
 
     // Compact base+displacement.  The displacement is scaled by the access
     // width, so it must be non-negative, aligned, and inside the field.

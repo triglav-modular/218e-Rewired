@@ -70,19 +70,15 @@ also what a browser build would load.
 
 **The JavaScript toolchain reproduces the firmware bit-for-bit.**
 
-```
-python3 tools/build.py --no-ghidra
-  ...
-  built    0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22
-  golden   0134880586e556167d2676aa9f45ef9f0d26fe64e149b8e6fe1818dbab69be22
-  MATCHES
-```
+Run `python3 tools/test.py --golden` to compare the default build with its
+SHA-256 pin in `config/218e.toml`. The fully specified historical configuration
+has a separate pin in `sweep.py`; both are checked against Ghidra.
 
-- **Encoder**: 3,731 / 3,731 corpus instructions, all 71 shapes, zero mismatches.
+- **Encoder**: 7,819 / 7,819 corpus instructions, 47 mnemonics, zero mismatches.
 - **Structure**: the transpiled program emits every EXTENT / BLOCK / SKIP /
   listing / PATCH record *identically* to a fresh Ghidra run.
-- **Image**: `tools/avr32/sweep.py` builds **30 configurations** both ways and
-  compares the images — 30/30 agree, and all 30 SHAs are distinct, so each
+- **Image**: `tools/avr32/sweep.py` builds **26 configurations** both ways and
+  compares the images — 26/26 agree, and all 26 SHAs are distinct, so each
   variant really does change the firmware rather than passing vacuously.
 
 Corpus coverage is now complete: every mnemonic in
@@ -129,7 +125,7 @@ scaled by the access width** and must be non-negative and aligned to it:
 | `LD.W` | 3 | 0 | 4 | 124 | 15 | — |
 | `LD.SH` | 4 | 0 | 2 | 14 | 16 | `0x04` |
 | `LD.UH` | 4 | 8 | 2 | 14 | 17 | `0x05` |
-| `ST.W` | 4 | 16 | 4 | 28 | 20 | — |
+| `ST.W` | 4 | 16 | 4 | 60 | 20 | — |
 | `ST.H` | 5 | 0 | 2 | 14 | 21 | `0x0A` |
 | `ST.B` | 5 | 8 | 1 | 7 | 22 | — |
 

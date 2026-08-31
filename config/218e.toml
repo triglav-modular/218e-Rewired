@@ -1,7 +1,7 @@
 # ===========================================================================
 # Buchla 218e V3 — custom firmware
 # ===========================================================================
-# Seven options.  Everything else is fixed at the value the firmware was built
+# The options.  Everything else is fixed at the value the firmware was built
 # and tested with; see tools/options.py for those constants and docs/BUILD.md
 # for what they are.
 #
@@ -42,12 +42,37 @@ pitch_correction = false
 
 # 4. ALTERNATE TUNINGS
 # Up to three Scala files, switchable from edit mode (key 28 toggles slot 0,
-# key 27 toggles slot 1; LEDs rem-en / trn).  Each must be a 12-note scale
-# with a true 2/1 octave, because the key table repeats every octave.
+# key 27 toggles slot 1; LEDs rem-en / trn).  A plain 12-note scale that
+# repeats at the octave needs nothing else.
+#
+# Any other degree count, or a period that is not the octave, needs a .kbm
+# keyboard map beside it saying which degree each key plays - write the pair
+# as ["scale.scl", "map.kbm"].  The octave controls then step that period
+# instead of an octave, so every slot has to agree about what the period is.
 #
 #   alternate_tunings = ["tunings/Sabat II (C-rooted).scl",
 #                        "tunings/5-Limit JI with Septimal 7th.scl",
 #                        "tunings/12TET.scl"]
+#
+# A slot may instead be a scale paired with a Scala keyboard mapping, which
+# lifts the twelve-degree rule: the .kbm says which degree each key takes, so
+# a scale of any size can be laid out however you like.
+#
+#   alternate_tunings = [["tunings/24TET.scl", "tunings/24TET-neutral.kbm"],
+#                        "tunings/12TET.scl"]
+#
+# Keys the mapping leaves out sound their nearest mapped neighbour - the
+# firmware has no way to make a key silent.  The mapping's own reference note
+# and frequency are read and ignored: this instrument has no MIDI note
+# numbers, and its absolute pitch comes from the 208's trimmer, so which key
+# stays put across slots remains [tuning].reference_key.
+#
+# A scale need not repeat at the octave.  The key table steps whatever period
+# the file declares, and the octave controls - the panel switch, the
+# arpeggiator's random octave, knob 3's span - are rebuilt to step that same
+# period, so a Bohlen-Pierce tritave moves the keyboard by a tritave.  There
+# is one set of those controls, so every slot must repeat at the same
+# interval; the factory temperament repeats at the octave.
 #
 # Slots you do not fill keep the instrument's own temperament.  false gives
 # all three slots the factory temperament, i.e. no retuning at all.
@@ -80,6 +105,66 @@ pressure_fix = true
 pressure_portamento = true
 
 
+# 8. WHAT EACH PRESET KNOB DOES
+# With remap_knobs on, each knob can be named individually instead of taking
+# the default role.  Leave a knob out and it keeps that default.
+#   knob1  "order"   press-order-into-random blend (default) | "orders" six
+#          fixed orders: up, down, up-down, as played, backwards, random
+#   knob2  "spacing" trigger randomness (default) | "swing" | "patterns"
+#   knob3  "octaves" random octave per note (default)
+#   knob4  "vibrato" depth and rate (default) | "trn" the factory octave switch
+# Any knob may also be "factory" to hand that one back to its preset voltage.
+# knob1 = "orders"
+# knob2 = "swing"
+# knob3 = "factory"
+# knob4 = "trn"
+
+# 9. ARPEGGIATOR STEP PATTERNS
+# Only read when knob2 = "patterns".  Each entry is a string of steps - a dot
+# is a rest, anything else a hit - or a [pattern, length] pair to make it
+# repeat sooner than it is written.  Up to 32 patterns of up to 32 steps.
+# Left out, the bank is the 22 CLIX fills from the Clockwork Card.
+# arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]
+
+# 10. STEP SEQUENCER
+# Sixty-four steps, recorded and played from the preset pads.  Hold pad 4 for
+# about a second until it blinks, then - still holding it - press pad 1
+# to record (pad 1 again finishes the take), pad 2 to play or stop, pad 3
+# to clear.  Recording APPENDS to what is there; the pad-3 chord clears it.
+# Pad 4 stays held, so the presses can follow one another without letting
+# go. While recording, touch the lower half of the pitch strip for a rest
+# or the upper half for a tie, one per touch; a tie slides into the note
+# after it. Play starts the sequence's clock and stop ends it, independently
+# of the arp switch. RATE still sets tempo (or external-clock division); the
+# arp is silent while recording. Stopping returns the keyboard to the
+# physical arp switch's normal mode. With pad 4 released while recording,
+# holding pad 2 for about a third of a second previews the recorded order
+# once and returns to WRITE; holding pad 3 the same way backspaces one
+# step per hold, and pad 3 flashes when a step goes. A quick tap keeps
+# choosing octaves. The octave pads reach the recording key by key,
+# whatever the arp switch: each step keeps the octave it was entered at,
+# like the latches. Playback follows the pads on top of that; a preview
+# always plays the take exactly as recorded.
+sequencer = true
+
+# 11. EXTERNAL CLOCK DIVIDE
+# With a steady clock patched in, the arpeggiator RATE knob becomes a divider
+# instead: every pulse with the knob at zero, one in eight at the top.  It
+# acquires after five consistent measured intervals and releases after more
+# than 2.6 seconds without an input. Target range: 0.5–200 Hz. The conditioned
+# MCU input must be low for >250 us before each rising edge; see docs/CLOCK.md.
+clock_divide = true
+
+# Save the remapped preset voltages and sequence across power cycles.
+# Save a changed sequence when leaving record or clearing it; save a
+# changed preset when its pad is released. No idle or arp-off requirement.
+# Preview and backspace keep WRITE open, even when backspace empties it.
+# Explicit STOP during preview or the CLEAR chord finishes/saves the take.
+# Flash writes can briefly interrupt playback/capture. DFU updates erase
+# these records. See docs/PERSISTENCE.md for the format and limits.
+persist = true
+
+
 # ---------------------------------------------------------------------------
 # Paths and checksums (not behaviour)
 # ---------------------------------------------------------------------------
@@ -98,12 +183,12 @@ updaters       = ["Program218e_v3_Rewired_macOS.command",
 # SHA-256, which is derived and cannot drift; this is the part people can say
 # out loud.  The build reports them together as "Rewired <version> (<sha8>)"
 # and writes that into both flashers.
-version        = "1.2.0"
+version        = "2.0.0"
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "5ea2ba82dcf9403a8b4e10faa88dc957c5e597ad61fc5feb3879ae745faf64cd"
+golden_sha256  = "87246bb2f852b24b71e31f73cfcd9e7caf9aa8d53e728b8e235edfbd029961de"
 
 
 [tools]

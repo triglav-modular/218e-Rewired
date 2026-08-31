@@ -88,7 +88,11 @@ Everything the build produces lands in `build/` and is not tracked:
 - the written hex reads back byte-for-byte;
 - every difference from the factory image lies inside a declared patch;
 - generated pitch tables are monotonic and inside the 12-bit DAC range;
-- each Scala file has 12 strictly ascending degrees and a true 2/1 octave;
+- each Scala file has strictly ascending degrees.  Twelve of them repeating
+  at a 2/1 need nothing else; any other count, or a period that is not the
+  octave, needs a .kbm keyboard map beside it saying which degree each key
+  plays.  The octave controls then step that period rather than an octave,
+  and every slot has to agree about it, since there is one set of them;
 - the pitch calibration covers every semitone the firmware reads (0..78), so
   a short table cannot leave assembler padding to be read as pitch.
 
@@ -100,6 +104,20 @@ rewritten updater behind.
 `tools/test.py` covers the generators and validators without needing Ghidra;
 `tools/test.py --golden` also rebuilds and compares against
 `[firmware].golden_sha256`.
+
+`python3 tools/test_clock.py` builds clock-only and clock+sequencer variants
+and emulates the actual ISR, divider and pitch/trigger hooks. It requires
+Ghidra and never flashes a device. See [CLOCK.md](CLOCK.md) for the input
+contract, regression coverage and remaining hardware checks.
+
+`python3 tools/test_persistence.py` builds all four persistence/sequence/clock
+variants and executes the actual save/load/startup code and factory flash
+wrapper with controller failure and power-cut injection. It also reruns the
+clock suite with an unfinished preset held and tests saves during playback.
+With `persist = true`, changed sequences save on record exit/CLEAR and
+changed presets on pad release, without an idle or arp-off requirement.
+Flash saves can briefly disrupt playback. See [PERSISTENCE.md](PERSISTENCE.md)
+for the gesture contract, failure handling and legacy-format limits.
 
 ## macOS tool compatibility
 
@@ -222,12 +240,12 @@ bootloader region is protected), programs, and validates by read-back. If the
 keyboard does not enumerate in DFU, it aborts **before erasing anything** — a
 failed attempt leaves the instrument as it was.
 
-## The seven options
+## The options
 
 Everything that is a choice lives in [`config/218e.toml`](../config/218e.toml)
 under `[options]`. Every other setting is fixed at the value this firmware was
 built and tested with; those constants are in `tools/options.py`, which expands
-the seven options into the full internal settings the build has always used.
+the options into the full internal settings the build has always used.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -238,6 +256,11 @@ the seven options into the full internal settings the build has always used.
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
+| `knob1`, `knob2`, `knob3`, `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
+| `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
+| `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
+| `persist` | `true` | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). |
+| `clock_divide` | `true` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
 
 The options combine freely, with one exception the build enforces:
 **pressure-based portamento needs the pressure response fix**. The blend
@@ -277,9 +300,11 @@ alternate_tunings = ["tunings/Sabat II (C-rooted).scl",
                      "tunings/12TET.scl"]
 ```
 
-Each must have 12 degrees and a true 2/1 octave — the key table repeats every
-octave across the 32 keys, so anything else puts the octave switches out of
-tune, and the build rejects it. Slot 0 is the power-on default; in edit mode
+Each must have 12 degrees unless a `.kbm` says otherwise, and may repeat at
+whatever interval it declares — the table steps that period and the octave
+controls are rebuilt to match it, so a scale that never reaches a 2/1 still
+plays in tune with its own switches. All three slots must agree about the
+period, because there is one set of octave controls. Slot 0 is the power-on default; in edit mode
 key 28 toggles slot 0 against slot 2 and key 27 toggles slot 1 against slot 2.
 Slots you do not fill keep the factory temperament, and a slot left empty
 between two filled ones stays empty rather than collapsing.
@@ -350,9 +375,20 @@ after the firmware has been flashed and played, not before.
 ```bash
 python3 tools/test.py --golden     # generators, validators, and the golden image
 python3 tools/avr32/sweep.py       # every option both ways, both toolchains
+python3 tools/test_controls.py     # emitted knob roles and strip-gesture ownership
 ```
 
-`sweep.py` builds thirteen configurations twice — once through Ghidra, once
+`test_controls.py` runs default, six-order/transpose, tuned-transpose, and
+lean (factory arp, no sequencer or divider) images with persistence on and
+off. It checks all six note orders, preset-4
+isolation through the actual ADC-event pitch target and DAC path from the
+first knob movement, release-triggered saves, released/unlatched press
+history, and pitch ordering with octave-stacked notes and equal pitches.
+It also checks strip touches across preview and RECORD boundaries.
+Like `test_persistence.py`, it requires Ghidra, models
+peripherals without flashing hardware, and restores shared build metadata.
+
+`sweep.py` builds 26 configurations twice — once through Ghidra, once
 through the JavaScript toolchain — and compares the images. It also asserts
 that every configuration produces a *distinct* image, so a variant that
 silently stopped taking effect cannot pass as agreement.
@@ -401,18 +437,19 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 
 | | |
 |---|---|
-| `tools/test.py` | 107 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
+| `tools/test.py` | 126 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
-| `tools/avr32/sweep.py` | 13 representative configurations, built by both toolchains and compared byte for byte |
-| `web/test_configs.py` | the browser build matches `build.py` for 10 configurations |
-| `web/test_matrix.js` | **all 192 option combinations** built through the guarded path |
+| `tools/avr32/sweep.py` | representative configurations, including all four persistence variants, built by both toolchains and compared byte for byte |
+| `web/test_configs.py` | the browser build matches `build.py` across its option/interaction matrix |
+| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, and clock continuation after saves |
+| `web/test_matrix.js` | **1,536 option combinations**, including persistence on/off, built through the guarded path |
 
 Every build, in either toolchain, has to pass four structural checks before it
 produces an image: no two patches overlap, no patch lands on a factory entry
 point (2,665 control transfers are traced), every byte differing from the
 factory image lies inside a declared patch, and the rendered hex re-parses to
-the same bytes. `web/test_matrix.js` runs all 192 combinations through those
-checks in about 40 seconds:
+the same bytes. `web/test_matrix.js` runs all 1,536 combinations through those
+checks:
 
 ```bash
 jsc web/generated.js web/sha256.js web/buildlib.js web/assembler.js \
@@ -625,11 +662,24 @@ what the page can actually send, so the worst case is noise in the numbers
 rather than arbitrary strings in the dataset.
 
 
+## Watching buchla.com
+
+A new stock firmware means rebasing this patch, so buchla.com is watched daily
+for one. None of that lives here: it runs from
+[buchla-firmware-watch](https://github.com/triglav-modular/buchla-firmware-watch),
+a private repository, which is also where the code and its documentation sit.
+
+Private for a reason worth repeating here, because it is the kind of thing that
+gets undone by someone tidying up: GitHub disables a scheduled workflow on a
+**public** repository after 60 days with no repository activity. A watch that
+exists for the quiet years cannot be one of the things that goes quiet.
+
+
 ## Giving CI the factory image
 
 Everything that builds firmware needs Buchla's stock image, and it is not in
 this repository. Without it the workflow still runs, but the golden build, the
-reproducibility check, the 192-build option matrix and the browser/Python
+reproducibility check, the 1,536-build option matrix and the browser/Python
 comparison all skip — so a green tick covers the flashers, the validators and
 the packaging, and none of the firmware. The notice in the log says so.
 

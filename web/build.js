@@ -6,8 +6,15 @@
 var WEBBUILD = (function () {
     'use strict';
 
+    // One record per slot that carries a scale, for the latch-spacing check:
+    // { ideal, table, periodCents, periodUnits }.  Collected while the tables
+    // are built, because the check needs the unquantised pitches too and this
+    // is the only place they exist.  Reset per build, never accumulated.
+    var spacingSlots = [];
+
     function tablesFor(cfg, factoryMemory) {
         var tables = {};
+        spacingSlots = [];
         tables.pressure_curve = BUILDLIB.pressureCurve(
             cfg.pressure.curve.span, cfg.pressure.curve.onset_db,
             cfg.pressure.curve.onset_fade);
@@ -16,12 +23,45 @@ var WEBBUILD = (function () {
             if (slot === 'factory') {
                 tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
             } else {
-                var cents = BUILDLIB.parseScala(slot.text, slot.name);
-                var offset = BUILDLIB.anchorOffset(cents, cfg.tuning.reference_key);
-                tables['tuning_slot' + index] = BUILDLIB.tuningTable(
-                    cents, cfg.tuning.base_units, cfg.tuning.units_per_octave, offset);
+                var scale = BUILDLIB.slotScale(slot);
+                // Same rule as tools/build.py: without a .kbm there is one key
+                // table entry per key and nothing to map them with, so the
+                // scale has to have exactly the twelve the keyboard repeats.
+                if (!scale.degrees && scale.cents.length - 1 !== 12) {
+                    throw new Error(slot.name + ': ' + (scale.cents.length - 1) +
+                        ' degrees — the key table gives one entry per key, so ' +
+                        'without a .kbm to map them a 12-note scale is required');
+                }
+                var period = scale.cents[scale.formal];
+                var offset = BUILDLIB.anchorOffset(
+                    scale.cents, cfg.tuning.reference_key, scale.degrees, period);
+                // Same rule as tools/build.py: pinning a key to its 12-TET
+                // pitch says nothing about a scale that has no octave, and
+                // spends the headroom the octave switch needs.
+                if (Math.abs(period - 1200.0) > 0.001) offset = 0.0;
+                var perOctave = cfg.tuning.units_per_octave;
+                var table = BUILDLIB.tuningTable(
+                    scale.cents, BUILDLIB.baseUnits(cfg), perOctave,
+                    offset, scale.degrees, period);
+                var periodUnits = BUILDLIB.floorHalf(period * perOctave / 1200);
+                BUILDLIB.checkTableRange(slot.name, table, periodUnits);
+                tables['tuning_slot' + index] = table;
+                spacingSlots.push({
+                    ideal: BUILDLIB.idealKeyPitches(
+                        scale.cents, scale.degrees, period, offset),
+                    table: table,
+                    periodCents: period,
+                    periodUnits: periodUnits
+                });
             }
         });
+        var bank = BUILDLIB.patternBank(cfg);
+        tables.arp_pattern_bank = [];
+        bank.masks.forEach(function (m) {
+            tables.arp_pattern_bank.push(m & 0xFFFF, Math.floor(m / 65536) & 0xFFFF);
+        });
+        tables.arp_pattern_len = bank.lengths.slice();
+
         var mask = 0x0A54A54A;
         var excess = BUILDLIB.floorHalf(cfg.pressure.black_key_scale * 256) - 256;
         var bk = [];
@@ -76,6 +116,8 @@ var WEBBUILD = (function () {
         if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {
             blocks.pitch_target_blend_hook = true;
             blocks.blend_offset_apply = true;
+            // The conditioner calls the apply shim; they exist together.
+            blocks.blend_target_conditioner = true;
         } else {
             // Same rule as tools/build.py: the factory long-hold on the arp
             // switch comes back when the factory switch does.
@@ -86,8 +128,69 @@ var WEBBUILD = (function () {
             blocks.knob3_pressure_floor = false;
             blocks.knob3_pool = false;
         }
+        // Same rule as tools/build.py: the factory's octave arithmetic is only
+        // rewritten when an octave has stopped being a 2/1.
+        var octave = BUILDLIB.computeNumbers(cfg).octave_units;
+        ['octave_step_down', 'octave_step_up', 'octave_step_up2',
+         'octave_scale_mul', 'octave_scale_bias'].forEach(function (n) {
+            blocks[n] = octave !== cfg.tuning.units_per_octave;
+        });
+        blocks.arp_order_zones = cfg.arp_order.knob1_orders === 1;
+        blocks.arp_pattern_gate = cfg.knob2.mode === 'patterns';
+        blocks.arp_pattern_tables = blocks.arp_pattern_gate;
+        // Same rule as tools/build.py: the rhythm randomiser reads the same
+        // knob, and even spacing is what makes a pattern legible.
+        if (blocks.arp_pattern_gate) blocks.arp_rhythm_hook = false;
+        blocks.arp_swing = cfg.knob2.mode === 'swing';
+        var seq = !!(cfg.sequencer && cfg.sequencer.on);
+        ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
+         'seq_clock_enabled', 'seq_transport', 'seq_clock_rate_hook',
+         'seq_clock_change_hook', 'seq_clock_setup_hook', 'seq_clock_tick_hook',
+         'seq_clock_input_hook', 'seq_clock_midi_hook',
+         'seq_strip', 'seq_gate', 'seq_glide', 'strip_pool',
+         'seq_gate_clear', 'seq_gate_clear_hook',
+         'seq_pulse_drop', 'pulse_drop_pool', 'seq_next_step',
+         'seq_noteoff', 'seq_noteoff_hook',
+         'seq_trigger_led', 'seq_trigger_led_hook',
+         'seq_edit', 'seq_preview_step', 'seq_command',
+         'seq_preview_next', 'seq_preview_start', 'seq_preview_transport',
+         'seq_record_pitch', 'seq_hold', 'seq_flash',
+         'seq_restart_init', 'seq_boot']
+            .forEach(function (n) { blocks[n] = seq; });
+        var keep = !!(cfg.persist && cfg.persist.on);
+        ['persist_crc', 'persist_record_crc', 'persist_pack',
+         'persist_valid', 'persist_newest', 'persist_load',
+         'persist_same', 'persist_verify', 'persist_save', 'persist_tick',
+         'persist_capture', 'persist_boot', 'persist_scan_shim', 'persist']
+            .forEach(function (n) { blocks[n] = keep; });
+        var div = !!(cfg.clock && cfg.clock.divide);
+        blocks.seq_clock_input_hook = seq && !div;
+        ['clock_scan', 'clock_pulse', 'clock_hook',
+         'clock_tempo', 'clock_tempo_hook',
+         'clock_ms_tick', 'clock_ms_pool',
+         'clock_gate', 'clock_gate_hook', 'clock_settle',
+         'clock_capture', 'clock_irq_hook', 'clock_irq_pool',
+         'clock_edge_mode', 'clock_init', 'clock_init_pool',
+         'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard',
+         'clock_spike_units', 'clock_fast_trigger', 'clock_remap_bare',
+         'clock_deadline', 'clock_pitch_target']
+            .forEach(function (n) { blocks[n] = div; });
+        blocks.clock_init_pool = div || keep || seq;
+        blocks.profiler_pool = div || !!features.scan_profiler;
+        blocks.knob4_octave_switch =
+            cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
+        if (blocks.knob4_octave_switch) {
+            features.knob4_vibrato = false;
+            ['vibrato_engine', 'vibrato_sine', 'pressure_vibrato_scale',
+             'pressure_vibrato_pool'].forEach(function (n) { blocks[n] = false; });
+        }
         var smoothing = cfg.pressure.output_smoothing;
-        ['dac_interpolator', 'dac_flush_pool', 'pressure_target_redirect']
+        // The event-17 wrapper is shared between pressure smoothing and the
+        // clock's trigger rise, so it exists for either; dac_interpolate is
+        // the pressure half alone.  Mirrors tools/build.py.
+        ['dac_interpolator', 'dac_flush_pool']
+            .forEach(function (n) { blocks[n] = !!smoothing || div; });
+        ['dac_interpolate', 'pressure_target_redirect']
             .forEach(function (n) { blocks[n] = !!smoothing; });
         return { blocks: blocks, features: features };
     }
@@ -186,6 +289,11 @@ var WEBBUILD = (function () {
 
         var cfg = BUILDLIB.expand(options);
         var tables = tablesFor(cfg, factory.memory);
+        // Same refusal tools/build.py makes, and it has to happen here rather
+        // than in the editor: a fine keyboard mapping can put two notes closer
+        // together than the latch can tell apart, and the image that comes out
+        // is valid in every other way - nothing downstream would catch it.
+        BUILDLIB.checkLatchSpacing(cfg, spacingSlots);
         var flags = flagsFor(cfg);
         var numbers = BUILDLIB.computeNumbers(cfg);
         numbers.init_marker = BUILDLIB.initMarker(flags.blocks, flags.features, numbers, tables);

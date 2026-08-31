@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO / "tools"))
+import build as build_mod  # noqa: E402
 BASE = REPO / "config" / "218e.toml"
 TEMP = REPO / "config" / "_sweep.toml"
 
@@ -51,6 +53,46 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                (r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]'),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    # The 2.0 features.  They were missing from this sweep, which is how a
+    # clock hook that jumped to an invalid address reached a release build:
+    # the browser-parity matrix compares two toolchains against each other and
+    # both were told the same wrong thing, and the emulations called each cave
+    # directly rather than through its hook.  This sweep is the only check
+    # that builds every one of them through Ghidra.
+    # All three ship ON, so the variants worth building are the ones that
+    # turn them OFF - those are the images the defaults no longer cover, and
+    # the ones whose housekeeping chain loses a call.  Persistence joined the
+    # defaults after the divider knob was reversed, which is why the four
+    # rows below read "volatile" rather than "persist": the combination that
+    # needs proving is the one nobody gets by accident.
+    ("sequencer_off",         [(r"^sequencer = true", "sequencer = false")]),
+    ("clock_divide_off",      [(r"^clock_divide = true", "clock_divide = false")]),
+    ("seq_and_clock_off",     [(r"^sequencer = true", "sequencer = false"),
+                               (r"^clock_divide = true", "clock_divide = false")]),
+    ("volatile_bare",         [(r"^persist = true", "persist = false"),
+                               (r"^sequencer = true", "sequencer = false"),
+                               (r"^clock_divide = true", "clock_divide = false")]),
+    ("volatile_sequencer",    [(r"^persist = true", "persist = false"),
+                               (r"^clock_divide = true", "clock_divide = false")]),
+    ("volatile_clock",        [(r"^persist = true", "persist = false"),
+                               (r"^sequencer = true", "sequencer = false")]),
+    ("volatile_only",         [(r"^persist = true", "persist = false")]),
+    ("knob_roles",            [(r"^remap_knobs = true",
+                               'remap_knobs = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
+    ("knob2_swing",           [(r"^remap_knobs = true", 'remap_knobs = true\nknob2 = "swing"')]),
+    ("arp_patterns",          [(r"^remap_knobs = true",
+                               'remap_knobs = true\nknob2 = "patterns"\n'
+                               'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')]),
+    ("tuning_maps",           [(r"^alternate_tunings = false",
+                               'alternate_tunings = [["tunings/24TET.scl", "tunings/24TET-full.kbm"]]')]),
+    ("non_octave",            [(r"^alternate_tunings = false",
+                               'alternate_tunings = [' + ', '.join(
+                                   ['["tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm"]'] * 3)
+                               + ']')]),
+    ("everything_on",         [(r"^pitch_correction = false",
+                                'pitch_correction = "calibration/218e-pitch-calibration.csv"'),
+                               (r"^alternate_tunings = false",
+                                'alternate_tunings = ["tunings/12TET.scl"]')]),
     ("everything_off",        [(r"^latching_arp = true", "latching_arp = false"),
                                (r"^remap_knobs = true", "remap_knobs = false"),
                                (r"^pressure_fix = true", "pressure_fix = false"),
@@ -58,6 +100,41 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
 ]
 
 SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
+
+
+def audit_call_pools(image_path) -> list[str]:
+    """Every MCALL in this image must read a word naming emitted code.
+
+    Per-variant, because the bug class is per-variant: a pool that is right
+    with everything on can name erased flash once the callee's block is off.
+    """
+    flash, _ = build_mod.parse_hex(image_path)
+    word = lambda a: int.from_bytes(bytes(flash.get(a + i, 0xFF) for i in range(4)), "big")
+
+    def called(target: int) -> bool:
+        for pc in range(0x80002000, 0x80020000, 2):
+            if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
+                continue
+            d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
+            if d & 0x8000:
+                d -= 0x10000
+            if (pc & ~3) + d * 4 == target:
+                return True
+        return False
+
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    targets = sorted({int(m, 16) for m in
+                      re.findall(r'emit\("MCALL PC\[(0x[0-9a-f]+)\]"\);', source)})
+    bad = []
+    for t in targets:
+        if t not in flash or not called(t):
+            continue
+        v = word(t)
+        if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
+            bad.append(f"{t:#x} holds {v:#010x}")
+        elif flash.get(v, 0xFF) == 0xFF:
+            bad.append(f"{t:#x} -> {v:#x} (erased flash)")
+    return bad
 
 # Configurations whose image is pinned, so an unintended change shows up here
 # rather than in someone's instrument.
@@ -71,9 +148,53 @@ SHA_RE = re.compile(r"SHA-256 ([0-9a-f]{64})")
 # a changed build forces a fresh power-up init.  What this pin still buys is a
 # stable anchor for the most complex configuration.
 # Re-pinned after the calibration defaults moved to the settings that suit the
-# instrument this was measured on, and both trims were centred on them.
+# instrument this was measured on, and both trims were centred on them; and
+# again for 2.0, which added caves and moved the first-use clear; and again
+# when rests and ties moved to an absolute strip position, which moved the
+# clear once more; and for interrupt-timestamped clock capture, whose FIFO
+# extends that clear through 0x62df; and for canonical persistence plus
+# independent sequence transport, completed-gesture persistence, and
+# one-shot preview/explicit CLEAR ownership, strip gesture boundaries,
+# preset-4 role isolation, the corrected up-down zone, early transpose
+# ownership, held-only reverse history, and pitch-aware note ordering; and
+# for the millisecond-timed clock release, latch-aware sequence recording,
+# held preview/backspace, the pad-1 record toggle and preset knob pickup;
+# and again for the audit corrections: recording at today's transpose with
+# clamped pitches, playback without a second latch re-base, preset edits
+# declining the bare-pad hold, and the unconditional first-use fill; and
+# once more for the follow-up: the audition re-aimed at the allocated latch
+# slot, the blend parked during playback, and partial pad touches keeping
+# the preset edit's ownership; and again for the octave round: recording
+# transposed in every arp position, the audition pinned to its recorded
+# pitch, previews absolute while play follows the pads, pressure routed by
+# slot ownership, the re-base vetoed during playback, preview end sentinels,
+# no arp-OFF double audition, and the delete-pad flash — whose two new
+# caves are gated with the code they call, so a latch-free or sequencer-free
+# build stops emitting them instead of pointing a call pool at erased flash;
+# and once more when the divider knob was reversed so /1 sits at zero, and
+# persistence joined the shipped defaults — which this anchor carries too.
+# and again when leaving the latch switch position stopped releasing keys
+# that are still under a finger; and again for the clock_latency diagnostic,
+# which moves only the four marker bytes when it is off -- the marker hashes
+# the assembler source, so adding the option repins even though no shipped
+# behaviour changed; and again when that diagnostic went from publishing
+# running means to publishing maxima and learned to time the internal beat,
+# which is once more a diagnostic-only change to a shipped image that carries
+# none of it; and again when the deadline moved onto an absolute COUNT target
+# with the RC settle measured from the actual DAC transfer and the main-loop
+# wrapper servicing pending output around the dispatcher, which is a real
+# behavioural change to every clocked build; and again when the gate's target
+# moved off a latch pitch stamp it had been sharing and the external beat's
+# pitch was held back to the gate's own transfer, which is behavioural for
+# every deadline build and a bug fix for every latch one; and again when the
+# audit of that change found the held pitch published from the wrong context,
+# the internal beat's settle spent on the wrong pitch, and an external edge
+# able to overwrite a pending internal step; and again when pending output
+# switched from GPIO presence to stable step ownership across clock takeover;
+# and when fast output began preparing the transposed target before staging it.
+# Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "b0827b659704ac624118a731497ba7ac4fabdf8325272901679488c0ef977ba2",
+    "historical_config": "e3030f20767b0c701e1c9794a47712367192869dd8f86257fa564bc76fd37132",
 }
 
 
@@ -123,6 +244,11 @@ def main() -> None:
                 failures += 1
                 continue
             sha = match.group(1)
+            pool_bad = audit_call_pools(REPO / "build" / "_sweep.hex")
+            if pool_bad:
+                rows.append((name, sha[:12], "BAD CALL POOL: " + "; ".join(pool_bad)))
+                failures += 1
+                continue
             js = run([sys.executable, "tools/build.py", "--no-ghidra",
                       "--config", str(TEMP), "--expect-sha", sha])
             ok = js.returncode == 0

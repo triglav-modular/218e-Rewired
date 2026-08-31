@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Execute knob/gesture regressions in emitted firmware; never flash hardware.
+
+    python3 tools/test_controls.py
+    python3 tools/test_controls.py --variant roles --persist off
+    python3 tools/test_controls.py --variant default --persist off --image build/218eV3_v369_Rewired_DFU.hex
+
+The default, six-order/transpose, tuned transpose, and lean (factory arp,
+no sequencer/divider) builds run with and without persistence.
+--image checks an existing image without rebuilding it;
+its variant and persistence settings must be specified correctly by the caller.
+Temporary images/logs/projects stay in build/. Shared metadata is restored.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+from test_persistence import METADATA, REPO
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--variant", choices=("default", "roles", "tuned", "lean", "all"), default="all")
+    parser.add_argument("--persist", choices=("on", "off", "both"), default="both")
+    parser.add_argument("--image", type=Path)
+    parser.add_argument("--ghidra", type=Path)
+    args = parser.parse_args()
+    if args.image and (args.variant == "all" or args.persist == "both"):
+        parser.error("--image requires one --variant and --persist on/off")
+    base = (REPO / "config/218e.toml").read_text()
+    settings = tomllib.loads(base).get("tools", {})
+    local = REPO / "config/local.toml"
+    if local.exists():
+        settings.update(tomllib.loads(local.read_text()).get("tools", {}))
+    ghidra = args.ghidra or Path(os.environ.get("GHIDRA_HOME") or settings.get("ghidra_home", ""))
+    headless = ghidra / "support/analyzeHeadless"
+    if not headless.is_file():
+        raise SystemExit("Set GHIDRA_HOME, config/local.toml [tools].ghidra_home, or --ghidra.")
+    build = REPO / "build"
+    build.mkdir(exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="control-regression-", dir=build))
+    print(f"Artifacts: {work}", flush=True)
+    saved = {} if args.image else {
+        name: (REPO / "build" / name).read_bytes() if (REPO / "build" / name).exists() else None
+        for name in METADATA
+    }
+    variants = ("default", "roles", "tuned", "lean") if args.variant == "all" else (args.variant,)
+    persists = (False, True) if args.persist == "both" else (args.persist == "on",)
+    failures = []
+    try:
+        for variant in variants:
+            for persist in persists:
+                name = f"{variant}-{'persist' if persist else 'volatile'}"
+                image = args.image.resolve() if args.image else work / f"{name}.hex"
+                if not args.image:
+                    text = base
+                    for key, value in (("persist", persist), ("sequencer", variant != "lean"),
+                                       ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean")):
+                        text, count = re.subn(rf"^{key} = (?:true|false)$",
+                                             f"{key} = {str(value).lower()}", text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit(f"Cannot set {key} in regression config")
+                    # Replace explicit role choices as well as handling the
+                    # shipped config, which leaves both at their defaults.
+                    text = re.sub(r'^knob[14]\s*=.*\n', "", text, flags=re.M)
+                    role = 'knob1 = "order"\nknob4 = "vibrato"\n' if variant == "default" else 'knob1 = "orders"\nknob4 = "trn"\n'
+                    text = text.replace("[firmware]", role + "\n[firmware]", 1)
+                    if variant == "tuned":
+                        text, count = re.subn(r'^alternate_tunings = false$',
+                            'alternate_tunings = ["tunings/12TET.scl"]', text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit("Cannot enable tuning in regression config")
+                    text, count = re.subn(r'^output_hex\s*=\s*"[^"]*"',
+                                         f'output_hex = "{image}"', text, flags=re.M)
+                    if count != 1:
+                        raise SystemExit("Cannot redirect regression image")
+                    text, count = re.subn(r'^updaters?\s*=\s*(?:"[^"]*"|\[[^\]]*\])\n', "", text, flags=re.M)
+                    if count != 1 or any(k in tomllib.loads(text)["firmware"] for k in ("updater", "updaters")):
+                        raise SystemExit("Refusing a regression build that could rewrite flashers")
+                    config = work / f"{name}.toml"
+                    config.write_text(text)
+                    result = subprocess.run([sys.executable, "tools/build.py", "--no-ghidra", "--config", str(config)],
+                                            cwd=REPO, capture_output=True, text=True)
+                    (work / f"{name}-build.log").write_text(result.stdout + result.stderr)
+                    if result.returncode:
+                        raise SystemExit(result.stdout + result.stderr)
+                command = [str(headless), str(work), name, "-import", str(image),
+                    "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src"),
+                    "-postScript", "ControlRegression.java", "vibrato" if variant == "default" else "trn",
+                    "order" if variant == "default" else "orders", "persist" if persist else "volatile",
+                    "9", "lean" if variant == "lean" else "full"]
+                print(f"Emulating {name}...", flush=True)
+                result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
+                output = result.stdout + result.stderr
+                log = work / f"{name}-emulation.log"
+                log.write_text(output)
+                for line in output.splitlines():
+                    if "ControlRegression.java>" in line:
+                        print(line.split("ControlRegression.java>", 1)[1].strip(), flush=True)
+                if result.returncode or "ERROR REPORT SCRIPT ERROR" in output or "CONTROL REGRESSION PASS:" not in output:
+                    failures.append(str(log))
+    finally:
+        for name, data in saved.items():
+            path = REPO / "build" / name
+            if data is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(data)
+    if failures:
+        raise SystemExit("Control regressions failed; see:\n" + "\n".join(failures))
+    print("All requested control firmware regressions passed.", flush=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -79,7 +79,7 @@ FEATURE_MAP = {
     ),
     "arp.switch":             (
         ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
-         "release_count_guard"],
+         "release_count_guard", "latch_owner"],
         ["arp_latch"],
     ),
     "midi.poly_default":      (
@@ -91,9 +91,10 @@ FEATURE_MAP = {
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "pressure.multi_key":     ([], ["multi_key_pressure"]),
     "pressure.error_diffusion": ([], ["error_diffusion"]),
-    "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply"], ["pressure_blend"]),
+    "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
+    "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
     "diagnostics.latch_probe": ([], ["latch_probe"]),
     "diagnostics.pressure_ab_switch": (
@@ -117,6 +118,7 @@ ENABLED_WHEN = {
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
+    "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
     "diagnostics.latch_probe": True,
     "diagnostics.pressure_ab_switch": True,
@@ -133,11 +135,17 @@ def get(cfg: dict, dotted: str):
 # ---------------------------------------------------------------------------
 # Scala parsing and table generation
 # ---------------------------------------------------------------------------
-def parse_scala(path: Path) -> list[float]:
-    """Return the 12 scale degrees in cents, starting at 0 for the tonic.
+def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
+    """Return the scale degrees in cents, starting at 0 for the tonic.
 
     Scala format: '!' comments, then description, then the degree count, then
     that many pitches as either a ratio (a/b) or a cents value (contains '.').
+
+    Without a keyboard mapping the scale must have twelve degrees, because one
+    key table entry per semitone is all the instrument has: 12 degrees are
+    returned, the octave implied.  With `mapped` the count is free and the
+    whole list is returned, the final degree included - a .kbm then says which
+    degree each key takes and which one is the period.
     """
     raw = [ln for ln in path.read_text().splitlines()
            if not ln.lstrip().startswith("!")]
@@ -162,9 +170,32 @@ def parse_scala(path: Path) -> list[float]:
     for index, token in enumerate(pitches, 1):
         token = token.split()[0]
         if "." in token:
-            value = float(token)
+            try:
+                value = float(token)
+            except ValueError:
+                raise ValueError(f"{path.name}: degree {index} is {token!r}, "
+                                 "which is not a number") from None
         else:
-            value = 1200.0 * math.log2(float(Fraction(token)))
+            # The .scl format: "Ratios are written with a slash, and only one",
+            # an integer with neither slash nor period is that integer over 1,
+            # and "negative ratios are meaningless and should give a read
+            # error".  Spelled out rather than handed to Fraction, which reads
+            # "1/2/3" as an error with a message about literals and left the
+            # browser - which read it as 1/2 - free to build what this refused.
+            parts = token.split("/")
+            ratio = None
+            if len(parts) <= 2 and all(p.lstrip("+-").isdigit() for p in parts):
+                try:
+                    ratio = (Fraction(int(parts[0]), int(parts[1]))
+                             if len(parts) == 2 else Fraction(int(parts[0])))
+                except (ValueError, ZeroDivisionError):
+                    ratio = None
+            if ratio is None or ratio <= 0:
+                raise ValueError(
+                    f"{path.name}: degree {index} is {token!r} — a ratio is one "
+                    "whole number, or two separated by a single slash, and must "
+                    "be above zero")
+            value = 1200.0 * math.log2(float(ratio))
         # float() takes "1.0e999" as infinity without complaint, and every
         # check below is a comparison that an infinity or a NaN answers
         # meaninglessly.
@@ -173,10 +204,10 @@ def parse_scala(path: Path) -> list[float]:
                 f"{path.name}: degree {index} is {token!r}, which is not a number")
         cents.append(value)
 
-    if count != 12:
+    if count != 12 and not mapped:
         raise ValueError(
             f"{path.name}: {count} degrees — the key table repeats every octave, "
-            "so a 12-note scale is required"
+            "so a 12-note scale is required, or a .kbm to map it"
         )
     if any(b <= a for a, b in zip(cents, cents[1:])):
         raise ValueError(
@@ -184,12 +215,108 @@ def parse_scala(path: Path) -> list[float]:
             "descend or repeat")
     if cents[1] <= 0.0:
         raise ValueError(f"{path.name}: first degree must be above the tonic")
-    if abs(cents[-1] - 1200.0) > 0.001:
-        raise ValueError(
-            f"{path.name}: last degree is {cents[-1]:.3f} cents, not a 2/1 octave — "
-            "the octave switches would go out of tune"
-        )
+    if mapped:
+        return cents  # the .kbm names the period; every degree stays reachable
     return cents[:12]  # degree 12 is the octave, supplied by the octave term
+
+
+def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
+    """Return (degree per map position, formal-octave degree) from a .kbm.
+
+    Scala keyboard mapping: '!' comments, then seven header values - map size,
+    first and last MIDI note, middle note, reference note, reference frequency,
+    formal octave degree - then one line per map position naming a scale
+    degree, or 'x' for a position that sounds nothing.
+
+    Four of those seven describe a MIDI keyboard tuned in Hz, and this
+    instrument is neither: it has 29 keys with no note numbers, and its
+    absolute pitch comes from the 208's trimmer rather than from the firmware.
+    So first, last, middle and the reference are read to prove the file is
+    well formed and then ignored, map position 0 falling on the bottom key.
+    Which key is pinned across slots stays [tuning].reference_key.
+
+    Unmapped positions take the degree of the nearest mapped position, ties to
+    the lower - the key sounds like the key beside it rather than falling
+    silent, which the firmware has no way to do.
+    """
+    degree_count = len(cents) - 1
+    raw = [ln for ln in path.read_text().splitlines()
+           if not ln.lstrip().startswith("!")]
+    header, index = [], 0
+    while index < len(raw) and len(header) < 7:
+        token = raw[index].strip()
+        index += 1
+        if token:
+            header.append(token.split()[0])
+    if len(header) < 7:
+        raise ValueError(f"{path.name}: not a Scala keyboard mapping — "
+                         f"needs seven header values, found {len(header)}")
+    names = ("map size", "first MIDI note", "last MIDI note", "middle note",
+             "reference note", "reference frequency", "formal octave degree")
+    values = []
+    for name, token in zip(names, header):
+        try:
+            values.append(float(token) if "frequency" in name else int(token))
+        except ValueError:
+            raise ValueError(
+                f"{path.name}: {name} is {token!r}, which is not a number") from None
+    size, _first, _last, _middle, _reference, ref_hz, formal = values
+    if not math.isfinite(ref_hz) or ref_hz <= 0:
+        raise ValueError(f"{path.name}: reference frequency must be above zero")
+    if size < 0:
+        raise ValueError(f"{path.name}: map size is {size}, which is negative")
+    if not 1 <= formal <= degree_count:
+        raise ValueError(
+            f"{path.name}: formal octave degree is {formal}, but the scale has "
+            f"{degree_count} degrees — it must name one of them")
+    # Size zero is the format's "no mapping": every degree in order.
+    if size == 0:
+        return list(range(degree_count)), formal
+
+    # Blank entries mean unmapped, so the mapping is read WITH its blank lines
+    # - only the header skipped them.  The .kbm format also says: "At the end,
+    # unmapped keys may be left out."  A map may
+    # stop short of its own size and the positions after it are unmapped, so a
+    # So a map may stop short of its own size: that is a legal file, not a
+    # truncated one, and refusing it turned away maps Scala itself reads.  The
+    # tail fills from the nearest mapped position, like any other gap.
+    entries = raw[index:][:size]
+    entries += [""] * (size - len(entries))
+    degrees: list[int | None] = []
+    for position, line in enumerate(entries):
+        token = line.strip()
+        if not token or token[0] in "xX":
+            degrees.append(None)
+            continue
+        try:
+            degree = int(token.split()[0])
+        except ValueError:
+            raise ValueError(
+                f"{path.name}: position {position} is {token!r} — a scale "
+                "degree or 'x' for unmapped") from None
+        if not 0 <= degree <= degree_count:
+            raise ValueError(
+                f"{path.name}: position {position} names degree {degree}, but "
+                f"the scale has degrees 0..{degree_count}")
+        degrees.append(degree)
+
+    mapped = [i for i, d in enumerate(degrees) if d is not None]
+    if not mapped:
+        raise ValueError(f"{path.name}: every position is unmapped")
+    filled = []
+    for position, degree in enumerate(degrees):
+        if degree is not None:
+            filled.append(degree)
+            continue
+        nearest = min(mapped, key=lambda i: (abs(i - position), i))
+        filled.append(degrees[nearest])
+    return filled, formal
+
+
+def key_pitch(cents: list[float], degrees: list[int], period: float, key: int) -> float:
+    """Where a key sounds, in cents above the bottom key."""
+    size = len(degrees)
+    return period * (key // size) + cents[degrees[key % size]]
 
 
 def factory_tuning(memory: dict[int, int]) -> list[int]:
@@ -205,7 +332,9 @@ def factory_tuning(memory: dict[int, int]) -> list[int]:
         )
 
 
-def anchor_offset(cents: list[float], reference_key: int) -> float:
+def anchor_offset(cents: list[float], reference_key: int,
+                  degrees: list[int] | None = None,
+                  period: float = 1200.0) -> float:
     """Cents to shift a scale so `reference_key` lands on the 12-TET grid.
 
     A scale's degree 0 sits on the bottom key, but its degrees do not otherwise
@@ -221,22 +350,170 @@ def anchor_offset(cents: list[float], reference_key: int) -> float:
             f"[tuning].reference_key is {reference_key}; it is a semitone above the "
             "bottom key (a C), so it must be 0..11 — 0 = C, 9 = A"
         )
-    return 100.0 * reference_key - cents[reference_key]
+    if degrees is None:
+        # reference_key is 0..11, inside the first period, so the period does
+        # not enter here.
+        return 100.0 * reference_key - cents[reference_key]
+    # With a map the reference key's degree is whatever the map gives it, so
+    # the pitch has to be looked up rather than indexed.  The target stays the
+    # 12-TET grid: that is where the factory table puts the key, and it is
+    # what the 208 was trimmed against.
+    return 100.0 * reference_key - key_pitch(cents, degrees, period, reference_key)
 
 
 def tuning_table(cents: list[float], base: int, per_octave: int,
-                 offset: float = 0.0) -> list[int]:
+                 offset: float = 0.0, degrees: list[int] | None = None,
+                 period: float = 1200.0) -> list[int]:
     """32 key-table entries: octave-periodic, `per_octave` units per octave.
 
     `offset` shifts the whole table by a number of cents, for the anchoring
     above.  It is applied before quantising, so it costs no extra resolution:
     the table's own step is 1200/`per_octave` cents either way.
     """
+    if degrees is None:
+        # cents[12] is the scale's own octave.  Every scale that was legal
+        # before declares 1200 there, so this is the same table it always
+        # produced - but a scale that repeats somewhere else now says so.
+        span = cents[12] if len(cents) > 12 else 1200.0
+        return [
+            base + math.floor(
+                (span * (k // 12) + cents[k % 12] + offset) * per_octave / 1200 + 0.5)
+            for k in range(32)
+        ]
     return [
         base + math.floor(
-            (1200 * (k // 12) + cents[k % 12] + offset) * per_octave / 1200 + 0.5)
+            (key_pitch(cents, degrees, period, k) + offset) * per_octave / 1200 + 0.5)
         for k in range(32)
     ]
+
+
+# The 29 keys the instrument actually has.  Entries 29..31 exist because the
+# table is 32 long, but no key reaches them, so they say nothing about what two
+# notes the player can sound together.
+REAL_KEYS = 29
+
+# The factory's trn transposes by ([state+0x6b] - 2) periods: nine positions,
+# -2 to +6.  A latched note keeps the transpose it was pressed at, so two
+# sounding notes can sit up to eight periods apart, and the arp's own octave
+# randomiser adds one more either way.
+#
+# The exact width stops mattering well before that.  A transpose only brings
+# two keys together while it is smaller than the span of the table itself;
+# past that every pair is further apart than it started, so widening the sweep
+# cannot lower the answer.  Measured: every shipped tuning and every fixture
+# below gives the same number at +-2 as at +-32.  Eight is chosen to cover the
+# instrument's real range with room to spare, not because the edge is delicate.
+TRANSPOSE_STEPS = range(-8, 9)
+
+# What the runtime transpose can differ by between the press that latches a
+# note and the press meant to release it, in DAC units.  The transpose itself
+# is an exact multiple of the period, but the two paths that publish it to
+# 0x60A0 do not agree to the unit - one carries base_units, one octave_units,
+# and base_units is octave_units plus one.  A probe measured exactly that: 485
+# stored against 484 live.  So the gap the player actually gets is up to this
+# much smaller than the gap in the table, and a spacing has to clear the
+# tolerance by it.
+TRANSPOSE_SLACK = 1
+
+
+def ideal_key_pitches(cents: list[float], degrees: list[int] | None,
+                      period: float, offset: float) -> list[float]:
+    """The 29 real keys' pitches in cents, before the table quantises them."""
+    if degrees is None:
+        return [period * (k // 12) + cents[k % 12] + offset for k in range(REAL_KEYS)]
+    return [key_pitch(cents, degrees, period, k) + offset for k in range(REAL_KEYS)]
+
+
+def min_key_spacing(slots) -> int | None:
+    """How close two DIFFERENT sounding pitches ever get, in DAC units.
+
+    `slots` holds one (ideal, table, period_cents, period_units) per tuning
+    slot: `ideal` the real keys' unquantised pitches from ideal_key_pitches,
+    `table` the key table actually emitted.
+
+    Every pair is compared at every transpose difference the instrument can put
+    between them, not just at the same one.  The latch matches
+    `table[key] + transpose`, and a latched note keeps the transpose it was
+    pressed at, so a map can be comfortably spaced across the keyboard and
+    still put two notes within the tolerance once one of them is an octave
+    away.  Reading only the untransposed table missed that entirely.
+
+    A pair whose IDEAL pitches coincide under some transpose is the same note -
+    an octave-equivalent alias, or a degree a map deliberately doubles up - and
+    is skipped.  That test is made on the cents, not on the emitted units,
+    because rounding can leave such a pair a unit or two apart in the table;
+    absorbing exactly that is what the tolerance is for.
+
+    None when no slot carries a key table, which is the factory temperament's
+    ~40-unit semitone.
+    """
+    closest = None
+    for ideal, table, period_cents, period_units in slots:
+        for a, pitch_a in enumerate(ideal):
+            for step in TRANSPOSE_STEPS:
+                shifted = pitch_a + step * period_cents
+                emitted = table[a] + step * period_units
+                for b, pitch_b in enumerate(ideal):
+                    if abs(shifted - pitch_b) < 1e-9:
+                        continue          # the same note, on purpose
+                    gap = abs(emitted - table[b])
+                    if closest is None or gap < closest:
+                        closest = gap
+    return closest
+
+
+# The instrument's own transpose, in periods.  The factory's trn steps
+# ([state+0x6b] - 2) of them, so the reach above an untransposed table entry is
+# six periods.  The downward direction is not checked here: the table's base is
+# one period above nothing so the lowest switch position still lands above
+# zero, and below that the factory's own range checks hold it.
+TRANSPOSE_UP = 6
+
+# A pitch is carried through signed 16-bit storage and loads.  Above this it
+# comes back negative and falls to the DAC floor - the bottom of the range
+# rather than the top, which no clamp can correct.
+MAX_PITCH = 0x7FFF
+
+
+# Two faults at the two ends, and they are not the same fault.  Below zero the
+# entry is stored as a halfword and the latch match and the pitch ranking read
+# it back with LD.UH, so -39 becomes 65497 and they compare a pitch 65,536
+# units from the one that sounds.  Above MAX_PITCH the signed load turns the
+# pitch negative and the note drops to the floor.  Between the DAC ceiling and
+# MAX_PITCH there is no fault at all: the pitch path clamps, so the note is
+# flat rather than wrong.
+def check_table_range(name: str, table: list[int], period_units: int) -> None:
+    # Only the keys that exist.  Entries 29..31 are emitted because the table
+    # is 32 long, and no key reaches them, so a pitch they hold is not one the
+    # instrument can be made to play.
+    table = table[:REAL_KEYS]
+    low = min(table)
+    if low < 0:
+        raise ValueError(
+            f"{name}: key table entry {low} is below zero — the anchor has "
+            f"pushed the bottom of this scale under the instrument's lowest "
+            f"pitch.  The firmware reads the table unsigned, so that entry "
+            f"would come back as {low & 0xFFFF} and the latch would compare a "
+            f"note that never sounds.  Use a scale or mapping whose keys stay "
+            f"above the bottom, or an anchor key the map does not carry more "
+            f"than an octave above it.")
+    # The transpose is what makes this more than a check on the table: an entry
+    # can sit under the limit and cross it the moment the player steps the
+    # octave up, which is a note that plays at the bottom of the range instead
+    # of the top.
+    reach = max(table) + TRANSPOSE_UP * period_units
+    if reach > MAX_PITCH:
+        top = max(table)
+        raise ValueError(
+            f"{name}: key {table.index(top)} reaches {reach} once the octave "
+            f"controls are stepped up ({top} in the table, plus "
+            f"{TRANSPOSE_UP} periods of {period_units}), and the firmware "
+            f"carries a pitch as a signed 16-bit value — past {MAX_PITCH} it "
+            f"comes back negative and the note drops to the bottom of the "
+            f"range instead of the top.  This scale's period spans "
+            f"{period_units} units, so the keyboard runs out of pitch before "
+            f"it runs out of keys: use a mapping with more degrees to the "
+            f"period, or a smaller period.")
 
 
 def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
@@ -679,12 +956,14 @@ RAM_REGIONS = [
     # the initialiser addresses it as base+2/+6/+a/+c.
     (0x60E4, 0x60E6, "tuning-apply guard"),
     (0x60E6, 0x60E8, "arp knob 2 latch"),
-    (0x60E8, 0x60EA, "arp last countdown"),
+    # 0x60E8 and 0x60EC were "arp last countdown" and "arp gate threshold".
+    # Nothing in the firmware reads or writes either any more - the audit
+    # walked every base-plus-offset access in the built image and found none -
+    # so they are gone rather than left looking like live state.
     (0x60EA, 0x60EC, "arp knob 3 latch"),
-    (0x60EC, 0x60EE, "arp gate threshold"),
     (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
     (0x60EF, 0x60F0, "previous switch position"),
-    (0x60F0, 0x60F2, "vibrato knob latch"),
+    (0x60F0, 0x60F2, "knob 4 latch: vibrato raw value or transpose zone"),
     # Our own cell, not the factory's state+0x38c: that byte is the factory
     # weighted-random selector's bias parameter, and borrowing it meant a
     # factory-knobs build still had knob 1 writing over a live factory
@@ -700,6 +979,7 @@ RAM_REGIONS = [
     (0x6032, 0x6036, "profiler reports"),
     (0x6036, 0x6038, "interpolator target"),
     (0x6038, 0x6044, "profiler accumulators"),
+    (0x6044, 0x6046, "clock-latency edge-to-claim age"),
     (0x6046, 0x604C, "octave-switch shadow"),
     (0x604C, 0x604E, "octave-switch boot counter"),
     (0x6050, 0x6080, "pressure history taps"),
@@ -709,13 +989,100 @@ RAM_REGIONS = [
     (0x6086, 0x6088, "filter ring index"),
     (0x6088, 0x608C, "filter running sum"),
     (0x608C, 0x608E, "filter newest sample"),
+    # The pitch the DAC was showing when a beat claimed the step, republished
+    # every unclaimed scan.  A claimed beat's scan puts it back, so the new
+    # note's pitch cannot reach the output before the gate it belongs to.
+    (0x609C, 0x609E, "held pitch, published for a claimed beat"),
     (0x60A0, 0x60A2, "live transpose offset"),
     (0x60A2, 0x60DC, "latch pitch stamps"),
+    # The gate's absolute COUNT target.  Declared, so that the next cell to be
+    # picked out of this page collides here instead of silently inside the
+    # stamps above - which is what 0x60A8 did: slot 3.
+    (0x60DC, 0x60E0, "claimed beat's gate target, absolute COUNT"),
     (0x60E0, 0x60E2, "blend offset target"),
     (0x60E2, 0x60E4, "blend applied offset"),
     (0x60F4, 0x60F6, "blend previous base"),
     (0x60F6, 0x60F8, "blend target filter"),
     (0x60F8, 0x60FA, "blend hysteresis hold"),
+    # Decoupled preset voltages.  The stored value is what the preset output
+    # and the pitch adder both read; the snapshot and the flag are what stop a
+    # pad hold from snatching the stored value to wherever the knob happens to
+    # be standing.
+    (0x613A, 0x6142, "preset voltage store"),
+    (0x6142, 0x614A, "preset knob snapshot"),
+    (0x614A, 0x614E, "preset following flags"),
+    # Which way the mirror order is travelling; it turns at the ends.
+    (0x614E, 0x614F, "arp mirror direction"),
+    # Where knob 2's pattern has got to, wrapped at that pattern's length.
+    (0x6150, 0x6152, "arp pattern step"),
+    # Which half of the swung pair the next step is.
+    (0x6152, 0x6153, "arp swing parity"),
+    # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
+    # the selection is frozen at, last scan's touch levels, and the blink
+    # counter every light this firmware adds shares.
+    (0x6154, 0x6160, "sequencer chord and mode"),
+    # 64 recorded pitches, then how many there are, where play has got to,
+    # and the pitch the step about to sound carries.
+    (0x6160, 0x61E6, "sequencer steps"),
+    # The external clock: diagnostic milliseconds / dispatch stamp, measured
+    # period, acquisition confidence, and divide phase. The active-divider
+    # latch and physical edge timestamps are separate, below.
+    (0x61E6, 0x61EE, "external clock divider"),
+    # The key each recorded step was played on.  The pitch beside it is what
+    # the CV plays; this is what MIDI names the note by.
+    (0x61EE, 0x622E, "sequencer step keys"),
+    # The strip's own mode, plus one, for as long as record has it aside.
+    # Zero means nothing is being held and a restore cannot fire twice.
+    (0x622E, 0x6230, "strip mode borrowed by record"),
+    # The key a note-on left for record to sound, plus one, so that the
+    # cleared state is "nothing waiting" rather than key zero.
+    (0x6230, 0x6232, "the key record has yet to sound"),
+    (0x6232, 0x6233, "unconsumed low interval, GPIO ISR"),
+    (0x6233, 0x6234, "acquired divider latch"),
+    (0x6234, 0x6236, "clock FIFO producer and consumer indices"),
+    (0x6236, 0x6238, "input-present and output-step-in-flight flags"),
+    (0x6238, 0x6244, "low, accepted and consumed COUNT timestamps"),
+    (0x6244, 0x6254, "cycles/ms, low qualification, refractory and release"),
+    (0x6254, 0x6258, "last physical output COUNT timestamp"),
+    # A bare pad press has to be HELD to mean preview or backspace: a quick
+    # tap still belongs to whatever else the pad does, which is how octave 3
+    # became impossible to choose without deleting a note.
+    (0x6258, 0x625A, "saturating capture FIFO overrun count"),
+    (0x625A, 0x625B, "physical output timestamp valid"),
+    # Set beside the scan's countdown when a clock is present, cleared by
+    # whichever context takes the step. Inside the 0x6232..0x62E0 block the
+    # startup initialiser zeroes, so a warm restart cannot fire a stale one.
+    (0x625B, 0x625C, "the step's trigger is claimable by the 1 kHz flush"),
+    (0x625C, 0x625D, "which pad a bare hold is counting, plus one"),
+    (0x625D, 0x625E, "how many scans it has been held"),
+    (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
+    # Completed edit gestures commit immediately. A failed
+    # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
+    (0x62E0, 0x62E1, "persistence request/result"),
+    (0x62E1, 0x62E2, "which rotation page holds the newest record"),
+    (0x62E4, 0x62E8, "the sequence number that record carries"),
+    # One stamp per knob, the raw ADC value plus one; zero means no edit has
+    # parked anything and the knob's other job may follow it live.
+    (0x62E8, 0x62F0, "where each preset edit left its knob, plus one"),
+    (0x62F0, 0x62F4, "clock-latency internal-beat claim stamp"),
+    # The scan watches for two gestures ENDING, so it has to remember what
+    # they looked like on the previous scan.
+    (0x62F8, 0x62F9, "logical sequencer mode last scan, preview counts as WRITE"),
+    (0x62F9, 0x62FD, "each preset was edited since its last full release"),
+    (0x62FD, 0x62FE, "the stored record has been restored this power-up"),
+    # A preview is a take being listened back to, not a take being
+    # finished: it must not read as leaving record mode.
+    (0x62FE, 0x62FF, "a one-shot preview of the take is playing"),
+    (0x62FF, 0x6300, "explicit CLEAR event awaiting persistence scan"),
+    # The release is timed from the 1 ms task, not from COUNT: COUNT is
+    # scaled by the CPU-frequency word, and on the instrument a nominal
+    # 2600 ms release expired in well under a second.
+    (0x62F6, 0x62F8, "the millisecond count at the last accepted edge"),
+    # The record staged for writing, 8-byte aligned and a multiple of 8 long,
+    # so the flash driver takes its simple aligned path - the same reason the
+    # factory stages its own record rather than writing from scattered state.
+    (0x6300, 0x63E0, "canonical v2 record, staged for body then marker commit"),
+    (0x6400, 0x64CC, "canonical musical payload from completed edit gestures"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -724,29 +1091,70 @@ RAM_REGIONS = [
     # pitch snapshot that was never implemented.
     (0x609A, 0x609C, "latch probe snapshot"),
     (0x6100, 0x613A, "corrected-pressure cache"),
+    # The recording audition's pinned pitch and the delete-pad flash, with
+    # the pressure-ownership maps, above the persistence staging and
+    # snapshot blocks.  Every cell is written before it is read or
+    # validated before it is trusted, so none of this needs the first-use
+    # fill.  The flash countdown is also cleared by the startup wrapper,
+    # because SRAM survives a same-image warm restart.
+    (0x6500, 0x6502, "the audition's pinned pitch, plus one"),
+    (0x6502, 0x6503, "delete-pad flash countdown, in scans"),
+    (0x6504, 0x6521, "owner: which key's press made each slot's note, plus one"),
+    (0x6521, 0x653E, "current: the slot each key's note lives in, plus one"),
+    (0x6540, 0x657A, "slot-indexed pressure weights, rebuilt per scan"),
 ]
 
 # Factory-owned RAM the patches address absolutely.  Not ours to initialise —
 # the factory already does — but listed so that a new cell of our own cannot
 # be placed on top of one without the coverage check noticing.
 FACTORY_CELLS = [
+    (0x29CC, 0x29D0, "CPU frequency, also used by the factory COUNT delay"),
     # 32 halfwords - the tuning applier loop counts MOV R9,0x20 - so the
     # cell ends at 0x894.  It was declared 6 bytes short, which left the
     # last three entries outside the overlap protection this map exists
     # to provide.
     (0x0854, 0x0894, "key pitch table"),
+    # The note the arp step sounded, and the flag saying one is sounding.
+    # Both are read by the release that stop and clear now do for themselves.
+    (0x2EE4, 0x2EE6, "the note the arp is sounding"),
+    # table[knob] + CV/2, clamped - written at 0x80002b62.  The divisor must
+    # NOT read this: the knob half is the tempo table's OUTPUT, not the knob
+    # position, and the CV half is the arp-rate CV input (the 218K+'s own
+    # jack; a reassigned input on a modified V3).  The knob alone, as a
+    # position, is state+0x2fc raw.
+    (0x2EE6, 0x2EE8, "arp rate knob and CV, combined"),
+    (0x2EED, 0x2EEE, "arp active-note flag"),
+    # Read before the 208-bus note-off and before every bend send.  Named for
+    # what it is seen to do, not for a writer this repo has found.
+    (0x2EFA, 0x2EFB, "send-enable flag"),
     (0x2EEE, 0x2EF0, "glide rate"),
     (0x3212, 0x3214, "pitch mirror"),
+    # The pads' own touch states, the same shape as the keys' array: one byte
+    # each, 2 meaning held.  Read only - the factory owns the writing.
+    (0x46F0, 0x46F4, "pad touch state"),
     # Live again whenever pressure_fix is off: the clamp skips are gated now,
     # so the factory 16-tap pressure history shifts through here in that
     # build.  Declared so no region of ours can ever move back in.
     (0x3216, 0x3236, "factory 16-tap pressure history"),
     (0x3490, 0x34AD, "per-key touch state"),
+    (0x3599, 0x359A, "state+0x39: global edit mode"),
+    (0x35CA, 0x35CC, "state+0x6a/0x6b: transpose enable and knob zone"),
     (0x3686, 0x36C0, "per-key raw pressure"),
     (0x377B, 0x3798, "state+0x21b: per-slot held flags"),
-    (0x3866, 0x3868, "arp step state"),
+    # state+0x306: the PORTAMENTO knob, 0..1023.  Six knobs are conditioned
+    # together at 0x80007ad8 - portamento, arp rate, and the four preset
+    # voltage knobs at 0x30a/0x30c/0x30e/0x310.  The strip is not among them:
+    # it is a seven-segment capacitive sensor, and its position is a centroid
+    # (0x8000aa98) mapped to state+0x1fe.
+    (0x3866, 0x3868, "portamento knob mirror"),
+    (0x386A, 0x3872, "state+0x30a..0x310: the four preset knob mirrors"),
     (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
     (0x38B0, 0x38B2, "state+0x350: transpose"),
+    # The pitch the 1 kHz flush transfers.  Declared now that a patch names it
+    # by an address the map can see: clock_settle captures it at an external
+    # claim and clock_output restores it until completion, so a held beat's
+    # gate and pitch leave on one transfer.
+    (0x38B8, 0x38BA, "state+0x358: DAC slot 2, the pitch"),
 ]
 
 # Immediates that are values rather than addresses, so the coverage check does
@@ -1054,24 +1462,107 @@ def main() -> None:
         "pitch_remap": pitch_table(cfg, read_calibration(calibration)),
     }
     reference_key = tuning.get("reference_key", 9)
+    # What one step of the octave controls should be, in DAC units.  The
+    # factory temperament and every 2/1 scale make this 484.
+    periods = set()
+    for relative in tuning["slots"]:
+        if relative == "factory":
+            periods.add(tuning["units_per_octave"])
+            continue
+        name, map_name = relative if isinstance(relative, (list, tuple)) else (relative, None)
+        probe = parse_scala(REPO / name, mapped=True)
+        if map_name is None:
+            span = probe[12] if len(probe) > 12 else 1200.0
+        else:
+            span = probe[parse_kbm(REPO / map_name, probe)[1]]
+        periods.add(int(math.floor(span * tuning["units_per_octave"] / 1200 + 0.5)))
+    if len(periods) > 1:
+        raise SystemExit(
+            "[tuning].slots disagree about the period: "
+            + ", ".join(f"{p} units" for p in sorted(periods))
+            + " — the octave controls step one period, and there is one set of "
+              "them for the whole instrument, so every slot must repeat at the "
+              "same interval (the factory temperament repeats at 484)")
+    # The bottom key sits one period above nothing, so the switch's lowest
+    # position still lands above zero.  485 for a 2/1, which is what every
+    # octave build already has.
+    tuning["base_units"] = max(periods) + 1
+    periods = set()
+    # One (ideal, table, period_cents, period_units) per slot that carries a
+    # scale, for the latch-spacing check below.  The factory temperament is not
+    # among them: it is copied bit-exact and its semitones are ~40 units apart.
+    spacing_slots = []
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
+            periods.add(tuning["units_per_octave"])
             tables[f"tuning_slot{index}"] = factory_tuning(memory)
             print(f"  tuning slot {index}: factory temperament (from the base image, "
                   "copied bit-exact, so the anchor does not apply)")
             continue
-        path = REPO / relative
-        cents = parse_scala(path)
+        scale_name, map_name = (
+            (relative, None) if isinstance(relative, str)
+            else (relative[0], relative[1] if len(relative) > 1 else None))
+        path = REPO / scale_name
+        degrees = period = None
         try:
-            offset = anchor_offset(cents, reference_key)
+            if map_name is None:
+                cents = parse_scala(path, mapped=True)
+                if len(cents) - 1 != 12:
+                    raise ValueError(
+                        f"{path.name}: {len(cents) - 1} degrees — the key table "
+                        "gives one entry per key, so without a .kbm to map them "
+                        "a 12-note scale is required")
+                period = cents[12]
+            else:
+                cents = parse_scala(path, mapped=True)
+                degrees, formal = parse_kbm(REPO / map_name, cents)
+                period = cents[formal]
+            offset = anchor_offset(cents, reference_key, degrees, period or 1200.0)
         except ValueError as error:
             raise SystemExit(str(error))
-        tables[f"tuning_slot{index}"] = tuning_table(
-            cents, tuning["base_units"], tuning["units_per_octave"], offset
+        # The anchor keeps one key where equal temperament puts it, so one trim
+        # on the 208 serves every slot.  That is a statement about a 12-TET
+        # grid, and a scale that does not repeat at the octave has no place on
+        # one: pinning its ninth key to A's pitch only transposes the whole
+        # scale by whatever the difference happens to be, and spends the
+        # headroom the octave switch needs.  Degree 0 keeps the bottom key.
+        if abs((period or 1200.0) - 1200.0) > 0.001:
+            offset = 0.0
+        table = tuning_table(
+            cents, tuning["base_units"], tuning["units_per_octave"], offset,
+            degrees, period or 1200.0
         )
-        anchor = NOTE_NAMES[reference_key]
+        period_units = int(math.floor(
+            (period or 1200.0) * tuning["units_per_octave"] / 1200 + 0.5))
+        try:
+            check_table_range(path.name, table, period_units)
+        except ValueError as error:
+            raise SystemExit(str(error))
+        tables[f"tuning_slot{index}"] = table
+        periods.add(period_units)
+        spacing_slots.append((
+            ideal_key_pitches(cents, degrees, period or 1200.0, offset),
+            table, period or 1200.0, period_units))
+        anchor = (NOTE_NAMES[reference_key] if abs((period or 1200.0) - 1200.0) <= 0.001
+                  else "bottom key")
+        shape = ("" if degrees is None else
+                 f", {Path(map_name).name}: {len(degrees)} keys per octave")
         print(f"  tuning slot {index}: {path.name}"
-              f"  ({anchor} anchored, {offset:+.2f} cents)")
+              f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
+    cfg["_min_key_spacing"] = min_key_spacing(spacing_slots)
+    # The octave controls - the panel switch, the arpeggiator's random octave,
+    # knob 3's span - are one setting for the whole build, so every slot has to
+    # agree about how big an octave is.  Mixing a 2/1 scale with one that
+    # repeats somewhere else would leave the controls right for one slot and
+    # wrong for the others; the factory temperament counts as a 2/1.
+    if len(periods) > 1:
+        raise SystemExit(
+            "[tuning].slots disagree about the period: "
+            + ", ".join(f"{p} units" for p in sorted(periods))
+            + " — the octave controls step one period, and there is one set of "
+              "them for the whole instrument, so every slot must repeat at the "
+              "same interval (the factory temperament repeats at 484)")
+    cfg["_octave_units"] = periods.pop() if periods else tuning["units_per_octave"]
     if len(tuning["slots"]) != 3:
         raise SystemExit("[tuning].slots must list exactly three scales")
 
@@ -1097,6 +1588,7 @@ def main() -> None:
         "pressure_ceiling_default": calib["ceiling"],
         "scan_period_ms": cfg["timing"]["scan_period_ms"],
         "proximity_reference": cfg["pressure"].get("proximity_reference", 300),
+        "octave_units": cfg.get("_octave_units", cfg["tuning"]["units_per_octave"]),
         "factory_gain_shift": cfg["diagnostics"].get("factory_gain_shift", 3),
         # Direct indexing, as above at the excess table: the two dead
         # fallbacks here used to disagree (1.0 vs 1.35), which would have
@@ -1139,7 +1631,15 @@ def main() -> None:
     check_ram_regions()
     check_ram_coverage()
     blocks, features, summary = resolve_flags(cfg)
-    claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe")
+    # The factory's own octave arithmetic only needs rewriting when an octave
+    # has stopped being a 2/1; at 484 these patches would write back the bytes
+    # that are already there.
+    for name in ("octave_step_down", "octave_step_up", "octave_step_up2",
+                 "octave_scale_mul", "octave_scale_bias"):
+        blocks[name] = (cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
+                        != cfg["tuning"]["units_per_octave"])
+    claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe",
+                          "clock_latency")
               if features.get(n)]
     if len(claims) > 1:
         raise SystemExit(
@@ -1219,6 +1719,12 @@ def main() -> None:
     if get(cfg, "arp.switch") == "latch":
         blocks["pitch_target_blend_hook"] = True
         blocks["blend_offset_apply"] = True
+        # The conditioner ends in a call to the apply shim, so the two exist
+        # together - with neither the blend nor the latch, that call would
+        # name erased flash.  Dead today (the pitch pool routes around the
+        # conditioner when the blend is off), but not something to leave
+        # where a future route could reach it.
+        blocks["blend_target_conditioner"] = True
     else:
         # The factory's long-hold on the arp switch toggles polyphonic MIDI.
         # We suppress it so the edit-mode setting has one owner, but that is
@@ -1235,11 +1741,35 @@ def main() -> None:
     tolerance = cfg["arp"].get("latch_match_tolerance", 8)
     if isinstance(tolerance, bool) or not isinstance(tolerance, int) or not 0 <= tolerance <= 30:
         raise SystemExit("[arp].latch_match_tolerance must be an integer from 0 to 30")
+    closest = cfg.get("_min_key_spacing")
+    if closest is not None and get(cfg, "arp.switch") == "latch":
+        # The table's gap is the nominal one, and the runtime's is up to a unit
+        # smaller: the note that was latched keeps the transpose it was pressed
+        # at, and the two paths that publish it do not always agree to the unit
+        # - one carries the base, one the period, and those differ by exactly
+        # the one the base adds.  So a nominal 9 is an 8 under the fingers,
+        # which a tolerance of 8 matches.  Comparing the nominal gap alone
+        # emitted an image where the second note cleared the first.
+        if tolerance + TRANSPOSE_SLACK >= closest:
+            raise SystemExit(
+                f"[arp].latch_match_tolerance is {tolerance}, but the closest two "
+                f"different keys get in this build is {closest} units "
+                f"({closest * 2.48:.0f} cents), and the transpose the latch "
+                f"compares against can move by {TRANSPOSE_SLACK} between the "
+                f"press that latches a note and the press meant to release it "
+                f"— so the latch would treat them as one note.  Use less than "
+                f"{closest - TRANSPOSE_SLACK}.")
+        if tolerance * 2 > closest:
+            print(f"  note: latch_match_tolerance {tolerance} is over half the "
+                  f"{closest}-unit gap between the closest keys; {closest // 2 - 1} "
+                  "or less keeps the margin the semitone default has")
     cfg["_numbers"]["latch_match_tolerance"] = tolerance
     if get(cfg, "arp.switch") == "latch":
+        gap = ("semitone is ~40 units" if closest is None
+               else f"closest keys are {closest} units apart")
         summary.append(f"  {'arp.latch_match_tolerance':28s} "
                        f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
-                       f"{'exact match' if tolerance == 0 else 'semitone is ~40 units'})")
+                       f"{'exact match' if tolerance == 0 else gap})")
 
     mode = calib.get("trim_mode", "independent")
     if mode not in ("independent", "scale"):
@@ -1350,7 +1880,167 @@ def main() -> None:
     cfg["_numbers"]["blend_slew_taper"] = staper
     summary.append(f"  {'portamento.blend_slew_taper':28s} "
                    f"{staper}  ({'knob picks the rate' if staper else 'fixed rate'})")
-    for name in ("dac_interpolator", "dac_flush_pool", "pressure_target_redirect"):
+    # Knob 1: 0 keeps the 1.x blend from press order into randomness, 1 cuts
+    # the travel into six zones - ascending, descending, mirror, press order,
+    # reverse press order, random.
+    orders = cfg.get("arp_order", {}).get("knob1_orders", 0)
+    if isinstance(orders, bool) or not isinstance(orders, int) or orders not in (0, 1):
+        raise SystemExit("[arp_order].knob1_orders must be 0 or 1")
+    cfg["_numbers"]["knob1_orders"] = orders
+    blocks["arp_order_zones"] = orders == 1
+    summary.append(f"  {'arp.knob1_orders':28s} "
+                   f"{orders}  ({'six zones' if orders else 'press-to-random blend'})")
+    # Knob 4: vibrato as in 1.x, or an octave switch.  Both cannot run - they
+    # would each want RAM 0x6028, which is the offset the pitch remap adds -
+    # so choosing the octave switch takes the vibrato engine out of the build.
+    k4 = cfg.get("knob4", {}).get("octaves", 0)
+    if isinstance(k4, bool) or not isinstance(k4, int) or k4 not in (0, 1):
+        raise SystemExit("[knob4].octaves must be 0 or 1")
+    cfg["_numbers"]["knob4_octaves"] = k4
+    # How many positions knob 4 gets.  The factory has nine: three that mean
+    # no transpose, then six steps up.  Six OCTAVES is the reach, so a scale
+    # whose period is wider gets proportionally fewer steps rather than a
+    # knob whose top half pushes everything past the DAC and the oscillator.
+    # An octave build comes out at nine, which is the factory's own count.
+    step = cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
+    cfg["_numbers"]["knob4_zones"] = 3 + max(
+        1, (6 * cfg["tuning"]["units_per_octave"]) // step)
+    if blocks.get("knob4_octave_switch"):
+        summary.append(f"  {'knob4.zones':28s} "
+                       f"{cfg['_numbers']['knob4_zones']}  "
+                       f"(3 silent, then {cfg['_numbers']['knob4_zones'] - 3} up)")
+    blocks["knob4_octave_switch"] = k4 == 1 and get(cfg, "knobs.knob4") == "vibrato"
+    if blocks["knob4_octave_switch"]:
+        features["knob4_vibrato"] = False
+        for name in ("vibrato_engine", "vibrato_sine",
+                     "pressure_vibrato_scale", "pressure_vibrato_pool"):
+            blocks[name] = False
+    summary.append(f"  {'knob4.octaves':28s} "
+                   f"{k4}  ({'octave switch' if blocks['knob4_octave_switch'] else 'vibrato'})")
+    # Knob 2: randomness as in 1.x, or a bank of step patterns the knob
+    # selects from.  A pattern says whether a step sounds at all, which is a
+    # different question from how long the step is, so it is gated at the note
+    # selector rather than in the rhythm randomiser.
+    k2 = cfg.get("knob2", {}).get("mode", "randomness")
+    if k2 not in ("randomness", "patterns", "swing"):
+        raise SystemExit("[knob2].mode must be 'randomness', 'swing' or 'patterns'")
+    bank = list(cfg.get("knob2", {}).get("patterns") or [])
+    lens = list(cfg.get("knob2", {}).get("lengths") or [])
+    if k2 == "patterns":
+        if not bank:
+            import clix
+            bank, lens = list(clix.CLIX), [32] * len(clix.CLIX)
+        if not lens:
+            lens = [32] * len(bank)
+        if len(lens) != len(bank):
+            raise SystemExit("[knob2].lengths must have one entry per pattern")
+        if not 1 <= len(bank) <= 32:
+            raise SystemExit("[knob2].patterns: give one to 32 patterns")
+        for i, (m, n) in enumerate(zip(bank, lens)):
+            if not isinstance(m, int) or isinstance(m, bool) or not 0 <= m <= 0xFFFFFFFF:
+                raise SystemExit(f"[knob2].patterns[{i}] must be a 32-bit mask")
+            if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 32:
+                raise SystemExit(f"[knob2].lengths[{i}] must be 1..32")
+            if m == 0:
+                raise SystemExit(f"[knob2].patterns[{i}] is empty — it would "
+                                 "never sound a note")
+        tables["arp_pattern_bank"] = [h for m in bank
+                                      for h in (m & 0xFFFF, (m >> 16) & 0xFFFF)]
+        tables["arp_pattern_len"] = list(lens)
+        cfg["_numbers"]["pattern_count"] = len(bank)
+    else:
+        tables["arp_pattern_bank"] = [0, 0]
+        tables["arp_pattern_len"] = [32]
+        cfg["_numbers"]["pattern_count"] = 1
+    blocks["arp_pattern_gate"] = k2 == "patterns"
+    blocks["arp_pattern_tables"] = k2 == "patterns"
+    if k2 == "patterns":
+        # The rhythm randomiser reads the SAME knob latch, so leaving it in
+        # would mean a denser pattern also bought more jitter in the step
+        # interval - the hits land unevenly and the pattern is unreadable.
+        # A pattern is about which steps sound, and the steps have to be
+        # evenly spaced for that to mean anything, so the randomiser goes and
+        # the factory's own reload stands.
+        blocks["arp_rhythm_hook"] = False
+    cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
+    cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
+    cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 200))
+    cfg["_numbers"]["strip_halfway_units"] = int(
+        cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
+    cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
+    cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 4))
+    cfg["_numbers"]["clock_lock_pulses"] = int(
+        cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
+    cfg["_numbers"]["clock_settle_scans"] = int(
+        cfg.get("sequencer", {}).get("clock_settle_scans", 0))
+    cfg["_numbers"]["clock_deadline_ms"] = int(
+        cfg.get("sequencer", {}).get("clock_deadline_ms", 4))
+    cfg["_numbers"]["clock_rearm_us"] = int(
+        cfg.get("sequencer", {}).get("clock_rearm_us", 250))
+    cfg["_numbers"]["clock_max_ms"] = int(
+        cfg.get("sequencer", {}).get("clock_max_ms", 2400))
+    cfg["_numbers"]["clock_release_ms"] = int(
+        cfg.get("sequencer", {}).get("clock_release_ms", 2600))
+    cfg["_numbers"]["seq_edit_hold_scans"] = int(
+        cfg.get("sequencer", {}).get("seq_edit_hold_scans", 60))
+    cfg["_numbers"]["persist_page_count"] = int(
+        cfg.get("persist", {}).get("page_count", 8))
+    # The trigger spike's length, in scheduler units of (n - 1) milliseconds:
+    # the factory's 3 measured 2 ms on the jack. 5 is the ~4 ms Buchla spike
+    # the owner asked for, and the ceiling the attack-age guards cover.
+    cfg["_numbers"]["trigger_spike_units"] = int(
+        cfg.get("sequencer", {}).get("trigger_spike_units", 5))
+    seq = bool(cfg.get("sequencer", {}).get("on"))
+    div = bool(cfg.get("clock", {}).get("divide"))
+    for name in ("clock_scan", "clock_pulse", "clock_hook",
+                 "clock_tempo", "clock_tempo_hook",
+                 "clock_ms_tick", "clock_ms_pool",
+                 "clock_gate", "clock_gate_hook", "clock_settle",
+                 "clock_capture", "clock_irq_hook", "clock_irq_pool",
+                 "clock_edge_mode", "clock_init", "clock_init_pool",
+                 "clock_service", "clock_output", "clock_low_age", "clock_attack_guard",
+                 "clock_spike_units", "clock_fast_trigger", "clock_remap_bare",
+                 "clock_deadline", "clock_pitch_target"):
+        blocks[name] = div
+    blocks["profiler_pool"] = div or features.get("scan_profiler", False)
+    summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
+    keep = bool(cfg.get("persist", {}).get("on"))
+    for name in ("persist_crc", "persist_record_crc", "persist_pack",
+                 "persist_valid", "persist_newest", "persist_load",
+                 "persist_same", "persist_verify", "persist_save", "persist_tick",
+                 "persist_capture", "persist_boot", "persist_scan_shim", "persist"):
+        blocks[name] = keep
+    blocks["clock_init_pool"] = div or keep or seq
+    summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
+    blocks["seq_chord"] = seq
+    for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
+                 "seq_clock_enabled", "seq_transport", "seq_clock_rate_hook",
+                 "seq_clock_change_hook", "seq_clock_setup_hook", "seq_clock_tick_hook",
+                 "seq_clock_input_hook", "seq_clock_midi_hook",
+                 "seq_strip", "seq_gate", "seq_glide", "strip_pool",
+                 "seq_gate_clear", "seq_gate_clear_hook",
+                 "seq_pulse_drop", "pulse_drop_pool", "seq_next_step",
+                 "seq_noteoff", "seq_noteoff_hook",
+                 "seq_trigger_led", "seq_trigger_led_hook",
+                 "seq_edit", "seq_preview_step", "seq_command",
+                 "seq_preview_next", "seq_preview_start", "seq_preview_transport",
+                 "seq_record_pitch", "seq_hold", "seq_flash",
+                 "seq_restart_init", "seq_boot"):
+        blocks[name] = seq
+    blocks["seq_clock_input_hook"] = seq and not div
+    summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
+    blocks["arp_swing"] = k2 == "swing"
+    summary.append(f"  {'knob2.mode':28s} {k2!r}"
+                   + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
+    # The event-17 wrapper is shared: pressure smoothing runs its
+    # interpolation there, and clock division raises the trigger there. It has
+    # to exist for either. `dac_interpolate` is the pressure half alone -
+    # pressure_fix off sets smoothing to zero while clock division stays on,
+    # and gating the whole wrapper on smoothing left that build's trigger back
+    # on the 5 ms scan with the fast-trigger cave unreachable.
+    for name in ("dac_interpolator", "dac_flush_pool"):
+        blocks[name] = bool(smoothing) or div
+    for name in ("dac_interpolate", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "
                    f"{smoothing if smoothing else 'off'!r}")

@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import math
+import math
 import re
 import subprocess
 import sys
@@ -87,10 +88,15 @@ def test_scala() -> None:
            lambda: B.parse_scala(tmp(scale(
                " 100.0\n 90.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n 800.0\n"
                " 900.0\n 1000.0\n 1100.0\n 2/1\n"), "_desc.scl")), "ascending")
-    raises("non-octave scale rejected",
-           lambda: B.parse_scala(tmp(scale(
-               " 100.0\n 200.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n 800.0\n"
-               " 900.0\n 1000.0\n 1100.0\n 1250.0\n"), "_oct.scl")), "2/1 octave")
+    # A scale is free to repeat somewhere other than the octave: the table
+    # steps the period the file declares, and the octave controls are rebuilt
+    # from it.  Twelve degrees to a 1250-cent period is a legal instrument.
+    stretched = B.parse_scala(tmp(scale(
+        " 100.0\n 200.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n 800.0\n"
+        " 900.0\n 1000.0\n 1100.0\n 1250.0\n"), "_oct.scl"), mapped=True)
+    check("a scale may repeat off the octave",
+          abs(stretched[12] - 1250.0) < 1e-9
+          and B.tuning_table(stretched, 485, 484)[12] - 485 == 504)
     raises("wrong degree count rejected",
            lambda: B.parse_scala(tmp("! t\nt\n 3\n!\n 100.0\n 200.0\n 2/1\n", "_n.scl")),
            "12-note")
@@ -106,6 +112,297 @@ def test_scala() -> None:
     raises("degree count that is not a number is refused cleanly",
            lambda: B.parse_scala(tmp("! t\nt\n 12x\n" + twelve, "_cnt.scl")),
            "not a number")
+
+    # The .scl format's own examples of valid pitch lines: a cents value may
+    # end in the period, an integer with no slash is that integer over 1, and
+    # "anything after a valid pitch value should be ignored".
+    lenient = B.parse_scala(tmp(
+        "! t\nt\n 12\n 100.\n 200.0 cents\n 300.0 C#\n 400.0\n 500.0\n"
+        " 600.0\n 700.0\n 800.0\n 900.0\n 1000.0\n 1100.0\n 2\n",
+        "_lenient.scl"), mapped=True)
+    check("the format's own valid pitch lines are read",
+          abs(lenient[1] - 100.0) < 1e-9 and abs(lenient[3] - 300.0) < 1e-9
+          and abs(lenient[12] - 1200.0) < 1e-9, lenient)
+
+    def ratio(token: str) -> "Path":
+        body = "".join(f" {100.0 * k}\n" for k in range(1, 12))
+        return tmp(f"! t\nt\n 12\n{body} {token}\n", "_ratio.scl")
+
+    # "Ratios are written with a slash, and only one."  The browser used to
+    # divide the first two parts and ignore the rest, so a file tools/build.py
+    # refused outright built an ordinary fifth on the page.
+    raises("a ratio with two slashes is refused",
+           lambda: B.parse_scala(ratio("3/2/9"), mapped=True), "single slash")
+    # "Negative ratios are meaningless and should give a read error."
+    raises("a negative ratio is refused",
+           lambda: B.parse_scala(ratio("-2/1"), mapped=True), "above zero")
+    raises("a zero ratio is refused",
+           lambda: B.parse_scala(ratio("0/1"), mapped=True), "above zero")
+    raises("a ratio that is not whole numbers is refused",
+           lambda: B.parse_scala(ratio("2/x"), mapped=True), "single slash")
+
+
+def test_keyboard_maps() -> None:
+    print("keyboard mapping (.kbm)")
+
+    def kbm(body: str, size: int = 12, formal: int = 12) -> "Path":
+        return tmp(f"! t\n {size}\n 0\n 127\n 60\n 69\n 440.0\n {formal}\n" + body,
+                   "_m.kbm")
+
+    twelve = B.parse_scala(REPO / "tunings" / "12TET.scl", mapped=True)
+    check("mapped parse keeps the octave degree",
+          len(twelve) == 13 and abs(twelve[12] - 1200.0) < 1e-9)
+
+    # The identity map has to reproduce the unmapped table exactly, or every
+    # existing build would move the moment .kbm support shipped.
+    plain = B.parse_scala(REPO / "tunings" / "12TET.scl")
+    degrees, formal = B.parse_kbm(kbm("".join(f" {d}\n" for d in range(12))), twelve)
+    check("identity map reproduces the unmapped table",
+          degrees == list(range(12)) and formal == 12
+          and B.tuning_table(twelve, 485, 484,
+                             B.anchor_offset(twelve, 9, degrees, twelve[formal]),
+                             degrees, twelve[formal])
+          == B.tuning_table(plain, 485, 484, B.anchor_offset(plain, 9)))
+
+    # Size zero is the format's "no mapping at all".
+    check("size zero maps every degree in order",
+          B.parse_kbm(kbm("", size=0), twelve)[0] == list(range(12)))
+
+    # Unmapped positions take the nearest mapped one, ties to the lower.
+    filled, _ = B.parse_kbm(kbm(" 0\n x\n 1\n x\n x\n 2\n" + " x\n" * 6), twelve)
+    check("unmapped positions take the nearest degree",
+          filled == [0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2], filled)
+
+    raises("formal octave outside the scale is refused",
+           lambda: B.parse_kbm(kbm(" 0\n" * 12, formal=99), twelve), "must name one")
+    # "At the end, unmapped keys may be left out" - the .kbm format allows a
+    # map to stop short of its own size, and the tail is unmapped like any
+    # other gap.  Both builders used to refuse these, and did not even agree on
+    # how many entries they had found.
+    short, _ = B.parse_kbm(kbm(" 0\n 1\n"), twelve)
+    check("a map may stop early, the rest unmapped",
+          short == [0, 1] + [1] * 10, short)
+    raises("but a map with nothing in it is still refused",
+           lambda: B.parse_kbm(kbm(""), twelve), "every position is unmapped")
+    raises("an all-unmapped map is refused",
+           lambda: B.parse_kbm(kbm(" x\n" * 12), twelve), "every position is unmapped")
+    raises("a degree outside the scale is refused",
+           lambda: B.parse_kbm(kbm(" 0\n 99\n" + " 0\n" * 10), twelve), "degrees 0..12")
+    raises("a header that is not a number is refused",
+           lambda: B.parse_kbm(tmp("! t\n twelve\n 0\n 127\n 60\n 69\n 440.0\n 12\n",
+                                   "_bad.kbm"), twelve), "not a number")
+    # A map can be structurally fine and still belong to another scale: the
+    # degree it calls the octave has to BE an octave in this one.
+    quarter = B.parse_scala(REPO / "tunings" / "24TET.scl", mapped=True)
+    check("a map may call any degree the period",
+          B.parse_kbm(kbm(" 0\n" * 12, formal=7), quarter)[1] == 7)
+
+    # A scale that repeats somewhere other than the octave is legal now: the
+    # table uses the period the file declares, and the octave controls are
+    # rebuilt to match it.
+    bp = B.parse_scala(REPO / "tunings" / "BohlenPierce.scl", mapped=True)
+    bpmap, formal = B.parse_kbm(REPO / "tunings" / "BohlenPierce.kbm", bp)
+    period = bp[formal]
+    table = B.tuning_table(bp, 485, 484, 0.0, bpmap, period)
+    check("a non-2/1 scale repeats at its own period",
+          len(bpmap) == 13 and abs(period - 1901.955) < 0.01
+          and table[13] - table[0] == 767, table[13] - table[0])
+
+    # Found on hardware: a tritave build put the bottom eight keys below zero
+    # once the octave switch went down, and the DAC clamped them all to one
+    # pitch.  The table has to clear one period, not one octave, and a scale
+    # with no 2/1 must not be shifted onto the 12-TET grid by the anchor.
+    bpcents = B.parse_scala(REPO / "tunings" / "BohlenPierce.scl", mapped=True)
+    bpdeg, bpformal = B.parse_kbm(REPO / "tunings" / "BohlenPierce.kbm", bpcents)
+    bpperiod = bpcents[bpformal]
+    step = int(math.floor(bpperiod * 484 / 1200 + 0.5))
+    bptable = B.tuning_table(bpcents, step + 1, 484, 0.0, bpdeg, bpperiod)[:29]
+    check("a non-octave table clears its own period at the bottom",
+          min(bptable) - step >= 0, min(bptable) - step)
+    check("and still fits the DAC two positions up",
+          max(bptable) + 2 * step <= 4095, max(bptable) + 2 * step)
+
+    raises("a truncated header is refused",
+           lambda: B.parse_kbm(tmp("! t\n 12\n 0\n", "_short.kbm"), twelve),
+           "seven header values")
+
+
+def test_latch_spacing() -> None:
+    """The latch's safety gap, over pitches and over transposes.
+
+    The latch calls two notes the same when `table[key] + transpose` lands
+    within the match tolerance, so the number that has to clear the tolerance
+    is the closest any two DIFFERENT sounding pitches get.  Two readings of
+    that were wrong in turn: physically adjacent keys, which a .kbm may
+    interleave; and then the untransposed table, which misses a map that is
+    comfortably spaced until one of its notes is latched an octave away.
+    """
+    print("latch key spacing")
+
+    def scale(count: int, span: float = 1200.0) -> "Path":
+        body = "".join(f" {span * k / count:.10f}\n" for k in range(1, count + 1))
+        return tmp(f"! t\nt\n {count}\n!\n" + body, f"_{count}_{int(span)}.scl")
+
+    def kbm(order: list[int], formal: int | None = None) -> "Path":
+        formal = len(order) if formal is None else formal
+        return tmp(f"! t\n {len(order)}\n 0\n 127\n 60\n 69\n 440.0\n"
+                   f" {formal}\n" + "".join(f" {d}\n" for d in order), "_ord.kbm")
+
+    def spacing(cents, degrees, period, offset=0.0, base=485, per=484):
+        table = B.tuning_table(cents, base, per, offset, degrees, period)
+        units = int(math.floor(period * per / 1200 + 0.5))
+        return B.min_key_spacing(
+            [(B.ideal_key_pitches(cents, degrees, period, offset),
+              table, period, units)]), table
+
+    cents = B.parse_scala(scale(72), mapped=True)
+
+    # Degrees 0,36,1,37,... : two keys apart on the keyboard is half an octave,
+    # but keys 0 and 2 are one 72-TET step - 6 units - from each other.
+    order = [d for k in range(36) for d in (k, k + 36)]
+    degrees, formal = B.parse_kbm(kbm(order, 72), cents)
+    gap, table = spacing(cents, degrees, cents[formal])
+    adjacent = min(abs(b - a) for a, b in zip(table[:29], table[1:29]) if b != a)
+    check("a reordered map hides the collision from adjacent keys",
+          adjacent == 235, adjacent)
+    check("the distinct-pitch gap finds it anyway", gap == 6, gap)
+
+    # Comfortably spaced across the keyboard - 13 units at the closest - until
+    # key 0 is latched an octave up, where it lands 6 units from key 1.
+    sparse = [0, 71] + list(range(2, 56, 2))
+    degrees, formal = B.parse_kbm(kbm(sparse, 72), cents)
+    # With the anchor the build actually applies: it moves the whole table, and
+    # the rounding it leaves behind is part of where the two notes land.
+    anchored = B.anchor_offset(cents, 9, degrees, cents[formal])
+    gap, table = spacing(cents, degrees, cents[formal], anchored)
+    untransposed = min(b - a for a, b in zip(sorted(set(table[:29])),
+                                             sorted(set(table[:29]))[1:]))
+    check("a sparse map looks safe until it is transposed",
+          untransposed == 13, untransposed)
+    check("the transpose sweep finds the collision", gap == 6, gap)
+    check("and it is the octave that causes it",
+          abs(table[0] + 484 - table[1]) == 6, (table[0], table[1]))
+
+    # In order, both readings agree - this is the case that always worked.
+    degrees, formal = B.parse_kbm(kbm(list(range(72)), 72), cents)
+    check("an in-order map still measures the same gap",
+          spacing(cents, degrees, cents[formal])[0] == 6)
+
+    # A map is allowed to sound one pitch from several keys, and a scale is
+    # allowed to repeat at the octave.  Both are the same note on purpose and
+    # must not read as a gap no tolerance could clear - not even after the
+    # rounding that an eight-period transpose can accumulate.
+    twelve = B.parse_scala(REPO / "tunings" / "12TET.scl", mapped=True)
+    doubled = [d for k in range(12) for d in (k, k)][:12]
+    degrees, formal = B.parse_kbm(kbm(doubled, 12), twelve)
+    check("keys deliberately doubled up are one note, not a zero gap",
+          spacing(twelve, degrees, twelve[formal])[0] == 40)
+    check("and a plain octave scale keeps its semitone",
+          spacing(twelve, None, 1200.0)[0] == 40)
+
+    # Every tuning the repo ships still clears the default tolerance of 8.
+    for name, map_name in (("12TET.scl", None),
+                           ("Sabat II (C-rooted).scl", None),
+                           ("5-Limit JI with Septimal 7th.scl", None),
+                           ("24TET.scl", "24TET-full.kbm"),
+                           ("diatonic7.scl", "diatonic7.kbm"),
+                           ("BohlenPierce.scl", "BohlenPierce.kbm")):
+        shipped = B.parse_scala(REPO / "tunings" / name, mapped=True)
+        degrees = period = None
+        if map_name:
+            degrees, formal = B.parse_kbm(REPO / "tunings" / map_name, shipped)
+            period = shipped[formal]
+        else:
+            period = shipped[12]
+        offset = (0.0 if abs(period - 1200.0) > 0.001
+                  else B.anchor_offset(shipped, 9, degrees, period))
+        units = int(math.floor(period * 484 / 1200 + 0.5))
+        gap, _ = spacing(shipped, degrees, period, offset, units + 1)
+        check(f"{name} clears the tolerance and the slack",
+              gap > 8 + B.TRANSPOSE_SLACK, gap)
+
+    check("no key table at all leaves the factory semitone",
+          B.min_key_spacing([]) is None)
+
+    # 53-TET, one degree per key: 9 units between neighbours, which clears a
+    # tolerance of 8 on paper.  It does not clear it under the fingers - the
+    # transpose the latch compares against moves by a unit between the press
+    # that latches a note and the press meant to release it, so the 9 becomes
+    # an 8 and the second note clears the first.  The build used to emit this.
+    fine = B.parse_scala(scale(53), mapped=True)
+    degrees, formal = B.parse_kbm(kbm([], 53), fine)
+    gap, table = spacing(fine, degrees, fine[formal],
+                         B.anchor_offset(fine, 9, degrees, fine[formal]))
+    check("53-TET neighbours are nine units apart", gap == 9, gap)
+    check("which the nominal comparison called safe", gap > 8)
+    check("and the slack correctly does not", 8 + B.TRANSPOSE_SLACK >= gap)
+
+    # The boundary, both sides of it, at the shipped tolerance of 8.
+    for nominal, safe in ((8, False), (9, False), (10, True), (11, True)):
+        check(f"a {nominal}-unit gap is {'accepted' if safe else 'refused'}",
+              (8 + B.TRANSPOSE_SLACK < nominal) == safe)
+    # And the margin is a margin, not a hardcoded 9: at tolerance 7 the same
+    # nine-unit tuning is buildable again.
+    check("a tolerance of 7 makes the same tuning legal",
+          7 + B.TRANSPOSE_SLACK < 9)
+
+
+def test_table_range() -> None:
+    """A key table entry below zero is read back as a huge one.
+
+    The anchor pins one key to its 12-TET pitch.  A map with few degrees per
+    period carries the anchor key more than an octave above the bottom, so the
+    shift needed to pin it drags the bottom of the table under zero.  The
+    entries are halfwords, and the latch match and the pitch ranking both read
+    them with LD.UH: -39 comes back as 65497, and they compare a pitch the
+    instrument can never sound.
+    """
+    print("key table range")
+
+    pentatonic = tmp("Minor pentatonic\n5\n300.0\n500.0\n700.0\n1000.0\n1200.0\n",
+                     "_pent.scl")
+    linear = tmp("! t\n 0\n 0\n 127\n 60\n 69\n 440.0\n 5\n", "_pent.kbm")
+    cents = B.parse_scala(pentatonic, mapped=True)
+    degrees, formal = B.parse_kbm(linear, cents)
+    offset = B.anchor_offset(cents, 9, degrees, cents[formal])
+    check("the anchor drags a five-degree map below the bottom",
+          round(offset) == -1300, offset)
+    table = B.tuning_table(cents, 485, 484, offset, degrees, cents[formal])
+    check("which puts a negative entry in the table", table[0] == -39, table[:3])
+    check("that the firmware would read as 65497", (table[0] & 0xFFFF) == 65497)
+    raises("so the build refuses it",
+           lambda: B.check_table_range("_pent.scl", table, 484), "below zero")
+
+    # Between the DAC ceiling and the signed limit there is no fault: the pitch
+    # path clamps, so the note is flat rather than wrong.
+    B.check_table_range("clamped", [4095] * 29, 0)
+    check("a table above the DAC ceiling is left to the clamp", True)
+    B.check_table_range("zero", [0] + [40 * k for k in range(1, 29)], 484)
+    check("and zero itself is a legal entry", True)
+
+    # Past the signed limit is a different fault, and this test used to assert
+    # the opposite: it accepted 60000 on the assumption that anything positive
+    # would clamp high.  A pitch is carried through signed 16-bit loads, so
+    # 60000 comes back negative and the note drops to the FLOOR.
+    raises("an entry past the signed limit is refused",
+           lambda: B.check_table_range("wrapped", [0] * 28 + [60000], 0),
+           "signed 16-bit")
+    check("the limit itself is still legal",
+          B.check_table_range("edge", [0] * 28 + [0x7FFF], 0) is None)
+
+    # And the transpose is what makes this more than a check on the table: an
+    # entry can sit under the limit and cross it when the octave is stepped up.
+    B.check_table_range("headroom", [0] * 28 + [0x7FFF - 6 * 484], 484)
+    check("an entry with room for the octave controls passes", True)
+    raises("one without it is refused",
+           lambda: B.check_table_range(
+               "no headroom", [0] * 28 + [0x7FFF - 6 * 484 + 1], 484),
+           "octave controls are stepped up")
+
+    # Only the 29 keys that exist: entries 29..31 are emitted because the table
+    # is 32 long, and no key can be made to play them.
+    B.check_table_range("tail", [40 * k for k in range(29)] + [60000] * 3, 0)
+    check("the three unreachable entries are not ranged", True)
 
 
 def test_tables(cfg: dict) -> None:
@@ -380,13 +677,97 @@ def test_blend(cfg: dict) -> None:
     # three bytes past key 28 sometimes hold live state, which is how phantom
     # keys got into the arp once.
     source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    def key_walkers(text: str) -> list[str]:
+        # Pin 5's write-one-to-clear mask is 0x20 too, but is not an array
+        # bound. Exclude only that exact store pair, not all new uses of 32.
+        text = re.sub(
+            r'emit\("MOV (R\d+),0x20"\);\s*emit\("ST.W R\d+\[0xd8\],\1"\);',
+            "", text)
+        # Boot captures all four presets plus the sequence with mask 0x1f.
+        # Exempt only that argument/call pair, never a loop using 31 keys.
+        text = re.sub(
+            r'emit\("MOV R12,0x1f"\);\s*emit\("MCALL PC\[0x8001d5bc\]"\);',
+            "", text)
+        return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
-    walkers = sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', source))
-    stray = [w for w in walkers if w != "1c" and w != "20"]
+    walkers = key_walkers(source)
+    # 0x1c is a walk over the keys and 0x20 the tuning applier's 32-halfword
+    # table copy - counts over arrays that are not the key array, and only a
+    # walk over the KEYS starting past 28 is the bug this guards.  The
+    # first-use clear used to need naming here too, at 0x25; it now runs to
+    # 0x76 and is out of this range entirely, which is why it is gone.
+    stray = [w for w in walkers if w not in ("1c", "20")]
     check("every key walk starts at the last real key",
           not stray and walkers.count("20") == 1,
           f"unexpected loop bounds {stray or walkers}")
+    bad_walk = source.replace('emit("MOV R12,0x1c");', 'emit("MOV R12,0x1f");')
+    check("capture-mask exception still rejects an oversized key walk",
+          bad_walk != source and "1f" in key_walkers(bad_walk))
+
+
+def test_call_pools(cfg: dict) -> None:
+    """Every MCALL must name a word that holds a code address, not code.
+
+    MCALL is memory-indirect: `MCALL PC[x]` calls whatever the WORD at x
+    says, so pointing it straight at a routine calls that routine's first
+    instruction *as an address*.  The clock divider shipped exactly that bug -
+    it read back 0xebcd4080, the encoding of its own STM - and neither the
+    emulation nor the browser-parity matrix could see it, because the one
+    called the cave directly and the other compares two toolchains that were
+    both told the same wrong thing.
+    """
+    print("call pools")
+    out = REPO / cfg["firmware"]["output_hex"]
+    if not out.exists():
+        # Nothing to check yet, which is the normal state of a fresh checkout:
+        # CI runs the plain suite before anything has built.  Skipping is right
+        # here and costs no coverage, because --golden builds first and then
+        # comes back through this.
+        print("  skip  no built image yet - --golden builds one and re-checks")
+        return
+    flash, _ = B.parse_hex(out)
+    factory, _ = B.parse_hex(REPO / cfg["firmware"]["factory_hex"])
+    word = lambda a: int.from_bytes(bytes(flash.get(a + i, 0) for i in range(4)), "big")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    targets = sorted({int(m, 16) for m in
+                      re.findall(r'emit\("MCALL PC\[(0x[0-9a-f]+)\]"\);', source)})
+    def called(target: int) -> bool:
+        """Is there an MCALL in this image that actually reads that word?
+
+        A pool word only matters if the call naming it was emitted; with the
+        block off, the address is whatever else lives there.  MCALL is
+        f0 1f <signed word displacement from pc & ~3>.
+        """
+        for pc in range(0x80002000, 0x80020000, 2):
+            if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
+                continue
+            d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
+            if d & 0x8000:
+                d -= 0x10000
+            if (pc & ~3) + d * 4 == target:
+                return True
+        return False
+
+    bad = []
+    for t in targets:
+        if t not in flash:
+            continue                      # outside the image entirely
+        v = word(t)
+        if not called(t):
+            continue                      # a block this build did not emit
+
+        # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
+        if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
+            bad.append(f"{t:#x} holds {v:#010x}")
+            continue
+        # The address must land on emitted code, not erased flash: a cave
+        # whose callee's block is off ships an MCALL into 0xff.  The audit
+        # found exactly that in a portamento-off build.
+        if flash.get(v, 0xFF) == 0xFF:
+            bad.append(f"{t:#x} -> {v:#x}, which is erased flash")
+    check("every MCALL names a pool word, not code",
+          not bad, "; ".join(bad))
 
 
 def test_output_interpolation(cfg: dict) -> None:
@@ -581,12 +962,19 @@ def test_held_flag_bounds() -> None:
     check("the arp candidate scan stops at key 28", scan and scan[0] == "1d",
           f"scans 0..0x{scan[0] if scan else '?'}")
 
+    # The latch exit copies the touch flags over the held flags rather than
+    # zeroing them, so a key still under a finger keeps playing; the bound is
+    # what matters here either way, and reading past 28 would hand the
+    # selector three bytes of unrelated state as held keys.
     housekeeping = cave("0x8001a480L", "scan_housekeeping")
-    clear = re.search(r'emit\("MOV R9,0x([0-9a-f]+)"\);\s*\n\s*padTo\(0x8001a500L\)',
-                      housekeeping)
-    check("the latch-exit clear stops at key 28",
-          clear is not None and clear.group(1) == "1c",
-          f"clears 0..0x{clear.group(1) if clear else '?'}")
+    walk = re.search(r'emit\("MOV R9,0x([0-9a-f]+)"\);\s*\n\s*padTo\(0x8001a4faL\)',
+                     housekeeping)
+    check("the latch-exit walk stops at key 28",
+          walk is not None and walk.group(1) == "1c",
+          f"walks 0..0x{walk.group(1) if walk else '?'}")
+    check("the latch exit keeps physically-held keys",
+          'emit("LD.UB R11,R12[0x239]");' in housekeeping
+          and 'emit("ST.B R12[0x21b],R11");' in housekeeping)
 
     # The press-order path is bounded by the list's own length rather than a
     # key count, but every candidate it returns is re-checked against the held
@@ -738,6 +1126,145 @@ def test_overlap_and_range() -> None:
     check("non-overlapping patches apply", (changed, added) == (1, 0), f"{changed},{added}")
 
 
+def test_latency_report_clears() -> None:
+    """A run of cleared frames is ONE clear, and separate runs are several.
+
+    The validator kept zero frames so an explicit reset could not hide, then
+    counted every zero ROW as its own clear.  A cell stays zero until a valid
+    sample arrives, so an honest internal-to-external hand-off read twice
+    before the first measurement was condemned as contaminated, and
+    --external-start could not rescue it: it skipped one zero row, not the
+    run.  Both directions are checked here, because the fix must not soften
+    the rejection the kept frames exist for.
+    """
+    print("latency report")
+    import subprocess as sp
+    import tempfile
+
+    def run(rows, *flags):
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as fh:
+            fh.write("scan_component_a,scan_component_b\n")
+            for a, b in rows:
+                fh.write(f"{a},{b}\n")
+            name = fh.name
+        out = sp.run([sys.executable, str(REPO / "tools" / "clock_latency_report.py"),
+                      name, *flags], capture_output=True, text=True)
+        Path(name).unlink()
+        return out.returncode, out.stdout + out.stderr
+
+    hand_off = [(10000, 15000), (0, 0), (0, 0), (1000, 7500), (1200, 7700)]
+    code, out = run(hand_off)
+    check("a clear read twice is one clear", code == 0 and "CONTAMINATED" not in out,
+          out.strip().splitlines()[-1] if out.strip() else "no output")
+    check("and the run is skipped, not one row of it",
+          "measured population        2" in out)
+    code, out = run(hand_off, "--external-start", "2")
+    check("--external-start on the clear reaches the measurements",
+          code == 0 and "CONTAMINATED" not in out)
+    code, out = run([(10000, 15000), (0, 0), (0, 0), (1000, 7500), (0, 0),
+                     (1200, 7700)])
+    check("two separated runs are still two clears",
+          code != 0 and "2 clears" in out)
+    code, out = run([(1000, 12000), (0, 0), (900, 13000)], "--internal")
+    check("an explicit reset under an internal run is still refused",
+          code != 0 and "reset" in out)
+
+
+def test_flashers_expect_the_golden(cfg: dict) -> None:
+    """The shipped flashers must name the DEFAULT image, not a test build.
+
+    Every ordinary build rewrites the flashers with its own image's hash, so
+    a hand-run build of a sequencer or persistence config silently repoints
+    the released flashers at that config.  That reached a commit: they were
+    left expecting a persistence audit build while golden_sha256 named the
+    default one, and the only symptom was the web bundle going stale,
+    because generated.js embeds the flasher scripts.
+
+    The regression harnesses already refuse to run a build that could rewrite
+    the flashers.  This catches the hand-run case, which is how it happened.
+    """
+    print("flashers")
+    golden = cfg["firmware"].get("golden_sha256", "")
+    if not golden:
+        check("a golden to check against", False, "golden_sha256 is not set")
+        return
+    for name, pattern in (("Program218e_v3_Rewired_macOS.command",
+                           r'^EXPECTED_SHA256="([0-9a-f]{64})"'),
+                          ("218e_Rewired_Flasher.bat",
+                           r'^SET "EXPECTED_SHA256=([0-9a-f]{64})"')):
+        path = REPO / name
+        if not path.exists():
+            continue
+        found = re.search(pattern, path.read_text(), re.M)
+        got = found.group(1) if found else "(no EXPECTED_SHA256 line)"
+        check(f"{name} expects the golden image", got == golden,
+              f"it expects {got[:8]}, golden is {golden[:8]} - "
+              f"rebuild the DEFAULT config to put it back")
+
+
+def test_pool_fallthrough() -> None:
+    """A literal pool must not sit where code can fall into it.
+
+    `padTo` fills with NOPs, so a `word(...)` placed after code that does not
+    end in an unconditional transfer is reached by falling through the
+    padding - and the address literal is then executed as instructions.  That
+    shipped in the clock_gate hook: the allowed branch fell straight out of
+    the replaced code and into its own pool word.  Nothing caught it, because
+    emulation calls caves directly and the parity matrix compares two
+    toolchains that were both told the same wrong thing.
+    """
+    print("pool fall-through")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    ENDS = ("RJMP", "BR{al}", "MOV PC,", "LDM SP++", "RET")
+    bad = []
+    for block in re.split(r"\n\s*begin\(", source)[1:]:
+        block = block.split("finish(")[0]
+        name = "?"
+        m = re.search(r'finish\("([^"]+)"', source[source.index(block) + len(block):
+                                                   source.index(block) + len(block) + 200])
+        if m:
+            name = m.group(1)
+        last = None
+        for line in block.split("\n"):
+            mw = re.search(r"^\s*word\(", line)
+            # String.format() emits count too.  Matching only the literal
+            # form left every computed branch invisible to this check - which
+            # is most of the clock caves, where the labels are variables.
+            me = re.search(r'emit\((?:String\.format\()?"([^"]+)"', line)
+            if me:
+                last = me.group(1)
+            elif mw and last is not None:
+                if not last.startswith(ENDS):
+                    bad.append(f"{name}: word() after {last!r}")
+                last = None          # report the first word of a pool only
+    check("no literal pool is reachable by falling through padding",
+          not bad, "; ".join(bad))
+
+
+def test_leaf_with_call() -> None:
+    """A cave returning `MOV PC,LR` has not saved LR, so it cannot call.
+
+    MCALL writes LR, which turns such a return into a jump to itself.  That
+    shipped once in pulse_defer_set and hung the running instrument: the
+    panel died while USB kept enumerating, because the hang was in the main
+    loop and USB is interrupt-driven.
+    """
+    print("leaf with call")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    bad = []
+    for chunk in re.split(r"\n\s*begin\(", source)[1:]:
+        body, _, rest = chunk.partition("finish(")
+        name = re.match(r'"([^"]+)"', rest)
+        name = name.group(1) if name else "?"
+        emits = re.findall(r'emit\("([^"]+)"', body)
+        saves_lr = any(e.startswith("STM --SP") and "LR" in e for e in emits)
+        calls = [e for e in emits if e.startswith(("MCALL", "RCALL"))]
+        leaf = any(e.startswith("MOV PC,LR") for e in emits)
+        if leaf and calls and not saves_lr:
+            bad.append(f"{name}: returns MOV PC,LR yet calls {calls[0]!r}")
+    check("no leaf cave contains a call", not bad, "; ".join(bad))
+
+
 def test_atomic_replace() -> None:
     """The atomic replace must preserve the file mode: the updater is executable."""
     print("file replacement")
@@ -825,6 +1352,70 @@ def test_golden(cfg: dict) -> None:
           result.stdout.strip().splitlines()[-1] if result.stdout else result.stderr.strip())
 
 
+JSC = Path("/System/Library/Frameworks/JavaScriptCore.framework"
+           "/Versions/A/Helpers/jsc")
+
+PATTERN_PROBE = """
+var hex = readFile('firmware/218eV3_v369_DFU.hex');
+[1, 21, 22, 23, 24, 31, 32, 33].forEach(function (n) {
+    var pats = [];
+    for (var i = 0; i < n; i++) pats.push('x...');
+    try {
+        print(n + ' ' + WEBBUILD.build(
+            { knob2: 'patterns', arp_patterns: pats }, hex).sha256);
+    } catch (e) { print(n + ' REFUSED ' + e.message); }
+});
+"""
+
+
+def test_pattern_bank_capacity() -> None:
+    """Every pattern count the editor offers has table space to land in.
+
+    The bank was cut for 22 masks while the config, the validator and the
+    editor all allowed 32, so a bank a user could assemble in the page stopped
+    the build dead on the 23rd pattern - a valid configuration that could not
+    be built.  Driven through the browser builder because that is the one with
+    the 32-pattern editor in front of it, and it is quick: no Ghidra, no CLI
+    build per count.
+    """
+    print("pattern bank capacity")
+    if not JSC.exists():
+        print("  skip  no jsc to run the browser builder")
+        return
+    probe = REPO / "build" / "_patterns_probe.js"
+    probe.parent.mkdir(exist_ok=True)
+    probe.write_text(PATTERN_PROBE)
+    try:
+        r = subprocess.run(
+            [str(JSC), "web/generated.js", "web/sha256.js", "web/buildlib.js",
+             "tools/avr32/encoder.js", "tools/avr32/runtime.js",
+             "tools/avr32/program.js", "web/build.js", str(probe)],
+            capture_output=True, text=True, cwd=REPO)
+    finally:
+        probe.unlink(missing_ok=True)
+    built = {}
+    refused = {}
+    for line in (r.stdout + r.stderr).splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 2 or not parts[0].isdigit():
+            continue
+        if parts[1] == "REFUSED":
+            refused[int(parts[0])] = parts[2] if len(parts) > 2 else ""
+        else:
+            built[int(parts[0])] = parts[1]
+    for n in (1, 21, 22, 23, 24, 31, 32):
+        check(f"{n} patterns build", n in built,
+              refused.get(n, "no result — " + (r.stdout + r.stderr).strip()[:120]))
+    # Distinct images, or a count could be silently ignored and still "build".
+    check("each count produces its own image",
+          len(set(built.values())) == len(built), sorted(built))
+    # And the limit is still a limit, refused where the config says it is
+    # rather than wherever the assembler happens to run out of table.
+    check("33 patterns are refused", 33 in refused, built.get(33))
+    check("and refused by the count rule, not by the table running out",
+          "one to 32 patterns" in refused.get(33, ""), refused.get(33))
+
+
 def test_corpus_current() -> None:
     """The encoder corpus must match the assembler it vouches for.
 
@@ -865,6 +1456,9 @@ def main() -> None:
         cfg["tools"] = raw["tools"]
     test_pitch_table(cfg)
     test_scala()
+    test_keyboard_maps()
+    test_latch_spacing()
+    test_table_range()
     test_tables(cfg)
     test_resolution(cfg)
     test_blend(cfg)
@@ -878,12 +1472,19 @@ def main() -> None:
     test_migration_and_empty_hand()
     test_filter_equivalence(cfg)
     test_overlap_and_range()
+    test_flashers_expect_the_golden(cfg)
+    test_latency_report_clears()
+    test_pool_fallthrough()
+    test_leaf_with_call()
     test_atomic_replace()
     test_generated_is_current()
     test_corpus_current()
+    test_pattern_bank_capacity()
     test_hex_roundtrip(cfg)
     if args.golden:
         test_golden(cfg)
+    # After the golden build, so there is an image to read on a clean tree.
+    test_call_pools(cfg)
 
     print()
     if FAILURES:

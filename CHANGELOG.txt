@@ -1,2 +1,18 @@
-1.2
-— Improved pressure-based portamento behavior.
+2.0 (2026-08-31)
+- Step sequencer: 64 steps, recorded and played from the preset pads.
+- External clock divider: the arpeggiator rate knob now divides a patched clock from /1 to /8.
+- Preset knobs can now be assigned individually.
+- Preset voltages are now set by holding a pad and turning the knob above it.
+- Alternate tunings now accept Scala keyboard maps, so a scale can have any number of degrees and repeat at something other than the octave.
+- Leaving the arpeggiator’s latch no longer stops notes still held by hand.
+
+1.2 (2026-08-25)
+- Improved pressure-based portamento behavior.
+- Held-key state is cleared on the first boot after flashing, so a stuck gate no longer survives an update.
+
+1.1 (2026-08-21)
+- trn and remote enable stay factory when nothing has taken them.
+- The macOS flasher is a signed, notarised app.
+
+1.0 (2026-08-19)
+- Initial release.

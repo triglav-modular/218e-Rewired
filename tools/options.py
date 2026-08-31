@@ -30,7 +30,8 @@ REPO = Path(__file__).resolve().parent.parent
 # options in config/218e.toml override the few fields they name.  Not a
 # user surface — edit the option set in build.py, not these constants.
 INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
-    'diagnostics': {   'factory_gain_shift': 3,
+    'diagnostics': {   'clock_latency': False,
+                       'factory_gain_shift': 3,
                        'latch_probe': False,
                        'pressure_ab_switch': False,
                        'scan_profiler': False,
@@ -69,6 +70,11 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                     'resolution_bits': 4,
                     'smoothing_taps': 8},
     'vibrato': {'dither': 0},
+    'arp_order': {'knob1_orders': 0},
+    'knob4': {'octaves': 0},
+    # Knob 2: 'randomness' is what 1.x does, 'patterns' turns the knob into a
+    # bank selector over step masks, 'swing' delays every other step.
+    'knob2': {'mode': 'randomness', 'patterns': [], 'lengths': []},
     'timing': {'gate_settle_scans': 1, 'scan_period_ms': 5},
     'tuning': {   'base_units': 485,
                   'reference_key': 9,
@@ -76,6 +82,39 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                                'tunings/5-Limit JI with Septimal 7th.scl',
                                'tunings/12TET.scl'],
                   'units_per_octave': 484}}
+
+# The four diagnostics below all publish through the same telemetry pair, and
+# scan_profiler and clock_latency additionally share the five RAM cells behind
+# it: 0x6032, 0x6034, 0x6038, 0x603c, 0x6040.  In a build with both, the clock
+# wrapper's dispatcher is routed through the profiler, so the profiler's window
+# rollover overwrites the latency shim's running max, mean, sum, count and
+# last-timed stamp; the selection in AssemblePressureFix reaches scan_profiler
+# first, so tools/clock_latency_report.py would decode the profiler's clamped
+# worst dispatch and print it as an edge-to-gate delay with nothing to show
+# that it is the wrong number.
+#
+# The check belongs here rather than only in tools/build.py because
+# web/generate.py reads this table straight into the browser bundle without
+# going through build.py, and the JavaScript toolchain has no equivalent
+# refusal - a diagnostic pair that build.py rejects would otherwise still be
+# buildable in the browser.
+_TELEMETRY_CLAIMS = ("scan_profiler", "telemetry_smoothing", "latch_probe",
+                     "clock_latency")
+
+
+def _check_internal_diagnostics() -> None:
+    diag = INTERNAL_DEFAULTS["diagnostics"]
+    on = [n for n in _TELEMETRY_CLAIMS if diag.get(n)]
+    if len(on) > 1:
+        raise SystemExit(
+            "tools/options.py: " + " and ".join(on) + " claim the same telemetry "
+            "fields; enable one at a time.\n"
+            "  scan_profiler and clock_latency also share RAM 0x6032-0x6042, "
+            "and the profiler wins,\n  so the latency report would carry the "
+            "profiler's numbers under its own name.")
+
+
+_check_internal_diagnostics()
 
 # A flat pitch ramp: no per-key correction, every semitone exactly 100 cents.
 # 79 rows, matching what the firmware reads (semitones 0..78).
@@ -104,6 +143,24 @@ OPTION_TYPES = {
     "volts_per_octave":    float,
     "pitch_correction":    (bool, str),
     "alternate_tunings":   (bool, list),
+    "knob1":               str,
+    "knob2":               str,
+    "knob3":               str,
+    "knob4":               str,
+    "arp_patterns":        list,
+    "sequencer":           bool,
+    "clock_divide":        bool,
+    "persist":             bool,
+}
+
+# What each preset knob may be set to.  The first entry of each is what
+# remap_knobs = true has always meant, so a config that never mentions a knob
+# keeps the behaviour it had.
+KNOB_ROLES = {
+    "knob1": ("order", "orders", "factory"),
+    "knob2": ("spacing", "swing", "patterns", "factory"),
+    "knob3": ("octaves", "factory"),
+    "knob4": ("vibrato", "trn", "factory"),
 }
 
 
@@ -142,17 +199,28 @@ def check(options: dict) -> None:
         # bool passed the tuple check above, but only False means anything:
         # "true" carries no path and no files, and expand() used to die on it
         # with a raw TypeError instead of a sentence.
-        if value is True:
+        # arp_patterns is the exception: true means the CLIX bank, which is a
+        # real answer, where a tuning or a calibration cannot be conjured.
+        if value is True and name != "arp_patterns":
             raise SystemExit(
                 f"{name} = true says nothing to build from - give it "
                 + ("a CSV path" if name == "pitch_correction"
                    else "a list of Scala files") + ", or false")
         if name == "alternate_tunings" and isinstance(value, list):
             for i, entry in enumerate(value):
-                if not isinstance(entry, (str, dict)):
+                # A slot is a Scala file, or that file paired with a .kbm
+                # keyboard mapping: ["scale.scl", "scale.kbm"].
+                if isinstance(entry, (list, tuple)):
+                    if not 1 <= len(entry) <= 2 or not all(
+                            isinstance(part, str) for part in entry):
+                        raise SystemExit(
+                            f"alternate_tunings[{i}] as a pair must be "
+                            f'["scale.scl", "map.kbm"]: {entry!r}')
+                elif not isinstance(entry, (str, dict)):
                     raise SystemExit(
-                        f"alternate_tunings[{i}] must be a filename (or "
-                        f"'factory'), not {type(entry).__name__}: {entry!r}")
+                        f"alternate_tunings[{i}] must be a filename, a "
+                        f'["scale.scl", "map.kbm"] pair, or \'factory\', '
+                        f"not {type(entry).__name__}: {entry!r}")
 
 
 def expand(options: dict) -> dict:
@@ -166,11 +234,86 @@ def expand(options: dict) -> dict:
     # 1. Latching arpeggiator ------------------------------------------------
     cfg["arp"]["switch"] = "latch" if want("latching_arp", True) else "factory"
 
-    # 2. Remap knobs 1-4 ----------------------------------------------------
+    # 2. What each preset knob does -----------------------------------------
+    # remap_knobs still sets them all at once, and each knob can then be named
+    # individually - which is the only way to say "arpeggiator octaves on knob
+    # 3, preset voltage on the rest", and the only way to reach the roles that
+    # did not exist in 1.x.
     remap = want("remap_knobs", True)
     live = {"knob1": "arp_order", "knob2": "arp_rhythm",
             "knob3": "arp_octaves", "knob4": "vibrato"}
     cfg["knobs"] = {k: (v if remap else "factory") for k, v in live.items()}
+    roles = {}
+    for knob, allowed in KNOB_ROLES.items():
+        role = want(knob, None)
+        if role is None:
+            role = allowed[0] if remap else "factory"
+        if role not in allowed:
+            raise SystemExit(
+                f"{knob} = {role!r} is not one of "
+                + ", ".join(repr(a) for a in allowed))
+        roles[knob] = role
+        cfg["knobs"][knob] = "factory" if role == "factory" else live[knob]
+    # The sequencer's controls live on a pad chord.  It does NOT require
+    # remap_knobs: with factory knobs the chord still works - the arm freezes
+    # the active pad so the selecting press cannot change a preset, and the
+    # knob-moved refusal reads the editor cave, which every build carries.
+    # Where along the bend strip the line between a rest and a tie falls, in
+    # the strip's own position units - 0 at one end, 4095 at the other, which
+    # is the range the factory clamps state+0x1fe to.  2048 is the middle, and
+    # the middle is the rule; the number is here so a strip that reads off
+    # centre can be told where its own middle is.
+    cfg["sequencer"] = {"on": bool(want("sequencer", True)),
+                        "strip_halfway_units": 2048,
+                        # How far a tie slides into the note after it, on the
+                        # factory's own 0..1024 glide scale.  Another number
+                        # that wants a real instrument to settle.
+                        "tie_glide_rate": 60,
+                        # Capture is interrupt-timestamped. At 200 Hz a
+                        # 4 ms refractory leaves 1 ms of period margin; the
+                        # low phase must be longer than 250 us at the MCU.
+                        "clock_min_ms": 4,
+                        "clock_rearm_us": 250,
+                        # Acquisition confidence is separate from the active
+                        # divider latch. Once acquired, jitter cannot reset
+                        # /N to /1; only absence or arp-off releases it.
+                        "clock_lock_pulses": 5,
+                        "clock_max_ms": 2400,
+                        "clock_release_ms": 2600,
+                        # The trigger spike, in units of (n - 1) ms: the
+                        # factory's 3 measured 2 ms; 5 is the ~4 ms Buchla
+                        # spike, and the attack-age guards' ceiling.
+                        "trigger_spike_units": 5,
+                        # How long a bare pad 2 or 3 must be HELD before it
+                        # previews or backspaces, in ~5 ms scans.  60 is about
+                        # a third of a second: long enough that a tap still
+                        # belongs to whatever else the pad does.
+                        "seq_edit_hold_scans": 60,
+                        # 0 = fire with the pitch store. Higher settings
+                        # deliberately lower maximum sustainable output rate.
+                        "clock_settle_scans": 0,
+                        # How long after the ACCEPTED EDGE the external
+                        # trigger goes out, in milliseconds. The path from
+                        # edge to claim measured 3.60 ms at worst on the
+                        # instrument, so 4 clears it: every beat then gates at
+                        # edge + 4 ms instead of edge + whatever it cost.
+                        # Buys jitter with latency, and 0 turns it off and
+                        # restores the fire-on-the-next-flush behaviour.
+                        # Bounded at build time by half the acquired period.
+                        "clock_deadline_ms": 4,
+                        # How long pad 4 has to be held before pads 1-3 mean
+                        # anything, in ~5 ms scans.  200 is a second.
+                        "chord_hold_scans": 200}
+    # The arp rate knob divides an external clock once one is locked.
+    cfg["clock"] = {"divide": bool(want("clock_divide", True))}
+    cfg["persist"] = {"on": bool(want("persist", True)),
+                      # Reserved main-array pages; never include settings
+                      # at 0x8003f000. The newest valid page is not retried.
+                      "page_count": 8}
+    cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
+    cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
+    cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing")
+                            else "randomness")
 
     # 3. Per-key pitch correction -------------------------------------------
     correction = want("pitch_correction", False)
@@ -190,14 +333,57 @@ def expand(options: dict) -> dict:
             tunings = [tunings]
         if not 1 <= len(tunings) <= 3:
             raise SystemExit("alternate_tunings: give one to three Scala files")
-        for name in tunings:
-            if not (REPO / name).exists():
-                raise SystemExit(f"alternate_tunings: no such file: {name}")
+        for entry in tunings:
+            for name in ([entry] if isinstance(entry, str) else list(entry)):
+                if not (REPO / name).exists():
+                    raise SystemExit(f"alternate_tunings: no such file: {name}")
         # Unused slots fall back to the instrument's own temperament, so the
         # edit-mode selector always has three valid tables to switch between.
-        cfg["tuning"]["slots"] = list(tunings) + ["factory"] * (3 - len(tunings))
+        cfg["tuning"]["slots"] = [
+            entry if isinstance(entry, str) else list(entry) for entry in tunings
+        ] + ["factory"] * (3 - len(tunings))
     else:
         cfg["tuning"]["slots"] = ["factory"] * 3
+
+    # 8. Knob 2's bank, when knob 2 is set to patterns ----------------------
+    # Each entry is a string of steps - a dot is a rest, anything else a hit -
+    # or a [pattern, length] pair to make it repeat sooner than it is written.
+    # Left out, the bank is the CLIX fills.
+    patterns = want("arp_patterns", None)
+    if patterns:
+        masks, lengths = [], []
+        for i, entry in enumerate(patterns):
+            if isinstance(entry, (list, tuple)):
+                if len(entry) != 2:
+                    raise SystemExit(
+                        f"arp_patterns[{i}] as a pair must be "
+                        '["x.x.x...", length]')
+                text, length = entry
+            else:
+                text, length = entry, None
+            if not isinstance(text, str):
+                raise SystemExit(
+                    f"arp_patterns[{i}] must be a string of steps, "
+                    f"not {type(text).__name__}: {text!r}")
+            steps = [c for c in text if not c.isspace()]
+            if not 1 <= len(steps) <= 32:
+                raise SystemExit(
+                    f"arp_patterns[{i}] has {len(steps)} steps; "
+                    "it must have 1 to 32")
+            mask = sum(1 << k for k, c in enumerate(steps) if c != ".")
+            if mask == 0:
+                raise SystemExit(
+                    f"arp_patterns[{i}] is all rests — it would never sound")
+            if length is None:
+                length = len(steps)
+            if not isinstance(length, int) or isinstance(length, bool) \
+                    or not 1 <= length <= 32:
+                raise SystemExit(
+                    f"arp_patterns[{i}] length must be a whole number 1..32")
+            masks.append(mask)
+            lengths.append(length)
+        cfg["knob2"]["patterns"] = masks
+        cfg["knob2"]["lengths"] = lengths
 
     # 5. Volts per octave ----------------------------------------------------
     # The pair is a hardware limit, not a shortlist.  The keyboard spans 6.5
