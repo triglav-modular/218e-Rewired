@@ -6,7 +6,7 @@
 "build/assemble.log",
 "build/assemble.nomulti.log"
 ],
-"count": 8658,
+"count": 8668,
 "entries": [
 {
 "addr": "80014300",
@@ -17068,8 +17068,8 @@
 },
 {
 "addr": "8001ab6c",
-"text": "MOV R11,0x6256",
-"bytes": "e06b6256",
+"text": "MOV R11,0xe65b",
+"bytes": "e06be65b",
 "width": 4
 },
 {
@@ -18136,8 +18136,8 @@
 },
 {
 "addr": "8001ad1c",
-"text": "MOV R11,0x6256",
-"bytes": "e06b6256",
+"text": "MOV R11,0xe65b",
+"bytes": "e06be65b",
 "width": 4
 },
 {
@@ -42009,6 +42009,66 @@
 "width": 4
 },
 {
+"addr": "8001be30",
+"text": "STM --SP,R7,LR",
+"bytes": "ebcd4080",
+"width": 4
+},
+{
+"addr": "8001be34",
+"text": "MOV R7,SP",
+"bytes": "1a97",
+"width": 2
+},
+{
+"addr": "8001be36",
+"text": "MCALL PC[0x8001be48]",
+"bytes": "f01f0005",
+"width": 4
+},
+{
+"addr": "8001be3a",
+"text": "LDDPC R10,0x8001be4c",
+"bytes": "485a",
+"width": 2
+},
+{
+"addr": "8001be3c",
+"text": "LD.SH R12,R10[0x352]",
+"bytes": "f50c0352",
+"width": 4
+},
+{
+"addr": "8001be40",
+"text": "LDM SP++,R7,PC",
+"bytes": "e3cd8080",
+"width": 4
+},
+{
+"addr": "8001be44",
+"text": "NOP",
+"bytes": "d703",
+"width": 2
+},
+{
+"addr": "8001be46",
+"text": "NOP",
+"bytes": "d703",
+"width": 2
+},
+{
+"addr": "8001be48",
+"text": ".word 0x80003590",
+"bytes": "80003590",
+"width": 4
+},
+{
+"addr": "8001be4c",
+"text": ".word 0x00003560",
+"bytes": "00003560",
+"width": 4
+},
+{
 "addr": "8001c0e0",
 "text": "STM --SP,R7,LR",
 "bytes": "ebcd4080",
@@ -42358,15 +42418,15 @@
 },
 {
 "addr": "8001c180",
-"text": "LDDPC R10,0x8001c1f0",
-"bytes": "49ca",
-"width": 2
+"text": "MCALL PC[0x8001c1f0]",
+"bytes": "f01f001c",
+"width": 4
 },
 {
-"addr": "8001c182",
-"text": "LD.SH R12,R10[0x352]",
-"bytes": "f50c0352",
-"width": 4
+"addr": "8001c184",
+"text": "NOP",
+"bytes": "d703",
+"width": 2
 },
 {
 "addr": "8001c186",
@@ -42616,8 +42676,8 @@
 },
 {
 "addr": "8001c1f0",
-"text": ".word 0x00003560",
-"bytes": "00003560",
+"text": ".word 0x8001be30",
+"bytes": "8001be30",
 "width": 4
 },
 {
@@ -51957,5 +52017,5 @@
 "width": 4
 }
 ],
-"program_sha256": "952764bda517f251f16d1644093e5c39a78baff3ec47a094e2e7eabf1dcf51d6"
+"program_sha256": "18342039ab2558f1bd58dd753e8ce9f7feac5cf57aa90cf61cca3847248d9480"
 }

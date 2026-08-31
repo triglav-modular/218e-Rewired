@@ -1449,6 +1449,69 @@ public class ClockRegression extends GhidraScript {
                 pendingStepKeepsItsSource(before,hz,settleMs);
     }
 
+    // The arp selector writes a BARE note to state+0x352. The ADC event's
+    // target preparation later adds transpose and latch stamps, before the
+    // pitch scan consumes that target. Earlier clock fixtures only ran the
+    // consumer, so a clock output of the bare note agreed with their scan.
+    // A held, transposed note must stay put across EVERY service/flush, not
+    // merely agree again once the next full pitch pass has repaired it.
+    void heldTransposeSurvivesEveryBeat() throws Exception {
+        boolean mode=sequencer;
+        try {
+            for (boolean external : new boolean[]{false,true})
+            for (boolean latch : new boolean[]{true,false})
+            for (int hz : new int[]{25000000,60000000}) {
+                sequencer=false; fresh(1,hz);
+                w(S+0x340,1,latch?1:0); w(S+0x341,1,latch?0:1);
+                w(S+0x342,1,1); w(S+0x2ef,1,latch?1:2);
+                w(0x60a2,2,latch?484:0);
+                w(S+0x34a,2,26); w(S+0x38e,2,1);
+                internal(10000); finishStep(30000);
+                check("transpose fixture starts with a sounding arp note",
+                      !outputTimes.isEmpty() && r(S+0x350,2)>0);
+                // Settle using the complete producer/consumer pair, exactly
+                // as an ADC pitch update does. No fixture-supplied DAC word.
+                for (long t=35000;t<=45000;t+=5000) {
+                    time(t); call(0x80003590L,0x100); scan(t);
+                }
+                long held=r(S+0x358,2);
+                check("transpose fixture is not the untransposed control",
+                      r(S+0x352,2)-r(S+0x350,2)>400);
+                int gates=outputTimes.size(), sent=transfers;
+                for(long t=50000;t<=257000;t+=250) {
+                    if(t<=246000 && (t-50000)%49000==0) {
+                        if(external) irq(t,true);
+                        else { w(S+0x38e,2,1); internal(t); }
+                    }
+                    if(external && t>=70000 && (t-70000)%49000==0) irq(t,false);
+                    if(t%1000==0) bank(t);
+                    long phase=r(0x6024,2), depth=r(0x6026,2);
+                    service(t); flush(t);
+                    check("clock preparation leaves the vibrato engine alone",
+                          r(0x6024,2)==phase && r(0x6026,2)==depth);
+                    check("held transpose survives clock service: "
+                          +(external?"external":"internal")+", latch="+latch
+                          +", Hz="+hz+", pitch="+r(S+0x358,2)+", held="+held,
+                          Math.abs(r(S+0x358,2)-held)<=1);
+                    if(t%5000==4250) {
+                        time(t); call(0x80003590L,0x100); scan(t);
+                        check("the next complete scan preserves that same pitch",
+                              Math.abs(r(S+0x358,2)-held)<=1);
+                    }
+                }
+                check("all five repeated notes gate",outputTimes.size()==gates+5);
+                for(int i=gates;i<dac.size();i++)
+                    check("every gate carries the held transposed pitch",
+                          Math.abs(dac.get(i)-held)<=1);
+                for(int i=sent;i<transferPitches.size();i++)
+                    check("every settle transfer carries the held transposed pitch",
+                          Math.abs(transferPitches.get(i)-held)<=1);
+                println("PASS held transpose across five "
+                        +(external?"external":"internal")+" beats: latch="+latch+", Hz="+hz);
+            }
+        } finally { sequencer=mode; }
+    }
+
     // The lever the audit asked for, proven end to end: a ready output no
     // longer waits for event 17.  The wrapper services pending output around
     // the dispatcher, so with every dispatch withheld -- no flush, no
@@ -2002,6 +2065,7 @@ public class ClockRegression extends GhidraScript {
             // is fixture-timed for the shipped settle and says nothing extra
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
+            heldTransposeSurvivesEveryBeat();
             if (jitterOnly) {
                 bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {

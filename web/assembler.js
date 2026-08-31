@@ -6832,6 +6832,32 @@ function assembleProgram() {
         word(0x8000ba9c); // the factory DAC transfer the pulse paths use
         finish("clock_deadline", 0x8001be2c);
 
+        // Arp selection writes the bare table note into BOTH state+0x350
+        // and state+0x352. The latter is not a finished target until the
+        // factory transpose pass has run: that pass also applies a latched
+        // note's stamp and the sequencer's preview/audition rules. Reading
+        // it immediately after selection briefly sounded the bare note on
+        // every beat, until the next scan restored the transposed pitch.
+        //
+        // Reuse that target calculation rather than reproducing its octave,
+        // preset and latch arithmetic here. It publishes the target and
+        // pressure-blend goal; it does NOT run the glide, bend, pressure
+        // filter, blend conditioner, vibrato oscillator, or DAC transfer.
+        // The blend re-base is conditional on a changed base, so repeating
+        // this preparation at phase A and the gate cannot spend it twice.
+        // Return the state base as well, for the fast path's bend load.
+        begin(0x8001be30);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001be48]");
+        emit("LDDPC R10,0x8001be4c");
+        emit("LD.SH R12,R10[0x352]");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001be48);
+        word(0x80003590); // the factory pitch-target preparation
+        word(0x00003560);
+        finish("clock_pitch_target", 0x8001be50);
+
         // The pitch remap, entered PAST the per-scan chain at its head.
         // 0x80019980 opens with a call to 0x8001a2e8 - the tuning applier,
         // the per-scan housekeeping and the VIBRATO ENGINE - every one of
@@ -7026,8 +7052,8 @@ function assembleProgram() {
             // the block has none - this cave ends where clock_capture begins.
             padTo(fastCompute);
         }
-        emit(StringFormat("LDDPC R10,0x%x", fastPool));
-        emit("LD.SH R12,R10[0x352]");   // the step's own pitch TARGET
+        emit(StringFormat("MCALL PC[0x%x]", fastPool));
+        emit("NOP"); // retain the staging labels; R12 is now the finished target
         // The bend strip's offset, which the 200 Hz scan adds to the target
         // at 0x800031f4 before clamping the result into 0x3210.  Leaving it
         // out was the pitch bleed: the fast path drove DAC slot 2 to a
@@ -7111,7 +7137,7 @@ function assembleProgram() {
         padTo(fastExit);
         if (twoPhaseBeat()) emit("LDM SP++,R0,R7,PC"); else emit("LDM SP++,R7,PC");
         padTo(fastPool);
-        word(0x00003560); // global state base
+        word(0x8001be30); // prepare the selected step's transposed pitch target
         word(0x8001c0e0); // remap, minus the per-scan chain
         word(block("clock_latency") ? 0x8001bbc0 : 0x800077f8);
         if (deadline) word(0x8001bd40); // the deadline, sized from the edge

@@ -193,7 +193,12 @@ longer marks it, `clock_settle` refuses to re-claim while 0x625b is
 nonzero: an arp advance faster than the pending wait keeps the outstanding
 trigger instead of orphaning it.
 
-The flush path stages the step's own pitch through the calibration
+The fast path first runs the factory pitch-target preparation at
+`0x80003590`, so the selected base note has its octave, preset transpose,
+latch stamp and playback/preview rules applied before it can be output.
+This prepares the target and blend goal without advancing the per-scan
+glide, modulation or filter engines. It then stages the pitch through the
+calibration
 remap **entered past the per-scan chain at its head** — the tuning applier,
 the housekeeping and the vibrato engine all advance once per scan and must not
 be run at 1 kHz — and then raises the gate, so pitch and trigger reach the DAC
@@ -844,6 +849,40 @@ claimed scans. External-settle builds deliberately send pitch early and keep
 the separate configured-settle test. Both repaired regressions were run on
 known-bad images to verify that their assertions fail for the original faults.
 
+### A bare arp note was still reaching the pitch output
+
+The owner's `pitchbleed.mp3` recording shows a sustained tone near 585 Hz
+interrupted by short downward excursions. Further emitted-image probing
+found a path the clock suite did not model: the arp selector writes the
+untransposed note into both `state+0x350` and `state+0x352`. The ADC event's
+factory target preparation later replaces `state+0x352` with the transposed
+target. Reading it between those operations does not read the finished pitch.
+
+For a latched note one octave above its table pitch, the old internal-clock
+path transferred DAC word **601** at phase A, then the complete pitch scan
+restored **1082** three milliseconds later. This repeated on every beat in
+the probe. No DAC-value change was intended: the instrument was repeating
+one held note. External clocks can encounter the same ordering, depending
+on where their gate lands relative to the ADC pass.
+
+`clock_pitch_target` now calls the existing factory target preparation before
+the fast path reads the target. This reuses the transpose, latch and sequencer
+rules rather than copying them into a second calculation. It does not call
+the DAC, advance the glide or vibrato, or spend a filter/conditioner step.
+The target chain's blend re-base happens only when the base changes, so a
+second preparation at the gate cannot apply it twice. The helper adds CPU
+work but no new RAM state, scan-period wait, or change to the configured
+deadline/settle.
+
+`heldTransposeSurvivesEveryBeat()` now drives both the target producer and
+pitch consumer, checks every clock-service/flush result and settle transfer,
+and covers latched and ordinary octave transpose with internal/external
+clocks at 25 and 60 MHz. The regression rejects the previously shipped
+`aa84136d` image. A separate probe executing the real pulse routines and
+DAC transfers also reproduced the dip and verified its removal in the model.
+Confirmation on the instrument is still required; neither the emulator nor
+the MP3 establishes the electrical waveform at the pitch jack.
+
 ### What it measures, in the model
 
 **These are the millisecond-countdown deadline's figures**, kept as the
@@ -973,7 +1012,10 @@ continuation after a modeled pause, not physical flash timing.
 
 The clock, persistence and sequence-edit harnesses run the actual factory
 pitch pass: glide-rate lookup, floating-point slew, bend, clamp, remap,
-DAC-slot write and output hook. Ghidra 12.1.3's AVR32 SLEIGH inserts `BFINS`
+DAC-slot write and output hook. The held-transpose clock regression also
+runs the preceding factory target preparation; omitting that producer hid
+the bare-note/transposed-note alternation above. Ghidra 12.1.3's AVR32 SLEIGH
+inserts `BFINS`
 at the wrong bit offset, so the harnesses model that instruction themselves;
 the factory code around it still executes from the emitted image. They model
 peripheral boundaries and do not validate analog settling, interrupt response
