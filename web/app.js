@@ -1344,11 +1344,28 @@
             li.textContent = line.replace(/^[-\u2013\u2014]\s*/, '');
             list.appendChild(li);
         });
+        // Centre the panel on the pill, then pull it back inside the paragraph
+        // if that hung it over an edge.  The paragraph is the content column,
+        // so a panel within it is on-screen at every width.  Measured rather
+        // than assumed: the pill sits wherever the sentence ends, which moves
+        // with the wrap.  Setting right as well as left would stretch it.
+        function centreChangelog() {
+            if (body.classList.contains('hidden')) return;
+            var sub = body.offsetParent;
+            if (!sub) return;
+            var room = sub.clientWidth - body.offsetWidth;
+            var want = btn.offsetLeft + btn.offsetWidth / 2 - body.offsetWidth / 2;
+            body.style.setProperty('--chlog-left',
+                Math.round(Math.max(0, Math.min(want, room))) + 'px');
+            body.style.right = 'auto';
+        }
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
             var open = body.classList.toggle('hidden');
             btn.setAttribute('aria-expanded', String(!open));
+            centreChangelog();
         });
+        window.addEventListener('resize', centreChangelog);
         document.addEventListener('click', function () {
             body.classList.add('hidden');
             btn.setAttribute('aria-expanded', 'false');

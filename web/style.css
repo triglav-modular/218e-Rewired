@@ -402,13 +402,15 @@ h1 {
   display: block;
   position: absolute;
   top: calc(100% + 8px);
-  /* The paragraph's right edge, not its left: the pill ends the sentence, so
-     the left edge opened a panel that finished before the pill even started.
-     Anchoring right puts the pill over the panel it belongs to while keeping
-     the containing block - and with it the percentage sizing and the
-     off-screen guard - the paragraph's.  Below about 640 the panel is as wide
-     as the paragraph anyway, so this only moves it where there is room. */
+  /* Centred on the pill, which only script can do: the offset depends on where
+     the sentence ends, and CSS centring on the pill would hang a 420 panel
+     over the edge of a phone.  centreChangelog() writes the left, clamped to
+     the paragraph; until it runs, the paragraph's right edge is the fallback,
+     and it is the same guarantee the left edge was - the content column's, at
+     every width.  The containing block stays the paragraph either way, so the
+     percentage sizing and the off-screen guard are unchanged. */
   right: 0;
+  left: var(--chlog-left, auto);
   z-index: 10;
   width: max-content;
   min-width: min(300px, 100%);
@@ -2057,14 +2059,9 @@ button.primary:not(:disabled):hover {
    page, and a shadow in two parts: a tight one that sits the card on the
    surface, and a wide soft one that lifts it off.  A nested card gets less
    of both, so it reads as sitting on its parent rather than beside it.
-   Shadows paint outside the border box and change no geometry.
-
-   The changelog panel takes the deeper tier despite being the smaller thing:
-   it floats over the page rather than sitting in it, and the nested tier -
-   which says "on my parent" - would read as flat against the text behind. */
+   Shadows paint outside the border box and change no geometry. */
 section,
-.danger,
-.chlog-body {
+.danger {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045),
               0 1px 2px rgba(0, 0, 0, .14),
               0 16px 36px -20px rgba(0, 0, 0, .36);
@@ -2087,6 +2084,20 @@ section,
 .kbdwrap {
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, .30),
               inset 0 -1px 0 rgba(255, 255, 255, .03);
+}
+/* The changelog panel is both at once: a card floating over the page, and a
+   well its contents scroll inside.  So it takes the deeper card tier - it
+   floats rather than sits, and the nested tier would read as flat against the
+   text behind - and the keyboard's well on top of it, which is how this page
+   already says "there is more of this than you can see".  One declaration,
+   because a second box-shadow would replace this rather than add to it, and
+   without the card's top edge light: a lit top edge and a shadowed one are
+   the same edge claiming to be raised and recessed at once. */
+.chlog-body {
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .30),
+              inset 0 -1px 0 rgba(255, 255, 255, .03),
+              0 1px 2px rgba(0, 0, 0, .14),
+              0 16px 36px -20px rgba(0, 0, 0, .36);
 }
 
 /* Narrow screens.  Last in the sheet on purpose: these share specificity
