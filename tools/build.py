@@ -1065,6 +1065,7 @@ RAM_REGIONS = [
     # parked anything and the knob's other job may follow it live.
     (0x62E8, 0x62F0, "where each preset edit left its knob, plus one"),
     (0x62F0, 0x62F4, "clock-latency internal-beat claim stamp"),
+    (0x62F4, 0x62F6, "the transpose the take was born under (its reference)"),
     # The scan watches for two gestures ENDING, so it has to remember what
     # they looked like on the previous scan.
     (0x62F8, 0x62F9, "logical sequencer mode last scan, preview counts as WRITE"),

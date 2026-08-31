@@ -1449,6 +1449,128 @@ public class ClockRegression extends GhidraScript {
                 pendingStepKeepsItsSource(before,hz,settleMs);
     }
 
+    // A sequenced step is stored RELATIVE to the transpose its take was born
+    // under, and playback sounds it at step + the pad's addend: the target
+    // preparation's per-scan re-add IS the pad transposing the take.  So the
+    // contract to hold is a cancellation: shift the STORE down by a pad's
+    // addend and stand the pad AT that addend, and the audible take must be
+    // identical to the same values played at neutral.  That exercises the
+    // signed store (a take under a high pad runs negative), the preparation's
+    // LD.SH reads, and its +-1 duplicate-row nudges, without needing the
+    // calibration remap to be linear.
+    //
+    // The transpose is driven the way the instrument drives it: ADD TO PITCH
+    // at octaves (state+0x342) and the active pad (state+0x2ef), the inputs
+    // the preparation at 0x80003590 derives its addend from.  An earlier
+    // fixture wrote the published 0x60a0 instead - an OUTPUT of that very
+    // arithmetic, which the warmup scans promptly recomputed to zero - so it
+    // measured an addend of nothing and passed on a build the instrument
+    // showed broken.  The play loop must also run the preparation and the
+    // pitch scan every 5 ms as hardware does: a wrong target reaches the
+    // output through the ADC pass's own write, not only through the clock's
+    // staging call.
+    void sequencedStepTakesTheOctaveOnce() throws Exception {
+        boolean mode=sequencer;
+        try {
+            java.util.List<java.util.List<Integer>> byPad=new java.util.ArrayList<>();
+            // Pad 2 is the neutral octave; pads 1 and 4 stand -484 and +968
+            // from it (state+0x2ef counts pads from zero).
+            int[][] pads={{1,0},{0,-484},{3,968}};
+            for (int[] p : pads) {
+                sequencer=true; fresh(1,25000000);
+                for (int k=0;k<16;k++) w(0x6160+2*k,2,(485+40*k-p[1])&0xffff);
+                w(S+0x342,1,1); w(S+0x2ef,1,p[0]);
+                internal(10000); finishStep(30000);
+                for (long t=35000;t<=45000;t+=5000) { time(t); call(0x80003590L,0x100); scan(t); }
+                int from=dac.size();
+                for (long t=50000;t<=257000;t+=250) {
+                    if (t<=246000 && (t-50000)%49000==0) { w(S+0x38e,2,1); internal(t); }
+                    if (t%1000==0) bank(t);
+                    if (t%5000==0) { time(t); call(0x80003590L,0x100); scan(t); }
+                    service(t); flush(t);
+                }
+                java.util.List<Integer> sounded=new java.util.ArrayList<>();
+                for (int i=from;i<dac.size();i++) sounded.add(dac.get(i));
+                check("the take sounds at pad "+(p[0]+1), !sounded.isEmpty());
+                byPad.add(sounded);
+            }
+            java.util.List<Integer> neutral=byPad.get(0);
+            for (int i=1;i<byPad.size();i++) {
+                java.util.List<Integer> moved=byPad.get(i);
+                check("pad "+(pads[i][0]+1)+" plays the same number of notes as pad 2"
+                      +" ("+neutral.size()+" vs "+moved.size()+")",
+                      moved.size()==neutral.size());
+                int n=Math.min(neutral.size(),moved.size()), worst=0;
+                for (int k=0;k<n;k++)
+                    worst=Math.max(worst,Math.abs(moved.get(k)-neutral.get(k)));
+                check("the pad's addend lands on a relative take at pad "+(pads[i][0]+1)
+                      +" (worst drift "+worst+" units)", worst<=3);
+            }
+            println("PASS a relative take cancels against the pad that plays it");
+        } finally { sequencer=mode; }
+    }
+
+    // The sequencer's gate on the internal clock.  A Buchla trigger spikes
+    // and falls to its 5 V sustain; a sequenced step that is not tied holds
+    // that sustain for HALF its interval and rests at zero for the other
+    // half - a 50% gate at any tempo.  Only a tie carries the sustain
+    // across a step boundary, and the note it carries into keeps the
+    // factory three-tick gap ahead of its retrigger.
+    //
+    // The take is two plain notes, then a tie carrying the second of them,
+    // then the note that retriggers after it, looping.  Per 80-tick cycle
+    // the pulse must read: high 10 / low 10 (a plain note), high 10 /
+    // low 10 (the note ahead of nothing special), high 37 / low 3 (the
+    // note the tie doubles, down to the retrigger's gap).  The transport
+    // runs on the internal tick alone - the reported instrument behavior,
+    // a sustain that never rests at all, was seen exactly there.
+    void sequencedGateIsHalfTheStep() throws Exception {
+        boolean mode=sequencer;
+        try {
+            sequencer=true; fresh(1,25000000);
+            w(0x61e0,1,4);
+            w(0x6160,2,485); w(0x6162,2,525);
+            w(0x6164,2,0x7fff); w(0x6166,2,565);
+            w(S+0x34a,2,20); w(S+0x38e,2,3);
+            java.util.List<long[]> edges=new java.util.ArrayList<>();
+            long last=0;
+            for (long t=10000; t<=260000; t+=1000) {
+                bank(t); service(t); internal(t); flush(t);
+                if (t%5000==0) { time(t); call(0x80003590L,0x100); scan(t); }
+                long lv=r(S+0x354,2)==0?0:1;
+                if (lv!=last) { edges.add(new long[]{t/1000,lv}); last=lv; }
+            }
+            StringBuilder sb=new StringBuilder("  pulse edges (tick,level):");
+            for (long[] e : edges) sb.append(" ").append(e[0]).append(e[1]==0?"v":"^");
+            println(sb.toString());
+            int rises=0, falls=0;
+            for (long[] e : edges) if (e[0]>=100) { if (e[1]==1) rises++; else falls++; }
+            check("the pulse both sounds and rests in the steady state",
+                  rises>=6 && falls>=6);
+            // The drop is countdown-timed from the step ADVANCE (the spike
+            // follows the advance by the settle, so rise-to-fall is not the
+            // firmware's own number).  Fall minus the last advance before it
+            // must be interval-threshold: 10 with the untied half, 17 for
+            // the tie's tail, and nothing else - the factory's fixed three
+            // read 17 for every segment here, which is the failure shape.
+            java.util.List<Integer> ds=new java.util.ArrayList<>();
+            for (long[] e : edges) {
+                if (e[1]!=0 || e[0]<100) continue;
+                long beat=-1;
+                for (long b : beatTimes) if (b/1000<=e[0]) beat=b/1000;
+                if (beat>=0) ds.add((int)(e[0]-beat));
+            }
+            int halves=0, tails=0;
+            for (int d : ds) {
+                if (d>=9 && d<=11) halves++;
+                else if (d>=16 && d<=18) tails++;
+            }
+            check("every drop is half the step or the retrigger gap ("+ds+")",
+                  halves+tails==ds.size() && halves>=4 && tails>=2);
+            println("PASS an untied step gates half its interval; a tie carries through");
+        } finally { sequencer=mode; }
+    }
+
     // The arp selector writes a BARE note to state+0x352. The ADC event's
     // target preparation later adds transpose and latch stamps, before the
     // pitch scan consumes that target. Earlier clock fixtures only ran the
@@ -2066,6 +2188,10 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             heldTransposeSurvivesEveryBeat();
+            // Both of these play a TAKE, which only a sequencer build has
+            // the caves for - under the arp image the fixture would sound
+            // nothing at all and fail on the silence.
+            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); }
             if (jitterOnly) {
                 bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {
