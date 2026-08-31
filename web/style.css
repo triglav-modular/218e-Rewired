@@ -2374,6 +2374,14 @@ section,
   padding-left: calc(var(--tr-w) + var(--tr-gap));
   text-indent: calc(-1 * (var(--tr-w) + var(--tr-gap)));
 }
+/* The hang is there to clear a mark, so a label without one keeps neither
+   half of it.  Both labels that carry no mark were a word long while it
+   stayed invisible; the first one to wrap indented its second line 18 to
+   clear a mark that was never in front of it. */
+.padfig .fn:not(:has(.tr)) {
+  padding-left: 0;
+  text-indent: 0;
+}
 /* The transport marks, on the functions they name.  Drawn rather than typed:
    as glyphs, ● ▶ ■ come from whichever font has them and ✕ is a letter in
    some, so none of the four would match the others.  Inline and on the
