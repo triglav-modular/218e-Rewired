@@ -2057,9 +2057,14 @@ button.primary:not(:disabled):hover {
    page, and a shadow in two parts: a tight one that sits the card on the
    surface, and a wide soft one that lifts it off.  A nested card gets less
    of both, so it reads as sitting on its parent rather than beside it.
-   Shadows paint outside the border box and change no geometry. */
+   Shadows paint outside the border box and change no geometry.
+
+   The changelog panel takes the deeper tier despite being the smaller thing:
+   it floats over the page rather than sitting in it, and the nested tier -
+   which says "on my parent" - would read as flat against the text behind. */
 section,
-.danger {
+.danger,
+.chlog-body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045),
               0 1px 2px rgba(0, 0, 0, .14),
               0 16px 36px -20px rgba(0, 0, 0, .36);
