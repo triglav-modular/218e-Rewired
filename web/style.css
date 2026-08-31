@@ -376,7 +376,7 @@ h1 {
 /* Positioned so the changelog panel can hang off the paragraph rather than
    off the pill inside it.  The pill sits wherever the sentence ends, which on
    a narrow window is close enough to the right edge that a panel anchored to
-   it would open off-screen; the paragraph's own left edge is the content
+   it would open off-screen; the paragraph's own edges are the content
    column's, at every width. */
 .sub {
   position: relative;
@@ -402,7 +402,13 @@ h1 {
   display: block;
   position: absolute;
   top: calc(100% + 8px);
-  left: 0;
+  /* The paragraph's right edge, not its left: the pill ends the sentence, so
+     the left edge opened a panel that finished before the pill even started.
+     Anchoring right puts the pill over the panel it belongs to while keeping
+     the containing block - and with it the percentage sizing and the
+     off-screen guard - the paragraph's.  Below about 640 the panel is as wide
+     as the paragraph anyway, so this only moves it where there is room. */
+  right: 0;
   z-index: 10;
   width: max-content;
   min-width: min(300px, 100%);
