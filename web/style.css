@@ -1495,6 +1495,58 @@ strong {
   color: #171716;
   opacity: .7;
 }
+/* The volts-per-octave pair as one divided rectangle: the same control the
+   knob rows are, laid across instead of down, so a choice between two reads
+   as a choice rather than two cards that happen to sit together.  Full width
+   because the row is the choice - 430 of a 780 column left it stranded. */
+.vpo.rowpick {
+  gap: 0;
+  max-width: none;
+  /* The field row is a flex, and a grid inside one shrink-wraps to its
+     content: dropping the max-width alone left it at 483 of 676. */
+  flex: 1;
+  min-width: 0;
+  /* Mixed from --ink rather than currentColor, as the knob rows are: here the
+     colour sweeps on hover, and a rule mixed from it would sweep with it. */
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.vpo.rowpick button {
+  position: relative;
+  border: 0;
+  border-right: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 0;
+}
+.vpo.rowpick button:last-child {
+  border-right: 0;
+}
+/* The shared button hover paints every border accent, and the only border a
+   segment still has is the rule beside it - so hovering drew a coloured line
+   down the middle.  The rule holds, whatever the segment's state. */
+.vpo.rowpick button:hover {
+  border-right-color: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+/* sweep-edge animates border-color, and an animation outranks every static
+   rule above - so pinning border-right-color was not enough on its own and
+   the line came back the moment a segment was hovered.  The type carries the
+   hover instead, as it does on the knob rows, and only on a segment that is
+   not the chosen one: the chosen one is dark on accent, and sweeping its type
+   to the accent would put it on its own background. */
+.vpo.rowpick button:hover:not([aria-pressed=true]) {
+  animation: sweep-ink var(--sweep-pass) forwards;
+}
+/* After the hover rule, so a selection still clears the line beside it. */
+.vpo.rowpick button[aria-pressed=true] {
+  z-index: 1;
+  border-right-color: transparent;
+  border-radius: 7px;
+}
+.vpo.rowpick button[aria-pressed=true]:hover,
+.vpo.rowpick button:has(+ button[aria-pressed=true]),
+.vpo.rowpick button:hover:has(+ button[aria-pressed=true]) {
+  border-right-color: transparent;
+}
 /* --- the offsets laid out as the keyboard they describe -------------------- */
 .kbdwrap {
   overflow-x: auto;
