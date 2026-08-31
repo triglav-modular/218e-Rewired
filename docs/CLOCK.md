@@ -268,7 +268,20 @@ key held and therefore arping before the clock starts, would leave internal
 samples inside the external maxima that follow.
 
 Those two cells go out on the telemetry frame's scan-component fields, and
-`tools/clock_latency_report.py` decodes a readout CSV into milliseconds. The
+`tools/clock_latency_report.py` decodes a readout CSV into milliseconds. It
+checks the capture's validity before it reports any figure, because a running
+maximum that FALLS between frames proves the cells were cleared and reseeded
+mid-run. That rule is asymmetric and the asymmetry matters: an internal
+capture should see no source change at all, so any reset there is
+contamination and the tool refuses to report; an external capture is
+*expected* to reset exactly once, when the clock arrives and clears the
+internal pre-roll the bench procedure creates by having a key held first.
+The tool names that frame and says how many frames follow it, which is the
+population the maxima are actually drawn from. Several resets in an external
+capture mean the input was dropping out and being re-acquired. `--period-ms`
+adds a cross-check: a figure at or above the beat period is being charged
+across beats. All of this was found by hand on the first internal capture,
+which is why it is in the tool now. The
 build also lifts the edit-mode gate on telemetry, since a clock running is
 not edit mode; USB MIDI is still required and a key must be held, because the
 frame is sent from the pressure path.
