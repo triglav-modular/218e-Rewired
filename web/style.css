@@ -1547,6 +1547,17 @@ strong {
 .vpo.rowpick button:hover:has(+ button[aria-pressed=true]) {
   border-right-color: transparent;
 }
+/* A segment's corners have to move with its fill.  The button transition
+   carries background over .15s but leaves border-radius to switch outright,
+   so the moment a choice moved the outgoing segment lost its corners while
+   its colour was still there - a square block of accent for 150ms, which is
+   the flash.  Same list as the button rule with border-radius added: the
+   shorthand replaces rather than extends, so the rest has to be restated. */
+.vpo.rowpick button,
+.knobmap .knobpick button {
+  transition: background .15s, color .15s, border-color .15s,
+              border-radius .15s, transform .08s;
+}
 /* --- the offsets laid out as the keyboard they describe -------------------- */
 .kbdwrap {
   overflow-x: auto;
