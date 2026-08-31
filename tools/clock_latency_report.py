@@ -33,8 +33,18 @@ the last frame of a file already holds that session's final values -- there is
 nothing to aggregate.  Combining files across a power cycle or firmware build
 is meaningless, so this tool accepts exactly one CSV.
 
+VALIDITY IS A HEURISTIC.  The frame carries no source field and no session
+generation, so this tool infers clears from value movement, and value
+movement cannot identify every transition.  What it can say for certain: a
+running MAXIMUM that falls, or a frame reading (0,0) after data has appeared,
+proves the cells were cleared under the run -- those rules hold for both
+sources.  What it cannot do is prove the absence of a clear, or say WHICH
+source a segment belongs to.  When the capture is ambiguous the tool says so
+and asks for --external-start rather than guessing.
+
     python3 tools/clock_latency_report.py <this-run.csv> --scope-max-ms 3.62
     python3 tools/clock_latency_report.py <this-run.csv> --internal
+    python3 tools/clock_latency_report.py <this-run.csv> --external-start 42
 """
 import argparse
 import csv
@@ -48,16 +58,16 @@ def ms(units: int) -> float:
 
 
 def session(path: Path):
-    """Every frame that carries a measurement, in order, plus the frame count.
+    """Every frame after the first measurement, in order, plus the frame count.
 
-    The whole series, not just the last frame: both published cells are
-    RUNNING maxima, so a value that falls between frames is arithmetically
-    impossible and proves the cells were cleared and reseeded mid-capture.
-    That happens when RAM 0x6236 flaps -- the source changed, and a change of
-    source clears the pair.  Capture 2's first attempt did exactly that and
-    the only reason it was caught was a hand-read of the CSV.
+    Zero frames BEFORE any measurement are the cells' cleared startup state
+    and carry nothing.  A zero frame AFTER data has appeared is different: it
+    is direct evidence the cells were cleared under the run, and dropping it
+    (as an earlier version did) hid explicit resets from the checks below --
+    an internal series (1000,12000), (0,0), (900,13000) was accepted with
+    "source resets 0".  So those rows are KEPT, marked as clears.
     """
-    series = []
+    series = []                # (frame, a, b, is_clear_marker)
     stamps = []
     rows = 0
     with path.open(newline="") as fh:
@@ -67,23 +77,31 @@ def session(path: Path):
             rows += 1
             a, b = int(row["scan_component_a"]), int(row["scan_component_b"])
             if a or b:
-                series.append((rows, a, b))
+                series.append((rows, a, b, False))
+                stamps.append(row.get("timestamp", ""))
+            elif series:
+                series.append((rows, 0, 0, True))
                 stamps.append(row.get("timestamp", ""))
     return series, stamps, rows
 
 
-def resets(series, internal: bool):
-    """Frames where a published figure moved in a direction it cannot.
+def segment_faults(segment, internal: bool):
+    """Moves that are impossible WITHIN one population, grouped by frame.
 
-    External: both cells are maxima, so neither may fall.  Internal: cell A is
-    a MINIMUM and may not rise, cell B is a maximum and may not fall.  Grouped
-    by FRAME -- one source change clears both cells, so it is one event and
-    not two.
+    External: both cells are running maxima, so neither may fall.  Internal:
+    cell A is a running MINIMUM and may not rise, cell B a maximum and may
+    not fall.  A clear marker inside a segment is impossible in either.
+    One clear wipes both cells, so a frame is one event and not two.
     """
     events = {}
-    for i in range(1, len(series)):
-        frame, a, b = series[i]
-        _, pa, pb = series[i - 1]
+    for i in range(len(segment)):
+        frame, a, b, clear = segment[i]
+        if clear:
+            events[frame] = ["both cells read (0,0) after data: an explicit clear"]
+            continue
+        if i == 0 or segment[i - 1][3]:
+            continue                       # first sample of the population
+        _, pa, pb, _ = segment[i - 1]
         moved = []
         if internal:
             if a > pa:
@@ -100,7 +118,33 @@ def resets(series, internal: bool):
     return sorted(events.items())
 
 
-def report_window(series, stamps, rows: int, internal: bool, period_ms):
+def clear_candidates(series):
+    """Frames that prove a clear happened, whatever the sources were.
+
+    Cell B is a running maximum under BOTH sources, so B falling between
+    frames is impossible inside any single population; so is a (0,0) frame
+    after data.  Cell A proves nothing on its own -- it is a minimum during
+    an internal pre-roll and legitimately falls there -- which is exactly the
+    move an earlier version of this tool counted as a source reset, condemning
+    valid captures whose pre-roll minimum was still settling.
+    """
+    events = []
+    for i in range(1, len(series)):
+        frame, _, b, clear = series[i]
+        if clear:
+            events.append(frame)
+        elif not series[i - 1][3] and b < series[i - 1][2]:
+            events.append(frame)
+    return events
+
+
+def start_index(series, frame):
+    return next((i for i, (f, _, _, _) in enumerate(series) if f >= frame),
+                len(series))
+
+
+def report_window(series, stamps, rows: int, internal: bool, period_ms,
+                  external_start):
     """Validity of the capture, and which frames the figures are drawn from.
 
     A reset is not automatically a fault, and this is the whole subtlety.  The
@@ -108,67 +152,128 @@ def report_window(series, stamps, rows: int, internal: bool, period_ms):
     bench procedure has a key held before the clock is started, so an external
     capture legitimately begins with an internal pre-roll and clears once when
     the clock arrives.  What follows that one reset is the population being
-    measured.
+    measured.  During the pre-roll cell A is a MINIMUM, so decreases there are
+    legitimate and must not be counted as resets.
 
     An INTERNAL capture has no such transition -- nothing should change the
     source -- so any reset there means 0x6236 was flapping and the run is
-    contaminated.  Getting this asymmetry wrong condemns the good external
-    capture, which an earlier version of this check did.
+    contaminated.
+
+    All of this is inference from value movement; the frame carries no source
+    field.  --external-start names the frame the clock was patched at and
+    replaces the boundary heuristic with the operator's own knowledge.
 
     Returns the index in `series` at which the measured population starts.
     """
     print(f"  frames                {rows:6d}   "
-          f"{len(series)} carrying a measurement")
+          f"{len(series)} carrying a measurement or an explicit clear")
     first, last = stamps[0], stamps[-1]
     if first and last and first != last:
         print(f"  measured window       {first} .. {last}")
-    events = resets(series, internal)
-    start = 0
-    if internal and events:
+
+    if internal:
+        events = segment_faults(series, internal=True)
+        if events:
+            print()
+            print(f"  CONTAMINATED: {len(events)} reset(s), first at frame "
+                  f"{events[0][0]}")
+            for frame, moved in events[:5]:
+                for what in moved:
+                    print(f"      frame {frame}: {what}")
+            raise SystemExit(
+                "\n  Nothing should change the source during an internal"
+                " capture, so a\n"
+                "  running maximum that falls, a running minimum that rises,"
+                " or a (0,0)\n"
+                "  frame after data means the cells were cleared and reseeded"
+                " under the\n"
+                "  run. The figures would mix two populations, so they are not"
+                " reported.\n"
+                "  Re-take it with no clock patched and the key held"
+                " throughout.")
+        print(f"  resets                     0   no impossible move in either"
+              " cell")
+        print(f"  measured population   {len(series):6d}   frames")
+        if period_ms is not None:
+            print(f"  beat period           {period_ms:6.2f} ms   "
+                  "(given, for the cross-check below)")
+        return 0
+
+    # External capture: [optional internal pre-roll][one clear][the clock].
+    if external_start is not None:
+        start = start_index(series, external_start)
+        if start >= len(series):
+            raise SystemExit(
+                f"  --external-start {external_start} is past the last"
+                f" measured frame.")
+        if series[start][3]:
+            start += 1                     # the clear itself carries nothing
+        print(f"  external window       {external_start:6d}   "
+              "given with --external-start; frames before it are pre-roll")
+    else:
+        events = clear_candidates(series)
+        if len(events) > 1:
+            print()
+            print(f"  CONTAMINATED: {len(events)} clears, at frames "
+                  + ", ".join(str(f) for f in events[:6]))
+            raise SystemExit(
+                "\n  One clear is the expected hand-off from the internal"
+                " pre-roll to the\n"
+                "  clock. Several prove the cells were wiped repeatedly:"
+                " consistent with\n"
+                "  the input dropping out and being re-acquired, so the"
+                " figures mix\n"
+                "  populations and are not reported. Check the patch and the"
+                " input\n"
+                "  levels, and re-take it.")
+        if len(events) == 1:
+            start = start_index(series, events[0])
+            if series[start][3]:
+                start += 1
+            print(f"  source change         {events[0]:6d}   "
+                  "inferred from a move impossible inside one population --")
+            print("                                 read as the clock"
+                  " arriving and clearing the internal pre-roll")
+        else:
+            # No clear detected. That does not prove there was none: a
+            # pre-roll whose values never exceeded the first external sample
+            # leaves no impossible move behind. A falling cell A is the
+            # pre-roll's signature (it is a minimum there), so its presence
+            # with no detectable boundary is exactly the ambiguous case.
+            falls = [f for f, moved in segment_faults(series, internal=False)
+                     if any("edge->claim fell" in m for m in moved)]
+            if falls:
+                print()
+                print(f"  AMBIGUOUS: cell A falls at frame(s) "
+                      + ", ".join(str(f) for f in falls[:6])
+                      + " but no clear is detectable.")
+                raise SystemExit(
+                    "\n  A falling cell A is legitimate during the internal"
+                    " pre-roll (it is\n"
+                    "  a minimum there) and impossible after the clock"
+                    " arrives, and this\n"
+                    "  capture shows the fall without the boundary that"
+                    " separates the two.\n"
+                    "  Value movement alone cannot place it. Re-run with"
+                    " --external-start\n"
+                    "  <frame> naming the frame at which the clock was"
+                    " patched in.")
+            start = 0
+            print(f"  source change           none   no clear detected;"
+                  " treating the whole capture as external")
+
+    tail = [s for s in series[start:]]
+    faults = segment_faults(tail, internal=False)
+    if faults:
         print()
-        print(f"  CONTAMINATED: {len(events)} source reset(s), first at frame "
-              f"{events[0][0]}")
-        for frame, moved in events[:5]:
+        for frame, moved in faults[:5]:
             for what in moved:
                 print(f"      frame {frame}: {what}")
         raise SystemExit(
-            "\n  Nothing should change the source during an internal capture,"
-            " so a\n"
-            "  running maximum that falls or a running minimum that rises means"
-            " RAM\n"
-            "  0x6236 was flapping and the cells were cleared and reseeded"
-            " under the\n"
-            "  run. The figures would mix two populations, so they are not"
-            " reported.\n"
-            "  Re-take it with no clock patched and the key held throughout.")
-    if not internal and len(events) > 1:
-        print()
-        print(f"  CONTAMINATED: {len(events)} source resets, at frames "
-              + ", ".join(str(f) for f, _ in events[:6]))
-        raise SystemExit(
-            "\n  One reset is the expected hand-off from the internal pre-roll"
-            " to the\n"
-            "  clock. Several mean RAM 0x6236 flapped: the input was dropping"
-            " out and\n"
-            "  being re-acquired, so the figures mix populations and are not"
-            " reported.\n"
-            "  Check the patch and the input levels, and re-take it.")
-    if not internal and len(events) == 1:
-        frame, moved = events[0]
-        start = next(i for i, (f, _, _) in enumerate(series) if f == frame)
-        print(f"  source change         {frame:6d}   "
-              "the clock arriving; the internal pre-roll cleared here")
-        print(f"  measured population   {len(series) - start:6d}   "
-              "frames after it, which is what the figures below are drawn from")
-        after = resets(series[start:], internal)
-        if after:
-            raise SystemExit(
-                "  ...and it did not settle: the cells moved impossibly again"
-                " after\n  that reset. Re-take the capture.")
-    else:
-        print(f"  source resets         {len(events):6d}   "
-              "no impossible move in either cell")
-        print(f"  measured population   {len(series):6d}   frames")
+            "  The external window itself moved impossibly after the"
+            " hand-off. The\n  capture did not settle; re-take it.")
+    print(f"  measured population   {len(tail):6d}   frames -- what the"
+          " figures below are drawn from")
     if period_ms is not None:
         print(f"  beat period           {period_ms:6.2f} ms   "
               "(given, for the cross-check below)")
@@ -269,12 +374,20 @@ def main() -> None:
                         help="the beat period during the capture, in ms, for "
                              "the cross-check: a figure at or above it is "
                              "being charged across beats")
+    parser.add_argument("--external-start", type=int, metavar="FRAME",
+                        help="frame at which the external clock was patched "
+                             "in; replaces the boundary heuristic with the "
+                             "operator's own knowledge of the run")
     args = parser.parse_args()
     if args.internal and args.scope_max_ms is not None:
         raise SystemExit(
             "--scope-max-ms is an external figure: it measures input edge to "
             "trigger,\nand an internal capture has no input edge to measure "
             "from.")
+    if args.internal and args.external_start is not None:
+        raise SystemExit(
+            "--external-start marks the clock's arrival, and an internal "
+            "capture is\nthe run with no clock patched at all.")
     path = args.csv
     series, stamps, rows = session(path)
     print(f"{path.name}")
@@ -286,11 +399,17 @@ def main() -> None:
             "  the key was held throughout and the source never changed.")
     # Validity before figures: a contaminated capture exits here rather than
     # printing numbers that mix two populations.
-    report_window(series, stamps, rows, args.internal, args.period_ms)
+    report_window(series, stamps, rows, args.internal, args.period_ms,
+                  args.external_start)
     print()
     # The last frame already holds the running figures for the population that
     # started at the source change, since neither cell is touched again.
-    _, a, b = series[-1]
+    frame, a, b, clear = series[-1]
+    if clear:
+        raise SystemExit(
+            "  the capture ends on cleared cells: the source changed at the"
+            " very end\n  and nothing was measured after it. The final"
+            " figures do not exist.")
     if args.internal:
         internal(a, b)
     else:

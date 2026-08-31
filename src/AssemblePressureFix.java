@@ -3780,9 +3780,19 @@ public class AssemblePressureFix extends GhidraScript {
             // set of beats, so the count is what says how much of a session
             // a pair of maxima actually saw -- a maximum over four beats and
             // a maximum over four thousand read identically otherwise.
+            //
+            // SATURATED at 0xffff rather than wrapped: ST.H stores bit 16
+            // away, so a wrapped count reads 1 next and the internal half's
+            // first-sample branch reseeds both extrema mid-session -- about
+            // 44 minutes in at 25 beats/second -- while the capture tool
+            // reads the falling count as a source reset.  Freezing the
+            // count is the cheaper loss; the extrema keep accumulating.
             emit("MOV R10,0x6038");
             emit("LD.UH R9,R10[0x4]");      // 0x603c sample count
             emit("SUB R9,-0x1");
+            emit("MOV R8,R9");
+            emit("LSR R8,0x10");            // 1 only on the wrapping increment
+            emit("SUB R9,R8");
             emit("ST.H R10[0x4],R9");
             // Running MAXIMUM edge-to-claim.  This is also the number that
             // sizes a deadline: a settle computed from the edge stamp has to
@@ -3857,6 +3867,13 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MOV R10,0x6038");
             emit("LD.UH R9,R10[0x4]");      // 0x603c sample count, shared
             emit("SUB R9,-0x1");
+            // The same saturation as the external half: a wrapped count
+            // reads 1 on the next increment and the first-sample branch
+            // below would reseed both extrema even though the source never
+            // changed, throwing away the session's history.
+            emit("MOV R8,R9");
+            emit("LSR R8,0x10");
+            emit("SUB R9,R8");
             emit("ST.H R10[0x4],R9");
             // The first sample seeds both cells.  A minimum cannot start from
             // the zero the startup initialiser leaves, and cannot use that

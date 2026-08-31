@@ -1471,15 +1471,70 @@ public class ClockRegression extends GhidraScript {
         // once, the way a flash write or any other stall makes it drain.
         for (int i=0;i<40;i++) { irq(t+i*5000,true); irq(t+2500+i*5000,false); }
         check("the backlog really did overrun the FIFO", r(0x6258,2)>0);
+        // Drain with the WHOLE completing machinery -- timer, flush and scan,
+        // exactly what finishes a step on the instrument. An earlier version
+        // drove service() and scan() alone, which a deadline build leaves as
+        // claim 2 forever: it reported PASS with thirty entries still queued
+        // and no backlogged gate ever reaching the diagnostic, so its
+        // unchanged-maxima assertion was also satisfied by measuring nothing.
         long drain=t+400000;
-        for (int i=0;i<31;i++) { service(drain+i*5000); scan(drain+i*5000); }
+        int outBefore=outputTimes.size();
+        for (int i=0;i<31;i++) {
+            long tD=drain+i*5000;
+            service(tD); bank(tD); flush(tD);
+            if (i%5==0) scan(tD);
+        }
         println("  after the drain: claim/total maxima "+r(0x6032,2)+"/"
-                +r(0x6034,2)+" units, were "+settledClaim+"/"+settledTotal);
+                +r(0x6034,2)+" units, were "+settledClaim+"/"+settledTotal
+                +"; "+(outputTimes.size()-outBefore)+" backlogged gates");
+        check("the backlogged gates actually happened",
+              outputTimes.size()==outBefore+31);
+        check("the drain emptied the FIFO and left nothing in flight",
+              r(0x6234,1)==r(0x6235,1) && r(0x6237,1)==0 && r(0x625b,1)==0);
         check("a drained backlog moves neither published maximum",
               r(0x6032,2)==settledClaim && r(0x6034,2)==settledTotal);
+        check("a drained backlog is not counted as samples",
+              r(0x603c,2)==samples);
         println("PASS backlogged edges discarded; claim/total maxima "
                 +r(0x6032,2)+"/"+r(0x6034,2)+" units over "
                 +r(0x603c,2)+" samples");
+    }
+
+    // The shared sample counter is a halfword and the shim used to increment
+    // it blind: ST.H stored bit 16 away, the next increment read 1, and the
+    // internal half's first-sample branch reseeded BOTH extrema even though
+    // the source never changed -- about 44 minutes in at 25 beats/second.
+    // The count saturates at 0xffff now. Seed the reachable pre-wrap state
+    // and prove the counter pins while the extrema stay monotonic.
+    void latencyCountSaturates() throws Exception {
+        fresh(1,25000000);
+        if (r(0x8001c6b0L,4)!=0x8001bbc0L) {
+            println("SKIP counter saturation: not a diagnostic build");
+            return;
+        }
+        // Internal beats, so the pair is (min,max) and a reseed is visible
+        // as a minimum that jumps UP to whatever sample reseeded it.
+        w(S+0x34a,2,26); w(S+0x38e,2,1); w(S+0x340,1,1);
+        for (long tick=10000; tick<=120000; tick+=1000) {
+            bank(tick); service(tick); internal(tick); flush(tick);
+            if (tick%5000==0) scan(tick);
+        }
+        long lo=r(0x6032,2), hi=r(0x6034,2), n=r(0x603c,2);
+        check("saturation fixture accumulated samples", n>1 && lo>0 && lo<=hi);
+        w(0x603c,2,0xffff);
+        for (long tick=121000; tick<=200000; tick+=1000) {
+            bank(tick); service(tick); internal(tick); flush(tick);
+            if (tick%5000==0) scan(tick);
+        }
+        println("  count "+r(0x603c,2)+", min "+r(0x6032,2)+" (was "+lo
+                +"), max "+r(0x6034,2)+" (was "+hi+")");
+        check("the sample counter saturates instead of wrapping",
+              r(0x603c,2)==0xffff);
+        check("saturated samples cannot reseed the published minimum",
+              r(0x6032,2)<=lo && r(0x6032,2)>0);
+        check("saturated samples keep the published maximum monotonic",
+              r(0x6034,2)>=hi);
+        println("PASS sample counter saturates at 0xffff; extrema monotonic");
     }
 
     public void run() throws Exception {
@@ -1491,9 +1546,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheClaim(); internalDispatchModel(); keyboardKeepsTheScan();
+                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheClaim(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheClaim(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheClaim(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})
