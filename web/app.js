@@ -348,26 +348,40 @@
                 // grid in every slot, which is why switching tuning never
                 // moves the note the 208 was trimmed to.  Worth showing: it is
                 // computed here, not baked into the file.
-                var shift = '', mapShape = '';
+                var anchorChip = '', anchorTip = '', mapShape = '';
                 try {
-                    var cents = BUILDLIB.parseScala(entry.text, entry.name, !!entry.kbmText);
-                    var degrees = null, period = 1200.0;
-                    if (entry.kbmText) {
-                        var map = BUILDLIB.parseKbm(entry.kbmText, entry.kbmName,
-                                                    cents);
-                        degrees = map.degrees;
-                        period = cents[map.formal];
-                        mapShape = degrees.length + ' keys/oct';
+                    // Resolved through the same function web/build.js uses, so
+                    // what the page says about a slot cannot drift from what
+                    // the build does with it.
+                    var scale = BUILDLIB.slotScale(entry);
+                    var usable = scale.degrees || scale.cents.length - 1 === 12;
+                    if (scale.degrees) mapShape = scale.degrees.length + ' keys/oct';
+                    var period = usable ? scale.cents[scale.formal] : 1200.0;
+                    // The build drops the anchor when the scale does not repeat
+                    // at the octave: pinning one key to its 12-TET pitch says
+                    // nothing about a scale that has no place on that grid, so
+                    // degree 0 keeps the bottom key instead.  Reporting the
+                    // offset anyway named a shift no image ever carried.
+                    if (!usable) {
+                        // Not buildable yet - the slot's own warning says why.
+                    } else if (Math.abs(period - 1200.0) > 0.001) {
+                        anchorChip = 'bottom key anchored';
+                        anchorTip = 'anchored on the bottom key';
+                    } else {
+                        var offset = BUILDLIB.anchorOffset(
+                            scale.cents, 9, scale.degrees, period);
+                        var shift = '  ' + (offset >= 0 ? '+' : '')
+                            + offset.toFixed(2) + 'c';
+                        anchorChip = 'A anchored' + shift;
+                        anchorTip = 'anchored on A by' + shift;
                     }
-                    var off = BUILDLIB.anchorOffset(cents, 9, degrees, period);
-                    shift = '  ' + (off >= 0 ? '+' : '') + off.toFixed(2) + 'c';
                 } catch (e) { /* already reported on load */ }
                 var fname = document.createElement('span');
                 fname.className = 'fname';
                 fname.textContent = entry.name;
                 what.appendChild(fname);
                 what.title = entry.name + (entry.kbmName ? ' mapped by ' + entry.kbmName : '') +
-                    (shift ? ': anchored on A by' + shift : '');
+                    (anchorTip ? ': ' + anchorTip : '');
                 if (entry.kbmName) {
                     var chip = document.createElement('span');
                     chip.className = 'kbmchip';
@@ -382,11 +396,11 @@
                     chip.appendChild(off);
                     what.appendChild(chip);
                 }
-                if (shift) {
+                if (anchorChip) {
                     var tag = document.createElement('span');
                     tag.className = 'muted';
                     tag.style.cssText = 'font-family:inherit;font-size:11px;margin-left:8px';
-                    tag.textContent = 'A anchored' + shift +
+                    tag.textContent = anchorChip +
                         (mapShape ? ' · ' + mapShape : '');
                     what.appendChild(tag);
                 }
