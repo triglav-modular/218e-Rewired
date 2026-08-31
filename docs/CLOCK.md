@@ -35,7 +35,9 @@ At the default settings:
   Dispatcher stalls can add latency; a finite queue cannot absorb an
   indefinite stall or a sustained rate above its output capacity.
 - The trigger rises a **fixed `clock_deadline_ms` (default 4 ms) after the
-  accepted edge**, on the 1 kHz DAC flush rather than the 5 ms pitch scan.
+  accepted edge**, on the first service point at or past that target — a
+  main-loop pass or the 1 kHz DAC flush, whichever arrives first — rather
+  than the 5 ms pitch scan.
   The deadline buys jitter with latency: the path from edge to claim measured
   0.3-3.6 ms on the instrument and that variation used to reach the gate,
   where now it is absorbed. A beat that overruns the deadline gates at once
@@ -51,13 +53,15 @@ At the default settings:
   **What the harness cannot measure** below.
 - The **internal clock's beat holds the same bound**, and so does an
   external beat with a settle configured. A settle is a wait for the output
-  RC, not for the scan grid: the flush stages the pitch at once, the
-  millisecond timer spends the wait, and a later flush raises the gate. The
-  wait itself is unchanged — `gate_settle_scans` and `clock_settle_scans`
-  still mean the same number of scan periods — but it no longer rounds the
-  trigger up to the next scan boundary. Under the same fixture the internal
-  beat went from 5–10 ms with 4 ms of spread to a fixed 5 ms settle with
-  none; the same caveat applies.
+  RC, not for the scan grid, and on a deadline build it is measured **from
+  the actual DAC transfer**: phase A stages the pitch, pushes it to the DAC
+  through the factory transfer, and stores transfer + settle as part of the
+  gate's COUNT target. It cannot begin earlier — a wait spent before the
+  pitch reaches the DAC protects nothing, and an earlier build did exactly
+  that (see **The COUNT target and the pending service** below). The wait
+  itself is unchanged — `gate_settle_scans` and `clock_settle_scans` still
+  mean the same number of scan periods. Under the fixture the internal beat
+  is a fixed settle with no spread; the same fixture caveat applies.
   A key played with the arp and the sequencer both off is not a beat; its
   latency is the player's own and it stays on the scan as before.
 
@@ -157,19 +161,37 @@ The factory dispatcher at 0x80004c64 takes ONE event from its 32-entry ring
 (0x8001030c) and returns; every jump-table arm ends in `BR{al} 0x800051b0`.
 The main loop at 0x80007c5a calls `clock_service` and then that dispatcher,
 once each, per iteration — so the dequeue already runs at least as often as
-event 17 is dispatched, and moving it would make it rarer. What is left of
-the trigger's latency is event-queue depth, and that is a floor either way:
-the DAC transfer itself happens in the factory event-17 handler, which reads
-state+0x354 at 0x80004fae, so nothing staged earlier moves the edge.
+event 17 is dispatched, and moving it would make it rarer.
+
+An earlier version of this paragraph went on to claim event-queue depth was
+a floor either way, because "the DAC transfer itself happens in the factory
+event-17 handler, so nothing staged earlier moves the edge." That was
+wrong, and the 2026-08-31 audit proved it on the emitted image: the factory
+pulse-high routine at 0x800077f8 performs its own DAC transfer through pool
+0x800078b8 -> 0x8000ba9c -> 0x8000b9ac, one transfer and 24 SPI byte writes,
+with no dispatcher event involved — and so does the pulse-drop path. Event
+17 is A way the DAC gets flushed, not THE way, which is what makes the
+pending-output service below possible. It also invalidates the pulse-width
+argument at the end of this file as a proof of event-17 cadence: the pulse
+paths transfer directly, so a narrow width distribution says nothing about
+how often event 17 was serviced.
 
 The claim byte at 0x625b says which of those the flush is holding: 1 to
-fire on this tick, 2 to stage the pitch and start a settle, 3 while that
-settle runs. Under 2 and 3 the countdown at 0x60ee is MILLISECONDS rather
-than scans — `clock_settle` writes it that way when it sets the claim, the
-1 ms task spends it, and `clock_output` leaves the whole step alone so the
-scan cannot read those milliseconds as scans and spend them five times
-over. If the glide declines the step the claim is dropped and 0x60ee is
-handed back a scan count, which is exactly what declining asked for.
+fire on this tick, 2 to stage the pitch and compute the wait, 3 while that
+wait runs. On a deadline build 0x60ee stays ZERO for the claim's whole
+life: the wait is the absolute COUNT target phase A stores at 0x60a8, the
+1 ms task never touches it, and every service point simply compares COUNT
+against it. On a `clock_deadline_ms = 0` build the countdown at 0x60ee is
+MILLISECONDS rather than scans under claim 3 — phase A hands it to the 1 ms
+task once the pitch has been staged and transferred, and not before, so the
+RC wait cannot be spent while the old pitch is still at the output. Either
+way `clock_output` leaves the whole step alone so the scan cannot read the
+wait as scans and spend it five times over. If the glide declines the step
+the claim is dropped and 0x60ee is handed back a scan count, which is
+exactly what declining asked for. Because a claimed step's countdown no
+longer marks it, `clock_settle` refuses to re-claim while 0x625b is
+nonzero: an arp advance faster than the pending wait keeps the outstanding
+trigger instead of orphaning it.
 
 The flush path stages the step's own pitch through the calibration
 remap **entered past the per-scan chain at its head** — the tuning applier,
@@ -225,6 +247,7 @@ unfinished edits do not write.
 
 | RAM | Meaning |
 | --- | --- |
+| 0x60a8 | Claimed beat's gate target, absolute COUNT (deadline builds; valid only under claim 3) |
 | 0x6232 | Low interval: 0 none, 1 timing, 2 qualified |
 | 0x6233 | Acquired-divider latch |
 | 0x6234 / 0x6235 | FIFO producer / consumer index |
@@ -430,6 +453,12 @@ deadline is most of a beat.
 
 ### Where the internal beat's settle actually starts
 
+**Superseded twice over.** The two-dispatch structure this section traces is
+what the pending service removed, and the claim-2 counting that was this
+section's fix is the settle-before-pitch defect the COUNT target corrected —
+see **The COUNT target and the pending service**. The tracing stands as the
+reason the structure was worth removing.
+
 The internal capture above measured claim-to-gate at min 4.23 ms, max 8.54 ms
 against a 5 ms nominal settle, and that looked impossible: a countdown of
 whole milliseconds cannot spread 4.31 ms. The premise was wrong. **The settle
@@ -567,13 +596,17 @@ and both gate at edge + D.
 
 `clock_deadline` at `0x8001bd40` does that sizing. Three changes carry it.
 
-**The wait is computed at phase A, not at the claim.** `clock_settle` sets
-claim 2 and leaves `0x60ee` at zero; `clock_fast_trigger` calls
-`clock_deadline` once the pitch is staged, and it writes
-`max(D - age, settle)` where `age` is `(COUNT - 0x6240) / 0x6244` in whole
-milliseconds by repeated subtraction — bounded by D, so no divide runs at
-1 kHz. Computing it at the claim instead would have had the phase-A dispatch
-added straight back on top, which is the term being removed.
+**The wait is computed at phase A, not at the claim, and it is an absolute
+COUNT target.** `clock_settle` sets claim 2 and leaves `0x60ee` at zero;
+`clock_fast_trigger` calls `clock_deadline` once the pitch is staged, and it
+stores at `0x60a8` the later of `edge + (D + settle) × cpms` and
+`transfer + settle × cpms` — one MUL against the cycles-per-millisecond word
+at `0x6244`, no divide. The first version wrote whole milliseconds into
+`0x60ee` for the 1 ms task to decrement at an arbitrary phase, which put up
+to a millisecond of quantisation on every gate; the target is exact, and
+every service point just compares COUNT against it, signed and wrap-safe.
+Computing it at the claim instead would have had the phase-A gap added
+straight back on top, which is the term being removed.
 
 **A deadline already spent gates now.** `clock_deadline` returns the wait it
 wrote; zero means it dropped the claim as well, and the caller falls through
@@ -581,22 +614,36 @@ to the gate on that same flush rather than costing another dispatch. Beats
 that overran the deadline therefore keep exactly today's latency — they do
 not get worse.
 
-**The 1 ms task counts under claim 2, not only claim 3.** This is the
-separate fault the internal capture exposed: nothing writes claim 3 except
-phase A, so the wait did not begin until a dispatch had run, and a nominal
-5 ms settle measured 6. Claim 1 is still not the timer's — there `0x60ee` is
-a SCAN count, and spending it at 1 kHz would fire the scan's deferred pulse
-five times over.
+**The RC settle starts at the actual DAC transfer, never earlier.** An
+intermediate version had the 1 ms task count under claim 2 as well as 3, to
+take the phase-A dispatch out of the internal beat's mean, and the
+2026-08-31 audit proved that a defect: the settle is a wait for the output
+RC, and under claim 2 the pitch has not been staged — a delayed dispatch
+could spend the entire configured interval while the OLD pitch was still at
+the output, and the first flush then staged the pitch and raised the gate
+on the same millisecond, a zero analog settle. Now phase A pushes the
+staged pitch through the factory DAC transfer itself (`0x8000ba9c`, the
+same routine both factory pulse paths call) and the settle leg of the
+target is measured from that transfer. On a deadline build the 1 ms task
+never touches a claimed step at all; on a `clock_deadline_ms = 0` build it
+counts under claim 3 only, which starts the countdown at the phase-A
+dispatch whose own flush sends the pitch out. The latency this re-adds to
+the internal beat is then removed honestly, by the pending service below,
+instead of by spending the RC wait early. Claim 1 is still not the
+timer's — there `0x60ee` is a SCAN count, and spending it at 1 kHz would
+fire the scan's deferred pulse five times over.
 
-**A configured settle is ADDED to the deadline, not maxed with it.** The
-settle is a wait for the output RC and it starts when the pitch is staged, so
-it is measured from phase A and carries phase A's variability. Taking
-`max(D, settle)` let a settle longer than D swallow the deadline whole:
-measured that way, `clock_settle_scans = 1` still ran 800-4200 us across the
-dequeue-starved sweep, which is the distribution before the fix. Added, the
-target stays edge-relative -- that build now runs flat at 800 us, at
-edge + 9 ms -- and the floor only catches beats so late that the RC wait is
-all that is left of the deadline.
+**A configured settle is ADDED to the deadline on the jitter leg, and
+required from the transfer on the RC leg.** Taking `max(D, settle)` let a
+settle longer than D swallow the deadline whole: measured that way,
+`clock_settle_scans = 1` still ran 800-4200 us across the dequeue-starved
+sweep, which is the distribution before the fix. So the edge-relative leg
+is `edge + (D + settle)`, which keeps that build flat at edge + 9 ms — and
+the target is the LATER of that and `transfer + settle`, so a beat so late
+that its jitter budget is already gone still gives the output RC its full
+wait, measured from the transfer the wait is for. Requiring both is the
+audit's correction: lower latency must not be bought by spending the RC
+wait while the old pitch is still at the output.
 
 **D is bounded by half the acquired period, and does not apply at all before
 one is acquired.** At the contract's 200 Hz ceiling a 4 ms deadline is most
@@ -618,11 +665,56 @@ not clear it -- that cave is packed to the byte, and it was never the full
 discard path anyway, leaving `0x6237` and the queue alone too.
 
 `clock_deadline_ms` defaults to **4** — the next whole millisecond above the
-3.60 ms maximum. Zero restores the previous behaviour exactly: the block is
-still assembled, but no pool word reaches it and `clock_settle` goes back to
-`claimFor(clock_settle_scans)`.
+3.60 ms maximum. Zero restores the previous behaviour, with one correction
+kept: the block is still assembled but no pool word reaches it,
+`clock_settle` goes back to `claimFor(clock_settle_scans)`, and the 1 ms
+task spends the countdown under claim 3 only, so even the comparison mode
+cannot spend the RC settle before the pitch has been transferred.
+
+### The COUNT target and the pending service
+
+Two dispatch waits used to sit inside every claimed beat, one on each side
+of the wait: the claim was made in one dispatch, phase A could only run in
+the NEXT event-17 pop, and when the wait expired the gate could only rise
+in the pop after that. Each wait is a slot in the same 32-entry ring
+everything else posts into — up to ~1.75 ms of tail apiece by the
+instrument's own upstream measurements — and neither is necessary, because
+the audit's direct probe showed the pulse routines transfer the DAC
+themselves: event 17 is a way the DAC gets flushed, not the way.
+
+So the main-loop wrapper at `0x8001b980` now services pending output
+directly, around the dispatcher: `clock_service`, the pending service, ONE
+dispatcher pop, the pending service again. The call is `clock_fast_trigger`
+itself — the same attack-age guard, the same glide decline, the same claim
+ownership, the same remap entered past the per-scan chain — so nothing runs
+more often except a handful of claim-check instructions, and the per-scan
+tuning, vibrato and housekeeping chains are untouched. Phase A therefore
+runs on the very pass whose dequeue made the claim, the DAC transfer at
+phase A is the wrapper's own call, and a target that expires is gated a
+pass later at most, on the pulse routine's own transfer. The 1 kHz flush
+still reaches the fast trigger too; whichever context arrives first takes
+the step, the claim serialises them, and all of it is main-loop context —
+the dispatcher was never anything else.
+
+Model figures, like for like against the tables below (model microseconds;
+the dispatch slot is charged, not handler run time, so these are lower
+bounds): the dequeue-starved sweep reads min 4000 us — the deadline
+exactly, since the countdown's whole-millisecond phase error is gone — with
+spread 400-600 us and mean about 4.2 ms across every service rate, and the
+widest spread over the whole loop-rate sweep fell from 1775 us to 654 us.
+The internal beat's mean is the settle itself, 5000 us for a nominal
+5000, with zero modeled spread, against 5961-6000 us before.
+`settleStartsAtTheTransfer()` proves the RC interval is spent from the
+transfer with every dispatch withheld, and `pendingGatesWithoutADispatch()`
+proves a claimed external beat gates at edge + deadline through the bare
+wrapper alone. None of this is a hardware bound; the measurement protocol
+below is unchanged and still owed.
 
 ### What it measures, in the model
+
+**These are the millisecond-countdown deadline's figures**, kept as the
+baseline the COUNT target and pending service above improve on; their own
+figures are in that section.
 
 `loopModelJitter()` and `internalDispatchModel()` before and after, same
 model, same configurations. These are model microseconds: `loopModel` charges
@@ -664,10 +756,14 @@ establish is structural and holds regardless of its absolute scale: the gate
 is now placed relative to the edge, so terms upstream of the claim cannot
 reach it. The flat dequeue row is that property, measured.
 
-The floor stays about 1 ms rather than the 0.8 ms tier, for the reason
-already recorded: `0x60ee` counts whole milliseconds and the physical edge
-goes out on an event-17 DAC transfer, so the gate rides the first transfer at
-or after the countdown expires whoever raises it.
+The floor is no longer the millisecond countdown or the event-17 transfer:
+the target is exact COUNT and the gate goes out on the pulse routine's own
+transfer from whichever service point reaches it first. What remains under
+the gate is main-loop service delay — how often the wrapper actually runs
+between dispatcher work on a loaded instrument — plus the driver and
+interrupt execution itself, and neither is established by the model or the
+fixture. That is the number the hardware protocol below has to produce
+before the default deadline is lowered.
 
 ### Two consequences worth knowing
 
@@ -719,8 +815,11 @@ as is the 1 kHz DAC flush through the dispatcher's own jump-table entry.
 It also measures edge-to-rise jitter across a locked clock walked over the
 scan grid and beat-to-rise jitter across an internal tempo walked over the
 same grid, asks the firmware what settle it was built with rather than
-assuming it, proves in `settleStartsAtTheClaim()` that the wait is spent from
-the claim and that only the gate waits on a dispatch, runs the internal beat
+assuming it, proves in `settleStartsAtTheTransfer()` that the RC wait is
+spent from the DAC transfer and cannot begin before the pitch has gone out,
+proves in `pendingGatesWithoutADispatch()` that a claimed beat gates at
+edge + deadline through the bare main-loop wrapper with every dispatch
+withheld, runs the internal beat
 through the same ring model as the external one in `internalDispatchModel()`,
 holds both to the 1–2 ms target on any build that carries a deadline —
 detected from the emitted image, not a build flag — checks a key played with
@@ -899,6 +998,11 @@ task, that is direct evidence the dequeue wait was never the term, and the
 change was reverted at `554283a`.
 
 ### What the trigger's pulse width excludes
+
+**The conclusion here no longer follows.** The pulse-drop path performs its
+own direct DAC transfer (see **What changed**), so the spike's width does
+not read the event-17 grid and a narrow width distribution cannot establish
+dispatch cadence. The measurements themselves stand.
 
 If the DAC transfer in the factory event-17 handler were dispatched on a
 coarse grid, an asynchronous external edge would wait a random fraction of it

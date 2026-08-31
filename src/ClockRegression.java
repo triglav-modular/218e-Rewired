@@ -34,6 +34,7 @@ public class ClockRegression extends GhidraScript {
             + " advances=" + advances + " outputs=" + outputTimes.size()
             + " head/tail=" + r(0x6234,1) + "/" + r(0x6235,1)
             + " busy=" + r(0x6237,1) + " pending=" + r(0x60ee,1)
+            + " claim=" + r(0x625b,1) + " target=" + r(0x60a8,4)
             + " period=" + r(0x61ea,2) + " run=" + r(0x61ec,1));
     }
     void step() throws Exception {
@@ -239,6 +240,33 @@ public class ClockRegression extends GhidraScript {
         throw new Exception("no gate between "+from+" and "+until
                             +" (claim="+r(0x625b,1)+" pending="+r(0x60ee,1)+")");
     }
+    // One bare pending-output pass: the call the main-loop wrapper makes
+    // around the dispatcher on a deadline build, without the dequeue and
+    // without popping an event. Entered exactly as the wrapper enters it.
+    void pending(long us) throws Exception {
+        time(us);
+        call(0x8001c100L,0x100);
+    }
+    // What settle the emitted image gives the internal beat, in milliseconds,
+    // asked of the firmware rather than assumed. A deadline build spends the
+    // wait as a COUNT target computed at phase A from the actual DAC
+    // transfer, so claim a beat and let one flush run phase A, then read the
+    // target back; an older build writes the milliseconds at the claim.
+    // Returns 0 when the build claims 1 and holds no gate at all. Runs on a
+    // fresh machine and leaves it dirty -- call before the fixture's own
+    // fresh().
+    int askInternalSettleMs() throws Exception {
+        fresh(1,25000000);
+        w(0x6236,1,0); w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
+        time(50000);
+        call(0x8001c700L,0x100);        // the claim
+        if (r(0x625b,1)!=2) return 0;
+        if (!deadlineBuild()) return (int)r(0x60ee,1);
+        flush(50000);                    // phase A stores the target
+        long target=r(0x60a8,4);
+        long now=(50000L*frequency)/1000000L;
+        return (int)((target-now)/(frequency/1000));
+    }
     void abiAndNoise() throws Exception {
         fresh(1,25000000);
         e.writeRegister("R0",0x685b); e.writeRegister("R1",0x12345678);
@@ -312,10 +340,24 @@ public class ClockRegression extends GhidraScript {
         dispatch(1011000);
         irq(1011500,false); dispatch(1012000); dispatch(1013000);
         irq(1014000,true); service(1014000); dispatch(1014000);
-        scan(1015000); dispatch(1015000);
+        // The second beat gated at 1011000 -- on the service pass, since a
+        // pending service places the gate at its target instead of waiting
+        // for a dispatch -- so its spike is three milliseconds old here and
+        // the attack-age guard must still be holding the countdown off.
         check("factory countdown cannot cut a just-emitted attack", r(S+0x354,2)==0xfff);
+        scan(1015000); dispatch(1015000);
+        // At 1015000 the spike is exactly four milliseconds old and the
+        // countdown MAY legitimately cut it: that is the nominal spike
+        // width, not a truncation.  The old expectation of a still-high gate
+        // here was the dispatch-starved fixture stretching the spike, since
+        // the countdown only fell when a dispatch ran.
         service(1016000); dispatch(1016000); dispatch(1017000);
-        check("queued step cannot truncate previous attack", advances==2 && r(S+0x354,2)==0xfff);
+        // With the pending service the third edge dequeues AND gates at
+        // 1016000 (it is past its 2 ms period-bounded deadline); without one
+        // it is the second edge that dequeues here.  Either way the newest
+        // spike is a millisecond old and must be intact.
+        check("queued step cannot truncate previous attack",
+              advances==(deadlineBuild()?3:2) && r(S+0x354,2)==0xfff);
         // The 1 ms task is on the TIMER, not the ring: a stalled dispatcher
         // does not stop it, and it is what spends a deadline. Run both on,
         // banking every millisecond, far enough for the third beat to gate
@@ -366,9 +408,13 @@ public class ClockRegression extends GhidraScript {
                     irq(fall,false); fall+=period;
                 }
             }
-            bank(tick); service(tick);
+            bank(tick);
+            // The gate can go out inside service() now -- the wrapper calls
+            // the pending-output service around the dispatcher -- so the
+            // sample window covers service and flush together.
             int before=outputTimes.size();
             long phase=r(0x6024,2), depth=r(0x6026,2), offset=r(0x6028,2);
+            service(tick);
             flush(tick);
             if (outputTimes.size()>before) {
                 // The fast path enters the remap PAST its per-scan chain. If
@@ -429,8 +475,9 @@ public class ClockRegression extends GhidraScript {
                 if (rise<=fall) { irq(rise,true); beats++; rise+=period; }
                 else { irq(fall,false); fall+=period; }
             }
-            bank(tick); service(tick);
+            bank(tick);
             int before=outputTimes.size();
+            service(tick);
             flush(tick);
             if (outputTimes.size()>before && beats>=10 && staged==null) {
                 staged=(int)r(S+0x358,2); pending=true;
@@ -628,20 +675,26 @@ public class ClockRegression extends GhidraScript {
     }
     void warmRestart() throws Exception {
         fresh(1,25000000);
-        irq(10000,true); service(10000);
-        // What marks an owed trigger depends on the build: without a deadline
-        // it is the scan countdown at 0x60ee, with one it is the flush claim
-        // at 0x625b, since the countdown itself is not written until phase A.
+        // A first beat has no acquired period and completes at once, so the
+        // held trigger has to be a SECOND beat: with a deadline built it sits
+        // as claim 3 on a stored COUNT target, without one as the claim or
+        // the scan countdown, depending on where the build parks the wait.
+        irq(10000,true); service(10000); finishStep(19000);
+        irq(35000,false); irq(60000,true); service(60000);
+        int outs=outputTimes.size();
         check("restart fixture has an in-flight trigger",
               (r(0x60ee,1)==1 || r(0x625b,1)!=0) && r(0x6237,1)==1);
         w(0x6234,1,7); w(0x6235,1,5); w(0x6258,2,29);
-        w(GPIO+0x60,4,0); time(11000);
+        w(GPIO+0x60,4,0); time(61000);
         call(0x80007bf4L,0x80007bf8L);
         check("warm restart clears FIFO and ownership", r(0x6234,4)==0 && r(0x6258,2)==0);
         check("warm restart cancels pre-restart trigger",
               r(0x60ee,1)==0 && r(0x625b,1)==0);
-        scan(15000);
-        check("warm restart cannot emit a stale trigger", outputTimes.isEmpty());
+        // Every completing context: the scan, a bare pending pass, and a
+        // whole flush. None may emit the cancelled trigger.
+        scan(65000); pending(66000); flush(67000); bank(68000);
+        check("warm restart cannot emit a stale trigger",
+              outputTimes.size()==outs);
         println("PASS warm restart clears queued and pending clock work");
     }
     // Step the three bit-field forms where the factory actually uses them and
@@ -689,18 +742,12 @@ public class ClockRegression extends GhidraScript {
     // of the beat's jitter. Walk the tempo across that grid and measure.
     void internalJitter() throws Exception {
         // Ask the FIRMWARE what settle this build was configured with rather
-        // than assuming the default: drive clock_settle once on the internal
-        // branch and read what it left. Claim 2 means the flush holds the
-        // gate and 0x60ee is that hold in milliseconds; claim 1 means there
-        // is nothing to hold and the gate goes out on the next flush.
-        fresh(1,25000000);
-        w(0x6236,1,0); w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
-        call(0x8001c700L,0x100);
-        final int claim=(int)r(0x625b,1);
-        final int settleMs=claim==2 ? (int)r(0x60ee,1) : 0;
-        check("the internal beat is claimed by the flush however it is built",
-              claim==1 || claim==2);
-        println("internal settle this build asks for: "+settleMs+" ms (claim "+claim+")");
+        // than assuming the default. On a deadline build the wait is the
+        // COUNT target phase A stores; on an older one it is the countdown
+        // clock_settle writes. askInternalSettleMs() reads whichever this
+        // image is.
+        final int settleMs=askInternalSettleMs();
+        println("internal settle this build asks for: "+settleMs+" ms");
         fresh(1,25000000);
         // 26 ms is a whole number of milliseconds and NOT a multiple of the
         // 5 ms scan, so successive beats land on every phase of the grid.
@@ -761,15 +808,20 @@ public class ClockRegression extends GhidraScript {
         check("a key with the arp and sequencer off is not claimed by the flush",
               r(0x625b,1)==0 && r(0x60ee,1)>=1);
         // Claimed, the flush owns it: claim 1 fires on the next flush, claim
-        // 2 stages the pitch and holds the gate for the settle -- and then
-        // the countdown is that settle in MILLISECONDS, not in scans.
+        // 2 stages the pitch and holds the gate for the settle.  What holds
+        // the wait depends on the build: a deadline build leaves 0x60ee at
+        // ZERO -- phase A computes the whole wait as a COUNT target from the
+        // actual transfer, and anything spent before that transfer would be
+        // the settle-before-pitch defect -- while an older build writes the
+        // settle in MILLISECONDS here, not in scans.
         w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
         call(0x8001c700L,0x100);
         int beatClaim=(int)r(0x625b,1);
         check("the internal beat is claimed by the flush, however built",
               beatClaim==1 || beatClaim==2);
-        check("a claim that holds the gate carries a wait to hold it for",
-              beatClaim!=2 || r(0x60ee,1)>=1);
+        check("a held claim leaves the wait where this build spends it",
+              beatClaim!=2 || (deadlineBuild() ? r(0x60ee,1)==0
+                                               : r(0x60ee,1)>=1));
         w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,0); w(S+0x341,1,1);
         call(0x8001c700L,0x100);
         check("a playing sequence is a beat too", r(0x625b,1)==beatClaim);
@@ -869,6 +921,11 @@ public class ClockRegression extends GhidraScript {
                     // harness cannot run the factory's, so it costs only that.
                     if (ev==EV_FLUSH) flush(t); else if (ev==EV_SCAN) scan(t);
                 }
+                // A deadline build's wrapper services pending output around
+                // the dispatcher on every pass, so the model must too:
+                // phase A runs a pass behind the claim and the gate goes out
+                // on the pass its target expires, whatever the ring holds.
+                if (deadlineBuild()) pending(t);
                 tLoop+=loopUs;
             }
         }
@@ -1020,59 +1077,138 @@ public class ClockRegression extends GhidraScript {
                                   : ""));
     }
 
-    // Where the internal beat's settle starts, and what still waits on a
-    // dispatch. It used to start at PHASE A: clock_ms_tick spent 0x60ee only
-    // while the claim read 3, nothing writes 3 except phase A, and the claim
-    // is made in the factory half of a dispatch whose wrapper half has
-    // already gone by -- so a whole dispatch sat between the claim and the
-    // first decrement and a nominal 5 ms settle measured 6. The tick now
-    // counts under claim 2 as well, so the wait begins where it is asked for.
+    // Where the internal beat's settle actually starts: at the DAC TRANSFER.
+    // An earlier build spent the countdown from the claim -- deliberately,
+    // to take the phase-A dispatch out of the mean -- and that was the
+    // audit's P1: the settle is a wait for the output RC, and spending it
+    // before the pitch has been staged, let alone transferred, meant a
+    // delayed dispatch could exhaust the whole configured interval while the
+    // OLD pitch was still at the output, and the first flush then staged the
+    // pitch and raised the gate on the same millisecond.  This test's
+    // predecessor asserted that behaviour as a success.
     //
-    // What cannot be removed is the GATE's dispatch: the physical edge goes
-    // out in the factory event-17 handler's DAC transfer, so the gate rides
-    // the first transfer at or after the countdown expires whichever context
-    // raises it. That quantisation is the floor, and it is about a
-    // millisecond.
-    void settleStartsAtTheClaim() throws Exception {
+    // On a deadline build the wait is a COUNT target computed at phase A,
+    // after the transfer clock_deadline performs there, and the main-loop
+    // wrapper's pending-output service both runs phase A without any
+    // dispatch and raises the gate when the target expires.  On a countdown
+    // build the 1 ms task spends 0x60ee under claim 3 only, so the wait
+    // still cannot begin before phase A's dispatch has sent the pitch out.
+    void settleStartsAtTheTransfer() throws Exception {
         fresh(1,25000000);
         w(S+0x340,1,1); w(S+0x34a,2,26); w(S+0x38e,2,1);
         long t=10000;
         internal(t);                      // the arp advance claims the beat
         int claim=(int)r(0x625b,1);
-        long settle=r(0x60ee,1);
-        println("internal claim="+claim+" countdown="+settle);
+        println("internal claim="+claim+" countdown="+r(0x60ee,1)
+                +" target="+r(0x60a8,4));
         if (claim!=2) {
             println("SKIP settle start: this build claims "+claim
                     +", so there is no held gate to start");
             return;
         }
-        check("a claimed beat carries a wait", settle>=1);
-        // The 1 ms task alone, no dispatch at all. The wait is spent here.
-        for (long k=1;k<=settle;k++) bank(t+k*1000);
-        check("the settle is spent from the CLAIM, with no dispatch needed",
-              r(0x60ee,1)==0);
-        check("and the step is still claimed, because only a dispatch gates it",
+        if (!deadlineBuild()) {
+            // Countdown build: the same property in its legacy form.
+            long settle=r(0x60ee,1);
+            check("a claimed beat carries its wait in the countdown", settle>=1);
+            for (long k=1;k<=settle+3;k++) bank(t+k*1000);
+            check("the countdown is not spent before phase A has transferred",
+                  r(0x60ee,1)==settle && r(0x625b,1)==2 && outputTimes.isEmpty());
+            long tA=t+(settle+4)*1000;
+            flush(tA);                    // phase A: stage, transfer, claim 3
+            check("phase A hands the countdown to the timer", r(0x625b,1)==3);
+            for (long k=1;k<=settle;k++) bank(tA+k*1000);
+            check("the countdown runs from phase A", r(0x60ee,1)==0);
+            check("an expired countdown still waits for a flush",
+                  outputTimes.isEmpty());
+            long g=gateAt(tA+(settle+1)*1000, tA+(settle+3)*1000);
+            check("the settle is spent after the transfer, in full",
+                  g-tA>=settle*1000L);
+            println("PASS the settle starts at phase A's transfer"
+                    +" (countdown build)");
+            return;
+        }
+        check("nothing is spent at the claim itself",
+              r(0x60ee,1)==0 && r(0x60a8,4)==0);
+        // The 1 ms task alone, for twice the settle.  This is the audit's
+        // reproduction: it used to deplete the countdown here and gate with
+        // a zero RC interval on the next flush.  Now there is nothing for
+        // it to spend.
+        for (long k=1;k<=10;k++) bank(t+k*1000);
+        check("no wait can be spent before the pitch is transferred",
               r(0x625b,1)==2 && outputTimes.isEmpty());
-        // Withhold the dispatch a further five milliseconds: this is the part
-        // the nominal settle does not account for and the tail can contain.
-        for (long k=1;k<=5;k++) bank(t+(settle+k)*1000);
-        check("an expired settle still waits for a dispatch", outputTimes.isEmpty());
-        long tB=t+(settle+6)*1000;
-        // One whole dispatch. Phase A stages the pitch and finds the wait
-        // already spent, so the gate goes out on this same flush rather than
-        // costing another dispatch -- which is what clock_deadline returning
-        // zero is for.
-        flush(tB);
-        check("the first dispatch after an expired settle gates it",
-              outputTimes.size()==1);
+        // One main-loop pass: phase A stages the pitch, transfers it, and
+        // stores transfer + settle as the gate's target.  No dispatch.
+        long tA=t+11000;
+        service(tA);
+        check("phase A ran from the main loop, no dispatch needed",
+              r(0x625b,1)==3 && outputTimes.isEmpty());
+        long target=r(0x60a8,4);
+        long settleMs=(target-(tA*frequency/1000000L))/(frequency/1000);
+        println("target is "+settleMs+" ms after the transfer");
+        check("the stored target is a real settle past the transfer",
+              settleMs>=1);
+        // A pass before the target holds the gate...
+        service(tA+1000);
+        check("a pass before the target holds the gate", outputTimes.isEmpty());
+        // ...and banks alone can never raise it, target expired or not.
+        for (long k=2;k<=settleMs+3;k++) bank(tA+k*1000);
+        check("an expired target still waits for a service point",
+              outputTimes.isEmpty());
+        long tB=tA+(settleMs+4)*1000;
+        service(tB);
+        check("the next main-loop pass gates it", outputTimes.size()==1);
         check("and the claim is released", r(0x625b,1)==0);
-        long claimToGate=outputTimes.get(0)-t;
-        println("claim to gate with dispatches withheld: "+claimToGate+" us,"
-                +" against a "+settle+" ms settle");
-        check("the withheld dispatches are inside claim-to-gate",
-              claimToGate>settle*1000L);
-        println("PASS the settle starts at the claim; only the gate waits"
-                +" for a dispatch");
+        long transferToGate=outputTimes.get(0)-tA;
+        println("transfer to gate with dispatches withheld: "+transferToGate
+                +" us against a "+settleMs+" ms settle");
+        check("the RC settle is spent from the transfer, in full",
+              transferToGate>=settleMs*1000L);
+        println("PASS the settle starts at the DAC transfer; a main-loop"
+                +" pass gates it");
+    }
+
+    // The lever the audit asked for, proven end to end: a ready output no
+    // longer waits for event 17.  The wrapper services pending output around
+    // the dispatcher, so with every dispatch withheld -- no flush, no
+    // event-17 pop, nothing -- a claimed external beat still gates at
+    // edge + deadline, on the first bare pass after its target expires.
+    void pendingGatesWithoutADispatch() throws Exception {
+        fresh(1,25000000);
+        if (!deadlineBuild()) {
+            println("SKIP pending service: no deadline built");
+            return;
+        }
+        // Acquire a period with completed beats first; the deadline does not
+        // apply before one is acquired.
+        long t=10000;
+        for (int i=0;i<4;i++) {
+            irq(t,true); service(t); finishStep(t+9000);
+            irq(t+25000,false); t+=50000;
+        }
+        int before=outputTimes.size();
+        irq(t,true);
+        service(t);
+        check("the beat is claimed and targeted on the dequeue pass",
+              r(0x625b,1)==3 && r(0x60a8,4)!=0);
+        check("no gate yet: the deadline is ahead",
+              outputTimes.size()==before);
+        // The stored target says when the gate is due -- the deadline plus
+        // any configured settle, edge-relative in this fixture since the
+        // edge, the dequeue and the transfer share one microsecond here.
+        long dueUs=(r(0x60a8,4)-t*(frequency/1000000L))/(frequency/1000000L);
+        long gate=-1;
+        for (long k=1;k<=dueUs/1000+3;k++) {
+            bank(t+k*1000); pending(t+k*1000);
+            if (outputTimes.size()>before) { gate=t+k*1000; break; }
+        }
+        check("the pending service raised the gate with every dispatch"
+              +" withheld", gate>0);
+        println("gate at edge + "+(gate-t)+" us under a withheld dispatcher;"
+                +" the target asked for "+dueUs);
+        check("and it landed on the target, not before or a dispatch after",
+              gate-t==dueUs && dueUs>=4000);
+        check("the claim is released", r(0x625b,1)==0);
+        println("PASS a ready output does not wait for event 17");
     }
 
     // The internal beat under the same ring model loopModel() runs for the
@@ -1127,6 +1263,11 @@ public class ClockRegression extends GhidraScript {
                     if (ev==EV_FLUSH) { flush(t); internal(t); }
                     else if (ev==EV_SCAN) scan(t);
                 }
+                // The wrapper's pending-output service, on every pass, as on
+                // the instrument: the claim made in the factory half of this
+                // very pop gets its phase A here, without waiting for the
+                // next event-17 pop.
+                if (deadlineBuild()) pending(t);
                 tLoop+=loopUs;
             }
         }
@@ -1169,7 +1310,7 @@ public class ClockRegression extends GhidraScript {
         w(0x6236,1,0); w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
         call(0x8001c700L,0x100);
         final int claim=(int)r(0x625b,1);
-        final long settleMs=claim==2 ? r(0x60ee,1) : 0;
+        final long settleMs=askInternalSettleMs();
         println("internal beat under the ring model: hardware was min="
                 +HW_INT_MIN+" max="+HW_INT_MAX+" spread="+(HW_INT_MAX-HW_INT_MIN)
                 +" us; this build claims "+claim+" with a "+settleMs+" ms settle");
@@ -1211,14 +1352,17 @@ public class ClockRegression extends GhidraScript {
         // missing, and saying so is the result -- so this asserts only what
         // the model does establish and reports the shortfall rather than
         // dressing it up as agreement.
-        // The wait now starts at the CLAIM, so the mean is the settle itself
-        // rather than the settle plus a phase-A dispatch. Before the tick
-        // counted under claim 2 this model returned 5961-6000 us for a
-        // nominal 5000, every configuration; a mean back above that is the
-        // phase-A gap having returned.
+        // The wait starts at phase A's TRANSFER now -- anything earlier was
+        // the settle-before-pitch defect -- and the wrapper's pending
+        // service runs phase A on the pass right behind the claim, so the
+        // mean is the settle plus main-loop service and nothing else.
+        // Before the pending service this model returned 5961-6000 us for a
+        // nominal 5000 (a whole event-17 dispatch sat before phase A); a
+        // mean back above settle + 1.5 ms is that dispatch having returned,
+        // and a mean BELOW the settle is the defect having returned.
         if (claim==2 && deadlineBuild())
-            check("the internal wait is spent from the claim, not from phase A",
-                  nominal<=settleMs*1000L+500);
+            check("the internal wait is the settle plus main-loop service",
+                  nominal>=settleMs*1000L && nominal<=settleMs*1000L+1500);
         check("the internal beat is inside the 1-2 ms target under the model",
               !deadlineBuild() || widest<=TARGET_SPREAD_US);
         println("PASS internal ring model: mean "+nominal+" us against a"
@@ -1283,11 +1427,15 @@ public class ClockRegression extends GhidraScript {
             return;
         }
         irq(10000,true);
+        int g0=outputTimes.size();
         service(10750);
         long wantClaim=((750L*frequency)/1000000L)>>5;
         check("claim stamp measures edge through note selection",
               r(0x6044,2)==wantClaim);
-        long gate1=gateAt(12000,26000);
+        // The first beat of a session has no acquired period, so no deadline
+        // applies -- and the wrapper's pending service then gates it on the
+        // dequeue pass itself. Without a deadline it rides the next flush.
+        long gate1=outputTimes.size()>g0 ? 10750 : gateAt(12000,26000);
         long wantTotal=(((gate1-10000)*frequency)/1000000L)>>5;
         check("both maxima share one completed sample", r(0x603c,2)==1);
         check("published edge-to-claim maximum reaches the claim boundary",
@@ -1320,8 +1468,11 @@ public class ClockRegression extends GhidraScript {
         // Larger on both boundaries. A beat serviced well past its deadline
         // is the way to get one now: it gates at once rather than being held,
         // so its whole path is longer than an on-time beat's.
-        irq(100000,false); irq(110000,true); service(115500);
-        long gate3=gateAt(116000,132000);
+        irq(100000,false); irq(110000,true);
+        int g2=outputTimes.size();
+        service(115500);
+        // Serviced past its deadline, the beat gates on that same pass.
+        long gate3=outputTimes.size()>g2 ? 115500 : gateAt(116000,132000);
         long wantClaim3=((5500L*frequency)/1000000L)>>5;
         long wantTotal3=(((gate3-110000)*frequency)/1000000L)>>5;
         check("a larger beat is counted", r(0x603c,2)==3);
@@ -1329,8 +1480,8 @@ public class ClockRegression extends GhidraScript {
               r(0x6032,2)==wantClaim3);
         check("a larger beat raises the whole-path maximum",
               r(0x6034,2)==wantTotal3 && wantTotal3>wantTotal2);
-        check("a beat already past its deadline is not held any further",
-              !deadlineBuild() || gate3==116000);
+        check("a beat already past its deadline gates on the service pass",
+              !deadlineBuild() || gate3==115500);
 
         // And a fourth, on time and under the same deadline as beat two: a
         // mean would fall on both boundaries, a maximum holds both.
@@ -1403,9 +1554,27 @@ public class ClockRegression extends GhidraScript {
         // more beat and doctor its claim stamp between the claim and the gate,
         // the way the external negative control doctors 0x6044, so this beat
         // is genuinely SHORTER than every real one before it.
-        internal(405000);
-        w(0x62f0,4,((408000L-2000L)*frequency)/1000000L);
-        for (long tick=406000; tick<=415000; tick+=1000) {
+        // The loop above can leave its last claim in flight at the boundary;
+        // let it finish on its own target first, or the doctored beat below
+        // never gets claimed and the doctored stamp is never consumed.
+        for (long tick=401000; tick<=406000; tick+=1000) {
+            bank(tick); service(tick); flush(tick);
+        }
+        // Force a fresh claim wherever the tempo phase happens to be.
+        long tc=407000;
+        while (r(0x625b,1)==0 && tc<440000) { internal(tc); tc+=1000; }
+        check("the doctored beat was claimed", r(0x625b,1)!=0);
+        if (deadlineBuild()) {
+            // Phase A first, so the gate's COUNT target is known; then
+            // doctor the claim stamp to two milliseconds before it, making
+            // this beat genuinely shorter than every settle-length sample
+            // before it.
+            flush(tc);
+            w(0x62f0,4,r(0x60a8,4)-2L*(frequency/1000));
+        } else {
+            w(0x62f0,4,((tc+3000L)*frequency)/1000000L);
+        }
+        for (long tick=tc+1000; tick<=tc+9000; tick+=1000) {
             bank(tick); flush(tick);
             if (tick%5000==0) scan(tick);
         }
@@ -1418,16 +1587,22 @@ public class ClockRegression extends GhidraScript {
         // The external clock arrives mid-session, exactly as the protocol has
         // it arrive.  Let the internal step in flight finish first -- without
         // that the edge below lands on a busy step and never reaches a gate.
-        for (long tick=416000; tick<=460000; tick+=1000) {
+        for (long tick=tc+10000; tick<=tc+50000; tick+=1000) {
             bank(tick); service(tick); flush(tick);
             if (tick%5000==0) scan(tick);
         }
         long internalMax=r(0x6034,2);
-        irq(500000,true);
-        service(500750);
-        long gate=gateAt(502000,516000);
+        long tEdge=tc+60000;
+        irq(tEdge,true);
+        int gX=outputTimes.size();
+        service(tEdge+750);
+        // No period is acquired from a first edge, so a deadline build's
+        // pending service gates it on the dequeue pass; an older build
+        // rides the next flush.
+        long gate=outputTimes.size()>gX ? tEdge+750
+                                        : gateAt(tEdge+2000,tEdge+16000);
         long wantClaim=((750L*frequency)/1000000L)>>5;
-        long wantTotal=(((gate-500000)*frequency)/1000000L)>>5;
+        long wantTotal=(((gate-tEdge)*frequency)/1000000L)>>5;
         check("an external edge is now the source", r(0x6236,1)!=0);
         check("the source change restarts the count at its own first sample",
               r(0x603c,2)==1);
@@ -1546,9 +1721,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheClaim(); internalDispatchModel(); keyboardKeepsTheScan();
+                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheClaim(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})

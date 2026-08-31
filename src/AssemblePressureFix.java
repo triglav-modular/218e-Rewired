@@ -3647,22 +3647,33 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UH R9,R8[0x0]");
         emit("SUB R9,-0x1");
         emit("ST.H R8[0x0],R9");
-        if (twoPhaseBeat()) {
+        if (twoPhaseBeat() && deadlineMs() == 0) {
             // The beat's settle is milliseconds, so it is spent here, on the
             // 1 ms timer, and not on the 5 ms scan that used to quantise it.
             // Only while the flush owns the step; at every other moment
             // 0x60ee is the scan's own countdown and is not ours.
             //
-            // Claim 2 counts as well as claim 3, which it did not used to.
-            // Under 3 alone the wait did not begin until phase A had run, so
-            // a whole dispatch sat between the claim and the first decrement
-            // and the internal beat's nominal 5 ms measured 6.  Claim 1 is
-            // still not ours: there 0x60ee is a SCAN count and spending it at
-            // 1 kHz would fire the scan's own deferred pulse five times over.
+            // Claim 3 ONLY.  Counting under claim 2 as well was tried, to
+            // take the phase-A dispatch out of the internal beat's mean, and
+            // it was a defect: the settle is a wait for the output RC, and
+            // under claim 2 the pitch has not been staged -- a delayed
+            // dispatch could spend the entire configured settle while the
+            // OLD pitch was still at the output, and the first flush then
+            // staged the pitch and raised the gate on the same millisecond.
+            // Under 3 the countdown starts at phase A, where the staged
+            // pitch goes out on that same dispatch's DAC transfer.  Claim 1
+            // is still not ours: there 0x60ee is a SCAN count and spending
+            // it at 1 kHz would fire the scan's deferred pulse five times
+            // over.
+            //
+            // A deadline build has no business here at all: its whole wait
+            // is an absolute COUNT target at 0x60a8, computed at phase A
+            // from the accepted edge and the actual transfer, and 0x60ee
+            // stays zero for the claim's entire life.
             emit("MOV R8,0x625b");
             emit("LD.UB R9,R8[0x0]");
-            emit("CP.W R9,0x2");
-            emit("BR{lt} 0x8001bb9c");
+            emit("CP.W R9,0x3");
+            emit("BR{ne} 0x8001bb9c");
             emit("MOV R8,0x60ee");
             emit("LD.UB R9,R8[0x0]");
             emit("CP.W R9,0x0");
@@ -3910,15 +3921,46 @@ public class AssemblePressureFix extends GhidraScript {
         // Consequently a delayed dispatcher cannot merge two notes into one
         // pending-trigger flag, or compute a new note inside an old remap.
         begin(0x8001b980L);
-        emit("STM --SP,R7,LR");
-        emit("MOV R7,SP");
-        emit("MCALL PC[0x8001b9bc]");
-        emit("MCALL PC[0x8001b9c0]");
-        emit("LDM SP++,R7,PC");
-        padTo(0x8001b9bcL);
-        word(0x8001c400L); // clock_service
-        word(feature("scan_profiler") ? 0x8001a540L : 0x80004c64L);
-        finish("clock_scan", 0x8001b9c4L);
+        if (deadlineMs() > 0) {
+            // With a deadline every claimed beat waits on a COUNT target,
+            // and a target is not an event: nothing posts to the ring when
+            // it expires.  Left to event 17 alone, a ready output waits for
+            // the next pop of a 32-entry ring that everything else also
+            // posts into -- the same wait, measured at up to ~1.75 ms of
+            // tail, on BOTH sides of the settle.  So the wrapper services
+            // pending output directly, around the dispatcher: once right
+            // after clock_service, so phase A runs on the very pass whose
+            // dequeue made the claim, and once after the dispatcher, so a
+            // target that expires is gated a pass later at most.  The call
+            // is the fast trigger itself -- same guards, same ownership,
+            // same remap entered past the per-scan chain -- and it is a
+            // handful of claim-check instructions when nothing is pending.  The
+            // 1 kHz flush still reaches it too; whichever context arrives
+            // first takes the step and the claim serialises them, all in
+            // main-loop context.
+            emit("STM --SP,R7,LR");
+            emit("MOV R7,SP");
+            emit("MCALL PC[0x8001b9c0]");   // clock_service
+            emit("MCALL PC[0x8001b9c8]");   // phase A, right behind the claim
+            emit("MCALL PC[0x8001b9c4]");   // the factory dispatcher, one event
+            emit("MCALL PC[0x8001b9c8]");   // and the gate, the pass it expires
+            emit("LDM SP++,R7,PC");
+            padTo(0x8001b9c0L);
+            word(0x8001c400L); // clock_service
+            word(feature("scan_profiler") ? 0x8001a540L : 0x80004c64L);
+            word(0x8001c100L); // pending-output service: the fast trigger
+            finish("clock_scan", 0x8001b9ccL);
+        } else {
+            emit("STM --SP,R7,LR");
+            emit("MOV R7,SP");
+            emit("MCALL PC[0x8001b9bc]");
+            emit("MCALL PC[0x8001b9c0]");
+            emit("LDM SP++,R7,PC");
+            padTo(0x8001b9bcL);
+            word(0x8001c400L); // clock_service
+            word(feature("scan_profiler") ? 0x8001a540L : 0x80004c64L);
+            finish("clock_scan", 0x8001b9c4L);
+        }
 
         // One accepted, timestamped input from the FIFO. R12 = COUNT at the
         // edge. Neither dispatcher latency nor the 1 ms task changes its
@@ -6049,7 +6091,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001c600L);
         finish("clock_output", 0x8001c6c0L);
 
-        // The external beat's DEADLINE.  Measured on the instrument, max
+        // The external beat's DEADLINE, and every claimed beat's RC settle,
+        // as one absolute COUNT target.  Measured on the instrument, max
         // edge-to-claim was 3.60 ms and max edge-to-gate 3.61: essentially
         // the whole of the external tail is spent upstream of the claim, so
         // a wait counted FROM the claim cannot reach it and a settle
@@ -6057,109 +6100,151 @@ public class AssemblePressureFix extends GhidraScript {
         // the EDGE can - a beat that arrived quickly waits longer, a beat
         // that was held up waits less, and both gate at edge + D.
         //
-        // Computed HERE, at phase A, and not in clock_settle, because the
-        // countdown is only spent once the claim reads 3.  A deadline
-        // written at the claim would have the phase-A dispatch added back
-        // on top of it, which is the term this is trying to remove.
+        // Two legs, and the gate needs BOTH spent:
         //
-        // A LEAF: reached by MCALL from the flush, returns with MOV PC,LR and
-        // calls nothing.  R8-R12 are the interpolator's scratch at that point
-        // and are free.  Returns R12 = the wait left in 0x60ee, zero meaning
-        // the caller should gate on this same flush.
+        //   edge + (D + settle)      the jitter leg.  The settle is ADDED,
+        //       exactly as the millisecond version added it: max(D, settle)
+        //       let a settle longer than D swallow the deadline whole and
+        //       put the upstream jitter straight back on the gate.  Bounded
+        //       by half the acquired period, absent before one is acquired.
+        //
+        //   transfer + settle        the RC leg.  The settle is a wait for
+        //       the output RC, so it is measured from the DAC transfer this
+        //       routine performs after the caller stages the pitch -- not
+        //       from the claim, and not from a RAM store the DAC has not
+        //       seen.  Spending it earlier let the configured analog wait
+        //       expire while the OLD pitch was still at the output.  The
+        //       internal beat has no edge and carries only this leg.
+        //
+        // The later of the two is stored at 0x60a8 (a free word in the deep
+        // stack region every custom cell lives in) and compared against
+        // COUNT at every service point.  The old path wrote whole
+        // milliseconds into 0x60ee for the 1 ms task to spend at an
+        // arbitrary phase, which cost up to a millisecond of quantisation;
+        // the comparison here is exact.  It is a signed difference, so it is
+        // wrap-safe for any target within ~35 s, and targets are at most
+        // D + settle ahead.  Cleared claims are what gate stale targets:
+        // startup, warm restart and seq_transport all clear 0x625b, and
+        // 0x60a8 is only ever read under claim 3, after phase A rewrote it.
+        //
+        // Called by MCALL from the fast trigger, R12 selecting the duty:
+        //   R12 != 0   phase A, pitch just staged: transfer it, compute and
+        //              store the target; returns R12 = 0 with the claim
+        //              dropped when the target is already spent (the caller
+        //              gates on this same pass), else nonzero.
+        //   R12 == 0   claim 3: evaluate the stored target; returns R12 = 0
+        //              once it is reached, and leaves R8 = 0x625b, which
+        //              the caller's fire path stores through.
+        // R0-R7 survive both duties -- the transfer is compiled factory
+        // code and preserves them.
         begin(0x8001bd40L);
-        emit("MOV R8,0x6236");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001bdc0");      // internal beat: its wait is an RC fact
-        // The deadline PLUS any configured settle, not the larger of the two.
-        // The settle is a wait for the output RC that starts when the pitch is
-        // staged, so it is measured from phase A and carries phase A's own
-        // variability; taking max(D, settle) let a settle longer than D
-        // swallow the deadline whole and put every bit of the upstream jitter
-        // straight back on the gate.  Measured that way, clock_settle_scans=1
-        // still ran 800..4200 us across the dequeue-starved sweep -- exactly
-        // the distribution the deadline exists to flatten.  Added, the target
-        // stays edge-relative and the floor below only catches beats so late
-        // that the RC wait is all that is left of it.
-        emit(String.format("MOV R12,0x%x",
-             deadlineMs() + settleMsFor(number("clock_settle_scans", 0, 0, 3))));
-        // Bounded by half the acquired period.  At the contract's 200 Hz
-        // ceiling a 4 ms deadline is most of a beat, and a deadline longer
-        // than the beat itself would hold this gate under the next edge's.
+        int dSettleExt = settleMsFor(number("clock_settle_scans", 0, 0, 3));
+        int dSettleInt = settleMsFor(number("gate_settle_scans", 1, 0, 3));
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("CP.W R12,0x0");
+        emit("BR{ne} 0x8001bd70");
+        // Claim 3: has COUNT reached the stored target?
+        emit("MOV R8,0x625b");          // the caller's claim pointer, restored
+        emit("MOV R9,0x60a8");
+        emit("LD.W R9,R9[0x0]");
+        emit("MFSR R10,COUNT");
+        emit("SUB R9,R10,R9 << 0x0");   // COUNT - target, signed
+        emit("MOV R12,0x0");
+        emit("CP.W R9,0x0");
+        emit("BR{ge} 0x8001bd68");
+        emit("MOV R12,0x1");
+        padTo(0x8001bd68L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001bd70L);
+        // Phase A.  The RC leg first: push the staged pitch to the DAC now,
+        // through the same transfer the factory's pulse routines use
+        // (pool 0x800078b8 and 0x80002464 both name it), so the settle
+        // measures from the transfer it is waiting on.  With no settle
+        // configured for this source there is nothing to send ahead of the
+        // gate's own transfer, and the leg is simply "now".
+        emit("MOV R9,0x6236");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001be08");      // the internal beat: RC leg only
+        if (dSettleExt > 0) {
+            emit("MOV R12,0x38b4");     // state 0x3560 + 0x354, the DAC slots
+            emit("MCALL PC[0x8001be28]");
+            emit("MOV R10,0x6244");
+            emit("LD.W R10,R10[0x0]");  // cycles per millisecond
+            emit(String.format("MOV R9,0x%x", dSettleExt));
+            emit("MUL R9,R10,R9");
+            emit("MFSR R11,COUNT");
+            emit("ADD R11,R9");         // RC leg: transfer + settle
+        } else {
+            emit("MOV R10,0x6244");
+            emit("LD.W R10,R10[0x0]");  // cycles per millisecond, for below
+            emit("MFSR R11,COUNT");     // no RC wait: the leg is "now"
+        }
+        padTo(0x8001bdb0L);
+        // The jitter leg, bounded by half the acquired period.  At the
+        // contract's 200 Hz ceiling a 4 ms deadline is most of a beat, and a
+        // deadline longer than the beat would hold this gate under the next
+        // edge's.  No period acquired means no deadline at all: an unlocked
+        // clock has no steady period to be steady against, and before
+        // acquisition the deadline plus the 4 ms attack guard exceeds a
+        // 200 Hz period, so the FIFO would back up while it was still
+        // locking -- and acquisition happens at the dequeue, so the backlog
+        // would throttle the very thing that clears it.
         emit("MOV R9,0x61ea");
         emit("LD.UH R9,R9[0x0]");
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001bdd8");      // nothing acquired yet: no deadline
+        emit("BR{eq} 0x8001bde0");      // unlocked: the RC leg is the target
         emit("LSR R9,0x1");
+        emit(String.format("MOV R12,0x%x", deadlineMs() + dSettleExt));
         emit("CP.W R12,R9");
-        emit("BR{ls} 0x8001bd64");
+        emit("BR{ls} 0x8001bdc8");
         emit("MOV R12,R9");
-        padTo(0x8001bd64L);
-        // What the path has already spent, in whole milliseconds.  Repeated
-        // subtraction rather than DIVU: the count is bounded by D, so this is
-        // a handful of iterations at worst and no divide runs at 1 kHz.
+        padTo(0x8001bdc8L);
+        emit("MUL R12,R10,R12");        // the bounded budget, in cycles
         emit("MOV R9,0x6234");
-        emit("LD.W R9,R9[0xc]");        // 0x6240, the edge this step is acting on
+        emit("LD.W R9,R9[0xc]");        // 0x6240, the edge this step acts on
+        emit("ADD R12,R9");             // jitter leg: edge + budget
+        emit("SUB R9,R12,R11 << 0x0");  // which leg is later, signed
+        emit("CP.W R9,0x0");
+        emit("BR{lt} 0x8001bde0");
+        emit("MOV R11,R12");
+        padTo(0x8001bde0L);
+        emit("MOV R9,0x60a8");
+        emit("ST.W R9[0x0],R11");
         emit("MFSR R10,COUNT");
-        emit("SUB R9,R10,R9 << 0x0");   // wrap-safe cycles since that edge
-        emit("MOV R10,0x6244");
-        emit("LD.W R10,R10[0x0]");      // cycles per millisecond
-        padTo(0x8001bd80L);
-        emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001bd94");      // the deadline is already spent
-        // Reversed operands so the test is UNSIGNED: R9 is a COUNT difference
-        // and the assembler takes {hi} but not {lo}.
-        emit("CP.W R10,R9");
-        emit("BR{hi} 0x8001bd94");      // less than a millisecond left to charge
-        emit("SUB R9,R9,R10 << 0x0");
-        emit("SUB R12,0x1");
-        emit("RJMP 0x8001bd80");
-        padTo(0x8001bd94L);
-        // A configured settle is a FLOOR under the deadline, not an addition
-        // to it: the output RC needs that wait whether or not the beat was
-        // late, and a late beat has already spent its deadline elsewhere.
-        if (settleMsFor(number("clock_settle_scans", 0, 0, 3)) > 0) {
-            emit(String.format("MOV R9,0x%x",
-                 settleMsFor(number("clock_settle_scans", 0, 0, 3))));
-            emit("CP.W R12,R9");
-            emit("BR{hi} 0x8001bda0");
-            emit("MOV R12,R9");
-        }
-        padTo(0x8001bda0L);
-        emit("MOV R9,0x60ee");
-        emit("ST.B R9[0x0],R12");
-        emit("CP.W R12,0x0");
-        emit("BR{ne} 0x8001bdd0");
-        // Nothing left to wait.  Drop the claim so the caller gates on THIS
-        // flush instead of a dispatch later - the same thing claim 1 does,
-        // reached from a deadline that turned out to be already spent.
+        emit("SUB R10,R10,R11 << 0x0"); // COUNT - target, signed
+        emit("MOV R12,0x1");
+        emit("CP.W R10,0x0");
+        emit("BR{lt} 0x8001be00");
+        // Already spent.  Drop the claim so the caller gates on THIS pass
+        // instead of a service point later - the same thing claim 1 does,
+        // reached from a deadline that turned out to be already gone by.
+        emit("MOV R12,0x0");
         emit("MOV R9,0x625b");
         emit("ST.B R9[0x0],R12");
-        emit("RJMP 0x8001bdd0");
-        padTo(0x8001bdc0L);
-        // The internal beat has no accepted edge to be late against.  Its
-        // wait is the output RC and clock_settle has already written it, so
-        // this only reports it - and lets the shared tail above gate now if
-        // the 1 ms task has already spent it, which it can, since the
-        // countdown starts at the claim rather than here.
-        emit("MOV R9,0x60ee");
-        emit("LD.UB R12,R9[0x0]");
-        emit("RJMP 0x8001bda0");
-        padTo(0x8001bdd0L);
-        emit("MOV PC,LR");
-        padTo(0x8001bdd8L);
-        // No period acquired.  An unlocked clock has no steady period to be
-        // steady against, and the deadline exists to take the jitter off one
-        // that has.  It also must not apply here: before acquisition the full
-        // deadline plus the 4 ms attack guard exceeds a 200 Hz period, so the
-        // top of the range would back its FIFO up while it was still locking
-        // -- and acquisition happens at the dequeue, so the backlog would
-        // throttle the very thing that clears it.  The settle floor below
-        // still applies; a beat with no settle configured gates as it always
-        // did.
-        emit("MOV R12,0x0");
-        emit("RJMP 0x8001bd94");
-        finish("clock_deadline", 0x8001bde0L);
+        padTo(0x8001be00L);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001be08L);
+        // The internal beat has no accepted edge to be late against; its
+        // wait is the output RC and nothing else, measured from the same
+        // transfer.
+        if (dSettleInt > 0) {
+            emit("MOV R12,0x38b4");
+            emit("MCALL PC[0x8001be28]");
+            emit("MOV R10,0x6244");
+            emit("LD.W R10,R10[0x0]");
+            emit(String.format("MOV R9,0x%x", dSettleInt));
+            emit("MUL R9,R10,R9");
+            emit("MFSR R11,COUNT");
+            emit("ADD R11,R9");
+        } else {
+            emit("MFSR R11,COUNT");
+        }
+        emit("RJMP 0x8001bde0");
+        padTo(0x8001be28L);
+        word(0x8000ba9cL); // the factory DAC transfer the pulse paths use
+        finish("clock_deadline", 0x8001be2cL);
 
         // The pitch remap, entered PAST the per-scan chain at its head.
         // 0x80019980 opens with a call to 0x8001a2e8 - the tuning applier,
@@ -6224,16 +6309,28 @@ public class AssemblePressureFix extends GhidraScript {
         if (twoPhaseBeat()) emit("CP.W R0,0x0"); else emit("CP.W R9,0x0");
         emit(String.format("BR{eq} 0x%x", fastExit));   // nothing armed
         if (twoPhaseBeat()) {
-            // Claim 3 is a settle already running: the pitch went out on an
-            // earlier flush and the gate is waiting on the millisecond timer,
-            // which is not us.  When it does run out the gate still owes the
-            // attack-age guard below, so this rejoins rather than jumping.
+            // Claim 3 is a wait already running: the pitch went out at phase
+            // A and the gate is waiting on its target.  When it is reached
+            // the gate still owes the attack-age guard below, so this
+            // rejoins rather than jumping.  With a deadline the wait is the
+            // COUNT target at 0x60a8 and clock_deadline evaluates it (R12=0
+            // asks for the evaluation; it returns R12=0 once the target is
+            // reached, and hands back R8 = 0x625b, which the fire path
+            // below stores through); without one it is the millisecond
+            // countdown the 1 ms timer spends.
             emit("CP.W R0,0x3");
             emit("BR{ne} 0x8001c11e");
-            emit("MOV R9,0x60ee");
-            emit("LD.UB R9,R9[0x0]");
-            emit("CP.W R9,0x0");
-            emit(String.format("BR{ne} 0x%x", fastExit));
+            if (deadline) {
+                emit("MOV R12,0x0");
+                emit(String.format("MCALL PC[0x%x]", fastPool + 12));
+                emit("CP.W R12,0x0");
+                emit(String.format("BR{ne} 0x%x", fastExit));
+            } else {
+                emit("MOV R9,0x60ee");
+                emit("LD.UB R9,R9[0x0]");
+                emit("CP.W R9,0x0");
+                emit(String.format("BR{ne} 0x%x", fastExit));
+            }
             padTo(0x8001c11eL);
         }
         // The same 4 ms attack-age guard the scan path applies: a spike must
@@ -6334,11 +6431,14 @@ public class AssemblePressureFix extends GhidraScript {
             emit("CP.W R0,0x2");
             if (deadline) {
                 // ...except that how long that is, is only decidable HERE.
-                // clock_deadline sizes the wait from the accepted edge and
-                // returns zero when it has already gone by, in which case the
-                // gate belongs on this flush after all and the claim it just
-                // dropped says so.
+                // R12=1 asks clock_deadline for phase A's duty: it pushes
+                // the just-staged pitch to the DAC, stores the gate's COUNT
+                // target -- the later of edge + budget and transfer + settle
+                // -- and returns zero when that target has already gone by,
+                // in which case the gate belongs on this pass after all and
+                // the claim it just dropped says so.
                 emit(String.format("BR{ne} 0x%x", fastGate));
+                emit("MOV R12,0x1");
                 emit(String.format("MCALL PC[0x%x]", fastPool + 12));
                 emit("CP.W R12,0x0");
                 emit(String.format("BR{ne} 0x%x", fastExit));
@@ -6950,6 +7050,18 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
         emit(String.format("BR{ne} 0x%x", settleExit));
+        if (deadlineMs() > 0) {
+            // On a deadline build a claimed step's countdown is ZERO, so the
+            // guard above no longer covers a held claim: an arp advance
+            // faster than the pending wait would re-claim the step, restamp
+            // the target and orphan the held gate.  The claim byte itself is
+            // the guard -- an outstanding step keeps its trigger, exactly as
+            // the nonzero countdown used to ensure.
+            emit("MOV R10,0x625b");
+            emit("LD.UB R10,R10[0x0]");
+            emit("CP.W R10,0x0");
+            emit(String.format("BR{ne} 0x%x", settleExit));
+        }
         emit("MOV R10,0x6237");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
@@ -6999,9 +7111,10 @@ public class AssemblePressureFix extends GhidraScript {
                 emit("ST.H R11[0x0],R10");
             }
             if (deadlineMs() > 0) {
-                // Zero, deliberately.  The 1 ms task skips a zero countdown,
-                // so nothing is spent between here and phase A - which is
-                // exactly the gap the deadline exists to stop measuring.
+                // Zero, deliberately.  On a deadline build the 1 ms task
+                // never touches a claimed step's countdown at all: the whole
+                // wait is the COUNT target phase A stores at 0x60a8, so
+                // nothing can be spent between here and the transfer there.
                 emit("MOV R9,0x0");
             } else if (number("clock_settle_scans", 0, 0, 3) > 0) {
                 emit(String.format("MOV R9,0x%x",
@@ -7046,8 +7159,19 @@ public class AssemblePressureFix extends GhidraScript {
                 emit("ST.W R11[0x0],R10");
             }
             if (number("gate_settle_scans", 1, 0, 3) > 0) {
-                emit(String.format("MOV R9,0x%x",
-                     settleMsFor(number("gate_settle_scans", 1, 0, 3))));
+                if (deadlineMs() > 0) {
+                    // Zero, like the external arm: on a deadline build the
+                    // wait is a COUNT target computed at phase A, measured
+                    // from the DAC transfer performed there, so nothing may
+                    // be spent between this claim and that transfer.
+                    // Writing the settle here is what let the RC wait expire
+                    // before the pitch was even staged.  A zero settle is
+                    // claim 1 and never arrives here.
+                    emit("MOV R9,0x0");
+                } else {
+                    emit(String.format("MOV R9,0x%x",
+                         settleMsFor(number("gate_settle_scans", 1, 0, 3))));
+                }
             }
             if (feature("clock_latency")) emit("RJMP 0x8001c776");
             else emit("RJMP 0x8001c756");
