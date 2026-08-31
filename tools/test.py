@@ -318,10 +318,33 @@ def test_latch_spacing() -> None:
                   else B.anchor_offset(shipped, 9, degrees, period))
         units = int(math.floor(period * 484 / 1200 + 0.5))
         gap, _ = spacing(shipped, degrees, period, offset, units + 1)
-        check(f"{name} clears the tolerance", gap > 8, gap)
+        check(f"{name} clears the tolerance and the slack",
+              gap > 8 + B.TRANSPOSE_SLACK, gap)
 
     check("no key table at all leaves the factory semitone",
           B.min_key_spacing([]) is None)
+
+    # 53-TET, one degree per key: 9 units between neighbours, which clears a
+    # tolerance of 8 on paper.  It does not clear it under the fingers - the
+    # transpose the latch compares against moves by a unit between the press
+    # that latches a note and the press meant to release it, so the 9 becomes
+    # an 8 and the second note clears the first.  The build used to emit this.
+    fine = B.parse_scala(scale(53), mapped=True)
+    degrees, formal = B.parse_kbm(kbm([], 53), fine)
+    gap, table = spacing(fine, degrees, fine[formal],
+                         B.anchor_offset(fine, 9, degrees, fine[formal]))
+    check("53-TET neighbours are nine units apart", gap == 9, gap)
+    check("which the nominal comparison called safe", gap > 8)
+    check("and the slack correctly does not", 8 + B.TRANSPOSE_SLACK >= gap)
+
+    # The boundary, both sides of it, at the shipped tolerance of 8.
+    for nominal, safe in ((8, False), (9, False), (10, True), (11, True)):
+        check(f"a {nominal}-unit gap is {'accepted' if safe else 'refused'}",
+              (8 + B.TRANSPOSE_SLACK < nominal) == safe)
+    # And the margin is a margin, not a hardcoded 9: at tolerance 7 the same
+    # nine-unit tuning is buildable again.
+    check("a tolerance of 7 makes the same tuning legal",
+          7 + B.TRANSPOSE_SLACK < 9)
 
 
 def test_table_range() -> None:
@@ -348,14 +371,38 @@ def test_table_range() -> None:
     check("which puts a negative entry in the table", table[0] == -39, table[:3])
     check("that the firmware would read as 65497", (table[0] & 0xFFFF) == 65497)
     raises("so the build refuses it",
-           lambda: B.check_table_range("_pent.scl", table), "below zero")
+           lambda: B.check_table_range("_pent.scl", table, 484), "below zero")
 
-    # The ceiling is not the same kind of fault: the pitch path clamps there,
-    # so a high entry is a flat note rather than a note 65,536 units away.
-    B.check_table_range("high", [4095, 5000, 60000])
+    # Between the DAC ceiling and the signed limit there is no fault: the pitch
+    # path clamps, so the note is flat rather than wrong.
+    B.check_table_range("clamped", [4095] * 29, 0)
     check("a table above the DAC ceiling is left to the clamp", True)
-    B.check_table_range("zero", [0] + [40 * k for k in range(1, 32)])
+    B.check_table_range("zero", [0] + [40 * k for k in range(1, 29)], 484)
     check("and zero itself is a legal entry", True)
+
+    # Past the signed limit is a different fault, and this test used to assert
+    # the opposite: it accepted 60000 on the assumption that anything positive
+    # would clamp high.  A pitch is carried through signed 16-bit loads, so
+    # 60000 comes back negative and the note drops to the FLOOR.
+    raises("an entry past the signed limit is refused",
+           lambda: B.check_table_range("wrapped", [0] * 28 + [60000], 0),
+           "signed 16-bit")
+    check("the limit itself is still legal",
+          B.check_table_range("edge", [0] * 28 + [0x7FFF], 0) is None)
+
+    # And the transpose is what makes this more than a check on the table: an
+    # entry can sit under the limit and cross it when the octave is stepped up.
+    B.check_table_range("headroom", [0] * 28 + [0x7FFF - 6 * 484], 484)
+    check("an entry with room for the octave controls passes", True)
+    raises("one without it is refused",
+           lambda: B.check_table_range(
+               "no headroom", [0] * 28 + [0x7FFF - 6 * 484 + 1], 484),
+           "octave controls are stepped up")
+
+    # Only the 29 keys that exist: entries 29..31 are emitted because the table
+    # is 32 long, and no key can be made to play them.
+    B.check_table_range("tail", [40 * k for k in range(29)] + [60000] * 3, 0)
+    check("the three unreachable entries are not ranged", True)
 
 
 def test_tables(cfg: dict) -> None:

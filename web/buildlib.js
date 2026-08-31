@@ -295,6 +295,26 @@ var BUILDLIB = (function () {
     // shipped tuning measures the same at +-2 as at +-32.
     var TRANSPOSE_STEPS = 8;
 
+    // What the runtime transpose can differ by between the press that latches
+    // a note and the press meant to release it, in DAC units.  The transpose
+    // is an exact multiple of the period, but the two paths that publish it to
+    // 0x60A0 do not agree to the unit - one carries base_units, one
+    // octave_units, and base_units is octave_units plus one.  A probe measured
+    // exactly that: 485 stored against 484 live.  Same value, same reason, in
+    // tools/build.py.
+    var TRANSPOSE_SLACK = 1;
+
+    // The instrument's own transpose, in periods: the factory's trn steps
+    // ([state+0x6b] - 2) of them, so an untransposed entry can be carried six
+    // periods up.  The downward direction is not checked - the base sits one
+    // period above nothing, and the factory's range checks hold it below that.
+    var TRANSPOSE_UP = 6;
+
+    // A pitch is carried through signed 16-bit storage and loads.  Above this
+    // it comes back negative and falls to the DAC floor - the bottom of the
+    // range rather than the top, which no clamp can correct.
+    var MAX_PITCH = 0x7FFF;
+
     // The real keys' pitches in cents, before the table quantises them.
     function idealKeyPitches(cents, degrees, period, offset) {
         var out = [];
@@ -342,30 +362,60 @@ var BUILDLIB = (function () {
         if (get(cfg, 'arp.switch') !== 'latch') return;
         var tolerance = cfg.arp.latch_match_tolerance;
         var closest = minKeySpacing(slots);
-        if (closest === null || tolerance < closest) return;
+        // The table's gap is the nominal one and the runtime's is up to
+        // TRANSPOSE_SLACK smaller, so the spacing has to clear the tolerance by
+        // that much.  Comparing the nominal gap alone built an image where the
+        // second note cleared the first.
+        if (closest === null || tolerance + TRANSPOSE_SLACK < closest) return;
         throw new Error('the closest two different keys in this tuning are ' +
             closest + ' units apart (' + Math.round(closest * 2.48) + ' cents), ' +
             'and the latching arpeggiator treats anything within ' + tolerance +
-            ' units as the same note — pressing one of them would release the ' +
-            'other. Use a coarser scale, or a .kbm that maps fewer degrees ' +
+            ' units as the same note — with the transpose moving by up to ' +
+            TRANSPOSE_SLACK + ' unit between the press that latches a note and ' +
+            'the press meant to release it, pressing one of them would release ' +
+            'the other. Use a coarser scale, or a .kbm that maps fewer degrees ' +
             'onto the keyboard.');
     }
 
-    // The pitch path clamps to the 12-bit DAC, so an entry above the ceiling
-    // is a flat note rather than a wrong one.  Below zero is different in kind:
+    // Two faults at the two ends, and they are not the same fault.  Below zero
     // the entry is stored as a halfword and the latch match and the pitch
-    // ranking both read it back unsigned, so -39 comes back as 65497 and they
-    // compare a pitch 65,536 units away from the one the instrument sounds.
-    function checkTableRange(name, table) {
+    // ranking read it back unsigned, so -39 comes back as 65497 and they
+    // compare a pitch 65,536 units from the one that sounds.  Above MAX_PITCH
+    // the signed load turns the pitch negative and the note drops to the
+    // floor.  Between the DAC ceiling and MAX_PITCH there is no fault: the
+    // pitch path clamps, so the note is flat rather than wrong.
+    function checkTableRange(name, table, periodUnits) {
+        // Only the keys that exist.  Entries 29..31 are emitted because the
+        // table is 32 long, and no key reaches them, so a pitch they hold is
+        // not one the instrument can be made to play.
+        table = table.slice(0, REAL_KEYS);
         var low = Math.min.apply(null, table);
-        if (low >= 0) return;
-        throw new Error(name + ': key table entry ' + low + ' is below zero — ' +
-            'the anchor has pushed the bottom of this scale under the ' +
-            'instrument\'s lowest pitch. The firmware reads the table ' +
-            'unsigned, so that entry would come back as ' + (low >>> 0 & 0xFFFF) +
-            ' and the latch would compare a note that never sounds. Use a ' +
-            'scale or mapping whose keys stay above the bottom, or an anchor ' +
-            'key the map does not carry more than an octave above it.');
+        if (low < 0) {
+            throw new Error(name + ': key table entry ' + low + ' is below ' +
+                'zero — the anchor has pushed the bottom of this scale under ' +
+                'the instrument\'s lowest pitch. The firmware reads the table ' +
+                'unsigned, so that entry would come back as ' + (low >>> 0 & 0xFFFF) +
+                ' and the latch would compare a note that never sounds. Use a ' +
+                'scale or mapping whose keys stay above the bottom, or an ' +
+                'anchor key the map does not carry more than an octave above it.');
+        }
+        // The transpose is what makes this more than a check on the table: an
+        // entry can sit under the limit and cross it the moment the player
+        // steps the octave up, which is a note that plays at the bottom of the
+        // range instead of the top.
+        var top = Math.max.apply(null, table);
+        var reach = top + TRANSPOSE_UP * periodUnits;
+        if (reach > MAX_PITCH) {
+            throw new Error(name + ': key ' + table.indexOf(top) + ' reaches ' +
+                reach + ' once the octave controls are stepped up (' + top +
+                ' in the table, plus ' + TRANSPOSE_UP + ' periods of ' +
+                periodUnits + '), and the firmware carries a pitch as a signed ' +
+                '16-bit value — past ' + MAX_PITCH + ' it comes back negative ' +
+                'and the note drops to the bottom of the range instead of the ' +
+                'top. This scale\'s period spans ' + periodUnits + ' units, so ' +
+                'the keyboard runs out of pitch before it runs out of keys: use ' +
+                'a mapping with more degrees to the period, or a smaller period.');
+        }
     }
 
     // Python's round() is banker's rounding, but every call site here adds 0.5

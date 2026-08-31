@@ -43,14 +43,15 @@ var WEBBUILD = (function () {
                 var table = BUILDLIB.tuningTable(
                     scale.cents, BUILDLIB.baseUnits(cfg), perOctave,
                     offset, scale.degrees, period);
-                BUILDLIB.checkTableRange(slot.name, table);
+                var periodUnits = BUILDLIB.floorHalf(period * perOctave / 1200);
+                BUILDLIB.checkTableRange(slot.name, table, periodUnits);
                 tables['tuning_slot' + index] = table;
                 spacingSlots.push({
                     ideal: BUILDLIB.idealKeyPitches(
                         scale.cents, scale.degrees, period, offset),
                     table: table,
                     periodCents: period,
-                    periodUnits: BUILDLIB.floorHalf(period * perOctave / 1200)
+                    periodUnits: periodUnits
                 });
             }
         });

@@ -405,6 +405,16 @@ REAL_KEYS = 29
 # instrument's real range with room to spare, not because the edge is delicate.
 TRANSPOSE_STEPS = range(-8, 9)
 
+# What the runtime transpose can differ by between the press that latches a
+# note and the press meant to release it, in DAC units.  The transpose itself
+# is an exact multiple of the period, but the two paths that publish it to
+# 0x60A0 do not agree to the unit - one carries base_units, one octave_units,
+# and base_units is octave_units plus one.  A probe measured exactly that: 485
+# stored against 484 live.  So the gap the player actually gets is up to this
+# much smaller than the gap in the table, and a spacing has to clear the
+# tolerance by it.
+TRANSPOSE_SLACK = 1
+
 
 def ideal_key_pitches(cents: list[float], degrees: list[int] | None,
                       period: float, offset: float) -> list[float]:
@@ -452,22 +462,58 @@ def min_key_spacing(slots) -> int | None:
     return closest
 
 
-# The pitch path clamps to the 12-bit DAC, so a table entry above the ceiling
-# is a flat note rather than a wrong one.  Below zero is different in kind: the
-# entry is stored as a halfword and the latch match and the pitch ranking both
-# read it back with LD.UH, so -39 becomes 65497 and they compare a pitch 65,536
-# units away from the one the instrument sounds.
-def check_table_range(name: str, table: list[int]) -> None:
+# The instrument's own transpose, in periods.  The factory's trn steps
+# ([state+0x6b] - 2) of them, so the reach above an untransposed table entry is
+# six periods.  The downward direction is not checked here: the table's base is
+# one period above nothing so the lowest switch position still lands above
+# zero, and below that the factory's own range checks hold it.
+TRANSPOSE_UP = 6
+
+# A pitch is carried through signed 16-bit storage and loads.  Above this it
+# comes back negative and falls to the DAC floor - the bottom of the range
+# rather than the top, which no clamp can correct.
+MAX_PITCH = 0x7FFF
+
+
+# Two faults at the two ends, and they are not the same fault.  Below zero the
+# entry is stored as a halfword and the latch match and the pitch ranking read
+# it back with LD.UH, so -39 becomes 65497 and they compare a pitch 65,536
+# units from the one that sounds.  Above MAX_PITCH the signed load turns the
+# pitch negative and the note drops to the floor.  Between the DAC ceiling and
+# MAX_PITCH there is no fault at all: the pitch path clamps, so the note is
+# flat rather than wrong.
+def check_table_range(name: str, table: list[int], period_units: int) -> None:
+    # Only the keys that exist.  Entries 29..31 are emitted because the table
+    # is 32 long, and no key reaches them, so a pitch they hold is not one the
+    # instrument can be made to play.
+    table = table[:REAL_KEYS]
     low = min(table)
-    if low >= 0:
-        return
-    raise ValueError(
-        f"{name}: key table entry {low} is below zero — the anchor has pushed "
-        f"the bottom of this scale under the instrument's lowest pitch.  The "
-        f"firmware reads the table unsigned, so that entry would come back as "
-        f"{low & 0xFFFF} and the latch would compare a note that never sounds. "
-        f"Use a scale or mapping whose keys stay above the bottom, or an "
-        f"anchor key the map does not carry more than an octave above it.")
+    if low < 0:
+        raise ValueError(
+            f"{name}: key table entry {low} is below zero — the anchor has "
+            f"pushed the bottom of this scale under the instrument's lowest "
+            f"pitch.  The firmware reads the table unsigned, so that entry "
+            f"would come back as {low & 0xFFFF} and the latch would compare a "
+            f"note that never sounds.  Use a scale or mapping whose keys stay "
+            f"above the bottom, or an anchor key the map does not carry more "
+            f"than an octave above it.")
+    # The transpose is what makes this more than a check on the table: an entry
+    # can sit under the limit and cross it the moment the player steps the
+    # octave up, which is a note that plays at the bottom of the range instead
+    # of the top.
+    reach = max(table) + TRANSPOSE_UP * period_units
+    if reach > MAX_PITCH:
+        top = max(table)
+        raise ValueError(
+            f"{name}: key {table.index(top)} reaches {reach} once the octave "
+            f"controls are stepped up ({top} in the table, plus "
+            f"{TRANSPOSE_UP} periods of {period_units}), and the firmware "
+            f"carries a pitch as a signed 16-bit value — past {MAX_PITCH} it "
+            f"comes back negative and the note drops to the bottom of the "
+            f"range instead of the top.  This scale's period spans "
+            f"{period_units} units, so the keyboard runs out of pitch before "
+            f"it runs out of keys: use a mapping with more degrees to the "
+            f"period, or a smaller period.")
 
 
 def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
@@ -1486,13 +1532,13 @@ def main() -> None:
             cents, tuning["base_units"], tuning["units_per_octave"], offset,
             degrees, period or 1200.0
         )
+        period_units = int(math.floor(
+            (period or 1200.0) * tuning["units_per_octave"] / 1200 + 0.5))
         try:
-            check_table_range(path.name, table)
+            check_table_range(path.name, table, period_units)
         except ValueError as error:
             raise SystemExit(str(error))
         tables[f"tuning_slot{index}"] = table
-        period_units = int(math.floor(
-            (period or 1200.0) * tuning["units_per_octave"] / 1200 + 0.5))
         periods.add(period_units)
         spacing_slots.append((
             ideal_key_pitches(cents, degrees, period or 1200.0, offset),
@@ -1697,12 +1743,22 @@ def main() -> None:
         raise SystemExit("[arp].latch_match_tolerance must be an integer from 0 to 30")
     closest = cfg.get("_min_key_spacing")
     if closest is not None and get(cfg, "arp.switch") == "latch":
-        if tolerance >= closest:
+        # The table's gap is the nominal one, and the runtime's is up to a unit
+        # smaller: the note that was latched keeps the transpose it was pressed
+        # at, and the two paths that publish it do not always agree to the unit
+        # - one carries the base, one the period, and those differ by exactly
+        # the one the base adds.  So a nominal 9 is an 8 under the fingers,
+        # which a tolerance of 8 matches.  Comparing the nominal gap alone
+        # emitted an image where the second note cleared the first.
+        if tolerance + TRANSPOSE_SLACK >= closest:
             raise SystemExit(
                 f"[arp].latch_match_tolerance is {tolerance}, but the closest two "
                 f"different keys get in this build is {closest} units "
-                f"({closest * 2.48:.0f} cents) — the latch would treat them as one "
-                f"note.  Use less than {closest}.")
+                f"({closest * 2.48:.0f} cents), and the transpose the latch "
+                f"compares against can move by {TRANSPOSE_SLACK} between the "
+                f"press that latches a note and the press meant to release it "
+                f"— so the latch would treat them as one note.  Use less than "
+                f"{closest - TRANSPOSE_SLACK}.")
         if tolerance * 2 > closest:
             print(f"  note: latch_match_tolerance {tolerance} is over half the "
                   f"{closest}-unit gap between the closest keys; {closest // 2 - 1} "
