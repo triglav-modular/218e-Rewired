@@ -2,7 +2,6 @@
 - Step sequencer: 64 steps, recorded and played from the preset pads, with rests, ties and 303-style slides.
 - External clock divide: with a clock patched in, the arpeggiator rate knob divides it, /1 to /8.
 - Presets and the sequence survive power-off.
-- Reduced clock jitter.
 - Each preset knob can be assigned individually: note orders, swing, a bank of step patterns, the factory octave switch, or left factory.
 - Preset voltages are set by holding a pad and turning the knob above it.
 - Alternate tunings accept Scala keyboard maps, so a scale can have any number of degrees and repeat at something other than the octave. The octave controls step that period.
