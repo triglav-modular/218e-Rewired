@@ -191,10 +191,14 @@ def audit_call_pools(image_path) -> list[str]:
 # the internal beat's settle spent on the wrong pitch, and an external edge
 # able to overwrite a pending internal step; and again when pending output
 # switched from GPIO presence to stable step ownership across clock takeover;
-# and when fast output began preparing the transposed target before staging it.
+# and when fast output began preparing the transposed target before staging it;
+# and when sequenced steps became relative to the take's own transpose, the
+# playing gate took half the step, play mode silenced the keyboard, the
+# first-use bootstrap adopted the bend and DAC slots, and the pad-4 chord
+# guarded press-time selection at its source.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "e3030f20767b0c701e1c9794a47712367192869dd8f86257fa564bc76fd37132",
+    "historical_config": "4453a5ce5dc1e2129918a213a9d7f4ccb24f761b3321fd3bfa0da521c8be2769",
 }
 
 
