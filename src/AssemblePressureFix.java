@@ -1011,11 +1011,19 @@ public class AssemblePressureFix extends GhidraScript {
         // Knob 2's pattern bank: one 32-bit mask per pattern as two halfwords,
         // low first, then one length each.  In the gap the relocated sine
         // left behind.
+        //
+        // Both tables are cut for the full 32 patterns the editor, the config
+        // and the validator all allow: 32 * 4 bytes of mask to 0x80019fa0,
+        // then 32 * 2 bytes of length to 0x80019fe0.  They used to end at
+        // 0x80019f78 and 0x80019fa4, which is 22 of each - so a bank the UI
+        // let you build stopped the assembler dead on the 23rd pattern.
+        // Nothing sits between here and arp_order_selector at 0x8001a020, and
+        // the factory image has no code or branch target in any of it.
         begin(0x80019f20L);
         emitTable("arp_pattern_bank");
-        padTo(0x80019f78L);
+        padTo(0x80019fa0L);
         emitTable("arp_pattern_len");
-        finish("arp_pattern_tables", 0x80019fa4L);
+        finish("arp_pattern_tables", 0x80019fe0L);
 
         // Pressure-based portamento:
         // each scan the pitch target becomes
@@ -3086,7 +3094,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001b0f0L);
         word(0x00003560L); // global state base
         word(0x80019f20L); // pattern bank
-        word(0x80019f78L); // pattern lengths
+        word(0x80019fa0L); // pattern lengths
         word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0L : 0x8001a0a0L);
         finish("arp_pattern_gate", 0x8001b100L);
 

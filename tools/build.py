@@ -361,6 +361,36 @@ def tuning_table(cents: list[float], base: int, per_octave: int,
     ]
 
 
+# The 29 keys the instrument actually has.  Entries 29..31 exist because the
+# table is 32 long, but no key reaches them, so they say nothing about what two
+# notes the player can sound together.
+REAL_KEYS = 29
+
+
+def min_key_spacing(tables: dict[str, list[int]]) -> int | None:
+    """How close two DIFFERENT pitches ever get, in DAC units, over every slot.
+
+    Measured over SORTED DISTINCT pitches, not over physical neighbours: a
+    .kbm is free to reorder the degrees, so the two keys that land closest in
+    pitch need not be adjacent on the keyboard - and pitch is all the latch's
+    match compares.  Sorting also collapses the keys a map deliberately doubles
+    up onto one value, so those stay one note on purpose instead of reading as
+    a zero-unit gap.
+
+    None when no slot carries a key table, which is the factory temperament's
+    ~40-unit semitone.
+    """
+    closest = None
+    for name, table in tables.items():
+        if not name.startswith("tuning_slot"):
+            continue
+        pitches = sorted(set(table[:REAL_KEYS]))
+        for a, b in zip(pitches, pitches[1:]):
+            if closest is None or b - a < closest:
+                closest = b - a
+    return closest
+
+
 def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
     """218r-style response: 0 at the floor, an onset step, then a smooth rise.
 
@@ -1307,13 +1337,6 @@ def main() -> None:
         "pitch_remap": pitch_table(cfg, read_calibration(calibration)),
     }
     reference_key = tuning.get("reference_key", 9)
-    # How close two DIFFERENT pitches ever get, over the 29 real keys of every
-    # slot.  The latch calls two pitches the same note when they are within
-    # its tolerance, so a map finer than semitones has to tighten it or two
-    # neighbours would toggle each other.  Keys the map deliberately doubles
-    # up sit at zero apart and are the same note on purpose, so they are not
-    # counted.
-    closest = None
     # What one step of the octave controls should be, in DAC units.  The
     # factory temperament and every 2/1 scale make this 484.
     periods = set()
@@ -1388,14 +1411,7 @@ def main() -> None:
                  f", {Path(map_name).name}: {len(degrees)} keys per octave")
         print(f"  tuning slot {index}: {path.name}"
               f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
-    for name, table in tables.items():
-        if not name.startswith("tuning_slot"):
-            continue
-        for a, b in zip(table[:29], table[1:29]):
-            gap = abs(b - a)
-            if gap and (closest is None or gap < closest):
-                closest = gap
-    cfg["_min_key_spacing"] = closest
+    cfg["_min_key_spacing"] = min_key_spacing(tables)
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that

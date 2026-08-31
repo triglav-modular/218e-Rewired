@@ -192,6 +192,69 @@ def test_keyboard_maps() -> None:
            "seven header values")
 
 
+def test_latch_spacing() -> None:
+    """The latch's safety gap is measured over pitches, not over key numbers.
+
+    The latch calls two notes the same when their pitches land within the
+    match tolerance, so the number that has to clear the tolerance is the
+    closest any two DIFFERENT pitches get.  Reading it off physically adjacent
+    keys held only while the map ran up the scale in order: a .kbm that
+    interleaves the degrees leaves neighbours far apart and puts the real
+    collision between keys at opposite ends of the keyboard.
+    """
+    print("latch key spacing")
+
+    def scale(count: int) -> "Path":
+        body = "".join(f" {k * 1200 / count:.10f}\n" for k in range(1, count + 1))
+        return tmp(f"! t\nt\n {count}\n!\n" + body, f"_{count}tet.scl")
+
+    def kbm(order: list[int]) -> "Path":
+        return tmp(f"! t\n {len(order)}\n 0\n 127\n 60\n 69\n 440.0\n"
+                   f" {len(order)}\n" + "".join(f" {d}\n" for d in order), "_ord.kbm")
+
+    cents = B.parse_scala(scale(72), mapped=True)
+
+    # Degrees 0,36,1,37,... : two keys apart on the keyboard is half an octave,
+    # but keys 0 and 2 are one 72-TET step - 6 units - from each other.
+    order = [d for k in range(36) for d in (k, k + 36)]
+    degrees, formal = B.parse_kbm(kbm(order), cents)
+    shuffled = B.tuning_table(cents, 485, 484, 0.0, degrees, cents[formal])
+    adjacent = min(abs(b - a) for a, b in zip(shuffled[:29], shuffled[1:29]) if b != a)
+    check("a reordered map hides the collision from adjacent keys",
+          adjacent == 235, adjacent)
+    check("the distinct-pitch gap finds it anyway",
+          B.min_key_spacing({"tuning_slot0": shuffled}) == 6,
+          B.min_key_spacing({"tuning_slot0": shuffled}))
+
+    # In order, both readings agree - this is the case that always worked.
+    degrees, formal = B.parse_kbm(kbm(list(range(72))), cents)
+    ordered = B.tuning_table(cents, 485, 484, 0.0, degrees, cents[formal])
+    check("an in-order map still measures the same gap",
+          B.min_key_spacing({"tuning_slot0": ordered}) == 6,
+          B.min_key_spacing({"tuning_slot0": ordered}))
+
+    # A map is allowed to sound one pitch from several keys.  Those are one
+    # note on purpose, so they must not read as a zero-unit gap that no
+    # tolerance could ever clear.
+    twelve = B.parse_scala(REPO / "tunings" / "12TET.scl", mapped=True)
+    doubled = [d for k in range(12) for d in (k, k)][:12]
+    degrees, formal = B.parse_kbm(kbm(doubled), twelve)
+    aliased = B.tuning_table(twelve, 485, 484, 0.0, degrees, twelve[formal])
+    check("keys deliberately doubled up are one note, not a zero gap",
+          B.min_key_spacing({"tuning_slot0": aliased}) == 40,
+          B.min_key_spacing({"tuning_slot0": aliased}))
+
+    # Only the 29 keys the instrument has: entries 29..31 exist because the
+    # table is 32 long and no key reaches them.
+    padded = list(range(29)) + [29, 29, 29]
+    check("the three unreachable entries are not measured",
+          B.min_key_spacing({"tuning_slot0": padded}) == 1,
+          B.min_key_spacing({"tuning_slot0": padded}))
+
+    check("no key table at all leaves the factory semitone",
+          B.min_key_spacing({"pitch_remap": [0, 1, 2]}) is None)
+
+
 def test_tables(cfg: dict) -> None:
     print("generated tables")
     tuning = cfg["tuning"]
@@ -1139,6 +1202,70 @@ def test_golden(cfg: dict) -> None:
           result.stdout.strip().splitlines()[-1] if result.stdout else result.stderr.strip())
 
 
+JSC = Path("/System/Library/Frameworks/JavaScriptCore.framework"
+           "/Versions/A/Helpers/jsc")
+
+PATTERN_PROBE = """
+var hex = readFile('firmware/218eV3_v369_DFU.hex');
+[1, 21, 22, 23, 24, 31, 32, 33].forEach(function (n) {
+    var pats = [];
+    for (var i = 0; i < n; i++) pats.push('x...');
+    try {
+        print(n + ' ' + WEBBUILD.build(
+            { knob2: 'patterns', arp_patterns: pats }, hex).sha256);
+    } catch (e) { print(n + ' REFUSED ' + e.message); }
+});
+"""
+
+
+def test_pattern_bank_capacity() -> None:
+    """Every pattern count the editor offers has table space to land in.
+
+    The bank was cut for 22 masks while the config, the validator and the
+    editor all allowed 32, so a bank a user could assemble in the page stopped
+    the build dead on the 23rd pattern - a valid configuration that could not
+    be built.  Driven through the browser builder because that is the one with
+    the 32-pattern editor in front of it, and it is quick: no Ghidra, no CLI
+    build per count.
+    """
+    print("pattern bank capacity")
+    if not JSC.exists():
+        print("  skip  no jsc to run the browser builder")
+        return
+    probe = REPO / "build" / "_patterns_probe.js"
+    probe.parent.mkdir(exist_ok=True)
+    probe.write_text(PATTERN_PROBE)
+    try:
+        r = subprocess.run(
+            [str(JSC), "web/generated.js", "web/sha256.js", "web/buildlib.js",
+             "tools/avr32/encoder.js", "tools/avr32/runtime.js",
+             "tools/avr32/program.js", "web/build.js", str(probe)],
+            capture_output=True, text=True, cwd=REPO)
+    finally:
+        probe.unlink(missing_ok=True)
+    built = {}
+    refused = {}
+    for line in (r.stdout + r.stderr).splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 2 or not parts[0].isdigit():
+            continue
+        if parts[1] == "REFUSED":
+            refused[int(parts[0])] = parts[2] if len(parts) > 2 else ""
+        else:
+            built[int(parts[0])] = parts[1]
+    for n in (1, 21, 22, 23, 24, 31, 32):
+        check(f"{n} patterns build", n in built,
+              refused.get(n, "no result — " + (r.stdout + r.stderr).strip()[:120]))
+    # Distinct images, or a count could be silently ignored and still "build".
+    check("each count produces its own image",
+          len(set(built.values())) == len(built), sorted(built))
+    # And the limit is still a limit, refused where the config says it is
+    # rather than wherever the assembler happens to run out of table.
+    check("33 patterns are refused", 33 in refused, built.get(33))
+    check("and refused by the count rule, not by the table running out",
+          "one to 32 patterns" in refused.get(33, ""), refused.get(33))
+
+
 def test_corpus_current() -> None:
     """The encoder corpus must match the assembler it vouches for.
 
@@ -1180,6 +1307,7 @@ def main() -> None:
     test_pitch_table(cfg)
     test_scala()
     test_keyboard_maps()
+    test_latch_spacing()
     test_tables(cfg)
     test_resolution(cfg)
     test_blend(cfg)
@@ -1200,6 +1328,7 @@ def main() -> None:
     test_atomic_replace()
     test_generated_is_current()
     test_corpus_current()
+    test_pattern_bank_capacity()
     test_hex_roundtrip(cfg)
     if args.golden:
         test_golden(cfg)

@@ -761,11 +761,19 @@ function assembleProgram() {
         // Knob 2's pattern bank: one 32-bit mask per pattern as two halfwords,
         // low first, then one length each.  In the gap the relocated sine
         // left behind.
+        //
+        // Both tables are cut for the full 32 patterns the editor, the config
+        // and the validator all allow: 32 * 4 bytes of mask to 0x80019fa0,
+        // then 32 * 2 bytes of length to 0x80019fe0.  They used to end at
+        // 0x80019f78 and 0x80019fa4, which is 22 of each - so a bank the UI
+        // let you build stopped the assembler dead on the 23rd pattern.
+        // Nothing sits between here and arp_order_selector at 0x8001a020, and
+        // the factory image has no code or branch target in any of it.
         begin(0x80019f20);
         emitTable("arp_pattern_bank");
-        padTo(0x80019f78);
+        padTo(0x80019fa0);
         emitTable("arp_pattern_len");
-        finish("arp_pattern_tables", 0x80019fa4);
+        finish("arp_pattern_tables", 0x80019fe0);
 
         // Pressure-based portamento:
         // each scan the pitch target becomes
@@ -2836,7 +2844,7 @@ function assembleProgram() {
         padTo(0x8001b0f0);
         word(0x00003560); // global state base
         word(0x80019f20); // pattern bank
-        word(0x80019f78); // pattern lengths
+        word(0x80019fa0); // pattern lengths
         word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0 : 0x8001a0a0);
         finish("arp_pattern_gate", 0x8001b100);
 

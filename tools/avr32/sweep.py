@@ -194,7 +194,7 @@ def audit_call_pools(image_path) -> list[str]:
 # and when fast output began preparing the transposed target before staging it.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "4f929f62d8f2a98a10ebead5c6b8a47a3c3bcc3d6d9803bbb75d9507bf6e98e6",
+    "historical_config": "e3030f20767b0c701e1c9794a47712367192869dd8f86257fa564bc76fd37132",
 }
 
 

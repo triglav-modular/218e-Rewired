@@ -236,6 +236,76 @@ var BUILDLIB = (function () {
         return cents.slice(0, 12);
     }
 
+    // One tuning slot, resolved the way tools/build.py resolves it: the whole
+    // scale, the map's degree list when the slot has a .kbm, and which degree
+    // is the period.  Both the octave arithmetic and the key tables read the
+    // slot through here, so they cannot disagree about where a scale repeats.
+    //
+    // parseScala is asked for the FULL scale either way.  Truncating an
+    // unmapped one to twelve entries threw degree 12 - the period - away, and
+    // every reader then fell back to 1200 cents: a twelve-note scale that
+    // repeats somewhere else built a descending jump at each twelve-key
+    // boundary and octave controls that stepped the wrong interval.  The
+    // twelve-degree requirement is a separate rule; tablesFor in build.js
+    // applies it, the way tools/build.py applies it beside its own call.
+    function slotScale(slot) {
+        var cents = parseScala(slot.text, slot.name, true);
+        if (!slot.kbmText) return { cents: cents, degrees: null, formal: 12 };
+        var map = parseKbm(slot.kbmText, slot.kbmName, cents);
+        return { cents: cents, degrees: map.degrees, formal: map.formal };
+    }
+
+    // The interval one step of the octave controls covers, in cents.  The
+    // 1200 fallback is tools/build.py's probe, not a default: it stands in
+    // for a scale too short to declare a period, which the twelve-degree
+    // rule refuses a moment later with a message about the real fault.
+    function slotPeriod(slot) {
+        var scale = slotScale(slot);
+        return scale.cents.length > scale.formal ? scale.cents[scale.formal] : 1200.0;
+    }
+
+    // The 29 keys the instrument actually has.  Entries 29..31 exist because
+    // the table is 32 long, but no key reaches them.
+    var REAL_KEYS = 29;
+
+    // How close two DIFFERENT pitches ever get, in DAC units, over every slot;
+    // null when no slot carries a key table.  Mirrors min_key_spacing in
+    // tools/build.py, measured over SORTED DISTINCT pitches rather than over
+    // physical neighbours - a .kbm may reorder the degrees, and pitch is all
+    // the latch's match compares.  Sorting also collapses the keys a map
+    // deliberately doubles up onto one value, so those stay one note on
+    // purpose instead of reading as a zero-unit gap.
+    function minKeySpacing(tables) {
+        var closest = null;
+        Object.keys(tables).forEach(function (name) {
+            if (name.indexOf('tuning_slot') !== 0) return;
+            var pitches = tables[name].slice(0, REAL_KEYS).slice().sort(
+                function (a, b) { return a - b; });
+            for (var i = 1; i < pitches.length; i++) {
+                var gap = pitches[i] - pitches[i - 1];
+                if (gap && (closest === null || gap < closest)) closest = gap;
+            }
+        });
+        return closest;
+    }
+
+    // The same refusal tools/build.py makes: a tuning whose notes sit closer
+    // together than the latch can tell apart builds an instrument where
+    // pressing one note releases another.  The page has no field for the
+    // tolerance, so the message names what the page user can actually change.
+    function checkLatchSpacing(cfg, tables) {
+        if (get(cfg, 'arp.switch') !== 'latch') return;
+        var tolerance = cfg.arp.latch_match_tolerance;
+        var closest = minKeySpacing(tables);
+        if (closest === null || tolerance < closest) return;
+        throw new Error('the closest two different keys in this tuning are ' +
+            closest + ' units apart (' + Math.round(closest * 2.48) + ' cents), ' +
+            'and the latching arpeggiator treats anything within ' + tolerance +
+            ' units as the same note — pressing one of them would release the ' +
+            'other. Use a coarser scale, or a .kbm that maps fewer degrees ' +
+            'onto the keyboard.');
+    }
+
     // Python's round() is banker's rounding, but every call site here adds 0.5
     // and floors, so plain Math.floor(x + 0.5) is the same operation.
     function floorHalf(x) { return Math.floor(x + 0.5); }
@@ -537,13 +607,7 @@ var BUILDLIB = (function () {
         var per = cfg.tuning.units_per_octave, seen = {};
         (cfg._tunings || []).forEach(function (slot) {
             if (slot === 'factory') { seen[per] = true; return; }
-            var mapped = !!slot.kbmText;
-            var cents = parseScala(slot.text, slot.name, mapped);
-            var period = cents.length > 12 ? cents[12] : 1200.0;
-            if (mapped) {
-                period = cents[parseKbm(slot.kbmText, slot.kbmName, cents).formal];
-            }
-            seen[floorHalf(period * per / 1200)] = true;
+            seen[floorHalf(slotPeriod(slot) * per / 1200)] = true;
         });
         var keys = Object.keys(seen);
         if (keys.length > 1) {
@@ -569,6 +633,12 @@ var BUILDLIB = (function () {
             ? cfg.knob2.lengths.slice() : masks.map(function () { return 32; });
         if (lengths.length !== masks.length) {
             throw new Error('knob2.lengths must have one entry per pattern');
+        }
+        // Same limit tools/build.py sets.  Without it the only thing stopping
+        // a 33rd pattern was the assembler running out of table, which says
+        // "Code crossed target" at the page user instead of what is wrong.
+        if (!(masks.length >= 1 && masks.length <= 32)) {
+            throw new Error('knob2.patterns: give one to 32 patterns');
         }
         masks.forEach(function (m, i) {
             if (!(m >= 0 && m <= 0xFFFFFFFF)) {
@@ -718,6 +788,8 @@ var BUILDLIB = (function () {
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
         baseUnits: baseUnits, patternBank: patternBank,
+        slotScale: slotScale, slotPeriod: slotPeriod,
+        minKeySpacing: minKeySpacing, checkLatchSpacing: checkLatchSpacing,
         initMarker: initMarker, writeProperties: writeProperties, get: get
     };
 })();

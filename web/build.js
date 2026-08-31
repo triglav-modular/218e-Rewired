@@ -16,23 +16,25 @@ var WEBBUILD = (function () {
             if (slot === 'factory') {
                 tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
             } else {
-                var mapped = !!slot.kbmText;
-                var cents = BUILDLIB.parseScala(slot.text, slot.name, mapped);
-                var degrees = null, period = 1200.0;
-                if (mapped) {
-                    var map = BUILDLIB.parseKbm(slot.kbmText, slot.kbmName, cents);
-                    degrees = map.degrees;
-                    period = cents[map.formal];
+                var scale = BUILDLIB.slotScale(slot);
+                // Same rule as tools/build.py: without a .kbm there is one key
+                // table entry per key and nothing to map them with, so the
+                // scale has to have exactly the twelve the keyboard repeats.
+                if (!scale.degrees && scale.cents.length - 1 !== 12) {
+                    throw new Error(slot.name + ': ' + (scale.cents.length - 1) +
+                        ' degrees — the key table gives one entry per key, so ' +
+                        'without a .kbm to map them a 12-note scale is required');
                 }
+                var period = scale.cents[scale.formal];
                 var offset = BUILDLIB.anchorOffset(
-                    cents, cfg.tuning.reference_key, degrees, period);
+                    scale.cents, cfg.tuning.reference_key, scale.degrees, period);
                 // Same rule as tools/build.py: pinning a key to its 12-TET
                 // pitch says nothing about a scale that has no octave, and
                 // spends the headroom the octave switch needs.
-                if (Math.abs((period || 1200.0) - 1200.0) > 0.001) offset = 0.0;
+                if (Math.abs(period - 1200.0) > 0.001) offset = 0.0;
                 tables['tuning_slot' + index] = BUILDLIB.tuningTable(
-                    cents, BUILDLIB.baseUnits(cfg), cfg.tuning.units_per_octave, offset,
-                    degrees, period);
+                    scale.cents, BUILDLIB.baseUnits(cfg), cfg.tuning.units_per_octave,
+                    offset, scale.degrees, period);
             }
         });
         var bank = BUILDLIB.patternBank(cfg);
@@ -269,6 +271,11 @@ var WEBBUILD = (function () {
 
         var cfg = BUILDLIB.expand(options);
         var tables = tablesFor(cfg, factory.memory);
+        // Same refusal tools/build.py makes, and it has to happen here rather
+        // than in the editor: a fine keyboard mapping can put two notes closer
+        // together than the latch can tell apart, and the image that comes out
+        // is valid in every other way - nothing downstream would catch it.
+        BUILDLIB.checkLatchSpacing(cfg, tables);
         var flags = flagsFor(cfg);
         var numbers = BUILDLIB.computeNumbers(cfg);
         numbers.init_marker = BUILDLIB.initMarker(flags.blocks, flags.features, numbers, tables);
