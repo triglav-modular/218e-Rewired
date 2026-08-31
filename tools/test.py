@@ -913,6 +913,50 @@ def test_overlap_and_range() -> None:
     check("non-overlapping patches apply", (changed, added) == (1, 0), f"{changed},{added}")
 
 
+def test_latency_report_clears() -> None:
+    """A run of cleared frames is ONE clear, and separate runs are several.
+
+    The validator kept zero frames so an explicit reset could not hide, then
+    counted every zero ROW as its own clear.  A cell stays zero until a valid
+    sample arrives, so an honest internal-to-external hand-off read twice
+    before the first measurement was condemned as contaminated, and
+    --external-start could not rescue it: it skipped one zero row, not the
+    run.  Both directions are checked here, because the fix must not soften
+    the rejection the kept frames exist for.
+    """
+    print("latency report")
+    import subprocess as sp
+    import tempfile
+
+    def run(rows, *flags):
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as fh:
+            fh.write("scan_component_a,scan_component_b\n")
+            for a, b in rows:
+                fh.write(f"{a},{b}\n")
+            name = fh.name
+        out = sp.run([sys.executable, str(REPO / "tools" / "clock_latency_report.py"),
+                      name, *flags], capture_output=True, text=True)
+        Path(name).unlink()
+        return out.returncode, out.stdout + out.stderr
+
+    hand_off = [(10000, 15000), (0, 0), (0, 0), (1000, 7500), (1200, 7700)]
+    code, out = run(hand_off)
+    check("a clear read twice is one clear", code == 0 and "CONTAMINATED" not in out,
+          out.strip().splitlines()[-1] if out.strip() else "no output")
+    check("and the run is skipped, not one row of it",
+          "measured population        2" in out)
+    code, out = run(hand_off, "--external-start", "2")
+    check("--external-start on the clear reaches the measurements",
+          code == 0 and "CONTAMINATED" not in out)
+    code, out = run([(10000, 15000), (0, 0), (0, 0), (1000, 7500), (0, 0),
+                     (1200, 7700)])
+    check("two separated runs are still two clears",
+          code != 0 and "2 clears" in out)
+    code, out = run([(1000, 12000), (0, 0), (900, 13000)], "--internal")
+    check("an explicit reset under an internal run is still refused",
+          code != 0 and "reset" in out)
+
+
 def test_flashers_expect_the_golden(cfg: dict) -> None:
     """The shipped flashers must name the DEFAULT image, not a test build.
 
@@ -970,7 +1014,10 @@ def test_pool_fallthrough() -> None:
         last = None
         for line in block.split("\n"):
             mw = re.search(r"^\s*word\(", line)
-            me = re.search(r'emit\("([^"]+)"', line)
+            # String.format() emits count too.  Matching only the literal
+            # form left every computed branch invisible to this check - which
+            # is most of the clock caves, where the labels are variables.
+            me = re.search(r'emit\((?:String\.format\()?"([^"]+)"', line)
             if me:
                 last = me.group(1)
             elif mw and last is not None:
@@ -1147,6 +1194,7 @@ def main() -> None:
     test_filter_equivalence(cfg)
     test_overlap_and_range()
     test_flashers_expect_the_golden(cfg)
+    test_latency_report_clears()
     test_pool_fallthrough()
     test_leaf_with_call()
     test_atomic_replace()

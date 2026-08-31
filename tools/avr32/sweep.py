@@ -186,10 +186,13 @@ def audit_call_pools(image_path) -> list[str]:
 # behavioural change to every clocked build; and again when the gate's target
 # moved off a latch pitch stamp it had been sharing and the external beat's
 # pitch was held back to the gate's own transfer, which is behavioural for
-# every deadline build and a bug fix for every latch one.
+# every deadline build and a bug fix for every latch one; and again when the
+# audit of that change found the held pitch published from the wrong context,
+# the internal beat's settle spent on the wrong pitch, and an external edge
+# able to overwrite a pending internal step.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "ba69616a1144b5f656bbfae43f4207165ef8afb24467725c7e81c3df4edc0e12",
+    "historical_config": "902d8a7036109a4805b60515a623b3cf67a23982a5ad541d2d03624a6311b105",
 }
 
 

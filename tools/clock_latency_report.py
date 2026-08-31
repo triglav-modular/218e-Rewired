@@ -132,7 +132,12 @@ def clear_candidates(series):
     for i in range(1, len(series)):
         frame, _, b, clear = series[i]
         if clear:
-            events.append(frame)
+            # A cleared cell stays zero until a valid sample arrives, so a
+            # run of (0,0) frames is ONE clear observed several times, not
+            # several clears.  Counting each row condemned honest captures
+            # whose telemetry was read twice before the first measurement.
+            if not series[i - 1][3]:
+                events.append(frame)
         elif not series[i - 1][3] and b < series[i - 1][2]:
             events.append(frame)
     return events
@@ -141,6 +146,16 @@ def clear_candidates(series):
 def start_index(series, frame):
     return next((i for i, (f, _, _, _) in enumerate(series) if f >= frame),
                 len(series))
+
+
+def past_the_clear(series, start):
+    """First index at or after `start` that carries a measurement.
+
+    The clear itself carries nothing, and neither does the rest of its run.
+    """
+    while start < len(series) and series[start][3]:
+        start += 1
+    return start
 
 
 def report_window(series, stamps, rows: int, internal: bool, period_ms,
@@ -206,8 +221,7 @@ def report_window(series, stamps, rows: int, internal: bool, period_ms,
             raise SystemExit(
                 f"  --external-start {external_start} is past the last"
                 f" measured frame.")
-        if series[start][3]:
-            start += 1                     # the clear itself carries nothing
+        start = past_the_clear(series, start)   # the clear carries nothing
         print(f"  external window       {external_start:6d}   "
               "given with --external-start; frames before it are pre-roll")
     else:
@@ -227,9 +241,7 @@ def report_window(series, stamps, rows: int, internal: bool, period_ms,
                 " input\n"
                 "  levels, and re-take it.")
         if len(events) == 1:
-            start = start_index(series, events[0])
-            if series[start][3]:
-                start += 1
+            start = past_the_clear(series, start_index(series, events[0]))
             print(f"  source change         {events[0]:6d}   "
                   "inferred from a move impossible inside one population --")
             print("                                 read as the clock"

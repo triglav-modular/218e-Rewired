@@ -5978,6 +5978,22 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x8001c540");
+        if (deadlineMs() > 0) {
+            // A deadline build zeroes the countdown at the claim, so the two
+            // guards above stopped covering a beat that is still owed its
+            // gate: an internal step waiting on its COUNT target sets neither
+            // 0x6237 nor 0x60ee.  An arriving edge passed, was taken off the
+            // FIFO, and advanced the note selection over a step that had
+            // already been selected and never gated - the internal note was
+            // simply replaced.  The claim byte is what owns an unfinished
+            // beat now, so it is what has to be asked.  The edge stays queued
+            // and is dequeued once the step completes; the deadline is capped
+            // at half the acquired period, so the hold cannot outlast a beat.
+            emit("MOV R8,0x625b");
+            emit("LD.UB R8,R8[0x0]");
+            emit("CP.W R8,0x0");
+            emit("BR{ne} 0x8001c540");
+        }
         // Do not cut the previous 3 ms attack merely because a later edge
         // is queued. Its pitch scan may have completed only a moment ago.
         emit("LD.UB R8,R10[0x26]");
@@ -6048,15 +6064,6 @@ public class AssemblePressureFix extends GhidraScript {
             emit("CP.W R9,0x1");
             emit(String.format("BR{hi} 0x%x",
                  holdPitchToGate() ? 0x8001c690L : 0x8001c688L));
-        }
-        if (holdPitchToGate()) {
-            // Nothing owns the step, so what the remap just wrote IS the
-            // pitch the instrument is showing.  Publish it: the next claim
-            // holds the output here until its gate, and this is the value it
-            // holds.  Every unclaimed scan republishes it, so it is never
-            // more than one scan old when a claim arrives - and a claim
-            // cannot arrive before acquisition, which is many scans in.
-            emit("MCALL PC[0x8001c6bc]");
         }
         emit("MOV R10,0x6234");
         emit("MOV R8,0x60ee");
@@ -6139,21 +6146,8 @@ public class AssemblePressureFix extends GhidraScript {
         // stamps the delay and tail-calls the real routine.
         word(block("clock_latency") ? 0x8001bbc0L : 0x800077f8L);
         word(0x8001c600L);
-        if (holdPitchToGate()) {
-            word(0x00003560L); // global state base, for the restore below
-            word(0x8001c6c0L); // the publish, called from the unclaimed path
-            // Publishing is two bytes in the path the scan takes every 5 ms
-            // and the rest of the work out here, where the block has room.
-            // LR is already on the stack from the entry, so an MCALL costs
-            // nothing to unwind.
-            padTo(0x8001c6c0L);
-            emit("MOV R9,0x3560");
-            emit("LD.SH R9,R9[0x358]");
-            emit("MOV R10,0x609c");
-            emit("ST.H R10[0x0],R9");
-            emit("MOV PC,LR");
-        }
-        finish("clock_output", holdPitchToGate() ? 0x8001c6e0L : 0x8001c6c0L);
+        if (holdPitchToGate()) word(0x00003560L); // state base, for the restore
+        finish("clock_output", 0x8001c6c0L);
 
         // The external beat's DEADLINE, and every claimed beat's RC settle,
         // as one absolute COUNT target.  Measured on the instrument, max
@@ -6356,13 +6350,12 @@ public class AssemblePressureFix extends GhidraScript {
         long fastClear = twoPhaseBeat() ? 0x8001c15cL : 0x8001c14cL;
         long fastJoin  = twoPhaseBeat() ? 0x8001c168L : 0x8001c14cL;
         // A held build asks the deadline BEFORE the pitch is computed, which
-        // moves the arithmetic and its two clamps along by the sixteen bytes
-        // that check and its alignment cost.  The block's own end does not
-        // move: they come out of the padding that already sat in front of the
-        // gate, which a held build no longer needs - it reaches the gate
-        // straight from the staging call.
+        // moves the arithmetic and its two clamps along by the bytes that
+        // check costs.  The block's own end does not move: they come out of
+        // the padding that sat in front of the gate, which moves up to meet
+        // them.
         boolean hold = holdPitchToGate();
-        long fastShift = hold ? 0x10L : 0;
+        long fastShift = hold ? 0x18L : 0;
         long fastCompute   = 0x8001c168L + fastShift;
         long fastClampLow  = twoPhaseBeat() ? 0x8001c17cL + fastShift : 0x8001c166L;
         long fastClampHigh = twoPhaseBeat() ? 0x8001c188L + fastShift : 0x8001c172L;
@@ -6371,8 +6364,11 @@ public class AssemblePressureFix extends GhidraScript {
         // word, so everything from the decline on moves along by 0x10.  The
         // block still ends short of clock_capture at 0x8001c200.
         boolean deadline = deadlineMs() > 0;
-        long fastGate  = 0x8001c1b8L;
-        long fastDecline = deadline ? 0x8001c1d8L : 0x8001c1c0L;
+        long fastGate  = hold ? 0x8001c1c2L : 0x8001c1b8L;
+        // A held build spends the four bytes that sat between the decline
+        // block and the exit, which is where the source check's cost lands.
+        long fastDecline = hold ? 0x8001c1dcL
+                                : (deadline ? 0x8001c1d8L : 0x8001c1c0L);
         long fastExit  = twoPhaseBeat() ? (deadline ? 0x8001c1ecL : 0x8001c1d4L)
                                         : 0x8001c1c8L;
         long fastPool  = twoPhaseBeat() ? (deadline ? 0x8001c1f0L : 0x8001c1d8L)
@@ -6471,21 +6467,40 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.B R8[0x0],R9");        // and the scan's countdown with it
         if (twoPhaseBeat()) padTo(fastJoin);
         if (hold) {
-            // Claim 2 is phase A, and on a held build phase A has ONE duty:
-            // size the gate's wait.  Staging the pitch first was the bleed -
-            // it handed the step's new note to the next flush's transfer, as
-            // much as a whole deadline before the trigger that belongs to it,
-            // with the previous note's gate still up.  So decide first: if
-            // the target is ahead, leave without touching the pitch at all,
-            // and the fire pass below - claim 3, or this same pass when the
-            // target turns out to be already spent - computes and stages it
-            // on the gate's own transfer, exactly as claim 1 always did.
+            // Claim 2 is phase A, and for an EXTERNAL beat on a held build
+            // phase A has one duty: size the gate's wait.  Staging the pitch
+            // first was the bleed - it handed the step's new note to the next
+            // flush's transfer, as much as a whole deadline before the
+            // trigger it belongs to, with the previous note's gate still up.
+            // So decide first: if the target is ahead, leave without touching
+            // the pitch at all, and the fire pass - claim 3, or this same
+            // pass when the target turns out to be already spent - computes
+            // and stages it on the gate's own transfer, as claim 1 always did.
+            //
+            // The SOURCE has to be read here, not assumed from the build.
+            // holdPitchToGate() is the EXTERNAL settle's answer, and the
+            // internal beat shares this path with its own settle: deciding
+            // first for that one transferred the pitch still in the buffer
+            // and spent the whole RC interval on the OLD note, which is the
+            // opposite of what a settle is for.  An internal claim 2 takes
+            // the original order below - stage, then transfer, then size the
+            // wait from that transfer.
             emit("CP.W R0,0x2");
             emit(String.format("BR{ne} 0x%x", fastCompute));
+            emit("MOV R8,0x6236");
+            emit("LD.UB R8,R8[0x0]");
+            emit("CP.W R8,0x0");
+            emit(String.format("BR{eq} 0x%x", fastCompute));
             emit("MOV R12,0x1");
             emit(String.format("MCALL PC[0x%x]", fastPool + 12));
             emit("CP.W R12,0x0");
             emit(String.format("BR{ne} 0x%x", fastExit));
+            // Already spent, so this pass gates and the claim is dropped.
+            // R0 stays 2, which sends the staging below through the deadline
+            // a second time: with the target behind us it recomputes to
+            // "now", returns spent again and falls straight to the gate.  Two
+            // bytes of block would be needed to say claim 1 here instead, and
+            // the block has none - this cave ends where clock_capture begins.
             padTo(fastCompute);
         }
         emit(String.format("LDDPC R10,0x%x", fastPool));
@@ -6522,9 +6537,11 @@ public class AssemblePressureFix extends GhidraScript {
         }
         padTo(fastStage);
         emit(String.format("MCALL PC[0x%x]", fastPool + 4));  // pitch, slot 2
-        if (twoPhaseBeat() && !hold) {
+        if (twoPhaseBeat()) {
             // Phase A ends here.  The CV now has the whole settle to travel
-            // before the gate follows it out on a later flush.
+            // before the gate follows it out on a later flush.  On a held
+            // build only the INTERNAL beat still reaches this as claim 2:
+            // the external one decided above and came back as claim 1.
             emit("CP.W R0,0x2");
             if (deadline) {
                 // ...except that how long that is, is only decidable HERE.
@@ -7134,7 +7151,11 @@ public class AssemblePressureFix extends GhidraScript {
         // The divider and the sequencer's rest/tie decision have already run.
         // This is a non-leaf: preserve LR across the physical gate-off call.
         begin(0x8001c700L);
-        long latencyShift = feature("clock_latency") ? 0x20L : 0;
+        // The claim-time pitch capture costs sixteen bytes before the store,
+        // so every label after it moves along on a held build.  The block
+        // still ends short of clock_pulse at 0x8001c800.
+        long latencyShift = (feature("clock_latency") ? 0x20L : 0)
+                          + (holdPitchToGate() ? 0x10L : 0);
         long settleStore = 0x8001c756L + latencyShift;
         long settleExit = 0x8001c760L + latencyShift;
         long settleGatePool = 0x8001c778L + latencyShift;
@@ -7194,6 +7215,22 @@ public class AssemblePressureFix extends GhidraScript {
                  deadlineMs() > 0 ? 2
                                   : claimFor(number("clock_settle_scans", 0, 0, 3))));
             emit("ST.B R10[0x0],R11");
+            if (holdPitchToGate()) {
+                // What the DAC is showing at the moment the step is claimed:
+                // the committed pitch of the note still sounding.  The scan
+                // puts this back for as long as the claim stands, so the new
+                // note cannot reach the output before its own gate.
+                //
+                // Captured HERE and nowhere else.  Publishing it from the
+                // unclaimed scan instead made it depend on a scan landing
+                // between one gate and the next claim, which at the 200 Hz
+                // ceiling is not guaranteed: with none, a claimed scan
+                // restored a note OLDER than the one that had just gated.
+                emit(String.format("LDDPC R10,0x%x", settleStatePool));
+                emit("LD.SH R11,R10[0x358]");
+                emit("MOV R10,0x609c");
+                emit("ST.H R10[0x0],R11");
+            }
             if (feature("clock_latency")) {
                 // Split the diagnostic at the first moment the selected
                 // external step is claimable by the flush.  Store the age,
@@ -7270,8 +7307,11 @@ public class AssemblePressureFix extends GhidraScript {
                          settleMsFor(number("gate_settle_scans", 1, 0, 3))));
                 }
             }
-            if (feature("clock_latency")) emit("RJMP 0x8001c776");
-            else emit("RJMP 0x8001c756");
+            // settleStore, named rather than written out: it moves with
+            // every option that adds bytes ahead of it, and a literal here
+            // sent the internal beat into the middle of another instruction
+            // the first time a second option did.
+            emit(String.format("RJMP 0x%x", settleStore));
             padTo(settleStatePool);
             word(0x00003560L); // global state base
         }

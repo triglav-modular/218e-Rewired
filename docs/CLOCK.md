@@ -767,6 +767,49 @@ counting entries to the factory DAC transfer rather than being told.
 The harness had never checked WHEN the pitch reaches slot 2 relative to the
 gate, which is exactly the hole both routes went through.
 
+### What the audit of that fix found
+
+An independent audit of the fix above found three faults in it and one in the
+capture validator. All four are corrected; none is verified on hardware.
+
+**The held pitch was published from the wrong context.** The first version
+republished it from every *unclaimed* scan, which made it depend on a scan
+landing between one gate and the next claim. At the 200 Hz ceiling there need
+not be one, and a claimed scan then restored a note OLDER than the one that
+had just gated. It is captured at the CLAIM now, in `clock_settle`, which has
+no phase to be caught out by: one writer, at the moment the step is claimed.
+
+**The internal beat's settle was spent on the old pitch.** `holdPitchToGate()`
+is the EXTERNAL settle's answer, and the internal beat shares the fast path.
+Deciding before staging for it transferred whatever was already in the buffer
+and spent the whole RC interval on the note already out, leaving the new one
+none. The fast trigger reads the SOURCE at 0x6236 now: an external claim 2
+decides first, an internal claim 2 keeps the original order — stage, transfer,
+then size the wait from that transfer. `settleStartsAtTheTransfer()` could not
+see this because it checked the target and gate timestamps and never the
+transferred VALUE; `internalSettleTransfersTheNewPitch()` checks the value.
+
+**An external edge could overwrite a pending internal step.** A deadline build
+zeroes the countdown at the claim, and an internal step in flight sets neither
+`0x6237` nor `0x60ee`, so an arriving edge passed the dequeue guard, was taken
+off the FIFO, and advanced note selection over a step that had been selected
+and never gated. The claim byte owns an unfinished beat now, so the dequeue
+guard asks it. The edge stays queued; the deadline is capped at half the
+acquired period, so the hold cannot outlast a beat.
+
+**A run of cleared telemetry frames was counted as several clears.** A cell
+stays zero until a valid sample arrives, so an honest hand-off read twice
+before the first measurement was rejected as contaminated, and
+`--external-start` skipped one zero row rather than the run. Entry into a
+contiguous zero run counts once now, and the run is skipped whole. The
+rejections the kept frames exist for are unchanged.
+
+Two checks were widened rather than added: `pitchWaitsForItsGate()` was
+passing vacuously in four of six configs because their fixture repeats the
+step pitch, and the pool fall-through check matched only literal `emit("...")`
+branches, which left every computed branch in the clock caves — most of them —
+invisible to it.
+
 ### What it measures, in the model
 
 **These are the millisecond-countdown deadline's figures**, kept as the
