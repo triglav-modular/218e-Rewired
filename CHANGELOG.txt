@@ -1,6 +1,6 @@
 2.0 (2026-08-31)
 - Step sequencer: 64 steps, recorded and played from the preset pads.
-- External clock divider: the arpeggiator rate knob divides a patched clock from /1 to /8.
+- External clock divider: the arpeggiator rate knob now divides a patched clock from /1 to /8.
 - Preset knobs can now be assigned individually.
 - Preset voltages are now set by holding a pad and turning the knob above it.
 - Alternate tunings now accept Scala keyboard maps, so a scale can have any number of degrees and repeat at something other than the octave.
