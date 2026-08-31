@@ -65,16 +65,29 @@ def harness(items, details, keys, extra=""):
     out = b""
     for key in keys:
         # Let the menu draw before the next key, or it reads them as a burst.
-        deadline = time.time() + 0.6
-        while time.time() < deadline:
-            r, _, _ = select.select([fd], [], [], 0.1)
+        # Waiting a fixed slice was enough on a quiet machine and not on a
+        # loaded CI runner: the draw had not finished, the keystroke went into
+        # a menu that was not reading yet, and the run failed with "chose None"
+        # on a flasher that was working.  So wait for the draw to go QUIET -
+        # nothing new for a beat - and give it a ceiling generous enough that
+        # only a hang reaches it.
+        settled = time.time() + 0.15
+        ceiling = time.time() + 10
+        while time.time() < ceiling:
+            r, _, _ = select.select([fd], [], [], 0.05)
             if r:
                 try:
-                    out += os.read(fd, 65536)
+                    chunk = os.read(fd, 65536)
                 except OSError:
                     break
+                if not chunk:
+                    break
+                out += chunk
+                settled = time.time() + 0.15   # still drawing; wait again
+            elif time.time() >= settled:
+                break                          # quiet, and it has drawn
         os.write(fd, key)
-    deadline = time.time() + 3
+    deadline = time.time() + 15
     while time.time() < deadline:
         r, _, _ = select.select([fd], [], [], 0.2)
         if not r:
