@@ -86,6 +86,14 @@ var RT = (function () {
         return twoPhaseBeat() ? number('clock_deadline_ms', 4, 0, 8) : 0;
     }
 
+    // Mirrors holdPitchToGate() in the Java: whether the external beat's
+    // pitch is held back to the gate's own transfer, which it is whenever a
+    // deadline holds the gate and no settle asked for the CV to travel first.
+    function holdPitchToGate() {
+        return deadlineMs() > 0
+            && settleMsFor(number('clock_settle_scans', 0, 0, 3)) === 0;
+    }
+
     function table(name) {
         var raw = (cfg['table.' + name] || '').trim();
         if (raw === '') throw new Error('Missing table in build config: ' + name);
@@ -189,6 +197,7 @@ var RT = (function () {
         on: on, block: block, feature: feature, number: number,
         twoPhaseBeat: twoPhaseBeat, claimFor: claimFor,
         settleMsFor: settleMsFor, deadlineMs: deadlineMs,
+        holdPitchToGate: holdPitchToGate,
         table: table, emitTable: emitTable, begin: begin, emit: emit,
         word: word, halfword: halfword, padTo: padTo, finish: finish,
         singlePatch: singlePatch, wordPatch: wordPatch, fixedPatch: fixedPatch,
@@ -200,6 +209,7 @@ var RT = (function () {
 var block = RT.block, feature = RT.feature, number = RT.number, table = RT.table,
     twoPhaseBeat = RT.twoPhaseBeat, claimFor = RT.claimFor,
     settleMsFor = RT.settleMsFor, deadlineMs = RT.deadlineMs,
+    holdPitchToGate = RT.holdPitchToGate,
     emitTable = RT.emitTable, begin = RT.begin, emit = RT.emit, word = RT.word,
     halfword = RT.halfword, padTo = RT.padTo, finish = RT.finish,
     singlePatch = RT.singlePatch, wordPatch = RT.wordPatch,

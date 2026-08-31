@@ -834,8 +834,16 @@ RAM_REGIONS = [
     (0x6086, 0x6088, "filter ring index"),
     (0x6088, 0x608C, "filter running sum"),
     (0x608C, 0x608E, "filter newest sample"),
+    # The pitch the DAC was showing when a beat claimed the step, republished
+    # every unclaimed scan.  A claimed beat's scan puts it back, so the new
+    # note's pitch cannot reach the output before the gate it belongs to.
+    (0x609C, 0x609E, "held pitch, published for a claimed beat"),
     (0x60A0, 0x60A2, "live transpose offset"),
     (0x60A2, 0x60DC, "latch pitch stamps"),
+    # The gate's absolute COUNT target.  Declared, so that the next cell to be
+    # picked out of this page collides here instead of silently inside the
+    # stamps above - which is what 0x60A8 did: slot 3.
+    (0x60DC, 0x60E0, "claimed beat's gate target, absolute COUNT"),
     (0x60E0, 0x60E2, "blend offset target"),
     (0x60E2, 0x60E4, "blend applied offset"),
     (0x60F4, 0x60F6, "blend previous base"),
@@ -987,6 +995,11 @@ FACTORY_CELLS = [
     (0x386A, 0x3872, "state+0x30a..0x310: the four preset knob mirrors"),
     (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
     (0x38B0, 0x38B2, "state+0x350: transpose"),
+    # The pitch the 1 kHz flush transfers.  Declared now that a patch names it
+    # by an address the map can see: clock_output republishes it every
+    # unclaimed scan and puts it back under a claim, so a held beat's gate and
+    # its pitch leave on one transfer.
+    (0x38B8, 0x38BA, "state+0x358: DAC slot 2, the pitch"),
 ]
 
 # Immediates that are values rather than addresses, so the coverage check does

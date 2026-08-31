@@ -183,10 +183,13 @@ def audit_call_pools(image_path) -> list[str]:
 # none of it; and again when the deadline moved onto an absolute COUNT target
 # with the RC settle measured from the actual DAC transfer and the main-loop
 # wrapper servicing pending output around the dispatcher, which is a real
-# behavioural change to every clocked build.
+# behavioural change to every clocked build; and again when the gate's target
+# moved off a latch pitch stamp it had been sharing and the external beat's
+# pitch was held back to the gate's own transfer, which is behavioural for
+# every deadline build and a bug fix for every latch one.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "76169ea70c94ee54c1e2bbf77a7725b09a599a0975bceefb1027490d4a4aaa7f",
+    "historical_config": "ba69616a1144b5f656bbfae43f4207165ef8afb24467725c7e81c3df4edc0e12",
 }
 
 

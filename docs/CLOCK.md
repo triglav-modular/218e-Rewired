@@ -179,7 +179,7 @@ how often event 17 was serviced.
 The claim byte at 0x625b says which of those the flush is holding: 1 to
 fire on this tick, 2 to stage the pitch and compute the wait, 3 while that
 wait runs. On a deadline build 0x60ee stays ZERO for the claim's whole
-life: the wait is the absolute COUNT target phase A stores at 0x60a8, the
+life: the wait is the absolute COUNT target phase A stores at 0x60dc, the
 1 ms task never touches it, and every service point simply compares COUNT
 against it. On a `clock_deadline_ms = 0` build the countdown at 0x60ee is
 MILLISECONDS rather than scans under claim 3 — phase A hands it to the 1 ms
@@ -247,7 +247,8 @@ unfinished edits do not write.
 
 | RAM | Meaning |
 | --- | --- |
-| 0x60a8 | Claimed beat's gate target, absolute COUNT (deadline builds; valid only under claim 3) |
+| 0x609c | Held pitch: the DAC word republished by every unclaimed scan, and put back by a claimed one |
+| 0x60dc | Claimed beat's gate target, absolute COUNT (deadline builds; valid only under claim 3) |
 | 0x6232 | Low interval: 0 none, 1 timing, 2 qualified |
 | 0x6233 | Acquired-divider latch |
 | 0x6234 / 0x6235 | FIFO producer / consumer index |
@@ -599,7 +600,7 @@ and both gate at edge + D.
 **The wait is computed at phase A, not at the claim, and it is an absolute
 COUNT target.** `clock_settle` sets claim 2 and leaves `0x60ee` at zero;
 `clock_fast_trigger` calls `clock_deadline` once the pitch is staged, and it
-stores at `0x60a8` the later of `edge + (D + settle) × cpms` and
+stores at `0x60dc` the later of `edge + (D + settle) × cpms` and
 `transfer + settle × cpms` — one MUL against the cycles-per-millisecond word
 at `0x6244`, no divide. The first version wrote whole milliseconds into
 `0x60ee` for the 1 ms task to decrement at an arbitrary phase, which put up
@@ -709,6 +710,62 @@ transfer with every dispatch withheld, and `pendingGatesWithoutADispatch()`
 proves a claimed external beat gates at edge + deadline through the bare
 wrapper alone. None of this is a hardware bound; the measurement protocol
 below is unchanged and still owed.
+
+### The pitch bleed the first deadline image showed, and its two causes
+
+The COUNT-target image (`4e857b01`) was the first deadline build to reach the
+instrument. It measured 2.3 ms of jitter, down from 3.36 ms, and the owner
+reported the clock audibly bleeding into the pitch signal. Two separate
+faults, both found in the source and both fixed; neither is verified on
+hardware yet.
+
+**A RAM collision, and the worse of the two.** The gate's COUNT target was
+put at `0x60a8`. That is not free RAM: `0x60a2-0x60dc` is the 29-entry latch
+pitch-stamp array, and `0x60a8` is stamp **slot 3** — so the target word
+covered slots 3 and 4. In a latch build every claimed external beat wrote a
+raw COUNT value over two latched notes' pitches, and every latch stamp wrote
+a pitch over the gate's target. The pitches moved with the clock because
+COUNT does. The build's RAM map did not catch it because the cell was inside
+a region already declared for the stamps; the target is at `0x60dc` now — the
+free word between the stamps and the blend cells — and both it and the held
+pitch below are declared in their own right, so the overlap check that exists
+for exactly this will fire if anything lands on them again.
+
+**The pitch ran ahead of the gate it belonged to.** A deadline holds the GATE
+at edge + D. Nothing held the PITCH, by two routes:
+
+* Phase A staged the step's new note into DAC slot 2 to size the wait, and
+  the next 1 kHz flush transferred it — as much as a whole deadline before
+  the trigger, with the previous note's gate still up.
+* The 200 Hz scan writes slot 2 from the glide engine, and a snap glide puts
+  the full new pitch there on the first scan after the step. `clock_output`
+  guarded step COMPLETION under a claim, never the scan's own store.
+
+Pre-deadline firmware fired pitch and gate on one flush (claim 1, one
+transfer), so this window was about zero. Any deadline build opens it, which
+makes this the deadline design's own defect rather than the COUNT target's.
+
+Both are closed for an external beat with **no settle configured**, which is
+the only case where the early pitch was never wanted:
+
+* The fast trigger now asks the deadline BEFORE it computes or stages the
+  pitch. Phase A's one duty is to size the wait; if the target is ahead it
+  returns without touching the output, and the fire pass — claim 3, or the
+  same pass when the target turns out to be already spent — computes and
+  stages the pitch on the gate's own transfer.
+* `clock_output` republishes what the DAC is showing at `0x609c` on every
+  unclaimed scan, and puts it back, slot and last-sent mirror together, on a
+  claimed one. The scan and the flush are separate dispatcher events, so no
+  transfer can run between the scan's store and the restore.
+
+A **configured settle is left alone**: it exists so the CV travels before the
+trigger, so on those builds the pitch is still meant to go out first, and
+`clock_deadline` still transfers it at phase A. `pitchWaitsForItsGate()`
+asserts whichever of the two the build asked for, and tells them apart by
+counting entries to the factory DAC transfer rather than being told.
+
+The harness had never checked WHEN the pitch reaches slot 2 relative to the
+gate, which is exactly the hole both routes went through.
 
 ### What it measures, in the model
 

@@ -11,6 +11,12 @@ public class ClockRegression extends GhidraScript {
     EmulatorHelper e;
     int frequency, advances, periodicAdvances, checks, maxIrqSteps, dispatches, callbacks;
     boolean sequencer, periodic;
+    // Entries to the factory DAC transfer clock_deadline performs at phase A.
+    // Counting it is how a test tells a settle build from a held one without
+    // being told: the deadline calls it only when a settle was configured for
+    // the source, which is the same thing as the pitch being MEANT to leave
+    // ahead of the gate.
+    int transfers;
     long nowUs;
     final List<Integer> pitches = new ArrayList<>();
     final List<Integer> dac = new ArrayList<>();
@@ -34,7 +40,7 @@ public class ClockRegression extends GhidraScript {
             + " advances=" + advances + " outputs=" + outputTimes.size()
             + " head/tail=" + r(0x6234,1) + "/" + r(0x6235,1)
             + " busy=" + r(0x6237,1) + " pending=" + r(0x60ee,1)
-            + " claim=" + r(0x625b,1) + " target=" + r(0x60a8,4)
+            + " claim=" + r(0x625b,1) + " target=" + r(0x60dc,4)
             + " period=" + r(0x61ea,2) + " run=" + r(0x61ec,1));
     }
     void step() throws Exception {
@@ -50,6 +56,7 @@ public class ClockRegression extends GhidraScript {
             check("1 ms hook preserves task argument", e.readRegister("R12").longValue()==0x7010);
             callbacks++; jump(e.readRegister("LR").longValue()); return;
         }
+        if (pc() == 0x8000ba9cL) transfers++;
         if (pc() == 0x80002456L) { jump(0x8000245aL); return; }
         if (pc() == 0x80007572L) { jump(0x80007576L); return; }
         if (pc() == 0x800077f8L) {
@@ -145,7 +152,7 @@ public class ClockRegression extends GhidraScript {
         }
         w(GPIO+0xc4,4,32); w(0xffff1c08L,4,1);
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202); // SPI TX ready/empty
-        advances=0; periodicAdvances=0; periodic=false;
+        advances=0; periodicAdvances=0; periodic=false; transfers=0;
         pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear();
     }
     void irq(long us, boolean high) throws Exception {
@@ -263,7 +270,7 @@ public class ClockRegression extends GhidraScript {
         if (r(0x625b,1)!=2) return 0;
         if (!deadlineBuild()) return (int)r(0x60ee,1);
         flush(50000);                    // phase A stores the target
-        long target=r(0x60a8,4);
+        long target=r(0x60dc,4);
         long now=(50000L*frequency)/1000000L;
         return (int)((target-now)/(frequency/1000));
     }
@@ -1100,7 +1107,7 @@ public class ClockRegression extends GhidraScript {
         internal(t);                      // the arp advance claims the beat
         int claim=(int)r(0x625b,1);
         println("internal claim="+claim+" countdown="+r(0x60ee,1)
-                +" target="+r(0x60a8,4));
+                +" target="+r(0x60dc,4));
         if (claim!=2) {
             println("SKIP settle start: this build claims "+claim
                     +", so there is no held gate to start");
@@ -1128,7 +1135,7 @@ public class ClockRegression extends GhidraScript {
             return;
         }
         check("nothing is spent at the claim itself",
-              r(0x60ee,1)==0 && r(0x60a8,4)==0);
+              r(0x60ee,1)==0 && r(0x60dc,4)==0);
         // The 1 ms task alone, for twice the settle.  This is the audit's
         // reproduction: it used to deplete the countdown here and gate with
         // a zero RC interval on the next flush.  Now there is nothing for
@@ -1142,7 +1149,7 @@ public class ClockRegression extends GhidraScript {
         service(tA);
         check("phase A ran from the main loop, no dispatch needed",
               r(0x625b,1)==3 && outputTimes.isEmpty());
-        long target=r(0x60a8,4);
+        long target=r(0x60dc,4);
         long settleMs=(target-(tA*frequency/1000000L))/(frequency/1000);
         println("target is "+settleMs+" ms after the transfer");
         check("the stored target is a real settle past the transfer",
@@ -1167,6 +1174,91 @@ public class ClockRegression extends GhidraScript {
                 +" pass gates it");
     }
 
+    // The bleed the instrument showed on the first deadline image, and the
+    // hole this harness had: nothing here ever asked WHEN the pitch reaches
+    // DAC slot 2 relative to the gate.  A deadline holds the GATE at
+    // edge + D and the pitch escaped by two routes -- phase A staged it for
+    // the next flush's transfer, and the 200 Hz scan wrote its own answer
+    // into the same slot, which with a snap glide is the full new pitch on
+    // the first scan after the step.  Either put the new note at the output
+    // while the PREVIOUS note's gate was still up.
+    //
+    // So: what the DAC is showing must not move between the claim and the
+    // gate, and must move on the gate's own pass.  The scan is run every
+    // millisecond here, far harder than the 5 ms it really gets.
+    void pitchWaitsForItsGate() throws Exception {
+        fresh(1,25000000);
+        if (!deadlineBuild()) {
+            println("SKIP pitch hold: no deadline built");
+            return;
+        }
+        // The deadline needs an acquired period, so spend four whole beats
+        // first and leave the output showing the last one's pitch.
+        long t=10000;
+        for (int i=0;i<4;i++) {
+            irq(t,true); service(t); finishStep(t+9000);
+            irq(t+25000,false); t+=50000;
+        }
+        scan(t-1000);
+        int shown=(int)r(S+0x358,2);
+        // Give the coming beat a pitch of its own.  Not every config's
+        // fixture steps to a different note - a single held key repeats one -
+        // so push the bend strip, which every writer adds before it clamps.
+        // Both the scan and the gate's staging now WANT a different word than
+        // the one at the output, which is what makes a leak visible; without
+        // it this test could pass on a fixture that had nothing to leak.  No
+        // scan runs between here and the claim, so the output still shows the
+        // old word.
+        w(S+0x216,2,0x100);
+        int before=outputTimes.size(), sent=transfers;
+        irq(t,true);
+        service(t);                     // the dequeue pass: claim, then phase A
+        check("the beat is claimed and targeted on the dequeue pass",
+              r(0x625b,1)==3 && r(0x60dc,4)!=0);
+        if (transfers>sent) {
+            // A settle IS configured for the external source, so phase A
+            // transferred the pitch on purpose: the wait exists for the CV to
+            // travel before the trigger.  Assert that instead - the pitch out
+            // first, the gate a real settle behind it - rather than skipping,
+            // which would leave this config asserting nothing at all.
+            check("a settle build puts the pitch out at phase A",
+                  r(S+0x358,2)!=shown);
+            long due=(r(0x60dc,4)-t*(frequency/1000000L))/(frequency/1000000L);
+            long g=-1;
+            for (long k=1;k<=due/1000+3;k++) {
+                long u=t+k*1000;
+                bank(u); pending(u);
+                if (outputTimes.size()>before) { g=u; break; }
+            }
+            check("and its gate waits the settle out", g>0 && g-t>=due);
+            println("PASS a configured settle sends the pitch "+(g-t)
+                    +" us ahead of its gate, which is what it is for");
+            return;
+        }
+        check("phase A left the output where it was", r(S+0x358,2)==shown);
+        long dueUs=(r(0x60dc,4)-t*(frequency/1000000L))/(frequency/1000000L);
+        long gate=-1;
+        for (long k=1;k<=dueUs/1000+3;k++) {
+            long u=t+k*1000;
+            bank(u);
+            scan(u);                    // the other writer, at five times its rate
+            if (outputTimes.size()==before)
+                check("the pitch has not moved at ms "+k+" of a "+(dueUs/1000)
+                      +" ms wait: "+r(S+0x358,2)+" vs "+shown,
+                      r(S+0x358,2)==shown);
+            pending(u);
+            if (outputTimes.size()>before) { gate=u; break; }
+        }
+        check("the gate went out", gate>0);
+        int after=(int)r(S+0x358,2);
+        println("pitch held "+(gate-t)+" us, then moved "+shown+" -> "+after
+                +" on the gate's own pass");
+        check("the pitch and the gate left together, so the hold was real "
+              +"and not a fixture with nothing to leak", after!=shown);
+        w(S+0x216,2,0);
+        println("PASS the pitch waits for its gate; the scan cannot leak it");
+    }
+
     // The lever the audit asked for, proven end to end: a ready output no
     // longer waits for event 17.  The wrapper services pending output around
     // the dispatcher, so with every dispatch withheld -- no flush, no
@@ -1189,13 +1281,13 @@ public class ClockRegression extends GhidraScript {
         irq(t,true);
         service(t);
         check("the beat is claimed and targeted on the dequeue pass",
-              r(0x625b,1)==3 && r(0x60a8,4)!=0);
+              r(0x625b,1)==3 && r(0x60dc,4)!=0);
         check("no gate yet: the deadline is ahead",
               outputTimes.size()==before);
         // The stored target says when the gate is due -- the deadline plus
         // any configured settle, edge-relative in this fixture since the
         // edge, the dequeue and the transfer share one microsecond here.
-        long dueUs=(r(0x60a8,4)-t*(frequency/1000000L))/(frequency/1000000L);
+        long dueUs=(r(0x60dc,4)-t*(frequency/1000000L))/(frequency/1000000L);
         long gate=-1;
         for (long k=1;k<=dueUs/1000+3;k++) {
             bank(t+k*1000); pending(t+k*1000);
@@ -1570,7 +1662,7 @@ public class ClockRegression extends GhidraScript {
             // this beat genuinely shorter than every settle-length sample
             // before it.
             flush(tc);
-            w(0x62f0,4,r(0x60a8,4)-2L*(frequency/1000));
+            w(0x62f0,4,r(0x60dc,4)-2L*(frequency/1000));
         } else {
             w(0x62f0,4,((tc+3000L)*frequency)/1000000L);
         }
@@ -1721,9 +1813,9 @@ public class ClockRegression extends GhidraScript {
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
             if (jitterOnly) {
-                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
+                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})

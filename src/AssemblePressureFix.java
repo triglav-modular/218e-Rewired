@@ -70,6 +70,20 @@ public class AssemblePressureFix extends GhidraScript {
         return twoPhaseBeat() ? number("clock_deadline_ms", 4, 0, 8) : 0;
     }
 
+    // Whether the external beat's pitch is held back to the gate's own
+    // transfer.  A deadline holds the GATE at edge + D; nothing held the
+    // PITCH, so a step's new note reached the DAC as much as D early and was
+    // audible under the previous note's gate - the clock bleeding into the
+    // pitch signal.  With a settle configured the early pitch is the whole
+    // point (the CV is meant to travel before the trigger), so only the
+    // settle-less external beat is held, which restores exactly the
+    // electrical behaviour claim 1 always had: pitch and gate on one
+    // transfer.
+    private boolean holdPitchToGate() {
+        return deadlineMs() > 0
+            && settleMsFor(number("clock_settle_scans", 0, 0, 3)) == 0;
+    }
+
     private boolean feature(String name) {
         return on("feature." + name);
     }
@@ -3667,7 +3681,7 @@ public class AssemblePressureFix extends GhidraScript {
             // over.
             //
             // A deadline build has no business here at all: its whole wait
-            // is an absolute COUNT target at 0x60a8, computed at phase A
+            // is an absolute COUNT target at 0x60dc, computed at phase A
             // from the accepted edge and the actual transfer, and 0x60ee
             // stays zero for the claim's entire life.
             emit("MOV R8,0x625b");
@@ -6032,7 +6046,17 @@ public class AssemblePressureFix extends GhidraScript {
             emit("MOV R8,0x625b");
             emit("LD.UB R9,R8[0x0]");
             emit("CP.W R9,0x1");
-            emit("BR{hi} 0x8001c688");
+            emit(String.format("BR{hi} 0x%x",
+                 holdPitchToGate() ? 0x8001c690L : 0x8001c688L));
+        }
+        if (holdPitchToGate()) {
+            // Nothing owns the step, so what the remap just wrote IS the
+            // pitch the instrument is showing.  Publish it: the next claim
+            // holds the output here until its gate, and this is the value it
+            // holds.  Every unclaimed scan republishes it, so it is never
+            // more than one scan old when a claim arrives - and a claim
+            // cannot arrive before acquisition, which is many scans in.
+            emit("MCALL PC[0x8001c6bc]");
         }
         emit("MOV R10,0x6234");
         emit("MOV R8,0x60ee");
@@ -6084,12 +6108,52 @@ public class AssemblePressureFix extends GhidraScript {
         }
         padTo(0x8001c688L);
         emit("LDM SP++,R7,PC");
+        if (holdPitchToGate()) {
+            // The flush owns the step, and the scan has just written the NEW
+            // note's pitch to DAC slot 2 - the second half of the bleed, and
+            // the half the fast path never touched: with a snap glide the
+            // first scan after the step jumps straight to the target, so the
+            // pitch went out under the old gate whether or not phase A staged
+            // it.  Put the published pitch back, slot and last-sent mirror
+            // together, and let the gate's own pass stage the new one.  The
+            // scan and the flush are separate dispatcher events, so no
+            // transfer can run between the store above and this restore.
+            //
+            // Internal beats are left alone: their settle is a deliberate
+            // wait for the CV to travel ahead of the trigger.
+            padTo(0x8001c690L);
+            emit("MOV R8,0x6236");
+            emit("LD.UB R8,R8[0x0]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8001c688");
+            emit("MOV R8,0x609c");
+            emit("LD.SH R9,R8[0x0]");
+            emit("LDDPC R8,0x8001c6b8");
+            emit("ST.H R8[0x358],R9");
+            emit("MOV R8,0x3212");
+            emit("ST.H R8[0x0],R9");
+            emit("RJMP 0x8001c688");
+        }
         padTo(0x8001c6b0L);
         // Diagnostic builds route the gate through the latency shim, which
         // stamps the delay and tail-calls the real routine.
         word(block("clock_latency") ? 0x8001bbc0L : 0x800077f8L);
         word(0x8001c600L);
-        finish("clock_output", 0x8001c6c0L);
+        if (holdPitchToGate()) {
+            word(0x00003560L); // global state base, for the restore below
+            word(0x8001c6c0L); // the publish, called from the unclaimed path
+            // Publishing is two bytes in the path the scan takes every 5 ms
+            // and the rest of the work out here, where the block has room.
+            // LR is already on the stack from the entry, so an MCALL costs
+            // nothing to unwind.
+            padTo(0x8001c6c0L);
+            emit("MOV R9,0x3560");
+            emit("LD.SH R9,R9[0x358]");
+            emit("MOV R10,0x609c");
+            emit("ST.H R10[0x0],R9");
+            emit("MOV PC,LR");
+        }
+        finish("clock_output", holdPitchToGate() ? 0x8001c6e0L : 0x8001c6c0L);
 
         // The external beat's DEADLINE, and every claimed beat's RC settle,
         // as one absolute COUNT target.  Measured on the instrument, max
@@ -6116,8 +6180,14 @@ public class AssemblePressureFix extends GhidraScript {
         //       expire while the OLD pitch was still at the output.  The
         //       internal beat has no edge and carries only this leg.
         //
-        // The later of the two is stored at 0x60a8 (a free word in the deep
-        // stack region every custom cell lives in) and compared against
+        // The later of the two is stored at 0x60dc (the free word between the
+        // latch pitch stamps and the blend cells; the first version of this
+        // used 0x60a8, which is stamp SLOT 3 -- every claimed beat wrote a
+        // COUNT value over two latched notes' pitches, and every latch stamp
+        // wrote a pitch over the gate's target.  The RAM map did not catch it
+        // because the cell was inside a region already declared for the
+        // stamps; both cells are declared in their own right now) and
+        // compared against
         // COUNT at every service point.  The old path wrote whole
         // milliseconds into 0x60ee for the 1 ms task to spend at an
         // arbitrary phase, which cost up to a millisecond of quantisation;
@@ -6125,7 +6195,7 @@ public class AssemblePressureFix extends GhidraScript {
         // wrap-safe for any target within ~35 s, and targets are at most
         // D + settle ahead.  Cleared claims are what gate stale targets:
         // startup, warm restart and seq_transport all clear 0x625b, and
-        // 0x60a8 is only ever read under claim 3, after phase A rewrote it.
+        // 0x60dc is only ever read under claim 3, after phase A rewrote it.
         //
         // Called by MCALL from the fast trigger, R12 selecting the duty:
         //   R12 != 0   phase A, pitch just staged: transfer it, compute and
@@ -6146,7 +6216,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ne} 0x8001bd70");
         // Claim 3: has COUNT reached the stored target?
         emit("MOV R8,0x625b");          // the caller's claim pointer, restored
-        emit("MOV R9,0x60a8");
+        emit("MOV R9,0x60dc");
         emit("LD.W R9,R9[0x0]");
         emit("MFSR R10,COUNT");
         emit("SUB R9,R10,R9 << 0x0");   // COUNT - target, signed
@@ -6210,7 +6280,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{lt} 0x8001bde0");
         emit("MOV R11,R12");
         padTo(0x8001bde0L);
-        emit("MOV R9,0x60a8");
+        emit("MOV R9,0x60dc");
         emit("ST.W R9[0x0],R11");
         emit("MFSR R10,COUNT");
         emit("SUB R10,R10,R11 << 0x0"); // COUNT - target, signed
@@ -6285,9 +6355,18 @@ public class AssemblePressureFix extends GhidraScript {
         long fastFire  = twoPhaseBeat() ? 0x8001c150L : 0x8001c14cL;
         long fastClear = twoPhaseBeat() ? 0x8001c15cL : 0x8001c14cL;
         long fastJoin  = twoPhaseBeat() ? 0x8001c168L : 0x8001c14cL;
-        long fastClampLow  = twoPhaseBeat() ? 0x8001c17cL : 0x8001c166L;
-        long fastClampHigh = twoPhaseBeat() ? 0x8001c188L : 0x8001c172L;
-        long fastStage = twoPhaseBeat() ? 0x8001c198L : 0x8001c180L;
+        // A held build asks the deadline BEFORE the pitch is computed, which
+        // moves the arithmetic and its two clamps along by the sixteen bytes
+        // that check and its alignment cost.  The block's own end does not
+        // move: they come out of the padding that already sat in front of the
+        // gate, which a held build no longer needs - it reaches the gate
+        // straight from the staging call.
+        boolean hold = holdPitchToGate();
+        long fastShift = hold ? 0x10L : 0;
+        long fastCompute   = 0x8001c168L + fastShift;
+        long fastClampLow  = twoPhaseBeat() ? 0x8001c17cL + fastShift : 0x8001c166L;
+        long fastClampHigh = twoPhaseBeat() ? 0x8001c188L + fastShift : 0x8001c172L;
+        long fastStage = twoPhaseBeat() ? 0x8001c198L + fastShift : 0x8001c180L;
         // The deadline call costs eight bytes in the cave and a fourth pool
         // word, so everything from the decline on moves along by 0x10.  The
         // block still ends short of clock_capture at 0x8001c200.
@@ -6313,7 +6392,7 @@ public class AssemblePressureFix extends GhidraScript {
             // A and the gate is waiting on its target.  When it is reached
             // the gate still owes the attack-age guard below, so this
             // rejoins rather than jumping.  With a deadline the wait is the
-            // COUNT target at 0x60a8 and clock_deadline evaluates it (R12=0
+            // COUNT target at 0x60dc and clock_deadline evaluates it (R12=0
             // asks for the evaluation; it returns R12=0 once the target is
             // reached, and hands back R8 = 0x625b, which the fire path
             // below stores through); without one it is the millisecond
@@ -6391,6 +6470,24 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x60ee");
         emit("ST.B R8[0x0],R9");        // and the scan's countdown with it
         if (twoPhaseBeat()) padTo(fastJoin);
+        if (hold) {
+            // Claim 2 is phase A, and on a held build phase A has ONE duty:
+            // size the gate's wait.  Staging the pitch first was the bleed -
+            // it handed the step's new note to the next flush's transfer, as
+            // much as a whole deadline before the trigger that belongs to it,
+            // with the previous note's gate still up.  So decide first: if
+            // the target is ahead, leave without touching the pitch at all,
+            // and the fire pass below - claim 3, or this same pass when the
+            // target turns out to be already spent - computes and stages it
+            // on the gate's own transfer, exactly as claim 1 always did.
+            emit("CP.W R0,0x2");
+            emit(String.format("BR{ne} 0x%x", fastCompute));
+            emit("MOV R12,0x1");
+            emit(String.format("MCALL PC[0x%x]", fastPool + 12));
+            emit("CP.W R12,0x0");
+            emit(String.format("BR{ne} 0x%x", fastExit));
+            padTo(fastCompute);
+        }
         emit(String.format("LDDPC R10,0x%x", fastPool));
         emit("LD.SH R12,R10[0x352]");   // the step's own pitch TARGET
         // The bend strip's offset, which the 200 Hz scan adds to the target
@@ -6425,7 +6522,7 @@ public class AssemblePressureFix extends GhidraScript {
         }
         padTo(fastStage);
         emit(String.format("MCALL PC[0x%x]", fastPool + 4));  // pitch, slot 2
-        if (twoPhaseBeat()) {
+        if (twoPhaseBeat() && !hold) {
             // Phase A ends here.  The CV now has the whole settle to travel
             // before the gate follows it out on a later flush.
             emit("CP.W R0,0x2");
@@ -7113,7 +7210,7 @@ public class AssemblePressureFix extends GhidraScript {
             if (deadlineMs() > 0) {
                 // Zero, deliberately.  On a deadline build the 1 ms task
                 // never touches a claimed step's countdown at all: the whole
-                // wait is the COUNT target phase A stores at 0x60a8, so
+                // wait is the COUNT target phase A stores at 0x60dc, so
                 // nothing can be spent between here and the transfer there.
                 emit("MOV R9,0x0");
             } else if (number("clock_settle_scans", 0, 0, 3) > 0) {
