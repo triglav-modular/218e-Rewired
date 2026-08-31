@@ -1265,65 +1265,67 @@ public class ClockRegression extends GhidraScript {
         println("PASS the pitch waits for its gate; the scan cannot leak it");
     }
 
-    // Back-to-back beats with no unclaimed scan between them.  The held
-    // pitch used to be published by the SCAN, which made it depend on a scan
-    // landing between one gate and the next claim - at the 200 Hz ceiling
-    // there need not be one, and a claimed scan then restored a note OLDER
-    // than the one that had just gated.  Publishing at the claim instead has
-    // no phase to be caught out by, and this drives the phase that caught it:
-    // every scan lands inside a claim.
+    // Sweep real 200 Hz scan phases inside successive external claims. No
+    // unclaimed scan may refresh the cache between those gates and claims.
+    // Compare directly with the last gate's DAC word, including warm-up gates;
+    // a separate counter once made this assertion permanently unreachable.
     void heldPitchIsNeverOlderThanTheLastGate() throws Exception {
         fresh(1,25000000);
         if (!deadlineBuild()) {
             println("SKIP held pitch age: no deadline built");
             return;
         }
-        long t=10000;
-        for (int i=0;i<4;i++) {
-            irq(t,true); service(t); finishStep(t+9000);
-            irq(t+25000,false); t+=50000;
+        irq(10000,true); service(10000); finishStep(19000);
+        if (transfers>0) {
+            // With external RC settling the pitch deliberately precedes its
+            // gate. pitchWaitsForItsGate() asserts that separate contract.
+            println("SKIP held pitch age: external RC settle sends pitch early");
+            return;
         }
-        // Beats close enough that a 5 ms scan need not fall outside a claim,
-        // and a bend so each beat's pitch differs from the one before it.
-        int reverted=0, gates=0, last=-1, claimedScans=0;
-        for (int beat=0;beat<6;beat++) {
-            w(S+0x216,2,0x40*(beat+1));
-            long edge=t+beat*25000;
-            irq(edge,true);
-            service(edge);
-            for (long k=1;k<=20;k++) {
-                long u=edge+k*1000;
+        for (int hz : new int[]{25000000,60000000})
+        for (int phase : new int[]{1000,1250,1750}) {
+            fresh(1,hz);
+            int edges=0, claimedScans=0, changedGates=0;
+            for (long t=1000;t<=120000;t+=250) {
+                if (t>=10000 && t<110000 && (t-10000)%5000==0) {
+                    // Arp fixtures repeat a held key; bend gives those beats
+                    // distinct pitches too, without synthesizing a DAC value.
+                    w(S+0x216,2,0x40*(edges%8));
+                    irq(t,true); edges++;
+                }
+                if (t>=12500 && t<112500 && (t-12500)%5000==0) irq(t,false);
+                if (t%1000==0) bank(t);
                 int before=outputTimes.size();
-                bank(u); pending(u);
-                if (outputTimes.size()>before) {
-                    last=(int)r(S+0x358,2); gates++;
+                service(t);
+                if (t%1000==500) dispatch(t);
+                if (outputTimes.size()>before && dac.size()>1
+                    && !dac.get(dac.size()-1).equals(dac.get(dac.size()-2)))
+                    changedGates++;
+                boolean claimed=r(0x625b,1)>1;
+                if (t%5000==phase) {
+                    scan(t);
+                    if (claimed && !dac.isEmpty()) {
+                        claimedScans++;
+                        check("held scan preserves last gate at "+hz+" Hz, phase "
+                              +phase+", t="+t+": "+r(S+0x358,2)+" vs "
+                              +dac.get(dac.size()-1),
+                              r(S+0x358,2)==dac.get(dac.size()-1));
+                        check("held scan preserves pitch mirror",
+                              r(0x3212,2)==r(S+0x358,2));
+                    }
                 }
-                // A scan on every millisecond, so no phase can be missed.
-                boolean claimed=r(0x625b,1)!=0;
-                scan(u);
-                if (claimed) claimedScans++;
-                if (last>=0 && r(S+0x358,2)!=last
-                    && r(0x625b,1)!=0 && outputTimes.size()==gates) {
-                    // A claimed scan moved the committed pitch.  Only a
-                    // restore can do that, and a restore may only ever put
-                    // back what the last gate committed.
-                    reverted++;
-                    check("a claimed scan put back "+r(S+0x358,2)
-                          +", but the last gate committed "+last
-                          +" (beat "+beat+", "+u+" us)", false);
-                }
+                if (claimed && !dac.isEmpty())
+                    check("pending output/flush retains the committed pitch",
+                          r(S+0x358,2)==dac.get(dac.size()-1));
             }
-            irq(edge+12000,false);
+            check("every 200 Hz edge gates exactly once", edges==20 && outputTimes.size()==20);
+            check("pitch changes make the hold observable", changedGates>=15);
+            check("scans exercise successive held claims", claimedScans>=16);
+            check("the FIFO drains without overrun", r(0x6234,1)==r(0x6235,1)
+                  && r(0x6258,2)==0 && r(0x625b,1)==0);
+            println("PASS held pitch: "+hz+" Hz, scan phase "+phase
+                    +" us, "+claimedScans+" claimed scans, 20 gates");
         }
-        w(S+0x216,2,0);
-        check("the fixture gated every beat", gates>=6);
-        // Without this the test could pass by never reaching the phase it
-        // exists for: a restore only runs on a scan that lands inside a
-        // claim, and the fault was a stale value being restored there.
-        check("and scans landed inside a claim, which is the phase under "
-              +"test: "+claimedScans, claimedScans>=6);
-        println("PASS "+gates+" back-to-back gates, "+reverted
-                +" scans put back a pitch older than the last gate");
     }
 
     // A configured settle is a wait for the OUTPUT to travel, so the transfer
@@ -1369,48 +1371,82 @@ public class ClockRegression extends GhidraScript {
         println("PASS the internal settle transfers the new pitch");
     }
 
-    // An external edge arriving over a pending internal step used to pass the
-    // dequeue guard: a deadline build zeroes the countdown at the claim, and
-    // an internal step in flight sets neither 0x6237 nor 0x60ee, so the edge
-    // was taken off the FIFO and advanced note selection over a step that had
-    // been selected and never gated.  The note was simply replaced.
+    // Keep the selected beat, its pitch, its RC interval and its diagnostic
+    // source when GPIO presence changes. Exercise both sides of phase A;
+    // merely checking the FIFO after phase A missed both source races.
+    void pendingStepKeepsItsSource(boolean edgeBeforePhaseA, int hz, int settleMs)
+            throws Exception {
+        fresh(1,hz);
+        boolean diagnostic=r(0x8001c6b0L,4)==0x8001bbc0L;
+        w(S+0x340,1,1); w(S+0x34a,2,26); w(S+0x38e,2,1);
+        scan(9000);
+        long oldPitch=r(S+0x358,2);
+        w(S+0x216,2,0x100);
+        internal(10000);
+        check("internal beat owns the claim", r(0x625b,1)==2 && r(0x6237,1)==0);
+        long note=r(S+0x352,2), consumer=r(0x6235,1);
+        long phaseAt=edgeBeforePhaseA ? 11000 : 10000;
+        if (!edgeBeforePhaseA) pending(phaseAt);
+        irq(edgeBeforePhaseA ? 10500 : 11000,true);
+        service(11000);
+        check("presence changes without changing the step's owner",
+              r(0x6236,1)==1 && r(0x6237,1)==0);
+        check("external arrival cannot gate before the internal settle",
+              outputTimes.isEmpty() && r(0x625b,1)==3);
+        check("phase A transfers the new pitch even after GPIO presence changes",
+              transfers==1 && transferPitches.get(0)!=oldPitch);
+        long staged=transferPitches.get(0);
+        long due=phaseAt+settleMs*1000L;
+        check("target retains the internal transfer-relative settle",
+              r(0x60dc,4)==due*(frequency/1000000L));
+        check("external edge stays queued behind the internal note",
+              r(0x6235,1)==consumer && r(S+0x352,2)==note);
+        scan(11500);
+        check("takeover scan leaves the settling pitch and mirror intact",
+              r(S+0x358,2)==staged && r(0x3212,2)==staged);
+        boolean internalGated=false;
+        for (long t=12000;t<=due+30000;t+=250) {
+            if (t%1000==0) bank(t);
+            service(t);
+            if (t%1000==0) flush(t);
+            if (t%5000==1500) scan(t);
+            if (outputTimes.isEmpty()) {
+                check("a pending internal step keeps its note and pitch",
+                      r(S+0x352,2)==note && r(S+0x358,2)==staged);
+                check("no dequeue before the internal gate", r(0x6235,1)==consumer);
+            } else if (!internalGated) {
+                internalGated=true;
+                check("internal gate follows its complete RC interval",
+                      outputTimes.get(0)==due && dac.get(0)==staged);
+                if (diagnostic) {
+                    check("internal gate is measured as internal despite input presence",
+                          r(0x6038,1)==0 && r(0x603c,2)==1 && r(0x62f0,4)==0);
+                    check("internal sample uses its own claim timestamp",
+                          r(0x6032,2)==(((due-10000)*frequency/1000000L)>>5));
+                }
+            }
+            if (outputTimes.size()==2 && r(0x6234,1)==r(0x6235,1)
+                && r(0x625b,1)==0 && r(0x6237,1)==0) break;
+        }
+        check("the pending beat and queued external edge both gate once",
+              internalGated && outputTimes.size()==2 && r(0x6234,1)==r(0x6235,1)
+              && r(0x625b,1)==0 && r(0x6237,1)==0 && r(0x6258,2)==0);
+        if (diagnostic) check("the external gate changes diagnostic population",
+                              r(0x6038,1)==1);
+        println("PASS pending source: "+hz+" Hz, edge "
+                +(edgeBeforePhaseA ? "before phase A" : "during settling")
+                +", internal gate "+due+" us, queued edge drained");
+    }
+
     void anEdgeWaitsForAPendingStep() throws Exception {
         int settleMs=askInternalSettleMs();
-        fresh(1,25000000);
         if (!deadlineBuild() || settleMs<=0) {
             println("SKIP pending takeover: no held internal step to take over");
             return;
         }
-        w(S+0x340,1,1); w(S+0x34a,2,26); w(S+0x38e,2,1);
-        long t=10000;
-        internal(t);
-        check("the internal beat is claimed", r(0x625b,1)==2);
-        // One pass to run phase A, so the step is genuinely in flight on a
-        // stored target rather than merely claimed.
-        bank(t+500); service(t+500);
-        long target=r(0x60dc,4);
-        check("the step is waiting on a target", target!=0 && r(0x625b,1)==3);
-        long dueUs=(target-t*(frequency/1000000L))/(frequency/1000000L);
-        check("the target is far enough ahead to take over inside", dueUs>=2000);
-        long when=t+dueUs-1000;         // an edge while the step is still owed
-        int note=(int)r(S+0x352,2);
-        long consumer=r(0x6235,1);
-        irq(when,true);
-        service(when);
-        check("the queued edge did not advance the note over the pending "
-              +"step: "+r(S+0x352,2)+" was "+note, r(S+0x352,2)==note);
-        check("and it is still queued: consumer "+r(0x6235,1)+" was "+consumer,
-              r(0x6235,1)==consumer);
-        check("the claim still stands", r(0x625b,1)!=0);
-        long g=-1;
-        for (long k=1;k<=settleMs+12;k++) {
-            long u=when+k*1000;
-            bank(u); service(u);
-            if (!outputTimes.isEmpty()) { g=u; break; }
-        }
-        check("the internal step gated after all", g>0);
-        println("PASS an external edge waits for the pending step; it gated at "
-                +(g-t)+" us");
+        for (int hz : new int[]{25000000,60000000})
+            for (boolean before : new boolean[]{true,false})
+                pendingStepKeepsItsSource(before,hz,settleMs);
     }
 
     // The lever the audit asked for, proven end to end: a ready output no

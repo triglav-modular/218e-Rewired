@@ -247,12 +247,12 @@ unfinished edits do not write.
 
 | RAM | Meaning |
 | --- | --- |
-| 0x609c | Held pitch: the DAC word republished by every unclaimed scan, and put back by a claimed one |
+| 0x609c | Held pitch: the DAC word captured when an external step is claimed, restored by scans until its gate |
 | 0x60dc | Claimed beat's gate target, absolute COUNT (deadline builds; valid only under claim 3) |
 | 0x6232 | Low interval: 0 none, 1 timing, 2 qualified |
 | 0x6233 | Acquired-divider latch |
 | 0x6234 / 0x6235 | FIFO producer / consumer index |
-| 0x6236 / 0x6237 | Input present / output step in flight |
+| 0x6236 / 0x6237 | ISR input presence / external output step in flight; pending output uses the latter as its source |
 | 0x6238 / 0x623c / 0x6240 | Low / accepted / consumed COUNT stamps |
 | 0x6244–0x6253 | Cycle-based timing constants |
 | 0x6254 / 0x625a | Last physical output stamp / valid flag |
@@ -286,10 +286,11 @@ cycles/32 at `0x6032`/`0x6034`, and tail-calls the real pulse-high routine
 with R8–R12 saved around the measurement. It also times the INTERNAL beat,
 which has no accepted edge: `clock_settle` stamps `0x62f0` when the internal
 beat claims the step, and the shim publishes the minimum and maximum of that
-claim-to-gate instead. `0x6236` selects which pair the cells hold, and a
-change of source clears them — without that the bench procedure, which has a
-key held and therefore arping before the clock starts, would leave internal
-samples inside the external maxima that follow.
+claim-to-gate instead. At each gate, `0x6237` identifies the step
+being measured; `0x6038` remembers which source the published pair describes.
+A gate from a different source clears the pair — without that the bench
+procedure, which has a key held and therefore arping before the clock starts,
+would leave internal samples inside the external maxima that follow.
 
 Those two cells go out on the telemetry frame's scan-component fields, and
 `tools/clock_latency_report.py` decodes a readout CSV into milliseconds. It
@@ -783,7 +784,7 @@ no phase to be caught out by: one writer, at the moment the step is claimed.
 is the EXTERNAL settle's answer, and the internal beat shares the fast path.
 Deciding before staging for it transferred whatever was already in the buffer
 and spent the whole RC interval on the note already out, leaving the new one
-none. The fast trigger reads the SOURCE at 0x6236 now: an external claim 2
+none. That revision read the SOURCE at 0x6236: an external claim 2
 decides first, an internal claim 2 keeps the original order — stage, transfer,
 then size the wait from that transfer. `settleStartsAtTheTransfer()` could not
 see this because it checked the target and gate timestamps and never the
@@ -809,6 +810,39 @@ passing vacuously in four of six configs because their fixture repeats the
 step pitch, and the pool fall-through check matched only literal `emit("...")`
 branches, which left every computed branch in the clock caves — most of them —
 invisible to it.
+
+### Pending steps keep their source across input changes
+
+GPIO presence (`0x6236`) can change while an internal step is waiting. The
+FIFO guard preserves its note, but reading presence again at phase A used
+the external settle for that internal note. An edge during phase B also made
+the scan restore an external held-pitch cache that the internal step had never
+captured. These were two ways to lose the internal RC interval.
+
+Pending output now uses **external step ownership at `0x6237`** throughout:
+claim creation, phase A, deadline selection, scan restoration and diagnostic
+attribution. `clock_pulse` sets it before selecting an external output step;
+completion clears it. Internal steps leave it zero, and restart/transport
+cancellation clears both it and the claim. The ISR never writes it. Input
+presence still changes immediately to suppress subsequent internal advances,
+but a queued edge cannot change the source of a beat already selected.
+
+No extra RAM or instructions are needed: the source loads use the existing
+owner byte. The COUNT deadline and configured RC intervals are unchanged.
+
+`anEdgeWaitsForAPendingStep()` now tests external arrival both before phase A
+and during the settle, at 25 and 60 MHz. It checks the actual transferred
+pitch, intervening scans/flushes, the full internal RC wait, diagnostic source,
+and eventual completion of the queued external edge.
+
+The held-pitch regression also now compares against the actual last gate's
+DAC value. Its former equality guard compared total outputs, including four
+warm-up gates, against a counter starting at zero, so it could never fail.
+It now runs 20-beat 200 Hz streams at three scan phases and two CPU timebases,
+checks pitch at scans and pending flushes, and requires changing pitches and
+claimed scans. External-settle builds deliberately send pitch early and keep
+the separate configured-settle test. Both repaired regressions were run on
+known-bad images to verify that their assertions fail for the original faults.
 
 ### What it measures, in the model
 

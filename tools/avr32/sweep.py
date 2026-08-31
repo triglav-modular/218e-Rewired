@@ -189,10 +189,11 @@ def audit_call_pools(image_path) -> list[str]:
 # every deadline build and a bug fix for every latch one; and again when the
 # audit of that change found the held pitch published from the wrong context,
 # the internal beat's settle spent on the wrong pitch, and an external edge
-# able to overwrite a pending internal step.
+# able to overwrite a pending internal step; and again when pending output
+# switched from GPIO presence to stable step ownership across clock takeover.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "902d8a7036109a4805b60515a623b3cf67a23982a5ad541d2d03624a6311b105",
+    "historical_config": "a64eee5104c1d8c92fc4312fae327b46e395881a0b686a8a0cfa56a4e67918fa",
 }
 
 

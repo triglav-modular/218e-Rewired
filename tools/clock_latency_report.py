@@ -4,7 +4,8 @@
 The `diagnostics.clock_latency` build repurposes the two scan-component
 telemetry fields, which the readout tool labels with their pressure names.
 What they carry depends on the source the instrument was running, because
-RAM 0x6236 selects it and a CHANGE of source clears both cells:
+the step owner at RAM 0x6237 selects the sample at gate time. RAM 0x6038
+remembers the published source; a gate from a different source clears both cells:
 
     external clock present      internal beat (no clock patched)
     scan_component_a = MAX      scan_component_a = MIN claim-to-gate
@@ -163,16 +164,17 @@ def report_window(series, stamps, rows: int, internal: bool, period_ms,
     """Validity of the capture, and which frames the figures are drawn from.
 
     A reset is not automatically a fault, and this is the whole subtlety.  The
-    cells clear when RAM 0x6236 changes, which is a DESIGNED behaviour: the
-    bench procedure has a key held before the clock is started, so an external
-    capture legitimately begins with an internal pre-roll and clears once when
+    cells clear when a gate belongs to a different source, which is a
+    DESIGNED behaviour: the bench procedure has a key held before the clock
+    is started, so an external capture legitimately begins with an internal
+    pre-roll and clears once when
     the clock arrives.  What follows that one reset is the population being
     measured.  During the pre-roll cell A is a MINIMUM, so decreases there are
     legitimate and must not be counted as resets.
 
     An INTERNAL capture has no such transition -- nothing should change the
-    source -- so any reset there means 0x6236 was flapping and the run is
-    contaminated.
+    source -- so any reset there means the measurement population changed
+    and the run is contaminated.
 
     All of this is inference from value movement; the frame carries no source
     field.  --external-start names the frame the clock was patched at and

@@ -996,9 +996,9 @@ FACTORY_CELLS = [
     (0x38A0, 0x38AE, "state+0x340: latch, mode and last arp key"),
     (0x38B0, 0x38B2, "state+0x350: transpose"),
     # The pitch the 1 kHz flush transfers.  Declared now that a patch names it
-    # by an address the map can see: clock_output republishes it every
-    # unclaimed scan and puts it back under a claim, so a held beat's gate and
-    # its pitch leave on one transfer.
+    # by an address the map can see: clock_settle captures it at an external
+    # claim and clock_output restores it until completion, so a held beat's
+    # gate and pitch leave on one transfer.
     (0x38B8, 0x38BA, "state+0x358: DAC slot 2, the pitch"),
 ]
 

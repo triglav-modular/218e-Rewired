@@ -4251,7 +4251,7 @@ function assembleProgram() {
         // an outlier, so the same two boundaries are now published as
         // maxima.
         //
-        // 0x6236 selects which source the two cells describe, and a CHANGE
+        // 0x6237 identifies the step being gated, and a CHANGE
         // of source clears them.  Without that the published figures mix two
         // populations in the ordinary bench procedure: the protocol has the
         // owner hold a key before starting the clock, so the arp beats
@@ -4268,7 +4268,7 @@ function assembleProgram() {
             emit("MOV R7,SP");
             emit("STM --SP,R8,R9,R10,R11,R12");
             emit("MOV R10,0x6234");
-            emit("LD.UB R8,R10[0x2]");      // 0x6236 input present
+            emit("LD.UB R8,R10[0x3]");      // 0x6237 external step in flight
             // Which source the published cells currently describe.  0x6038 is
             // the old running-sum word, freed when this shim stopped
             // publishing means, and the startup initialiser already clears it.
@@ -4385,7 +4385,7 @@ function assembleProgram() {
             // here independently of the external path that motivated it.
             //
             // Published in the same two cells: no external capture and no
-            // internal capture can be running at once, since 0x6236 selects
+            // internal capture can be running at once, since 0x6237 selects
             // between them, and the reader is told which one it is holding.
             // 0x6032 becomes the MINIMUM and 0x6034 the MAXIMUM, so their
             // difference is the spread the owner is chasing rather than a
@@ -6651,7 +6651,7 @@ function assembleProgram() {
             // Internal beats are left alone: their settle is a deliberate
             // wait for the CV to travel ahead of the trigger.
             padTo(0x8001c690);
-            emit("MOV R8,0x6236");
+            emit("MOV R8,0x6237");
             emit("LD.UB R8,R8[0x0]");
             emit("CP.W R8,0x0");
             emit("BR{eq} 0x8001c688");
@@ -6749,7 +6749,7 @@ function assembleProgram() {
         // measures from the transfer it is waiting on.  With no settle
         // configured for this source there is nothing to send ahead of the
         // gate's own transfer, and the leg is simply "now".
-        emit("MOV R9,0x6236");
+        emit("MOV R9,0x6237");
         emit("LD.UB R9,R9[0x0]");
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x8001be08");      // the internal beat: RC leg only
@@ -6999,7 +6999,8 @@ function assembleProgram() {
             // pass when the target turns out to be already spent - computes
             // and stages it on the gate's own transfer, as claim 1 always did.
             //
-            // The SOURCE has to be read here, not assumed from the build.
+            // The STEP SOURCE is read here, not assumed from the build or
+            // taken from input presence, which can change during the claim.
             // holdPitchToGate() is the EXTERNAL settle's answer, and the
             // internal beat shares this path with its own settle: deciding
             // first for that one transferred the pitch still in the buffer
@@ -7009,7 +7010,7 @@ function assembleProgram() {
             // wait from that transfer.
             emit("CP.W R0,0x2");
             emit(StringFormat("BR{ne} 0x%x", fastCompute));
-            emit("MOV R8,0x6236");
+            emit("MOV R8,0x6237");
             emit("LD.UB R8,R8[0x0]");
             emit("CP.W R8,0x0");
             emit(StringFormat("BR{eq} 0x%x", fastCompute));
@@ -7711,17 +7712,17 @@ function assembleProgram() {
         emit("MOV R8,0x60ee");
         emit(StringFormat("MOV R9,0x%x",
             number("gate_settle_scans", 1, 0, 3) + 1));
-        emit("MOV R10,0x6236");
+        emit("MOV R10,0x6237");
         emit("LD.UB R10,R10[0x0]");
         emit("CP.W R10,0x0");
-        // No external clock: the internal beat and a bare keyboard note both
+        // No external step in flight: an internal beat and a bare key both
         // arrive here.  The tail at 0x8001c780 sorts them out; without the
         // two-phase claim built, both go straight to the scan as before.
         if (twoPhaseBeat()) emit(StringFormat("BR{eq} 0x%x", settleInternal));
         else emit(StringFormat("BR{eq} 0x%x", settleStore));
         emit(StringFormat("MOV R9,0x%x",
             number("clock_settle_scans", 0, 0, 3) + 1));
-        // A clock is present, so the fast trigger takes this step off the
+        // An external step owns this output, so the fast trigger takes it off the
         // scan.  Both claims are set; the first context to reach the step
         // clears the other.  A settle asked for in SCANS no longer hands the
         // step back to the scan - the flush stages the pitch and holds the
