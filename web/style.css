@@ -401,7 +401,7 @@ h1 {
 .chlog-body {
   display: block;
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 18px);
   /* Centred on the pill, which only script can do: the offset depends on where
      the sentence ends, and CSS centring on the pill would hang a 420 panel
      over the edge of a phone.  centreChangelog() writes the left, clamped to
