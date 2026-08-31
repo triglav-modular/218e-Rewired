@@ -180,10 +180,13 @@ def audit_call_pools(image_path) -> list[str]:
 # behaviour changed; and again when that diagnostic went from publishing
 # running means to publishing maxima and learned to time the internal beat,
 # which is once more a diagnostic-only change to a shipped image that carries
-# none of it.
+# none of it; and again when the deadline moved onto an absolute COUNT target
+# with the RC settle measured from the actual DAC transfer and the main-loop
+# wrapper servicing pending output around the dispatcher, which is a real
+# behavioural change to every clocked build.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "4d869cd023770382526c3c1ee9144b801e11f0c8335e29bd52e44990c5ea2caf",
+    "historical_config": "76169ea70c94ee54c1e2bbf77a7725b09a599a0975bceefb1027490d4a4aaa7f",
 }
 
 
