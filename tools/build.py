@@ -170,9 +170,32 @@ def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
     for index, token in enumerate(pitches, 1):
         token = token.split()[0]
         if "." in token:
-            value = float(token)
+            try:
+                value = float(token)
+            except ValueError:
+                raise ValueError(f"{path.name}: degree {index} is {token!r}, "
+                                 "which is not a number") from None
         else:
-            value = 1200.0 * math.log2(float(Fraction(token)))
+            # The .scl format: "Ratios are written with a slash, and only one",
+            # an integer with neither slash nor period is that integer over 1,
+            # and "negative ratios are meaningless and should give a read
+            # error".  Spelled out rather than handed to Fraction, which reads
+            # "1/2/3" as an error with a message about literals and left the
+            # browser - which read it as 1/2 - free to build what this refused.
+            parts = token.split("/")
+            ratio = None
+            if len(parts) <= 2 and all(p.lstrip("+-").isdigit() for p in parts):
+                try:
+                    ratio = (Fraction(int(parts[0]), int(parts[1]))
+                             if len(parts) == 2 else Fraction(int(parts[0])))
+                except (ValueError, ZeroDivisionError):
+                    ratio = None
+            if ratio is None or ratio <= 0:
+                raise ValueError(
+                    f"{path.name}: degree {index} is {token!r} — a ratio is one "
+                    "whole number, or two separated by a single slash, and must "
+                    "be above zero")
+            value = 1200.0 * math.log2(float(ratio))
         # float() takes "1.0e999" as infinity without complaint, and every
         # check below is a comparison that an infinity or a NaN answers
         # meaninglessly.
@@ -251,13 +274,16 @@ def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
         return list(range(degree_count)), formal
 
     # Blank entries mean unmapped, so the mapping is read WITH its blank lines
-    # - only the header skipped them.
-    entries = raw[index:]
-    if len(entries) < size:
-        raise ValueError(
-            f"{path.name}: map size is {size}, found {len(entries)} entries")
+    # - only the header skipped them.  The .kbm format also says: "At the end,
+    # unmapped keys may be left out."  A map may
+    # stop short of its own size and the positions after it are unmapped, so a
+    # So a map may stop short of its own size: that is a legal file, not a
+    # truncated one, and refusing it turned away maps Scala itself reads.  The
+    # tail fills from the nearest mapped position, like any other gap.
+    entries = raw[index:][:size]
+    entries += [""] * (size - len(entries))
     degrees: list[int | None] = []
-    for position, line in enumerate(entries[:size]):
+    for position, line in enumerate(entries):
         token = line.strip()
         if not token or token[0] in "xX":
             degrees.append(None)
@@ -366,29 +392,82 @@ def tuning_table(cents: list[float], base: int, per_octave: int,
 # notes the player can sound together.
 REAL_KEYS = 29
 
+# The factory's trn transposes by ([state+0x6b] - 2) periods: nine positions,
+# -2 to +6.  A latched note keeps the transpose it was pressed at, so two
+# sounding notes can sit up to eight periods apart, and the arp's own octave
+# randomiser adds one more either way.
+#
+# The exact width stops mattering well before that.  A transpose only brings
+# two keys together while it is smaller than the span of the table itself;
+# past that every pair is further apart than it started, so widening the sweep
+# cannot lower the answer.  Measured: every shipped tuning and every fixture
+# below gives the same number at +-2 as at +-32.  Eight is chosen to cover the
+# instrument's real range with room to spare, not because the edge is delicate.
+TRANSPOSE_STEPS = range(-8, 9)
 
-def min_key_spacing(tables: dict[str, list[int]]) -> int | None:
-    """How close two DIFFERENT pitches ever get, in DAC units, over every slot.
 
-    Measured over SORTED DISTINCT pitches, not over physical neighbours: a
-    .kbm is free to reorder the degrees, so the two keys that land closest in
-    pitch need not be adjacent on the keyboard - and pitch is all the latch's
-    match compares.  Sorting also collapses the keys a map deliberately doubles
-    up onto one value, so those stay one note on purpose instead of reading as
-    a zero-unit gap.
+def ideal_key_pitches(cents: list[float], degrees: list[int] | None,
+                      period: float, offset: float) -> list[float]:
+    """The 29 real keys' pitches in cents, before the table quantises them."""
+    if degrees is None:
+        return [period * (k // 12) + cents[k % 12] + offset for k in range(REAL_KEYS)]
+    return [key_pitch(cents, degrees, period, k) + offset for k in range(REAL_KEYS)]
+
+
+def min_key_spacing(slots) -> int | None:
+    """How close two DIFFERENT sounding pitches ever get, in DAC units.
+
+    `slots` holds one (ideal, table, period_cents, period_units) per tuning
+    slot: `ideal` the real keys' unquantised pitches from ideal_key_pitches,
+    `table` the key table actually emitted.
+
+    Every pair is compared at every transpose difference the instrument can put
+    between them, not just at the same one.  The latch matches
+    `table[key] + transpose`, and a latched note keeps the transpose it was
+    pressed at, so a map can be comfortably spaced across the keyboard and
+    still put two notes within the tolerance once one of them is an octave
+    away.  Reading only the untransposed table missed that entirely.
+
+    A pair whose IDEAL pitches coincide under some transpose is the same note -
+    an octave-equivalent alias, or a degree a map deliberately doubles up - and
+    is skipped.  That test is made on the cents, not on the emitted units,
+    because rounding can leave such a pair a unit or two apart in the table;
+    absorbing exactly that is what the tolerance is for.
 
     None when no slot carries a key table, which is the factory temperament's
     ~40-unit semitone.
     """
     closest = None
-    for name, table in tables.items():
-        if not name.startswith("tuning_slot"):
-            continue
-        pitches = sorted(set(table[:REAL_KEYS]))
-        for a, b in zip(pitches, pitches[1:]):
-            if closest is None or b - a < closest:
-                closest = b - a
+    for ideal, table, period_cents, period_units in slots:
+        for a, pitch_a in enumerate(ideal):
+            for step in TRANSPOSE_STEPS:
+                shifted = pitch_a + step * period_cents
+                emitted = table[a] + step * period_units
+                for b, pitch_b in enumerate(ideal):
+                    if abs(shifted - pitch_b) < 1e-9:
+                        continue          # the same note, on purpose
+                    gap = abs(emitted - table[b])
+                    if closest is None or gap < closest:
+                        closest = gap
     return closest
+
+
+# The pitch path clamps to the 12-bit DAC, so a table entry above the ceiling
+# is a flat note rather than a wrong one.  Below zero is different in kind: the
+# entry is stored as a halfword and the latch match and the pitch ranking both
+# read it back with LD.UH, so -39 becomes 65497 and they compare a pitch 65,536
+# units away from the one the instrument sounds.
+def check_table_range(name: str, table: list[int]) -> None:
+    low = min(table)
+    if low >= 0:
+        return
+    raise ValueError(
+        f"{name}: key table entry {low} is below zero — the anchor has pushed "
+        f"the bottom of this scale under the instrument's lowest pitch.  The "
+        f"firmware reads the table unsigned, so that entry would come back as "
+        f"{low & 0xFFFF} and the latch would compare a note that never sounds. "
+        f"Use a scale or mapping whose keys stay above the bottom, or an "
+        f"anchor key the map does not carry more than an octave above it.")
 
 
 def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
@@ -1363,6 +1442,10 @@ def main() -> None:
     # octave build already has.
     tuning["base_units"] = max(periods) + 1
     periods = set()
+    # One (ideal, table, period_cents, period_units) per slot that carries a
+    # scale, for the latch-spacing check below.  The factory temperament is not
+    # among them: it is copied bit-exact and its semitones are ~40 units apart.
+    spacing_slots = []
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             periods.add(tuning["units_per_octave"])
@@ -1399,19 +1482,28 @@ def main() -> None:
         # headroom the octave switch needs.  Degree 0 keeps the bottom key.
         if abs((period or 1200.0) - 1200.0) > 0.001:
             offset = 0.0
-        tables[f"tuning_slot{index}"] = tuning_table(
+        table = tuning_table(
             cents, tuning["base_units"], tuning["units_per_octave"], offset,
             degrees, period or 1200.0
         )
-        periods.add(int(math.floor(
-            (period or 1200.0) * tuning["units_per_octave"] / 1200 + 0.5)))
+        try:
+            check_table_range(path.name, table)
+        except ValueError as error:
+            raise SystemExit(str(error))
+        tables[f"tuning_slot{index}"] = table
+        period_units = int(math.floor(
+            (period or 1200.0) * tuning["units_per_octave"] / 1200 + 0.5))
+        periods.add(period_units)
+        spacing_slots.append((
+            ideal_key_pitches(cents, degrees, period or 1200.0, offset),
+            table, period or 1200.0, period_units))
         anchor = (NOTE_NAMES[reference_key] if abs((period or 1200.0) - 1200.0) <= 0.001
                   else "bottom key")
         shape = ("" if degrees is None else
                  f", {Path(map_name).name}: {len(degrees)} keys per octave")
         print(f"  tuning slot {index}: {path.name}"
               f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
-    cfg["_min_key_spacing"] = min_key_spacing(tables)
+    cfg["_min_key_spacing"] = min_key_spacing(spacing_slots)
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that

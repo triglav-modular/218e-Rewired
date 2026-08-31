@@ -113,6 +113,34 @@ def test_scala() -> None:
            lambda: B.parse_scala(tmp("! t\nt\n 12x\n" + twelve, "_cnt.scl")),
            "not a number")
 
+    # The .scl format's own examples of valid pitch lines: a cents value may
+    # end in the period, an integer with no slash is that integer over 1, and
+    # "anything after a valid pitch value should be ignored".
+    lenient = B.parse_scala(tmp(
+        "! t\nt\n 12\n 100.\n 200.0 cents\n 300.0 C#\n 400.0\n 500.0\n"
+        " 600.0\n 700.0\n 800.0\n 900.0\n 1000.0\n 1100.0\n 2\n",
+        "_lenient.scl"), mapped=True)
+    check("the format's own valid pitch lines are read",
+          abs(lenient[1] - 100.0) < 1e-9 and abs(lenient[3] - 300.0) < 1e-9
+          and abs(lenient[12] - 1200.0) < 1e-9, lenient)
+
+    def ratio(token: str) -> "Path":
+        body = "".join(f" {100.0 * k}\n" for k in range(1, 12))
+        return tmp(f"! t\nt\n 12\n{body} {token}\n", "_ratio.scl")
+
+    # "Ratios are written with a slash, and only one."  The browser used to
+    # divide the first two parts and ignore the rest, so a file tools/build.py
+    # refused outright built an ordinary fifth on the page.
+    raises("a ratio with two slashes is refused",
+           lambda: B.parse_scala(ratio("3/2/9"), mapped=True), "single slash")
+    # "Negative ratios are meaningless and should give a read error."
+    raises("a negative ratio is refused",
+           lambda: B.parse_scala(ratio("-2/1"), mapped=True), "above zero")
+    raises("a zero ratio is refused",
+           lambda: B.parse_scala(ratio("0/1"), mapped=True), "above zero")
+    raises("a ratio that is not whole numbers is refused",
+           lambda: B.parse_scala(ratio("2/x"), mapped=True), "single slash")
+
 
 def test_keyboard_maps() -> None:
     print("keyboard mapping (.kbm)")
@@ -147,8 +175,15 @@ def test_keyboard_maps() -> None:
 
     raises("formal octave outside the scale is refused",
            lambda: B.parse_kbm(kbm(" 0\n" * 12, formal=99), twelve), "must name one")
-    raises("a short map is refused",
-           lambda: B.parse_kbm(kbm(" 0\n 1\n"), twelve), "found 2 entries")
+    # "At the end, unmapped keys may be left out" - the .kbm format allows a
+    # map to stop short of its own size, and the tail is unmapped like any
+    # other gap.  Both builders used to refuse these, and did not even agree on
+    # how many entries they had found.
+    short, _ = B.parse_kbm(kbm(" 0\n 1\n"), twelve)
+    check("a map may stop early, the rest unmapped",
+          short == [0, 1] + [1] * 10, short)
+    raises("but a map with nothing in it is still refused",
+           lambda: B.parse_kbm(kbm(""), twelve), "every position is unmapped")
     raises("an all-unmapped map is refused",
            lambda: B.parse_kbm(kbm(" x\n" * 12), twelve), "every position is unmapped")
     raises("a degree outside the scale is refused",
@@ -193,66 +228,134 @@ def test_keyboard_maps() -> None:
 
 
 def test_latch_spacing() -> None:
-    """The latch's safety gap is measured over pitches, not over key numbers.
+    """The latch's safety gap, over pitches and over transposes.
 
-    The latch calls two notes the same when their pitches land within the
-    match tolerance, so the number that has to clear the tolerance is the
-    closest any two DIFFERENT pitches get.  Reading it off physically adjacent
-    keys held only while the map ran up the scale in order: a .kbm that
-    interleaves the degrees leaves neighbours far apart and puts the real
-    collision between keys at opposite ends of the keyboard.
+    The latch calls two notes the same when `table[key] + transpose` lands
+    within the match tolerance, so the number that has to clear the tolerance
+    is the closest any two DIFFERENT sounding pitches get.  Two readings of
+    that were wrong in turn: physically adjacent keys, which a .kbm may
+    interleave; and then the untransposed table, which misses a map that is
+    comfortably spaced until one of its notes is latched an octave away.
     """
     print("latch key spacing")
 
-    def scale(count: int) -> "Path":
-        body = "".join(f" {k * 1200 / count:.10f}\n" for k in range(1, count + 1))
-        return tmp(f"! t\nt\n {count}\n!\n" + body, f"_{count}tet.scl")
+    def scale(count: int, span: float = 1200.0) -> "Path":
+        body = "".join(f" {span * k / count:.10f}\n" for k in range(1, count + 1))
+        return tmp(f"! t\nt\n {count}\n!\n" + body, f"_{count}_{int(span)}.scl")
 
-    def kbm(order: list[int]) -> "Path":
+    def kbm(order: list[int], formal: int | None = None) -> "Path":
+        formal = len(order) if formal is None else formal
         return tmp(f"! t\n {len(order)}\n 0\n 127\n 60\n 69\n 440.0\n"
-                   f" {len(order)}\n" + "".join(f" {d}\n" for d in order), "_ord.kbm")
+                   f" {formal}\n" + "".join(f" {d}\n" for d in order), "_ord.kbm")
+
+    def spacing(cents, degrees, period, offset=0.0, base=485, per=484):
+        table = B.tuning_table(cents, base, per, offset, degrees, period)
+        units = int(math.floor(period * per / 1200 + 0.5))
+        return B.min_key_spacing(
+            [(B.ideal_key_pitches(cents, degrees, period, offset),
+              table, period, units)]), table
 
     cents = B.parse_scala(scale(72), mapped=True)
 
     # Degrees 0,36,1,37,... : two keys apart on the keyboard is half an octave,
     # but keys 0 and 2 are one 72-TET step - 6 units - from each other.
     order = [d for k in range(36) for d in (k, k + 36)]
-    degrees, formal = B.parse_kbm(kbm(order), cents)
-    shuffled = B.tuning_table(cents, 485, 484, 0.0, degrees, cents[formal])
-    adjacent = min(abs(b - a) for a, b in zip(shuffled[:29], shuffled[1:29]) if b != a)
+    degrees, formal = B.parse_kbm(kbm(order, 72), cents)
+    gap, table = spacing(cents, degrees, cents[formal])
+    adjacent = min(abs(b - a) for a, b in zip(table[:29], table[1:29]) if b != a)
     check("a reordered map hides the collision from adjacent keys",
           adjacent == 235, adjacent)
-    check("the distinct-pitch gap finds it anyway",
-          B.min_key_spacing({"tuning_slot0": shuffled}) == 6,
-          B.min_key_spacing({"tuning_slot0": shuffled}))
+    check("the distinct-pitch gap finds it anyway", gap == 6, gap)
+
+    # Comfortably spaced across the keyboard - 13 units at the closest - until
+    # key 0 is latched an octave up, where it lands 6 units from key 1.
+    sparse = [0, 71] + list(range(2, 56, 2))
+    degrees, formal = B.parse_kbm(kbm(sparse, 72), cents)
+    # With the anchor the build actually applies: it moves the whole table, and
+    # the rounding it leaves behind is part of where the two notes land.
+    anchored = B.anchor_offset(cents, 9, degrees, cents[formal])
+    gap, table = spacing(cents, degrees, cents[formal], anchored)
+    untransposed = min(b - a for a, b in zip(sorted(set(table[:29])),
+                                             sorted(set(table[:29]))[1:]))
+    check("a sparse map looks safe until it is transposed",
+          untransposed == 13, untransposed)
+    check("the transpose sweep finds the collision", gap == 6, gap)
+    check("and it is the octave that causes it",
+          abs(table[0] + 484 - table[1]) == 6, (table[0], table[1]))
 
     # In order, both readings agree - this is the case that always worked.
-    degrees, formal = B.parse_kbm(kbm(list(range(72))), cents)
-    ordered = B.tuning_table(cents, 485, 484, 0.0, degrees, cents[formal])
+    degrees, formal = B.parse_kbm(kbm(list(range(72)), 72), cents)
     check("an in-order map still measures the same gap",
-          B.min_key_spacing({"tuning_slot0": ordered}) == 6,
-          B.min_key_spacing({"tuning_slot0": ordered}))
+          spacing(cents, degrees, cents[formal])[0] == 6)
 
-    # A map is allowed to sound one pitch from several keys.  Those are one
-    # note on purpose, so they must not read as a zero-unit gap that no
-    # tolerance could ever clear.
+    # A map is allowed to sound one pitch from several keys, and a scale is
+    # allowed to repeat at the octave.  Both are the same note on purpose and
+    # must not read as a gap no tolerance could clear - not even after the
+    # rounding that an eight-period transpose can accumulate.
     twelve = B.parse_scala(REPO / "tunings" / "12TET.scl", mapped=True)
     doubled = [d for k in range(12) for d in (k, k)][:12]
-    degrees, formal = B.parse_kbm(kbm(doubled), twelve)
-    aliased = B.tuning_table(twelve, 485, 484, 0.0, degrees, twelve[formal])
+    degrees, formal = B.parse_kbm(kbm(doubled, 12), twelve)
     check("keys deliberately doubled up are one note, not a zero gap",
-          B.min_key_spacing({"tuning_slot0": aliased}) == 40,
-          B.min_key_spacing({"tuning_slot0": aliased}))
+          spacing(twelve, degrees, twelve[formal])[0] == 40)
+    check("and a plain octave scale keeps its semitone",
+          spacing(twelve, None, 1200.0)[0] == 40)
 
-    # Only the 29 keys the instrument has: entries 29..31 exist because the
-    # table is 32 long and no key reaches them.
-    padded = list(range(29)) + [29, 29, 29]
-    check("the three unreachable entries are not measured",
-          B.min_key_spacing({"tuning_slot0": padded}) == 1,
-          B.min_key_spacing({"tuning_slot0": padded}))
+    # Every tuning the repo ships still clears the default tolerance of 8.
+    for name, map_name in (("12TET.scl", None),
+                           ("Sabat II (C-rooted).scl", None),
+                           ("5-Limit JI with Septimal 7th.scl", None),
+                           ("24TET.scl", "24TET-full.kbm"),
+                           ("diatonic7.scl", "diatonic7.kbm"),
+                           ("BohlenPierce.scl", "BohlenPierce.kbm")):
+        shipped = B.parse_scala(REPO / "tunings" / name, mapped=True)
+        degrees = period = None
+        if map_name:
+            degrees, formal = B.parse_kbm(REPO / "tunings" / map_name, shipped)
+            period = shipped[formal]
+        else:
+            period = shipped[12]
+        offset = (0.0 if abs(period - 1200.0) > 0.001
+                  else B.anchor_offset(shipped, 9, degrees, period))
+        units = int(math.floor(period * 484 / 1200 + 0.5))
+        gap, _ = spacing(shipped, degrees, period, offset, units + 1)
+        check(f"{name} clears the tolerance", gap > 8, gap)
 
     check("no key table at all leaves the factory semitone",
-          B.min_key_spacing({"pitch_remap": [0, 1, 2]}) is None)
+          B.min_key_spacing([]) is None)
+
+
+def test_table_range() -> None:
+    """A key table entry below zero is read back as a huge one.
+
+    The anchor pins one key to its 12-TET pitch.  A map with few degrees per
+    period carries the anchor key more than an octave above the bottom, so the
+    shift needed to pin it drags the bottom of the table under zero.  The
+    entries are halfwords, and the latch match and the pitch ranking both read
+    them with LD.UH: -39 comes back as 65497, and they compare a pitch the
+    instrument can never sound.
+    """
+    print("key table range")
+
+    pentatonic = tmp("Minor pentatonic\n5\n300.0\n500.0\n700.0\n1000.0\n1200.0\n",
+                     "_pent.scl")
+    linear = tmp("! t\n 0\n 0\n 127\n 60\n 69\n 440.0\n 5\n", "_pent.kbm")
+    cents = B.parse_scala(pentatonic, mapped=True)
+    degrees, formal = B.parse_kbm(linear, cents)
+    offset = B.anchor_offset(cents, 9, degrees, cents[formal])
+    check("the anchor drags a five-degree map below the bottom",
+          round(offset) == -1300, offset)
+    table = B.tuning_table(cents, 485, 484, offset, degrees, cents[formal])
+    check("which puts a negative entry in the table", table[0] == -39, table[:3])
+    check("that the firmware would read as 65497", (table[0] & 0xFFFF) == 65497)
+    raises("so the build refuses it",
+           lambda: B.check_table_range("_pent.scl", table), "below zero")
+
+    # The ceiling is not the same kind of fault: the pitch path clamps there,
+    # so a high entry is a flat note rather than a note 65,536 units away.
+    B.check_table_range("high", [4095, 5000, 60000])
+    check("a table above the DAC ceiling is left to the clamp", True)
+    B.check_table_range("zero", [0] + [40 * k for k in range(1, 32)])
+    check("and zero itself is a legal entry", True)
 
 
 def test_tables(cfg: dict) -> None:
@@ -1308,6 +1411,7 @@ def main() -> None:
     test_scala()
     test_keyboard_maps()
     test_latch_spacing()
+    test_table_range()
     test_tables(cfg)
     test_resolution(cfg)
     test_blend(cfg)

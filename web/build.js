@@ -6,8 +6,15 @@
 var WEBBUILD = (function () {
     'use strict';
 
+    // One record per slot that carries a scale, for the latch-spacing check:
+    // { ideal, table, periodCents, periodUnits }.  Collected while the tables
+    // are built, because the check needs the unquantised pitches too and this
+    // is the only place they exist.  Reset per build, never accumulated.
+    var spacingSlots = [];
+
     function tablesFor(cfg, factoryMemory) {
         var tables = {};
+        spacingSlots = [];
         tables.pressure_curve = BUILDLIB.pressureCurve(
             cfg.pressure.curve.span, cfg.pressure.curve.onset_db,
             cfg.pressure.curve.onset_fade);
@@ -32,9 +39,19 @@ var WEBBUILD = (function () {
                 // pitch says nothing about a scale that has no octave, and
                 // spends the headroom the octave switch needs.
                 if (Math.abs(period - 1200.0) > 0.001) offset = 0.0;
-                tables['tuning_slot' + index] = BUILDLIB.tuningTable(
-                    scale.cents, BUILDLIB.baseUnits(cfg), cfg.tuning.units_per_octave,
+                var perOctave = cfg.tuning.units_per_octave;
+                var table = BUILDLIB.tuningTable(
+                    scale.cents, BUILDLIB.baseUnits(cfg), perOctave,
                     offset, scale.degrees, period);
+                BUILDLIB.checkTableRange(slot.name, table);
+                tables['tuning_slot' + index] = table;
+                spacingSlots.push({
+                    ideal: BUILDLIB.idealKeyPitches(
+                        scale.cents, scale.degrees, period, offset),
+                    table: table,
+                    periodCents: period,
+                    periodUnits: BUILDLIB.floorHalf(period * perOctave / 1200)
+                });
             }
         });
         var bank = BUILDLIB.patternBank(cfg);
@@ -275,7 +292,7 @@ var WEBBUILD = (function () {
         // than in the editor: a fine keyboard mapping can put two notes closer
         // together than the latch can tell apart, and the image that comes out
         // is valid in every other way - nothing downstream would catch it.
-        BUILDLIB.checkLatchSpacing(cfg, tables);
+        BUILDLIB.checkLatchSpacing(cfg, spacingSlots);
         var flags = flagsFor(cfg);
         var numbers = BUILDLIB.computeNumbers(cfg);
         numbers.init_marker = BUILDLIB.initMarker(flags.blocks, flags.features, numbers, tables);

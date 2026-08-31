@@ -209,8 +209,25 @@ var BUILDLIB = (function () {
             // CLI gives.
             if (tok.indexOf('.') >= 0) value = Number(tok);
             else {
-                var p = tok.split('/');
-                var ratio = p.length > 1 ? Number(p[0]) / Number(p[1]) : Number(p[0]);
+                // The .scl format: "Ratios are written with a slash, and only
+                // one", an integer with neither is that integer over 1, and
+                // "negative ratios are meaningless and should give a read
+                // error".  This used to divide the first two parts and drop
+                // the rest, so "3/2/9" built a fifth here while tools/build.py
+                // refused the file outright.
+                var parts = tok.split('/');
+                var whole = parts.length <= 2 && parts.every(function (t) {
+                    return /^[+-]?[0-9]+$/.test(t);
+                });
+                var ratio = whole
+                    ? (parts.length > 1 ? Number(parts[0]) / Number(parts[1])
+                                        : Number(parts[0]))
+                    : NaN;
+                if (!(ratio > 0) || !isFinite(ratio)) {
+                    throw new Error(name + ': degree ' + (index + 1) + ' is ' +
+                        JSON.stringify(tok) + ' — a ratio is one whole number, ' +
+                        'or two separated by a single slash, and must be above zero');
+                }
                 value = 1200.0 * Math.log(ratio) / Math.LN2;
             }
             // Every check below this is a comparison, and every comparison
@@ -268,22 +285,50 @@ var BUILDLIB = (function () {
     // the table is 32 long, but no key reaches them.
     var REAL_KEYS = 29;
 
-    // How close two DIFFERENT pitches ever get, in DAC units, over every slot;
-    // null when no slot carries a key table.  Mirrors min_key_spacing in
-    // tools/build.py, measured over SORTED DISTINCT pitches rather than over
-    // physical neighbours - a .kbm may reorder the degrees, and pitch is all
-    // the latch's match compares.  Sorting also collapses the keys a map
-    // deliberately doubles up onto one value, so those stay one note on
-    // purpose instead of reading as a zero-unit gap.
-    function minKeySpacing(tables) {
+    // The factory's trn transposes by ([state+0x6b] - 2) periods: nine
+    // positions, -2 to +6.  A latched note keeps the transpose it was pressed
+    // at, so two sounding notes can sit up to eight periods apart, and the
+    // arp's octave randomiser adds one more either way.  The exact width stops
+    // mattering well before that: a transpose only brings two keys together
+    // while it is smaller than the span of the table, so widening the sweep
+    // cannot lower the answer.  Same value in tools/build.py, and every
+    // shipped tuning measures the same at +-2 as at +-32.
+    var TRANSPOSE_STEPS = 8;
+
+    // The real keys' pitches in cents, before the table quantises them.
+    function idealKeyPitches(cents, degrees, period, offset) {
+        var out = [];
+        for (var k = 0; k < REAL_KEYS; k++) {
+            out.push((degrees ? keyPitch(cents, degrees, period, k)
+                              : period * Math.floor(k / 12) + cents[k % 12]) + offset);
+        }
+        return out;
+    }
+
+    // How close two DIFFERENT sounding pitches ever get, in DAC units, over
+    // every slot; null when no slot carries a key table.  Mirrors
+    // min_key_spacing in tools/build.py, including the transpose sweep: the
+    // latch matches table[key] + transpose and a latched note keeps the
+    // transpose it was pressed at, so a map can be comfortably spaced across
+    // the keyboard and still put two notes within the tolerance once one of
+    // them is an octave away.  A pair whose IDEAL pitches coincide under some
+    // transpose is the same note and is skipped - that test is on the cents,
+    // not the emitted units, because rounding can leave such a pair a unit or
+    // two apart, which is what the tolerance is there to absorb.
+    function minKeySpacing(slots) {
         var closest = null;
-        Object.keys(tables).forEach(function (name) {
-            if (name.indexOf('tuning_slot') !== 0) return;
-            var pitches = tables[name].slice(0, REAL_KEYS).slice().sort(
-                function (a, b) { return a - b; });
-            for (var i = 1; i < pitches.length; i++) {
-                var gap = pitches[i] - pitches[i - 1];
-                if (gap && (closest === null || gap < closest)) closest = gap;
+        slots.forEach(function (slot) {
+            var ideal = slot.ideal, table = slot.table;
+            for (var a = 0; a < ideal.length; a++) {
+                for (var n = -TRANSPOSE_STEPS; n <= TRANSPOSE_STEPS; n++) {
+                    var shifted = ideal[a] + n * slot.periodCents;
+                    var emitted = table[a] + n * slot.periodUnits;
+                    for (var b = 0; b < ideal.length; b++) {
+                        if (Math.abs(shifted - ideal[b]) < 1e-9) continue;
+                        var gap = Math.abs(emitted - table[b]);
+                        if (closest === null || gap < closest) closest = gap;
+                    }
+                }
             }
         });
         return closest;
@@ -293,10 +338,10 @@ var BUILDLIB = (function () {
     // together than the latch can tell apart builds an instrument where
     // pressing one note releases another.  The page has no field for the
     // tolerance, so the message names what the page user can actually change.
-    function checkLatchSpacing(cfg, tables) {
+    function checkLatchSpacing(cfg, slots) {
         if (get(cfg, 'arp.switch') !== 'latch') return;
         var tolerance = cfg.arp.latch_match_tolerance;
-        var closest = minKeySpacing(tables);
+        var closest = minKeySpacing(slots);
         if (closest === null || tolerance < closest) return;
         throw new Error('the closest two different keys in this tuning are ' +
             closest + ' units apart (' + Math.round(closest * 2.48) + ' cents), ' +
@@ -304,6 +349,23 @@ var BUILDLIB = (function () {
             ' units as the same note — pressing one of them would release the ' +
             'other. Use a coarser scale, or a .kbm that maps fewer degrees ' +
             'onto the keyboard.');
+    }
+
+    // The pitch path clamps to the 12-bit DAC, so an entry above the ceiling
+    // is a flat note rather than a wrong one.  Below zero is different in kind:
+    // the entry is stored as a halfword and the latch match and the pitch
+    // ranking both read it back unsigned, so -39 comes back as 65497 and they
+    // compare a pitch 65,536 units away from the one the instrument sounds.
+    function checkTableRange(name, table) {
+        var low = Math.min.apply(null, table);
+        if (low >= 0) return;
+        throw new Error(name + ': key table entry ' + low + ' is below zero — ' +
+            'the anchor has pushed the bottom of this scale under the ' +
+            'instrument\'s lowest pitch. The firmware reads the table ' +
+            'unsigned, so that entry would come back as ' + (low >>> 0 & 0xFFFF) +
+            ' and the latch would compare a note that never sounds. Use a ' +
+            'scale or mapping whose keys stay above the bottom, or an anchor ' +
+            'key the map does not carry more than an octave above it.');
     }
 
     // Python's round() is banker's rounding, but every call site here adds 0.5
@@ -372,11 +434,14 @@ var BUILDLIB = (function () {
             for (var d = 0; d < degreeCount; d++) linear.push(d);
             return { degrees: linear, formal: formal };
         }
-        var entries = raw.slice(index);
-        if (entries.length < size) {
-            throw new Error(name + ': map size is ' + size + ', found ' +
-                            entries.length + ' entries');
-        }
+        // The .kbm format: "At the end, unmapped keys may be left out."  A map
+        // may stop short of its own size and the positions after it are
+        // unmapped, so a short map is a legal file, not a truncated one.  Both
+        // builders refused these; the counts they reported did not even agree,
+        // because splitting on newlines leaves the browser a trailing empty
+        // line the CLI never sees.  Padding removes the count from the picture.
+        var entries = raw.slice(index, index + size);
+        while (entries.length < size) entries.push('');
         var degrees = [];
         for (var position = 0; position < size; position++) {
             var line = entries[position].trim();
@@ -789,7 +854,9 @@ var BUILDLIB = (function () {
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
         baseUnits: baseUnits, patternBank: patternBank,
         slotScale: slotScale, slotPeriod: slotPeriod,
+        idealKeyPitches: idealKeyPitches,
         minKeySpacing: minKeySpacing, checkLatchSpacing: checkLatchSpacing,
+        checkTableRange: checkTableRange,
         initMarker: initMarker, writeProperties: writeProperties, get: get
     };
 })();
