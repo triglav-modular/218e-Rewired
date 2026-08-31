@@ -2204,6 +2204,15 @@ function assembleProgram() {
         emit("MOV R9,0x6036");
         emit("ST.H R9[0x0],R8");
         emit("ST.H R10[0x356],R8");
+        // The bend offset and the gate and pitch DAC slots.  The strip only
+        // republishes the bend when it MOVES, and the 1 kHz flush sends the
+        // slots as they stand - so after a flash the output pitch sat at
+        // whatever the bootloader left in the slot, offset by a bend nobody
+        // was applying, until the first real note and strip touch.  Zero is
+        // the defined rest for all three.
+        emit("ST.H R10[0x216],R8");
+        emit("ST.H R10[0x354],R8");
+        emit("ST.H R10[0x358],R8");
         // The curve level byte is not touched here.  It sits in factory state
         // and survives a flash, and knob 4 owns it again - forcing it to 0
         // would drop the curve until the knob was next swept.
@@ -4167,14 +4176,20 @@ function assembleProgram() {
         emit("CP.W R1,R10");
         emit("BR{ge} 0x8001cdd8");
         emit("ADD R8,R0,R1 << 0x1");
-        emit("LD.UH R9,R8[0x1c]");
-        emit("CP.W R9,0xfff");
-        emit("BR{ls} 0x8001cd90");
+        // A step is RELATIVE to the take's reference now, so a playable
+        // value is signed and can run past the DAC in either direction;
+        // +-0x2000 bounds every reachable table + transpose difference
+        // with room, and still rejects three quarters of random flash.
+        // The sentinels are asked first, as exact values.
+        emit("LD.SH R9,R8[0x1c]");
         emit("CP.W R9,0x7ffe");
         emit("BR{eq} 0x8001cdb0");
         emit("CP.W R9,0x7fff");
-        emit("BR{ne} 0x8001cde0");
-        emit("RJMP 0x8001cdb0");
+        emit("BR{eq} 0x8001cdb0");
+        emit("SUB R9,-0x2000");
+        emit("CP.W R9,0x4000");
+        emit("BR{ls} 0x8001cd90");
+        emit("RJMP 0x8001cde0");
         padTo(0x8001cd90);
         emit("ADD R8,R0,R1 << 0x0");
         emit("LD.UB R9,R8[0x9c]");
@@ -5253,10 +5268,20 @@ function assembleProgram() {
         // that used to live there.  0x60a0 is published every scan and
         // belongs to no slot.
         //
-        // The sum is then clamped to 0..4095 exactly as the sounding path
-        // clamps it.  Octaves stacked on the top keys can push past the
-        // DAC's range, and persistence rightly refuses a step it could not
-        // play back - one such note left the whole take unsaveable.
+        // The sum is stored RELATIVE to the take's own reference: the
+        // transpose the take was born under, adopted from 0x60a0 by the
+        // first note recorded into an empty take (0x62f4, boot-cleared;
+        // CLEAR empties the count, so the next first note adopts afresh).
+        // The factory target preparation re-adds the live transpose on
+        // every scan of playback, so a step sounds
+        // recorded + (pad now - pad at record) - and a take recorded and
+        // played in one place plays exactly what was heard.  The value can
+        // run negative or past the DAC under a far-moved pad; it is stored
+        // raw, signed, and the preparation's own 0..0xfff clamp on the
+        // finished target guards the rails (the old 0..4095 clamp here
+        // belonged to absolute pitches).  A take appended to after a
+        // reload has lost its reference to the boot clear - those appends
+        // measure from neutral until the take is re-recorded.
         begin(0x8001dce0);
         emit("MOV R11,0x854");
         emit("ADD R11,R11,R12 << 0x1");
@@ -5269,16 +5294,24 @@ function assembleProgram() {
         emit("MOV R8,0x60a0");
         emit("LD.SH R8,R8[0x0]");
         emit("ADD R11,R8");
-        padTo(0x8001dd00);
-        emit("CP.W R11,0x0");
-        emit("BR{ge} 0x8001dd08");
-        emit("MOV R11,0x0");
-        padTo(0x8001dd08);
-        emit("MOV R8,0xfff");
-        emit("CP.W R11,R8");
-        emit("BR{lt} 0x8001dd12");      // {lt}, which has the short encoding;
-        emit("MOV R11,R8");             // equal rewrites 4095 with itself
-        padTo(0x8001dd12);
+        // An empty take adopts this scan's transpose as its reference.
+        // Only R8 and R11 are scratch here - the caller keeps its step
+        // base and count in R9/R10 across this leaf - so the result parks
+        // on the stack for the length of the store.
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001dd0e");
+        emit("MOV R8,0x60a0");
+        emit("LD.SH R8,R8[0x0]");
+        emit("ST.W --SP,R11");
+        emit("MOV R11,0x62f4");
+        emit("ST.H R11[0x0],R8");
+        emit("LD.W R11,SP++");
+        padTo(0x8001dd0e);
+        emit("MOV R8,0x62f4");
+        emit("LD.SH R8,R8[0x0]");
+        emit("SUB R11,R8");
         emit("MOV PC,LR");
         finish("seq_record_pitch", 0x8001dd20);
 
@@ -5435,12 +5468,16 @@ function assembleProgram() {
         // before the glide could turn it around.
         //
         // Then the pitch this chain publishes (R12).  A one-shot preview
-        // auditions the take AS RECORDED, so the live pad transpose - play
-        // mode's to follow - is subtracted back out for as long as the
-        // preview runs.  And a recording audition sounds the pitch the
-        // recorder just stored, exactly: the chain otherwise re-derives the
-        // note from the last arp key's slot and stamp every scan, which is
-        // the old note for a reallocated slot and the old octave for a
+        // used to subtract the live pad transpose to audition the take AS
+        // RECORDED - with steps stored relative to the take's own
+        // reference, that subtraction now made the preview flat by the
+        // pad's whole standing, and preview simply follows the play rule:
+        // recorded + (pad now - pad at record), nothing to compensate.
+        // A recording audition sounds the pitch the recorder just stored
+        // PLUS the take's reference - the store is relative, the ear wants
+        // the absolute note that was played: the chain otherwise re-derives
+        // the note from the last arp key's slot and stamp every scan, which
+        // is the old note for a reallocated slot and the old octave for a
         // toggled-off press.  The pin holds between presses, which only
         // holds the note that was already sounding; with the arp OFF the
         // keyboard is live and no pin applies.
@@ -5472,18 +5509,7 @@ function assembleProgram() {
         emit("MOV R8,0x6158");
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x1");
-        emit("BR{eq} 0x8001de80");
-        emit("CP.W R8,0x2");
-        emit("BR{ne} 0x8001de9c");
-        emit("MOV R8,0x62fe");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001de9c");
-        emit("MOV R8,0x60a0");
-        emit("LD.SH R8,R8[0x0]");
-        emit("SUB R12,R8");             // preview: as recorded
-        emit("RJMP 0x8001de9c");
-        padTo(0x8001de80);
+        emit("BR{ne} 0x8001de9c");      // play and preview take the chain's own pitch
         emit("MOV R8,0x38a0");          // state+0x340/341 in one halfword
         emit("LD.UH R8,R8[0x0]");
         emit("CP.W R8,0x0");
@@ -5493,7 +5519,10 @@ function assembleProgram() {
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x8001de9c");
         emit("SUB R9,0x1");
-        emit("MOV R12,R9");             // the audition: the stored pitch
+        emit("MOV R8,0x62f4");          // the take's reference: the store is
+        emit("LD.SH R8,R8[0x0]");       // relative, the audition is absolute
+        emit("ADD R9,R8");
+        emit("MOV R12,R9");
         padTo(0x8001de9c);
         if (feature("arp_latch")) {
             emit("MOV R9,0x6540");
@@ -6089,6 +6118,15 @@ function assembleProgram() {
         // The blend re-base is conditional on a changed base, so repeating
         // this preparation at phase A and the gate cannot spend it twice.
         // Return the state base as well, for the fast path's bend load.
+        //
+        // A sequenced step needs no exception here.  The preparation re-adds
+        // the live transpose to whatever the selector staged, and the ADC
+        // pass runs the very same preparation every scan regardless - so a
+        // gate on this one caller could never change what a recorded step
+        // sounds (it was tried, and the take still played off the scan's
+        // own pass).  Steps are stored relative to the take's own
+        // reference, so the re-add on BOTH callers is the pad transposing
+        // the take, not a defect to be gated off.
         begin(0x8001be30);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -6472,44 +6510,61 @@ function assembleProgram() {
         // schedules that drop three counts after the spike (0x8000788a) and
         // performs it at 0x80007540, which is the pool word this replaces.
         //
-        // A sequencer step that is not tied into the next one is not held by
-        // anything: it should go to 0 there, not sit at the sustain for the
-        // rest of the step.  Which is which is seq_gate's decision, asked
-        // rather than repeated, so the gate and the pulse can never disagree
-        // about the same step.
-        //
-        // R12 is the scheduler's own message pointer.  The factory routine
-        // stores and increments it and then never reads it, but it is handed
-        // back untouched all the same.
+        // Every playing step keeps that sustain now.  An earlier version
+        // sent an untied step to 0 right here, three counts after its spike
+        // - which read as no gate at all at any musical tempo, a spike-wide
+        // blink.  The zero belongs to the countdown instead: seq_gate holds
+        // an untied step's threshold at half its interval, so the sustain
+        // stands for half the step and rests for the other half, at every
+        // tempo.  The transport forces the held count while the sequencer
+        // plays, so the factory's own drop lands on the sustain, not on 0,
+        // for tied and untied steps alike - this cave is a plain hand-off,
+        // kept only so the scheduler's pool word has a stable home.
         begin(0x8001b320);
-        emit("STM --SP,R0,R7,LR");
+        emit("LDDPC R8,0x8001b328");
+        emit("MOV PC,R8");
+        padTo(0x8001b328);
+        word(0x80007540); // the factory's own drop to the sustain
+        finish("seq_pulse_drop", 0x8001b32c);
+
+        // While the sequencer PLAYS, the keyboard is silent: the note-on
+        // pool points here instead of at the filter-reset wrapper, and a
+        // press in play mode simply never becomes a note - no sound, no
+        // MIDI, no latch churn, no press-order entry - so the running take
+        // cannot be yanked off pitch by a stray finger.  Releases are not
+        // routed through this pool and still land; a press swallowed here
+        // leaves nothing for its release to find, which the release path's
+        // own guards already treat as a no-op.  Every other surface - the
+        // pads, the knobs, the strip - keeps its transport and edit jobs.
+        // R8/R9 are restored because the factory caller had the wrapper's
+        // own STM preserving them.
+        begin(0x8001b330);
+        emit("STM --SP,R7,R8,R9,LR");
         emit("MOV R7,SP");
-        emit("MOV R0,R12");
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x2");
-        emit("BR{ne} 0x8001b342");      // not playing: the factory's own drop
-        emit("MCALL PC[0x8001b350]");   // seq_gate -> R8, negative if held
-        emit("CP.W R8,0x0");
-        emit("BR{lt} 0x8001b342");      // a tie is carrying it: keep the 5 V
-        emit("MCALL PC[0x8001b354]");   // to zero, and flushed
-        emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001b342);
-        emit("MOV R12,R0");
-        emit("MCALL PC[0x8001b358]");   // the factory's 10 V -> 5 V
-        emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001b350);
-        word(0x8001b4f0); // seq_gate
-        word(0x80002440); // gate to zero and flush it
-        word(0x80007540); // the factory's own drop to the sustain
-        finish("seq_pulse_drop", 0x8001b35c);
+        emit("BR{eq} 0x8001b346");      // playing: the press means nothing
+        emit("MCALL PC[0x8001b34c]");   // anything else: the real note-on
+        padTo(0x8001b346);
+        emit("LDM SP++,R7,R8,R9,PC");
+        padTo(0x8001b34c);
+        word(0x80018d00); // note_on_reset_raw_filter
+        finish("seq_noteon_mute", 0x8001b350);
 
         // How long the arp holds its gate.  Three counts from the end of the
-        // step, as the factory does - unless the step about to play is a tie,
-        // and then a threshold the countdown can never reach, so the gate
-        // never falls and the note carries across.  The tie's own step
-        // answers the selector with -1, so nothing retriggers and the pitch
-        // it is carrying stays put.  R8 = the threshold.
+        // step, as the factory does, everywhere but play mode.  A playing
+        // step's threshold is seq_gate_length's answer: HALF the step's
+        // interval for an untied note, so the sustain stands for half the
+        // step and rests at zero for the other half at every tempo - the
+        // factory's fixed three left a rest the width of a spike, which at
+        // any musical tempo read as a gate that never fell at all.  A tie
+        // about to play instead answers a threshold the countdown can never
+        // reach, so the gate never falls and the note carries across.  The
+        // tie's own step answers the selector with -1, so nothing
+        // retriggers and the pitch it is carrying stays put.  R8 = the
+        // threshold.  A rest about to play takes the same half: the note
+        // sounding now is untied whatever follows it.
         //
         // Only the tie holds it.  A real note after a tie used to be held too
         // - the 303 slide - but a Buchla trigger is a 10 V spike that drops
@@ -6523,43 +6578,114 @@ function assembleProgram() {
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001b544");      // not playing: the factory's own
+        emit("BR{ne} 0x8001b53c");      // not playing: the factory's own
         emit("MOV R10,0x61e0");
         emit("LD.UB R11,R10[0x0]");
         emit("CP.W R11,0x0");
-        emit("BR{eq} 0x8001b544");
+        emit("BR{eq} 0x8001b53c");
         emit("LD.UB R9,R10[0x1]");      // the step about to play
         emit("CP.W R9,R11");
         emit("BR{lt} 0x8001b520");
         // Off the end.  A LOOP wraps here and step zero is genuinely next -
         // but a one-shot preview leaves cursor==count as its end sentinel,
         // and there is nothing after the end for a tie to carry into: the
-        // last note gets the factory countdown, however the take begins.
+        // last note plays out like any untied one.
         emit("MOV R9,0x62fe");
         emit("LD.UB R9,R9[0x0]");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001b544");
+        emit("BR{ne} 0x8001b53c");
         emit("MOV R9,0x0");
         padTo(0x8001b520);
         emit("MOV R10,0x6160");
         emit("ADD R10,R10,R9 << 0x1");
         emit("LD.SH R10,R10[0x0]");
-        // A REST is silent whatever else is going on, and it is tested first
-        // for exactly that reason: a tie that runs into a rest used to keep
-        // the gate up through it, because the tie's own hold was checked
-        // before anyone asked what the next step was.
-        emit("MOV R11,0x7ffe");
-        emit("CP.W R10,R11");
-        emit("BR{eq} 0x8001b544");
         emit("MOV R11,0x7fff");
         emit("CP.W R10,R11");
-        emit("BR{ne} 0x8001b544");      // a real note next: it gets its own
+        emit("BR{ne} 0x8001b538");      // a note or a rest next: half the step
         emit("MOV R8,-0x8000");         // a tie next: carry the gate into it
-        padTo(0x8001b544);
+        emit("RJMP 0x8001b53c");
+        padTo(0x8001b538);
+        emit("MCALL PC[0x8001b548]");   // seq_gate_length -> R8
+        padTo(0x8001b53c);
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b54c);
+        padTo(0x8001b548);
+        word(0x8001b740); // seq_gate_length
         word(0x8001b4f0); // this cave, for the caller too far away to pool it
         finish("seq_gate", 0x8001b550);
+
+        // How long an untied playing step holds its sustain: HALF the
+        // interval its countdown started from, floored at the factory's
+        // three so the drop is never later than the factory's own and the
+        // attack guard's ==3 window still means what it meant.  R8 = the
+        // threshold; a leaf, clobbers R9-R11, which every seq_gate caller
+        // already treats as scratch.
+        //
+        // The step playing NOW is the cursor's predecessor.  When it is a
+        // tie, the gate has carried this far and only the retrigger's gap
+        // is owed, so the factory three stands - halving the tie's own
+        // step would cut the carried note short.  (Before the first step
+        // fires the predecessor read lands two bytes under the step table;
+        // a read only, and the gate is not up yet for any answer to cut.)
+        //
+        // The interval is the one the countdown rides: the measured clock
+        // period while pulses are about - clock_gate pushes the countdown
+        // by exactly that cell - and the RATE interval otherwise.
+        begin(0x8001b740);
+        emit("MOV R10,0x61e0");
+        emit("LD.UB R9,R10[0x1]");      // the cursor: the step about to play
+        emit("SUB R9,0x1");             // so this is the one playing now
+        emit("MOV R8,0x6160");
+        emit("ADD R8,R8,R9 << 0x1");
+        emit("LD.SH R8,R8[0x0]");
+        emit("MOV R11,0x7fff");
+        emit("CP.W R8,R11");
+        emit("BR{ne} 0x8001b760");
+        emit("MOV R8,0x3");             // a tie's tail: the retrigger's gap
+        emit("MOV PC,LR");
+        padTo(0x8001b760);
+        emit("MOV R8,0x6236");          // a clock about?
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b774");
+        emit("MOV R8,0x61ea");
+        emit("LD.UH R8,R8[0x0]");       // the measured period, in ticks
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001b77a");      // none measured yet: RATE's interval
+        padTo(0x8001b774);
+        emit("MOV R8,0x38aa");          // state+0x34a, the RATE interval
+        emit("LD.SH R8,R8[0x0]");
+        padTo(0x8001b77a);
+        emit("ASR R8,0x1");
+        emit("CP.W R8,0x3");
+        emit("BR{ge} 0x8001b782");
+        emit("MOV R8,0x3");
+        padTo(0x8001b782);
+        emit("MOV PC,LR");
+        finish("seq_gate_length", 0x8001b788);
+
+        // select_pad, guarded for the pad-4 chord.  The press-time selection
+        // is the factory routine at 0x8000a784: it calls select_pad with the
+        // PRESSED pad through the pool this build repoints, and recomputes
+        // straight after - so an armed option press flipped the octave at
+        // its source, ahead of any per-scan restore (an earlier fix guarded
+        // the ADC decoder instead, which never writes the selection at all,
+        // and changed nothing).  While the arm lasts, the request collapses
+        // to the selection the arm holds before the factory acts, so the
+        // wrong pad is never selected even for an instant.  The repaint
+        // callers pass the current selection and stay on the raw routine.
+        begin(0x8001b790);
+        emit("MOV R9,0x6156");
+        emit("LD.UB R9,R9[0x0]");       // the chord armed?
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b7a4");
+        emit("MOV R9,0x6159");
+        emit("LD.UB R12,R9[0x0]");      // the held selection replaces the press
+        padTo(0x8001b7a4);
+        emit("LDDPC R9,0x8001b7a8");
+        emit("MOV PC,R9");
+        padTo(0x8001b7a8);
+        word(0x8000698c); // select_pad(0..3)
+        finish("select_pad_guard", 0x8001b7ac);
 
         // The arp's OTHER gate clear.  When no key is held it drops the gate
         // and its LED at every fired step, before choosing a note - and in
@@ -7114,8 +7240,18 @@ function assembleProgram() {
         // handed up.  Either way the octave randomiser runs on it AFTER it is
         // chosen, so knob 3 displaces sequenced notes the same way it
         // displaces played ones - it used to run first and have its answer
-        // thrown away by the step.  The pad octave transpose is applied
-        // further downstream and so still applies.
+        // thrown away by the step.
+        //
+        // The step goes up UNCHANGED, and the factory target preparation's
+        // per-scan re-add of the live transpose IS the pad transposing the
+        // take: seq_record_pitch stores every step RELATIVE to the
+        // transpose the take was born under, so playback sounds
+        // recorded + (pad now - pad at record) - exact where it was
+        // recorded, shifted by exactly how far the pad has moved since,
+        // landing mid-note the moment the pad flips.  An earlier fix
+        // subtracted the published transpose here at step time instead,
+        // which pinned the take to its recorded pitches but took the pad
+        // away from playback entirely and let every flip jump-and-correct.
         begin(0x8001ba30);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -7898,8 +8034,12 @@ function assembleProgram() {
         emit("MOV R8,0x0");
         emit("CP.W R8,0x0");
         finish("remote_guard_3", 0x800085de);
-        wordPatch("note_on_pool", 0x80005e8c, 0x80018d00,
+        wordPatch("note_on_pool", 0x80005e8c,
+            block("seq_pitch") ? 0x8001b330 : 0x80018d00,
             "note-on pointer -> filter-reset wrapper");
+        wordPatch("pad_select_pool", 0x8000a810,
+            block("seq_chord") ? 0x8001b790 : 0x8000698c,
+            "press-time select_pad -> chord-armed guard");
         wordPatch("active_key_pool", 0x80006280, 0x80018d40,
             "active-key pointer -> filter-reset wrapper");
 }
