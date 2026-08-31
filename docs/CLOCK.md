@@ -690,21 +690,22 @@ The period bound is what keeps it from mattering at the top of the range.
 ## Repeatable checks
 
 ```sh
-python3 tools/test_clock.py            # five builds; see below
+python3 tools/test_clock.py            # six builds; see below
 python3 tools/test_persistence.py
 python3 tools/avr32/sweep.py
 python3 web/test_configs.py
 python3 tools/test.py --golden
 ```
 
-The first command builds five images without rewriting the flashers, then
+The first command builds six images without rewriting the flashers, then
 executes their bytes using ClockRegression.java. Three carry the shipped
 timing — clock-only, clock+sequencer, and the `pressure_fix = false` build
 that turns output smoothing off while leaving clock division on. The other
-two exist for the trigger's jitter bound alone and run the jitter tests only:
-`settle-scans` builds `clock_settle_scans = 1` and `no-gate-settle` builds
-`gate_settle_scans = 0`, the two settings that used to decide whether the
-trigger rode the flush at all. Neither settle is a build option — both are
+three run the jitter tests only. `settle-scans` builds
+`clock_settle_scans = 1` and `no-gate-settle` builds `gate_settle_scans = 0`,
+the two settings that used to decide whether the trigger rode the flush at
+all; `latency` builds the `clock_latency` diagnostic so its own tests run
+against a real image instead of detecting an ordinary one and skipping. Neither settle is a build option — both are
 constants in tools/options.py — so the driver edits the constant around the
 build and restores it in a finally, dropping tools/__pycache__ with it: the
 edit changes one digit, so the file keeps its length, and a same-second
@@ -718,8 +719,12 @@ as is the 1 kHz DAC flush through the dispatcher's own jump-table entry.
 It also measures edge-to-rise jitter across a locked clock walked over the
 scan grid and beat-to-rise jitter across an internal tempo walked over the
 same grid, asks the firmware what settle it was built with rather than
-assuming it, checks a key played with the arp and sequencer off is not
-claimed, checks the pitch the flush stages is the one a later scan reaches,
+assuming it, proves in `settleStartsAtTheClaim()` that the wait is spent from
+the claim and that only the gate waits on a dispatch, runs the internal beat
+through the same ring model as the external one in `internalDispatchModel()`,
+holds both to the 1–2 ms target on any build that carries a deadline —
+detected from the emitted image, not a build flag — checks a key played with
+the arp and sequencer off is not claimed, checks the pitch the flush stages is the one a later scan reaches,
 checks the flush leaves the per-scan vibrato chain alone, and runs a whole
 clock with the scan before the flush and again with it after.
 Missing completion markers and emulator instruction-budget exhaustion fail
@@ -745,6 +750,12 @@ tempo conversion; its enable gates, raw-input conditioning, rate table lookup
 and setup/teardown execute from the firmware image.
 
 ## What the harness cannot measure
+
+**Everything in this section and the four below it is the instrument and the
+model BEFORE the deadline.** The measurements stand — they are what the fix
+was built from — but several of the conclusions were superseded by it, and
+each of those is marked where it appears. See **The deadline, and what it
+changed** above for the current numbers.
 
 `riseJitter()` and `internalJitter()` drive `service()` and `flush()` every
 1000 us, so the spread they report cannot exceed one tick whatever the
@@ -782,12 +793,28 @@ the limit of that inference: period jitter cancels a constant offset, so it
 says nothing about a fixed delay the shared path may add. It bounds the
 jitter, not the latency.
 
+That inference was later put under strain by the internal claim-to-gate
+capture, which measured a 4.31 ms spread on a path this paragraph calls free
+of significant variable delay. The two are reconcilable and neither
+measurement is stale — see **The measurement this was thought to contradict**
+above — but part of that spread was a real defect, the settle not starting
+until phase A, and it is fixed.
+
 `loopModelJitter()` can reproduce the scale only by artificially starving
 `clock_service`: at 250–300 Hz that model produces min 200–400 us, max 3.6 ms
 and spread 3.2–3.6 ms. It is a calibrated hypothesis, not a measurement, and
 the dequeue move below directly refuted its proposed wait. What remains unique
 to the external path is the work from FIFO entry through `clock_service` and
 factory note selection until `clock_settle` claims the selected note.
+
+**That starved sweep is exactly what the deadline flattened, and it is the
+clearest evidence the fix does what it claims.** Its whole point was that a
+slower `clock_service` widened the spread — 800, 2000, 2200, 3200, 3600,
+4200 us as the poll rate fell from 1 kHz to 200 Hz. With a deadline built it
+reads 800 us at every one of those rates. The work named in the paragraph
+above is still done, and still takes as long; it simply no longer reaches the
+gate, because the gate is placed from the edge stamp rather than from the
+claim that work leads to.
 
 A second blind spot turned up alongside the first. The fast path declines
 when `0x2eee != 0` -- a real portamento time -- and sends the beat back to
