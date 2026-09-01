@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Draw the icon sources for the flashers.
 
-The page's banana on the site's background, on the plate each platform
-expects.  For the app the shape is Apple's: an 824 square inside 1024, and a
-superellipse rather than a rounded rect, which is visibly the wrong curve
-beside the system icons in the Dock.  For the Windows launcher it is the
-plain rounded rectangle Windows 11 tiles use - the superellipse is as wrong
-there as the rect is in the Dock.
+The page's banana on the site's background, on the plate the app expects.
+The shape is Apple's: an 824 square inside 1024, and a superellipse rather
+than a rounded rect, which is visibly the wrong curve beside the system icons
+in the Dock.
 """
 import math
 import re
@@ -19,7 +17,6 @@ GROUND = "#171716"          # the page's background
 ICONS = [
     # file, plate, body fill, peel fill - None keeps the artwork's own colours
     ("mac/AppIcon.svg", "squircle", None, None),
-    ("windows/launcher/AppIcon.svg", "rounded", None, None),
 ]
 
 

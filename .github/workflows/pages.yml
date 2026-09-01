@@ -47,7 +47,6 @@ on:
       - 'mac/Flasher.zip'
       - 'mac/support/**'
       - 'windows/support/**'
-      - 'windows/launcher/**'
       - 'THIRD-PARTY.md'
       - '.github/workflows/pages.yml'
   workflow_dispatch:

@@ -206,14 +206,12 @@ Both need a **Developer ID Application** certificate — the only type Apple
 accepts for notarisation. It can only be created by the Account Holder of a
 team, and development certificates (`Mac Developer`, `Apple Development`) do
 not work; the scripts say so if pointed at the wrong one. Windows signing is
-separate again and needs an Authenticode certificate.  A batch file has no slot for
-an icon or a signature, so `windows/launcher/` holds a small launcher — built
-by `tools/make-launcher.sh` with mingw-w64, banana icon and version block
-embedded, CI-tested — that would carry both.  It is deliberately **not** in
-the download yet: unsigned, a tiny static exe that spawns `cmd.exe` is the
-exact shape Defender's dropper heuristics hard-block, and it did.  It ships
-the day it is signed.  Until then the `.bat` is the double-click, and Windows
-Defender may want **More info → Run anyway**.
+separate again and needs an Authenticode certificate.  Nothing on the Windows
+side is signed: the `.bat` is the double-click, and Windows Defender may want
+**More info → Run anyway**.  A batch file has no slot for an icon or a
+signature, and a small unsigned launcher exe was tried and dropped — a tiny
+static exe that spawns `cmd.exe` is the exact shape Defender's dropper
+heuristics hard-block, and it did.
 
 **Getting an instrument out of DFU by hand.** If a run stopped before the erase
 the application is intact, but a power cycle will not boot it: reading the fuses

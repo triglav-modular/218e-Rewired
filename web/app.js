@@ -982,10 +982,6 @@
             // - the split said something about where they came from, nothing
             // about what they are.
             tools: [
-                // windows/launcher's banana-faced exe is NOT in this list on
-                // purpose: unsigned, a tiny launcher that spawns cmd.exe is
-                // the exact shape Defender's dropper heuristics hard-block.
-                // It ships the day it is signed, and not before.
                 ['kit/windows/support/dfu-programmer.exe', 'tools/dfu-programmer.exe', false],
                 ['kit/windows/support/sendmidi.exe', 'tools/sendmidi.exe', false],
                 ['kit/windows/support/zadig-2.8.exe', 'tools/zadig-2.8.exe', false],

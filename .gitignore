@@ -15,22 +15,14 @@ build/
 # Buchla's own material: the firmware image, their updater and their notes.
 #
 # Buchla's windows/ folder is vendor drop except the three tools the flasher
-# runs, which were force-added; the launcher/ sources and its built exe are
-# ours and tracked.  A directory a pattern excludes cannot have files
-# re-included, so the folders come back first, then their junk goes again.
+# runs, which were force-added.  A directory a pattern excludes cannot have
+# files re-included, so the folder comes back first, then its junk goes again.
 windows/*
 !windows/support/
 windows/support/*
 !windows/support/dfu-programmer.exe
 !windows/support/sendmidi.exe
 !windows/support/zadig-2.8.exe
-!windows/launcher/
-windows/launcher/*
-!windows/launcher/launcher.c
-!windows/launcher/launcher.rc
-!windows/launcher/AppIcon.svg
-!windows/launcher/AppIcon.ico
-!windows/launcher/218e Rewired Flasher.exe
 
 # Stock firmware images for other models/versions.
 otherfirmware/
