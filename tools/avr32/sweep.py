@@ -209,12 +209,13 @@ def audit_call_pools(image_path) -> list[str]:
 # chooses an octave on its way in - leaves a preview alone; and when the
 # bootstrap adopted the staged base and target too, whose bootloader
 # leftovers derailed the first touch's portamento until the finger lifted;
-# and again when a polyphonic press stopped reaching MIDI while the sequencer
-# plays, which the earlier keyboard silence had missed because the factory
-# poly handler sends its Note On ahead of the muted contact call.
+# and again when the MONO keyboard stopped reaching MIDI while the sequencer
+# plays, which the earlier keyboard silence had missed - it took the sound
+# and left the notes - while poly, which is the mode for playing over a
+# running take, was deliberately left live.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "a0db1d5684eb6e36ee754300c55bc616a061378b30ba9e2c7639deeb085c0107",
+    "historical_config": "ea93905788223c724236d4d8bd9705c62ba5129adf13bec99fa1e0ee0255e25a",
 }
 
 

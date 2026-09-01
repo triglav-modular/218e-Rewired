@@ -59,9 +59,10 @@ public class PolyMidiProbe extends ControlRegression {
         button(1); check("the real transport reached STOP",r(0x6158,1)==0);
     }
 
-    void bench() throws Exception {
+    void bench() throws Exception { bench(0); }
+    void bench(int steps) throws Exception {
         seq=true; clock=true; persistent=true;
-        setup(0,false,0);                     // the real chord into WRITE
+        setup(steps,false,0);                 // the real chord into WRITE
         command(0);                           // and out again: transport stopped
         check("the fixture starts stopped",r(0x6158,1)==0);
         sustain=(int)(short)r(S+0x396,2)+0x50+200;
@@ -112,63 +113,98 @@ public class PolyMidiProbe extends ControlRegression {
         println("PASS the stopped keyboard is untouched in both modes");
     }
 
-    // The audited defect.  With poly MIDI enabled and the arpeggiator off, a
-    // key pressed during PLAY used to reach both outputs even though the
-    // press makes no sound: the factory poly handler sends its Note On before
-    // the pressure state machine ever reaches the muted contact call.
-    void polyMutedDuringPlay() throws Exception {
+    // Poly is the mode for playing over a running take: each key holds its
+    // own note and the receiver has the voices, so PLAY leaves it alone.
+    void polyPlaysOverTheSequence() throws Exception {
         bench(); play(); arm(true);
-        down(4);
-        check("a poly press during PLAY sends no MIDI: "+seen(),midi.isEmpty());
-        check("and leaves no active note",activeNote(40)==0);
-        up(4);
-        check("its lift sends no MIDI either: "+seen(),midi.isEmpty());
+        down(4); down(9);
+        check("a poly chord over a running take reaches both outputs: "+seen(),
+            count("on",40)==2&&count("on",45)==2);
+        up(9); up(4);
+        check("and both keys end when they are let go: "+seen(),
+            count("off",40)==2&&count("off",45)==2);
+        check("leaving nothing active",activeNote(40)==0&&activeNote(45)==0);
         stop();
-        // STOP's own defensive all-notes-off controller is the only thing on
-        // the wire; what must not be there is a keyboard note of either kind.
-        check("STOP adds no keyboard note and leaves nothing active: "+seen(),
-            activeNote(40)==0&&count("on",40)==0&&count("off",40)==0);
-        println("PASS a poly press during PLAY reaches neither MIDI output");
+        println("PASS poly plays over a running sequence, both keys balanced");
     }
 
-    // A key already sounding when the transport starts still owns its note on
-    // the channel it began on, so its lift has to reach MIDI even though
-    // presses no longer do.
+    // A key already sounding when the transport starts.  In poly its lift
+    // still ends it, because poly is live through the take anyway.  In mono
+    // the lift is swallowed with the rest, so the note rings on until the
+    // transport's own all-notes-off at STOP - deliberate: the alternative is
+    // a note that stops under the finger, and this way nothing the sequencer
+    // is playing can be cut short by a key.
     void heldAcrossPlay() throws Exception {
         bench(); arm(true);
         down(4);
-        check("the press before PLAY sounded: "+seen(),count("on",40)==2&&activeNote(40)!=0);
+        check("the poly press before PLAY sounded: "+seen(),count("on",40)==2&&activeNote(40)!=0);
         play(); arm(true);
         up(4);
-        check("the lift during PLAY still ends the note: "+seen(),count("off",40)==2);
+        check("its lift during PLAY still ends the note: "+seen(),count("off",40)==2);
         check("and clears its active-note record",activeNote(40)==0);
         stop();
-        println("PASS a note held into PLAY is still ended by its own release");
+
+        bench(); arm(false);
+        down(4);
+        check("the mono press before PLAY sounded: "+seen(),count("on",40)==2&&activeNote(40)!=0);
+        play(); arm(false);
+        up(4);
+        check("its lift during PLAY is swallowed: "+seen(),midi.isEmpty());
+        stop();
+        check("and STOP's all-notes-off is what takes the note back: "+seen(),
+            count("on",40)==0&&!midi.isEmpty());
+        println("PASS a held note: poly ends on release, mono waits for STOP");
     }
 
-    // Recorded, not endorsed.  The contact handler at 0x80005b6c sends the
-    // MONO Note On itself, from 0x80005e3a and 0x80005e5c, AFTER the note-on
-    // pool word seq_noteon_mute owns - so PLAY silences the mono keyboard's
-    // sound but not its MIDI.  The pair is balanced, so nothing sticks in the
-    // receiver; this pins the behaviour until it is decided on.
-    void monoStillSendsDuringPlay() throws Exception {
-        bench(); play(); arm(false);
-        down(4);
-        check("mono PLAY still sends the press: "+seen(),count("on",40)==2);
-        up(4);
-        check("but the pair is balanced, so nothing sticks: "+seen(),
-            count("off",40)==2&&activeNote(40)==0);
+    // Mono is the mode that must NOT play over a take.  The sequencer sends
+    // its own notes on the same channel, one at a time, so a second
+    // monophonic line there collides with it: a keyboard note-off can end
+    // the note the sequence is holding.  So the mono keyboard is silent on
+    // MIDI for the whole take - press, lift, and the retrigger release a
+    // second key would otherwise send for the first.
+    void monoSilentDuringPlay() throws Exception {
+        // Both release orders, because letting the NEWER key go hands the
+        // note back to the one still held - a fresh Note On from its own
+        // call site, which is how the first version of this guard leaked.
+        for(boolean newestFirst:new boolean[]{true,false}) {
+            bench(); play(); arm(false);
+            down(4);
+            check("a mono press during PLAY sends nothing: "+seen(),midi.isEmpty());
+            down(9);
+            check("nor does the retrigger a second key makes: "+seen(),midi.isEmpty());
+            down(14);
+            if(newestFirst) { up(14); up(9); up(4); } else { up(4); up(9); up(14); }
+            check("nor do the lifts, in either order (newest first="+newestFirst+"): "+seen(),
+                midi.isEmpty());
+            stop();
+        }
+        println("PASS the mono keyboard is silent on MIDI for the whole take");
+    }
+
+    // What the take itself does has to survive all of that: the sequencer
+    // uses different pool words, and its own notes still go out.
+    void theSequenceStillSounds() throws Exception {
+        bench(4); play(); arm(false);
+        for(int i=0;i<4;i++) externalBeat();
+        int on=0, off=0;
+        for(String m:midi) { if(m.startsWith("on ")) on++; if(m.startsWith("off ")) off++; }
+        check("the running take still reaches MIDI: "+seen(),on>=4&&off>=2);
+        // ...and a mono key pressed underneath it changes none of that.
+        int before=midi.size();
+        down(4); up(4);
+        check("a mono key underneath adds nothing: "+seen(),midi.size()==before);
         stop();
-        println("NOTE mono keyboard MIDI is not muted by PLAY; the pair is balanced");
+        println("PASS the sequence keeps its own MIDI with a key pressed underneath");
     }
 
     @Override public void run() throws Exception {
         try {
             try { stoppedStillSounds(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { overlap(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { polyMutedDuringPlay(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { polyPlaysOverTheSequence(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { heldAcrossPlay(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { monoStillSendsDuringPlay(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { monoSilentDuringPlay(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { theSequenceStillSounds(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("POLY MIDI PROBE FAIL: "+failures);
             println("POLY MIDI PROBE PASS: "+checks+" assertions");
         } finally { if(e!=null)e.dispose(); }

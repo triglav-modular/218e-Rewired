@@ -6824,39 +6824,6 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80018d00L); // note_on_reset_raw_filter
         finish("seq_noteon_mute", 0x8001b350L);
 
-        // The same silence, one call earlier.  seq_noteon_mute owns the pool
-        // word for an INNER call of the contact handler at 0x80005b6c, and in
-        // poly mode the pressure state machine never gets that far: it calls
-        // the poly handler at 0x800054d6 first, and that handler sends both
-        // Note Ons itself.  So a key pressed while the sequencer PLAYS made
-        // no sound - the mute did its half - and still went out on both MIDI
-        // outputs, which is exactly what play mode is meant to stop.
-        //
-        // The guard belongs on the poly handler's own pool word, which the
-        // onset and the release share: R12 is 1 for the press and 0 for the
-        // lift, and only the press is dropped.  Lifts stay live because a key
-        // held from before the transport entered PLAY still owns a sounding
-        // note, and the handler's saved note and channel are the only way to
-        // end it on the channel it began on.
-        //
-        // R8 is free here - the handler takes R12/R11/R10/R9 - and it
-        // clobbers R8..R12 itself, so the tail is a plain jump and the
-        // factory routine returns straight to the state machine.
-        begin(0x8001b550L);
-        emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001b560");      // a lift always runs
-        emit("MOV R8,0x6154");
-        emit("LD.UB R8,R8[0x4]");
-        emit("CP.W R8,0x2");
-        emit("BR{ne} 0x8001b560");
-        emit("MOV PC,LR");              // playing: the press sends no MIDI
-        padTo(0x8001b560L);
-        emit("LDDPC R8,0x8001b564");
-        emit("MOV PC,R8");
-        padTo(0x8001b564L);
-        word(0x80005660L); // the factory poly note-on/note-off handler
-        finish("seq_poly_mute", 0x8001b568L);
-
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does, everywhere but play mode.  A playing
         // step's threshold is seq_gate_length's answer: HALF the step's
@@ -7491,6 +7458,64 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001bb30L);
         word(0x00003560L); // global state base
         finish("clock_gate", 0x8001bb34L);
+
+        // While the sequencer plays, the MONO keyboard sends no MIDI.
+        //
+        // seq_noteon_mute already takes the sound away - it owns the pool
+        // word for an inner call of the contact handler at 0x80005b6c, so a
+        // press in PLAY reaches no pitch, no gate and no trigger.  The MIDI
+        // never went with it: the contact handler sends the mono Note On
+        // itself, further down and past that call, and the lift handler at
+        // 0x80005edc sends the Note Off the same way.  So a press during a
+        // take made no sound here and a real note over there.
+        //
+        // That matters because the sequencer is ALSO playing notes on the
+        // same MIDI channel, one at a time.  Two monophonic lines on one
+        // channel collide: press a key whose note the sequence is holding
+        // and the release ends the sequencer's note instead of yours.  Poly
+        // is the mode for playing over a running take - each key holds its
+        // own note and the receiver has the voices for it - and poly is
+        // deliberately left alone here.
+        //
+        // Eight pool words, one caller each, all of them the physical key's:
+        // the previous note's release at 0x80005d68/0x80005d84, the press at
+        // 0x80005e3a/0x80005e5c, the lift at 0x8000619c/0x800061b4, and the
+        // note handed back to a key still held at 0x80006380/0x8000639c.  The
+        // arpeggiator, the sequencer and the panic read different pool words
+        // for the same four senders and are untouched.
+        // R8 carries the real target in from the entry, R9 is dead at every
+        // one of the six sites, and the senders clobber R8..R12 themselves,
+        // so the tail is a plain jump and the sender returns straight home.
+        //
+        // A key still down when PLAY starts keeps its note: it was sent
+        // before the mute applied, and its lift is now swallowed with
+        // everything else, so the note rings until the transport's own
+        // all-notes-off at STOP takes it back.  Ending it at the transition
+        // instead would mean a note that stops under the finger; this way
+        // nothing the sequencer is playing can ever be cut short.
+        begin(0x8001bb34L);
+        emit("LDDPC R8,0x8001bb60");
+        emit("RJMP 0x8001bb44");
+        emit("LDDPC R8,0x8001bb64");
+        emit("RJMP 0x8001bb44");
+        emit("LDDPC R8,0x8001bb68");
+        emit("RJMP 0x8001bb44");
+        emit("LDDPC R8,0x8001bb6c");
+        emit("RJMP 0x8001bb44");
+        padTo(0x8001bb44L);
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001bb50");      // playing: the key sends nothing
+        emit("MOV PC,R8");              // anything else: the real sender
+        padTo(0x8001bb50L);
+        emit("MOV PC,LR");
+        padTo(0x8001bb60L);
+        word(0x80007e44L); // MIDI note off, port one
+        word(0x800081f0L); // MIDI note off, port two
+        word(0x80007de8L); // MIDI note on, port one
+        word(0x80008170L); // MIDI note on, port two
+        finish("seq_key_midi_mute", 0x8001bb70L);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
         // The divider and the sequencer's rest/tie decision have already run.
@@ -8494,9 +8519,36 @@ public class AssemblePressureFix extends GhidraScript {
         wordPatch("note_on_pool", 0x80005e8cL,
             block("seq_pitch") ? 0x8001b330L : 0x80018d00L,
             "note-on pointer -> filter-reset wrapper");
-        wordPatch("poly_note_pool", 0x80005644L,
-            block("seq_pitch") ? 0x8001b550L : 0x80005660L,
-            "poly note pointer -> PLAY-mute guard");
+        // The physical key's own six MIDI senders -> the play-mode guard.
+        // Off the sequencer these keep their factory targets, so a build
+        // without it never reaches the cave.
+        wordPatch("key_noteoff_prev_pool_1", 0x80005eb4L,
+            block("seq_pitch") ? 0x8001bb34L : 0x80007e44L,
+            "previous note off, port one -> play-mode guard");
+        wordPatch("key_noteoff_prev_pool_2", 0x80005eb8L,
+            block("seq_pitch") ? 0x8001bb38L : 0x800081f0L,
+            "previous note off, port two -> play-mode guard");
+        wordPatch("key_noteon_pool_1", 0x80005ec8L,
+            block("seq_pitch") ? 0x8001bb3cL : 0x80007de8L,
+            "key note on, port one -> play-mode guard");
+        wordPatch("key_noteon_pool_2", 0x80005eccL,
+            block("seq_pitch") ? 0x8001bb40L : 0x80008170L,
+            "key note on, port two -> play-mode guard");
+        wordPatch("key_noteoff_pool_1", 0x800062a4L,
+            block("seq_pitch") ? 0x8001bb34L : 0x80007e44L,
+            "key note off, port one -> play-mode guard");
+        wordPatch("key_noteoff_pool_2", 0x800062a8L,
+            block("seq_pitch") ? 0x8001bb38L : 0x800081f0L,
+            "key note off, port two -> play-mode guard");
+        // Letting a key go in mono hands the note back to one still under a
+        // finger, which is a fresh Note On from the helper at 0x800062b4 -
+        // reached from the lift handler and nowhere else.
+        wordPatch("key_restore_pool_1", 0x800063e8L,
+            block("seq_pitch") ? 0x8001bb3cL : 0x80007de8L,
+            "restored note on, port one -> play-mode guard");
+        wordPatch("key_restore_pool_2", 0x800063ecL,
+            block("seq_pitch") ? 0x8001bb40L : 0x80008170L,
+            "restored note on, port two -> play-mode guard");
         wordPatch("pad_select_pool", 0x8000a810L,
             block("seq_chord") ? 0x8001b790L : 0x8000698cL,
             "press-time select_pad -> chord-armed guard");
