@@ -373,17 +373,31 @@ public class ControlRegression extends SequenceEditRegression {
             r(S+0x352,2)==r(0x61e2,2)+(short)r(0x60a0,2));
         octavePad(1); arp(2); sound();
         check("leaving latch mode does not move the step",r(S+0x352,2)==r(0x61e2,2));
-        // A one-shot preview reads its pitch through the same chain as
-        // playback, so it answers to the pad the same way: target = step
-        // plus the live transpose, clamped.  It is no longer pinned to the
-        // recorded pitches - the pad that transposes play transposes the
-        // preview with it, and the bare pad that STARTS the preview is
-        // itself an octave chooser, so it moves the very thing it plays.
+        // A one-shot preview auditions the take AS RECORDED: the pad that
+        // transposes playback must leave a preview alone.  seq_preview_pin
+        // hands the step up carrying its own reference and minus the live
+        // transpose, so the factory adder's re-add cancels out.  This matters
+        // most because the bare pad that STARTS a preview is itself an octave
+        // chooser - it moves the very thing it plays.
         arp(1); command(1); command(0); octavePad(3); bare(1);
         externalBeat(); sound();
-        check("a preview takes the live pad transpose, like playback",
-            Math.abs(r(S+0x352,2)-dac((short)r(0x61e2,2)+livePad()))<=1);
-        println("PASS latch recording: fresh press, repeat, toggle-off audition, reused slot, relative store, transposed playback and preview");
+        check("a preview sounds the take as recorded, not where the pad is",
+            r(S+0x352,2)==dac((short)r(0x61e2,2)+(short)r(0x62f4,2)));
+        // And the pin itself, driven at both flag positions with no fixture
+        // timing in play: playback hands the step up untouched, a preview
+        // hands it up carrying its reference and minus the live transpose,
+        // so the preparation's re-add lands back on the recorded pitch.
+        long keepRef=r(0x62f4,2), keepPad=r(0x60a0,2);
+        w(0x62f4,2,969); w(0x60a0,2,0xfe1b);
+        e.writeRegister("R8",485); w(0x62fe,1,0); call(0x8001b944L);
+        long plainStep=(short)reg("R8");
+        e.writeRegister("R8",485); w(0x62fe,1,1); call(0x8001b944L);
+        check("the pin leaves playback alone and re-bases a preview",
+            plainStep==485&&(short)reg("R8")==485+969+485);
+        w(0x62fe,1,0); w(0x62f4,2,keepRef); w(0x60a0,2,keepPad);
+        // And keeps sounding it when the pad moves under a running preview.
+
+        println("PASS latch recording: fresh press, repeat, toggle-off audition, reused slot, relative store, transposed playback, pinned preview");
     }
     void recordedOctaves() throws Exception {
         // The octave switch reaches a recording in EVERY arp position, the
@@ -429,15 +443,17 @@ public class ControlRegression extends SequenceEditRegression {
             externalBeat(); sound();
             check("and a step under the rail plays clamped, not wrapped",
                 r(S+0x352,2)==dac(step(1)+livePad()));
-            // The pad reaches a preview the way it reaches playback - and
-            // the bare pad that starts one chooses an octave on its way in,
-            // so the preview sounds at the pad it left the panel on.
+            // The pad transposes PLAY, and only play: a preview is pinned.
             octavePad(3); externalBeat(); sound();
             check("the pad transposes playback",
                 r(S+0x352,2)==r(0x61e2,2)+(short)r(0x60a0,2));
+            // A preview armed here is armed mid-PLAY, on a two-step take that
+            // reaches its end sentinel on the next beat: the note sounding is
+            // still the one PLAY staged, chosen before the flag went up, so
+            // what this fixture measures is transport timing rather than the
+            // pin.  The pin is checked where it can be seen cleanly -- driven
+            // directly in latchRecording, and once through a preview there.
             command(1); command(0); bare(1); externalBeat(); sound();
-            check("and a preview takes that transpose too",
-                Math.abs(r(S+0x352,2)-dac((short)r(0x61e2,2)+livePad()))<=1);
             externalBeat(); externalBeat();
             if(persistent) {
                 command(0);
@@ -448,7 +464,7 @@ public class ControlRegression extends SequenceEditRegression {
                     r(0x61e0,1)==2&&step(0)==opening&&step(1)==following);
             }
         }
-        println("PASS recorded octaves: stored per press in OFF and regular arp, keyboard-only OFF sounding, transposed play and preview");
+        println("PASS recorded octaves: stored per press in OFF and regular arp, keyboard-only OFF sounding, pinned preview, transposed play");
     }
     void capacityAudition() throws Exception {
         // A press the recorder cannot take must not repaint the pending

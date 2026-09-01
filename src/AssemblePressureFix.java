@@ -7508,15 +7508,46 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001ba46");
+        emit("BR{ne} 0x8001ba4a");
         emit("MOV R9,0x61e2");
         emit("LD.SH R8,R9[0x0]");       // the step's own pitch
-        padTo(0x8001ba46L);
-        emit("MCALL PC[0x8001ba50]");   // and then the octave randomiser
+        emit("MCALL PC[0x8001ba58]");   // pinned back to the take for a preview
+        padTo(0x8001ba4aL);
+        emit("MCALL PC[0x8001ba54]");   // and then the octave randomiser
         emit("LDM SP++,R7,PC");
-        padTo(0x8001ba50L);
+        padTo(0x8001ba54L);
         word(0x80019da8L); // the octave entry this replaces
-        finish("seq_pitch", 0x8001ba54L);
+        word(0x8001b944L); // seq_preview_pin
+        finish("seq_pitch", 0x8001ba60L);
+
+        // A one-shot preview auditions the take AS RECORDED: the pad that
+        // transposes playback must leave a preview alone.  Playback wants the
+        // factory target preparation's per-scan re-add of the live transpose
+        // - that IS the pad transposing the take - so the pin cannot live in
+        // the store or in the adder.  It lives here: for the length of a
+        // preview the step is handed up already carrying its own reference
+        // and already minus the transpose about to be added back, so the two
+        // cancel and the preview sounds the pitch that was played in,
+        // wherever the pad has since been left.  A preview is the one place
+        // the pad must not reach, because the bare pad that STARTS one is an
+        // octave chooser itself and would move the very thing it plays.
+        //
+        // R8 = the step in, the pitch to sound out.  R9 is the caller's
+        // scratch, already spent by the time this is reached.
+        begin(0x8001b944L);
+        emit("MOV R9,0x62fe");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001b95e");      // ordinary playback: the pad reaches it
+        emit("MOV R9,0x62f4");
+        emit("LD.SH R9,R9[0x0]");
+        emit("ADD R8,R9");              // the take's own reference back on
+        emit("MOV R9,0x60a0");
+        emit("LD.SH R9,R9[0x0]");
+        emit("SUB R8,R9");              // less the transpose the adder re-adds
+        padTo(0x8001b95eL);
+        emit("MOV PC,LR");
+        finish("seq_preview_pin", 0x8001b968L);
 
         // Note-off pointer pools -> latch-gated wrapper.
         // Global vibrato on knob 4 (one-knob law: depth and rate

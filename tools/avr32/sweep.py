@@ -195,10 +195,13 @@ def audit_call_pools(image_path) -> list[str]:
 # and when sequenced steps became relative to the take's own transpose, the
 # playing gate took half the step, play mode silenced the keyboard, the
 # first-use bootstrap adopted the bend and DAC slots, and the pad-4 chord
-# guarded press-time selection at its source.
+# guarded press-time selection at its source; and again when a one-shot
+# preview was pinned back to the pitches it recorded, so the pad that
+# transposes playback - including the bare pad that starts the preview, which
+# chooses an octave on its way in - leaves a preview alone.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "4453a5ce5dc1e2129918a213a9d7f4ccb24f761b3321fd3bfa0da521c8be2769",
+    "historical_config": "eb1734ce1336511505db8c2a2f2f3968cf71bca7e975b34cc4d37917d9fc6f1e",
 }
 
 
