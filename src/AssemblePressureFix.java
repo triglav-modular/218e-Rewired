@@ -7459,31 +7459,38 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         finish("clock_gate", 0x8001bb34L);
 
-        // While the sequencer plays, the MONO keyboard sends nothing out.
+        // While the sequencer plays, the keyboard stops sending outward.
         //
         // seq_noteon_mute already takes the sound away - it owns the pool
         // word for an inner call of the contact handler at 0x80005b6c, so a
         // press in PLAY reaches no pitch, no gate and no trigger.  What it
         // never took was the notes: the contact handler sends the key's own
         // Note On further down, past that call, the lift handler at
-        // 0x80005edc sends the Note Off, and both do the 208 bus beside the
-        // two MIDI ports.  So a press during a take made no sound here and a
-        // real note on every output over there.
+        // 0x80005edc sends the Note Off, and both drive the 208 bus beside
+        // the two MIDI ports.  So a press during a take made no sound here
+        // and a real note on every output over there.
         //
-        // That is a defect in MONO and not in poly, and the difference is
-        // the sequencer's own notes: a running take sends its steps on the
-        // same MIDI channel and the same bus, one at a time.  Mono adds a
-        // second monophonic line to them, and the two collide - press a key
-        // whose note the sequence is holding and its release ends the
-        // sequencer's note instead of yours.  Poly does not: each key holds
-        // its own note and the receiver has the voices for it, which is what
-        // the mode is for.  So the test here is PLAYING AND NOT POLY, and
-        // the poly branches are left completely alone.
+        // Whether that is a defect depends on the destination, and on how
+        // many notes it can hold.  The sequencer is playing its own steps
+        // down all three at once, one note at a time.
         //
-        // The bus needs that second half of the test where MIDI would not:
-        // the bus section of the contact and lift handlers sits BEFORE their
-        // poly/mono fork, so a poly press reaches it too, and a bare
-        // playing test would have silenced the bus under poly as well.
+        //   MIDI in mono - a second monophonic line on the sequencer's own
+        //   channel.  The two collide: press a key whose note the sequence
+        //   is holding and its release ends the sequencer's note instead of
+        //   yours.  Silenced.
+        //
+        //   MIDI in poly - each key holds its own note and the receiver has
+        //   the voices for it.  That is what the mode is for, so it is left
+        //   live: this is the one way to play over a running take.
+        //
+        //   The 208 bus - a link to one 208, which is monophonic hardware
+        //   whatever the keyboard is set to.  The firmware knows it: both
+        //   handlers drive the bus from the single current-note byte at
+        //   state+0x2e1, BEFORE their poly/mono fork, so poly reaches it
+        //   too and reaches it one note at a time.  It collides with the
+        //   take exactly the way mono MIDI does, so it is silenced in every
+        //   mode - which is why the bus entries take the bare transport
+        //   test and the MIDI entries take the mode test as well.
         //
         // Twelve pool words, one caller each, all of them the physical
         // key's: the previous note's release at 0x80005d22/0x80005d68/
@@ -7499,33 +7506,41 @@ public class AssemblePressureFix extends GhidraScript {
         // straight home.
         begin(0x8001be50L);
         emit("LDDPC R8,0x8001bea0");
-        emit("RJMP 0x8001be68");
+        emit("RJMP 0x8001be74");
         emit("LDDPC R8,0x8001bea4");
-        emit("RJMP 0x8001be68");
+        emit("RJMP 0x8001be74");
         emit("LDDPC R8,0x8001bea8");
-        emit("RJMP 0x8001be68");
+        emit("RJMP 0x8001be74");
         emit("LDDPC R8,0x8001beac");
-        emit("RJMP 0x8001be68");
+        emit("RJMP 0x8001be74");
         emit("LDDPC R8,0x8001beb0");
         emit("RJMP 0x8001be68");
         emit("LDDPC R8,0x8001beb4");
         emit("RJMP 0x8001be68");
         padTo(0x8001be68L);
+        // The bus: monophonic hardware, so playing is the whole test.
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001be8c");      // stopped or recording: the real sender
+        emit("BR{eq} 0x8001be9c");
+        emit("RJMP 0x8001be98");
+        padTo(0x8001be74L);
+        // MIDI: silenced only where the keyboard is monophonic too.
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x2");
+        emit("BR{ne} 0x8001be98");      // stopped or recording: the real sender
         emit("MOV R9,0x3560");
         emit("LD.UB R9,R9[0x84]");
         emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001be90");      // playing, mono: send nothing
+        emit("BR{eq} 0x8001be9c");      // playing, mono: send nothing
         emit("MOV R9,0x3560");
         emit("LD.UB R9,R9[0x85]");
         emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001be90");      // the arp owns the mono path too
-        padTo(0x8001be8cL);
+        emit("BR{ne} 0x8001be9c");      // the arp owns the mono path too
+        padTo(0x8001be98L);
         emit("MOV PC,R8");
-        padTo(0x8001be90L);
+        padTo(0x8001be9cL);
         emit("MOV PC,LR");
         padTo(0x8001bea0L);
         word(0x80007e44L); // MIDI note off, port one
@@ -7536,37 +7551,41 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8000f3a8L); // note off, 208 bus
         finish("seq_key_send_mute", 0x8001beb8L);
 
-        // Entering PLAY ends the mono keyboard's note where it stands.
+        // Entering PLAY ends what the keyboard is holding, where it stands.
         //
-        // The mute above starts at the transition, so a key still under a
-        // finger owns a note nobody will ever end: its press went out before
-        // the mute applied and its lift is swallowed after.  Leaving it to
-        // the transport's own all-notes-off at STOP would let it ring for the
-        // whole take, so it is ended here instead, on the bus and both ports,
-        // exactly the way the lift handler would have.
+        // The mute above starts at the transition, so anything already
+        // sounding owns a note nobody will end: its press went out before
+        // the mute applied and its lift is swallowed after.  Both halves are
+        // ended here instead, each on the destinations the mute took.
         //
-        // 0x33c5 is the factory's own "the keyboard owns a sounding note",
-        // set only inside the mono section the poly modes skip, so a poly
-        // note held into PLAY is not touched: poly stays live through the
-        // take and its own release still ends it.  The flag is cleared and
-        // the note left alone - clearing the flag is what stops the contact
-        // handler ending this note a second time, and a stray note-off after
-        // STOP for a note already ended is a no-op, where a note number
-        // invented here would not be.
+        // The bus, in every mode, because it is silenced in every mode.  It
+        // keeps no "sounding" flag of its own - the factory sends it an
+        // unmatched note-off on every press - so the test is whether a key
+        // is under a finger at all, state+0x238, the count the contact
+        // handler itself keeps.  Nothing is written back: a second bus
+        // note-off after STOP, for a note already ended, is the same no-op
+        // the factory sends routinely, where a note number invented here
+        // would not be.
+        //
+        // MIDI, only where the keyboard is monophonic, on 0x33c5 - the
+        // factory's own "the keyboard owns a sounding note", set only inside
+        // the mono section the poly modes skip.  A poly note held into PLAY
+        // keeps its MIDI: poly stays live through the take and its own
+        // release still ends it.  Clearing the flag is what stops that note
+        // being ended a second time.
         //
         // seq_transport calls this on the way into PLAY, BEFORE it publishes
-        // the new mode, so the mute is not yet in the way; the sends here go
-        // to the real senders regardless.  It tails into seq_release, whose
-        // pool word it took over, so the arp note is ended exactly as before.
+        // the new mode, so the mute is not yet in the way.  It tails into
+        // seq_release, whose pool word it took over, so the arp note is
+        // ended exactly as before.
         begin(0x8001bec0L);
         emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
-        emit("LDDPC R1,0x8001bf40");    // global state base
-        emit("MOV R8,0x33c5");
-        emit("LD.UB R8,R8[0x0]");
+        emit("LDDPC R1,0x8001bf50");    // global state base
+        emit("LD.UB R0,R1[0x2e1]");     // the note the keyboard is holding
+        emit("LD.UB R8,R1[0x238]");     // is a key under a finger at all?
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001bf30");      // the keyboard owns nothing
-        emit("LD.UB R0,R1[0x2e1]");     // the note it owns
+        emit("BR{eq} 0x8001bf00");
         emit("MOV R8,0x2efa");
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
@@ -7575,30 +7594,34 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x8001bf00");
         emit("LD.UB R12,R1[0x0]");
-        emit("MCALL PC[0x8001bf44]");   // take the 208 bus
+        emit("MCALL PC[0x8001bf54]");   // take the 208 bus
         emit("MOV R10,0x0");
         emit("LD.W R11,R1[0x4]");
         emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bf48]");   // note off, on the bus
+        emit("MCALL PC[0x8001bf58]");   // note off, on the bus
         emit("LD.UB R12,R1[0x0]");
-        emit("MCALL PC[0x8001bf4c]");   // and give it back
+        emit("MCALL PC[0x8001bf5c]");   // and give it back
         padTo(0x8001bf00L);
+        emit("MOV R8,0x33c5");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf40");      // no mono keyboard note is sounding
         emit("LD.UB R10,R1[0x2e7]");
         emit("MOV R11,0x0");
         emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bf50]");   // note off, one port
+        emit("MCALL PC[0x8001bf60]");   // note off, one port
         emit("LD.UB R10,R1[0x2e7]");
         emit("MOV R11,0x0");
         emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bf54]");   // and the other
+        emit("MCALL PC[0x8001bf64]");   // and the other
         emit("MOV R8,0x33c5");
         emit("MOV R9,0x0");
-        emit("ST.B R8[0x0],R9");        // the keyboard owns nothing now
-        padTo(0x8001bf30L);
-        emit("LDM SP++,R0,R1,R7,LR");
-        emit("LDDPC R8,0x8001bf58");
-        emit("MOV PC,R8");              // on to the arp/sequencer release
+        emit("ST.B R8[0x0],R9");        // the keyboard owns no MIDI note now
         padTo(0x8001bf40L);
+        emit("LDM SP++,R0,R1,R7,LR");
+        emit("LDDPC R8,0x8001bf68");
+        emit("MOV PC,R8");              // on to the arp/sequencer release
+        padTo(0x8001bf50L);
         word(0x00003560L); // global state base
         word(0x8000f1f0L); // take the 208 bus
         word(0x8000f3a8L); // note off on the bus
@@ -7606,7 +7629,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80007e44L); // MIDI note off, port one
         word(0x800081f0L); // MIDI note off, port two
         word(0x8001b448L); // seq_release, whose pool word this took over
-        finish("seq_key_release", 0x8001bf5cL);
+        finish("seq_key_release", 0x8001bf6cL);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
         // The divider and the sequencer's rest/tie decision have already run.

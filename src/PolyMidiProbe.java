@@ -128,56 +128,65 @@ public class PolyMidiProbe extends ControlRegression {
             down(4);
             check("a stopped press sounds on both ports (poly="+poly+"): "+seen(),
                 count("on",40)==2&&activeNote(40)!=0);
+            check("and on the 208 bus (poly="+poly+"): "+seen(),bus("on",40)==1);
             up(4);
             check("and ends (poly="+poly+"): "+seen(),count("off",40)==2&&activeNote(40)==0);
+            check("on the bus too (poly="+poly+"): "+seen(),bus("off",40)>=1);
         }
         println("PASS the stopped keyboard is untouched in both modes");
     }
 
-    // Poly is the mode for playing over a running take: each key holds its
-    // own note and the receiver has the voices, so PLAY leaves it alone.
+    // Poly is the mode for playing over a running take - on MIDI, where the
+    // receiver has the voices.  The 208 bus is one monophonic instrument, so
+    // it goes quiet with everything else the take owns.
     void polyPlaysOverTheSequence() throws Exception {
         bench(); play(); armed(true);
         down(4); down(9);
-        check("a poly chord over a running take reaches both outputs: "+seen(),
+        check("a poly chord over a running take reaches both MIDI ports: "+seen(),
             count("on",40)==2&&count("on",45)==2);
+        check("but nothing reaches the 208 bus: "+seen(),
+            bus("on",40)==0&&bus("on",45)==0&&bus("off",40)==0&&bus("off",45)==0);
         up(9); up(4);
         check("and both keys end when they are let go: "+seen(),
             count("off",40)==2&&count("off",45)==2);
-        check("the 208 bus is left live for poly too: "+seen(),
-            bus("on",40)>0||bus("on",45)>0);
-        check("leaving nothing active",activeNote(40)==0&&activeNote(45)==0);
+        check("still nothing on the bus: "+seen(),bus("off",40)==0&&bus("off",45)==0);
         stop();
-        println("PASS poly plays over a running sequence, both keys balanced");
+        println("PASS poly plays over a take on MIDI, and leaves the 208 bus alone");
     }
 
-    // A key already sounding when the transport starts.  In poly its lift
-    // still ends it, because poly is live through the take anyway.  In mono
-    // the mute begins at the transition and would strand it, so the
-    // transition ends it there and then - on the bus and both ports.
+    // A key already sounding when the transport starts.  Whatever the mute
+    // is about to take is ended at the transition: the bus in both modes,
+    // MIDI only in mono.  A poly key keeps its MIDI note and ends it on its
+    // own release, because poly stays live through the take.
     void heldAcrossPlay() throws Exception {
         bench(); armed(true);
         down(4);
-        check("the poly press before PLAY sounded: "+seen(),count("on",40)==2&&activeNote(40)!=0);
-        play(); armed(true);
+        check("the poly press before PLAY sounded on MIDI and the bus: "+seen(),
+            count("on",40)==2&&bus("on",40)==1&&activeNote(40)!=0);
+        midi.clear();
+        play();
+        check("entering PLAY ends its bus note and leaves its MIDI: "+seen(),
+            bus("off",40)==1&&count("off",40)==0);
+        armed(true);
         up(4);
-        check("its lift during PLAY still ends the note: "+seen(),count("off",40)==2);
+        check("its lift during PLAY still ends the MIDI note: "+seen(),
+            count("off",40)==2&&bus("off",40)==0);
         check("and clears its active-note record",activeNote(40)==0);
         stop();
 
         bench(); armed(false);
         down(4);
-        check("the mono press before PLAY sounded: "+seen(),
+        check("the mono press before PLAY sounded on MIDI and the bus: "+seen(),
             count("on",40)==2&&bus("on",40)==1&&activeNote(40)!=0);
         midi.clear();
         play();
-        check("entering PLAY ends it at the boundary, on all three: "+seen(),
+        check("entering PLAY ends it on all three: "+seen(),
             count("off",40)==2&&bus("off",40)==1&&activeNote(40)==0);
         midi.clear();
         up(4);
         check("and its lift then has nothing left to send: "+seen(),midi.isEmpty());
         stop();
-        println("PASS a held note: poly ends on release, mono ends at the boundary");
+        println("PASS a held note ends at the boundary: the bus always, MIDI in mono");
     }
 
     // Mono is the mode that must NOT play over a take.  The sequencer sends
