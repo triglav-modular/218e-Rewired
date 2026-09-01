@@ -7578,8 +7578,16 @@ public class AssemblePressureFix extends GhidraScript {
         // the new mode, so the mute is not yet in the way.  It tails into
         // seq_release, whose pool word it took over, so the arp note is
         // ended exactly as before.
+        //
+        // It keeps R9 and R12 the way seq_release does, because it took over
+        // seq_release's pool word and inherits its contract: seq_transport
+        // publishes the mode through R12 the moment this returns, and the
+        // senders below leave their own R12 behind.  Without them in the
+        // frame the mode byte went out through a note number instead of the
+        // sequencer's block - a stray store into low RAM on every PLAY that
+        // found a key under a finger.
         begin(0x8001bec0L);
-        emit("STM --SP,R0,R1,R7,LR");
+        emit("STM --SP,R0,R1,R7,R9,R12,LR");
         emit("MOV R7,SP");
         emit("LDDPC R1,0x8001bf50");    // global state base
         emit("LD.UB R0,R1[0x2e1]");     // the note the keyboard is holding
@@ -7618,7 +7626,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");        // the keyboard owns no MIDI note now
         padTo(0x8001bf40L);
-        emit("LDM SP++,R0,R1,R7,LR");
+        emit("LDM SP++,R0,R1,R7,R9,R12,LR");
         emit("LDDPC R8,0x8001bf68");
         emit("MOV PC,R8");              // on to the arp/sequencer release
         padTo(0x8001bf50L);

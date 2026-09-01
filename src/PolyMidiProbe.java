@@ -17,13 +17,22 @@ public class PolyMidiProbe extends ControlRegression {
     static final long QUEUE=0x80009a64L,          // DIN/USB three-byte enqueue
         PORT2_ON=0x80007f5cL, PORT2_OFF=0x80007fc8L,  // port two's own link
         BUS_ON=0x8000f2c0L, BUS_OFF=0x8000f3a8L,      // the optional 208 bus
-        PRESSURE=0x800053acL;                     // the physical pressure scan
+        PRESSURE=0x800053acL,                     // the physical pressure scan
+        PUBLISH=0x8001d670L;                      // seq_transport's ST.B R12[0x4],R1
     final List<String> midi=new ArrayList<>();
     final List<String> failures=new ArrayList<>();
     int sustain;
+    // R12 as seq_transport publishes the new mode through it.  The call it
+    // makes just before - seq_key_release, on the way into PLAY - runs
+    // the senders with a key held, and they leave their own R12 behind;
+    // the store then went through a note number instead of the block.
+    // The senders are stubbed here, so the register is read at the store
+    // itself rather than inferred from where the byte landed.
+    long publishR12=-1;
 
     @Override void step() throws Exception {
         long p=pc();
+        if(p==PUBLISH) publishR12=reg("R12");
         if(p==QUEUE) {
             long buf=reg("R11");
             int status=(int)r(buf,1);
@@ -62,7 +71,11 @@ public class PolyMidiProbe extends ControlRegression {
         e.writeRegister("R11",pad); call(ENTER); call(TICK);
     }
     void play() throws Exception {
+        publishR12=-1;
         button(1); check("the real transport reached PLAY",r(0x6158,1)==2);
+        check("and published the mode through the sequencer's block, not a"
+            +" register a sender left behind: R12="+Long.toHexString(publishR12),
+            publishR12==0x6154);
     }
     void stop() throws Exception {
         button(1); check("the real transport reached STOP",r(0x6158,1)==0);
