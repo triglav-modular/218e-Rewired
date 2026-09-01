@@ -9,11 +9,14 @@ The default, six-order/transpose, tuned transpose, and lean (factory arp,
 no sequencer/divider) builds run with and without persistence.
 --image checks an existing image without rebuilding it;
 its variant and persistence settings must be specified correctly by the caller.
+The images are built one at a time and then emulated together; --jobs sets how
+many emulations run at once, and --jobs 1 puts the whole run back in a line.
 Temporary images/logs/projects stay in build/. Shared metadata is restored.
 """
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import os
 import re
 import subprocess
@@ -31,6 +34,8 @@ def main() -> None:
     parser.add_argument("--persist", choices=("on", "off", "both"), default="both")
     parser.add_argument("--image", type=Path)
     parser.add_argument("--ghidra", type=Path)
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="emulations to run at once (default: one per variant, capped at 8)")
     args = parser.parse_args()
     if args.image and (args.variant == "all" or args.persist == "both"):
         parser.error("--image requires one --variant and --persist on/off")
@@ -54,6 +59,11 @@ def main() -> None:
     variants = ("default", "roles", "tuned", "lean") if args.variant == "all" else (args.variant,)
     persists = (False, True) if args.persist == "both" else (args.persist == "on",)
     failures = []
+    # Built one at a time - every build writes the same fixed paths under
+    # build/ - then emulated together, since an emulation reads one image and
+    # writes one log and shares nothing with its neighbours.
+    jobs = args.jobs or min(len(variants) * len(persists), 8)
+    planned: list[tuple[str, list[str]]] = []
     try:
         for variant in variants:
             for persist in persists:
@@ -91,21 +101,35 @@ def main() -> None:
                     (work / f"{name}-build.log").write_text(result.stdout + result.stderr)
                     if result.returncode:
                         raise SystemExit(result.stdout + result.stderr)
-                command = [str(headless), str(work), name, "-import", str(image),
+                planned.append((name, [
+                    str(headless), str(work), name, "-import", str(image),
                     "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src"),
                     "-postScript", "ControlRegression.java", "vibrato" if variant == "default" else "trn",
                     "order" if variant == "default" else "orders", "persist" if persist else "volatile",
-                    "9", "lean" if variant == "lean" else "full"]
-                print(f"Emulating {name}...", flush=True)
-                result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
-                output = result.stdout + result.stderr
-                log = work / f"{name}-emulation.log"
-                log.write_text(output)
-                for line in output.splitlines():
+                    "9", "lean" if variant == "lean" else "full"]))
+
+        def emulate(name: str, command: list[str]) -> str:
+            result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
+            output = result.stdout + result.stderr
+            log = work / f"{name}-emulation.log"
+            log.write_text(output)
+            if result.returncode or "ERROR REPORT SCRIPT ERROR" in output or "CONTROL REGRESSION PASS:" not in output:
+                return str(log)
+            return ""
+
+        print(f"Emulating {len(planned)} firmware image(s), {jobs} at a time...", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            pending = [(name, pool.submit(emulate, name, command)) for name, command in planned]
+            # Reported in the order the variants were asked for, not the order
+            # they finish, so the run reads the same however it was scheduled.
+            for name, future in pending:
+                failure = future.result()
+                print(f"--- {name}", flush=True)
+                for line in (work / f"{name}-emulation.log").read_text().splitlines():
                     if "ControlRegression.java>" in line:
                         print(line.split("ControlRegression.java>", 1)[1].strip(), flush=True)
-                if result.returncode or "ERROR REPORT SCRIPT ERROR" in output or "CONTROL REGRESSION PASS:" not in output:
-                    failures.append(str(log))
+                if failure:
+                    failures.append(failure)
     finally:
         for name, data in saved.items():
             path = REPO / "build" / name

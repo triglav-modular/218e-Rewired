@@ -5,6 +5,9 @@
     python3 tools/test_persistence.py --mode seq-clock --quick
     python3 tools/test_persistence.py --mode seq --no-persist --quick
 
+The images are built one at a time and then emulated together; --jobs sets how
+many emulations run at once, and --jobs 1 puts the whole run back in a line.
+
 Requires Ghidra's AVR32 language. All images, configs, logs and private
 Ghidra projects stay under build/persistence-regression-*. Shared build
 metadata is restored on exit; updaters and the shipped image are untouched.
@@ -12,6 +15,7 @@ metadata is restored on exit; updaters and the shipped image are untouched.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import os
 import re
 import subprocess
@@ -41,6 +45,8 @@ def main() -> None:
     parser.add_argument("--quick", action="store_true", help="skip the clock frequency/duty sweep")
     parser.add_argument("--no-persist", action="store_true", help="test volatile sequencer edits/transport (requires --mode seq or seq-clock)")
     parser.add_argument("--ghidra", type=Path)
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="emulations to run at once (default: one per mode, capped at 8)")
     args = parser.parse_args()
     if args.no_persist and args.mode not in ("seq", "seq-clock"):
         parser.error("--no-persist requires --mode seq or seq-clock")
@@ -59,6 +65,11 @@ def main() -> None:
     work = Path(tempfile.mkdtemp(prefix="persistence-regression-", dir=build))
     print(f"Artifacts: {work}", flush=True)
     modes = ("presets", "seq", "clock", "seq-clock") if args.mode == "all" else (args.mode,)
+    # Built one at a time - every build writes the same fixed paths under
+    # build/ - then emulated together, since an emulation reads one image and
+    # writes one log and shares nothing with its neighbours.
+    jobs = args.jobs or min(len(modes), 8)
+    planned: list[tuple[str, list[str]]] = []
     try:
         for mode in modes:
             text = base
@@ -80,7 +91,9 @@ def main() -> None:
             (work / f"{mode}-build.log").write_text(result.stdout + result.stderr)
             if result.returncode:
                 raise SystemExit(result.stdout + result.stderr)
-            command = [str(headless), str(work), "persistence", "-import", str(image),
+            # Its own Ghidra project per mode: a shared one would serialise the
+            # modes again on the project lock.
+            command = [str(headless), str(work), f"persistence-{mode}", "-import", str(image),
                        "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src")]
             if not args.no_persist:
                 command += ["-postScript", "PersistenceRegression.java", mode]
@@ -94,14 +107,13 @@ def main() -> None:
                     command.append("quick")
                 command += ["-postScript", "SequenceEditRegression.java", mode,
                             "volatile" if args.no_persist else "persist"]
-            print(f"Emulating {mode} firmware...", flush=True)
+            planned.append((mode, command))
+
+        def emulate(mode: str, command: list[str]) -> str:
             result = subprocess.run(command, cwd=REPO, text=True, capture_output=True)
             output = result.stdout + result.stderr
             log = work / f"{mode}-emulation.log"
             log.write_text(output)
-            for line in output.splitlines():
-                if "Regression.java>" in line:
-                    print(line.split("Regression.java>", 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
             expected = []
             if not args.no_persist:
                 expected.append("PERSISTENCE REGRESSION PASS:")
@@ -112,7 +124,25 @@ def main() -> None:
             missing = [marker.rstrip(":") for marker in expected if marker not in output]
             if result.returncode or "ERROR REPORT SCRIPT ERROR" in output or missing:
                 why = "no " + ", ".join(missing) if missing else "script error"
-                raise SystemExit(f"Persistence regression failed: {mode}, {why}; see {log}\n{excerpt(output)}")
+                return f"Persistence regression failed: {mode}, {why}; see {log}\n{excerpt(output)}"
+            return ""
+
+        print(f"Emulating {len(planned)} firmware image(s), {jobs} at a time...", flush=True)
+        failures = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            pending = [(mode, pool.submit(emulate, mode, command)) for mode, command in planned]
+            # Reported in the order the modes were asked for, not the order
+            # they finish, so the run reads the same however it was scheduled.
+            for mode, future in pending:
+                failure = future.result()
+                print(f"--- {mode}", flush=True)
+                for line in (work / f"{mode}-emulation.log").read_text().splitlines():
+                    if "Regression.java>" in line:
+                        print(line.split("Regression.java>", 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
+                if failure:
+                    failures.append(failure)
+        if failures:
+            raise SystemExit("\n\n".join(failures))
     finally:
         for name, data in saved.items():
             path = build / name
