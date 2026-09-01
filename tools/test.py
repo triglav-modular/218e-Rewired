@@ -1652,6 +1652,23 @@ def test_corpus_current() -> None:
           "with tools/avr32/make_corpus.py (needs Ghidra)")
 
 
+def test_encoder_refusals() -> None:
+    """The JS encoder must refuse what its fields cannot hold; see
+    tools/avr32/test_encoder.js for the cases and why each one is there."""
+    print("encoder refusals")
+    jsc = Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc")
+    if not jsc.exists():
+        print("  skip  jsc is not on this machine")
+        return
+    result = subprocess.run(
+        [str(jsc), "tools/avr32/encoder.js", "tools/avr32/test_encoder.js"],
+        cwd=REPO, text=True, capture_output=True)
+    check("out-of-field immediates are refused, in-field ones encode",
+          result.returncode == 0 and "encoder checks pass" in result.stdout,
+          (result.stdout + result.stderr).strip().splitlines()[-1:] and
+          (result.stdout + result.stderr).strip().splitlines()[-1] or "no output")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden", action="store_true",
@@ -1692,6 +1709,7 @@ def main() -> None:
     test_atomic_replace()
     test_generated_is_current()
     test_corpus_current()
+    test_encoder_refusals()
     test_pattern_bank_capacity()
     test_hex_roundtrip(cfg)
     if args.golden:

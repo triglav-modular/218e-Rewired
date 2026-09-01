@@ -89,7 +89,12 @@ var AVR32 = (function () {
                 // 0x80003776 is MOV R8,-0x1e4 encoded fe78fe1c, and the
                 // formula below reproduces those four bytes exactly - and a
                 // build now emits one, so the corpus covers it from here on.
-                if (v < 0 && v >= -0x200000) v += 0x200000;
+                // The field is sign-extended by the CPU, so it holds
+                // -0x100000..0xFFFFF and nothing else: 0x100000 through
+                // 0x1FFFFF would come back negative, and -0x200000 through
+                // -0x100001 positive, when this accepted the whole 21 bits.
+                if (!fits(v, 21)) return null;
+                if (v < 0) v += 0x200000;
                 if (v >= 0 && v <= 0x1FFFFF) {
                     var up = (v >> 16) & 0x1F;
                     var hi = 0xE0600000 + ((up >> 1) * 0x02000000) +
@@ -147,7 +152,10 @@ var AVR32 = (function () {
             re: /^SUB (\S+),(-?0x[0-9a-fA-F]+)$/, fn: function (m) {
                 var rd = reg(m[1]), v = imm(m[2]);
                 if (rd === null || v === null) return null;
-                if (m[1] === 'SP') {
+                // R13 IS SP: written either way it takes the word-scaled
+                // stack form, or "SUB R13,0x20" encoded as an unscaled
+                // SUB Rd and moved the stack four times as far.
+                if (rd === 13) {
                     // Only word-aligned adjustments are representable; a
                     // stray byte offset would silently encode as v/4 rounded.
                     if (v % 4 !== 0) return null;
@@ -295,7 +303,9 @@ var AVR32 = (function () {
                 var t = TRIADIC[m[1]];
                 var rd = reg(m[2]), rs = reg(m[3]), ri = reg(m[4]), sh = imm(m[5]);
                 if (rd === null || rs === null || ri === null || sh === null) return null;
-                if (sh < 0 || sh > 15) return null;
+                // Two bits of shift, as for the indexed loads and stores; a
+                // larger one spilled into the reserved bits above it.
+                if (sh < 0 || sh > 3) return null;
                 return triadic(rs, ri, t[0], sh, rd);
             }
         },
