@@ -154,7 +154,7 @@ var WEBBUILD = (function () {
          'seq_trigger_led', 'seq_trigger_led_hook',
          'seq_edit', 'seq_preview_step', 'seq_command',
          'seq_preview_next', 'seq_preview_start', 'seq_preview_transport',
-         'seq_record_pitch', 'seq_hold', 'seq_flash',
+         'seq_record_pitch', 'seq_preview_pin', 'seq_hold', 'seq_flash',
          'seq_restart_init', 'seq_boot']
             .forEach(function (n) { blocks[n] = seq; });
         var keep = !!(cfg.persist && cfg.persist.on);
