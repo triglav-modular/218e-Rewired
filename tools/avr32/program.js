@@ -1588,6 +1588,13 @@ function assembleProgram() {
         // (state+0x2ad6 = RAM 0x6036) instead of the DAC slot directly.
         fixedPatch("pressure_target_redirect", 0x80002db2, 4, "ST.H R9[0x2ad6],R8");
 
+        // The strip's slewed value now lands on a shadow (state+0x301a =
+        // RAM 0x657a) instead of DAC slot 5, so seq_strip_led is the only
+        // writer of the slot the strip's three position lamps follow.  Gated
+        // with that cave: without it nothing would write the slot at all and
+        // the strip's own output would die.
+        fixedPatch("strip_dac_redirect", 0x80003120, 4, "ST.H R9[0x301a],R8");
+
         // Local proximity estimator.  R12 is the held key being corrected.
         // Walk outward on each
         // side past touched keys (and past the immediate neighbours, which
@@ -2213,6 +2220,12 @@ function assembleProgram() {
         emit("ST.H R10[0x216],R8");
         emit("ST.H R10[0x354],R8");
         emit("ST.H R10[0x358],R8");
+        // And the shadow DAC slot 5 was redirected to (RAM 0x657a).  The lamp
+        // cave hands it on whenever a take is not running, and it may read it
+        // before the factory's own strip pass has written it once - so
+        // without this the strip's jack could carry one scan of whatever the
+        // bootloader left, which is a spike into whatever it is patched to.
+        emit("ST.H R10[0x301a],R8");
         // And the staged base and target themselves.  A note-on rewrites
         // them, but the scans BEFORE the first note run the whole blend
         // chain against whatever the bootloader left in the base - measured
@@ -3148,7 +3161,8 @@ function assembleProgram() {
         word(0x8000673c); // led_flush()
         word(0x8001b2a0); // write_channel(R11, R9)
         word(0x8001b660); // seq_enter(R11 = the pad pressed)
-        word(0x8001b590); // the strip, per scan
+        // The strip's per-scan watch, or the lamp cave that calls it first.
+        word(block("seq_strip_led") ? 0x8001b7b0 : 0x8001b590);
         finish("seq_chord", 0x8001b320);
 
         // Explicit pad transport: record appends, play starts at the top,
@@ -6694,6 +6708,128 @@ function assembleProgram() {
         padTo(0x8001b7a8);
         word(0x8000698c); // select_pad(0..3)
         finish("select_pad_guard", 0x8001b7ac);
+
+        // The strip's three position lamps, and the acknowledgment they
+        // carry while a take is recording.
+        //
+        // Those lamps are not on the LED shift register.  All sixteen of its
+        // bits are accounted for - four pads, rem-en, trn, pm, the two preset
+        // outputs, the strip's own pulse, and six the factory never writes -
+        // and led_set is the only way any of them move.  The three that sit
+        // along the strip follow its ANALOG output instead: DAC slot 5,
+        // state+0x35e, which the factory rewrites every scan at 0x80003120
+        // from the slewed strip position, and which the 1 kHz flush sends
+        // with the other seven slots from state+0x354.  So the way to light
+        // them is to own that slot, and strip_dac_redirect sends the
+        // factory's own store to a shadow at 0x61f0 to make this cave the
+        // only writer of it.  Nothing reads 0x35e back - it is a DAC slot and
+        // nothing else - so owning it cannot disturb anything musical.
+        //
+        // The cost, stated plainly: slot 5 is the strip OUTPUT JACK, so a
+        // flash leaves the module as CV.  It is not a new cost.  Entering a
+        // rest means touching the strip, and a touch already drove that jack
+        // to wherever the finger was; pinning the slot for the take makes the
+        // jack quieter during a take than it is now, not noisier.
+        //
+        // A landed entry is read out of the step store rather than signalled
+        // by the strip cave, which leaves that tested block untouched: the
+        // count at 0x61e0 going UP BY ONE with 0x7ffe or 0x7fff on top is
+        // exactly what a rest or a tie that landed looks like.  A touch the
+        // 64-step ceiling or the transport rejected never moves the count; a
+        // played note moves it but leaves a pitch on top; a backspace or a
+        // clear moves it the wrong way.  The shadow count is resynced every
+        // scan, so none of those can arm a flash.
+        //
+        // RAM off 0x657a: +0 the redirected strip value (halfword), +2 the
+        // acknowledgment countdown in scans, +3 which side it was (1 rest,
+        // 2 tie), +4 last scan's step count.  Only the shadow needs the
+        // first-use fill - the countdown is rewritten every scan a take is
+        // not running, and the count is resynced every scan unconditionally.
+        begin(0x8001b7b0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001b868]");   // the strip's own watch, first
+        emit("MOV R10,0x61e0");         // the step store; +0 is the count
+        emit("MOV R11,0x657a");
+        emit("LD.UB R8,R10[0x0]");
+        emit("LD.UB R9,R11[0x4]");
+        emit("ST.B R11[0x4],R8");       // resync first, whatever follows
+        emit("SUB R9,-0x1");
+        emit("CP.W R8,R9");
+        emit("BR{ne} 0x8001b804");      // no append, or not by exactly one
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x8001b804");      // only record acknowledges anything
+        emit("SUB R8,0x1");
+        emit("MOV R12,0x6160");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("LD.SH R12,R12[0x0]");     // the step that just landed
+        // The side is chosen BEFORE each compare, the way the strip's own
+        // cave chooses one: nothing may sit between a CP and the branch that
+        // reads its flags.
+        emit("MOV R8,0x1");             // a rest: the lamp on the left
+        emit("MOV R9,0x7ffe");
+        emit("CP.W R12,R9");
+        emit("BR{eq} 0x8001b7f8");
+        emit("MOV R8,0x2");             // a tie: the lamp on the right
+        emit("MOV R9,0x7fff");
+        emit("CP.W R12,R9");
+        emit("BR{ne} 0x8001b804");      // neither: a played note
+        padTo(0x8001b7f8);
+        emit("ST.B R11[0x3],R8");
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_ack_scans", 20, 2, 250)));
+        emit("ST.B R11[0x2],R8");
+
+        padTo(0x8001b804);
+        // The slot itself, every scan.  Outside record the shadow is handed
+        // straight on, which is the factory's own behaviour with one store of
+        // indirection in front of it; inside record the lamps are ours.
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x8001b84c");
+        emit("LD.UB R8,R11[0x2]");      // still acknowledging?
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001b840");
+        emit("SUB R8,0x1");
+        emit("ST.B R11[0x2],R8");
+        emit("LD.UB R8,R11[0x3]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001b834");
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_led_rest_units", 512, 0, 4095)));
+        emit("RJMP 0x8001b858");
+        padTo(0x8001b834);
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_led_tie_units", 4095, 0, 4095)));
+        emit("RJMP 0x8001b858");
+        padTo(0x8001b840);
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_led_dark_units", 0, 0, 4095)));
+        emit("RJMP 0x8001b858");
+
+        padTo(0x8001b84c);
+        // Not recording.  An acknowledgment still in flight dies with the
+        // take, so leaving record cannot resume a flash into a mode that has
+        // none - and the lamps go back to following the strip on the next
+        // scan, repainted from the shadow rather than from anything we
+        // remembered.
+        emit("MOV R8,0x0");
+        emit("ST.B R11[0x2],R8");
+        emit("LD.SH R8,R11[0x0]");
+
+        padTo(0x8001b858);
+        // DAC slot 5 itself, addressed absolutely: state+0x35e is RAM 0x38be,
+        // and naming it outright costs the same as a pool word and a
+        // displaced store while leaving one fewer word behind the cave.
+        emit("MOV R9,0x38be");
+        emit("ST.H R9[0x0],R8");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001b868);
+        word(0x8001b590); // the strip's own per-scan watch
+        finish("seq_strip_led", 0x8001b86c);
 
         // The arp's OTHER gate clear.  When no key is held it drops the gate
         // and its LED at every fired step, before choosing a note - and in

@@ -1103,6 +1103,13 @@ RAM_REGIONS = [
     (0x6504, 0x6521, "owner: which key's press made each slot's note, plus one"),
     (0x6521, 0x653E, "current: the slot each key's note lives in, plus one"),
     (0x6540, 0x657A, "slot-indexed pressure weights, rebuilt per scan"),
+    # The strip lamps' cave.  The shadow is where the factory's own DAC slot 5
+    # store was redirected, so it is written every scan whether or not a take
+    # is running; the other three only mean anything inside one.
+    (0x657A, 0x657C, "strip DAC slot 5, redirected out of the factory store"),
+    (0x657C, 0x657D, "strip lamp acknowledgment countdown, in scans"),
+    (0x657D, 0x657E, "which lamp it is: 1 a rest, 2 a tie"),
+    (0x657E, 0x657F, "last scan's step count, for spotting an append"),
 ]
 
 # Factory-owned RAM the patches address absolutely.  Not ours to initialise —
@@ -1156,6 +1163,10 @@ FACTORY_CELLS = [
     # claim and clock_output restores it until completion, so a held beat's
     # gate and pitch leave on one transfer.
     (0x38B8, 0x38BA, "state+0x358: DAC slot 2, the pitch"),
+    # The slot the strip's three position lamps follow.  The factory wrote it
+    # every scan at 0x80003120; strip_dac_redirect sends that store to a
+    # shadow of ours and seq_strip_led becomes the only writer of the slot.
+    (0x38BE, 0x38C0, "state+0x35e: DAC slot 5, the strip"),
 ]
 
 # Immediates that are values rather than addresses, so the coverage check does
@@ -1969,6 +1980,14 @@ def main() -> None:
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
+    cfg["_numbers"]["strip_ack_scans"] = int(
+        cfg.get("sequencer", {}).get("strip_ack_scans", 20))
+    cfg["_numbers"]["strip_led_rest_units"] = int(
+        cfg.get("sequencer", {}).get("strip_led_rest_units", 512))
+    cfg["_numbers"]["strip_led_tie_units"] = int(
+        cfg.get("sequencer", {}).get("strip_led_tie_units", 4095))
+    cfg["_numbers"]["strip_led_dark_units"] = int(
+        cfg.get("sequencer", {}).get("strip_led_dark_units", 0))
     cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 4))
     cfg["_numbers"]["clock_lock_pulses"] = int(
         cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
@@ -2023,6 +2042,7 @@ def main() -> None:
                  "seq_pulse_drop", "pulse_drop_pool", "seq_next_step",
                  "seq_noteoff", "seq_noteoff_hook",
                  "seq_trigger_led", "seq_trigger_led_hook",
+                 "seq_strip_led", "strip_dac_redirect",
                  "seq_edit", "seq_preview_step", "seq_command",
                  "seq_preview_next", "seq_preview_start", "seq_preview_transport",
                  "seq_record_pitch", "seq_preview_pin", "seq_hold", "seq_flash",

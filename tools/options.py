@@ -269,6 +269,24 @@ def expand(options: dict) -> dict:
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
                         "tie_glide_rate": 60,
+                        # The strip's three position lamps follow its analog
+                        # output, so the acknowledgment a landed rest or tie
+                        # gets is a value written to that output for a moment.
+                        # How long the flash lasts, in ~5 ms scans: 20 is
+                        # about a tenth of a second, short enough that three
+                        # quick taps read as three separate flashes.
+                        "strip_ack_scans": 20,
+                        # What to write for each, in the same 0..4095 the
+                        # strip's own position uses.  A rest wants the lamp on
+                        # the left and a tie the one on the right; the numbers
+                        # are here because where those lamps change is a
+                        # property of the panel, not of the firmware, and only
+                        # a real instrument can settle them.
+                        "strip_led_rest_units": 512,
+                        "strip_led_tie_units": 4095,
+                        # What the lamps sit at for the rest of a take.  Zero
+                        # if the panel has all three dark there.
+                        "strip_led_dark_units": 0,
                         # Capture is interrupt-timestamped. At 200 Hz a
                         # 4 ms refractory leaves 1 ms of period margin; the
                         # low phase must be longer than 250 us at the MCU.
