@@ -15,7 +15,8 @@ import java.util.*;
 
 public class PolyMidiProbe extends ControlRegression {
     static final long QUEUE=0x80009a64L,          // DIN/USB three-byte enqueue
-        BUS_ON=0x80007f5cL, BUS_OFF=0x80007fc8L,  // the optional 208 bus
+        PORT2_ON=0x80007f5cL, PORT2_OFF=0x80007fc8L,  // port two's own link
+        BUS_ON=0x8000f2c0L, BUS_OFF=0x8000f3a8L,      // the optional 208 bus
         PRESSURE=0x800053acL;                     // the physical pressure scan
     final List<String> midi=new ArrayList<>();
     final List<String> failures=new ArrayList<>();
@@ -30,8 +31,16 @@ public class PolyMidiProbe extends ControlRegression {
                 +" p1 n"+r(buf+1,1)+" v"+r(buf+2,1)+" c"+(status&0xf));
             ret(); return;
         }
+        if(p==PORT2_ON||p==PORT2_OFF) {
+            midi.add((p==PORT2_ON?"on":"off")+" p2 n"+reg("R12")+" v"+reg("R11")+" c"+reg("R10"));
+            ret(); return;
+        }
+        // The 208 bus is a third destination, and the one this probe used to
+        // miss: the contact and lift handlers reach it BEFORE their poly/mono
+        // fork, so a "silent" claim that never watched it was only a claim
+        // about MIDI.
         if(p==BUS_ON||p==BUS_OFF) {
-            midi.add((p==BUS_ON?"on":"off")+" p2 n"+reg("R12")+" v"+reg("R11")+" c"+reg("R10"));
+            midi.add((p==BUS_ON?"on":"off")+" bus n"+reg("R12"));
             ret(); return;
         }
         super.step();
@@ -73,21 +82,33 @@ public class PolyMidiProbe extends ControlRegression {
     void arm(boolean poly) throws Exception {
         w(S+0x84,1,poly?1:0);   // the edit-mode poly setting
         w(S+0x85,1,0);          // arpeggiator off, which the poly path requires
-        w(S+0x349,1,1);         // the optional 208 bus, so port two is observable
+        w(S+0x349,1,1);         // port two's own link, so it is observable
+        w(0x2efa,1,1); w(S+0x4,4,0x1234);   // and the 208 bus, present and open
         w(S+0x2e7,1,3);         // a channel that is not the default
-        midi.clear();
     }
+    // Arming does NOT clear the log - one test needs the messages the
+    // transport itself sends - so every test opens its own window.
+    void armed(boolean poly) throws Exception { arm(poly); midi.clear(); }
     String seen() { return midi.toString(); }
+    // The two MIDI ports, so a fully sounded note counts two...
     int count(String kind,int note) {
         int n=0;
-        for(String m:midi) if(m.startsWith(kind+" ")&&m.contains(" n"+note+" ")) n++;
+        for(String m:midi)
+            if(m.startsWith(kind+" ")&&m.contains(" n"+note+" ")) n++;
+        return n;
+    }
+    // ...and the 208 bus counted on its own, because it is reached from a
+    // different place and was the half this probe used to miss.
+    int bus(String kind,int note) {
+        int n=0;
+        for(String m:midi) if(m.equals(kind+" bus n"+note)) n++;
         return n;
     }
 
     // Ordinary poly use: two overlapping keys keep independent lifecycles and
     // each lift ends only its own note, on both outputs.
     void overlap() throws Exception {
-        bench(); arm(true);
+        bench(); armed(true);
         down(4); down(9);
         check("both presses sound on both ports: "+seen(),
             count("on",40)==2&&count("on",45)==2&&count("off",40)==0&&count("off",45)==0);
@@ -103,7 +124,7 @@ public class PolyMidiProbe extends ControlRegression {
     // Stopped, the guard is not in the way.
     void stoppedStillSounds() throws Exception {
         for(boolean poly:new boolean[]{false,true}) {
-            bench(); arm(poly);
+            bench(); armed(poly);
             down(4);
             check("a stopped press sounds on both ports (poly="+poly+"): "+seen(),
                 count("on",40)==2&&activeNote(40)!=0);
@@ -116,13 +137,15 @@ public class PolyMidiProbe extends ControlRegression {
     // Poly is the mode for playing over a running take: each key holds its
     // own note and the receiver has the voices, so PLAY leaves it alone.
     void polyPlaysOverTheSequence() throws Exception {
-        bench(); play(); arm(true);
+        bench(); play(); armed(true);
         down(4); down(9);
         check("a poly chord over a running take reaches both outputs: "+seen(),
             count("on",40)==2&&count("on",45)==2);
         up(9); up(4);
         check("and both keys end when they are let go: "+seen(),
             count("off",40)==2&&count("off",45)==2);
+        check("the 208 bus is left live for poly too: "+seen(),
+            bus("on",40)>0||bus("on",45)>0);
         check("leaving nothing active",activeNote(40)==0&&activeNote(45)==0);
         stop();
         println("PASS poly plays over a running sequence, both keys balanced");
@@ -130,30 +153,31 @@ public class PolyMidiProbe extends ControlRegression {
 
     // A key already sounding when the transport starts.  In poly its lift
     // still ends it, because poly is live through the take anyway.  In mono
-    // the lift is swallowed with the rest, so the note rings on until the
-    // transport's own all-notes-off at STOP - deliberate: the alternative is
-    // a note that stops under the finger, and this way nothing the sequencer
-    // is playing can be cut short by a key.
+    // the mute begins at the transition and would strand it, so the
+    // transition ends it there and then - on the bus and both ports.
     void heldAcrossPlay() throws Exception {
-        bench(); arm(true);
+        bench(); armed(true);
         down(4);
         check("the poly press before PLAY sounded: "+seen(),count("on",40)==2&&activeNote(40)!=0);
-        play(); arm(true);
+        play(); armed(true);
         up(4);
         check("its lift during PLAY still ends the note: "+seen(),count("off",40)==2);
         check("and clears its active-note record",activeNote(40)==0);
         stop();
 
-        bench(); arm(false);
+        bench(); armed(false);
         down(4);
-        check("the mono press before PLAY sounded: "+seen(),count("on",40)==2&&activeNote(40)!=0);
-        play(); arm(false);
+        check("the mono press before PLAY sounded: "+seen(),
+            count("on",40)==2&&bus("on",40)==1&&activeNote(40)!=0);
+        midi.clear();
+        play();
+        check("entering PLAY ends it at the boundary, on all three: "+seen(),
+            count("off",40)==2&&bus("off",40)==1&&activeNote(40)==0);
+        midi.clear();
         up(4);
-        check("its lift during PLAY is swallowed: "+seen(),midi.isEmpty());
+        check("and its lift then has nothing left to send: "+seen(),midi.isEmpty());
         stop();
-        check("and STOP's all-notes-off is what takes the note back: "+seen(),
-            count("on",40)==0&&!midi.isEmpty());
-        println("PASS a held note: poly ends on release, mono waits for STOP");
+        println("PASS a held note: poly ends on release, mono ends at the boundary");
     }
 
     // Mono is the mode that must NOT play over a take.  The sequencer sends
@@ -167,7 +191,7 @@ public class PolyMidiProbe extends ControlRegression {
         // note back to the one still held - a fresh Note On from its own
         // call site, which is how the first version of this guard leaked.
         for(boolean newestFirst:new boolean[]{true,false}) {
-            bench(); play(); arm(false);
+            bench(); play(); armed(false);
             down(4);
             check("a mono press during PLAY sends nothing: "+seen(),midi.isEmpty());
             down(9);
@@ -176,6 +200,7 @@ public class PolyMidiProbe extends ControlRegression {
             if(newestFirst) { up(14); up(9); up(4); } else { up(4); up(9); up(14); }
             check("nor do the lifts, in either order (newest first="+newestFirst+"): "+seen(),
                 midi.isEmpty());
+            check("nothing reached the 208 bus either",bus("on",40)==0&&bus("off",40)==0);
             stop();
         }
         println("PASS the mono keyboard is silent on MIDI for the whole take");
@@ -184,7 +209,7 @@ public class PolyMidiProbe extends ControlRegression {
     // What the take itself does has to survive all of that: the sequencer
     // uses different pool words, and its own notes still go out.
     void theSequenceStillSounds() throws Exception {
-        bench(4); play(); arm(false);
+        bench(4); play(); armed(false);
         for(int i=0;i<4;i++) externalBeat();
         int on=0, off=0;
         for(String m:midi) { if(m.startsWith("on ")) on++; if(m.startsWith("off ")) off++; }

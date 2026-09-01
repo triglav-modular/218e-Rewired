@@ -1145,6 +1145,14 @@ FACTORY_CELLS = [
     # build.  Declared so no region of ours can ever move back in.
     (0x3216, 0x3236, "factory 16-tap pressure history"),
     (0x3490, 0x34AD, "per-key touch state"),
+    # "The keyboard owns a sounding note" - set only inside the mono section
+    # of the contact handler, cleared by its lift and by the release the
+    # transport now does on the way into PLAY.
+    (0x33C5, 0x33C6, "keyboard active-note flag"),
+    # The poly-MIDI setting and the arpeggiator mirror beside it.  Together
+    # they are what the contact and lift handlers fork on, so the play-mode
+    # send guard has to read the same pair.
+    (0x35E4, 0x35E6, "state+0x84/0x85: poly MIDI setting and arp mirror"),
     (0x3599, 0x359A, "state+0x39: global edit mode"),
     (0x35CA, 0x35CC, "state+0x6a/0x6b: transpose enable and knob zone"),
     (0x3686, 0x36C0, "per-key raw pressure"),

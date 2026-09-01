@@ -5071,7 +5071,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001d750");
         emit("CP.W R1,0x2");
         emit("BR{ne} 0x8001d670");
-        emit("MCALL PC[0x8001d76c]");    // end any preceding arp note on PLAY
+        emit("MCALL PC[0x8001d76c]");    // end the keyboard's note, then the arp's
         padTo(0x8001d670L);
         emit("ST.B R12[0x4],R1");
         emit("CP.W R0,0x2");
@@ -5111,7 +5111,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R0,R1,R2,R7,R9,R12,PC");
         padTo(0x8001d768L);
         word(0x8001b6c0L);
-        word(0x8001b448L);
+        word(0x8001bec0L); // seq_key_release, which tails into seq_release
         word(0x00003560L);
         word(0x80002b28L);
         finish("seq_transport", 0x8001d780L);
@@ -7459,63 +7459,154 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         finish("clock_gate", 0x8001bb34L);
 
-        // While the sequencer plays, the MONO keyboard sends no MIDI.
+        // While the sequencer plays, the MONO keyboard sends nothing out.
         //
         // seq_noteon_mute already takes the sound away - it owns the pool
         // word for an inner call of the contact handler at 0x80005b6c, so a
-        // press in PLAY reaches no pitch, no gate and no trigger.  The MIDI
-        // never went with it: the contact handler sends the mono Note On
-        // itself, further down and past that call, and the lift handler at
-        // 0x80005edc sends the Note Off the same way.  So a press during a
-        // take made no sound here and a real note over there.
+        // press in PLAY reaches no pitch, no gate and no trigger.  What it
+        // never took was the notes: the contact handler sends the key's own
+        // Note On further down, past that call, the lift handler at
+        // 0x80005edc sends the Note Off, and both do the 208 bus beside the
+        // two MIDI ports.  So a press during a take made no sound here and a
+        // real note on every output over there.
         //
-        // That matters because the sequencer is ALSO playing notes on the
-        // same MIDI channel, one at a time.  Two monophonic lines on one
-        // channel collide: press a key whose note the sequence is holding
-        // and the release ends the sequencer's note instead of yours.  Poly
-        // is the mode for playing over a running take - each key holds its
-        // own note and the receiver has the voices for it - and poly is
-        // deliberately left alone here.
+        // That is a defect in MONO and not in poly, and the difference is
+        // the sequencer's own notes: a running take sends its steps on the
+        // same MIDI channel and the same bus, one at a time.  Mono adds a
+        // second monophonic line to them, and the two collide - press a key
+        // whose note the sequence is holding and its release ends the
+        // sequencer's note instead of yours.  Poly does not: each key holds
+        // its own note and the receiver has the voices for it, which is what
+        // the mode is for.  So the test here is PLAYING AND NOT POLY, and
+        // the poly branches are left completely alone.
         //
-        // Eight pool words, one caller each, all of them the physical key's:
-        // the previous note's release at 0x80005d68/0x80005d84, the press at
-        // 0x80005e3a/0x80005e5c, the lift at 0x8000619c/0x800061b4, and the
-        // note handed back to a key still held at 0x80006380/0x8000639c.  The
-        // arpeggiator, the sequencer and the panic read different pool words
-        // for the same four senders and are untouched.
-        // R8 carries the real target in from the entry, R9 is dead at every
-        // one of the six sites, and the senders clobber R8..R12 themselves,
-        // so the tail is a plain jump and the sender returns straight home.
+        // The bus needs that second half of the test where MIDI would not:
+        // the bus section of the contact and lift handlers sits BEFORE their
+        // poly/mono fork, so a poly press reaches it too, and a bare
+        // playing test would have silenced the bus under poly as well.
         //
-        // A key still down when PLAY starts keeps its note: it was sent
-        // before the mute applied, and its lift is now swallowed with
-        // everything else, so the note rings until the transport's own
-        // all-notes-off at STOP takes it back.  Ending it at the transition
-        // instead would mean a note that stops under the finger; this way
-        // nothing the sequencer is playing can ever be cut short.
-        begin(0x8001bb34L);
-        emit("LDDPC R8,0x8001bb60");
-        emit("RJMP 0x8001bb44");
-        emit("LDDPC R8,0x8001bb64");
-        emit("RJMP 0x8001bb44");
-        emit("LDDPC R8,0x8001bb68");
-        emit("RJMP 0x8001bb44");
-        emit("LDDPC R8,0x8001bb6c");
-        emit("RJMP 0x8001bb44");
-        padTo(0x8001bb44L);
+        // Twelve pool words, one caller each, all of them the physical
+        // key's: the previous note's release at 0x80005d22/0x80005d68/
+        // 0x80005d84, the press at 0x80005df6/0x80005e3a/0x80005e5c, the
+        // lift at 0x80006162/0x8000619c/0x800061b4, and the note handed back
+        // to a key still held at 0x80006342/0x80006380/0x8000639c.  The
+        // arpeggiator, the sequencer and the panic reach the same six
+        // senders through their own pool words and are untouched.
+        //
+        // R8 carries the real target in from the entry and R9 is dead at
+        // every one of the twelve sites; the senders clobber R8..R12
+        // themselves, so the tail is a plain jump and the sender returns
+        // straight home.
+        begin(0x8001be50L);
+        emit("LDDPC R8,0x8001bea0");
+        emit("RJMP 0x8001be68");
+        emit("LDDPC R8,0x8001bea4");
+        emit("RJMP 0x8001be68");
+        emit("LDDPC R8,0x8001bea8");
+        emit("RJMP 0x8001be68");
+        emit("LDDPC R8,0x8001beac");
+        emit("RJMP 0x8001be68");
+        emit("LDDPC R8,0x8001beb0");
+        emit("RJMP 0x8001be68");
+        emit("LDDPC R8,0x8001beb4");
+        emit("RJMP 0x8001be68");
+        padTo(0x8001be68L);
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001bb50");      // playing: the key sends nothing
-        emit("MOV PC,R8");              // anything else: the real sender
-        padTo(0x8001bb50L);
+        emit("BR{ne} 0x8001be8c");      // stopped or recording: the real sender
+        emit("MOV R9,0x3560");
+        emit("LD.UB R9,R9[0x84]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001be90");      // playing, mono: send nothing
+        emit("MOV R9,0x3560");
+        emit("LD.UB R9,R9[0x85]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001be90");      // the arp owns the mono path too
+        padTo(0x8001be8cL);
+        emit("MOV PC,R8");
+        padTo(0x8001be90L);
         emit("MOV PC,LR");
-        padTo(0x8001bb60L);
+        padTo(0x8001bea0L);
         word(0x80007e44L); // MIDI note off, port one
         word(0x800081f0L); // MIDI note off, port two
         word(0x80007de8L); // MIDI note on, port one
         word(0x80008170L); // MIDI note on, port two
-        finish("seq_key_midi_mute", 0x8001bb70L);
+        word(0x8000f2c0L); // note on, 208 bus
+        word(0x8000f3a8L); // note off, 208 bus
+        finish("seq_key_send_mute", 0x8001beb8L);
+
+        // Entering PLAY ends the mono keyboard's note where it stands.
+        //
+        // The mute above starts at the transition, so a key still under a
+        // finger owns a note nobody will ever end: its press went out before
+        // the mute applied and its lift is swallowed after.  Leaving it to
+        // the transport's own all-notes-off at STOP would let it ring for the
+        // whole take, so it is ended here instead, on the bus and both ports,
+        // exactly the way the lift handler would have.
+        //
+        // 0x33c5 is the factory's own "the keyboard owns a sounding note",
+        // set only inside the mono section the poly modes skip, so a poly
+        // note held into PLAY is not touched: poly stays live through the
+        // take and its own release still ends it.  The flag is cleared and
+        // the note left alone - clearing the flag is what stops the contact
+        // handler ending this note a second time, and a stray note-off after
+        // STOP for a note already ended is a no-op, where a note number
+        // invented here would not be.
+        //
+        // seq_transport calls this on the way into PLAY, BEFORE it publishes
+        // the new mode, so the mute is not yet in the way; the sends here go
+        // to the real senders regardless.  It tails into seq_release, whose
+        // pool word it took over, so the arp note is ended exactly as before.
+        begin(0x8001bec0L);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R1,0x8001bf40");    // global state base
+        emit("MOV R8,0x33c5");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf30");      // the keyboard owns nothing
+        emit("LD.UB R0,R1[0x2e1]");     // the note it owns
+        emit("MOV R8,0x2efa");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf00");
+        emit("LD.W R8,R1[0x4]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf00");
+        emit("LD.UB R12,R1[0x0]");
+        emit("MCALL PC[0x8001bf44]");   // take the 208 bus
+        emit("MOV R10,0x0");
+        emit("LD.W R11,R1[0x4]");
+        emit("MOV R12,R0");
+        emit("MCALL PC[0x8001bf48]");   // note off, on the bus
+        emit("LD.UB R12,R1[0x0]");
+        emit("MCALL PC[0x8001bf4c]");   // and give it back
+        padTo(0x8001bf00L);
+        emit("LD.UB R10,R1[0x2e7]");
+        emit("MOV R11,0x0");
+        emit("MOV R12,R0");
+        emit("MCALL PC[0x8001bf50]");   // note off, one port
+        emit("LD.UB R10,R1[0x2e7]");
+        emit("MOV R11,0x0");
+        emit("MOV R12,R0");
+        emit("MCALL PC[0x8001bf54]");   // and the other
+        emit("MOV R8,0x33c5");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // the keyboard owns nothing now
+        padTo(0x8001bf30L);
+        emit("LDM SP++,R0,R1,R7,LR");
+        emit("LDDPC R8,0x8001bf58");
+        emit("MOV PC,R8");              // on to the arp/sequencer release
+        padTo(0x8001bf40L);
+        word(0x00003560L); // global state base
+        word(0x8000f1f0L); // take the 208 bus
+        word(0x8000f3a8L); // note off on the bus
+        word(0x8000f160L); // give the bus back
+        word(0x80007e44L); // MIDI note off, port one
+        word(0x800081f0L); // MIDI note off, port two
+        word(0x8001b448L); // seq_release, whose pool word this took over
+        finish("seq_key_release", 0x8001bf5cL);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
         // The divider and the sequencer's rest/tie decision have already run.
@@ -8519,35 +8610,49 @@ public class AssemblePressureFix extends GhidraScript {
         wordPatch("note_on_pool", 0x80005e8cL,
             block("seq_pitch") ? 0x8001b330L : 0x80018d00L,
             "note-on pointer -> filter-reset wrapper");
-        // The physical key's own six MIDI senders -> the play-mode guard.
-        // Off the sequencer these keep their factory targets, so a build
-        // without it never reaches the cave.
-        wordPatch("key_noteoff_prev_pool_1", 0x80005eb4L,
-            block("seq_pitch") ? 0x8001bb34L : 0x80007e44L,
+        // Every send the physical key owns -> the play-mode guard.  Off the
+        // sequencer these keep their factory targets, so a build without it
+        // never reaches the cave.  Four groups of three: the previous note's
+        // release, the press, the lift, and the note handed back to a key
+        // still held when another is let go.
+        wordPatch("key_prev_bus_pool", 0x80005ea8L,
+            block("seq_pitch") ? 0x8001be64L : 0x8000f3a8L,
+            "previous note off, 208 bus -> play-mode guard");
+        wordPatch("key_prev_pool_1", 0x80005eb4L,
+            block("seq_pitch") ? 0x8001be50L : 0x80007e44L,
             "previous note off, port one -> play-mode guard");
-        wordPatch("key_noteoff_prev_pool_2", 0x80005eb8L,
-            block("seq_pitch") ? 0x8001bb38L : 0x800081f0L,
+        wordPatch("key_prev_pool_2", 0x80005eb8L,
+            block("seq_pitch") ? 0x8001be54L : 0x800081f0L,
             "previous note off, port two -> play-mode guard");
+        wordPatch("key_noteon_bus_pool", 0x80005ec4L,
+            block("seq_pitch") ? 0x8001be60L : 0x8000f2c0L,
+            "key note on, 208 bus -> play-mode guard");
         wordPatch("key_noteon_pool_1", 0x80005ec8L,
-            block("seq_pitch") ? 0x8001bb3cL : 0x80007de8L,
+            block("seq_pitch") ? 0x8001be58L : 0x80007de8L,
             "key note on, port one -> play-mode guard");
         wordPatch("key_noteon_pool_2", 0x80005eccL,
-            block("seq_pitch") ? 0x8001bb40L : 0x80008170L,
+            block("seq_pitch") ? 0x8001be5cL : 0x80008170L,
             "key note on, port two -> play-mode guard");
+        wordPatch("key_noteoff_bus_pool", 0x8000629cL,
+            block("seq_pitch") ? 0x8001be64L : 0x8000f3a8L,
+            "key note off, 208 bus -> play-mode guard");
         wordPatch("key_noteoff_pool_1", 0x800062a4L,
-            block("seq_pitch") ? 0x8001bb34L : 0x80007e44L,
+            block("seq_pitch") ? 0x8001be50L : 0x80007e44L,
             "key note off, port one -> play-mode guard");
         wordPatch("key_noteoff_pool_2", 0x800062a8L,
-            block("seq_pitch") ? 0x8001bb38L : 0x800081f0L,
+            block("seq_pitch") ? 0x8001be54L : 0x800081f0L,
             "key note off, port two -> play-mode guard");
         // Letting a key go in mono hands the note back to one still under a
-        // finger, which is a fresh Note On from the helper at 0x800062b4 -
+        // finger, which is a fresh note from the helper at 0x800062b4 -
         // reached from the lift handler and nowhere else.
+        wordPatch("key_restore_bus_pool", 0x800063e0L,
+            block("seq_pitch") ? 0x8001be60L : 0x8000f2c0L,
+            "restored note on, 208 bus -> play-mode guard");
         wordPatch("key_restore_pool_1", 0x800063e8L,
-            block("seq_pitch") ? 0x8001bb3cL : 0x80007de8L,
+            block("seq_pitch") ? 0x8001be58L : 0x80007de8L,
             "restored note on, port one -> play-mode guard");
         wordPatch("key_restore_pool_2", 0x800063ecL,
-            block("seq_pitch") ? 0x8001bb40L : 0x80008170L,
+            block("seq_pitch") ? 0x8001be5cL : 0x80008170L,
             "restored note on, port two -> play-mode guard");
         wordPatch("pad_select_pool", 0x8000a810L,
             block("seq_chord") ? 0x8001b790L : 0x8000698cL,

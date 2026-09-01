@@ -209,13 +209,14 @@ def audit_call_pools(image_path) -> list[str]:
 # chooses an octave on its way in - leaves a preview alone; and when the
 # bootstrap adopted the staged base and target too, whose bootloader
 # leftovers derailed the first touch's portamento until the finger lifted;
-# and again when the MONO keyboard stopped reaching MIDI while the sequencer
-# plays, which the earlier keyboard silence had missed - it took the sound
-# and left the notes - while poly, which is the mode for playing over a
-# running take, was deliberately left live.
+# and again when the MONO keyboard stopped reaching MIDI and the 208 bus
+# while the sequencer plays, which the earlier keyboard silence had missed -
+# it took the sound and left the notes - with a note held into PLAY ended at
+# the transition, while poly, which is the mode for playing over a running
+# take, was deliberately left live on every output.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "ea93905788223c724236d4d8bd9705c62ba5129adf13bec99fa1e0ee0255e25a",
+    "historical_config": "ef377b1f39efc174307ea95e1002b5b8eee3aa89002963e80879a03417a43b89",
 }
 
 
