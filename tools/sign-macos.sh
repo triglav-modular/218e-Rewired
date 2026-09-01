@@ -96,6 +96,7 @@ rm -rf "$PROBE"
 BINARIES=(
     "mac/support/sendmidi"
     "mac/support/lem218-pressure-readout"
+    "mac/support/resolve-translocation"
     "mac/support/dfu/bin/dfu-programmer"
     "mac/support/dfu/Frameworks/libusb-1.0.0.dylib"
 )

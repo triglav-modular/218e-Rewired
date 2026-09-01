@@ -251,13 +251,12 @@ final class PressureMonitor {
 private let midiReadProc: MIDIReadProc = { packetList, readRefCon, _ in
     guard let readRefCon else { return }
     let monitor = Unmanaged<PressureMonitor>.fromOpaque(readRefCon).takeUnretainedValue()
-    var packet = packetList.pointee.packet
-    for _ in 0..<packetList.pointee.numPackets {
-        let length = Int(packet.length)
-        withUnsafeBytes(of: &packet.data) { storage in
-            monitor.consume(Array(storage.prefix(length)))
-        }
-        packet = MIDIPacketNext(&packet).pointee
+    // Walk the list in place.  Copying the first packet to a local and
+    // stepping MIDIPacketNext from that copy reads past the copy's 256-byte
+    // data field into the stack, so every packet after the first was
+    // garbage whenever CoreMIDI delivered more than one per callback.
+    for packet in packetList.unsafeSequence() {
+        monitor.consume(Array(packet.bytes()))
     }
 }
 
