@@ -575,10 +575,12 @@ Centred on the drawing, not on the file it arrives in: `banana.svg` is an
 Illustrator export with air on one side, and centring its frame put the banana
 visibly right of centre. The tool trims to the ink first.
 
-The wave is drawn at its own strength, where the page runs it at `.5`. The
-page holds it back because it is read through - there is a column of text over
-it the whole time anyone is on the page. A card has nothing over it and is
-looked at once, small, in a feed, and at `.5` the drawing barely arrives.
+The wave is held at the `.5` the page holds it at, but scaled half again past
+`cover`. A card is about a sixth of the area of the viewport the drawing was
+made to fill, so at `cover` the strokes come out small, and at `.5` they then
+hardly read at all. Zooming in trades a great many small marks for fewer at a
+size that carries. Not much further, though: past about 1.7 the crop runs out
+of drawing and half the card goes empty.
 
 It does not run in the workflow: the deploy runner has no rasteriser, and a
 card that exists only where one is installed eventually does not exist. So it

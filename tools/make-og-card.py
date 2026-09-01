@@ -38,6 +38,13 @@ W, H = 1200, 630
 # left around it that it reads as placed rather than cropped.
 SUBJECT = round(H * 0.66)
 
+# How much of the wave to show.  1 is `cover`, the way the stylesheet places
+# it: the whole drawing scaled until it fills the frame.  A card is a sixth of
+# the area of the viewport it was drawn for, so at 1 the strokes come out
+# small and, held at .5 over the ground, they hardly read at all.  Zooming in
+# gives fewer strokes at a size that does.
+WAVE_ZOOM = 1.5
+
 # The page's background, out of the block tools/sync-site.py keeps in step
 # with the theme rather than repeated here - a card in last season's colours
 # is exactly the drift that block exists to prevent.
@@ -73,19 +80,18 @@ def svg(path, height, rotate=0.0):
 
 
 def ground(colour):
-    """The page's background: the flat colour, then the wave whole over it."""
+    """The page's background: the flat colour, then the wave over it at .5."""
     card = Image.new("RGBA", (W, H), colour)
     wave = Image.open(WEB / "images" / "wave_bg.png").convert("RGBA")
-    # background-size: cover - scale to fill, then crop the overflow centred.
-    scale = max(W / wave.width, H / wave.height)
+    # background-size: cover, and then some - scale to fill, then crop the
+    # overflow centred.
+    scale = max(W / wave.width, H / wave.height) * WAVE_ZOOM
     wave = wave.resize((round(wave.width * scale), round(wave.height * scale)),
                        Image.LANCZOS)
     left, top = (wave.width - W) // 2, (wave.height - H) // 2
     wave = wave.crop((left, top, left + W, top + H))
-    # At its own strength, where the page runs it at .5.  The page holds it
-    # back because it is read through - there is a column of text on top of
-    # it for as long as anyone is there.  A card is looked at, once, small,
-    # with nothing over it, and at .5 the drawing barely arrives.
+    alpha = wave.getchannel("A").point(lambda a: a // 2)     # opacity: .5
+    wave.putalpha(alpha)
     card.alpha_composite(wave)
     return card
 
@@ -99,8 +105,9 @@ def build(out):
     card.alpha_composite(banana, ((W - banana.width) // 2,
                                   (H - banana.height) // 2))
     card.convert("RGB").save(out, "PNG", optimize=True)
-    print(f"  wrote {Path(out).relative_to(REPO)} "
-          f"({Path(out).stat().st_size // 1024} KB)")
+    out = Path(out)
+    name = out.relative_to(REPO) if out.is_relative_to(REPO) else out
+    print(f"  wrote {name} ({out.stat().st_size // 1024} KB)")
 
 
 def main():
