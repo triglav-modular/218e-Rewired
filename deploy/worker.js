@@ -123,6 +123,13 @@ export default {
     }
 
     const rest = url.pathname.slice(PUBLIC.length);   // "/style.css", "/kit/..."
+    // The route is PUBLIC followed by anything, so "/mods/218e-Rewiredx/.."
+    // reaches here too; passed on, "x/.." was appended to the origin's
+    // project name and asked GitHub Pages for a sibling project.
+    if (rest !== '' && !rest.startsWith('/')) {
+      return new Response('Not found', { status: 404,
+                                         headers: { 'cache-control': 'no-store' } });
+    }
 
     const headers = new Headers();
     for (const name of FORWARD) {
@@ -146,7 +153,15 @@ export default {
     const isPage = rest === '/' || rest === '' || rest.endsWith('/') ||
                    rest.endsWith('.html');
 
-    if (url.searchParams.has('v')) {
+    if (isPage || type.includes('text/html')) {
+      // The page is the one file that cannot carry a version - it is the URL
+      // people type - so it is the one that has to be checked every time.
+      // no-cache, not no-store: it is still kept and still revalidated, so an
+      // unchanged page costs a 304 rather than a download.  Asked first: a
+      // page URL that happens to carry ?v= is still the page, and the rule
+      // below would have pinned it in browsers for a year.
+      out.headers.set('cache-control', 'no-cache');
+    } else if (url.searchParams.has('v')) {
       // Everything the page asks for carries a hash of its own contents in
       // the URL, so this exact URL can never mean different bytes later.
       // Only when it worked: an origin 404 or 5xx stamped immutable would sit
@@ -156,12 +171,6 @@ export default {
       } else {
         out.headers.set('cache-control', 'no-store');
       }
-    } else if (isPage || type.includes('text/html')) {
-      // The page is the one file that cannot carry a version - it is the URL
-      // people type - so it is the one that has to be checked every time.
-      // no-cache, not no-store: it is still kept and still revalidated, so an
-      // unchanged page costs a 304 rather than a download.
-      out.headers.set('cache-control', 'no-cache');
     }
     return out;
   }

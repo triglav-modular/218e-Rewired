@@ -763,6 +763,9 @@
         measured = measured.map(function () { return 0; });
         buildTable(); drawPlot(); validateCal();
         msg($('calMsg'), '', '');
+        // The table is part of the image: without this the image built
+        // from the old readings stayed downloadable after they were cleared.
+        invalidate();
     });
     // Same columns the loader reads and the repository's own calibration file
     // uses, so a table can go out, be edited or shared, and come back.
