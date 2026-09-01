@@ -558,27 +558,30 @@ card is `web/images/og-card.png`, drawn by
 [../tools/make-og-card.py](../tools/make-og-card.py):
 
 ```bash
-pip install pillow "fonttools[woff]" cairosvg
+pip install pillow cairosvg
 python3 tools/make-og-card.py
 ```
 
-It takes the palette out of the `sync-site` block in `style.css`, the mark out
-of `web/icons/safari-pinned-tab.svg`, the banana out of `web/images`, the wave
-out of the background it is drawn on and the version out of
-`config/218e.toml`, so a card cannot claim a colour or a version the page has
-stopped using. It does not run in the workflow: the deploy runner has no
-rasteriser, and a card that exists only where one is installed eventually does
-not exist. So it is committed, like `mac/Flasher.zip`, and redrawn by hand
-after a change to any of those parts.
+The card carries no words. The `og:title` and `og:description` sit directly
+under the image in every feed that shows one, so anything written on it is
+said twice; what the picture is for is being recognised at a glance, which is
+the banana's job and not a paragraph's. So it is the banana, whole, at two
+thirds of the card's height, centred on the ground the page itself stands on -
+the background colour out of the `sync-site` block in `style.css` and the wave
+out of `web/images`, so a card cannot show a colour the page has stopped
+using.
 
-The headline is set in IBM Plex Mono, which is in this repository under the
-OFL. The page's display face, Euclid Circular A, is not - it is licensed to
-Triglav Modular, served from `triglavmodular.hu`, and deliberately not copied
-here. Whoever holds that licence can point the tool at their own copy:
+Centred on the drawing, not on the file it arrives in: `banana.svg` is an
+Illustrator export with air on one side, and centring its frame put the banana
+visibly right of centre. The tool trims to the ink first. The wave is held
+back to .32 where the page runs it at .5 - a card is a 1200x630 crop of the
+same drawing, which packs the strokes into a sixth of the room and turns a
+ground into marks on the image.
 
-```bash
-python3 tools/make-og-card.py --display-font ~/fonts/EuclidCircularA-Bold.otf
-```
+It does not run in the workflow: the deploy runner has no rasteriser, and a
+card that exists only where one is installed eventually does not exist. So it
+is committed, like `mac/Flasher.zip`, and redrawn by hand after a change to
+the palette, the background or the banana.
 
 ### Two hostnames, one page
 
