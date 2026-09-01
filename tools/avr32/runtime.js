@@ -163,6 +163,9 @@ var RT = (function () {
         if (encoded === null) {
             throw new Error(fmt('cannot encode at %08x: %s', address, instruction));
         }
+        // EXTENT before the enable check, as the Java prints it: without it
+        // the --no-ghidra build's collision check never saw these patches.
+        println(fmt('EXTENT %08x %08x %s', address, address + encoded.length, name));
         if (!block(name)) {
             println('SKIP ' + name + ' (disabled by build config)');
             return;
@@ -171,6 +174,7 @@ var RT = (function () {
     }
 
     function wordPatch(name, address, value, comment) {
+        println(fmt('EXTENT %08x %08x %s', address, address + 4, name));
         if (!block(name)) {
             println('SKIP ' + name + ' (disabled by build config)');
             return;
@@ -179,6 +183,7 @@ var RT = (function () {
     }
 
     function fixedPatch(name, address, length, instruction) {
+        println(fmt('EXTENT %08x %08x %s', address, address + length, name));
         begin(address);
         emit(instruction);
         if (pc > address + length) throw new Error('Instruction does not fit fixed patch');

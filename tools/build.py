@@ -1312,15 +1312,25 @@ def check_factory_entry_points(patches, factory_sha: str) -> None:
             f"{CONTROL_FLOW.name} was generated from a different base image\n"
             f"  recorded {recorded}\n  current  {factory_sha}\n"
             "Regenerate it (see the header of that file) before building.")
-    transfers = [(int(a, 16), int(b, 16)) for a, b in
-                 (l.split() for l in lines if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}$", l))]
+    # "source target", or "source target pool" for a call through a pool
+    # word: tools/factory_control_flow.py decodes those from the image.
+    transfers = []
+    for line in lines:
+        if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}( [0-9a-f]{8})?$", line):
+            fields = [int(f, 16) for f in line.split()]
+            transfers.append((fields[0], fields[1], fields[2] if len(fields) == 3 else None))
+    # A pool call whose pool word a patch rewrites has been redirected: the
+    # factory target is no longer live from that source.
+    patched = {start + i for start, payload, _ in patches for i in range(len(payload))}
+    transfers = [(s, t, p) for s, t, p in transfers
+                 if p is None or not any(p + i in patched for i in range(4))]
 
     problems = []
     for start, payload, description in patches:
         end = start + len(payload)
         # The patch's own start is a legitimate entry point: callers are meant
         # to keep reaching it.  Anything past it is interior.
-        for source, target in transfers:
+        for source, target, _ in transfers:
             if start < target < end and not (start <= source < end):
                 problems.append(
                     f"  {description or 'patch'} [0x{start:08X}..0x{end:08X}) buries "
@@ -2147,9 +2157,14 @@ def main() -> None:
     version_string = f"Rewired {version} ({digest[:8]})"
     (BUILD / "VERSION").write_text(version_string + "\n")
 
-    # every difference from the factory image must be inside a declared patch
+    # Every difference between the factory image and what the hex on disk
+    # will read back as must be inside a declared patch.  Compared on the
+    # re-parsed rendering, not on the memory the patches were applied to:
+    # that comparison could only ever see addresses the patches wrote, so
+    # it was a tautology, and it skipped addresses a patch added.
     covered = {a + i for a, data, _ in patches for i in range(len(data))}
-    stray = [a for a in original if original[a] != memory[a] and a not in covered]
+    stray = [a for a in set(original) | set(reread)
+             if original.get(a) != reread.get(a) and a not in covered]
     if stray:
         raise SystemExit(f"{len(stray)} byte(s) changed outside any patch")
 
