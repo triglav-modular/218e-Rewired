@@ -302,7 +302,7 @@ CALL :ok dfu-programmer.exe runs
 REM --- into DFU ----------------------------------------------------------
 CALL :step Putting the instrument into DFU
 "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
-IF NOT ERRORLEVEL 1 (
+IF "%ERRORLEVEL%"=="0" (
     ECHO The 218e V3 is already in DFU mode.
     GOTO :in_dfu
 )
@@ -403,7 +403,7 @@ SET "FOUND=0"
 FOR /L %%I IN (1,1,30) DO (
     IF "!FOUND!"=="0" (
         "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
-        IF NOT ERRORLEVEL 1 SET "FOUND=1"
+        IF "!ERRORLEVEL!"=="0" SET "FOUND=1"
         IF "!FOUND!"=="0" PING -n 3 127.0.0.1 >NUL
     )
 )
@@ -445,7 +445,7 @@ IF "!FOUND!"=="0" (
     FOR /L %%I IN (1,1,10) DO (
         IF "!FOUND!"=="0" (
             "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
-            IF NOT ERRORLEVEL 1 SET "FOUND=1"
+            IF "!ERRORLEVEL!"=="0" SET "FOUND=1"
             IF "!FOUND!"=="0" PING -n 2 127.0.0.1 >NUL
         )
     )
@@ -458,8 +458,10 @@ GOTO :in_dfu
 REM What Windows has bound to the Atmel bootloader, in its own words.
 SET "USBSTATE="
 FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
-ECHO !USBSTATE! | FINDSTR /B /C:"PRESENT" >NUL 2>&1
-IF ERRORLEVEL 1 (
+REM A substring test, as in the main flow above: each side of a pipe runs in
+REM its own cmd without delayed expansion, so an ECHO of !USBSTATE! piped
+REM into FINDSTR was matching the literal name and never PRESENT.
+IF NOT "!USBSTATE:~0,7!"=="PRESENT" (
     ECHO   Windows does not see an Atmel DFU device on USB at all, so the
     ECHO   instrument is probably not in DFU.  Power-cycle it and retry.
     EXIT /B 0
@@ -551,15 +553,19 @@ IF NOT EXIST "!FIRMWARE!" (
 )
 CALL :step Erasing the application flash
 SET "ERASE_STARTED=1"
+REM dfu-programmer returns its internal codes as the exit status, and erase
+REM and start can return NEGATIVE ones.  IF ERRORLEVEL 1 tests for one or
+REM more, signed, so a -1 passed as success - after a failed START that
+REM meant "Flashing successful" and an INSTALLED.txt for a unit still in DFU.
 "%DFU%" at32uc3b1256 erase >> "%LOG_FILE%" 2>&1
-IF ERRORLEVEL 1 (
+IF NOT "%ERRORLEVEL%"=="0" (
     ECHO Chip erase failed.
     GOTO :recovery_safe_stop
 )
 
 CALL :step Writing and validating the firmware
 "%DFU%" at32uc3b1256 flash --suppress-bootloader-mem "%FIRMWARE%" >> "%LOG_FILE%" 2>&1
-IF ERRORLEVEL 1 (
+IF NOT "%ERRORLEVEL%"=="0" (
     ECHO Firmware programming failed.  Do not disconnect; run this script again
     ECHO while the unit remains in DFU mode.
     GOTO :recovery_safe_stop
@@ -574,7 +580,7 @@ ECHO Only now is it safe to leave DFU mode.
 PAUSE
 
 "%DFU%" at32uc3b1256 start >> "%LOG_FILE%" 2>&1
-IF ERRORLEVEL 1 (
+IF NOT "%ERRORLEVEL%"=="0" (
     ECHO The DFU start command failed.
     GOTO :recovery_safe_stop
 )
@@ -758,7 +764,7 @@ IF NOT ERRORLEVEL 1 (
     EXIT /B 0
 )
 "%DFU%" at32uc3b1256 get bootloader-version >NUL 2>&1
-IF ERRORLEVEL 1 (
+IF NOT "%ERRORLEVEL%"=="0" (
     ECHO   No 218e V3 in DFU mode, and no 218e V3 MIDI port.
     ECHO.
     ECHO   Check the USB cable and that the instrument is powered on.  If the
@@ -770,7 +776,7 @@ IF ERRORLEVEL 1 (
 CALL :ok Found the 218e V3 in DFU mode
 ECHO   Sending START...
 "%DFU%" at32uc3b1256 start
-IF ERRORLEVEL 1 (
+IF NOT "%ERRORLEVEL%"=="0" (
     ECHO   Could not send START.  Power-cycle the instrument and try again.
     EXIT /B 1
 )
