@@ -73,7 +73,7 @@ def svg(path, height, rotate=0.0):
 
 
 def ground(colour):
-    """The page's background: the flat colour, then the wave held back over it."""
+    """The page's background: the flat colour, then the wave over it at .5."""
     card = Image.new("RGBA", (W, H), colour)
     wave = Image.open(WEB / "images" / "wave_bg.png").convert("RGBA")
     # background-size: cover - scale to fill, then crop the overflow centred.
@@ -82,10 +82,7 @@ def ground(colour):
                        Image.LANCZOS)
     left, top = (wave.width - W) // 2, (wave.height - H) // 2
     wave = wave.crop((left, top, left + W, top + H))
-    # The page runs it at .5, spread across a whole viewport.  A card is a
-    # 1200x630 crop of the same drawing, which packs those strokes into a
-    # sixth of the room and turns a ground into marks on the image.
-    alpha = wave.getchannel("A").point(lambda a: round(a * 0.32))
+    alpha = wave.getchannel("A").point(lambda a: a // 2)     # opacity: .5
     wave.putalpha(alpha)
     card.alpha_composite(wave)
     return card

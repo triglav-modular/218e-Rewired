@@ -573,10 +573,12 @@ using.
 
 Centred on the drawing, not on the file it arrives in: `banana.svg` is an
 Illustrator export with air on one side, and centring its frame put the banana
-visibly right of centre. The tool trims to the ink first. The wave is held
-back to .32 where the page runs it at .5 - a card is a 1200x630 crop of the
-same drawing, which packs the strokes into a sixth of the room and turns a
-ground into marks on the image.
+visibly right of centre. The tool trims to the ink first.
+
+The wave sits at the `.5` the page runs it at. A card is a 1200x630 crop of a
+2200x1550 drawing, so the same strokes arrive rather denser than they do on a
+viewport - but the ground a card shows is meant to be the ground the page
+shows, and holding it back to taste is how the two drift apart.
 
 It does not run in the workflow: the deploy runner has no rasteriser, and a
 card that exists only where one is installed eventually does not exist. So it
