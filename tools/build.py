@@ -1055,6 +1055,7 @@ RAM_REGIONS = [
     (0x625B, 0x625C, "the step's trigger is claimable by the 1 kHz flush"),
     (0x625C, 0x625D, "which pad a bare hold is counting, plus one"),
     (0x625D, 0x625E, "how many scans it has been held"),
+    (0x625E, 0x6260, "gate-off threshold set by the last pulse that fired a step"),
     (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
     # Completed edit gestures commit immediately. A failed
     # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.

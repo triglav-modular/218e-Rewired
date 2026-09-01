@@ -4114,35 +4114,51 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LSR R12,0x7");
         emit("SUB R12,-0x1");           // /1 .. /8
         padTo(0x8001c8d0L);
-        // Keep the factory gate-off countdown alive without allowing the
-        // internal timer to generate extra steps while an input is present.
-        emit("MOV R9,R1");
-        emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001c8dc");
-        emit(String.format("MOV R9,0x%x",
-             number("clock_release_ms", 2600, 100, 32000)));
-        padTo(0x8001c8dcL);
-        emit("MUL R9,R9,R12");
-        emit("MOV R11,R9");
-        emit("LSR R11,0x2");
-        emit("ADD R9,R11");
-        emit("SUB R9,-0x2");
-        emit("MOV R11,0x7fff");
-        emit("CP.W R9,R11");
-        emit("BR{le} 0x8001c8f8");
-        emit("MOV R9,R11");
-        padTo(0x8001c8f8L);
-        emit("LDDPC R11,0x8001c9e0");
-        emit("ST.H R11[0x38e],R9");
+        // Only the pulse that fires a step touches the countdown.  It starts
+        // it a quarter above the divided step, so the internal timer cannot
+        // run it out before the next firing pulse, and records beside it
+        // the gate-off threshold seq_gate_length answers with: that start
+        // less half the step, which puts the drop at the step's midpoint.
+        //
+        // A pulse between steps used to restart the countdown too.  Under
+        // /2 and above that kept it forever above a threshold cut from the
+        // PULSE period, so the sustain never fell, and under /1 the same
+        // threshold dropped it at three quarters.  Such a pulse now advances
+        // the divide phase and nothing else: the margin the firing pulse
+        // left covers the whole step, and clock_gate holds the internal
+        // timer for as long as a clock is about in any case.
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001c914");
-        emit("ST.B R10[0x7],R11");
+        emit("BR{ge} 0x8001c8e0");
+        emit("ST.B R10[0x7],R11");      // between steps: count it, leave the countdown
         emit("LDM SP++,R0,R1,R7,PC");
-        padTo(0x8001c914L);
+        padTo(0x8001c8e0L);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
+        emit("MOV R9,R1");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001c8f0");
+        emit(String.format("MOV R9,0x%x",
+             number("clock_release_ms", 2600, 100, 32000)));
+        padTo(0x8001c8f0L);
+        emit("MUL R9,R9,R12");          // the divided step, in ms
+        emit("MOV R12,R9");
+        emit("LSR R12,0x1");            // half of it
+        emit("MOV R11,R9");
+        emit("LSR R11,0x2");
+        emit("ADD R9,R11");
+        emit("SUB R9,-0x2");            // where the countdown starts: a quarter over, plus two
+        emit("MOV R11,0x7fff");
+        emit("CP.W R9,R11");
+        emit("BR{le} 0x8001c910");
+        emit("MOV R9,R11");
+        padTo(0x8001c910L);
+        emit("LDDPC R11,0x8001c9e0");
+        emit("ST.H R11[0x38e],R9");
+        emit("SUB R9,R9,R12 << 0x0");   // and where on the way down the gate falls
+        emit("MOV R11,0x625e");
+        emit("ST.H R11[0x0],R9");
         emit("MOV R11,0x6237");
         emit("MOV R12,0x1");
         emit("ST.B R11[0x0],R12");       // even a rest/tie gets its own pitch scan
@@ -4302,6 +4318,13 @@ public class AssemblePressureFix extends GhidraScript {
         // still has priority, and the attack-drop itself is untouched - four
         // milliseconds at the default trigger_spike_units of 5, which this
         // guard's four-millisecond window exactly covers.
+        //
+        // Whatever the threshold is.  It used to arm only at the factory's
+        // three, which was every threshold a clocked step asked for while
+        // the drop was cut from the pulse period and floored there; a
+        // divided step asks for half of itself, and at a fast clock that
+        // is inside the spike.  Only a tie's tail, which asks for no drop
+        // at all, has nothing to guard.
         begin(0x8001ca80L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -4310,8 +4333,9 @@ public class AssemblePressureFix extends GhidraScript {
         } else {
             emit("MOV R8,0x3");
         }
-        emit("CP.W R8,0x3");
-        emit("BR{ne} 0x8001cb10");
+        emit("MOV R9,-0x8000");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001cb10");      // a tie's tail: no drop to guard
         emit("MOV R10,0x6234");
         emit("LD.UB R9,R10[0x2]");
         emit("CP.W R9,0x0");
@@ -4321,7 +4345,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{eq} 0x8001cb10");
         emit("LDDPC R11,0x8001cb18");
         emit("LD.SH R9,R11[0x38e]");
-        emit("CP.W R9,0x3");
+        emit("CP.W R9,R8");             // at the threshold this step asked for
         emit("BR{ne} 0x8001cb10");
         emit("LD.W R9,R10[0x20]");
         emit("MFSR R12,COUNT");
@@ -4331,7 +4355,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R12,0x1");
         emit("CP.W R9,R12");
         emit("BR{hi} 0x8001cb10");
-        emit("MOV R9,0x4");
+        emit("MOV R9,R8");
+        emit("SUB R9,-0x1");            // one above it: the same compare, a tick later
         emit("ST.H R11[0x38e],R9");
         emit("MOV R8,-0x8000");
         padTo(0x8001cb10L);
@@ -6100,6 +6125,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x61ea");
         emit("ST.H R9[0x0],R8");
         emit("ST.H R9[0x2],R8");
+        emit("MOV R9,0x625e");          // the threshold the last step set goes with the period
+        emit("ST.H R9[0x0],R8");
         emit("LD.SH R8,R11[0x34a]");
         emit("ST.H R11[0x38e],R8");
         padTo(0x8001c540L);
@@ -6899,9 +6926,11 @@ public class AssemblePressureFix extends GhidraScript {
         // fires the predecessor read lands two bytes under the step table;
         // a read only, and the gate is not up yet for any answer to cut.)
         //
-        // The interval is the one the countdown rides: the measured clock
-        // period while pulses are about - clock_gate pushes the countdown
-        // by exactly that cell - and the RATE interval otherwise.
+        // Under a clock the answer was made by the pulse that fired the
+        // step: clock_pulse starts the countdown a quarter above the
+        // divided step and records that start less half the step, so the
+        // drop lands at the midpoint whatever the division.  Otherwise it
+        // is half the RATE interval the countdown started from.
         begin(0x8001b740L);
         emit("MOV R10,0x61e0");
         emit("LD.UB R9,R10[0x1]");      // the cursor: the step about to play
@@ -6918,20 +6947,21 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x6236");          // a clock about?
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b774");
-        emit("MOV R8,0x61ea");
-        emit("LD.UH R8,R8[0x0]");       // the measured period, in ticks
+        emit("BR{eq} 0x8001b778");
+        emit("MOV R8,0x625e");          // the threshold its firing pulse set
+        emit("LD.UH R8,R8[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001b77a");      // none measured yet: RATE's interval
-        padTo(0x8001b774L);
+        emit("BR{eq} 0x8001b778");      // none set yet: RATE's interval
+        emit("RJMP 0x8001b780");
+        padTo(0x8001b778L);
         emit("MOV R8,0x38aa");          // state+0x34a, the RATE interval
         emit("LD.SH R8,R8[0x0]");
-        padTo(0x8001b77aL);
         emit("ASR R8,0x1");
+        padTo(0x8001b780L);
         emit("CP.W R8,0x3");
-        emit("BR{ge} 0x8001b782");
+        emit("BR{ge} 0x8001b786");
         emit("MOV R8,0x3");
-        padTo(0x8001b782L);
+        padTo(0x8001b786L);
         emit("MOV PC,LR");
         finish("seq_gate_length", 0x8001b788L);
 

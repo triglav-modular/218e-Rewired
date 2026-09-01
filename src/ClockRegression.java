@@ -27,6 +27,7 @@ public class ClockRegression extends GhidraScript {
     final List<Integer> dac = new ArrayList<>();
     final List<Long> outputTimes = new ArrayList<>();
     final List<Long> beatTimes = new ArrayList<>();
+    final List<Long> fireTimes = new ArrayList<>();
 
     long pc() { return e.getExecutionAddress().getOffset(); }
     void jump(long p) { e.writeRegister(e.getPCRegister(), p); }
@@ -72,7 +73,11 @@ public class ClockRegression extends GhidraScript {
             jump(e.readRegister("LR").longValue());
             return;
         }
-        if (pc() == 0x8001c914L) advances++;
+        if (pc() == 0x8001c8e0L) advances++;
+        // The pulse-driven step itself, wherever clock_pulse keeps its firing
+        // path: the factory advance entered with interval -1 is that and
+        // nothing else, so a test can time from it on any layout.
+        if (pc() == 0x8000210cL && reg(12)==0xffff) fireTimes.add(nowUs);
         if (pc() == 0x800022deL && periodic) { periodicAdvances++; beatTimes.add(nowUs); }
         int ins = (int)r(pc(),2);
         // Installed AVR32 SLEIGH mis-models BFINS: it inserts the field at the
@@ -159,7 +164,7 @@ public class ClockRegression extends GhidraScript {
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202); // SPI TX ready/empty
         advances=0; periodicAdvances=0; periodic=false; transfers=0;
         transferPitches.clear();
-        pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear();
+        pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear(); fireTimes.clear();
     }
     void irq(long us, boolean high) throws Exception {
         time(us);
@@ -1571,6 +1576,61 @@ public class ClockRegression extends GhidraScript {
         } finally { sequencer=mode; }
     }
 
+    // The same contract under an external clock, at every division.  The
+    // pulse that fires a step starts the countdown and records where the
+    // gate falls; the pulses between steps must leave both alone.  When
+    // they restarted the countdown as well, the sustain never fell at /2
+    // and above and fell at three quarters at /1 - the threshold was cut
+    // from the pulse, the countdown from the step.  Four plain notes on a
+    // 20 ms clock: once the divider has locked, every drop must land half
+    // a divided step after the pulse that fired it, one drop per step.
+    void sequencedGateIsHalfTheDividedStep() throws Exception {
+        boolean mode=sequencer;
+        try {
+            for (int div : new int[]{1,2,4,8}) {
+                sequencer=true; fresh(div,25000000);
+                w(0x61e0,1,4);
+                w(0x6160,2,485); w(0x6162,2,525); w(0x6164,2,565); w(0x6166,2,605);
+                w(S+0x34a,2,20); w(S+0x38e,2,3);
+                final long period=20000, locked=10000+8*period;
+                long end=locked+4*div*period+2*period;
+                java.util.List<long[]> edges=new java.util.ArrayList<>();
+                long last=0;
+                for (long t=10000; t<=end; t+=1000) {
+                    long phase=(t-10000)%period;
+                    if (phase==0) irq(t,true);
+                    else if (phase==period/2) irq(t,false);
+                    bank(t); service(t); internal(t); flush(t);
+                    if (t%5000==0) { time(t); call(0x80003590L,0x100); scan(t); }
+                    long lv=r(S+0x354,2)==0?0:1;
+                    if (lv!=last) { edges.add(new long[]{t,lv}); last=lv; }
+                }
+                check("/"+div+": the divider locked", r(0x6233,1)==1);
+                int fires=0;
+                for (long f : fireTimes) if (f>=locked) fires++;
+                java.util.List<Long> ds=new java.util.ArrayList<>();
+                for (long[] e : edges) {
+                    if (e[1]!=0 || e[0]<locked) continue;
+                    long fire=-1;
+                    for (long f : fireTimes) if (f<=e[0]) fire=f;
+                    if (fire>=locked) ds.add((e[0]-fire)/1000);
+                }
+                StringBuilder sb=new StringBuilder("  /"+div+": fires after lock "+fires
+                    +", drop after its firing pulse (ms):");
+                for (long d : ds) sb.append(" ").append(d);
+                println(sb.toString());
+                long half=div*period/2000;
+                int inside=0;
+                for (long d : ds) if (d>=half-1 && d<=half+1) inside++;
+                check("/"+div+": the sustain falls once per divided step ("+ds.size()
+                      +" drops for "+fires+" steps)", fires>=3 && ds.size()>=fires-1 && ds.size()<=fires);
+                check("/"+div+": every drop is half the divided step, "+half+" ms ("+ds+")",
+                      !ds.isEmpty() && inside==ds.size());
+            }
+            println("PASS a divided step gates half its length at /1, /2, /4 and /8");
+        } finally { sequencer=mode; }
+    }
+
     // The arp selector writes a BARE note to state+0x352. The ADC event's
     // target preparation later adds transpose and latch stamps, before the
     // pitch scan consumes that target. Earlier clock fixtures only ran the
@@ -2191,7 +2251,7 @@ public class ClockRegression extends GhidraScript {
             // Both of these play a TAKE, which only a sequencer build has
             // the caves for - under the arp image the fixture would sound
             // nothing at all and fail on the silence.
-            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); }
+            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); sequencedGateIsHalfTheDividedStep(); }
             if (jitterOnly) {
                 bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {
