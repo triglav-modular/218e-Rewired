@@ -1,7 +1,8 @@
 # Preset and sequencer persistence
 
-`persist = true` in `[options]`, which is the default. This saves the four
-remapped preset voltages and the sequence, not the factory's settings. The factory preset path is unchanged
+`persist = true` in `[options]`, which is required: the build refuses
+`persist = false`. This saves the four remapped preset voltages and the
+sequence, not the factory's settings. The factory preset path is unchanged
 when knob remapping is disabled.
 
 ## Saving and restarting

@@ -34,6 +34,9 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
         var o = { latching_arp: arp, remap_knobs: kn, pressure_fix: fx,
                   pressure_portamento: po, volts_per_octave: v,
                   sequencer: sq[0], clock_divide: sq[1], persist: persist };
+        // buildlib refuses persist = false unless the caller says it means
+        // it.  This matrix is where the unsupported build is characterised.
+        if (!persist) o.unsupported_volatile = true;
         if (cal) o.pitch_correction = cal;
         if (nt) o.alternate_tunings = T.slice(0, nt);
         var label = 'arp=' + (arp ? 1 : 0) + ' knobs=' + (kn ? 1 : 0) +

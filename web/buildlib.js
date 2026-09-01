@@ -124,6 +124,13 @@ var BUILDLIB = (function () {
                           clock_max_ms: 2400, clock_release_ms: 2600,
                           trigger_spike_units: 5, seq_edit_hold_scans: 60 };
         cfg.persist = { on: !!want('persist', true), page_count: 8 };
+        // Mirrors VOLATILE_ENV in tools/options.py: persistence is not a
+        // choice.  The page never sends the option at all; the matrix in
+        // test_matrix.js asks for the unsupported build by name.
+        if (!cfg.persist.on && !want('unsupported_volatile', false)) {
+            throw new Error('persist = false is not a supported configuration - '
+                + 'set it to true, or leave it out.');
+        }
         cfg.clock = { divide: !!want('clock_divide', true) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;

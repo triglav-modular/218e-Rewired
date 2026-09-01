@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import math
+import os
 import re
 import subprocess
 import sys
@@ -1396,6 +1397,39 @@ def test_leaf_with_call(cfg: dict) -> None:
           not faults({"planted": [(0x8000fffe, "STM --SP,R7,LR")] + leaf}))
 
 
+def test_persist_required() -> None:
+    """persist = false is not a configuration; it is a diagnostic.
+
+    A volatile image restores a runtime that never reloads its committed
+    musical data, and a warm reset that finds the initialisation marker
+    already matching comes back in whatever mode it left - PLAY included,
+    where seq_noteon_mute eats every key and the keyboard reads as dead.  So
+    the option is not a default any more: the only way to build one is to ask
+    for the unsupported image by name, which the parity sweep and the control
+    and persistence regressions do and nothing that ships does.
+    """
+    print("persistence is mandatory")
+    import options as _options
+    saved = os.environ.pop(_options.VOLATILE_ENV, None)
+    try:
+        raises("persist = false is refused",
+               lambda: _options.expand({"persist": False}),
+               "not a supported configuration")
+        check("persist = true is accepted", _options.expand({"persist": True})["persist"]["on"])
+        check("leaving it out is accepted, and persistent",
+              _options.expand({})["persist"]["on"])
+        with open(REPO / "config" / "218e.toml", "rb") as fh:
+            shipped = tomllib.load(fh).get("options", {})
+        check("the shipped config is persistent", _options.expand(shipped)["persist"]["on"])
+        os.environ[_options.VOLATILE_ENV] = "1"
+        check("a fixture that asks for the unsupported image still gets one",
+              not _options.expand({"persist": False})["persist"]["on"])
+    finally:
+        os.environ.pop(_options.VOLATILE_ENV, None)
+        if saved is not None:
+            os.environ[_options.VOLATILE_ENV] = saved
+
+
 def test_atomic_replace() -> None:
     """The atomic replace must preserve the file mode: the updater is executable."""
     print("file replacement")
@@ -1606,6 +1640,7 @@ def main() -> None:
     test_flashers_expect_the_golden(cfg)
     test_latency_report_clears()
     test_pool_fallthrough()
+    test_persist_required()
     test_atomic_replace()
     test_generated_is_current()
     test_corpus_current()

@@ -21,9 +21,20 @@ and the JavaScript toolchain underneath are all unchanged.
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Persistence is not a choice the configuration gets to make.  A volatile
+# image restores a runtime that never reloads its committed musical data,
+# and on a warm reset that finds the initialisation marker already matching
+# it can come back in PLAY with seq_noteon_mute eating every key.  The
+# variants still exist as internal fixtures - the parity sweep and the
+# control and persistence regressions build them deliberately, to
+# characterise the path rather than to ship it - so the refusal is lifted
+# by an environment variable, which no config file can set.
+VOLATILE_ENV = "REWIRED_UNSUPPORTED_VOLATILE"
 
 # Frozen default behaviour for every setting the simplified config does not
 # expose.  Generated once from the historical full config; the seven user
@@ -221,6 +232,11 @@ def check(options: dict) -> None:
                         f"alternate_tunings[{i}] must be a filename, a "
                         f'["scale.scl", "map.kbm"] pair, or \'factory\', '
                         f"not {type(entry).__name__}: {entry!r}")
+
+    if options.get("persist") is False and not os.environ.get(VOLATILE_ENV):
+        raise SystemExit(
+            "persist = false is not a supported configuration - set it to "
+            "true, or leave it out.")
 
 
 def expand(options: dict) -> dict:

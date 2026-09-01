@@ -12,6 +12,7 @@ settings emit different code — so this walks the options.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 import build as build_mod  # noqa: E402
+import options  # noqa: E402
+
+# This harness is here to build the unsupported non-persistent images and
+# say how they behave, so it lifts the refusal in tools/options.py for the
+# builds it spawns.  Nothing that ships passes through here.
+os.environ[options.VOLATILE_ENV] = "1"
+
 BASE = REPO / "config" / "218e.toml"
 TEMP = REPO / "config" / "_sweep.toml"
 

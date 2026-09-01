@@ -162,6 +162,7 @@ clock_divide = true
 # Explicit STOP during preview or the CLEAR chord finishes/saves the take.
 # Flash writes can briefly interrupt playback/capture. DFU updates erase
 # these records. See docs/PERSISTENCE.md for the format and limits.
+# Required: the build refuses persist = false.
 persist = true
 
 
