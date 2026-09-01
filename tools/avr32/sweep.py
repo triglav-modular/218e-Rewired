@@ -208,10 +208,13 @@ def audit_call_pools(image_path) -> list[str]:
 # transposes playback - including the bare pad that starts the preview, which
 # chooses an octave on its way in - leaves a preview alone; and when the
 # bootstrap adopted the staged base and target too, whose bootloader
-# leftovers derailed the first touch's portamento until the finger lifted.
+# leftovers derailed the first touch's portamento until the finger lifted;
+# and again when a polyphonic press stopped reaching MIDI while the sequencer
+# plays, which the earlier keyboard silence had missed because the factory
+# poly handler sends its Note On ahead of the muted contact call.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "21c74070b151abdedc95702d785f9ec9e170619c92c6f8b990e7e7851f7bb758",
+    "historical_config": "a0db1d5684eb6e36ee754300c55bc616a061378b30ba9e2c7639deeb085c0107",
 }
 
 

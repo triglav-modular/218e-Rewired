@@ -6824,6 +6824,39 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80018d00L); // note_on_reset_raw_filter
         finish("seq_noteon_mute", 0x8001b350L);
 
+        // The same silence, one call earlier.  seq_noteon_mute owns the pool
+        // word for an INNER call of the contact handler at 0x80005b6c, and in
+        // poly mode the pressure state machine never gets that far: it calls
+        // the poly handler at 0x800054d6 first, and that handler sends both
+        // Note Ons itself.  So a key pressed while the sequencer PLAYS made
+        // no sound - the mute did its half - and still went out on both MIDI
+        // outputs, which is exactly what play mode is meant to stop.
+        //
+        // The guard belongs on the poly handler's own pool word, which the
+        // onset and the release share: R12 is 1 for the press and 0 for the
+        // lift, and only the press is dropped.  Lifts stay live because a key
+        // held from before the transport entered PLAY still owns a sounding
+        // note, and the handler's saved note and channel are the only way to
+        // end it on the channel it began on.
+        //
+        // R8 is free here - the handler takes R12/R11/R10/R9 - and it
+        // clobbers R8..R12 itself, so the tail is a plain jump and the
+        // factory routine returns straight to the state machine.
+        begin(0x8001b550L);
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001b560");      // a lift always runs
+        emit("MOV R8,0x6154");
+        emit("LD.UB R8,R8[0x4]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001b560");
+        emit("MOV PC,LR");              // playing: the press sends no MIDI
+        padTo(0x8001b560L);
+        emit("LDDPC R8,0x8001b564");
+        emit("MOV PC,R8");
+        padTo(0x8001b564L);
+        word(0x80005660L); // the factory poly note-on/note-off handler
+        finish("seq_poly_mute", 0x8001b568L);
+
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does, everywhere but play mode.  A playing
         // step's threshold is seq_gate_length's answer: HALF the step's
@@ -8461,6 +8494,9 @@ public class AssemblePressureFix extends GhidraScript {
         wordPatch("note_on_pool", 0x80005e8cL,
             block("seq_pitch") ? 0x8001b330L : 0x80018d00L,
             "note-on pointer -> filter-reset wrapper");
+        wordPatch("poly_note_pool", 0x80005644L,
+            block("seq_pitch") ? 0x8001b550L : 0x80005660L,
+            "poly note pointer -> PLAY-mute guard");
         wordPatch("pad_select_pool", 0x8000a810L,
             block("seq_chord") ? 0x8001b790L : 0x8000698cL,
             "press-time select_pad -> chord-armed guard");
