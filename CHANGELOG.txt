@@ -1,7 +1,7 @@
 2.1 (2026-09-01)
-- A sequence recorded below the pad it was born under keeps its MIDI notes after a power cycle.
-- A tie at the end of a loop holds its note to the next step instead of cutting it short.
-- Under an external clock a divided step’s gate now falls at its midpoint at every division.
+- Sequencer notes recorded below the initial octave now keep their MIDI notes after a power cycle.
+- A tie at the end of a loop now holds its note to the next step instead of cutting it short.
+- The clock divider’s gate is now half the step at every division.
 
 2.0 (2026-08-31)
 - Step sequencer: 64 steps, recorded and played from the preset pads.
