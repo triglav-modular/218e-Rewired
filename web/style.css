@@ -1066,8 +1066,13 @@ td input {
 }
 /* The shared button hover paints every border accent, and the only border a
    row still has is the rule under it - so hovering drew a coloured line
-   between two rows.  The rule holds, whatever the row's state. */
-.knobmap .knobpick button:hover {
+   between two rows.  The rule holds, whatever the row's state.
+
+   .vpo is in the selector to win on specificity rather than on position.
+   Without it this ties with .vpo button:hover:not([aria-pressed=true]) at
+   0-3-1, and that one is 400 lines further down, so it took the tie and the
+   line came back pink under whichever row the pointer was on. */
+.knobmap .vpo.knobpick button:hover {
   border-bottom-color: color-mix(in srgb, var(--ink) 20%, transparent);
 }
 /* The type carries the hover instead - but only on a row that is not the
@@ -1076,15 +1081,17 @@ td input {
 .knobmap .knobpick button:hover:not([aria-pressed=true]) {
   animation: sweep-ink var(--sweep-pass) forwards;
 }
-/* After the hover rule, so a selection still clears the lines around it. */
-.knobmap .knobpick button[aria-pressed=true] {
+/* After the hover rule, so a selection still clears the lines around it, and
+   carrying .vpo for the same reason: the chosen row ties with the two
+   [aria-pressed=true] rules below, both of which paint an accent border. */
+.knobmap .vpo.knobpick button[aria-pressed=true] {
   z-index: 1;
   border-bottom-color: transparent;
   border-radius: 7px;
 }
-.knobmap .knobpick button[aria-pressed=true]:hover,
-.knobmap .knobpick button:has(+ button[aria-pressed=true]),
-.knobmap .knobpick button:hover:has(+ button[aria-pressed=true]) {
+.knobmap .vpo.knobpick button[aria-pressed=true]:hover,
+.knobmap .vpo.knobpick button:has(+ button[aria-pressed=true]),
+.knobmap .vpo.knobpick button:hover:has(+ button[aria-pressed=true]) {
   border-bottom-color: transparent;
 }
 /* One row per pattern: a number, the steps, how many before it repeats. */
