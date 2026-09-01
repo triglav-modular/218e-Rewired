@@ -116,8 +116,8 @@ var BUILDLIB = (function () {
         // The sequencer's controls live on a pad chord, so it needs the pads.
         cfg.sequencer = { on: !!want('sequencer', true), strip_halfway_units: 2048,
                           tie_glide_rate: 60, chord_hold_scans: 200,
-                          strip_ack_scans: 20, strip_led_rest_units: 512,
-                          strip_led_tie_units: 4095, strip_led_dark_units: 0,
+                          strip_ack_scans: 20, strip_led_rest_units: 0,
+                          strip_led_tie_units: 4095, strip_led_idle_units: 2048,
                           clock_min_ms: 4, clock_lock_pulses: 5,
                           clock_settle_scans: 0, clock_deadline_ms: 4,
                           clock_rearm_us: 250,
@@ -809,15 +809,15 @@ var BUILDLIB = (function () {
             strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
             tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
             strip_ack_scans: (cfg.sequencer && cfg.sequencer.strip_ack_scans) || 20,
+            // Not `|| 0`: zero is the leftmost lamp, read off the panel, and
+            // the truthiness default would quietly discard it.
             strip_led_rest_units: (cfg.sequencer
                                    && cfg.sequencer.strip_led_rest_units !== undefined)
-                                ? cfg.sequencer.strip_led_rest_units : 512,
+                                ? cfg.sequencer.strip_led_rest_units : 0,
             strip_led_tie_units: (cfg.sequencer && cfg.sequencer.strip_led_tie_units) || 4095,
-            // Not `|| 0`: dark is the whole point of this one, and the
-            // truthiness default would light the lamps through every take.
-            strip_led_dark_units: (cfg.sequencer
-                                   && cfg.sequencer.strip_led_dark_units !== undefined)
-                                ? cfg.sequencer.strip_led_dark_units : 0,
+            strip_led_idle_units: (cfg.sequencer
+                                   && cfg.sequencer.strip_led_idle_units !== undefined)
+                                ? cfg.sequencer.strip_led_idle_units : 2048,
             clock_min_ms: (cfg.sequencer && cfg.sequencer.clock_min_ms) || 4,
             clock_lock_pulses: (cfg.sequencer && cfg.sequencer.clock_lock_pulses) || 5,
             clock_settle_scans: (cfg.sequencer && cfg.sequencer.clock_settle_scans) || 0,

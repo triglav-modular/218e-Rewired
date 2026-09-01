@@ -7546,9 +7546,16 @@ function assembleProgram() {
         // from the slewed strip position, and which the 1 kHz flush sends
         // with the other seven slots from state+0x354.  So the way to light
         // them is to own that slot, and strip_dac_redirect sends the
-        // factory's own store to a shadow at 0x61f0 to make this cave the
+        // factory's own store to a shadow at 0x657a to make this cave the
         // only writer of it.  Nothing reads 0x35e back - it is a DAC slot and
         // nothing else - so owning it cannot disturb anything musical.
+        //
+        // They are a DOT display with no off state, measured on the
+        // instrument: the value meant to be dark lit the leftmost lamp
+        // instead.  So a take rests on the MIDDLE lamp rather than on none of
+        // them, which reads better anyway - a steady centre for the take, and
+        // an entry throwing it to the side it went in on.  Both ends were
+        // read off the panel too: 0 is the left lamp alone, 4095 the right.
         //
         // The cost, stated plainly: slot 5 is the strip OUTPUT JACK, so a
         // flash leaves the module as CV.  It is not a new cost.  Entering a
@@ -7624,7 +7631,7 @@ function assembleProgram() {
         emit("CP.W R8,0x1");
         emit("BR{ne} 0x8001b834");
         emit(StringFormat("MOV R8,0x%x",
-             number("strip_led_rest_units", 512, 0, 4095)));
+             number("strip_led_rest_units", 0, 0, 4095)));
         emit("RJMP 0x8001b858");
         padTo(0x8001b834);
         emit(StringFormat("MOV R8,0x%x",
@@ -7632,7 +7639,7 @@ function assembleProgram() {
         emit("RJMP 0x8001b858");
         padTo(0x8001b840);
         emit(StringFormat("MOV R8,0x%x",
-             number("strip_led_dark_units", 0, 0, 4095)));
+             number("strip_led_idle_units", 2048, 0, 4095)));
         emit("RJMP 0x8001b858");
 
         padTo(0x8001b84c);

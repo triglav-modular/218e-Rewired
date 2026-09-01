@@ -2028,11 +2028,11 @@ def main() -> None:
     cfg["_numbers"]["strip_ack_scans"] = int(
         cfg.get("sequencer", {}).get("strip_ack_scans", 20))
     cfg["_numbers"]["strip_led_rest_units"] = int(
-        cfg.get("sequencer", {}).get("strip_led_rest_units", 512))
+        cfg.get("sequencer", {}).get("strip_led_rest_units", 0))
     cfg["_numbers"]["strip_led_tie_units"] = int(
         cfg.get("sequencer", {}).get("strip_led_tie_units", 4095))
-    cfg["_numbers"]["strip_led_dark_units"] = int(
-        cfg.get("sequencer", {}).get("strip_led_dark_units", 0))
+    cfg["_numbers"]["strip_led_idle_units"] = int(
+        cfg.get("sequencer", {}).get("strip_led_idle_units", 2048))
     cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 4))
     cfg["_numbers"]["clock_lock_pulses"] = int(
         cfg.get("sequencer", {}).get("clock_lock_pulses", 5))

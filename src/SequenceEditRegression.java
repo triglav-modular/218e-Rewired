@@ -191,31 +191,34 @@ public class SequenceEditRegression extends PersistenceRegression {
         // The three lamps along the strip are not on the LED register: they
         // follow the strip's analog output, DAC slot 5 at state+0x35e.  So
         // what they are saying is exactly what is in that cell, and this
-        // reads it rather than any flag of ours.
+        // reads it rather than any flag of ours.  They are a dot display with
+        // no off state - measured on the instrument - so a take rests on the
+        // middle lamp and an entry throws it to one side.
+        final int idle=2048, rest=0, tie=4095;
         setup(2,false,0); scan();
-        check("a take holds the strip lamps dark",r(S+0x35e,2)==0);
+        check("a take rests on the middle lamp",r(S+0x35e,2)==idle);
         // A rest is below halfway, and lands on the release.  The scan that
         // appends is also the first scan of the flash.
         w(S+0x1fe,2,1000); w(S+0x206,1,1); scan(); w(S+0x206,1,0); scan();
-        check("a landed rest lights the lamp on the left",
-            r(0x61e0,1)==3&&r(0x6164,2)==0x7ffe&&r(S+0x35e,2)==512);
+        check("a landed rest throws it to the lamp on the left",
+            r(0x61e0,1)==3&&r(0x6164,2)==0x7ffe&&r(S+0x35e,2)==rest);
         for(int i=1;i<20;i++)scan();
-        check("the flash lasts its whole length",r(S+0x35e,2)==512);
+        check("the flash lasts its whole length",r(S+0x35e,2)==rest);
         scan();
-        check("and then the lamps go back to dark",r(S+0x35e,2)==0);
-        // A tie is above halfway, and lights the other side.
+        check("and then it settles back to the middle",r(S+0x35e,2)==idle);
+        // A tie is above halfway, and throws it the other way.
         w(S+0x1fe,2,3000); w(S+0x206,1,1); scan(); w(S+0x206,1,0); scan();
-        check("a landed tie lights the lamp on the right",
-            r(0x61e0,1)==4&&r(0x6166,2)==0x7fff&&r(S+0x35e,2)==4095);
+        check("a landed tie throws it to the lamp on the right",
+            r(0x61e0,1)==4&&r(0x6166,2)==0x7fff&&r(S+0x35e,2)==tie);
         for(int i=0;i<20;i++)scan();
-        check("the tie flash ends too",r(S+0x35e,2)==0);
+        check("the tie flash ends too",r(S+0x35e,2)==idle);
         // A played note moves the count as well, and must flash nothing: the
         // cave reads what landed, not merely that something did.
         w(0x6168,2,700); w(0x61e0,1,5); scan();
-        check("a played note moves the count and flashes nothing",r(S+0x35e,2)==0);
+        check("a played note moves the count and flashes nothing",r(S+0x35e,2)==idle);
         // A touch the ceiling refuses never moves the count at all.
         w(0x61e0,1,0x40); w(S+0x1fe,2,1000); w(S+0x206,1,1); scan(); w(S+0x206,1,0); scan();
-        check("a refused touch flashes nothing",r(0x61e0,1)==0x40&&r(S+0x35e,2)==0);
+        check("a refused touch flashes nothing",r(0x61e0,1)==0x40&&r(S+0x35e,2)==idle);
         // Out of the take the slot is the strip's own again, handed on from
         // the shadow the factory's own store was redirected to.
         w(0x61e0,1,5); command(0);
@@ -224,7 +227,8 @@ public class SequenceEditRegression extends PersistenceRegression {
         check("leaving the take hands the strip its output back",r(S+0x35e,2)==1234);
         w(0x657a,2,777); scan();
         check("and keeps handing it on every scan",r(S+0x35e,2)==777);
-        println("PASS strip lamps: dark through a take, one flash per landed rest or tie, handed back on the way out");
+        println("PASS strip lamps: centred through a take, thrown to the side a landed "
+            +"rest or tie went in on, handed back on the way out");
     }
     void stripCarry() throws Exception {
         for(boolean internal:new boolean[]{false,true})for(boolean beforePreview:new boolean[]{false,true})

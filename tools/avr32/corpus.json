@@ -17248,8 +17248,8 @@
 },
 {
 "addr": "8001ab6c",
-"text": "MOV R11,0x572c",
-"bytes": "e06b572c",
+"text": "MOV R11,0x36c0",
+"bytes": "e06b36c0",
 "width": 4
 },
 {
@@ -18286,8 +18286,8 @@
 },
 {
 "addr": "8001ad1c",
-"text": "MOV R11,0x572c",
-"bytes": "e06b572c",
+"text": "MOV R11,0x36c0",
+"bytes": "e06b36c0",
 "width": 4
 },
 {
@@ -43972,14 +43972,20 @@
 },
 {
 "addr": "8001b81e",
-"text": "MOV R8,0x200",
-"bytes": "e0680200",
-"width": 4
+"text": "MOV R8,0x0",
+"bytes": "3008",
+"width": 2
+},
+{
+"addr": "8001b820",
+"text": "RJMP 0x8001b858",
+"bytes": "c1c8",
+"width": 2
 },
 {
 "addr": "8001b822",
-"text": "RJMP 0x8001b858",
-"bytes": "c1b8",
+"text": "NOP",
+"bytes": "d703",
 "width": 2
 },
 {
@@ -44062,20 +44068,14 @@
 },
 {
 "addr": "8001b840",
-"text": "MOV R8,0x0",
-"bytes": "3008",
-"width": 2
-},
-{
-"addr": "8001b842",
-"text": "RJMP 0x8001b858",
-"bytes": "c0b8",
-"width": 2
+"text": "MOV R8,0x800",
+"bytes": "e0680800",
+"width": 4
 },
 {
 "addr": "8001b844",
-"text": "NOP",
-"bytes": "d703",
+"text": "RJMP 0x8001b858",
+"bytes": "c0a8",
 "width": 2
 },
 {
@@ -53541,5 +53541,5 @@
 "width": 4
 }
 ],
-"program_sha256": "aeb926e73b6b01068f5299f443f5804763d56d195e4163af5043903563b5a072"
+"program_sha256": "da85fff68f48cfeda44f09576dd6294fe76622678e6e4a8c9dada070c40f6a13"
 }

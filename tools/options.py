@@ -342,15 +342,17 @@ def expand(options: dict) -> dict:
                         "strip_ack_scans": 20,
                         # What to write for each, in the same 0..4095 the
                         # strip's own position uses.  A rest wants the lamp on
-                        # the left and a tie the one on the right; the numbers
-                        # are here because where those lamps change is a
-                        # property of the panel, not of the firmware, and only
-                        # a real instrument can settle them.
-                        "strip_led_rest_units": 512,
+                        # the left and a tie the one on the right, and both
+                        # ends were read off the instrument.  They stay numbers
+                        # because where the lamps change is a property of the
+                        # panel, not of the firmware.
+                        "strip_led_rest_units": 0,
                         "strip_led_tie_units": 4095,
-                        # What the lamps sit at for the rest of a take.  Zero
-                        # if the panel has all three dark there.
-                        "strip_led_dark_units": 0,
+                        # Where the lamps sit for the rest of a take.  They are
+                        # a dot display with no off state, so this is the
+                        # middle lamp rather than none of them: a steady centre
+                        # for the take, thrown to one side by an entry.
+                        "strip_led_idle_units": 2048,
                         # Capture is interrupt-timestamped. At 200 Hz a
                         # 4 ms refractory leaves 1 ms of period margin; the
                         # low phase must be longer than 250 us at the MCU.
