@@ -192,6 +192,23 @@ public class PersistenceRegression extends GhidraScript {
             &&r(0x6158,1)==0&&r(0x615f,1)==0&&r(0x622e,2)==0);
         println("PASS CRC vector, real factory wrapper, equality, ring wrap, cold/warm startup");
     }
+    void relativeSteps() throws Exception {
+        // Steps are relative to the take's reference, so a note recorded
+        // under a pad below it is negative. It is a pitch with a key, not a
+        // rest: the key must be saved, must compare equal on the next
+        // capture, and must come back after a power cycle.
+        fresh(); seed();
+        w(0x6162,2,0xff00); w(0x61ef,1,7);       // step 1: -256, key 7
+        w(0x6164,2,0x7ffe); w(0x61f0,1,9);       // step 2: rest, key discarded
+        w(0x6166,2,0x7fff); w(0x61f1,1,11);      // step 3: tie, key discarded
+        check("negative step saves",saveLive()==0&&writes==4);
+        check("negative step compares equal",saveLive()==0&&writes==4);
+        cold();
+        check("negative step keeps its key",r(0x6162,2)==0xff00&&r(0x61ef,1)==7);
+        check("rest and tie keep no key",r(0x6164,2)==0x7ffe&&r(0x61f0,1)==0
+            &&r(0x6166,2)==0x7fff&&r(0x61f1,1)==0);
+        println("PASS negative relative step: key saved, unchanged, restored");
+    }
     void retries() throws Exception {
         for(String fault:new String[]{"locked","body","commit"}) {
             fresh(); seed(); w(0x613a,2,901); int before=writes;
@@ -451,7 +468,7 @@ public class PersistenceRegression extends GhidraScript {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
         try {
-            basic(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
+            basic(); relativeSteps(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
             println("PERSISTENCE REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash/analog testing.");
         } finally { if(e!=null)e.dispose(); }
     }

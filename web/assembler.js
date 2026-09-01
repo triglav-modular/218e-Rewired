@@ -5116,7 +5116,13 @@ function assembleProgram() {
         emit("BR{ge} 0x8001cf90");
         emit("MOV R8,0x640c");
         emit("ADD R8,R8,R1 << 0x1");
-        emit("LD.UH R9,R8[0x0]");
+        // SIGNED: a step is relative to its take's reference, so a note
+        // recorded under a pad below that reference is negative.  Loaded
+        // unsigned, every negative pitch sat above both sentinels and its
+        // key stayed zero - the CV came back right after a power cycle and
+        // MIDI named every such step note 0.  Of a signed halfword only the
+        // two sentinels reach 0x7ffe.
+        emit("LD.SH R9,R8[0x0]");
         emit("MOV R8,0x631c");
         emit("ADD R8,R8,R1 << 0x1");
         emit("ST.H R8[0x0],R9");
@@ -5396,7 +5402,9 @@ function assembleProgram() {
         emit("BR{ge} 0x8001d350");
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R1 << 0x1");
-        emit("LD.UH R9,R8[0x0]");
+        // Signed, as persist_pack reads it: a negative step is a pitch
+        // with a key, not a rest.
+        emit("LD.SH R9,R8[0x0]");
         emit("CP.W R9,0x7ffe");
         emit("BR{ge} 0x8001d350");
         emit("MOV R8,0x61ee");
@@ -5404,7 +5412,9 @@ function assembleProgram() {
         emit("LD.UB R11,R8[0x0]");
         padTo(0x8001d350);
         emit("ADD R10,R3,R1 << 0x1");
-        emit("LD.UH R8,R10[0xc]");
+        // The snapshot must be read the same way, or a negative step would
+        // never compare equal and every capture would write flash again.
+        emit("LD.SH R8,R10[0xc]");
         emit("CP.W R8,R9");
         emit("BR{eq} 0x8001d366");
         emit("MOV R0,0x1");

@@ -17248,8 +17248,8 @@
 },
 {
 "addr": "8001ab6c",
-"text": "MOV R11,0xc061",
-"bytes": "e06bc061",
+"text": "MOV R11,0x5bda",
+"bytes": "e06b5bda",
 "width": 4
 },
 {
@@ -18286,8 +18286,8 @@
 },
 {
 "addr": "8001ad1c",
-"text": "MOV R11,0xc061",
-"bytes": "e06bc061",
+"text": "MOV R11,0x5bda",
+"bytes": "e06b5bda",
 "width": 4
 },
 {
@@ -29194,8 +29194,8 @@
 },
 {
 "addr": "8001cf1c",
-"text": "LD.UH R9,R8[0x0]",
-"bytes": "9089",
+"text": "LD.SH R9,R8[0x0]",
+"bytes": "9009",
 "width": 2
 },
 {
@@ -31822,8 +31822,8 @@
 },
 {
 "addr": "8001d32e",
-"text": "LD.UH R9,R8[0x0]",
-"bytes": "9089",
+"text": "LD.SH R9,R8[0x0]",
+"bytes": "9009",
 "width": 2
 },
 {
@@ -31912,8 +31912,8 @@
 },
 {
 "addr": "8001d354",
-"text": "LD.UH R8,R10[0xc]",
-"bytes": "94e8",
+"text": "LD.SH R8,R10[0xc]",
+"bytes": "9468",
 "width": 2
 },
 {
@@ -53553,5 +53553,5 @@
 "width": 4
 }
 ],
-"program_sha256": "091127d8dd793278f34695c03f50ddf6bc44eb149cb816c5eb3d79a1eaf2e5ee"
+"program_sha256": "7c92784a0e91f7d652850212230839a0bd0d32c9beccad4f4f8713487c5b65ef"
 }

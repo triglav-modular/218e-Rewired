@@ -75,7 +75,7 @@ one version-2 record; multi-byte values are big-endian.
 | `0x10` | 8 | Four presets, `0..1023` |
 | `0x18` | 1 | Sequence length, `0..64` |
 | `0x19` | 3 | Reserved, zero |
-| `0x1c` | 128 | 64 pitches; `0..4095`, rest `0x7ffe`, tie `0x7fff` |
+| `0x1c` | 128 | 64 pitches, signed and relative to the take's reference, `-0x2000..0x2000`; rest `0x7ffe`, tie `0x7fff` |
 | `0x9c` | 64 | Key indexes `0..28`; rest/tie and inactive keys are zero |
 | `0xdc` | 4 | Zero alignment padding |
 
