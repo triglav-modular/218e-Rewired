@@ -499,7 +499,11 @@ var BUILDLIB = (function () {
         // builders refused these; the counts they reported did not even agree,
         // because splitting on newlines leaves the browser a trailing empty
         // line the CLI never sees.  Padding removes the count from the picture.
-        var entries = raw.slice(index, index + size);
+        // Only 'x' marks an unmapped position; a blank line is skipped, as
+        // in the header and as parse_kbm does, or every key after it moved
+        // up by one.
+        var entries = raw.slice(index).filter(function (l) { return l.trim(); })
+                         .slice(0, size);
         while (entries.length < size) entries.push('');
         var degrees = [];
         for (var position = 0; position < size; position++) {

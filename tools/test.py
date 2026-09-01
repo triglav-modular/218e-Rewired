@@ -85,6 +85,17 @@ def test_scala() -> None:
     def scale(body: str) -> str:
         return "! t\nt\n 12\n!\n" + body
 
+    # Archive files are often Latin-1 in the description, and a spreadsheet's
+    # CSV starts with a byte-order mark; neither may stop the read.
+    latin = REPO / "build" / "_test_latin.scl"
+    latin.write_bytes("! t\nD\xe9scription\n 12\n!\n".encode("latin-1")
+                      + "".join(f" {100 * i}.0\n" for i in range(1, 13)).encode())
+    check("a Latin-1 description does not stop the read", len(B.parse_scala(latin)) == 12)
+    bom = REPO / "build" / "_test_bom.csv"
+    bom.write_bytes(b"\xef\xbb\xbf" + (REPO / "calibration" / "218e-pitch-calibration.csv").read_bytes())
+    check("a byte-order mark does not hide the calibration header",
+          B.read_calibration(bom) == B.read_calibration(REPO / "calibration" / "218e-pitch-calibration.csv"))
+
     raises("descending scale rejected",
            lambda: B.parse_scala(tmp(scale(
                " 100.0\n 90.0\n 300.0\n 400.0\n 500.0\n 600.0\n 700.0\n 800.0\n"
@@ -168,6 +179,15 @@ def test_keyboard_maps() -> None:
     # Size zero is the format's "no mapping at all".
     check("size zero maps every degree in order",
           B.parse_kbm(kbm("", size=0), twelve)[0] == list(range(12)))
+
+    # Blank lines are not entries: one after the header, or between two
+    # entries, used to move every key after it up by one.
+    check("a blank line after the header is skipped",
+          B.parse_kbm(kbm("\n" + "".join(f" {d}\n" for d in range(12))), twelve)[0]
+          == list(range(12)))
+    check("a blank line between entries is skipped",
+          B.parse_kbm(kbm("".join(f" {d}\n" + ("\n" if d == 5 else "") for d in range(12))),
+                      twelve)[0] == list(range(12)))
 
     # Unmapped positions take the nearest mapped one, ties to the lower.
     filled, _ = B.parse_kbm(kbm(" 0\n x\n 1\n x\n x\n 2\n" + " x\n" * 6), twelve)
@@ -1444,6 +1464,19 @@ def test_leaf_with_call(cfg: dict) -> None:
           not faults({"planted": [(0x8000fffe, "STM --SP,R7,LR")] + leaf}))
 
 
+def test_option_messages() -> None:
+    """Wrong options answer with a sentence, and advertised ones are taken."""
+    print("option messages")
+    import options as _options
+    raises("a bare-type option refuses with a sentence",
+           lambda: _options.check({"knob1": 1}), "knob1 must be str")
+    check("arp_patterns = true is the default bank",
+          _options.expand({"arp_patterns": True})["knob2"] == _options.expand({})["knob2"])
+    slots = _options.expand({"alternate_tunings":
+                             ["tunings/12TET.scl", "factory", "tunings/12TET.scl"]})["tuning"]["slots"]
+    check("'factory' is accepted as a middle slot", slots[1] == "factory", str(slots))
+
+
 def test_persist_required() -> None:
     """persist = false is not a configuration; it is a diagnostic.
 
@@ -1706,6 +1739,7 @@ def main() -> None:
     test_fold_measurement()
     test_pool_fallthrough()
     test_persist_required()
+    test_option_messages()
     test_atomic_replace()
     test_generated_is_current()
     test_corpus_current()

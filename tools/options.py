@@ -158,7 +158,7 @@ OPTION_TYPES = {
     "knob2":               str,
     "knob3":               str,
     "knob4":               str,
-    "arp_patterns":        list,
+    "arp_patterns":        (list, bool),   # true is the CLIX bank
     "sequencer":           bool,
     "clock_divide":        bool,
     "persist":             bool,
@@ -203,8 +203,12 @@ def check(options: dict) -> None:
                     + ('\n  a quoted "false" is a string, and every non-empty '
                        'string is true' if isinstance(value, str) else ""))
             continue
-        if not isinstance(value, allowed):
-            names = " or ".join(t.__name__ for t in allowed)
+        # A bare type here, not a tuple, used to make the message itself
+        # fail: a knob set to 1 answered with a TypeError instead of a
+        # sentence.
+        types = allowed if isinstance(allowed, tuple) else (allowed,)
+        if not isinstance(value, types):
+            names = " or ".join(t.__name__ for t in types)
             raise SystemExit(
                 f"{name} must be {names}, not {type(value).__name__}: {value!r}")
         # bool passed the tuple check above, but only False means anything:
@@ -368,8 +372,10 @@ def expand(options: dict) -> dict:
         if not 1 <= len(tunings) <= 3:
             raise SystemExit("alternate_tunings: give one to three Scala files")
         for entry in tunings:
+            # 'factory' is the instrument's own temperament, which the slot
+            # check advertises and which has no file to exist.
             for name in ([entry] if isinstance(entry, str) else list(entry)):
-                if not (REPO / name).exists():
+                if name != "factory" and not (REPO / name).exists():
                     raise SystemExit(f"alternate_tunings: no such file: {name}")
         # Unused slots fall back to the instrument's own temperament, so the
         # edit-mode selector always has three valid tables to switch between.
@@ -384,6 +390,10 @@ def expand(options: dict) -> dict:
     # or a [pattern, length] pair to make it repeat sooner than it is written.
     # Left out, the bank is the CLIX fills.
     patterns = want("arp_patterns", None)
+    # true is the CLIX bank, which check() lets through for exactly that
+    # reason - and which this then tried to iterate.
+    if patterns is True:
+        patterns = None
     if patterns:
         masks, lengths = [], []
         for i, entry in enumerate(patterns):

@@ -135,6 +135,18 @@ def get(cfg: dict, dotted: str):
 # ---------------------------------------------------------------------------
 # Scala parsing and table generation
 # ---------------------------------------------------------------------------
+def read_lines(path: Path) -> list[str]:
+    """The lines of a text file people made elsewhere.
+
+    Scala archive files are often Latin-1 - an accented name in the
+    description - and a spreadsheet saves a CSV with a byte-order mark.  The
+    first raised a decode error and the second put the mark on the first
+    column's name, so the header was never found.  Nothing this reads takes
+    its numbers from a non-ASCII byte, so a replaced character is harmless.
+    """
+    return path.read_bytes().decode("utf-8-sig", errors="replace").splitlines()
+
+
 def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
     """Return the scale degrees in cents, starting at 0 for the tonic.
 
@@ -147,7 +159,7 @@ def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
     whole list is returned, the final degree included - a .kbm then says which
     degree each key takes and which one is the period.
     """
-    raw = [ln for ln in path.read_text().splitlines()
+    raw = [ln for ln in read_lines(path)
            if not ln.lstrip().startswith("!")]
     # The first non-comment line is the description, which the format allows
     # to be blank - so it is consumed by position, never filtered.  Dropping
@@ -240,7 +252,7 @@ def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
     silent, which the firmware has no way to do.
     """
     degree_count = len(cents) - 1
-    raw = [ln for ln in path.read_text().splitlines()
+    raw = [ln for ln in read_lines(path)
            if not ln.lstrip().startswith("!")]
     header, index = [], 0
     while index < len(raw) and len(header) < 7:
@@ -273,14 +285,14 @@ def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
     if size == 0:
         return list(range(degree_count)), formal
 
-    # Blank entries mean unmapped, so the mapping is read WITH its blank lines
-    # - only the header skipped them.  The .kbm format also says: "At the end,
-    # unmapped keys may be left out."  A map may
-    # stop short of its own size and the positions after it are unmapped, so a
-    # So a map may stop short of its own size: that is a legal file, not a
-    # truncated one, and refusing it turned away maps Scala itself reads.  The
-    # tail fills from the nearest mapped position, like any other gap.
-    entries = raw[index:][:size]
+    # Only 'x' marks an unmapped position.  Blank lines are skipped, as in
+    # the header and as Scala's own readers do; taking a blank line as an
+    # entry moved every key after it up by one.  The .kbm format also says:
+    # "At the end, unmapped keys may be left out."  So a map may stop short
+    # of its own size: that is a legal file, not a truncated one, and
+    # refusing it turned away maps Scala itself reads.  The tail fills from
+    # the nearest mapped position, like any other gap.
+    entries = [ln for ln in raw[index:] if ln.strip()][:size]
     entries += [""] * (size - len(entries))
     degrees: list[int | None] = []
     for position, line in enumerate(entries):
@@ -549,7 +561,7 @@ def read_calibration(path: Path) -> dict[int, float]:
     both the coarse octave scaling and each key's own tracking error, so this
     is the only pitch calibration data there is.
     """
-    lines = [ln for ln in path.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    lines = [ln for ln in read_lines(path) if not ln.lstrip().startswith("#")]
     if not lines:
         raise ValueError(f"{path.name}: empty calibration table")
     delimiter = ";" if lines[0].count(";") else ","
@@ -656,7 +668,7 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     reading is relative to firmware that already applies the existing table.
     """
     offsets = read_calibration(calibration)
-    lines = [ln for ln in measurement.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    lines = [ln for ln in read_lines(measurement) if not ln.lstrip().startswith("#")]
     delimiter = ";" if lines[0].count(";") else ","
     updates: dict[int, float] = {}
     for row in csv.DictReader(lines, delimiter=delimiter):
@@ -690,7 +702,7 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     highest = max(updates)
     tail_delta = -updates[highest] * octave_width_volts(offsets, highest)
 
-    text = calibration.read_text().splitlines()
+    text = read_lines(calibration)
     # The reader detects the delimiter and reads columns by header name; the
     # rewrite used to hard-code ';' and columns 3/4, so a comma-delimited
     # table that every build path accepts crashed the fold with a traceback.
