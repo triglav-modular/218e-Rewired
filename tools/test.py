@@ -706,6 +706,60 @@ def test_blend(cfg: dict) -> None:
           bad_walk != source and "1f" in key_walkers(bad_walk))
 
 
+# The assembler prints a listing line for every instruction it emits - the
+# address, the instruction as assembled, and its encoding - under a BLOCK
+# header naming the cave.  That listing is the only place a call built with
+# String.format() appears in the form it was actually emitted, so the checks
+# that have to see *every* instruction read it rather than the Java source.
+LISTING_RE = re.compile(r"^([0-9a-f]{8})  (\S.*?)\s+([0-9a-f]{4,})$")
+
+
+def emitted_blocks(cfg: dict) -> dict[str, list[tuple[int, str]]] | None:
+    """Each emitted cave's instructions, or None if no log matches the image.
+
+    build/ accumulates logs from earlier configurations and from the option
+    sweep, so the newest one need not describe the firmware sitting next to
+    it.  Pairing is established by replaying the log's own PATCH records
+    against the built image: if every patch is there byte for byte, log and
+    image came out of the same run.
+    """
+    out = REPO / cfg["firmware"]["output_hex"]
+    if not out.exists():
+        return None
+    flash, _ = B.parse_hex(out)
+    for name in ("assemble.js.log", "assemble.log"):
+        log = REPO / "build" / name
+        if not log.exists():
+            continue
+        blocks: dict[str, list[tuple[int, str]]] = {}
+        current, paired = None, True
+        for raw in log.read_text(errors="ignore").splitlines():
+            line = re.sub(r"^INFO\s+\S+>\s*", "", raw.rstrip())
+            line = re.sub(r"\s*\(GhidraScript\)\s*$", "", line)
+            patch = B.PATCH_RE.match(line)
+            if patch:
+                start = int(patch.group(1), 16)
+                if any(flash.get(start + i) != v
+                       for i, v in enumerate(bytes.fromhex(patch.group(2)))):
+                    paired = False
+                    break
+                current = None
+                continue
+            if line.startswith("BLOCK "):
+                current = line[6:].strip()
+                blocks[current] = []
+                continue
+            if line.startswith(("EXTENT ", "SKIP ")):
+                current = None
+                continue
+            listed = LISTING_RE.match(line)
+            if listed and current is not None:
+                blocks[current].append((int(listed.group(1), 16), listed.group(2).strip()))
+        if paired and blocks:
+            return blocks
+    return None
+
+
 def test_call_pools(cfg: dict) -> None:
     """Every MCALL must name a word that holds a code address, not code.
 
@@ -716,6 +770,12 @@ def test_call_pools(cfg: dict) -> None:
     emulation nor the browser-parity matrix could see it, because the one
     called the cave directly and the other compares two toolchains that were
     both told the same wrong thing.
+
+    The calls are decoded out of the built image.  Reading them out of the
+    Java source instead missed every one written through String.format(),
+    which is how the clock and gate caves name their pools, and it missed the
+    factory calls that read a pool word we repoint - those hang just as hard
+    when the word is wrong.
     """
     print("call pools")
     out = REPO / cfg["firmware"]["output_hex"]
@@ -728,46 +788,71 @@ def test_call_pools(cfg: dict) -> None:
         return
     flash, _ = B.parse_hex(out)
     factory, _ = B.parse_hex(REPO / cfg["firmware"]["factory_hex"])
-    word = lambda a: int.from_bytes(bytes(flash.get(a + i, 0) for i in range(4)), "big")
-    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
-    targets = sorted({int(m, 16) for m in
-                      re.findall(r'emit\("MCALL PC\[(0x[0-9a-f]+)\]"\);', source)})
-    def called(target: int) -> bool:
-        """Is there an MCALL in this image that actually reads that word?
+    ours = {a for a, v in flash.items() if factory.get(a) != v}
 
-        A pool word only matters if the call naming it was emitted; with the
-        block off, the address is whatever else lives there.  MCALL is
-        f0 1f <signed word displacement from pc & ~3>.
-        """
-        for pc in range(0x80002000, 0x80020000, 2):
-            if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
-                continue
-            d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
-            if d & 0x8000:
-                d -= 0x10000
-            if (pc & ~3) + d * 4 == target:
-                return True
-        return False
-
-    bad = []
-    for t in targets:
-        if t not in flash:
-            continue                      # outside the image entirely
-        v = word(t)
-        if not called(t):
-            continue                      # a block this build did not emit
-
-        # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
-        if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
-            bad.append(f"{t:#x} holds {v:#010x}")
+    # Every `MCALL PC[x]` in the application image, as (call, pool).  MCALL is
+    # f0 1f <signed word displacement from pc & ~3>.
+    calls = []
+    for pc in range(0x80002000, 0x80020000, 2):
+        if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
             continue
-        # The address must land on emitted code, not erased flash: a cave
-        # whose callee's block is off ships an MCALL into 0xff.  The audit
-        # found exactly that in a portamento-off build.
-        if flash.get(v, 0xFF) == 0xFF:
-            bad.append(f"{t:#x} -> {v:#x}, which is erased flash")
-    check("every MCALL names a pool word, not code",
-          not bad, "; ".join(bad))
+        d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
+        if d & 0x8000:
+            d -= 0x10000
+        calls.append((pc, (pc & ~3) + d * 4))
+
+    # Ours are the calls we assembled, plus the calls - factory ones included -
+    # that read a pool word we wrote.  The rest of the image is Buchla's and
+    # was right before we touched it.
+    emitted = [(pc, pool) for pc, pool in calls
+               if any(a in ours for a in range(pc, pc + 4))]
+    mine = [(pc, pool) for pc, pool in calls
+            if any(a in ours for a in range(pc, pc + 4))
+            or any(a in ours for a in range(pool, pool + 4))]
+
+    def faults(memory: dict[int, int]) -> list[str]:
+        word = lambda a: int.from_bytes(bytes(memory.get(a + i, 0) for i in range(4)), "big")
+        bad = []
+        for pc, pool in mine:
+            if pool not in memory:
+                bad.append(f"{pc:#x} calls through {pool:#x}, outside the image")
+                continue
+            value = word(pool)
+            # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
+            if not (0x80000000 <= value < 0x80020000 and value % 2 == 0):
+                bad.append(f"{pc:#x} -> {pool:#x} holds {value:#010x}")
+                continue
+            # The address must land on emitted code, not erased flash: a cave
+            # whose callee's block is off ships an MCALL into 0xff.  The audit
+            # found exactly that in a portamento-off build.
+            if memory.get(value, 0xFF) == 0xFF:
+                bad.append(f"{pc:#x} -> {pool:#x} -> {value:#x}, which is erased flash")
+        return bad
+
+    check("the image holds MCALLs of ours to check", bool(mine), "none decoded")
+    if not mine:
+        return
+    check(f"all {len(mine)} MCALLs of ours name a pool word, not code",
+          not faults(flash), "; ".join(faults(flash)))
+
+    # Decoding is only as good as its coverage, so hold it against the
+    # assembler's own listing: every call it says it emitted has to be one the
+    # scan found.
+    blocks = emitted_blocks(cfg)
+    if blocks is not None:
+        listed = sum(1 for body in blocks.values() for _, text in body
+                     if text.startswith("MCALL"))
+        check("every MCALL the assembler emitted was decoded from the image",
+              len(emitted) == listed,
+              f"the listing has {listed}, the image scan found {len(emitted)}")
+
+    # A check nobody has watched fail is a check nobody knows works, so plant
+    # the failure it exists for: the clock divider's own STM encoding, sitting
+    # in a pool word an MCALL reads.
+    planted = dict(flash)
+    for offset, byte in enumerate((0xEB, 0xCD, 0x40, 0x80)):
+        planted[mine[0][1] + offset] = byte
+    check("a pool holding instruction bytes is still caught", bool(faults(planted)))
 
 
 def test_output_interpolation(cfg: dict) -> None:
@@ -1241,28 +1326,74 @@ def test_pool_fallthrough() -> None:
           not bad, "; ".join(bad))
 
 
-def test_leaf_with_call() -> None:
-    """A cave returning `MOV PC,LR` has not saved LR, so it cannot call.
+def test_leaf_with_call(cfg: dict) -> None:
+    """A routine returning `MOV PC,LR` has not saved LR, so it cannot call.
 
     MCALL writes LR, which turns such a return into a jump to itself.  That
     shipped once in pulse_defer_set and hung the running instrument: the
     panel died while USB kept enumerating, because the hang was in the main
     loop and USB is interrupt-driven.
+
+    Read from the emitted listing rather than the Java source, which was
+    blind twice over: a call written through String.format() is not there to
+    find, and a cave routinely holds several routines, so asking whether
+    *some* line in the cave saved LR let a leaf routine pass on a save made
+    by the routine next to it.  Here each routine is taken on its own and the
+    save has to come before the call.
     """
     print("leaf with call")
-    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
-    bad = []
-    for chunk in re.split(r"\n\s*begin\(", source)[1:]:
-        body, _, rest = chunk.partition("finish(")
-        name = re.match(r'"([^"]+)"', rest)
-        name = name.group(1) if name else "?"
-        emits = re.findall(r'emit\("([^"]+)"', body)
-        saves_lr = any(e.startswith("STM --SP") and "LR" in e for e in emits)
-        calls = [e for e in emits if e.startswith(("MCALL", "RCALL"))]
-        leaf = any(e.startswith("MOV PC,LR") for e in emits)
-        if leaf and calls and not saves_lr:
-            bad.append(f"{name}: returns MOV PC,LR yet calls {calls[0]!r}")
-    check("no leaf cave contains a call", not bad, "; ".join(bad))
+    blocks = emitted_blocks(cfg)
+    if blocks is None:
+        print("  skip  no assembler listing matching the built image - "
+              "--golden builds one and re-checks")
+        return
+
+    def bare(text: str) -> str:
+        """The instruction without its condition, so `MOV{eq} PC,LR` is seen."""
+        return re.sub(r"\{[a-z]+\}", "", text)
+
+    def ends_routine(text: str) -> bool:
+        """Does control leave here for good, whatever the flags say?
+
+        Only unconditional transfers end a routine.  A conditional one falls
+        through when its condition fails, and cutting there would hide the
+        prologue from everything below it.
+        """
+        if "{" in text:
+            return False
+        plain = bare(text)
+        return (plain.startswith(("MOV PC,", "RET"))
+                or re.match(r"LDM SP\+\+,.*\bPC\b", plain) is not None)
+
+    def faults(listing: dict[str, list[tuple[int, str]]]) -> list[str]:
+        bad = []
+        for name, body in listing.items():
+            routine: list[tuple[int, str]] = []
+            for address, text in body:
+                routine.append((address, text))
+                if not ends_routine(text):
+                    continue
+                calls = [a for a, t in routine if bare(t).startswith(("MCALL", "RCALL"))]
+                saves = [a for a, t in routine
+                         if t.startswith("STM --SP") and re.search(r"\bLR\b", t)]
+                if (bare(text).startswith("MOV PC,LR") and calls
+                        and not (saves and min(saves) < min(calls))):
+                    bad.append(f"{name}: the routine at {routine[0][0]:#x} returns "
+                               f"MOV PC,LR yet calls at {min(calls):#x} with LR unsaved")
+                routine = []
+        return bad
+
+    check(f"no routine in {len(blocks)} emitted caves calls with LR unsaved",
+          not faults(blocks), "; ".join(faults(blocks)))
+
+    # Plant the hang this exists to catch, and the safe shape beside it, so a
+    # future rewrite cannot quietly stop looking.
+    leaf = [(0x80010000, "SUB R8,1"),
+            (0x80010002, "MCALL PC[0x80010010]"),
+            (0x80010006, "MOV PC,LR")]
+    check("a leaf routine that calls is still caught", bool(faults({"planted": leaf})))
+    check("a routine that saves LR first is not",
+          not faults({"planted": [(0x8000fffe, "STM --SP,R7,LR")] + leaf}))
 
 
 def test_atomic_replace() -> None:
@@ -1475,7 +1606,6 @@ def main() -> None:
     test_flashers_expect_the_golden(cfg)
     test_latency_report_clears()
     test_pool_fallthrough()
-    test_leaf_with_call()
     test_atomic_replace()
     test_generated_is_current()
     test_corpus_current()
@@ -1483,8 +1613,10 @@ def main() -> None:
     test_hex_roundtrip(cfg)
     if args.golden:
         test_golden(cfg)
-    # After the golden build, so there is an image to read on a clean tree.
+    # After the golden build, so there is an image - and an assembler
+    # listing beside it - to read on a clean tree.
     test_call_pools(cfg)
+    test_leaf_with_call(cfg)
 
     print()
     if FAILURES:
