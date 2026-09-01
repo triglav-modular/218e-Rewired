@@ -682,8 +682,11 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     if not updates:
         raise SystemExit(f"{measurement.name}: no Measured_Cents values")
 
-    # Rows above the highest measured note only ever held that note's
-    # correction, so they follow it rather than keeping a stale value.
+    # Extrapolated rows above the highest measured note only ever held that
+    # note's correction, so they follow it rather than keeping a stale
+    # value.  Only the rows that actually hold it, though: a tail beyond a
+    # measured row the reading never reached holds THAT row's correction,
+    # and a partial sweep of the lower keys used to drag it anyway.
     highest = max(updates)
     tail_delta = -updates[highest] * octave_width_volts(offsets, highest)
 
@@ -702,6 +705,13 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         raise SystemExit(
             f"{calibration.name}: the fold needs Offset_Cents and Source "
             "columns to rewrite") from None
+    rows = [(int(line.split(cal_delim)[0]), line.split(cal_delim)) for line in text
+            if not (line.lstrip().startswith("#") or line.startswith("Semitone"))]
+    # The tail ends at the first row above the reading that was measured
+    # (or set by the octave calibration) rather than extrapolated.
+    tail_end = min((s for s, parts in rows
+                    if s > highest and parts[source_col] != "extrapolated"),
+                   default=None)
     out, applied, trailing = [], 0, 0
     for line in text:
         if line.lstrip().startswith("#") or line.startswith("Semitone"):
@@ -716,7 +726,8 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
             parts[cents_col] = f"{offsets[semitone] + delta:.6f}"
             parts[source_col] = "measured"
             applied += 1
-        elif semitone > highest and parts[source_col] == "extrapolated":
+        elif (semitone > highest and parts[source_col] == "extrapolated"
+              and (tail_end is None or semitone < tail_end)):
             parts[cents_col] = f"{offsets[semitone] + tail_delta:.6f}"
             trailing += 1
         out.append(cal_delim.join(parts))

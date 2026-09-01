@@ -1212,6 +1212,53 @@ def test_overlap_and_range() -> None:
     check("non-overlapping patches apply", (changed, added) == (1, 0), f"{changed},{added}")
 
 
+def test_fold_measurement() -> None:
+    """A reading's extrapolated tail follows the highest key it measured -
+    and only when that tail actually holds that key's correction."""
+    print("fold_measurement")
+
+    def table() -> Path:
+        rows = ["Semitone;Note;Key;Offset_Cents;Source"]
+        for s in range(B.PITCH_TABLE_ENTRIES):
+            source = "octave" if s < 3 else "measured" if s <= 67 else "extrapolated"
+            rows.append(f"{s};X;;{s * 2.0:.6f};{source}")
+        return tmp("\n".join(rows) + "\n", "_fold.csv")
+
+    def fold(readings: dict[int, float]) -> tuple[dict[int, float], dict[int, float]]:
+        cal = table()
+        before = B.read_calibration(cal)
+        meas = tmp("Semitone,Measured_Cents\n"
+                   + "".join(f"{s},{c}\n" for s, c in readings.items()), "_meas.csv")
+        B.fold_measurement({}, cal, meas)
+        return before, B.read_calibration(cal)
+
+    def moved(before, after) -> list[int]:
+        return [s for s in before if abs(after[s] - before[s]) > 1e-9]
+
+    # A sweep of the lower keys leaves the measured rows above it alone, and
+    # the extrapolated tail beyond THOSE: it holds row 67's correction, not
+    # row 31's.  The defect dragged rows 68..78 along with a reading that
+    # never went above 31.
+    before, after = fold({s: 5.0 for s in range(3, 32)})
+    check("partial sweep moves only the keys it measured",
+          moved(before, after) == list(range(3, 32)), str(moved(before, after)))
+    check("tail keeps its step above the last measured row",
+          abs((after[68] - after[67]) - (before[68] - before[67])) < 1e-9)
+
+    # A reading of the last measured row is what the tail follows.
+    before, after = fold({67: 5.0})
+    check("tail follows the highest measured row",
+          moved(before, after) == list(range(67, B.PITCH_TABLE_ENTRIES)), str(moved(before, after)))
+    delta = after[67] - before[67]
+    check("tail follows by the same delta",
+          all(abs((after[s] - before[s]) - delta) < 1e-9 for s in range(68, B.PITCH_TABLE_ENTRIES)))
+
+    # A single key below the top does not reach the tail either.
+    before, after = fold({60: 5.0})
+    check("a single lower reading leaves the tail alone", moved(before, after) == [60],
+          str(moved(before, after)))
+
+
 def test_latency_report_clears() -> None:
     """A run of cleared frames is ONE clear, and separate runs are several.
 
@@ -1639,6 +1686,7 @@ def main() -> None:
     test_overlap_and_range()
     test_flashers_expect_the_golden(cfg)
     test_latency_report_clears()
+    test_fold_measurement()
     test_pool_fallthrough()
     test_persist_required()
     test_atomic_replace()
