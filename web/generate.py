@@ -53,8 +53,8 @@ def main() -> None:
     # the image it just built, so a download arrives as a bundle that flashes
     # that image without asking.  Both files are LF - the .bat too, which cmd
     # accepts - and JSON round-trips whatever the bytes are.
-    for key, name in (("flasherMac",  "Program218e_v3_Rewired_macOS.command"),
-                      ("flasherWin",  "218e_Rewired_Flasher.bat")):
+    for key, name in (("flasherMac",  "mac/Program218e_v3_Rewired_macOS.command"),
+                      ("flasherWin",  "windows/218e_Rewired_Flasher.bat")):
         parts.append(f"  {key}: {json.dumps((REPO / name).read_bytes().decode())},")
 
     # The bundled tunings, preloaded into the page's slots (behind a checkbox

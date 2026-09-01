@@ -151,8 +151,8 @@ notarisation.
 The flasher opens with a choice — flash firmware, or get a keyboard out of DFU
 mode after an interrupted flash. On macOS the site hands out
 `218e Rewired Flasher.app`, built and signed by `tools/make-app.sh`; from a
-checkout, `Program218e_v3_Rewired_macOS.command` is the same program.
-`218e_Rewired_Flasher.bat` on Windows.
+checkout, `mac/Program218e_v3_Rewired_macOS.command` is the same program.
+`windows/218e_Rewired_Flasher.bat` on Windows.
 
 It finds the image itself. From a checkout that means `firmware/` beside the
 script; from a download it means the `firmware` folder next to the app, which

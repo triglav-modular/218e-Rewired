@@ -150,7 +150,7 @@ jobs:
 
       - name: The scripts parse
         run: |
-          bash -n Program218e_v3_Rewired_macOS.command
+          bash -n mac/Program218e_v3_Rewired_macOS.command
 
       - name: The bundled tools run, and are universal
         run: |
@@ -203,4 +203,4 @@ jobs:
           awk '/^accept_choice\(\) \{/{f=NR} /^if \[ -n "\$\{1:-\}" \]/{c=NR}
                END{ if (c < f) { print "call at " c " precedes definition at " f; exit 1 }
                     print "argument block at " c " sits below accept_choice at " f }' \
-              Program218e_v3_Rewired_macOS.command
+              mac/Program218e_v3_Rewired_macOS.command

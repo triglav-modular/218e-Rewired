@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-FLASHER = REPO / "Program218e_v3_Rewired_macOS.command"
+FLASHER = REPO / "mac/Program218e_v3_Rewired_macOS.command"
 
 UP, DOWN, RET = b"\x1b[A", b"\x1b[B", b"\r"
 

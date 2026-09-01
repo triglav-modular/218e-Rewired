@@ -9,7 +9,7 @@ Windows against a real tool.
 import re, sys
 from pathlib import Path
 
-BAT = Path(__file__).resolve().parent.parent / "218e_Rewired_Flasher.bat"
+BAT = Path(__file__).resolve().parent.parent / "windows" / "218e_Rewired_Flasher.bat"
 # Set by the environment or by cmd itself, so not expected to be assigned here.
 BUILTIN = {
     "TEMP", "TMP", "ERRORLEVEL", "DATE", "TIME", "USERPROFILE", "PATH",

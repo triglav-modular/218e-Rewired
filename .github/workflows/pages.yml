@@ -42,8 +42,8 @@ on:
       - 'deploy/worker.js'
       - 'tools/test_worker.mjs'
       - 'wrangler.toml'
-      - 'Program218e_v3_Rewired_macOS.command'
-      - '218e_Rewired_Flasher.bat'
+      - 'mac/Program218e_v3_Rewired_macOS.command'
+      - 'windows/218e_Rewired_Flasher.bat'
       - 'mac/Flasher.zip'
       - 'mac/support/**'
       - 'windows/support/**'
@@ -202,7 +202,7 @@ jobs:
               sys.exit("mac/Flasher.zip carries no notarisation ticket - "
                        "it was archived before stapling")
           for inside, repo in ((root + "Resources/Program218e_v3_Rewired_macOS.command",
-                                "Program218e_v3_Rewired_macOS.command"),):
+                                "mac/Program218e_v3_Rewired_macOS.command"),):
               if z.read(inside) != Path(repo).read_bytes():
                   sys.exit(f"{repo} has changed since the app was built - "
                            f"rebuild with tools/make-app.sh --notarize and "

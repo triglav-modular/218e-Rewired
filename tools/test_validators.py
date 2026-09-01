@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hex_fixtures  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-FLASHER = REPO / "Program218e_v3_Rewired_macOS.command"
+FLASHER = REPO / "mac/Program218e_v3_Rewired_macOS.command"
 
 
 def awk_validator(tmp):

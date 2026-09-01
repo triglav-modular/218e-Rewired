@@ -52,7 +52,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # --- the payload, read-only inside the bundle ------------------------------
 cp -R "$REPO/mac/support" "$APP/Contents/Resources/support"
-cp "$REPO/Program218e_v3_Rewired_macOS.command" "$APP/Contents/Resources/"
+cp "$REPO/mac/Program218e_v3_Rewired_macOS.command" "$APP/Contents/Resources/"
 find "$APP/Contents/Resources/support" -name .DS_Store -delete
 
 # A manifest of what the payload was built FROM.  Signing rewrites every
@@ -61,7 +61,7 @@ find "$APP/Contents/Resources/support" -name .DS_Store -delete
 # would otherwise ship stale inside this zip with every workflow green.
 (
   cd "$REPO"
-  { shasum -a 256 "Program218e_v3_Rewired_macOS.command"
+  { shasum -a 256 "mac/Program218e_v3_Rewired_macOS.command"
     find mac/support -type f ! -name .DS_Store -print0 | sort -z | \
       xargs -0 shasum -a 256
   } > "$APP/Contents/Resources/SOURCES.sha256"

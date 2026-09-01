@@ -1188,9 +1188,9 @@ def test_flashers_expect_the_golden(cfg: dict) -> None:
     if not golden:
         check("a golden to check against", False, "golden_sha256 is not set")
         return
-    for name, pattern in (("Program218e_v3_Rewired_macOS.command",
+    for name, pattern in (("mac/Program218e_v3_Rewired_macOS.command",
                            r'^EXPECTED_SHA256="([0-9a-f]{64})"'),
-                          ("218e_Rewired_Flasher.bat",
+                          ("windows/218e_Rewired_Flasher.bat",
                            r'^SET "EXPECTED_SHA256=([0-9a-f]{64})"')):
         path = REPO / name
         if not path.exists():
@@ -1277,7 +1277,7 @@ def test_atomic_replace() -> None:
     mode = stat_module.S_IMODE(path.stat().st_mode)
     check("replacement keeps the executable bit", mode == 0o755, oct(mode))
     check("replacement writes the new content", "rewritten" in path.read_text())
-    updater = REPO / "Program218e_v3_Rewired_macOS.command"
+    updater = REPO / "mac/Program218e_v3_Rewired_macOS.command"
     if updater.exists():
         mode = stat_module.S_IMODE(updater.stat().st_mode)
         check("the shipped updater is executable", bool(mode & 0o111), oct(mode))
