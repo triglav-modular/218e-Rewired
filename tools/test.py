@@ -807,6 +807,9 @@ def test_call_pools(cfg: dict) -> None:
         # comes back through this.
         print("  skip  no built image yet - --golden builds one and re-checks")
         return
+    if not (REPO / cfg["firmware"]["factory_hex"]).exists():
+        print("  skip  factory image not present")
+        return
     flash, _ = B.parse_hex(out)
     factory, _ = B.parse_hex(REPO / cfg["firmware"]["factory_hex"])
     ours = {a for a, v in flash.items() if factory.get(a) != v}
@@ -1626,6 +1629,11 @@ def test_pattern_bank_capacity() -> None:
     print("pattern bank capacity")
     if not JSC.exists():
         print("  skip  no jsc to run the browser builder")
+        return
+    if not (REPO / "firmware" / "218eV3_v369_DFU.hex").exists():
+        # Buchla's image is not in the repository; every other test that
+        # needs it says so and steps aside, and this one read it blind.
+        print("  skip  factory image not present")
         return
     probe = REPO / "build" / "_patterns_probe.js"
     probe.parent.mkdir(exist_ok=True)

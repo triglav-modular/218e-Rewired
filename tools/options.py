@@ -21,6 +21,7 @@ and the JavaScript toolchain underneath are all unchanged.
 from __future__ import annotations
 
 import copy
+import json
 import os
 from pathlib import Path
 
@@ -126,6 +127,49 @@ def _check_internal_diagnostics() -> None:
 
 
 _check_internal_diagnostics()
+
+# A harness may need an image built with one internal constant changed - a
+# settle count, a diagnostic flag - and none of those is among the options a
+# config carries.  tools/test_clock.py used to rewrite this file in place
+# for the length of a build and put it back in a finally; a killed run, or a
+# second session sharing the checkout, saw the wrong constant as the real
+# one.  This is the same edit as a JSON object in the environment, applied
+# to the expanded settings alone: {"clock_settle_scans": 1}.  Each key must
+# name exactly one setting, wherever it sits in the tree.
+OVERRIDE_ENV = "REWIRED_INTERNAL_OVERRIDE"
+
+
+def _override(cfg: dict) -> None:
+    raw = os.environ.get(OVERRIDE_ENV)
+    if not raw:
+        return
+    try:
+        overrides = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{OVERRIDE_ENV} is not JSON: {exc}") from None
+    if not isinstance(overrides, dict):
+        raise SystemExit(f"{OVERRIDE_ENV} must be a JSON object of setting: value")
+
+    def assign(node: dict, key: str, value) -> int:
+        hits = 0
+        for name, child in node.items():
+            if name == key:
+                node[name] = value
+                hits += 1
+            elif isinstance(child, dict):
+                hits += assign(child, key, value)
+        return hits
+
+    for key, value in overrides.items():
+        hits = assign(cfg, key, value)
+        if hits != 1:
+            raise SystemExit(
+                f"{OVERRIDE_ENV}: {key!r} names {hits} settings, not one")
+    on = [n for n in _TELEMETRY_CLAIMS if cfg["diagnostics"].get(n)]
+    if len(on) > 1:
+        raise SystemExit(
+            f"{OVERRIDE_ENV}: " + " and ".join(on)
+            + " claim the same telemetry fields; enable one at a time.")
 
 # A flat pitch ramp: no per-key correction, every semitone exactly 100 cents.
 # 79 rows, matching what the firmware reads (semitones 0..78).
@@ -467,4 +511,5 @@ def expand(options: dict) -> dict:
     cfg["portamento"]["pressure_blend"] = blend
     cfg["portamento"]["zero_snap"] = blend
 
+    _override(cfg)
     return cfg

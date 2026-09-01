@@ -102,15 +102,25 @@ jobs:
 
       - name: The regenerated bundle must match what is committed
         # A mismatch means someone edited the source without re-running
-        # generate.py.  The deploy is still correct - it uses what was just
-        # generated - but the repository is stale and should be fixed.
+        # generate.py.  The deploy would still be right - it uses what was
+        # just generated - but then the repository does not hold what is
+        # published, and a warning here was scrolled past.  It fails now.
         run: |
           if ! git diff --quiet -- web/generated.js web/assembler.js; then
-            echo "::warning::web/generated.js or web/assembler.js is stale in git; run python3 web/generate.py and commit"
+            echo "::error::web/generated.js or web/assembler.js is stale in git; run python3 web/generate.py and commit"
             git diff --stat -- web/generated.js web/assembler.js
+            exit 1
           else
             echo "committed bundle is up to date"
           fi
+
+      - name: The generators, validators and safety checks pass
+        # The fast half of tools/test.py: no Ghidra, no factory image - the
+        # tests that need either say so and step aside - and no jsc on
+        # Ubuntu.  What is left is the pitch tables, the Scala and keyboard
+        # map readers, the option messages, the fold, the pool checks and the
+        # corpus stamp, none of which ran before a deploy until now.
+        run: python3 tools/test.py
 
       # web/test_configs.py is NOT run here: it compares the browser build
       # against tools/build.py, and build.py needs the factory image, which is

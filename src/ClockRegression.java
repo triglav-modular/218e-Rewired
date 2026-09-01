@@ -1031,7 +1031,7 @@ public class ClockRegression extends GhidraScript {
         println("main-loop model: one dispatcher pop per pass; hardware was"
                 +" min="+HW_MIN+" mean="+HW_MEAN+" max="+HW_MAX+" us");
         long widest=0;
-        int matches=0;
+        int matches=0, usable=0;
         for (int loopHz : new int[]{2500,2000,1600,1400}) {
             for (int competingHz : new int[]{0,400,800,1200}) {
                 long[] m=loopModel(loopHz,competingHz);
@@ -1040,6 +1040,7 @@ public class ClockRegression extends GhidraScript {
                             +" ring overflowed or lost an output");
                     continue;
                 }
+                usable++;
                 // Within 25% on all three moments: close enough to say the
                 // queue reproduces the instrument, loose enough not to
                 // pretend a four-parameter model is a measurement.
@@ -1062,6 +1063,7 @@ public class ClockRegression extends GhidraScript {
         for (int serviceHz : new int[]{1000,600,400,300,250,200}) {
             long[] m=loopModel(2000,0,serviceHz);
             if (m==null) { println("  service "+serviceHz+" Hz: lost an output"); continue; }
+            usable++;
             boolean near=Math.abs(m[0]-HW_MIN)<=HW_MIN/4+100
                       && Math.abs(m[3]-HW_MEAN)<=HW_MEAN/4
                       && Math.abs(m[1]-HW_MAX)<=HW_MAX/4;
@@ -1085,6 +1087,10 @@ public class ClockRegression extends GhidraScript {
         // charges the dispatch slot but not the handler's run time, so the
         // absolute figure is a lower bound -- but before and after are the
         // same model, and the ratio is what this asserts.
+        // A spread of zero from no model at all is not a measurement: with
+        // every configuration overflowing the ring the check below passed
+        // on nothing.  Some must have run for either verdict to mean much.
+        check("at least one queueing model ran to completion ("+usable+")", usable>0);
         if (deadlineBuild())
             check("the deadline brings every modeled loop rate inside the"
                   +" 1-2 ms target", widest<=TARGET_SPREAD_US);
