@@ -144,6 +144,17 @@ public class ControlRegression extends SequenceEditRegression {
     }
     void key(int key) throws Exception { e.writeRegister("R12",key); call(0x80018d00L); }
     void octavePad(int pad) throws Exception { e.writeRegister("R12",pad); call(0x8000698cL); call(0x80003590L); }
+    // A recorded step is RELATIVE to the take's reference at 0x62f4 - the
+    // transpose the take was born under, adopted from 0x60a0 by the first
+    // note into an empty take.  So the absolute pitch a step STANDS FOR is
+    // the step plus that reference, and the pitch it PLAYS is the step plus
+    // today's transpose: equal where the take was recorded, and moved by
+    // exactly how far the pad has walked since.
+    long step(int index) { return (short)r(0x6160+2*index,2); }
+    long sounds(int index) { return step(index)+(short)r(0x62f4,2); }
+    long livePad() { return (short)r(0x60a0,2); }
+    // What the factory target preparation does to a finished pitch.
+    long dac(long v) { return v<0?0:v>4095?4095:v; }
     void releasedOrders() throws Exception {
         for(int position:lean?new int[]{2}:new int[]{1,2})for(int zone:new int[]{3,4}) {
             setup(0,false,position); command(1); command(1);
@@ -296,7 +307,9 @@ public class ControlRegression extends SequenceEditRegression {
         // WRITE entered from the latching arp: every physical press records
         // the pitch it SOUNDS - the key table plus the transpose published
         // at 0x60a0 - never a slot stamp, which does not exist yet for a
-        // fresh press and is somebody else's note for a reused slot.  The
+        // fresh press and is somebody else's note for a reused slot.  What
+        // lands in the store is that sum measured from the take's own
+        // reference, so the checks below read a step through sounds().  The
         // published transpose can walk one unit between scans (the latch
         // toggle's own tolerance exists for the same reason), so repeats
         // are compared one unit wide.
@@ -304,14 +317,19 @@ public class ControlRegression extends SequenceEditRegression {
         key(0); sound();
         long high=r(S+0x352,2);
         check("fresh latch sounds above its table pitch",high>r(0x854,2));
-        check("fresh latch records the pitch it sounds",r(0x61e0,1)==1&&r(0x6160,2)==high);
+        // The first note into an empty take adopts today's transpose as the
+        // reference, so it stores a bare table pitch that still STANDS FOR
+        // the pitch it sounded.
+        check("the first note adopts today's transpose as the take's reference",
+            r(0x61e0,1)==1&&Math.abs((short)r(0x62f4,2)-livePad())<=1);
+        check("fresh latch records the pitch it sounds",r(0x61e0,1)==1&&sounds(0)==high);
         noteUp(0); octavePad(1); key(0); sound();
         check("repeat press records today's octave, not the old stamp",
-            r(0x61e0,1)==2&&r(0x6162,2)==r(0x854,2));
+            r(0x61e0,1)==2&&sounds(1)==r(0x854,2)+livePad());
         // The audition must sound what was recorded.  A repeat press at a
         // new octave allocates a fresh latch slot; auditioning the physical
         // key re-based off the OLD slot's stamp and sounded the old octave.
-        check("audition sounds the pitch it recorded",r(S+0x352,2)==r(0x6162,2));
+        check("audition sounds the pitch it recorded",r(S+0x352,2)==sounds(1));
         // A third press at the same octave toggles that slot OFF.  The
         // press is still recorded - it is what was played - and the
         // audition still sounds the stored pitch: the physical slot's old
@@ -321,7 +339,7 @@ public class ControlRegression extends SequenceEditRegression {
         check("a toggle-off press is recorded",
             r(0x61e0,1)==3&&Math.abs((short)r(0x6164,2)-(short)r(0x6162,2))<=1);
         check("and its audition sounds the stored pitch",
-            r(S+0x21b+1,1)==0&&Math.abs((short)r(S+0x352,2)-(short)r(0x6164,2))<=1);
+            r(S+0x21b+1,1)==0&&Math.abs((short)r(S+0x352,2)-sounds(2))<=1);
         // A slot latched and unlatched OUTSIDE the take keeps its stamp;
         // recording that key afterwards must not resurrect it.
         setup(0,false,1); command(2); latchFixture();
@@ -330,17 +348,22 @@ public class ControlRegression extends SequenceEditRegression {
             r(S+0x21b,1)==0&&(short)r(0x60a2,2)!=0);
         octavePad(1); command(0); key(0); sound();
         check("a reused slot records the pitch it sounds",
-            r(0x61e0,1)==1&&r(0x6160,2)==r(S+0x352,2));
-        // Recorded steps are absolute: playback adds the live pad transpose
-        // once, and a still-held latch slot must not re-base it again.
+            r(0x61e0,1)==1&&sounds(0)==r(S+0x352,2));
+        // Playback adds the live pad transpose once, and a still-held latch
+        // slot must not re-base it again.
         setup(0,false,1); latchFixture(); octavePad(3);
         key(0); sound(); noteUp(0);
         long wanted=r(S+0x352,2);
         key(0); sound(); noteUp(0); key(0); sound();
         check("every repeat press is recorded, the last still held",
             r(0x61e0,1)==3&&r(S+0x21b,1)==1);
-        check("repeat presses record the absolute pitch",
-            Math.abs((short)r(0x6162,2)-wanted)<=1&&Math.abs((short)r(0x6164,2)-wanted)<=1);
+        check("repeat presses record the pitch they sound",
+            Math.abs(sounds(1)-wanted)<=1&&Math.abs(sounds(2)-wanted)<=1);
+        // Presses that never moved the pad are one value: a step drifting
+        // against its neighbour at the SAME pad is the recorder, not the
+        // reference.
+        check("and presses at one pad record one step",
+            Math.abs(step(1)-step(2))<=1&&Math.abs(step(0)-step(1))<=1);
         command(1); octavePad(1); w(S+0x2fc,2,0);
         externalBeat(); sound(); externalBeat(); sound();
         check("playback in latch mode plays the step it recorded",
@@ -350,47 +373,71 @@ public class ControlRegression extends SequenceEditRegression {
             r(S+0x352,2)==r(0x61e2,2)+(short)r(0x60a0,2));
         octavePad(1); arp(2); sound();
         check("leaving latch mode does not move the step",r(S+0x352,2)==r(0x61e2,2));
-        // A one-shot preview auditions the take AS RECORDED: the pad that
-        // transposes playback must not move a preview.
+        // A one-shot preview reads its pitch through the same chain as
+        // playback, so it answers to the pad the same way: target = step
+        // plus the live transpose, clamped.  It is no longer pinned to the
+        // recorded pitches - the pad that transposes play transposes the
+        // preview with it, and the bare pad that STARTS the preview is
+        // itself an octave chooser, so it moves the very thing it plays.
         arp(1); command(1); command(0); octavePad(3); bare(1);
         externalBeat(); sound();
-        check("preview ignores the live pad transpose",r(S+0x352,2)==r(0x61e2,2));
-        println("PASS latch recording: fresh press, repeat, toggle-off audition, reused slot, absolute playback, pinned preview");
+        check("a preview takes the live pad transpose, like playback",
+            Math.abs(r(S+0x352,2)-dac((short)r(0x61e2,2)+livePad()))<=1);
+        println("PASS latch recording: fresh press, repeat, toggle-off audition, reused slot, relative store, transposed playback and preview");
     }
     void recordedOctaves() throws Exception {
         // The octave switch reaches a recording in EVERY arp position, the
         // way it reaches the latches: the same key entered at two octaves
         // is two different recorded pitches, and neutral playback plays
-        // the interval that was played.  With the arp OFF the keyboard
+        // the interval that was played.  The first octave is the take's
+        // reference rather than a number in the store, so the interval -
+        // not the opening pitch - is what the store has to carry.  With the arp OFF the keyboard
         // itself sounds the press, so no audition is armed on top of it -
         // that sent the same MIDI note twice with one note-off to share.
         for(int position:new int[]{0,2}) {
             setup(0,false,position); latchFixture(); octavePad(3);
             key(0); sound();
             long high=r(0x854,2)+(short)r(0x60a0,2);
-            check("the octave is in the stored pitch, arp position "+position,
-                Math.abs((short)r(0x6160,2)-high)<=1&&r(0x61e0,1)==1);
+            check("the octave is in the pitch the step stands for, arp position "+position,
+                Math.abs(sounds(0)-high)<=1&&r(0x61e0,1)==1);
             if(position==0)
                 check("the arp OFF keyboard needs no audition",
                     r(0x6230,2)==0&&r(0x2eed,1)==0);
             else
                 check("the regular-arp audition sounds the stored pitch",
-                    Math.abs((short)r(S+0x352,2)-(short)r(0x6160,2))<=1);
-            noteUp(0); octavePad(1); key(0); sound(); noteUp(0);
+                    Math.abs((short)r(S+0x352,2)-sounds(0))<=1);
+            noteUp(0); octavePad(1); key(0); sound();
+            // Read the pad the press itself saw: 0x60a0 walks a unit or two
+            // over the scans that follow, and every comparison here is
+            // against the transpose that was actually recorded against.
+            long neutral=livePad();
             check("the neutral repeat stores its own octave",
-                Math.abs((short)r(0x6162,2)-(short)r(0x854,2))<=1);
-            // Neutral playback: the interval as played, absolute steps.
+                Math.abs(sounds(1)-(r(0x854,2)+neutral))<=1);
+            // Which is where the interval lives now: the reference carries
+            // the first octave, so the store has to carry the DISTANCE
+            // between the two presses, whatever reference was adopted.
+            check("and the two steps are the octave apart that was played",
+                Math.abs((step(0)-step(1))-((short)r(0x62f4,2)-neutral))<=1);
+            noteUp(0);
+            long opening=step(0), following=step(1);
+            // Neutral playback is the whole take shifted down by its own
+            // reference, so the lower step falls under the DAC: it has to
+            // clamp at the rail the way any other target does, not wrap.
             command(1); octavePad(1); w(S+0x2fc,2,0);
             externalBeat(); sound();
-            check("playback opens on the recorded octave",r(S+0x352,2)==r(0x6160,2));
+            check("playback opens on the recorded octave",r(S+0x352,2)==dac(step(0)+livePad()));
             externalBeat(); sound();
-            check("and descends the played interval",r(S+0x352,2)==r(0x6162,2));
-            // The pad transposes PLAY, and only play: a preview is pinned.
+            check("and a step under the rail plays clamped, not wrapped",
+                r(S+0x352,2)==dac(step(1)+livePad()));
+            // The pad reaches a preview the way it reaches playback - and
+            // the bare pad that starts one chooses an octave on its way in,
+            // so the preview sounds at the pad it left the panel on.
             octavePad(3); externalBeat(); sound();
             check("the pad transposes playback",
                 r(S+0x352,2)==r(0x61e2,2)+(short)r(0x60a0,2));
             command(1); command(0); bare(1); externalBeat(); sound();
-            check("the same pad leaves a preview alone",r(S+0x352,2)==r(0x61e2,2));
+            check("and a preview takes that transpose too",
+                Math.abs(r(S+0x352,2)-dac((short)r(0x61e2,2)+livePad()))<=1);
             externalBeat(); externalBeat();
             if(persistent) {
                 command(0);
@@ -398,10 +445,10 @@ public class ControlRegression extends SequenceEditRegression {
                 check("the octave take is saved",page!=0&&r(page+24,1)==2);
                 cold();
                 check("and survives a power cycle",
-                    r(0x61e0,1)==2&&Math.abs((short)r(0x6160,2)-high)<=1);
+                    r(0x61e0,1)==2&&step(0)==opening&&step(1)==following);
             }
         }
-        println("PASS recorded octaves: stored per press in OFF and regular arp, keyboard-only OFF sounding, pinned preview, transposed play");
+        println("PASS recorded octaves: stored per press in OFF and regular arp, keyboard-only OFF sounding, transposed play and preview");
     }
     void capacityAudition() throws Exception {
         // A press the recorder cannot take must not repaint the pending
@@ -503,30 +550,43 @@ public class ControlRegression extends SequenceEditRegression {
         println("PASS preview boundaries: sentinel gates, loop wrap ties, WRITE exit releases");
     }
     void recordedBounds() throws Exception {
-        // The recorder must never store a pitch the DAC cannot play:
-        // octaves stacked on the top key clamp to 4095 exactly as the
-        // sounding path clamps, and the completed take stays saveable -
-        // one out-of-range step used to make the whole take unsaveable.
+        // A relative step is signed and deliberately unclamped: the DAC
+        // guard belongs to the playback target, where the factory
+        // preparation clamps 0..4095 AFTER re-adding the live transpose.
+        // What the store still has to promise is that a step stays inside
+        // the window the persistence validator accepts (+-0x2000 around the
+        // reference), so a take recorded against the rails saves and
+        // reloads - one out-of-range step used to make the whole take
+        // unsaveable.
         setup(0,false,1);
         w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,1023); musicalScan(); octavePad(3);
         key(28); sound(); noteUp(28); key(28); sound();
         check("stacked transpose sounds at the DAC limit",r(S+0x352,2)==4095);
-        check("recorded steps stay inside the DAC range",
-            r(0x61e0,1)==2&&r(0x6160,2)==4095&&r(0x6162,2)==4095);
+        check("recorded steps stay inside the store's valid window",
+            r(0x61e0,1)==2&&Math.abs(step(0))<=0x2000&&Math.abs(step(1))<=0x2000);
+        check("both presses at one pad record one step",Math.abs(step(0)-step(1))<=1);
+        check("a step stands for the unclamped pitch its press was worth",
+            Math.abs(sounds(0)-(r(0x854+2*28,2)+livePad()))<=1);
         int before=writes; command(0);
         if(persistent) {
             long page=call(NEWEST);
-            check("the take with clamped steps saves",writes>before&&r(page+24,1)==2);
+            check("the take against the rail saves",writes>before&&r(page+24,1)==2);
             cold();
             check("and survives a power cycle",r(0x61e0,1)==2);
         }
-        // Both clamp ends of the leaf itself, driven directly.
+        // The leaf itself, driven at pad positions the panel cannot reach:
+        // no clamp is left on the store, and both far ends stay inside the
+        // validator's window.
         arp(1);
         w(0x60a0,2,5000); e.writeRegister("R12",0); call(0x8001dce0L);
-        check("recorded pitch clamps high",reg("R11")==4095);
+        check("a far-high pad records unclamped",
+            (short)reg("R11")==r(0x854,2)+5000-(short)r(0x62f4,2)
+            &&Math.abs((short)reg("R11"))<=0x2000);
         w(0x60a0,2,0xf448); e.writeRegister("R12",0); call(0x8001dce0L);
-        check("recorded pitch clamps low",reg("R11")==0);
-        println("PASS recorded pitch bounds: DAC-limit take records, saves and restores; both clamp ends");
+        check("a far-low pad records signed",
+            (short)reg("R11")==r(0x854,2)-3000-(short)r(0x62f4,2)
+            &&(short)reg("R11")<0&&Math.abs((short)reg("R11"))<=0x2000);
+        println("PASS recorded pitch bounds: rail take records, plays clamped, saves and restores; both far pad ends unclamped and saveable");
     }
     void playbackPressure() throws Exception {
         // Live key pressure must not bend a playing sequence: in PLAY the
