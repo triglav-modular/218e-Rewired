@@ -81,6 +81,10 @@ ghidra_project/
 *.gpr
 *.rep/
 
+# Working files that are nobody's business but this machine's: pressure
+# captures pulled off one instrument, scans, anything parked mid-task.
+scratch/
+
 # --- hardware working files ---
 # Photoshop scan of the pressure op-amp section (~81 MB).
 PRESSURE_OPAMP.psd
@@ -104,6 +108,11 @@ web/kit/
 # whoever is next in Ghidra, not for an owner.  Kept locally, published as the
 # short docs/FIRMWARE_CHANGES.md instead.
 docs/internals/
+
+# Point-in-time reviews of particular commits on the way to a release.  They
+# quote line numbers and hashes that stop being true the moment the branch
+# moves, so they are kept beside the work rather than in the history.
+docs/audits/
 
 # Not everything that runs against this project belongs in it.
 private/
