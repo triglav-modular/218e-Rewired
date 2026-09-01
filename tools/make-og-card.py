@@ -73,7 +73,7 @@ def svg(path, height, rotate=0.0):
 
 
 def ground(colour):
-    """The page's background: the flat colour, then the wave over it at .5."""
+    """The page's background: the flat colour, then the wave whole over it."""
     card = Image.new("RGBA", (W, H), colour)
     wave = Image.open(WEB / "images" / "wave_bg.png").convert("RGBA")
     # background-size: cover - scale to fill, then crop the overflow centred.
@@ -82,8 +82,10 @@ def ground(colour):
                        Image.LANCZOS)
     left, top = (wave.width - W) // 2, (wave.height - H) // 2
     wave = wave.crop((left, top, left + W, top + H))
-    alpha = wave.getchannel("A").point(lambda a: a // 2)     # opacity: .5
-    wave.putalpha(alpha)
+    # At its own strength, where the page runs it at .5.  The page holds it
+    # back because it is read through - there is a column of text on top of
+    # it for as long as anyone is there.  A card is looked at, once, small,
+    # with nothing over it, and at .5 the drawing barely arrives.
     card.alpha_composite(wave)
     return card
 
