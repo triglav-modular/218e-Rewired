@@ -217,7 +217,7 @@ def audit_call_pools(image_path) -> list[str]:
 # transition into PLAY.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "d96b5fe4b959f8d146e882edd836fd6926fcf1e2ff59447a90bf5e3cad525acf",
+    "historical_config": "585818c27d7ea9a76944bee0634efc321ec23c3b605b1f4cd89d3a01581e72d0",
 }
 
 

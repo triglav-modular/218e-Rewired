@@ -1576,6 +1576,52 @@ public class ClockRegression extends GhidraScript {
         } finally { sequencer=mode; }
     }
 
+    // A tie as the LAST step of a loop.  seq_next_step wraps the cursor to
+    // zero the moment the last step is chosen, so a gate length read from
+    // the cursor's predecessor landed under the step table during that
+    // step, and the note carried into a final tie was cut at half the tie
+    // instead of holding to the retrigger's gap.  Four steps, the fourth a
+    // tie: the first two drop at half, the third carries, the tie's tail
+    // drops at interval minus the factory three.
+    void sequencedGateHoldsAFinalTie() throws Exception {
+        boolean mode=sequencer;
+        try {
+            sequencer=true; fresh(1,25000000);
+            w(0x61e0,1,4);
+            w(0x6160,2,485); w(0x6162,2,525);
+            w(0x6164,2,565); w(0x6166,2,0x7fff);
+            w(S+0x34a,2,20); w(S+0x38e,2,3);
+            java.util.List<long[]> edges=new java.util.ArrayList<>();
+            long last=0;
+            for (long t=10000; t<=260000; t+=1000) {
+                bank(t); service(t); internal(t); flush(t);
+                if (t%5000==0) { time(t); call(0x80003590L,0x100); scan(t); }
+                long lv=r(S+0x354,2)==0?0:1;
+                if (lv!=last) { edges.add(new long[]{t/1000,lv}); last=lv; }
+            }
+            // Each drop is credited to the beat before it, and the beat to
+            // its step in the loop: the fixture starts at step zero.
+            int[] perStep=new int[4]; java.util.List<String> got=new java.util.ArrayList<>();
+            boolean shapes=true;
+            for (long[] e : edges) {
+                if (e[1]!=0 || e[0]<100) continue;
+                int beat=-1;
+                for (int i=0;i<beatTimes.size();i++) if (beatTimes.get(i)/1000<=e[0]) beat=i;
+                if (beat<0) continue;
+                int step=beat%4, d=(int)(e[0]-beatTimes.get(beat)/1000);
+                perStep[step]++; got.add(step+":"+d);
+                boolean half=d>=9&&d<=11, tail=d>=16&&d<=18;
+                if (step<=1 && !half) shapes=false;
+                if (step==3 && !tail) shapes=false;
+            }
+            println("  drops by step (step:ms after its beat): "+got);
+            check("the two untied notes drop at half, the final tie at its tail ("+got+")",
+                  shapes && perStep[0]>=2 && perStep[1]>=2 && perStep[3]>=2);
+            check("the note before the final tie carries through it ("+got+")", perStep[2]==0);
+            println("PASS a loop's final tie holds the note to the retrigger gap");
+        } finally { sequencer=mode; }
+    }
+
     // The same contract under an external clock, at every division.  The
     // pulse that fires a step starts the countdown and records where the
     // gate falls; the pulses between steps must leave both alone.  When
@@ -2251,7 +2297,7 @@ public class ClockRegression extends GhidraScript {
             // Both of these play a TAKE, which only a sequencer build has
             // the caves for - under the arp image the fixture would sound
             // nothing at all and fail on the silence.
-            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); sequencedGateIsHalfTheDividedStep(); }
+            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); sequencedGateHoldsAFinalTie(); sequencedGateIsHalfTheDividedStep(); }
             if (jitterOnly) {
                 bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {

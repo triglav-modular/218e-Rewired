@@ -6929,12 +6929,18 @@ public class AssemblePressureFix extends GhidraScript {
         // threshold; a leaf, clobbers R9-R11, which every seq_gate caller
         // already treats as scratch.
         //
-        // The step playing NOW is the cursor's predecessor.  When it is a
-        // tie, the gate has carried this far and only the retrigger's gap
-        // is owed, so the factory three stands - halving the tie's own
-        // step would cut the carried note short.  (Before the first step
-        // fires the predecessor read lands two bytes under the step table;
-        // a read only, and the gate is not up yet for any answer to cut.)
+        // The step playing NOW is the one seq_select last fired, kept at
+        // 0x6503.  It used to be read as the cursor's predecessor, which
+        // is wrong twice over: seq_next_step wraps the cursor to zero as
+        // soon as the last step is chosen, so during the last step the
+        // read landed two bytes under the step table, and under the
+        // shuffle the cursor is whatever the draw chose.  A final tie was
+        // cut at half its step instead of carrying to the retrigger's gap.
+        // When the step is a tie, the gate has carried this far and only
+        // that gap is owed, so the factory three stands - halving the tie's
+        // own step would cut the carried note short.  (Before the first
+        // step fires the cell holds whatever the last play left; only the
+        // sign of the answer is read then, and the gate is not up yet.)
         //
         // Under a clock the answer was made by the pulse that fired the
         // step: clock_pulse starts the countdown a quarter above the
@@ -6942,9 +6948,8 @@ public class AssemblePressureFix extends GhidraScript {
         // drop lands at the midpoint whatever the division.  Otherwise it
         // is half the RATE interval the countdown started from.
         begin(0x8001b740L);
-        emit("MOV R10,0x61e0");
-        emit("LD.UB R9,R10[0x1]");      // the cursor: the step about to play
-        emit("SUB R9,0x1");             // so this is the one playing now
+        emit("MOV R10,0x6503");
+        emit("LD.UB R9,R10[0x0]");      // the step playing now
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R9 << 0x1");
         emit("LD.SH R8,R8[0x0]");
@@ -7337,6 +7342,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R12,0x61ee");
         emit("ADD R12,R12,R9 << 0x0");
         emit("LD.UB R0,R12[0x0]");
+        // Which step this is, for seq_gate_length: the cursor's predecessor
+        // is not it once the last step has wrapped the cursor to zero, nor
+        // under the shuffle, where the cursor is whatever the draw chose.
+        emit("MOV R12,0x6503");
+        emit("ST.B R12[0x0],R9");
         emit("MCALL PC[0x8001b43c]");   // which step plays next
         padTo(0x8001b3b8L);
         emit("ST.B R10[0x1],R9");
@@ -7364,6 +7374,8 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001b3e0L);
         emit("MOV R12,0x61e5");
         emit("ST.B R12[0x0],R8");
+        emit("MOV R12,0x6503");         // this step, tie or rest, is the one sounding
+        emit("ST.B R12[0x0],R9");
         emit("MCALL PC[0x8001b43c]");   // which step plays next
         padTo(0x8001b3f0L);
         emit("ST.B R10[0x1],R9");

@@ -1112,6 +1112,9 @@ RAM_REGIONS = [
     # because SRAM survives a same-image warm restart.
     (0x6500, 0x6502, "the audition's pinned pitch, plus one"),
     (0x6502, 0x6503, "delete-pad flash countdown, in scans"),
+    # Written by seq_select as it fires a step, read by seq_gate_length for
+    # the length of that step; the cursor is already on the next one.
+    (0x6503, 0x6504, "the sequencer step sounding now"),
     (0x6504, 0x6521, "owner: which key's press made each slot's note, plus one"),
     (0x6521, 0x653E, "current: the slot each key's note lives in, plus one"),
     (0x6540, 0x657A, "slot-indexed pressure weights, rebuilt per scan"),
