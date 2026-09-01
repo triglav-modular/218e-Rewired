@@ -2213,6 +2213,14 @@ function assembleProgram() {
         emit("ST.H R10[0x216],R8");
         emit("ST.H R10[0x354],R8");
         emit("ST.H R10[0x358],R8");
+        // And the staged base and target themselves.  A note-on rewrites
+        // them, but the scans BEFORE the first note run the whole blend
+        // chain against whatever the bootloader left in the base - measured
+        // derailing the pressure blend for the touch that follows, so the
+        // first note after a flash bent against garbage (or refused to bend
+        // at all) until the finger lifted.  Zero is the cold-start state
+        // the reboot workaround was restoring.
+        emit("ST.W R10[0x350],R8");
         // The curve level byte is not touched here.  It sits in factory state
         // and survives a flash, and knob 4 owns it again - forcing it to 0
         // would drop the curve until the knob was next swept.

@@ -198,10 +198,12 @@ def audit_call_pools(image_path) -> list[str]:
 # guarded press-time selection at its source; and again when a one-shot
 # preview was pinned back to the pitches it recorded, so the pad that
 # transposes playback - including the bare pad that starts the preview, which
-# chooses an octave on its way in - leaves a preview alone.
+# chooses an octave on its way in - leaves a preview alone; and when the
+# bootstrap adopted the staged base and target too, whose bootloader
+# leftovers derailed the first touch's portamento until the finger lifted.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "eb1734ce1336511505db8c2a2f2f3968cf71bca7e975b34cc4d37917d9fc6f1e",
+    "historical_config": "21c74070b151abdedc95702d785f9ec9e170619c92c6f8b990e7e7851f7bb758",
 }
 
 
