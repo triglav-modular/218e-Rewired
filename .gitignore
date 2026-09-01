@@ -110,7 +110,11 @@ docs/audits/
 
 # Not everything that runs against this project belongs in it.
 private/
-/deploy/.wrangler/cache
+
+# wrangler's own scratch: the account cache names the account and the address
+# it belongs to, and this repository is public.  It is written on demand by
+# any wrangler invocation, from wherever it was run.
+.wrangler/
 
 # The FCP video kit lives in its own private repo (fcp/ is a nested checkout).
 fcp/
