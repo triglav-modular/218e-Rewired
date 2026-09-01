@@ -28,6 +28,18 @@ else, or the page opened from a file, reports nowhere. See "Counting builds" in
 | `sha256.js` | synchronous SHA-256 (SubtleCrypto is async and absent from jsc) |
 | `generated.js` | **generated** — frozen defaults, feature map, control flow, assembler source |
 | `assembler.js` | **generated** — the AVR32 assembler, bundled from `tools/avr32/` |
+| `images/og-card.png` | **generated** — the link preview, by `tools/make-og-card.py` |
+
+The card is what Facebook, LinkedIn, Slack, Discord and iMessage show when
+somebody posts the page. It is committed rather than built in the workflow —
+drawing it needs Pillow, fontTools and cairosvg, and the deploy runner has
+none of them. Redraw it after a change to the version, the palette, the mark
+or the banana:
+
+```bash
+pip install pillow "fonttools[woff]" cairosvg
+python3 tools/make-og-card.py
+```
 
 Regenerate both generated files after changing `tools/options.py`,
 `tools/build.py`, `src/AssemblePressureFix.java` or

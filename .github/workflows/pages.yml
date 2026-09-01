@@ -273,6 +273,24 @@ jobs:
                   refs.add(m.group(1))
               for m in re.finditer(r'["\'](kit/[^"\']+)["\']', text):
                   refs.add(m.group(1))
+              # og:image names the card absolutely, because no scraper
+              # resolves a relative URL, so the sweep above skips it with
+              # every other absolute reference.  Skipped, a renamed or
+              # deleted card 404s for every scraper that asks and the
+              # workflow stays green - and nobody sees a link preview break,
+              # because nobody who shares a link looks at it afterwards.
+              # Brought back to a site path through the page's own canonical,
+              # which is where tools/version-assets.py gets it from too.
+              canonical = re.search(r'rel="canonical"\s+href="([^"]+)"', text)
+              if canonical:
+                  root = canonical.group(1).rstrip("/") + "/"
+                  for m in re.finditer(r'<meta\b[^>]*\bcontent="([^"]+)"', text):
+                      if m.group(1).startswith(root):
+                          # og:url is the page itself, which is the one URL
+                          # that carries no version - it is what people type.
+                          rest = m.group(1)[len(root):]
+                          if rest and not rest.endswith("/"):
+                              refs.add(rest)
               total += len(refs)
               for r in sorted(refs):
                   if r.startswith(("http://", "https://", "//", "#", "data:", "mailto:")):

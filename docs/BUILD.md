@@ -544,6 +544,60 @@ until they expire. They are no longer referenced by anything, so they do no
 harm; **Caching - Configuration - Purge Everything** clears them if you would
 rather not wait.
 
+## The link preview card
+
+A page with no `og:` tags does not get no preview - it gets a guessed one.
+Facebook took the only image the markup offered, the 56px banana in the
+header, stretched it to 1200x630 and posted a blurred crop of the peel on
+white, under the bare `<title>` and nothing else. Every other scraper guesses
+from the same markup, so the same card turned up in Slack, iMessage and
+LinkedIn.
+
+The tags are in the `<head>` of [../web/index.html](../web/index.html) and the
+card is `web/images/og-card.png`, drawn by
+[../tools/make-og-card.py](../tools/make-og-card.py):
+
+```bash
+pip install pillow "fonttools[woff]" cairosvg
+python3 tools/make-og-card.py
+```
+
+It takes the palette out of the `sync-site` block in `style.css`, the mark out
+of `web/icons/safari-pinned-tab.svg`, the banana out of `web/images`, the wave
+out of the background it is drawn on and the version out of
+`config/218e.toml`, so a card cannot claim a colour or a version the page has
+stopped using. It does not run in the workflow: the deploy runner has no
+rasteriser, and a card that exists only where one is installed eventually does
+not exist. So it is committed, like `mac/Flasher.zip`, and redrawn by hand
+after a change to any of those parts.
+
+The headline is set in IBM Plex Mono, which is in this repository under the
+OFL. The page's display face, Euclid Circular A, is not - it is licensed to
+Triglav Modular, served from `triglavmodular.hu`, and deliberately not copied
+here. Whoever holds that licence can point the tool at their own copy:
+
+```bash
+python3 tools/make-og-card.py --display-font ~/fonts/EuclidCircularA-Bold.otf
+```
+
+### Two hostnames, one page
+
+The page answers on `triglav-modular.github.io` as well, and a scraper
+resolves nothing relative, so `og:image` has to name a host. It names the
+domain, and `og:url` and `<link rel="canonical">` name it too: a post of
+either URL is then a post of the same page, and the likes and comments land
+in one place rather than two. The worker maps that path onto Pages, so the
+card is served through it like everything else.
+
+`tools/version-assets.py` stamps the card along with the rest, taking the
+canonical link as the base rather than keeping a second opinion about where
+the site lives. That is what eventually retires a cached card - a scraper
+holds one for weeks, and Facebook holds one until something makes it look
+again. To make it look now, put the URL into the [Sharing
+Debugger](https://developers.facebook.com/tools/debug/) and press **Scrape
+Again**; LinkedIn has the [Post
+Inspector](https://www.linkedin.com/post-inspector/).
+
 ## Counting builds
 
 The page reports one thing, once, when someone downloads: which options were

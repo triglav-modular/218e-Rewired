@@ -10,6 +10,47 @@
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
     <link rel="mask-icon" href="icons/safari-pinned-tab.svg" color="#F477BA">
     <title>218e Rewired Firmware Builder</title>
+
+    <!-- What this page looks like when somebody posts it.  Without any of
+         this, a scraper has only the markup to go on: Facebook took the
+         56px banana out of the header - the one image on the page - and
+         stretched it across a 1200x630 card, which came out as a blurred
+         crop of the peel on white with no words on it.
+
+         The card itself is web/images/og-card.png, drawn by
+         tools/make-og-card.py from this page's own palette, wave, mark,
+         banana and version.
+
+         Absolute, and on the domain rather than on github.io: a scraper
+         resolves nothing relative, and the page answers on both hosts.
+         Naming one of them here is what makes a share of either count as a
+         share of the same page - the likes and the comments land in one
+         place instead of two.  The Cloudflare worker in deploy/worker.js
+         maps that path onto the Pages site, so everything named below is
+         served from it, including the card. -->
+    <link rel="canonical" href="https://triglavmodular.hu/mods/218e-Rewired/">
+    <meta name="description" content="Step sequencer, Scala tunings, pressure portamento and a reworked arpeggiator for the Buchla 218e V3. Build the image in your browser — the factory firmware never leaves your machine.">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Triglav Modular">
+    <meta property="og:url" content="https://triglavmodular.hu/mods/218e-Rewired/">
+    <meta property="og:title" content="218e Rewired — custom firmware for the Buchla 218e V3">
+    <meta property="og:description" content="Step sequencer, Scala tunings, pressure portamento and a reworked arpeggiator. Build the image in your browser — the factory firmware never leaves your machine.">
+    <!-- 1200x630 is what Facebook asks for and what LinkedIn, Slack, Discord
+         and iMessage crop to; giving the dimensions here lets a feed lay the
+         card out before it has finished fetching it, rather than reflowing
+         around it afterwards.  A scraper that has already cached this page
+         keeps the old card until the URL changes; the stamp that
+         tools/version-assets.py puts on it at publish time is what
+         changes it. -->
+    <meta property="og:image" content="https://triglavmodular.hu/mods/218e-Rewired/images/og-card.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="218e Rewired — custom firmware for the Buchla 218e V3. Step sequencer, Scala tunings, pressure portamento, arpeggiator, per-note calibration, volts per octave. Build it in your browser.">
+    <!-- summary_large_image is the wide card; the default is a thumbnail
+         beside the text, which is the 1200x630 squeezed into a square. -->
+    <meta name="twitter:card" content="summary_large_image">
+
     <link rel="stylesheet" href="style.css">
   </head>
   <body>
