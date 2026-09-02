@@ -28,11 +28,14 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
     [true, false].forEach(function (fx) {
     [true, false].forEach(function (po) {
         if (po && !fx) return;   // options.py refuses this pairing
-    [1.2, 1.0].forEach(function (v) {
+    // The pitch offset rides on the scaling dimension: the two only meet in
+    // the pitch table, so the 208c layout at one scaling is the case to cover.
+    [[1.2, true], [1.0, true], [1.2, false]].forEach(function (vo) {
+        var v = vo[0];
     [null, rows].forEach(function (cal) {
     [0, 1, 2, 3].forEach(function (nt) {
         var o = { latching_arp: arp, remap_knobs: kn, pressure_fix: fx,
-                  pressure_portamento: po, volts_per_octave: v,
+                  pressure_portamento: po, volts_per_octave: v, pitch_offset: vo[1],
                   sequencer: sq[0], clock_divide: sq[1], persist: persist };
         // buildlib refuses persist = false unless the caller says it means
         // it.  This matrix is where the unsupported build is characterised.
@@ -43,7 +46,8 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
                     ' seq=' + (sq[0] ? 1 : 0) + ' clk=' + (sq[1] ? 1 : 0) +
                     ' persist=' + (persist ? 1 : 0) +
                     ' fix=' + (fx ? 1 : 0) + ' porta=' + (po ? 1 : 0) +
-                    ' v=' + v + ' cal=' + (cal ? 1 : 0) + ' tun=' + nt;
+                    ' v=' + v + ' off=' + (vo[1] ? 1 : 0) +
+                    ' cal=' + (cal ? 1 : 0) + ' tun=' + nt;
         try {
             var r = WEBBUILD.build(o, factory);
             built++;

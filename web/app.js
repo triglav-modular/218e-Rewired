@@ -57,26 +57,53 @@
     }
 
     // --- semitone naming -------------------------------------------------
-    // Semitone 0 is the 208's 0 V pitch, which is an A.  The bottom key is a
-    // C, at semitone 3, and keys are numbered from 1 — the three different
-    // ways the CSV let you name a row, and the reason this shows all of them.
-    var NAMES = ['A','A#','B','C','C#','D','D#','E','F','F#','G','G#'];
+    // Semitone 0 is the 208's 0 V pitch.  A 208, 208r or 208p starts from
+    // A, which puts the bottom key - a C - at semitone 3; the 208c starts
+    // from C, so there the bottom key IS semitone 0.  Keys are numbered from
+    // 1 — the three different ways the CSV let you name a row, and the
+    // reason this shows all of them.
+    var pitchOffset = true;
+    var NAMES_A = ['A','A#','B','C','C#','D','D#','E','F','F#','G','G#'];
+    var NAMES_C = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    function noteNames() { return pitchOffset ? NAMES_A : NAMES_C; }
     function noteName(semitone) {
-        return NAMES[semitone % 12] + (Math.floor((semitone + 9) / 12));
+        // The bottom key is C1 either way; only the row it sits on moves.
+        return noteNames()[semitone % 12] +
+            Math.floor((semitone + 12 - PLAYABLE_LOW) / 12);
     }
-    // The 32 physical keys are semitones 3..34, key 1 being the bottom C.
-    // Above that the same keys reach higher pitches through the octave switch.
+    // The 32 physical keys start at the bottom C, key 1.  Above that the
+    // same keys reach higher pitches through the octave switch.
     function keyLabel(semitone) {
-        if (semitone >= 3 && semitone <= 34) return String(semitone - 2);
+        if (semitone >= PLAYABLE_LOW && semitone <= PLAYABLE_LOW + 31) {
+            return String(semitone - PLAYABLE_LOW + 1);
+        }
         return '+oct';
     }
 
     // Only pitches the instrument can actually produce are editable.  The
-    // firmware indexes semitones 0..78, but 0..2 sit below the bottom key and
-    // 68..78 above anything the octave switch can reach, so neither can be
-    // played or measured.  They are filled in from the ends of the measured
-    // range instead of being offered as boxes nobody can fill.
+    // firmware indexes semitones 0..78, but with the offset 0..2 sit below
+    // the bottom key and 68..78 above anything the octave switch can reach,
+    // so neither can be played or measured.  They are filled in from the
+    // ends of the measured range instead of being offered as boxes nobody
+    // can fill.  Without the offset the same 65 notes start at semitone 0.
     var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;
+    function setPitchOffset(on) {
+        if (on === pitchOffset) return;
+        var from = PLAYABLE_LOW;
+        pitchOffset = on;
+        PLAYABLE_LOW = on ? 3 : 0;
+        PLAYABLE_HIGH = PLAYABLE_LOW + 64;
+        // Readings belong to keys, not rows: a table entered before the
+        // switch keeps each key's cents when the rows move under it.
+        var moved = measured.map(function () { return 0; });
+        for (var n = 0; n < TABLE_ENTRIES; n++) {
+            var to = n - from + PLAYABLE_LOW;
+            if (to >= 0 && to < TABLE_ENTRIES) moved[to] = measured[n];
+        }
+        measured = moved;
+        loadedTail = null;
+        buildTable(); drawPlot(); validateCal(); invalidate();
+    }
 
     // --- factory image ---------------------------------------------------
     function loadFactory(file) {
@@ -152,6 +179,16 @@
             validateCal();
             invalidate();
             Array.prototype.forEach.call($('vpo').children, function (o) {
+                o.setAttribute('aria-pressed', String(o === b));
+            });
+        });
+    });
+
+    // --- pitch offset -----------------------------------------------------
+    Array.prototype.forEach.call($('offset').children, function (b) {
+        b.addEventListener('click', function () {
+            setPitchOffset(b.dataset.v === '1');
+            Array.prototype.forEach.call($('offset').children, function (o) {
                 o.setAttribute('aria-pressed', String(o === b));
             });
         });
@@ -670,7 +707,7 @@
         var whites = 0;
         for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
             (function (n) {
-                var black = NAMES[n % 12].indexOf('#') >= 0;
+                var black = noteNames()[n % 12].indexOf('#') >= 0;
                 var key = document.createElement('div');
                 key.className = 'key ' + (black ? 'black' : 'white');
                 // A black key straddles the join between the two naturals it
@@ -707,7 +744,8 @@
     function validateCal() {
         if (!$('useCal').checked) { msg($('calMsg'), '', ''); return true; }
         try {
-            var cfg = BUILDLIB.expand({ volts_per_octave: vpo, pitch_correction: rows() });
+            var cfg = BUILDLIB.expand({ volts_per_octave: vpo, pitch_offset: pitchOffset,
+                                        pitch_correction: rows() });
             BUILDLIB.pitchTable(cfg, rows());
             msg($('calMsg'), 'ok', 'Correction is monotonic and inside the 12-bit DAC.');
             return true;
@@ -777,7 +815,7 @@
             '# on a tuner.  Positive means it played SHARP.  The builder works out the',
             '# correction from these; do not negate them yourself.',
             '#',
-            '# Semitone is the index into the firmware table; the lowest C on the',
+            '# Semitone counts up from the 208\'s 0 V pitch; the lowest C on the',
             '# keyboard is semitone ' + PLAYABLE_LOW + '.  Only notes the keyboard can play are',
             '# listed - the rest of the table is derived from these.',
             'Semitone;Note;Key;Measured_Cents'
@@ -857,7 +895,8 @@
                 : null,
             pressure_fix: $('pressure_fix').checked,
             pressure_portamento: $('pressure_portamento').checked,
-            volts_per_octave: vpo
+            volts_per_octave: vpo,
+            pitch_offset: pitchOffset
         };
         // The checkbox is the opt-in: off means factory everything, however
         // the slots are filled.  Trailing empty slots simply shorten the
@@ -1044,6 +1083,9 @@
             'Pressure: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
             'Scaling: ' + o.volts_per_octave + ' V/octave',
+            // No brackets: echoed by both flashers, see the tunings line.
+            'Pitch offset: ' + (o.pitch_offset === false
+                ? 'none - 208c' : '3 semitones - 208, 208r, 208p'),
             'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off')
         ];
         if (o.alternate_tunings && o.alternate_tunings.length) {
@@ -1125,6 +1167,7 @@
                 platform: id === 'dlMac' ? 'mac' : 'win',
                 version: GEN.version,
                 volts_per_octave: o.volts_per_octave,
+                pitch_offset: o.pitch_offset !== false,
                 latching_arp: !!o.latching_arp,
                 remap_knobs: !!o.remap_knobs,
                 pressure_fix: !!o.pressure_fix,

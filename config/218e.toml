@@ -155,6 +155,12 @@ sequencer = true
 # MCU input must be low for >250 us before each rising edge; see docs/CLOCK.md.
 clock_divide = true
 
+# 12. PITCH OFFSET
+# The pitch CV starts three semitones above the 208's 0 V pitch.  A 208, 208r
+# or 208p starts from A, so that offset is what puts the bottom C in tune.
+# The 208c starts from C: set false and the bottom key sounds the 0 V pitch.
+pitch_offset = true
+
 # Save the remapped preset voltages and sequence across power cycles.
 # Save a changed sequence when leaving record or clearing it; save a
 # changed preset when its pad is released. No idle or arp-off requirement.

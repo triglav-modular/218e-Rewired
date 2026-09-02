@@ -44,6 +44,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                'alternate_tunings = ["tunings/12TET.scl"]')]),
     ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]')]),
     ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
+    ("no_offset",             [(r"^pitch_offset = true", "pitch_offset = false")]),
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
@@ -51,6 +52,9 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("arp_off_portamento_off",[(r"^latching_arp = true", "latching_arp = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("one_volt_corrected",    [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0"),
+                               (r"^pitch_correction = false",
+                                'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    ("no_offset_corrected",   [(r"^pitch_offset = true", "pitch_offset = false"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     # The author's own instrument: the shipped calibration, three tunings, and

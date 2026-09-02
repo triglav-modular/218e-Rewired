@@ -66,6 +66,21 @@ def test_pitch_table(cfg: dict) -> None:
     check("generated curve stays in the 12-bit DAC", 0 <= table[0] and table[-1] <= 4095)
     check("length matches the firmware's reach", len(table) == B.PITCH_TABLE_ENTRIES)
 
+    # A 208c build lays the same curve out three entries later: the bottom
+    # key, which the firmware reads at entry 3, gets the 0 V pitch, and the
+    # entries under it sit at 0 V.  Nothing else about the curve changes.
+    c_cfg = json.loads(json.dumps(cfg))
+    c_cfg["pitch"]["bottom_key_semitone"] = 0
+    shifted = B.pitch_table(c_cfg, offsets)
+    check("208c table keeps the firmware's length", len(shifted) == B.PITCH_TABLE_ENTRIES)
+    check("208c table puts the 0 V pitch at the bottom key",
+          shifted[:3] == [0, 0, 0] and shifted[3:] == table[:-3])
+    check("the offset build's table is untouched",
+          B.pitch_table(cfg, offsets) == table)
+    c_cfg["pitch"]["bottom_key_semitone"] = 1
+    raises("only the two layouts are accepted",
+           lambda: B.pitch_table(c_cfg, offsets), "must be 3 or 0")
+
     header = "Semitone;Note;Key;Offset_Cents;Source\n"
     short = header + "".join(f"{i};;;0.0;t\n" for i in range(61))
     raises("short table rejected", lambda: B.read_calibration(tmp(short, "_short.csv")),
@@ -1247,12 +1262,13 @@ def test_fold_measurement() -> None:
             rows.append(f"{s};X;;{s * 2.0:.6f};{source}")
         return tmp("\n".join(rows) + "\n", "_fold.csv")
 
-    def fold(readings: dict[int, float]) -> tuple[dict[int, float], dict[int, float]]:
+    def fold(readings: dict[int, float], column: str = "Semitone",
+             cfg: dict | None = None) -> tuple[dict[int, float], dict[int, float]]:
         cal = table()
         before = B.read_calibration(cal)
-        meas = tmp("Semitone,Measured_Cents\n"
+        meas = tmp(f"{column},Measured_Cents\n"
                    + "".join(f"{s},{c}\n" for s, c in readings.items()), "_meas.csv")
-        B.fold_measurement({}, cal, meas)
+        B.fold_measurement(cfg or {}, cal, meas)
         return before, B.read_calibration(cal)
 
     def moved(before, after) -> list[int]:
@@ -1275,6 +1291,15 @@ def test_fold_measurement() -> None:
     delta = after[67] - before[67]
     check("tail follows by the same delta",
           all(abs((after[s] - before[s]) - delta) < 1e-9 for s in range(68, B.PITCH_TABLE_ENTRIES)))
+
+    # A reading named by key lands where the build puts that key: three
+    # semitones up with the offset, on the 0 V pitch for a 208c build.
+    before, after = fold({1: 5.0}, "Key")
+    check("key 1 is semitone 3 with the offset", moved(before, after) == [3], str(moved(before, after)))
+    before, after = fold({1: 5.0}, "Key", {"pitch": {"bottom_key_semitone": 0}})
+    check("key 1 is semitone 0 without it", moved(before, after) == [0], str(moved(before, after)))
+    before, after = fold({4: 5.0}, "Semitones", {"pitch": {"bottom_key_semitone": 0}})
+    check("Semitones follows the same layout", moved(before, after) == [4], str(moved(before, after)))
 
     # A single key below the top does not reach the tail either.
     before, after = fold({60: 5.0})
@@ -1473,6 +1498,12 @@ def test_option_messages() -> None:
     import options as _options
     raises("a bare-type option refuses with a sentence",
            lambda: _options.check({"knob1": 1}), "knob1 must be str")
+    raises("pitch_offset takes only true or false",
+           lambda: _options.check({"pitch_offset": "208c"}), "pitch_offset must be true or false")
+    check("pitch_offset = false puts the bottom key on the 0 V pitch",
+          _options.expand({"pitch_offset": False})["pitch"]["bottom_key_semitone"] == 0)
+    check("leaving pitch_offset out keeps the three semitones",
+          _options.expand({})["pitch"]["bottom_key_semitone"] == 3)
     check("arp_patterns = true is the default bank",
           _options.expand({"arp_patterns": True})["knob2"] == _options.expand({})["knob2"])
     slots = _options.expand({"alternate_tunings":
