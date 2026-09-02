@@ -222,9 +222,12 @@ def audit_call_pools(image_path) -> list[str]:
 # And again for 2.1: the strip lamp cave moved to 0x8001e000 and shows the
 # finger's side while the strip is held, and the comment correction behind it
 # (the lamps are a level meter, per the User's Guide) repinned once more.
+# And again when the blend's anchor stopped trusting the last arp key with
+# the arp off, and a release started clearing the key's slot ownership: a
+# released key 1 had been anchoring every later single key on its own pitch.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "cc27e884a982e1c1817b04ef70ef8ace76cdf5f69101de22641f4826ecde94ac",
+    "historical_config": "b8dbeed4d5934b7ad919bf4d46a5f37c38109cd4b157341c5ecb73b44562d528",
 }
 
 

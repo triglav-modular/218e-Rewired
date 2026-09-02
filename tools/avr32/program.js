@@ -1350,12 +1350,26 @@ function assembleProgram() {
         begin(0x8001a280);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
+        // The finger is gone, so the key's note no longer owns a pressure
+        // weight, nor the anchor the last arp key is translated through -
+        // in every switch position, latch included: a latched note keeps
+        // sounding, but nobody is pressing it.  Only a press ever wrote the
+        // map, so a released key stayed "current" until its next press, and
+        // a released key 1 kept the anchor on its own pitch for as long as
+        // the instrument stayed on (BlendAnchorProbe).  Key range as the
+        // toggle-off path checks it; R12 stays the key for the call below.
+        emit("CP.W R12,0x1d");
+        emit("BR{ge} 0x8001a294");
+        emit("MOV R9,0x6521");
+        emit("MOV R8,0x0");
+        emit("ST.B R9[R12 << 0x0],R8");
+        padTo(0x8001a294);
         emit("LDDPC R8,0x8001a338");
         emit("LD.UB R8,R8[0x340]");
         emit("CP.W R8,0x1");
-        emit("BR{eq} 0x8001a29c");
+        emit("BR{eq} 0x8001a2a2");
         emit("MCALL PC[0x8001a33c]");
-        padTo(0x8001a29c);
+        padTo(0x8001a2a2);
         emit("LDM SP++,R7,PC");
         padTo(0x8001a2a8);
         emit("STM --SP,R7,R8,R9,R10,LR");
@@ -5620,29 +5634,43 @@ function assembleProgram() {
         // key's current note - that note's own table pitch, so a recording
         // audition of an allocated slot anchors on the note it sounds, not
         // on the older note still latched in the key's slot number.  In
-        // live latch mode the arp names slots, whose map entries are unset
-        // unless that key was itself pressed, so the base falls through.
+        // live latch mode the arp names slots, and a key's map entry is
+        // live only while its finger is down, so the base falls through.
+        //
+        // Only while the arp is stepping, latch or regular.  The last arp
+        // key is written by the arp step alone: with the switch off it
+        // holds whatever the last step left - or key 0, which is what a
+        // cold boot leaves - and translating through THAT key's map entry
+        // anchored every later single key on key 1's pitch once key 1 had
+        // been pressed.  The held key, no longer the anchor, was thresholded
+        // and bent sharp by the whole interval; with the knob low enough
+        // that only a hard press cleared the threshold, it flickered.  Both
+        // switch bytes in one halfword, as the audition gate above reads
+        // them.
         emit("MOV R8,0x3560");
         emit("LD.SH R10,R8[0x350]");
         if (feature("arp_latch")) {
+            emit("LD.UH R9,R8[0x340]");
+            emit("CP.W R9,0x0");
+            emit("BR{eq} 0x8001df1c");
             emit("LD.UB R9,R8[0x34d]");
             emit("CP.W R9,0x1d");
-            emit("BR{ge} 0x8001df18");
+            emit("BR{ge} 0x8001df1c");
             emit("MOV R11,0x6521");
             emit("LD.UB R9,R11[R9 << 0x0]");
             emit("CP.W R9,0x0");
-            emit("BR{eq} 0x8001df18");
+            emit("BR{eq} 0x8001df1c");
             emit("SUB R9,0x1");
             emit("CP.W R9,0x1d");
-            emit("BR{ge} 0x8001df18");
+            emit("BR{ge} 0x8001df1c");
             emit("MOV R11,0x854");
             emit("ADD R11,R11,R9 << 0x1");
             emit("LD.UH R10,R11[0x0]");
         }
-        padTo(0x8001df18);
-        emit("MCALL PC[0x8001df20]");
+        padTo(0x8001df1c);
+        emit("MCALL PC[0x8001df24]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001df20);
+        padTo(0x8001df24);
         word(0x80019c64);              // the real blend cave entry
         finish("blend_slotmap", 0x8001df28);
 
