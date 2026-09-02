@@ -333,7 +333,7 @@ def expand(options: dict) -> dict:
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
                         "tie_glide_rate": 60,
-                        # The strip's three position lamps follow its analog
+                        # The strip's three lamps follow its analog
                         # output, so the acknowledgment a landed rest or tie
                         # gets is a value written to that output for a moment.
                         # How long the flash lasts, in ~5 ms scans: 20 is
@@ -341,17 +341,18 @@ def expand(options: dict) -> dict:
                         # quick taps read as three separate flashes.
                         "strip_ack_scans": 20,
                         # What to write for each, in the same 0..4095 the
-                        # strip's own position uses.  A rest wants the lamp on
-                        # the left and a tie the one on the right, and both
-                        # ends were read off the instrument.  They stay numbers
-                        # because where the lamps change is a property of the
-                        # panel, not of the firmware.
+                        # strip's own position uses.  Per the User's Guide the
+                        # end LEDs light near 0 V and 10 V and the centre LED's
+                        # brightness is the level: a rest wants the left end
+                        # (centre dark), a tie the right end (centre at full).
+                        # They stay numbers because where the lamps change is
+                        # a property of the panel, not of the firmware.
                         "strip_led_rest_units": 0,
                         "strip_led_tie_units": 4095,
-                        # Where the lamps sit for the rest of a take.  They are
-                        # a dot display with no off state, so this is the
-                        # middle lamp rather than none of them: a steady centre
-                        # for the take, thrown to one side by an entry.
+                        # Where the lamps sit for the rest of a take.  Nothing
+                        # is ever dark - the centre shows the level - so this
+                        # is the centre at half brightness: a steady, dim
+                        # centre for the take, thrown to an end by an entry.
                         "strip_led_idle_units": 2048,
                         # Capture is interrupt-timestamped. At 200 Hz a
                         # 4 ms refractory leaves 1 ms of period margin; the

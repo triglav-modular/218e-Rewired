@@ -1840,7 +1840,7 @@ public class AssemblePressureFix extends GhidraScript {
 
         // The strip's slewed value now lands on a shadow (state+0x301a =
         // RAM 0x657a) instead of DAC slot 5, so seq_strip_led is the only
-        // writer of the slot the strip's three position lamps follow.  Gated
+        // writer of the slot the strip's three lamps follow.  Gated
         // with that cave: without it nothing would write the slot at all and
         // the strip's own output would die.
         fixedPatch("strip_dac_redirect", 0x80003120L, 4, "ST.H R9[0x301a],R8");
@@ -7014,8 +7014,8 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8000698cL); // select_pad(0..3)
         finish("select_pad_guard", 0x8001b7acL);
 
-        // The strip's three position lamps, and the acknowledgment they
-        // carry while a take is recording.
+        // The strip's three lamps, and the acknowledgment they carry while
+        // a take is recording.
         //
         // Those lamps are not on the LED shift register.  All sixteen of its
         // bits are accounted for - four pads, rem-en, trn, pm, the two preset
@@ -7030,12 +7030,18 @@ public class AssemblePressureFix extends GhidraScript {
         // only writer of it.  Nothing reads 0x35e back - it is a DAC slot and
         // nothing else - so owning it cannot disturb anything musical.
         //
-        // They are a DOT display with no off state, measured on the
-        // instrument: the value meant to be dark lit the leftmost lamp
-        // instead.  So a take rests on the MIDDLE lamp rather than on none of
-        // them, which reads better anyway - a steady centre for the take, and
-        // an entry throwing it to the side it went in on.  Both ends were
-        // read off the panel too: 0 is the left lamp alone, 4095 the right.
+        // What the three lamps are, from the User's Guide (v5.1, "Welcome
+        // to the strip!"): the two blue LEDs at the ends light when the
+        // voltage approaches 0 V or 10 V, and the MIDDLE LED shows the
+        // overall level - its brightness IS the CV.  So 0 lights the left
+        // end with the centre dark, 2048 is the centre alone at half
+        // brightness, and 4095 lights the right end with the centre at full.
+        // Nothing lights the right end alone, and nothing is ever dark: a
+        // take rests on the half-bright centre, a rest goes to the left end,
+        // a tie to the right end with the centre bright.  Confirmed on the
+        // instrument once the value was held for a whole touch; the earlier
+        // "dot display, 4095 the right lamp alone" reading was wrong about
+        // the high end, which a 100 ms flash had hidden.
         //
         // The cost, stated plainly: slot 5 is the strip OUTPUT JACK, so a
         // flash leaves the module as CV.  It is not a new cost.  Entering a
@@ -7101,11 +7107,11 @@ public class AssemblePressureFix extends GhidraScript {
         // The side is chosen BEFORE each compare, the way the strip's own
         // cave chooses one: nothing may sit between a CP and the branch that
         // reads its flags.
-        emit("MOV R8,0x1");             // a rest: the lamp on the left
+        emit("MOV R8,0x1");             // a rest: the left end
         emit("MOV R9,0x7ffe");
         emit("CP.W R12,R9");
         emit("BR{eq} 0x8001e048");
-        emit("MOV R8,0x2");             // a tie: the lamp on the right
+        emit("MOV R8,0x2");             // a tie: the right end
         emit("MOV R9,0x7fff");
         emit("CP.W R12,R9");
         emit("BR{ne} 0x8001e050");      // neither: a played note
@@ -7146,7 +7152,7 @@ public class AssemblePressureFix extends GhidraScript {
 
         padTo(0x8001e088L);
         // Up, or a touch that will not land: the acknowledgment if one is
-        // still running, the middle lamp otherwise.
+        // still running, the half-bright centre otherwise.
         emit("LD.UB R8,R11[0x2]");      // still acknowledging?
         emit("CP.W R8,0x0");
         emit("BR{eq} 0x8001e0a4");
@@ -7155,7 +7161,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R8,R11[0x3]");
         emit("CP.W R8,0x1");
         emit("BR{ne} 0x8001e09c");
-        emit("RJMP 0x8001e080");        // a rest: the lamp on the left
+        emit("RJMP 0x8001e080");        // a rest: the left end
         padTo(0x8001e09cL);
         emit(String.format("MOV R8,0x%x",
              number("strip_led_tie_units", 4095, 0, 4095)));

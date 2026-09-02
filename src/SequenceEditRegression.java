@@ -191,12 +191,14 @@ public class SequenceEditRegression extends PersistenceRegression {
         // The three lamps along the strip are not on the LED register: they
         // follow the strip's analog output, DAC slot 5 at state+0x35e.  So
         // what they are saying is exactly what is in that cell, and this
-        // reads it rather than any flag of ours.  They are a dot display with
-        // no off state - measured on the instrument - so a take rests on the
-        // middle lamp and an entry throws it to one side.
+        // reads it rather than any flag of ours.  Per the User's Guide the
+        // end LEDs light near 0 V and 10 V and the centre LED's brightness is
+        // the level itself, so nothing is ever dark: a take rests on the
+        // half-bright centre, a rest lights the left end with the centre
+        // dark, a tie the right end with the centre at full.
         final int idle=2048, rest=0, tie=4095;
         setup(2,false,0); scan();
-        check("a take rests on the middle lamp",r(S+0x35e,2)==idle);
+        check("a take rests on the half-bright centre",r(S+0x35e,2)==idle);
         // Down below halfway: the rest's lamp at once, while the finger is
         // still there and nothing has landed.  The finger sliding over the
         // halfway point takes the lamp with it.
@@ -212,7 +214,7 @@ public class SequenceEditRegression extends PersistenceRegression {
         // The rest lands on the release, and the side holds through the
         // acknowledgment before settling back to the middle.
         w(S+0x206,1,0); scan();
-        check("a landed rest keeps the lamp on the left",
+        check("a landed rest keeps the left end lit",
             r(0x61e0,1)==3&&r(0x6164,2)==0x7ffe&&r(S+0x35e,2)==rest);
         for(int i=1;i<20;i++)scan();
         check("the acknowledgment lasts its whole length",r(S+0x35e,2)==rest);
@@ -223,7 +225,7 @@ public class SequenceEditRegression extends PersistenceRegression {
         check("a finger down above halfway shows the tie's lamp at once",
             r(0x61e0,1)==3&&r(S+0x35e,2)==tie);
         w(S+0x206,1,0); scan();
-        check("a landed tie keeps the lamp on the right",
+        check("a landed tie keeps the right end lit",
             r(0x61e0,1)==4&&r(0x6166,2)==0x7fff&&r(S+0x35e,2)==tie);
         for(int i=0;i<20;i++)scan();
         check("the tie acknowledgment ends too",r(S+0x35e,2)==idle);

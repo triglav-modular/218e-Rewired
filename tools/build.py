@@ -1198,7 +1198,7 @@ FACTORY_CELLS = [
     # claim and clock_output restores it until completion, so a held beat's
     # gate and pitch leave on one transfer.
     (0x38B8, 0x38BA, "state+0x358: DAC slot 2, the pitch"),
-    # The slot the strip's three position lamps follow.  The factory wrote it
+    # The slot the strip's three lamps follow.  The factory wrote it
     # every scan at 0x80003120; strip_dac_redirect sends that store to a
     # shadow of ours and seq_strip_led becomes the only writer of the slot.
     (0x38BE, 0x38C0, "state+0x35e: DAC slot 5, the strip"),
