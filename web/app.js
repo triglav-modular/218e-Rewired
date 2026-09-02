@@ -174,6 +174,7 @@
     Array.prototype.forEach.call($('vpo').children, function (b) {
         b.addEventListener('click', function () {
             vpo = parseFloat(b.dataset.v);
+            updateOffsetNote();
             // The DAC-range check depends on the scaling, so a green verdict
             // given at 1 V/oct must not survive a switch to 1.2 unexamined.
             validateCal();
@@ -185,14 +186,24 @@
     });
 
     // --- pitch offset -----------------------------------------------------
+    // What the bottom key puts out at the lowest octave position: nothing
+    // with the offset off, three semitones at the chosen scaling with it on.
+    // Follows both pickers, so it is refreshed from each.
+    function updateOffsetNote() {
+        var volts = pitchOffset ? vpo * 3 / 12 : 0;
+        $('offsetNote').textContent = 'The lowest key will output ' +
+            parseFloat(volts.toFixed(3)) + 'V.';
+    }
     Array.prototype.forEach.call($('offset').children, function (b) {
         b.addEventListener('click', function () {
             setPitchOffset(b.dataset.v === '1');
+            updateOffsetNote();
             Array.prototype.forEach.call($('offset').children, function (o) {
                 o.setAttribute('aria-pressed', String(o === b));
             });
         });
     });
+    updateOffsetNote();
 
     // --- Scala files ------------------------------------------------------
     // The three slots are not interchangeable, so which file goes where is a
