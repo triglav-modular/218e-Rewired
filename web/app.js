@@ -741,8 +741,21 @@
         kbd.style.width = (whites * WHITE_W) + 'px';
     }
 
+    // A table with every entry at zero corrects nothing: the image it builds
+    // is the one calibration-off builds, so the page reports it that way.
+    // The checkbox alone used to count as "applied" - image.txt and the
+    // beacon both said the correction was in while the image carried the
+    // flat ramp.  The readings live only in this page, so a fresh visit
+    // with the box ticked and no CSV loaded is exactly that table.
+    function calibrationBlank() {
+        return rows().every(function (r) { return r.cents === 0; });
+    }
+
     function validateCal() {
-        if (!$('useCal').checked) { msg($('calMsg'), '', ''); return true; }
+        if (!$('useCal').checked || calibrationBlank()) {
+            msg($('calMsg'), '', '');
+            return true;
+        }
         try {
             var cfg = BUILDLIB.expand({ volts_per_octave: vpo, pitch_offset: pitchOffset,
                                         pitch_correction: rows() });
@@ -907,7 +920,7 @@
         if (slots.length) {
             o.alternate_tunings = slots.map(function (e) { return e || 'factory'; });
         }
-        if ($('useCal').checked) o.pitch_correction = rows();
+        if ($('useCal').checked && !calibrationBlank()) o.pitch_correction = rows();
         return o;
     }
 
