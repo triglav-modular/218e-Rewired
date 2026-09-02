@@ -215,9 +215,12 @@ def audit_call_pools(image_path) -> list[str]:
 # note at a time, so both go quiet; poly MIDI is the one way to play over a
 # take and stays live; and anything the mute would strand is ended at the
 # transition into PLAY.
+# And again for 2.1: the strip lamp cave moved to 0x8001e000 and shows the
+# finger's side while the strip is held, and the comment correction behind it
+# (the lamps are a level meter, per the User's Guide) repinned once more.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "3c273e785b4d9968f2d1691403876ce56bf4251a850556bb41dbde64c1b29406",
+    "historical_config": "cc27e884a982e1c1817b04ef70ef8ace76cdf5f69101de22641f4826ecde94ac",
 }
 
 
