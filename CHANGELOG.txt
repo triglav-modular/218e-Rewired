@@ -3,7 +3,7 @@
 - A tie at the end of a loop now holds its note to the next step instead of cutting it short.
 - The clock divider’s gate is now half the step at every division.
 - The strip LEDs now provide feedback when entering a tie or a rest.
-- A pitch offset option for the 208c, which starts from C instead of A: turn it off and the bottom key plays the 0 V pitch.
+- Added option to remove the pitch offset on the 208c.
 
 2.0 (2026-08-31)
 - Step sequencer: 64 steps, recorded and played from the preset pads.
