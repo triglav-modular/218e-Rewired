@@ -3942,7 +3942,7 @@ function assembleProgram() {
         word(0x8001b2a0); // write_channel(R11, R9)
         word(0x8001b660); // seq_enter(R11 = the pad pressed)
         // The strip's per-scan watch, or the lamp cave that calls it first.
-        word(block("seq_strip_led") ? 0x8001b7b0 : 0x8001b590);
+        word(block("seq_strip_led") ? 0x8001e000 : 0x8001b590);
         finish("seq_chord", 0x8001b320);
 
         // Explicit pad transport: record appends, play starts at the top,
@@ -7573,6 +7573,21 @@ function assembleProgram() {
         // to wherever the finger was; pinning the slot for the take makes the
         // jack quieter during a take than it is now, not noisier.
         //
+        // While the finger is DOWN the lamp shows the side it is on - left
+        // below halfway, right above - so the player sees which entry they
+        // are about to make, and sees it at the touch rather than at the
+        // lift.  The entry itself still lands on release (seq_strip), and the
+        // factory's release detection is slow: its sensor conditioner at
+        // 0x80005268 passes a reading that FELL only every tenth scan, so a
+        // lift registers up to 50 ms late, and a feedback that waited for the
+        // landing waited for the whole tap and then that.  The preview is
+        // gated on exactly what the landing is gated on - record, the strip's
+        // latch at 0x61e4 reading 1 (this touch may produce a step; 2 is a
+        // touch carried across transport that never will), and fewer than 64
+        // steps - so a touch that will not land shows nothing.  The halfway
+        // point is the same number seq_strip decides by, read through the
+        // same setting, so the two cannot disagree.
+        //
         // A landed entry is read out of the step store rather than signalled
         // by the strip cave, which leaves that tested block untouched: the
         // count at 0x61e0 going UP BY ONE with 0x7ffe or 0x7fff on top is
@@ -7580,17 +7595,23 @@ function assembleProgram() {
         // 64-step ceiling or the transport rejected never moves the count; a
         // played note moves it but leaves a pitch on top; a backspace or a
         // clear moves it the wrong way.  The shadow count is resynced every
-        // scan, so none of those can arm a flash.
+        // scan, so none of those can arm a flash.  After the lift the side
+        // holds for the acknowledgment, then the lamp settles to the middle.
         //
         // RAM off 0x657a: +0 the redirected strip value (halfword), +2 the
         // acknowledgment countdown in scans, +3 which side it was (1 rest,
         // 2 tie), +4 last scan's step count.  Only the shadow needs the
         // first-use fill - the countdown is rewritten every scan a take is
         // not running, and the count is resynced every scan unconditionally.
-        begin(0x8001b7b0);
+        //
+        // This cave lives above the others at 0x8001e000: it outgrew the
+        // 0xb8 bytes it had at 0x8001b7b0, and the flash from 0x8001dfd0 up
+        // to the persistence pages at 0x8003e000 is erased in the factory
+        // image.  seq_chord's pool word at 0x8001b31c is what reaches it.
+        begin(0x8001e000);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001b868]");   // the strip's own watch, first
+        emit("MCALL PC[0x8001e0c0]");   // the strip's own watch, first
         emit("MOV R10,0x61e0");         // the step store; +0 is the count
         emit("MOV R11,0x657a");
         emit("LD.UB R8,R10[0x0]");
@@ -7598,11 +7619,11 @@ function assembleProgram() {
         emit("ST.B R11[0x4],R8");       // resync first, whatever follows
         emit("SUB R9,-0x1");
         emit("CP.W R8,R9");
-        emit("BR{ne} 0x8001b804");      // no append, or not by exactly one
+        emit("BR{ne} 0x8001e050");      // no append, or not by exactly one
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b804");      // only record acknowledges anything
+        emit("BR{ne} 0x8001e050");      // only record acknowledges anything
         emit("SUB R8,0x1");
         emit("MOV R12,0x6160");
         emit("ADD R12,R12,R8 << 0x1");
@@ -7613,46 +7634,68 @@ function assembleProgram() {
         emit("MOV R8,0x1");             // a rest: the lamp on the left
         emit("MOV R9,0x7ffe");
         emit("CP.W R12,R9");
-        emit("BR{eq} 0x8001b7f8");
+        emit("BR{eq} 0x8001e048");
         emit("MOV R8,0x2");             // a tie: the lamp on the right
         emit("MOV R9,0x7fff");
         emit("CP.W R12,R9");
-        emit("BR{ne} 0x8001b804");      // neither: a played note
-        padTo(0x8001b7f8);
+        emit("BR{ne} 0x8001e050");      // neither: a played note
+        padTo(0x8001e048);
         emit("ST.B R11[0x3],R8");
         emit(StringFormat("MOV R8,0x%x",
              number("strip_ack_scans", 20, 2, 250)));
         emit("ST.B R11[0x2],R8");
 
-        padTo(0x8001b804);
+        padTo(0x8001e050);
         // The slot itself, every scan.  Outside record the shadow is handed
         // straight on, which is the factory's own behaviour with one store of
         // indirection in front of it; inside record the lamps are ours.
         emit("MOV R9,0x6154");
         emit("LD.UB R9,R9[0x4]");
         emit("CP.W R9,0x1");
-        emit("BR{ne} 0x8001b84c");
+        emit("BR{ne} 0x8001e0ac");
+        // Down, and going to land: the side the finger is on right now.
+        emit("MOV R9,0x3560");          // global state base
+        emit("LD.UB R8,R9[0x206]");     // the touch flag
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001e088");
+        emit("LD.UB R8,R10[0x4]");      // the strip's latch
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001e088");      // carried across transport: no entry
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0x40");
+        emit("BR{ge} 0x8001e088");      // 64 steps: the release will refuse it
+        emit("LD.SH R12,R9[0x1fe]");    // where the finger is
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_halfway_units", 2048, 128, 3968)));
+        emit("CP.W R12,R8");
+        emit("BR{ge} 0x8001e09c");      // above halfway: the tie's lamp
+        padTo(0x8001e080);
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_led_rest_units", 0, 0, 4095)));
+        emit("RJMP 0x8001e0b4");
+
+        padTo(0x8001e088);
+        // Up, or a touch that will not land: the acknowledgment if one is
+        // still running, the middle lamp otherwise.
         emit("LD.UB R8,R11[0x2]");      // still acknowledging?
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b840");
+        emit("BR{eq} 0x8001e0a4");
         emit("SUB R8,0x1");
         emit("ST.B R11[0x2],R8");
         emit("LD.UB R8,R11[0x3]");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b834");
-        emit(StringFormat("MOV R8,0x%x",
-             number("strip_led_rest_units", 0, 0, 4095)));
-        emit("RJMP 0x8001b858");
-        padTo(0x8001b834);
+        emit("BR{ne} 0x8001e09c");
+        emit("RJMP 0x8001e080");        // a rest: the lamp on the left
+        padTo(0x8001e09c);
         emit(StringFormat("MOV R8,0x%x",
              number("strip_led_tie_units", 4095, 0, 4095)));
-        emit("RJMP 0x8001b858");
-        padTo(0x8001b840);
+        emit("RJMP 0x8001e0b4");
+        padTo(0x8001e0a4);
         emit(StringFormat("MOV R8,0x%x",
              number("strip_led_idle_units", 2048, 0, 4095)));
-        emit("RJMP 0x8001b858");
+        emit("RJMP 0x8001e0b4");
 
-        padTo(0x8001b84c);
+        padTo(0x8001e0ac);
         // Not recording.  An acknowledgment still in flight dies with the
         // take, so leaving record cannot resume a flash into a mode that has
         // none - and the lamps go back to following the strip on the next
@@ -7662,16 +7705,16 @@ function assembleProgram() {
         emit("ST.B R11[0x2],R8");
         emit("LD.SH R8,R11[0x0]");
 
-        padTo(0x8001b858);
+        padTo(0x8001e0b4);
         // DAC slot 5 itself, addressed absolutely: state+0x35e is RAM 0x38be,
         // and naming it outright costs the same as a pool word and a
         // displaced store while leaving one fewer word behind the cave.
         emit("MOV R9,0x38be");
         emit("ST.H R9[0x0],R8");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001b868);
+        padTo(0x8001e0c0);
         word(0x8001b590); // the strip's own per-scan watch
-        finish("seq_strip_led", 0x8001b86c);
+        finish("seq_strip_led", 0x8001e0c4);
 
         // The arp's OTHER gate clear.  When no key is held it drops the gate
         // and its LED at every fired step, before choosing a note - and in

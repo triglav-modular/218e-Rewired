@@ -1202,6 +1202,11 @@ FACTORY_CELLS = [
     # every scan at 0x80003120; strip_dac_redirect sends that store to a
     # shadow of ours and seq_strip_led becomes the only writer of the slot.
     (0x38BE, 0x38C0, "state+0x35e: DAC slot 5, the strip"),
+    # Read by seq_strip_led for the finger-down preview: where the finger is
+    # (written by the strip watch at 0x8000ad00 while touched) and whether it
+    # is down at all.  seq_strip reads the same two through a pool word.
+    (0x375E, 0x3760, "state+0x1fe: strip position, raw"),
+    (0x3766, 0x3767, "state+0x206: strip touch flag"),
 ]
 
 # Immediates that are values rather than addresses, so the coverage check does
