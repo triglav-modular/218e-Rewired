@@ -27,6 +27,7 @@ public class ClockRegression extends GhidraScript {
     final List<Integer> dac = new ArrayList<>();
     final List<Long> outputTimes = new ArrayList<>();
     final List<Long> beatTimes = new ArrayList<>();
+    final List<Long> fireTimes = new ArrayList<>();
 
     long pc() { return e.getExecutionAddress().getOffset(); }
     void jump(long p) { e.writeRegister(e.getPCRegister(), p); }
@@ -72,7 +73,11 @@ public class ClockRegression extends GhidraScript {
             jump(e.readRegister("LR").longValue());
             return;
         }
-        if (pc() == 0x8001c914L) advances++;
+        if (pc() == 0x8001c8e0L) advances++;
+        // The pulse-driven step itself, wherever clock_pulse keeps its firing
+        // path: the factory advance entered with interval -1 is that and
+        // nothing else, so a test can time from it on any layout.
+        if (pc() == 0x8000210cL && reg(12)==0xffff) fireTimes.add(nowUs);
         if (pc() == 0x800022deL && periodic) { periodicAdvances++; beatTimes.add(nowUs); }
         int ins = (int)r(pc(),2);
         // Installed AVR32 SLEIGH mis-models BFINS: it inserts the field at the
@@ -159,7 +164,7 @@ public class ClockRegression extends GhidraScript {
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202); // SPI TX ready/empty
         advances=0; periodicAdvances=0; periodic=false; transfers=0;
         transferPitches.clear();
-        pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear();
+        pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear(); fireTimes.clear();
     }
     void irq(long us, boolean high) throws Exception {
         time(us);
@@ -1026,7 +1031,7 @@ public class ClockRegression extends GhidraScript {
         println("main-loop model: one dispatcher pop per pass; hardware was"
                 +" min="+HW_MIN+" mean="+HW_MEAN+" max="+HW_MAX+" us");
         long widest=0;
-        int matches=0;
+        int matches=0, usable=0;
         for (int loopHz : new int[]{2500,2000,1600,1400}) {
             for (int competingHz : new int[]{0,400,800,1200}) {
                 long[] m=loopModel(loopHz,competingHz);
@@ -1035,6 +1040,7 @@ public class ClockRegression extends GhidraScript {
                             +" ring overflowed or lost an output");
                     continue;
                 }
+                usable++;
                 // Within 25% on all three moments: close enough to say the
                 // queue reproduces the instrument, loose enough not to
                 // pretend a four-parameter model is a measurement.
@@ -1057,6 +1063,7 @@ public class ClockRegression extends GhidraScript {
         for (int serviceHz : new int[]{1000,600,400,300,250,200}) {
             long[] m=loopModel(2000,0,serviceHz);
             if (m==null) { println("  service "+serviceHz+" Hz: lost an output"); continue; }
+            usable++;
             boolean near=Math.abs(m[0]-HW_MIN)<=HW_MIN/4+100
                       && Math.abs(m[3]-HW_MEAN)<=HW_MEAN/4
                       && Math.abs(m[1]-HW_MAX)<=HW_MAX/4;
@@ -1080,6 +1087,10 @@ public class ClockRegression extends GhidraScript {
         // charges the dispatch slot but not the handler's run time, so the
         // absolute figure is a lower bound -- but before and after are the
         // same model, and the ratio is what this asserts.
+        // A spread of zero from no model at all is not a measurement: with
+        // every configuration overflowing the ring the check below passed
+        // on nothing.  Some must have run for either verdict to mean much.
+        check("at least one queueing model ran to completion ("+usable+")", usable>0);
         if (deadlineBuild())
             check("the deadline brings every modeled loop rate inside the"
                   +" 1-2 ms target", widest<=TARGET_SPREAD_US);
@@ -1568,6 +1579,107 @@ public class ClockRegression extends GhidraScript {
             check("every drop is half the step or the retrigger gap ("+ds+")",
                   halves+tails==ds.size() && halves>=4 && tails>=2);
             println("PASS an untied step gates half its interval; a tie carries through");
+        } finally { sequencer=mode; }
+    }
+
+    // A tie as the LAST step of a loop.  seq_next_step wraps the cursor to
+    // zero the moment the last step is chosen, so a gate length read from
+    // the cursor's predecessor landed under the step table during that
+    // step, and the note carried into a final tie was cut at half the tie
+    // instead of holding to the retrigger's gap.  Four steps, the fourth a
+    // tie: the first two drop at half, the third carries, the tie's tail
+    // drops at interval minus the factory three.
+    void sequencedGateHoldsAFinalTie() throws Exception {
+        boolean mode=sequencer;
+        try {
+            sequencer=true; fresh(1,25000000);
+            w(0x61e0,1,4);
+            w(0x6160,2,485); w(0x6162,2,525);
+            w(0x6164,2,565); w(0x6166,2,0x7fff);
+            w(S+0x34a,2,20); w(S+0x38e,2,3);
+            java.util.List<long[]> edges=new java.util.ArrayList<>();
+            long last=0;
+            for (long t=10000; t<=260000; t+=1000) {
+                bank(t); service(t); internal(t); flush(t);
+                if (t%5000==0) { time(t); call(0x80003590L,0x100); scan(t); }
+                long lv=r(S+0x354,2)==0?0:1;
+                if (lv!=last) { edges.add(new long[]{t/1000,lv}); last=lv; }
+            }
+            // Each drop is credited to the beat before it, and the beat to
+            // its step in the loop: the fixture starts at step zero.
+            int[] perStep=new int[4]; java.util.List<String> got=new java.util.ArrayList<>();
+            boolean shapes=true;
+            for (long[] e : edges) {
+                if (e[1]!=0 || e[0]<100) continue;
+                int beat=-1;
+                for (int i=0;i<beatTimes.size();i++) if (beatTimes.get(i)/1000<=e[0]) beat=i;
+                if (beat<0) continue;
+                int step=beat%4, d=(int)(e[0]-beatTimes.get(beat)/1000);
+                perStep[step]++; got.add(step+":"+d);
+                boolean half=d>=9&&d<=11, tail=d>=16&&d<=18;
+                if (step<=1 && !half) shapes=false;
+                if (step==3 && !tail) shapes=false;
+            }
+            println("  drops by step (step:ms after its beat): "+got);
+            check("the two untied notes drop at half, the final tie at its tail ("+got+")",
+                  shapes && perStep[0]>=2 && perStep[1]>=2 && perStep[3]>=2);
+            check("the note before the final tie carries through it ("+got+")", perStep[2]==0);
+            println("PASS a loop's final tie holds the note to the retrigger gap");
+        } finally { sequencer=mode; }
+    }
+
+    // The same contract under an external clock, at every division.  The
+    // pulse that fires a step starts the countdown and records where the
+    // gate falls; the pulses between steps must leave both alone.  When
+    // they restarted the countdown as well, the sustain never fell at /2
+    // and above and fell at three quarters at /1 - the threshold was cut
+    // from the pulse, the countdown from the step.  Four plain notes on a
+    // 20 ms clock: once the divider has locked, every drop must land half
+    // a divided step after the pulse that fired it, one drop per step.
+    void sequencedGateIsHalfTheDividedStep() throws Exception {
+        boolean mode=sequencer;
+        try {
+            for (int div : new int[]{1,2,4,8}) {
+                sequencer=true; fresh(div,25000000);
+                w(0x61e0,1,4);
+                w(0x6160,2,485); w(0x6162,2,525); w(0x6164,2,565); w(0x6166,2,605);
+                w(S+0x34a,2,20); w(S+0x38e,2,3);
+                final long period=20000, locked=10000+8*period;
+                long end=locked+4*div*period+2*period;
+                java.util.List<long[]> edges=new java.util.ArrayList<>();
+                long last=0;
+                for (long t=10000; t<=end; t+=1000) {
+                    long phase=(t-10000)%period;
+                    if (phase==0) irq(t,true);
+                    else if (phase==period/2) irq(t,false);
+                    bank(t); service(t); internal(t); flush(t);
+                    if (t%5000==0) { time(t); call(0x80003590L,0x100); scan(t); }
+                    long lv=r(S+0x354,2)==0?0:1;
+                    if (lv!=last) { edges.add(new long[]{t,lv}); last=lv; }
+                }
+                check("/"+div+": the divider locked", r(0x6233,1)==1);
+                int fires=0;
+                for (long f : fireTimes) if (f>=locked) fires++;
+                java.util.List<Long> ds=new java.util.ArrayList<>();
+                for (long[] e : edges) {
+                    if (e[1]!=0 || e[0]<locked) continue;
+                    long fire=-1;
+                    for (long f : fireTimes) if (f<=e[0]) fire=f;
+                    if (fire>=locked) ds.add((e[0]-fire)/1000);
+                }
+                StringBuilder sb=new StringBuilder("  /"+div+": fires after lock "+fires
+                    +", drop after its firing pulse (ms):");
+                for (long d : ds) sb.append(" ").append(d);
+                println(sb.toString());
+                long half=div*period/2000;
+                int inside=0;
+                for (long d : ds) if (d>=half-1 && d<=half+1) inside++;
+                check("/"+div+": the sustain falls once per divided step ("+ds.size()
+                      +" drops for "+fires+" steps)", fires>=3 && ds.size()>=fires-1 && ds.size()<=fires);
+                check("/"+div+": every drop is half the divided step, "+half+" ms ("+ds+")",
+                      !ds.isEmpty() && inside==ds.size());
+            }
+            println("PASS a divided step gates half its length at /1, /2, /4 and /8");
         } finally { sequencer=mode; }
     }
 
@@ -2191,7 +2303,7 @@ public class ClockRegression extends GhidraScript {
             // Both of these play a TAKE, which only a sequencer build has
             // the caves for - under the arp image the fixture would sound
             // nothing at all and fail on the silence.
-            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); }
+            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); sequencedGateHoldsAFinalTie(); sequencedGateIsHalfTheDividedStep(); }
             if (jitterOnly) {
                 bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {

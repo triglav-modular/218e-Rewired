@@ -12,6 +12,7 @@ settings emit different code — so this walks the options.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 import build as build_mod  # noqa: E402
+import options  # noqa: E402
+
+# This harness is here to build the unsupported non-persistent images and
+# say how they behave, so it lifts the refusal in tools/options.py for the
+# builds it spawns.  Nothing that ships passes through here.
+os.environ[options.VOLATILE_ENV] = "1"
+
 BASE = REPO / "config" / "218e.toml"
 TEMP = REPO / "config" / "_sweep.toml"
 
@@ -200,10 +208,16 @@ def audit_call_pools(image_path) -> list[str]:
 # transposes playback - including the bare pad that starts the preview, which
 # chooses an octave on its way in - leaves a preview alone; and when the
 # bootstrap adopted the staged base and target too, whose bootloader
-# leftovers derailed the first touch's portamento until the finger lifted.
+# leftovers derailed the first touch's portamento until the finger lifted;
+# and again when the keyboard stopped reaching the outputs a running take
+# owns, which the earlier keyboard silence had missed - it took the sound and
+# left the notes.  Mono MIDI and the 208 bus both collide with the take one
+# note at a time, so both go quiet; poly MIDI is the one way to play over a
+# take and stays live; and anything the mute would strand is ended at the
+# transition into PLAY.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "21c74070b151abdedc95702d785f9ec9e170619c92c6f8b990e7e7851f7bb758",
+    "historical_config": "3c273e785b4d9968f2d1691403876ce56bf4251a850556bb41dbde64c1b29406",
 }
 
 

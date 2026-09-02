@@ -229,6 +229,33 @@ const REAL = {
   check('a versioned 304 renews the immutable lifetime',
         (res.headers.get('cache-control') || '').includes('immutable'))
 
+  // The page is the page whatever its query string says: a shared link
+  // with ?v= on it must not become immutable for a year.
+  origin = () => new Response('<html>', { status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' } })
+  res = await get('/?v=abc12345')
+  check('a page URL carrying ?v= still revalidates',
+        res.headers.get('cache-control') === 'no-cache',
+        res.headers.get('cache-control'))
+  res = await get('/index.html?v=abc12345')
+  check('so does index.html with ?v=',
+        res.headers.get('cache-control') === 'no-cache',
+        res.headers.get('cache-control'))
+
+  // The route matches everything that starts with the prefix, so a path
+  // that merely starts with it must be refused, not passed to the origin
+  // as a sibling project.
+  let fetched = 0
+  globalThis.fetch = async () => { fetched++; return new Response('ok', { status: 200 }) }
+  res = await worker.fetch(
+    new Request('https://triglavmodular.hu/mods/218e-Rewiredx/style.css'), {})
+  check('a sibling path under the route is refused',
+        res.status === 404 && fetched === 0, `status ${res.status}, fetched ${fetched}`)
+  res = await worker.fetch(
+    new Request('https://triglavmodular.hu/mods/218e-Rewired/style.css'), {})
+  check('while the real path still reaches the origin',
+        res.status === 200 && fetched === 1, `status ${res.status}, fetched ${fetched}`)
+
   globalThis.fetch = realFetch
 }
 

@@ -9,12 +9,16 @@ those properties is already proven identical to Ghidra.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools"))
+import options as OPTIONS  # noqa: E402
+
 JSC = Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc")
 TMP = REPO / "build"
 SCALES = ["tunings/Sabat II (C-rooted).scl", "tunings/5-Limit JI with Septimal 7th.scl",
@@ -193,17 +197,20 @@ CONFIGS = [
                            (r"^clock_divide = true", "clock_divide = false")],
                           {"sequencer": False, "clock_divide": False}),
     ("volatile",          [(r"^persist = true", "persist = false")],
-                          {"persist": False}),
+                          {"persist": False, "unsupported_volatile": True}),
     ("volatile_bare",     [(r"^persist = true", "persist = false"),
                            (r"^sequencer = true", "sequencer = false"),
                            (r"^clock_divide = true", "clock_divide = false")],
-                          {"persist": False, "sequencer": False, "clock_divide": False}),
+                          {"persist": False, "sequencer": False, "clock_divide": False,
+                           "unsupported_volatile": True}),
     ("volatile_seq",      [(r"^persist = true", "persist = false"),
                            (r"^clock_divide = true", "clock_divide = false")],
-                          {"persist": False, "clock_divide": False}),
+                          {"persist": False, "clock_divide": False,
+                           "unsupported_volatile": True}),
     ("volatile_clock",    [(r"^persist = true", "persist = false"),
                            (r"^sequencer = true", "sequencer = false")],
-                          {"persist": False, "sequencer": False}),
+                          {"persist": False, "sequencer": False,
+                           "unsupported_volatile": True}),
     ("non_octave",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
                             + ", ".join(['["tunings/BohlenPierce.scl", '
@@ -248,6 +255,14 @@ CONFIGS = [
 # on the side that lacks it, matching nothing, while the comparison stays
 # silent.  name -> (toml edits, browser options, CLI fragment, page fragment).
 REFUSALS = [
+    # Persistence is mandatory, so a config that turns it off is not a
+    # configuration at all.  Both toolchains have to say so, and say it the
+    # same way - the variants above build only because they ask for the
+    # unsupported image by name.
+    ("volatile_refused",  [(r"^persist = true", "persist = false")],
+                          {"persist": False},
+                          "not a supported configuration",
+                          "not a supported configuration"),
     # A mapping finer than the latch can resolve.  The image is valid in every
     # other way, so nothing downstream would have caught it.
     ("fine_latch",        [(r"^alternate_tunings = false",
@@ -428,9 +443,15 @@ def run(base: str, rows: list) -> None:
     for name, edits, options in CONFIGS:
         cfg_path = prepare(base, name, edits)
         try:
+            # The volatile rows are unsupported images, built here only to prove
+            # the two toolchains still agree on them.  run_refusals() above
+            # deliberately does not lift the refusal.
+            env = dict(os.environ)
+            if options.get("persist") is False:
+                env[OPTIONS.VOLATILE_ENV] = "1"
             built = subprocess.run(
                 [sys.executable, "tools/build.py", "--no-ghidra", "--config", str(cfg_path)],
-                capture_output=True, text=True, cwd=REPO)
+                capture_output=True, text=True, cwd=REPO, env=env)
             if built.returncode != 0:
                 rows.append((name, "build.py failed", "-", True)); continue
             sha = re.search(r"SHA-256 ([0-9a-f]{64})", built.stdout).group(1)

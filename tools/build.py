@@ -135,6 +135,18 @@ def get(cfg: dict, dotted: str):
 # ---------------------------------------------------------------------------
 # Scala parsing and table generation
 # ---------------------------------------------------------------------------
+def read_lines(path: Path) -> list[str]:
+    """The lines of a text file people made elsewhere.
+
+    Scala archive files are often Latin-1 - an accented name in the
+    description - and a spreadsheet saves a CSV with a byte-order mark.  The
+    first raised a decode error and the second put the mark on the first
+    column's name, so the header was never found.  Nothing this reads takes
+    its numbers from a non-ASCII byte, so a replaced character is harmless.
+    """
+    return path.read_bytes().decode("utf-8-sig", errors="replace").splitlines()
+
+
 def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
     """Return the scale degrees in cents, starting at 0 for the tonic.
 
@@ -147,7 +159,7 @@ def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
     whole list is returned, the final degree included - a .kbm then says which
     degree each key takes and which one is the period.
     """
-    raw = [ln for ln in path.read_text().splitlines()
+    raw = [ln for ln in read_lines(path)
            if not ln.lstrip().startswith("!")]
     # The first non-comment line is the description, which the format allows
     # to be blank - so it is consumed by position, never filtered.  Dropping
@@ -240,7 +252,7 @@ def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
     silent, which the firmware has no way to do.
     """
     degree_count = len(cents) - 1
-    raw = [ln for ln in path.read_text().splitlines()
+    raw = [ln for ln in read_lines(path)
            if not ln.lstrip().startswith("!")]
     header, index = [], 0
     while index < len(raw) and len(header) < 7:
@@ -273,14 +285,14 @@ def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
     if size == 0:
         return list(range(degree_count)), formal
 
-    # Blank entries mean unmapped, so the mapping is read WITH its blank lines
-    # - only the header skipped them.  The .kbm format also says: "At the end,
-    # unmapped keys may be left out."  A map may
-    # stop short of its own size and the positions after it are unmapped, so a
-    # So a map may stop short of its own size: that is a legal file, not a
-    # truncated one, and refusing it turned away maps Scala itself reads.  The
-    # tail fills from the nearest mapped position, like any other gap.
-    entries = raw[index:][:size]
+    # Only 'x' marks an unmapped position.  Blank lines are skipped, as in
+    # the header and as Scala's own readers do; taking a blank line as an
+    # entry moved every key after it up by one.  The .kbm format also says:
+    # "At the end, unmapped keys may be left out."  So a map may stop short
+    # of its own size: that is a legal file, not a truncated one, and
+    # refusing it turned away maps Scala itself reads.  The tail fills from
+    # the nearest mapped position, like any other gap.
+    entries = [ln for ln in raw[index:] if ln.strip()][:size]
     entries += [""] * (size - len(entries))
     degrees: list[int | None] = []
     for position, line in enumerate(entries):
@@ -549,7 +561,7 @@ def read_calibration(path: Path) -> dict[int, float]:
     both the coarse octave scaling and each key's own tracking error, so this
     is the only pitch calibration data there is.
     """
-    lines = [ln for ln in path.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    lines = [ln for ln in read_lines(path) if not ln.lstrip().startswith("#")]
     if not lines:
         raise ValueError(f"{path.name}: empty calibration table")
     delimiter = ";" if lines[0].count(";") else ","
@@ -656,7 +668,7 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     reading is relative to firmware that already applies the existing table.
     """
     offsets = read_calibration(calibration)
-    lines = [ln for ln in measurement.read_text().splitlines() if not ln.lstrip().startswith("#")]
+    lines = [ln for ln in read_lines(measurement) if not ln.lstrip().startswith("#")]
     delimiter = ";" if lines[0].count(";") else ","
     updates: dict[int, float] = {}
     for row in csv.DictReader(lines, delimiter=delimiter):
@@ -682,12 +694,15 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     if not updates:
         raise SystemExit(f"{measurement.name}: no Measured_Cents values")
 
-    # Rows above the highest measured note only ever held that note's
-    # correction, so they follow it rather than keeping a stale value.
+    # Extrapolated rows above the highest measured note only ever held that
+    # note's correction, so they follow it rather than keeping a stale
+    # value.  Only the rows that actually hold it, though: a tail beyond a
+    # measured row the reading never reached holds THAT row's correction,
+    # and a partial sweep of the lower keys used to drag it anyway.
     highest = max(updates)
     tail_delta = -updates[highest] * octave_width_volts(offsets, highest)
 
-    text = calibration.read_text().splitlines()
+    text = read_lines(calibration)
     # The reader detects the delimiter and reads columns by header name; the
     # rewrite used to hard-code ';' and columns 3/4, so a comma-delimited
     # table that every build path accepts crashed the fold with a traceback.
@@ -702,6 +717,13 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         raise SystemExit(
             f"{calibration.name}: the fold needs Offset_Cents and Source "
             "columns to rewrite") from None
+    rows = [(int(line.split(cal_delim)[0]), line.split(cal_delim)) for line in text
+            if not (line.lstrip().startswith("#") or line.startswith("Semitone"))]
+    # The tail ends at the first row above the reading that was measured
+    # (or set by the octave calibration) rather than extrapolated.
+    tail_end = min((s for s, parts in rows
+                    if s > highest and parts[source_col] != "extrapolated"),
+                   default=None)
     out, applied, trailing = [], 0, 0
     for line in text:
         if line.lstrip().startswith("#") or line.startswith("Semitone"):
@@ -716,7 +738,8 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
             parts[cents_col] = f"{offsets[semitone] + delta:.6f}"
             parts[source_col] = "measured"
             applied += 1
-        elif semitone > highest and parts[source_col] == "extrapolated":
+        elif (semitone > highest and parts[source_col] == "extrapolated"
+              and (tail_end is None or semitone < tail_end)):
             parts[cents_col] = f"{offsets[semitone] + tail_delta:.6f}"
             trailing += 1
         out.append(cal_delim.join(parts))
@@ -1055,6 +1078,7 @@ RAM_REGIONS = [
     (0x625B, 0x625C, "the step's trigger is claimable by the 1 kHz flush"),
     (0x625C, 0x625D, "which pad a bare hold is counting, plus one"),
     (0x625D, 0x625E, "how many scans it has been held"),
+    (0x625E, 0x6260, "gate-off threshold set by the last pulse that fired a step"),
     (0x6260, 0x62E0, "32-entry clock timestamp FIFO (31 usable)"),
     # Completed edit gestures commit immediately. A failed
     # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
@@ -1100,9 +1124,19 @@ RAM_REGIONS = [
     # because SRAM survives a same-image warm restart.
     (0x6500, 0x6502, "the audition's pinned pitch, plus one"),
     (0x6502, 0x6503, "delete-pad flash countdown, in scans"),
+    # Written by seq_select as it fires a step, read by seq_gate_length for
+    # the length of that step; the cursor is already on the next one.
+    (0x6503, 0x6504, "the sequencer step sounding now"),
     (0x6504, 0x6521, "owner: which key's press made each slot's note, plus one"),
     (0x6521, 0x653E, "current: the slot each key's note lives in, plus one"),
     (0x6540, 0x657A, "slot-indexed pressure weights, rebuilt per scan"),
+    # The strip lamps' cave.  The shadow is where the factory's own DAC slot 5
+    # store was redirected, so it is written every scan whether or not a take
+    # is running; the other three only mean anything inside one.
+    (0x657A, 0x657C, "strip DAC slot 5, redirected out of the factory store"),
+    (0x657C, 0x657D, "strip lamp acknowledgment countdown, in scans"),
+    (0x657D, 0x657E, "which lamp it is: 1 a rest, 2 a tie"),
+    (0x657E, 0x657F, "last scan's step count, for spotting an append"),
 ]
 
 # Factory-owned RAM the patches address absolutely.  Not ours to initialise —
@@ -1138,6 +1172,14 @@ FACTORY_CELLS = [
     # build.  Declared so no region of ours can ever move back in.
     (0x3216, 0x3236, "factory 16-tap pressure history"),
     (0x3490, 0x34AD, "per-key touch state"),
+    # "The keyboard owns a sounding note" - set only inside the mono section
+    # of the contact handler, cleared by its lift and by the release the
+    # transport now does on the way into PLAY.
+    (0x33C5, 0x33C6, "keyboard active-note flag"),
+    # The poly-MIDI setting and the arpeggiator mirror beside it.  Together
+    # they are what the contact and lift handlers fork on, so the play-mode
+    # send guard has to read the same pair.
+    (0x35E4, 0x35E6, "state+0x84/0x85: poly MIDI setting and arp mirror"),
     (0x3599, 0x359A, "state+0x39: global edit mode"),
     (0x35CA, 0x35CC, "state+0x6a/0x6b: transpose enable and knob zone"),
     (0x3686, 0x36C0, "per-key raw pressure"),
@@ -1156,6 +1198,15 @@ FACTORY_CELLS = [
     # claim and clock_output restores it until completion, so a held beat's
     # gate and pitch leave on one transfer.
     (0x38B8, 0x38BA, "state+0x358: DAC slot 2, the pitch"),
+    # The slot the strip's three lamps follow.  The factory wrote it
+    # every scan at 0x80003120; strip_dac_redirect sends that store to a
+    # shadow of ours and seq_strip_led becomes the only writer of the slot.
+    (0x38BE, 0x38C0, "state+0x35e: DAC slot 5, the strip"),
+    # Read by seq_strip_led for the finger-down preview: where the finger is
+    # (written by the strip watch at 0x8000ad00 while touched) and whether it
+    # is down at all.  seq_strip reads the same two through a pool word.
+    (0x375E, 0x3760, "state+0x1fe: strip position, raw"),
+    (0x3766, 0x3767, "state+0x206: strip touch flag"),
 ]
 
 # Immediates that are values rather than addresses, so the coverage check does
@@ -1278,15 +1329,25 @@ def check_factory_entry_points(patches, factory_sha: str) -> None:
             f"{CONTROL_FLOW.name} was generated from a different base image\n"
             f"  recorded {recorded}\n  current  {factory_sha}\n"
             "Regenerate it (see the header of that file) before building.")
-    transfers = [(int(a, 16), int(b, 16)) for a, b in
-                 (l.split() for l in lines if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}$", l))]
+    # "source target", or "source target pool" for a call through a pool
+    # word: tools/factory_control_flow.py decodes those from the image.
+    transfers = []
+    for line in lines:
+        if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}( [0-9a-f]{8})?$", line):
+            fields = [int(f, 16) for f in line.split()]
+            transfers.append((fields[0], fields[1], fields[2] if len(fields) == 3 else None))
+    # A pool call whose pool word a patch rewrites has been redirected: the
+    # factory target is no longer live from that source.
+    patched = {start + i for start, payload, _ in patches for i in range(len(payload))}
+    transfers = [(s, t, p) for s, t, p in transfers
+                 if p is None or not any(p + i in patched for i in range(4))]
 
     problems = []
     for start, payload, description in patches:
         end = start + len(payload)
         # The patch's own start is a legitimate entry point: callers are meant
         # to keep reaching it.  Anything past it is interior.
-        for source, target in transfers:
+        for source, target, _ in transfers:
             if start < target < end and not (start <= source < end):
                 problems.append(
                     f"  {description or 'patch'} [0x{start:08X}..0x{end:08X}) buries "
@@ -1969,6 +2030,14 @@ def main() -> None:
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
     cfg["_numbers"]["tie_glide_rate"] = int(cfg.get("sequencer", {}).get("tie_glide_rate", 60))
+    cfg["_numbers"]["strip_ack_scans"] = int(
+        cfg.get("sequencer", {}).get("strip_ack_scans", 20))
+    cfg["_numbers"]["strip_led_rest_units"] = int(
+        cfg.get("sequencer", {}).get("strip_led_rest_units", 0))
+    cfg["_numbers"]["strip_led_tie_units"] = int(
+        cfg.get("sequencer", {}).get("strip_led_tie_units", 4095))
+    cfg["_numbers"]["strip_led_idle_units"] = int(
+        cfg.get("sequencer", {}).get("strip_led_idle_units", 2048))
     cfg["_numbers"]["clock_min_ms"] = int(cfg.get("sequencer", {}).get("clock_min_ms", 4))
     cfg["_numbers"]["clock_lock_pulses"] = int(
         cfg.get("sequencer", {}).get("clock_lock_pulses", 5))
@@ -2023,6 +2092,7 @@ def main() -> None:
                  "seq_pulse_drop", "pulse_drop_pool", "seq_next_step",
                  "seq_noteoff", "seq_noteoff_hook",
                  "seq_trigger_led", "seq_trigger_led_hook",
+                 "seq_strip_led", "strip_dac_redirect",
                  "seq_edit", "seq_preview_step", "seq_command",
                  "seq_preview_next", "seq_preview_start", "seq_preview_transport",
                  "seq_record_pitch", "seq_preview_pin", "seq_hold", "seq_flash",
@@ -2104,9 +2174,14 @@ def main() -> None:
     version_string = f"Rewired {version} ({digest[:8]})"
     (BUILD / "VERSION").write_text(version_string + "\n")
 
-    # every difference from the factory image must be inside a declared patch
+    # Every difference between the factory image and what the hex on disk
+    # will read back as must be inside a declared patch.  Compared on the
+    # re-parsed rendering, not on the memory the patches were applied to:
+    # that comparison could only ever see addresses the patches wrote, so
+    # it was a tautology, and it skipped addresses a patch added.
     covered = {a + i for a, data, _ in patches for i in range(len(data))}
-    stray = [a for a in original if original[a] != memory[a] and a not in covered]
+    stray = [a for a in set(original) | set(reread)
+             if original.get(a) != reread.get(a) and a not in covered]
     if stray:
         raise SystemExit(f"{len(stray)} byte(s) changed outside any patch")
 

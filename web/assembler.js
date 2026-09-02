@@ -106,7 +106,12 @@ var AVR32 = (function () {
                 // 0x80003776 is MOV R8,-0x1e4 encoded fe78fe1c, and the
                 // formula below reproduces those four bytes exactly - and a
                 // build now emits one, so the corpus covers it from here on.
-                if (v < 0 && v >= -0x200000) v += 0x200000;
+                // The field is sign-extended by the CPU, so it holds
+                // -0x100000..0xFFFFF and nothing else: 0x100000 through
+                // 0x1FFFFF would come back negative, and -0x200000 through
+                // -0x100001 positive, when this accepted the whole 21 bits.
+                if (!fits(v, 21)) return null;
+                if (v < 0) v += 0x200000;
                 if (v >= 0 && v <= 0x1FFFFF) {
                     var up = (v >> 16) & 0x1F;
                     var hi = 0xE0600000 + ((up >> 1) * 0x02000000) +
@@ -164,7 +169,10 @@ var AVR32 = (function () {
             re: /^SUB (\S+),(-?0x[0-9a-fA-F]+)$/, fn: function (m) {
                 var rd = reg(m[1]), v = imm(m[2]);
                 if (rd === null || v === null) return null;
-                if (m[1] === 'SP') {
+                // R13 IS SP: written either way it takes the word-scaled
+                // stack form, or "SUB R13,0x20" encoded as an unscaled
+                // SUB Rd and moved the stack four times as far.
+                if (rd === 13) {
                     // Only word-aligned adjustments are representable; a
                     // stray byte offset would silently encode as v/4 rounded.
                     if (v % 4 !== 0) return null;
@@ -312,7 +320,9 @@ var AVR32 = (function () {
                 var t = TRIADIC[m[1]];
                 var rd = reg(m[2]), rs = reg(m[3]), ri = reg(m[4]), sh = imm(m[5]);
                 if (rd === null || rs === null || ri === null || sh === null) return null;
-                if (sh < 0 || sh > 15) return null;
+                // Two bits of shift, as for the indexed loads and stores; a
+                // larger one spilled into the reserved bits above it.
+                if (sh < 0 || sh > 3) return null;
                 return triadic(rs, ri, t[0], sh, rd);
             }
         },
@@ -710,6 +720,9 @@ var RT = (function () {
         if (encoded === null) {
             throw new Error(fmt('cannot encode at %08x: %s', address, instruction));
         }
+        // EXTENT before the enable check, as the Java prints it: without it
+        // the --no-ghidra build's collision check never saw these patches.
+        println(fmt('EXTENT %08x %08x %s', address, address + encoded.length, name));
         if (!block(name)) {
             println('SKIP ' + name + ' (disabled by build config)');
             return;
@@ -718,6 +731,7 @@ var RT = (function () {
     }
 
     function wordPatch(name, address, value, comment) {
+        println(fmt('EXTENT %08x %08x %s', address, address + 4, name));
         if (!block(name)) {
             println('SKIP ' + name + ' (disabled by build config)');
             return;
@@ -726,6 +740,7 @@ var RT = (function () {
     }
 
     function fixedPatch(name, address, length, instruction) {
+        println(fmt('EXTENT %08x %08x %s', address, address + length, name));
         begin(address);
         emit(instruction);
         if (pc > address + length) throw new Error('Instruction does not fit fixed patch');
@@ -2353,6 +2368,13 @@ function assembleProgram() {
         // (state+0x2ad6 = RAM 0x6036) instead of the DAC slot directly.
         fixedPatch("pressure_target_redirect", 0x80002db2, 4, "ST.H R9[0x2ad6],R8");
 
+        // The strip's slewed value now lands on a shadow (state+0x301a =
+        // RAM 0x657a) instead of DAC slot 5, so seq_strip_led is the only
+        // writer of the slot the strip's three lamps follow.  Gated
+        // with that cave: without it nothing would write the slot at all and
+        // the strip's own output would die.
+        fixedPatch("strip_dac_redirect", 0x80003120, 4, "ST.H R9[0x301a],R8");
+
         // Local proximity estimator.  R12 is the held key being corrected.
         // Walk outward on each
         // side past touched keys (and past the immediate neighbours, which
@@ -2978,6 +3000,12 @@ function assembleProgram() {
         emit("ST.H R10[0x216],R8");
         emit("ST.H R10[0x354],R8");
         emit("ST.H R10[0x358],R8");
+        // And the shadow DAC slot 5 was redirected to (RAM 0x657a).  The lamp
+        // cave hands it on whenever a take is not running, and it may read it
+        // before the factory's own strip pass has written it once - so
+        // without this the strip's jack could carry one scan of whatever the
+        // bootloader left, which is a spike into whatever it is patched to.
+        emit("ST.H R10[0x301a],R8");
         // And the staged base and target themselves.  A note-on rewrites
         // them, but the scans BEFORE the first note run the whole blend
         // chain against whatever the bootloader left in the base - measured
@@ -3913,7 +3941,8 @@ function assembleProgram() {
         word(0x8000673c); // led_flush()
         word(0x8001b2a0); // write_channel(R11, R9)
         word(0x8001b660); // seq_enter(R11 = the pad pressed)
-        word(0x8001b590); // the strip, per scan
+        // The strip's per-scan watch, or the lamp cave that calls it first.
+        word(block("seq_strip_led") ? 0x8001e000 : 0x8001b590);
         finish("seq_chord", 0x8001b320);
 
         // Explicit pad transport: record appends, play starts at the top,
@@ -4615,35 +4644,51 @@ function assembleProgram() {
         emit("LSR R12,0x7");
         emit("SUB R12,-0x1");           // /1 .. /8
         padTo(0x8001c8d0);
-        // Keep the factory gate-off countdown alive without allowing the
-        // internal timer to generate extra steps while an input is present.
-        emit("MOV R9,R1");
-        emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001c8dc");
-        emit(StringFormat("MOV R9,0x%x",
-             number("clock_release_ms", 2600, 100, 32000)));
-        padTo(0x8001c8dc);
-        emit("MUL R9,R9,R12");
-        emit("MOV R11,R9");
-        emit("LSR R11,0x2");
-        emit("ADD R9,R11");
-        emit("SUB R9,-0x2");
-        emit("MOV R11,0x7fff");
-        emit("CP.W R9,R11");
-        emit("BR{le} 0x8001c8f8");
-        emit("MOV R9,R11");
-        padTo(0x8001c8f8);
-        emit("LDDPC R11,0x8001c9e0");
-        emit("ST.H R11[0x38e],R9");
+        // Only the pulse that fires a step touches the countdown.  It starts
+        // it a quarter above the divided step, so the internal timer cannot
+        // run it out before the next firing pulse, and records beside it
+        // the gate-off threshold seq_gate_length answers with: that start
+        // less half the step, which puts the drop at the step's midpoint.
+        //
+        // A pulse between steps used to restart the countdown too.  Under
+        // /2 and above that kept it forever above a threshold cut from the
+        // PULSE period, so the sustain never fell, and under /1 the same
+        // threshold dropped it at three quarters.  Such a pulse now advances
+        // the divide phase and nothing else: the margin the firing pulse
+        // left covers the whole step, and clock_gate holds the internal
+        // timer for as long as a clock is about in any case.
         emit("LD.UB R11,R10[0x7]");
         emit("SUB R11,-0x1");
         emit("CP.W R11,R12");
-        emit("BR{ge} 0x8001c914");
-        emit("ST.B R10[0x7],R11");
+        emit("BR{ge} 0x8001c8e0");
+        emit("ST.B R10[0x7],R11");      // between steps: count it, leave the countdown
         emit("LDM SP++,R0,R1,R7,PC");
-        padTo(0x8001c914);
+        padTo(0x8001c8e0);
         emit("MOV R11,0x0");
         emit("ST.B R10[0x7],R11");
+        emit("MOV R9,R1");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001c8f0");
+        emit(StringFormat("MOV R9,0x%x",
+             number("clock_release_ms", 2600, 100, 32000)));
+        padTo(0x8001c8f0);
+        emit("MUL R9,R9,R12");          // the divided step, in ms
+        emit("MOV R12,R9");
+        emit("LSR R12,0x1");            // half of it
+        emit("MOV R11,R9");
+        emit("LSR R11,0x2");
+        emit("ADD R9,R11");
+        emit("SUB R9,-0x2");            // where the countdown starts: a quarter over, plus two
+        emit("MOV R11,0x7fff");
+        emit("CP.W R9,R11");
+        emit("BR{le} 0x8001c910");
+        emit("MOV R9,R11");
+        padTo(0x8001c910);
+        emit("LDDPC R11,0x8001c9e0");
+        emit("ST.H R11[0x38e],R9");
+        emit("SUB R9,R9,R12 << 0x0");   // and where on the way down the gate falls
+        emit("MOV R11,0x625e");
+        emit("ST.H R11[0x0],R9");
         emit("MOV R11,0x6237");
         emit("MOV R12,0x1");
         emit("ST.B R11[0x0],R12");       // even a rest/tie gets its own pitch scan
@@ -4803,6 +4848,13 @@ function assembleProgram() {
         // still has priority, and the attack-drop itself is untouched - four
         // milliseconds at the default trigger_spike_units of 5, which this
         // guard's four-millisecond window exactly covers.
+        //
+        // Whatever the threshold is.  It used to arm only at the factory's
+        // three, which was every threshold a clocked step asked for while
+        // the drop was cut from the pulse period and floored there; a
+        // divided step asks for half of itself, and at a fast clock that
+        // is inside the spike.  Only a tie's tail, which asks for no drop
+        // at all, has nothing to guard.
         begin(0x8001ca80);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -4811,8 +4863,9 @@ function assembleProgram() {
         } else {
             emit("MOV R8,0x3");
         }
-        emit("CP.W R8,0x3");
-        emit("BR{ne} 0x8001cb10");
+        emit("MOV R9,-0x8000");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001cb10");      // a tie's tail: no drop to guard
         emit("MOV R10,0x6234");
         emit("LD.UB R9,R10[0x2]");
         emit("CP.W R9,0x0");
@@ -4822,7 +4875,7 @@ function assembleProgram() {
         emit("BR{eq} 0x8001cb10");
         emit("LDDPC R11,0x8001cb18");
         emit("LD.SH R9,R11[0x38e]");
-        emit("CP.W R9,0x3");
+        emit("CP.W R9,R8");             // at the threshold this step asked for
         emit("BR{ne} 0x8001cb10");
         emit("LD.W R9,R10[0x20]");
         emit("MFSR R12,COUNT");
@@ -4832,7 +4885,8 @@ function assembleProgram() {
         emit("SUB R12,0x1");
         emit("CP.W R9,R12");
         emit("BR{hi} 0x8001cb10");
-        emit("MOV R9,0x4");
+        emit("MOV R9,R8");
+        emit("SUB R9,-0x1");            // one above it: the same compare, a tick later
         emit("ST.H R11[0x38e],R9");
         emit("MOV R8,-0x8000");
         padTo(0x8001cb10);
@@ -5077,7 +5131,13 @@ function assembleProgram() {
         emit("BR{ge} 0x8001cf90");
         emit("MOV R8,0x640c");
         emit("ADD R8,R8,R1 << 0x1");
-        emit("LD.UH R9,R8[0x0]");
+        // SIGNED: a step is relative to its take's reference, so a note
+        // recorded under a pad below that reference is negative.  Loaded
+        // unsigned, every negative pitch sat above both sentinels and its
+        // key stayed zero - the CV came back right after a power cycle and
+        // MIDI named every such step note 0.  Of a signed halfword only the
+        // two sentinels reach 0x7ffe.
+        emit("LD.SH R9,R8[0x0]");
         emit("MOV R8,0x631c");
         emit("ADD R8,R8,R1 << 0x1");
         emit("ST.H R8[0x0],R9");
@@ -5357,7 +5417,9 @@ function assembleProgram() {
         emit("BR{ge} 0x8001d350");
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R1 << 0x1");
-        emit("LD.UH R9,R8[0x0]");
+        // Signed, as persist_pack reads it: a negative step is a pitch
+        // with a key, not a rest.
+        emit("LD.SH R9,R8[0x0]");
         emit("CP.W R9,0x7ffe");
         emit("BR{ge} 0x8001d350");
         emit("MOV R8,0x61ee");
@@ -5365,7 +5427,9 @@ function assembleProgram() {
         emit("LD.UB R11,R8[0x0]");
         padTo(0x8001d350);
         emit("ADD R10,R3,R1 << 0x1");
-        emit("LD.UH R8,R10[0xc]");
+        // The snapshot must be read the same way, or a negative step would
+        // never compare equal and every capture would write flash again.
+        emit("LD.SH R8,R10[0xc]");
         emit("CP.W R8,R9");
         emit("BR{eq} 0x8001d366");
         emit("MOV R0,0x1");
@@ -5572,7 +5636,7 @@ function assembleProgram() {
         emit("BR{eq} 0x8001d750");
         emit("CP.W R1,0x2");
         emit("BR{ne} 0x8001d670");
-        emit("MCALL PC[0x8001d76c]");    // end any preceding arp note on PLAY
+        emit("MCALL PC[0x8001d76c]");    // seq_release: end the arp's note
         padTo(0x8001d670);
         emit("ST.B R12[0x4],R1");
         emit("CP.W R0,0x2");
@@ -5612,7 +5676,7 @@ function assembleProgram() {
         emit("LDM SP++,R0,R1,R2,R7,R9,R12,PC");
         padTo(0x8001d768);
         word(0x8001b6c0);
-        word(0x8001b448);
+        word(0x8001b448); // seq_release
         word(0x00003560);
         word(0x80002b28);
         finish("seq_transport", 0x8001d780);
@@ -6601,6 +6665,8 @@ function assembleProgram() {
         emit("MOV R9,0x61ea");
         emit("ST.H R9[0x0],R8");
         emit("ST.H R9[0x2],R8");
+        emit("MOV R9,0x625e");          // the threshold the last step set goes with the period
+        emit("ST.H R9[0x0],R8");
         emit("LD.SH R8,R11[0x34a]");
         emit("ST.H R11[0x38e],R8");
         padTo(0x8001c540);
@@ -7274,7 +7340,7 @@ function assembleProgram() {
         word(0x8000f160); // give the bus back
         word(0x80007e44); // MIDI note off, port one
         word(0x800081f0); // MIDI note off, port two
-        word(0x80002440); // gate to zero and flush it
+        word(0x8001beb0); // seq_release_gate: gate to zero, unless a key is held
         word(0x800068cc); // led_clear(ch)
         finish("seq_release", 0x8001b4f0);
 
@@ -7300,15 +7366,20 @@ function assembleProgram() {
         word(0x80007540); // the factory's own drop to the sustain
         finish("seq_pulse_drop", 0x8001b32c);
 
-        // While the sequencer PLAYS, the keyboard is silent: the note-on
-        // pool points here instead of at the filter-reset wrapper, and a
-        // press in play mode simply never becomes a note - no sound, no
-        // MIDI, no latch churn, no press-order entry - so the running take
-        // cannot be yanked off pitch by a stray finger.  Releases are not
+        // While the sequencer PLAYS with the arp switch OFF the keyboard is
+        // LIVE: a press sounds over the take - pitch, gate, trigger, MIDI and
+        // the 208 bus, all through the factory's own contact path - and the
+        // caves at 0x8001be50 settle who owns the one voice.  The mute is
+        // kept only for the two switch positions where the keyboard is not
+        // live anyway.  With the arp engaged a press joins the held table,
+        // and the contact handler's first-key rule then steps the arp at
+        // once and reloads its countdown from RATE - which, while the
+        // sequencer owns that engine, is a step stolen from the take and its
+        // phase thrown away.  So there the press means nothing: no held
+        // count, no latch churn, no press-order entry.  Releases are not
         // routed through this pool and still land; a press swallowed here
         // leaves nothing for its release to find, which the release path's
-        // own guards already treat as a no-op.  Every other surface - the
-        // pads, the knobs, the strip - keeps its transport and edit jobs.
+        // own guards already treat as a no-op.
         // R8/R9 are restored because the factory caller had the wrapper's
         // own STM preserving them.
         begin(0x8001b330);
@@ -7317,13 +7388,18 @@ function assembleProgram() {
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x2");
-        emit("BR{eq} 0x8001b346");      // playing: the press means nothing
-        emit("MCALL PC[0x8001b34c]");   // anything else: the real note-on
-        padTo(0x8001b346);
+        emit("BR{ne} 0x8001b34a");      // stopped or recording: the real note-on
+        emit("MOV R8,0x38a0");          // state+0x340/341 in one halfword
+        emit("LD.UH R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001b34e");      // playing, arp engaged: the press means nothing
+        padTo(0x8001b34a);
+        emit("MCALL PC[0x8001b354]");   // the real note-on
+        padTo(0x8001b34e);
         emit("LDM SP++,R7,R8,R9,PC");
-        padTo(0x8001b34c);
+        padTo(0x8001b354);
         word(0x80018d00); // note_on_reset_raw_filter
-        finish("seq_noteon_mute", 0x8001b350);
+        finish("seq_noteon_mute", 0x8001b358);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does, everywhere but play mode.  A playing
@@ -7378,11 +7454,11 @@ function assembleProgram() {
         emit("MOV R8,-0x8000");         // a tie next: carry the gate into it
         emit("RJMP 0x8001b53c");
         padTo(0x8001b538);
-        emit("MCALL PC[0x8001b548]");   // seq_gate_length -> R8
+        emit("MCALL PC[0x8001b548]");   // seq_gate_held, then seq_gate_length -> R8
         padTo(0x8001b53c);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b548);
-        word(0x8001b740); // seq_gate_length
+        word(0x8001bed0); // seq_gate_held: a held key holds the gate, else seq_gate_length
         word(0x8001b4f0); // this cave, for the caller too far away to pool it
         finish("seq_gate", 0x8001b550);
 
@@ -7393,20 +7469,27 @@ function assembleProgram() {
         // threshold; a leaf, clobbers R9-R11, which every seq_gate caller
         // already treats as scratch.
         //
-        // The step playing NOW is the cursor's predecessor.  When it is a
-        // tie, the gate has carried this far and only the retrigger's gap
-        // is owed, so the factory three stands - halving the tie's own
-        // step would cut the carried note short.  (Before the first step
-        // fires the predecessor read lands two bytes under the step table;
-        // a read only, and the gate is not up yet for any answer to cut.)
+        // The step playing NOW is the one seq_select last fired, kept at
+        // 0x6503.  It used to be read as the cursor's predecessor, which
+        // is wrong twice over: seq_next_step wraps the cursor to zero as
+        // soon as the last step is chosen, so during the last step the
+        // read landed two bytes under the step table, and under the
+        // shuffle the cursor is whatever the draw chose.  A final tie was
+        // cut at half its step instead of carrying to the retrigger's gap.
+        // When the step is a tie, the gate has carried this far and only
+        // that gap is owed, so the factory three stands - halving the tie's
+        // own step would cut the carried note short.  (Before the first
+        // step fires the cell holds whatever the last play left; only the
+        // sign of the answer is read then, and the gate is not up yet.)
         //
-        // The interval is the one the countdown rides: the measured clock
-        // period while pulses are about - clock_gate pushes the countdown
-        // by exactly that cell - and the RATE interval otherwise.
+        // Under a clock the answer was made by the pulse that fired the
+        // step: clock_pulse starts the countdown a quarter above the
+        // divided step and records that start less half the step, so the
+        // drop lands at the midpoint whatever the division.  Otherwise it
+        // is half the RATE interval the countdown started from.
         begin(0x8001b740);
-        emit("MOV R10,0x61e0");
-        emit("LD.UB R9,R10[0x1]");      // the cursor: the step about to play
-        emit("SUB R9,0x1");             // so this is the one playing now
+        emit("MOV R10,0x6503");
+        emit("LD.UB R9,R10[0x0]");      // the step playing now
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R9 << 0x1");
         emit("LD.SH R8,R8[0x0]");
@@ -7419,20 +7502,21 @@ function assembleProgram() {
         emit("MOV R8,0x6236");          // a clock about?
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001b774");
-        emit("MOV R8,0x61ea");
-        emit("LD.UH R8,R8[0x0]");       // the measured period, in ticks
+        emit("BR{eq} 0x8001b778");
+        emit("MOV R8,0x625e");          // the threshold its firing pulse set
+        emit("LD.UH R8,R8[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001b77a");      // none measured yet: RATE's interval
-        padTo(0x8001b774);
+        emit("BR{eq} 0x8001b778");      // none set yet: RATE's interval
+        emit("RJMP 0x8001b780");
+        padTo(0x8001b778);
         emit("MOV R8,0x38aa");          // state+0x34a, the RATE interval
         emit("LD.SH R8,R8[0x0]");
-        padTo(0x8001b77a);
         emit("ASR R8,0x1");
+        padTo(0x8001b780);
         emit("CP.W R8,0x3");
-        emit("BR{ge} 0x8001b782");
+        emit("BR{ge} 0x8001b786");
         emit("MOV R8,0x3");
-        padTo(0x8001b782);
+        padTo(0x8001b786);
         emit("MOV PC,LR");
         finish("seq_gate_length", 0x8001b788);
 
@@ -7459,6 +7543,184 @@ function assembleProgram() {
         padTo(0x8001b7a8);
         word(0x8000698c); // select_pad(0..3)
         finish("select_pad_guard", 0x8001b7ac);
+
+        // The strip's three lamps, and the acknowledgment they carry while
+        // a take is recording.
+        //
+        // Those lamps are not on the LED shift register.  All sixteen of its
+        // bits are accounted for - four pads, rem-en, trn, pm, the two preset
+        // outputs, the strip's own pulse, and six the factory never writes -
+        // and led_set is the only way any of them move.  The three that sit
+        // along the strip follow its ANALOG output instead: DAC slot 5,
+        // state+0x35e, which the factory rewrites every scan at 0x80003120
+        // from the slewed strip position, and which the 1 kHz flush sends
+        // with the other seven slots from state+0x354.  So the way to light
+        // them is to own that slot, and strip_dac_redirect sends the
+        // factory's own store to a shadow at 0x657a to make this cave the
+        // only writer of it.  Nothing reads 0x35e back - it is a DAC slot and
+        // nothing else - so owning it cannot disturb anything musical.
+        //
+        // What the three lamps are, from the User's Guide (v5.1, "Welcome
+        // to the strip!"): the two blue LEDs at the ends light when the
+        // voltage approaches 0 V or 10 V, and the MIDDLE LED shows the
+        // overall level - its brightness IS the CV.  So 0 lights the left
+        // end with the centre dark, 2048 is the centre alone at half
+        // brightness, and 4095 lights the right end with the centre at full.
+        // Nothing lights the right end alone, and nothing is ever dark: a
+        // take rests on the half-bright centre, a rest goes to the left end,
+        // a tie to the right end with the centre bright.  Confirmed on the
+        // instrument once the value was held for a whole touch; the earlier
+        // "dot display, 4095 the right lamp alone" reading was wrong about
+        // the high end, which a 100 ms flash had hidden.
+        //
+        // The cost, stated plainly: slot 5 is the strip OUTPUT JACK, so a
+        // flash leaves the module as CV.  It is not a new cost.  Entering a
+        // rest means touching the strip, and a touch already drove that jack
+        // to wherever the finger was; pinning the slot for the take makes the
+        // jack quieter during a take than it is now, not noisier.
+        //
+        // While the finger is DOWN the lamp shows the side it is on - left
+        // below halfway, right above - so the player sees which entry they
+        // are about to make, and sees it at the touch rather than at the
+        // lift.  The entry itself still lands on release (seq_strip), and the
+        // factory's release detection is slow: its sensor conditioner at
+        // 0x80005268 passes a reading that FELL only every tenth scan, so a
+        // lift registers up to 50 ms late, and a feedback that waited for the
+        // landing waited for the whole tap and then that.  The preview is
+        // gated on exactly what the landing is gated on - record, the strip's
+        // latch at 0x61e4 reading 1 (this touch may produce a step; 2 is a
+        // touch carried across transport that never will), and fewer than 64
+        // steps - so a touch that will not land shows nothing.  The halfway
+        // point is the same number seq_strip decides by, read through the
+        // same setting, so the two cannot disagree.
+        //
+        // A landed entry is read out of the step store rather than signalled
+        // by the strip cave, which leaves that tested block untouched: the
+        // count at 0x61e0 going UP BY ONE with 0x7ffe or 0x7fff on top is
+        // exactly what a rest or a tie that landed looks like.  A touch the
+        // 64-step ceiling or the transport rejected never moves the count; a
+        // played note moves it but leaves a pitch on top; a backspace or a
+        // clear moves it the wrong way.  The shadow count is resynced every
+        // scan, so none of those can arm a flash.  After the lift the side
+        // holds for the acknowledgment, then the lamp settles to the middle.
+        //
+        // RAM off 0x657a: +0 the redirected strip value (halfword), +2 the
+        // acknowledgment countdown in scans, +3 which side it was (1 rest,
+        // 2 tie), +4 last scan's step count.  Only the shadow needs the
+        // first-use fill - the countdown is rewritten every scan a take is
+        // not running, and the count is resynced every scan unconditionally.
+        //
+        // This cave lives above the others at 0x8001e000: it outgrew the
+        // 0xb8 bytes it had at 0x8001b7b0, and the flash from 0x8001dfd0 up
+        // to the persistence pages at 0x8003e000 is erased in the factory
+        // image.  seq_chord's pool word at 0x8001b31c is what reaches it.
+        begin(0x8001e000);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001e0c0]");   // the strip's own watch, first
+        emit("MOV R10,0x61e0");         // the step store; +0 is the count
+        emit("MOV R11,0x657a");
+        emit("LD.UB R8,R10[0x0]");
+        emit("LD.UB R9,R11[0x4]");
+        emit("ST.B R11[0x4],R8");       // resync first, whatever follows
+        emit("SUB R9,-0x1");
+        emit("CP.W R8,R9");
+        emit("BR{ne} 0x8001e050");      // no append, or not by exactly one
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x8001e050");      // only record acknowledges anything
+        emit("SUB R8,0x1");
+        emit("MOV R12,0x6160");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("LD.SH R12,R12[0x0]");     // the step that just landed
+        // The side is chosen BEFORE each compare, the way the strip's own
+        // cave chooses one: nothing may sit between a CP and the branch that
+        // reads its flags.
+        emit("MOV R8,0x1");             // a rest: the left end
+        emit("MOV R9,0x7ffe");
+        emit("CP.W R12,R9");
+        emit("BR{eq} 0x8001e048");
+        emit("MOV R8,0x2");             // a tie: the right end
+        emit("MOV R9,0x7fff");
+        emit("CP.W R12,R9");
+        emit("BR{ne} 0x8001e050");      // neither: a played note
+        padTo(0x8001e048);
+        emit("ST.B R11[0x3],R8");
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_ack_scans", 20, 2, 250)));
+        emit("ST.B R11[0x2],R8");
+
+        padTo(0x8001e050);
+        // The slot itself, every scan.  Outside record the shadow is handed
+        // straight on, which is the factory's own behaviour with one store of
+        // indirection in front of it; inside record the lamps are ours.
+        emit("MOV R9,0x6154");
+        emit("LD.UB R9,R9[0x4]");
+        emit("CP.W R9,0x1");
+        emit("BR{ne} 0x8001e0ac");
+        // Down, and going to land: the side the finger is on right now.
+        emit("MOV R9,0x3560");          // global state base
+        emit("LD.UB R8,R9[0x206]");     // the touch flag
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001e088");
+        emit("LD.UB R8,R10[0x4]");      // the strip's latch
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001e088");      // carried across transport: no entry
+        emit("LD.UB R8,R10[0x0]");
+        emit("CP.W R8,0x40");
+        emit("BR{ge} 0x8001e088");      // 64 steps: the release will refuse it
+        emit("LD.SH R12,R9[0x1fe]");    // where the finger is
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_halfway_units", 2048, 128, 3968)));
+        emit("CP.W R12,R8");
+        emit("BR{ge} 0x8001e09c");      // above halfway: the tie's lamp
+        padTo(0x8001e080);
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_led_rest_units", 0, 0, 4095)));
+        emit("RJMP 0x8001e0b4");
+
+        padTo(0x8001e088);
+        // Up, or a touch that will not land: the acknowledgment if one is
+        // still running, the half-bright centre otherwise.
+        emit("LD.UB R8,R11[0x2]");      // still acknowledging?
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001e0a4");
+        emit("SUB R8,0x1");
+        emit("ST.B R11[0x2],R8");
+        emit("LD.UB R8,R11[0x3]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001e09c");
+        emit("RJMP 0x8001e080");        // a rest: the left end
+        padTo(0x8001e09c);
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_led_tie_units", 4095, 0, 4095)));
+        emit("RJMP 0x8001e0b4");
+        padTo(0x8001e0a4);
+        emit(StringFormat("MOV R8,0x%x",
+             number("strip_led_idle_units", 2048, 0, 4095)));
+        emit("RJMP 0x8001e0b4");
+
+        padTo(0x8001e0ac);
+        // Not recording.  An acknowledgment still in flight dies with the
+        // take, so leaving record cannot resume a flash into a mode that has
+        // none - and the lamps go back to following the strip on the next
+        // scan, repainted from the shadow rather than from anything we
+        // remembered.
+        emit("MOV R8,0x0");
+        emit("ST.B R11[0x2],R8");
+        emit("LD.SH R8,R11[0x0]");
+
+        padTo(0x8001e0b4);
+        // DAC slot 5 itself, addressed absolutely: state+0x35e is RAM 0x38be,
+        // and naming it outright costs the same as a pool word and a
+        // displaced store while leaving one fewer word behind the cave.
+        emit("MOV R9,0x38be");
+        emit("ST.H R9[0x0],R8");
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001e0c0);
+        word(0x8001b590); // the strip's own per-scan watch
+        finish("seq_strip_led", 0x8001e0c4);
 
         // The arp's OTHER gate clear.  When no key is held it drops the gate
         // and its LED at every fired step, before choosing a note - and in
@@ -7664,9 +7926,9 @@ function assembleProgram() {
         // A rest and a tie are kept where a pitch cannot reach.  Both answer
         // -1, so nothing is retriggered; what separates them is the gate,
         // which seq_gate holds up across a tie and lets fall on a rest.
-        emit("MOV R12,0x7ffe");
+        emit("MCALL PC[0x8001b440]");   // seq_key_priority: 0x7ffe, or -0x8000 under a held key
         emit("CP.W R8,R12");
-        emit("BR{ge} 0x8001b3d4");
+        emit("BR{ge} 0x8001b3d4");      // a rest, a tie, or a note the keyboard outranks
         emit("MOV R12,0x61e2");
         emit("ST.H R12[0x0],R8");       // the pitch this step sounds
         // and the key it was played on, which is what MIDI names it by.  R0
@@ -7676,6 +7938,11 @@ function assembleProgram() {
         emit("MOV R12,0x61ee");
         emit("ADD R12,R12,R9 << 0x0");
         emit("LD.UB R0,R12[0x0]");
+        // Which step this is, for seq_gate_length: the cursor's predecessor
+        // is not it once the last step has wrapped the cursor to zero, nor
+        // under the shuffle, where the cursor is whatever the draw chose.
+        emit("MOV R12,0x6503");
+        emit("ST.B R12[0x0],R9");
         emit("MCALL PC[0x8001b43c]");   // which step plays next
         padTo(0x8001b3b8);
         emit("ST.B R10[0x1],R9");
@@ -7694,7 +7961,9 @@ function assembleProgram() {
         // A rest or a tie: step past it, sound nothing new.  A tie arms the
         // slide into whatever follows; a rest ENDS one, so the note after a
         // rest attacks cleanly rather than sliding in from a note two steps
-        // back that the rest already silenced.
+        // back that the rest already silenced.  A note under a held key
+        // arrives here too, reading as a rest: the keyboard has the voice,
+        // and the step is spent without sounding.
         emit("MOV R12,0x7fff");
         emit("CP.W R8,R12");
         emit("MOV R8,0x0");             // a rest: the slide ends here
@@ -7703,6 +7972,8 @@ function assembleProgram() {
         padTo(0x8001b3e0);
         emit("MOV R12,0x61e5");
         emit("ST.B R12[0x0],R8");
+        emit("MOV R12,0x6503");         // this step, tie or rest, is the one sounding
+        emit("ST.B R12[0x0],R9");
         emit("MCALL PC[0x8001b43c]");   // which step plays next
         padTo(0x8001b3f0);
         emit("ST.B R10[0x1],R9");
@@ -7732,7 +8003,8 @@ function assembleProgram() {
         word(arpSelector);
         word(0x8001b2e8); // what the selector answers while recording
         word(0x8001d860); // preview-aware next step; normal play still shuffles
-        finish("seq_select", 0x8001b440);
+        word(0x8001be80); // seq_key_priority
+        finish("seq_select", 0x8001b444);
 
         // Which step plays next.
         //
@@ -7837,6 +8109,179 @@ function assembleProgram() {
         padTo(0x8001bb30);
         word(0x00003560); // global state base
         finish("clock_gate", 0x8001bb34);
+
+        // The keyboard over a running take.
+        //
+        // With the arp switch OFF the keyboard is live while the sequencer
+        // plays, through the factory's own contact and lift handlers: a
+        // press sets the pitch, sends its MIDI note on both ports and the
+        // 208 bus, and fires the pulse; a lift ends the note.  And the
+        // keyboard has PRIORITY: for as long as a key is under a finger the
+        // take is silent on every output and only keeps time.
+        //
+        //   - a press ends the note the sequencer is sounding, on the bus
+        //     and both ports, the way STOP would (seq_key_takes, on the two
+        //     factory sites that read a key's MIDI note: the press, and the
+        //     note handed back to a key still held when another is let go);
+        //   - a note step under a held key is spent without sounding
+        //     (seq_key_priority): no pitch, no spike, no MIDI - it reads as
+        //     a rest and the cursor moves on, so the take is in the right
+        //     place when the key is let go;
+        //   - a held key holds the gate (seq_gate_held): the sequencer's
+        //     half-step drop and its rests do not cut a note the player is
+        //     holding, and its own lift is what ends it;
+        //   - a key held into PLAY keeps sounding (seq_release_gate): the
+        //     arp note seq_release ends on the way in is not the key's, so
+        //     the gate it would drop stays up.  On the way OUT the factory's
+        //     own arp-off transition then ends every note and drops the
+        //     gate, keyboard included, as it does whenever the arp switch is
+        //     turned off under a held key; STOP is that switch.
+        //
+        // With the arp switch ON the keyboard is not live in any mode, and
+        // seq_noteon_mute keeps a press off the take entirely.
+
+        // Whether the keyboard is live and a key is under a finger.  R8 = 1
+        // if so, else 0.  A leaf that keeps R9-R12: it answers for callers
+        // that are packed to the register.
+        begin(0x8001be50);
+        emit("ST.W --SP,R9");
+        emit("MOV R8,0x0");
+        emit("MOV R9,0x38a0");          // state+0x340/341 in one halfword
+        emit("LD.UH R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001be6c");      // arp engaged: the keyboard is not live
+        emit("LDDPC R9,0x8001be74");
+        emit("LD.UB R9,R9[0x238]");     // a key under a finger?
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001be6c");
+        emit("MOV R8,0x1");
+        padTo(0x8001be6c);
+        emit("LD.W R9,SP++");
+        emit("MOV PC,LR");
+        padTo(0x8001be74);
+        word(0x00003560); // global state base
+        finish("seq_key_held", 0x8001be78);
+
+        // seq_select's bound between a pitch and a rest or tie.  R8 = the
+        // step, R9-R11 seq_select's own; R12 = 0x7ffe, or -0x8000 while a
+        // key is held so that every step reads as silent and is spent.
+        begin(0x8001be80);
+        emit("STM --SP,R7,R8,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001bea8]");   // seq_key_held -> R8
+        emit("MOV R12,0x7ffe");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001be9a");
+        emit("MOV R12,-0x8000");        // the keyboard has the voice
+        padTo(0x8001be9a);
+        emit("LDM SP++,R7,R8,PC");
+        padTo(0x8001bea8);
+        word(0x8001be50); // seq_key_held
+        finish("seq_key_priority", 0x8001beac);
+
+        // seq_release's gate drop: a key under a finger keeps its gate;
+        // otherwise the factory's gate to zero, flushed.  Decisive on the
+        // way into PLAY.  On the way out seq_transport goes on to the
+        // factory's enable transition, whose arp-off half ends every note
+        // and drops the gate itself (0x80002c96), so a key held through
+        // STOP goes silent there exactly as it does when the arp switch is
+        // turned off under it.
+        begin(0x8001beb0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001bec8]");   // seq_key_held -> R8
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001bec2");      // held: the gate stays up
+        emit("MCALL PC[0x8001becc]");   // nobody's: gate to zero and flushed
+        padTo(0x8001bec2);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001bec8);
+        word(0x8001be50); // seq_key_held
+        word(0x80002440); // gate to zero and flush it
+        finish("seq_release_gate", 0x8001bed0);
+
+        // seq_gate's pool word for seq_gate_length: a held key answers a
+        // count the countdown never reaches, so the gate stays; otherwise
+        // the length as before.  Reached only while playing, for a step
+        // that is not a tie.
+        begin(0x8001bed0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001bef0]");   // seq_key_held -> R8
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bee8");
+        emit("MOV R8,-0x8000");         // held: the gate never falls
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001bee8);
+        emit("LDM SP++,R7,LR");
+        emit("LDDPC R8,0x8001bef4");
+        emit("MOV PC,R8");              // on to seq_gate_length
+        padTo(0x8001bef0);
+        word(0x8001be50); // seq_key_held
+        word(0x8001b740); // seq_gate_length
+        finish("seq_gate_held", 0x8001bef8);
+
+        // The key-to-MIDI-note helper's pool words in the contact handler's
+        // live path and in the hand-back helper: the keyboard is taking the
+        // voice, so the note the sequencer is sounding ends here, the way
+        // seq_release ends it - the bus when it carries the note, then both
+        // ports, then the active flag - so a receiver holding both lines
+        // hears the keyboard alone, as the CV does.  R12 is the key and
+        // goes through to the helper untouched.
+        begin(0x8001bf00);
+        emit("STM --SP,R0,R1,R7,R12,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x6154");
+        emit("LD.UB R8,R8[0x4]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001bf70");      // not playing
+        emit("MOV R8,0x2eed");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf70");      // the sequencer sounds nothing
+        emit("LDDPC R1,0x8001bf80");    // global state base
+        emit("MOV R8,0x2ee4");
+        emit("LD.UB R0,R8[0x1]");       // the note, kept where a call cannot reach it
+        emit("MOV R8,0x2efa");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf4a");
+        emit("LD.W R8,R1[0x4]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf4a");
+        emit("LD.UB R12,R1[0x0]");
+        emit("MCALL PC[0x8001bf84]");   // take the bus
+        emit("MOV R10,R0");
+        emit("LD.W R11,R1[0x4]");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001bf88]");   // note off, on the bus
+        emit("LD.UB R12,R1[0x0]");
+        emit("MCALL PC[0x8001bf8c]");   // and give it back
+        padTo(0x8001bf4a);
+        emit("LD.UB R10,R1[0x2e7]");
+        emit("MOV R11,R0");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001bf90]");   // note off, one port
+        emit("LD.UB R10,R1[0x2e7]");
+        emit("MOV R11,R0");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001bf94]");   // and the other
+        emit("MOV R8,0x2eed");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // the sequencer sounds nothing now
+        padTo(0x8001bf70);
+        emit("LDM SP++,R0,R1,R7,R12,LR");
+        emit("LDDPC R8,0x8001bf98");
+        emit("MOV PC,R8");              // the key's MIDI note, as before
+        padTo(0x8001bf80);
+        word(0x00003560); // global state base
+        word(0x8000f1f0); // take the 208 bus
+        word(0x8000f3a8); // note off on the bus
+        word(0x8000f160); // give the bus back
+        word(0x80007e44); // MIDI note off, port one
+        word(0x800081f0); // MIDI note off, port two
+        word(0x800057a8); // key -> MIDI note
+        finish("seq_key_takes", 0x8001bf9c);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
         // The divider and the sequencer's rest/tie decision have already run.
@@ -8841,6 +9286,17 @@ function assembleProgram() {
         wordPatch("note_on_pool", 0x80005e8c,
             block("seq_pitch") ? 0x8001b330 : 0x80018d00,
             "note-on pointer -> filter-reset wrapper");
+        // The keyboard over a running take: the two sites where the keyboard
+        // takes the one voice - the press, and the note handed back to a key
+        // still held when another is let go - end the note the sequencer is
+        // sounding first.  Off the sequencer these keep their factory
+        // targets.
+        wordPatch("key_note_pool", 0x80005ebc,
+            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            "key -> MIDI note on the press -> the sequencer's note ends");
+        wordPatch("key_restore_note_pool", 0x800063d0,
+            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            "key -> MIDI note on the hand-back -> the sequencer's note ends");
         wordPatch("pad_select_pool", 0x8000a810,
             block("seq_chord") ? 0x8001b790 : 0x8000698c,
             "press-time select_pad -> chord-armed guard");

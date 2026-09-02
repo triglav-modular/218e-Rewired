@@ -27,6 +27,8 @@ from pathlib import Path
 
 from test_persistence import METADATA, REPO
 
+import options  # noqa: E402
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -96,8 +98,14 @@ def main() -> None:
                         raise SystemExit("Refusing a regression build that could rewrite flashers")
                     config = work / f"{name}.toml"
                     config.write_text(text)
+                    # options.py refuses a non-persistent config; the volatile
+                    # half of this matrix is one of the few places allowed to
+                    # build one.
+                    env = dict(os.environ)
+                    if not persist:
+                        env[options.VOLATILE_ENV] = "1"
                     result = subprocess.run([sys.executable, "tools/build.py", "--no-ghidra", "--config", str(config)],
-                                            cwd=REPO, capture_output=True, text=True)
+                                            cwd=REPO, capture_output=True, env=env, text=True)
                     (work / f"{name}-build.log").write_text(result.stdout + result.stderr)
                     if result.returncode:
                         raise SystemExit(result.stdout + result.stderr)

@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import contextlib
-import shutil
+import json
 import os
 import re
 import subprocess
@@ -26,65 +26,32 @@ import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-
-
-OPTIONS_PY = REPO / "tools" / "options.py"
-
-
-@contextlib.contextmanager
-def settle_constant(key: str, value: int):
-    """Build with one of the two settle constants changed, then put it back.
-
-    Neither settle is a build option - both are constants in tools/options.py,
-    fixed at the value the firmware ships with.  The firmware still branches
-    on them, so the trigger has to meet its bound at every value they can
-    take, and the only way to build that is to edit the constant.  Restored in
-    a finally, so an exception mid-run cannot leave the tree modified.
-    """
-    original = OPTIONS_PY.read_text()
-    patched, n = re.subn(rf"(['\"]){key}\1: \d+", f"\\g<1>{key}\\g<1>: {value}", original)
-    if n != 1:
-        raise SystemExit(f"Cannot find the {key} constant in tools/options.py")
-
-    def rewrite(text: str) -> None:
-        # A single digit changes, so the file keeps its length; write it back
-        # inside the same second and CPython keeps the cached bytecode, whose
-        # invalidation is (mtime, size).  Every later build in the run then
-        # silently uses the wrong constant - which reads as a firmware defect,
-        # not a test one.  Drop the cache with the file, every time.
-        OPTIONS_PY.write_text(text)
-        shutil.rmtree(OPTIONS_PY.parent / "__pycache__", ignore_errors=True)
-
-    try:
-        rewrite(patched)
-        yield
-    finally:
-        rewrite(original)
+sys.path.insert(0, str(REPO / "tools"))
+import options  # noqa: E402
 
 
 @contextlib.contextmanager
-def diagnostic_flag(key: str):
-    """Build with one diagnostics flag on, then put it back.
+def internal_override(**settings):
+    """Build with an internal constant changed, through the environment.
 
-    The diagnostics are not among the seven options a config carries, so
-    expand() never sees them from a file - the only way to build one is to
-    edit the default.  Without this the two clock-latency tests detect an
-    ordinary image and skip, which is not a test.
+    Neither settle count is a build option, and the diagnostics are not
+    among the seven a config carries; the firmware still branches on them,
+    so the trigger has to meet its bound at every value they can take.  The
+    build takes the change from REWIRED_INTERNAL_OVERRIDE (see
+    tools/options.py) for the length of the subprocess.  This used to
+    rewrite tools/options.py in place and restore it in a finally: a killed
+    run left the wrong constant in the tree, and a second session sharing
+    the checkout built with it meanwhile.
     """
-    original = OPTIONS_PY.read_text()
-    patched, n = re.subn(rf"(['\"]){key}\1: False", f"\\g<1>{key}\\g<1>: True", original)
-    if n != 1:
-        raise SystemExit(f"Cannot find the {key} flag in tools/options.py")
-
-    def rewrite(text: str) -> None:
-        OPTIONS_PY.write_text(text)
-        shutil.rmtree(OPTIONS_PY.parent / "__pycache__", ignore_errors=True)
-
+    previous = os.environ.get(options.OVERRIDE_ENV)
+    os.environ[options.OVERRIDE_ENV] = json.dumps(settings)
     try:
-        rewrite(patched)
         yield
     finally:
-        rewrite(original)
+        if previous is None:
+            del os.environ[options.OVERRIDE_ENV]
+        else:
+            os.environ[options.OVERRIDE_ENV] = previous
 
 
 def main() -> None:
@@ -119,8 +86,9 @@ def main() -> None:
         modes = (args.mode,)
     # Two phases, because they have opposite constraints.  The builds must run
     # one at a time and in order: three of the modes reach their configuration
-    # by editing tools/options.py in place, and tools/build.py writes fixed
-    # paths under build/ that every build shares.  The emulations share
+    # through an environment override every build would see, and
+    # tools/build.py writes fixed paths under build/ that every build shares.
+    # The emulations share
     # nothing - each reads one image and writes one log - so they run
     # together, and the suite takes as long as its slowest mode instead of the
     # sum of all six.
@@ -151,13 +119,13 @@ def main() -> None:
         # tables rather than substituted.
         settle = contextlib.nullcontext()
         if mode == "settle-scans":
-            settle = settle_constant("clock_settle_scans", 1)
+            settle = internal_override(clock_settle_scans=1)
         elif mode == "no-gate-settle":
-            settle = settle_constant("gate_settle_scans", 0)
+            settle = internal_override(gate_settle_scans=0)
         elif mode == "latency":
             # The clock-latency diagnostic, so its own two tests run against
             # a real image instead of detecting an ordinary one and skipping.
-            settle = diagnostic_flag("clock_latency")
+            settle = internal_override(clock_latency=True)
         image = work / f"clock-{mode}.hex"
         text, n = re.subn(r'^output_hex\s*=\s*"[^"]*"', f'output_hex = "{image}"', text, flags=re.M)
         if n != 1:

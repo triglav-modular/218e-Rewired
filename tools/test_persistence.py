@@ -25,6 +25,9 @@ import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools"))
+import options  # noqa: E402
+
 METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt")
 # Ghidra ends every run with the JVM banner and its Unsafe warnings on stderr,
 # so a plain tail of the captured output never reaches the failure.
@@ -86,8 +89,15 @@ def main() -> None:
                 raise SystemExit("Refusing a regression build that could rewrite the flashers")
             config = work / f"{mode}.toml"
             config.write_text(text)
-            result = subprocess.run([sys.executable, "tools/build.py", "--no-ghidra", "--config", str(config)],
-                                    cwd=REPO, text=True, capture_output=True)
+            # options.py refuses a non-persistent config; this harness is one
+            # of the few places allowed to characterise one.
+            env = dict(os.environ)
+            if args.no_persist:
+                env[options.VOLATILE_ENV] = "1"
+            result = subprocess.run(
+                [sys.executable, "tools/build.py", "--no-ghidra",
+                 "--config", str(config)],
+                env=env, cwd=REPO, text=True, capture_output=True)
             (work / f"{mode}-build.log").write_text(result.stdout + result.stderr)
             if result.returncode:
                 raise SystemExit(result.stdout + result.stderr)

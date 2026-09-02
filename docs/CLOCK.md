@@ -223,6 +223,14 @@ output is less than 4 ms old, it retries on the next tick. This prevents a
 late pitch scan from placing its trigger directly under an old countdown's
 gate-off, without removing the eventual gate-off or the factory attack-drop.
 
+Under the divider the gate-off is timed from the pulse that fired the step.
+That pulse starts the factory countdown a quarter above the divided step, so
+the internal timer cannot run it out first, and records the countdown's start
+less half the step at 0x625e; a sequenced step's gate length is that value
+while a clock is about, so the sustain falls at the midpoint of the step at
+every division. Pulses between steps advance the divide phase and leave the
+countdown alone.
+
 The allowed branch of the hook at 0x800021ce explicitly jumps over its literal
 pool. It no longer executes the bytes at 0x800021e8 as loads/stores.
 
@@ -263,6 +271,7 @@ unfinished edits do not write.
 | 0x6254 / 0x625a | Last physical output stamp / valid flag |
 | 0x6258 | Saturating FIFO-overrun count |
 | 0x625b | Flush claim: 0 none, 1 fire now, 2 stage then settle, 3 settling |
+| 0x625e | Gate-off threshold set by the last pulse that fired a step: its countdown start less half the divided step |
 | 0x6260–0x62df | Timestamp FIFO |
 | 0x62f6 | Millisecond count at the last accepted edge |
 

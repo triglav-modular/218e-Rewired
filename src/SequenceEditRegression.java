@@ -187,6 +187,80 @@ public class SequenceEditRegression extends PersistenceRegression {
         }
         println("PASS rests/ties including first/final tie and all-silent previews, gate release and no phantom audition");
     }
+    void stripLamps() throws Exception {
+        // The three lamps along the strip are not on the LED register: they
+        // follow the strip's analog output, DAC slot 5 at state+0x35e.  So
+        // what they are saying is exactly what is in that cell, and this
+        // reads it rather than any flag of ours.  Per the User's Guide the
+        // end LEDs light near 0 V and 10 V and the centre LED's brightness is
+        // the level itself, so nothing is ever dark: a take rests on the
+        // half-bright centre, a rest lights the left end with the centre
+        // dark, a tie the right end with the centre at full.
+        final int idle=2048, rest=0, tie=4095;
+        setup(2,false,0); scan();
+        check("a take rests on the half-bright centre",r(S+0x35e,2)==idle);
+        // Down below halfway: the rest's lamp at once, while the finger is
+        // still there and nothing has landed.  The finger sliding over the
+        // halfway point takes the lamp with it.
+        w(S+0x1fe,2,1000); w(S+0x206,1,1); scan();
+        check("a finger down below halfway shows the rest's lamp at once",
+            r(0x61e0,1)==2&&r(0x61e4,1)==1&&r(S+0x35e,2)==rest);
+        scan();
+        check("and keeps showing it while held",r(0x61e0,1)==2&&r(S+0x35e,2)==rest);
+        w(S+0x1fe,2,3000); scan();
+        check("the lamp follows the finger over halfway",r(0x61e0,1)==2&&r(S+0x35e,2)==tie);
+        w(S+0x1fe,2,1000); scan();
+        check("and back",r(0x61e0,1)==2&&r(S+0x35e,2)==rest);
+        // The rest lands on the release, and the side holds through the
+        // acknowledgment before settling back to the middle.
+        w(S+0x206,1,0); scan();
+        check("a landed rest keeps the left end lit",
+            r(0x61e0,1)==3&&r(0x6164,2)==0x7ffe&&r(S+0x35e,2)==rest);
+        for(int i=1;i<20;i++)scan();
+        check("the acknowledgment lasts its whole length",r(S+0x35e,2)==rest);
+        scan();
+        check("and then it settles back to the middle",r(S+0x35e,2)==idle);
+        // A tie is above halfway, and throws it the other way.
+        w(S+0x1fe,2,3000); w(S+0x206,1,1); scan();
+        check("a finger down above halfway shows the tie's lamp at once",
+            r(0x61e0,1)==3&&r(S+0x35e,2)==tie);
+        w(S+0x206,1,0); scan();
+        check("a landed tie keeps the right end lit",
+            r(0x61e0,1)==4&&r(0x6166,2)==0x7fff&&r(S+0x35e,2)==tie);
+        for(int i=0;i<20;i++)scan();
+        check("the tie acknowledgment ends too",r(S+0x35e,2)==idle);
+        // A played note moves the count as well, and must flash nothing: the
+        // cave reads what landed, not merely that something did.
+        w(0x6168,2,700); w(0x61e0,1,5); scan();
+        check("a played note moves the count and flashes nothing",r(S+0x35e,2)==idle);
+        // A touch carried across transport never lands, so it shows nothing
+        // while down and nothing on the lift.  seq_strip never re-arms a 2
+        // while the finger stays down, so planting it is the real state.
+        w(0x61e4,1,2); w(S+0x1fe,2,1000); w(S+0x206,1,1); scan(); scan();
+        check("a touch carried across transport shows nothing while down",
+            r(0x61e0,1)==5&&r(0x61e4,1)==2&&r(S+0x35e,2)==idle);
+        w(S+0x206,1,0); scan();
+        check("and nothing on its lift",r(0x61e0,1)==5&&r(0x61e4,1)==0&&r(S+0x35e,2)==idle);
+        // A touch the ceiling refuses never moves the count at all, and is
+        // not previewed either: the lamp does not promise what will not land.
+        w(0x61e0,1,0x40); w(S+0x1fe,2,1000); w(S+0x206,1,1); scan();
+        check("a touch at the ceiling shows nothing while down",r(0x61e0,1)==0x40&&r(S+0x35e,2)==idle);
+        w(S+0x206,1,0); scan();
+        check("a refused touch flashes nothing",r(0x61e0,1)==0x40&&r(S+0x35e,2)==idle);
+        // Out of the take the slot is the strip's own again, handed on from
+        // the shadow the factory's own store was redirected to - finger down
+        // or not.
+        w(0x61e0,1,5); w(S+0x1fe,2,1000); w(S+0x206,1,1); scan();
+        check("down again before the take ends",r(S+0x35e,2)==rest);
+        command(0);
+        check("the take ended",r(0x6158,1)==0);
+        w(0x657a,2,1234); scan();
+        check("leaving the take hands the strip its output back, finger down",r(S+0x35e,2)==1234);
+        w(S+0x206,1,0); w(0x657a,2,777); scan();
+        check("and keeps handing it on every scan",r(S+0x35e,2)==777);
+        println("PASS strip lamps: centred through a take, on the finger's side while it is down, "
+            +"held there by a landed rest or tie, handed back on the way out");
+    }
     void stripCarry() throws Exception {
         for(boolean internal:new boolean[]{false,true})for(boolean beforePreview:new boolean[]{false,true})
             for(int position:new int[]{1000,3000}) {
@@ -375,7 +449,8 @@ public class SequenceEditRegression extends PersistenceRegression {
         seq=true; clock=getScriptArgs().length>0&&getScriptArgs()[0].contains("clock");
         persistent=getScriptArgs().length<2||!getScriptArgs()[1].equals("volatile");
         try {
-            previewOnce(); restsAndTies(); stripCarry(); cancellation(); unarmedHold(); backspace();
+            previewOnce(); restsAndTies(); stripCarry(); stripLamps();
+            cancellation(); unarmedHold(); backspace();
             previewTieEnd(); deleteFlash();
             println("SEQUENCE EDIT PASS: "+checks+" assertions; clock="+clock+", persist="+persistent
                 +"; emitted firmware with modeled peripherals, no hardware flash.");

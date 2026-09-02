@@ -23,11 +23,11 @@ mkdir -p "$WORK_DIR" 2>/dev/null
 LOG_FILE="$WORK_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"; printf "\033[?25h"' EXIT
-EXPECTED_SHA256="9eb5c045ee6cda1c0940c0ad48627c9b139e91ac74e90bfa5006f3ba0fa92046"
+EXPECTED_SHA256="c6622897da3470110eea06d34a7b19574a0277dd2f68c541b56561e0d1376c72"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 2.0.0 (9eb5c045)"
+FIRMWARE_VERSION="Rewired 2.1.0 (c6622897)"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
@@ -251,6 +251,20 @@ fail() {
             echo "  ISP_FORCE returns the instrument to DFU."
             log "Stopped after erase; application not valid; START not sent."
         fi
+    elif [ "$DFU_SESSION_ACTIVE" -eq 1 ]; then
+        # Written and validated, so the only thing missing is START.  Without
+        # this the failure was a bare line, and the way out was left unsaid.
+        echo
+        echo "  ${C_GREEN}The firmware is on the instrument and passed read-back.${C_RESET}"
+        echo "  Only the START command failed, so the 218e V3 is still in DFU."
+        echo
+        echo "  To start it now:"
+        echo "    ${C_BOLD}\"$DFUPATH\" at32uc3b1256 start${C_RESET}"
+        echo
+        echo "  Power-cycling alone will not do it: reading the fuses set"
+        echo "  ISP_FORCE, so the 218e V3 returns to DFU until START is sent."
+        echo "  Or run this command again: it flashes the same image and sends START."
+        log "Stopped after validated flash; START failed; still in DFU."
     fi
     read -r -p "Press return to close. "
     exit 1
@@ -786,14 +800,16 @@ DIRS
     } | sort -rn -k1,1 | cut -f2- | awk '!seen[$0]++' |
     while IFS= read -r candidate; do
         case "$(validate_hex "$candidate")" in OK*) printf '%s\n' "$candidate" ;; esac
-    done | head -12 | prefer_expected
+    done | prefer_expected | head -12
 }
 
 # The build this download was made for goes first, whatever the dates say.
 # Some unzippers stamp every extracted file with the moment of extraction, and
 # then the two images in a download carry the same timestamp - which left the
 # order to fall out of the filenames, putting the factory image on top and
-# preselecting a return to stock.
+# preselecting a return to stock.  It runs before the list is cut to twelve:
+# cut first, an expected image older than twelve others was gone before it
+# could be put on top.
 prefer_expected() {
     local line first="" rest=""
     while IFS= read -r line; do

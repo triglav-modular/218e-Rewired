@@ -21,9 +21,21 @@ and the JavaScript toolchain underneath are all unchanged.
 from __future__ import annotations
 
 import copy
+import json
+import os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Persistence is not a choice the configuration gets to make.  A volatile
+# image restores a runtime that never reloads its committed musical data,
+# and on a warm reset that finds the initialisation marker already matching
+# it can come back in PLAY with seq_noteon_mute eating every key.  The
+# variants still exist as internal fixtures - the parity sweep and the
+# control and persistence regressions build them deliberately, to
+# characterise the path rather than to ship it - so the refusal is lifted
+# by an environment variable, which no config file can set.
+VOLATILE_ENV = "REWIRED_UNSUPPORTED_VOLATILE"
 
 # Frozen default behaviour for every setting the simplified config does not
 # expose.  Generated once from the historical full config; the seven user
@@ -116,6 +128,49 @@ def _check_internal_diagnostics() -> None:
 
 _check_internal_diagnostics()
 
+# A harness may need an image built with one internal constant changed - a
+# settle count, a diagnostic flag - and none of those is among the options a
+# config carries.  tools/test_clock.py used to rewrite this file in place
+# for the length of a build and put it back in a finally; a killed run, or a
+# second session sharing the checkout, saw the wrong constant as the real
+# one.  This is the same edit as a JSON object in the environment, applied
+# to the expanded settings alone: {"clock_settle_scans": 1}.  Each key must
+# name exactly one setting, wherever it sits in the tree.
+OVERRIDE_ENV = "REWIRED_INTERNAL_OVERRIDE"
+
+
+def _override(cfg: dict) -> None:
+    raw = os.environ.get(OVERRIDE_ENV)
+    if not raw:
+        return
+    try:
+        overrides = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{OVERRIDE_ENV} is not JSON: {exc}") from None
+    if not isinstance(overrides, dict):
+        raise SystemExit(f"{OVERRIDE_ENV} must be a JSON object of setting: value")
+
+    def assign(node: dict, key: str, value) -> int:
+        hits = 0
+        for name, child in node.items():
+            if name == key:
+                node[name] = value
+                hits += 1
+            elif isinstance(child, dict):
+                hits += assign(child, key, value)
+        return hits
+
+    for key, value in overrides.items():
+        hits = assign(cfg, key, value)
+        if hits != 1:
+            raise SystemExit(
+                f"{OVERRIDE_ENV}: {key!r} names {hits} settings, not one")
+    on = [n for n in _TELEMETRY_CLAIMS if cfg["diagnostics"].get(n)]
+    if len(on) > 1:
+        raise SystemExit(
+            f"{OVERRIDE_ENV}: " + " and ".join(on)
+            + " claim the same telemetry fields; enable one at a time.")
+
 # A flat pitch ramp: no per-key correction, every semitone exactly 100 cents.
 # 79 rows, matching what the firmware reads (semitones 0..78).
 FLAT_CALIBRATION = REPO / "build" / "_flat_pitch_calibration.csv"
@@ -147,7 +202,7 @@ OPTION_TYPES = {
     "knob2":               str,
     "knob3":               str,
     "knob4":               str,
-    "arp_patterns":        list,
+    "arp_patterns":        (list, bool),   # true is the CLIX bank
     "sequencer":           bool,
     "clock_divide":        bool,
     "persist":             bool,
@@ -192,8 +247,12 @@ def check(options: dict) -> None:
                     + ('\n  a quoted "false" is a string, and every non-empty '
                        'string is true' if isinstance(value, str) else ""))
             continue
-        if not isinstance(value, allowed):
-            names = " or ".join(t.__name__ for t in allowed)
+        # A bare type here, not a tuple, used to make the message itself
+        # fail: a knob set to 1 answered with a TypeError instead of a
+        # sentence.
+        types = allowed if isinstance(allowed, tuple) else (allowed,)
+        if not isinstance(value, types):
+            names = " or ".join(t.__name__ for t in types)
             raise SystemExit(
                 f"{name} must be {names}, not {type(value).__name__}: {value!r}")
         # bool passed the tuple check above, but only False means anything:
@@ -221,6 +280,11 @@ def check(options: dict) -> None:
                         f"alternate_tunings[{i}] must be a filename, a "
                         f'["scale.scl", "map.kbm"] pair, or \'factory\', '
                         f"not {type(entry).__name__}: {entry!r}")
+
+    if options.get("persist") is False and not os.environ.get(VOLATILE_ENV):
+        raise SystemExit(
+            "persist = false is not a supported configuration - set it to "
+            "true, or leave it out.")
 
 
 def expand(options: dict) -> dict:
@@ -269,6 +333,27 @@ def expand(options: dict) -> dict:
                         # factory's own 0..1024 glide scale.  Another number
                         # that wants a real instrument to settle.
                         "tie_glide_rate": 60,
+                        # The strip's three lamps follow its analog
+                        # output, so the acknowledgment a landed rest or tie
+                        # gets is a value written to that output for a moment.
+                        # How long the flash lasts, in ~5 ms scans: 20 is
+                        # about a tenth of a second, short enough that three
+                        # quick taps read as three separate flashes.
+                        "strip_ack_scans": 20,
+                        # What to write for each, in the same 0..4095 the
+                        # strip's own position uses.  Per the User's Guide the
+                        # end LEDs light near 0 V and 10 V and the centre LED's
+                        # brightness is the level: a rest wants the left end
+                        # (centre dark), a tie the right end (centre at full).
+                        # They stay numbers because where the lamps change is
+                        # a property of the panel, not of the firmware.
+                        "strip_led_rest_units": 0,
+                        "strip_led_tie_units": 4095,
+                        # Where the lamps sit for the rest of a take.  Nothing
+                        # is ever dark - the centre shows the level - so this
+                        # is the centre at half brightness: a steady, dim
+                        # centre for the take, thrown to an end by an entry.
+                        "strip_led_idle_units": 2048,
                         # Capture is interrupt-timestamped. At 200 Hz a
                         # 4 ms refractory leaves 1 ms of period margin; the
                         # low phase must be longer than 250 us at the MCU.
@@ -334,8 +419,10 @@ def expand(options: dict) -> dict:
         if not 1 <= len(tunings) <= 3:
             raise SystemExit("alternate_tunings: give one to three Scala files")
         for entry in tunings:
+            # 'factory' is the instrument's own temperament, which the slot
+            # check advertises and which has no file to exist.
             for name in ([entry] if isinstance(entry, str) else list(entry)):
-                if not (REPO / name).exists():
+                if name != "factory" and not (REPO / name).exists():
                     raise SystemExit(f"alternate_tunings: no such file: {name}")
         # Unused slots fall back to the instrument's own temperament, so the
         # edit-mode selector always has three valid tables to switch between.
@@ -350,6 +437,10 @@ def expand(options: dict) -> dict:
     # or a [pattern, length] pair to make it repeat sooner than it is written.
     # Left out, the bank is the CLIX fills.
     patterns = want("arp_patterns", None)
+    # true is the CLIX bank, which check() lets through for exactly that
+    # reason - and which this then tried to iterate.
+    if patterns is True:
+        patterns = None
     if patterns:
         masks, lengths = [], []
         for i, entry in enumerate(patterns):
@@ -423,4 +514,5 @@ def expand(options: dict) -> dict:
     cfg["portamento"]["pressure_blend"] = blend
     cfg["portamento"]["zero_snap"] = blend
 
+    _override(cfg)
     return cfg

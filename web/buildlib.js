@@ -116,12 +116,21 @@ var BUILDLIB = (function () {
         // The sequencer's controls live on a pad chord, so it needs the pads.
         cfg.sequencer = { on: !!want('sequencer', true), strip_halfway_units: 2048,
                           tie_glide_rate: 60, chord_hold_scans: 200,
+                          strip_ack_scans: 20, strip_led_rest_units: 0,
+                          strip_led_tie_units: 4095, strip_led_idle_units: 2048,
                           clock_min_ms: 4, clock_lock_pulses: 5,
                           clock_settle_scans: 0, clock_deadline_ms: 4,
                           clock_rearm_us: 250,
                           clock_max_ms: 2400, clock_release_ms: 2600,
                           trigger_spike_units: 5, seq_edit_hold_scans: 60 };
         cfg.persist = { on: !!want('persist', true), page_count: 8 };
+        // Mirrors VOLATILE_ENV in tools/options.py: persistence is not a
+        // choice.  The page never sends the option at all; the matrix in
+        // test_matrix.js asks for the unsupported build by name.
+        if (!cfg.persist.on && !want('unsupported_volatile', false)) {
+            throw new Error('persist = false is not a supported configuration - '
+                + 'set it to true, or leave it out.');
+        }
         cfg.clock = { divide: !!want('clock_divide', true) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
@@ -490,7 +499,11 @@ var BUILDLIB = (function () {
         // builders refused these; the counts they reported did not even agree,
         // because splitting on newlines leaves the browser a trailing empty
         // line the CLI never sees.  Padding removes the count from the picture.
-        var entries = raw.slice(index, index + size);
+        // Only 'x' marks an unmapped position; a blank line is skipped, as
+        // in the header and as parse_kbm does, or every key after it moved
+        // up by one.
+        var entries = raw.slice(index).filter(function (l) { return l.trim(); })
+                         .slice(0, size);
         while (entries.length < size) entries.push('');
         var degrees = [];
         for (var position = 0; position < size; position++) {
@@ -795,6 +808,16 @@ var BUILDLIB = (function () {
             knob2_swing: cfg.knob2.mode === 'swing' ? 1 : 0,
             strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
             tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
+            strip_ack_scans: (cfg.sequencer && cfg.sequencer.strip_ack_scans) || 20,
+            // Not `|| 0`: zero is the leftmost lamp, read off the panel, and
+            // the truthiness default would quietly discard it.
+            strip_led_rest_units: (cfg.sequencer
+                                   && cfg.sequencer.strip_led_rest_units !== undefined)
+                                ? cfg.sequencer.strip_led_rest_units : 0,
+            strip_led_tie_units: (cfg.sequencer && cfg.sequencer.strip_led_tie_units) || 4095,
+            strip_led_idle_units: (cfg.sequencer
+                                   && cfg.sequencer.strip_led_idle_units !== undefined)
+                                ? cfg.sequencer.strip_led_idle_units : 2048,
             clock_min_ms: (cfg.sequencer && cfg.sequencer.clock_min_ms) || 4,
             clock_lock_pulses: (cfg.sequencer && cfg.sequencer.clock_lock_pulses) || 5,
             clock_settle_scans: (cfg.sequencer && cfg.sequencer.clock_settle_scans) || 0,

@@ -17,6 +17,40 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$REPO/build/218e Rewired Flasher.app"
 PROFILE="rewired-notary"
+
+# notarytool's "No Keychain password item found for profile" is not always
+# true.  The profile lives in the data-protection keychain, which the
+# `security` tool cannot list, and twice now a submit has failed with that
+# message while `notarytool history` with the same profile succeeded a
+# minute later.  So: on that error, ask notarytool itself whether the
+# profile answers, and if it does, try the submit again.  Only when the
+# profile really does not answer is store-credentials the fix.
+notary_submit() {
+    local archive="$1" attempt out
+    for attempt in 1 2 3 4 5; do
+        if out="$(xcrun notarytool submit "$archive" --keychain-profile "$PROFILE" --wait 2>&1)"; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+        printf '%s\n' "$out"
+        case "$out" in
+            *"No Keychain password item found"*) ;;
+            *) return 1 ;;
+        esac
+        if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+            echo "  The profile '$PROFILE' answers, so that message was transient;" >&2
+            echo "  retrying the submission ($attempt of 5)..." >&2
+            sleep 20
+        else
+            echo "  The profile '$PROFILE' does not answer either.  It has to be" >&2
+            echo "  created by you, once:" >&2
+            echo "    xcrun notarytool store-credentials $PROFILE --apple-id you@example.com --team-id LRU7FPHFVM" >&2
+            return 1
+        fi
+    done
+    echo "  Five attempts; the notary service kept refusing the profile." >&2
+    return 1
+}
 NOTARIZE=0
 [ "${1:-}" = "--notarize" ] && NOTARIZE=1
 
@@ -190,7 +224,7 @@ if [ "$NOTARIZE" = "1" ]; then
     # ditto, not zip: the signature lives in extended attributes that a plain
     # zip drops, and the notary service would reject an unsigned upload.
     ditto -c -k --keepParent "$APP" "$ZIP"
-    xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait
+    notary_submit "$ZIP"
     xcrun stapler staple "$APP"
     xcrun stapler validate "$APP"
     # Rebuild the archive AFTER stapling.  The one just submitted holds the

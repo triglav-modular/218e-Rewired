@@ -98,6 +98,10 @@
     print('  unimplemented ' + totals.skip);
     print('');
     print(totals.fail === 0 ? 'RESULT: PASS' : 'RESULT: FAIL');
+    // The process has to fail too: a RESULT line alone let a mismatch run
+    // exit 0, and anything checking the exit status saw a pass.  jsc has
+    // no exit code of its own, but an uncaught exception ends it non-zero.
+    if (totals.fail !== 0) throw new Error('corpus mismatch: ' + totals.fail + ' instruction(s)');
 
     function pad(s, n) { while (s.length < n) s += ' '; return s; }
     function pct(a, b) { return (100 * a / b).toFixed(1); }

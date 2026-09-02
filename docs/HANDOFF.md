@@ -91,10 +91,9 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   and nothing here is ever tested against hardware.  Archaeology pointers
   are in the plan's DFU section if the owner ever wants it chased.
 
-- **Preset/sequence persistence** — implemented behind `persist`, on by
-  default since 2026-08-29 and validated on the instrument. The post-audit
-  version uses a CRC32
-  musical-data-only record, verified body followed by a no-erase marker
+- **Preset/sequence persistence** — on since 2026-08-29, required since
+  2026-09-01, and validated on the instrument. The post-audit version
+  uses a CRC32 musical-data-only record, verified body followed by a no-erase marker
   commit, and bounded retries that never erase the newest valid page.
   Changed sequences save on record exit/CLEAR and changed presets on their
   pad release, with no idle or arp-off gate. A completed-edit snapshot
