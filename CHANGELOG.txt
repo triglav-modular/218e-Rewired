@@ -2,7 +2,7 @@
 - Sequencer notes recorded below the initial octave now keep their MIDI notes after a power cycle.
 - A tie at the end of a loop now holds its note to the next step instead of cutting it short.
 - The clock divider’s gate is now half the step at every division.
-- While the strip is held in record, its LEDs show which side a rest or a tie will go in on, and hold it for a moment after the release.
+- The strip LEDs now provide feedback when entering a tie or a rest.
 
 2.0 (2026-08-31)
 - Step sequencer: 64 steps, recorded and played from the preset pads.
