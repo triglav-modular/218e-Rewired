@@ -2251,6 +2251,22 @@ section,
   .patlen {
     margin-left: auto;
   }
+
+  /* Three nested paddings between the screen edge and a knob's label - the
+     page's 20, the card's 28, the group's 22 - which is 140 of a 375 phone
+     spent on margin.  It cost the labels their room: RANDOMNESS wants 83 and
+     had 67, so it ran out of its own button.  Each one comes down far enough
+     to give the column back about 52. */
+  .wrap {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  section {
+    padding: 20px 16px;
+  }
+  .group {
+    padding: 16px 14px 6px;
+  }
 }
 
 /* One switch for everything above.  The banana keeps its own rule further up
