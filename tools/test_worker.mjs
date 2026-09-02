@@ -49,6 +49,17 @@ async function post(body, env) {
 }
 
 const REAL = {
+  platform: 'win', version: '2.2.0', volts_per_octave: 1.2,
+  latching_arp: true, remap_knobs: true, pressure_fix: true,
+  pressure_portamento: false, alternate_tunings: 3, pitch_correction: true,
+  sequencer: true, clock_divide: false, pitch_offset: false,
+  knob1: 'orders', knob2: 'patterns', knob3: 'octaves', knob4: 'factory',
+  arp_patterns: 22
+};
+
+// What a page from before the 2.x options sends: the first nine values and
+// nothing else.
+const OLD = {
   platform: 'win', version: '1.1.0', volts_per_octave: 1.2,
   latching_arp: true, remap_knobs: true, pressure_fix: true,
   pressure_portamento: false, alternate_tunings: 3, pitch_correction: true
@@ -61,8 +72,8 @@ const REAL = {
   check('a real download is recorded', env.written.length === 1);
   check('its answer carries no body', res.status === 204, `status ${res.status}`);
   check('the options land in order',
-        p && p.blobs.join(',') === 'win,1.1.0,1.2'
-        && p.doubles.join(',') === '1,1,1,0,3,1',
+        p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory'
+        && p.doubles.join(',') === '1,1,1,0,3,1,1,0,0,22',
         p && `${p.blobs} / ${p.doubles}`);
 
   // The same download, in the form the dashboard can read without a token.
@@ -74,10 +85,53 @@ const REAL = {
   check('the whole point rides in the metadata, so listing is enough',
         k && k.opts.metadata.platform === 'win'
         && k.opts.metadata.tunings === 3
-        && k.opts.metadata.calibration === 1,
+        && k.opts.metadata.calibration === 1
+        && k.opts.metadata.sequencer === 1
+        && k.opts.metadata.clock_divide === 0
+        && k.opts.metadata.pitch_offset === 0
+        && k.opts.metadata.knob2 === 'patterns'
+        && k.opts.metadata.knob4 === 'factory'
+        && k.opts.metadata.patterns === 22,
         k && JSON.stringify(k.opts.metadata));
+  check('and it is small enough for KV metadata',
+        k && JSON.stringify(k.opts.metadata).length <= 1024,
+        k && String(JSON.stringify(k.opts.metadata).length));
   check('and it ages out rather than accumulating forever',
         k && k.opts.expirationTtl > 86400, k && String(k.opts.expirationTtl));
+}
+
+{
+  // A page older than the 2.x options says nothing about them.  Nothing is
+  // not "off": each has to be recorded as unreported, or every old build
+  // reads as having turned the sequencer down and chosen the 208c offset.
+  const env = fakeEnv();
+  await post(OLD, env);
+  const p = env.written[0];
+  const m = env.keys[0].opts.metadata;
+  check('the first nine values still land where they always did',
+        p.blobs.slice(0, 3).join(',') === 'win,1.1.0,1.2'
+        && p.doubles.slice(0, 6).join(',') === '1,1,1,0,3,1',
+        `${p.blobs} / ${p.doubles}`);
+  check('an unreported flag is -1, not off',
+        p.doubles.slice(6).join(',') === '-1,-1,-1,-1'
+        && m.sequencer === -1 && m.clock_divide === -1
+        && m.pitch_offset === -1 && m.patterns === -1,
+        `${p.doubles.slice(6)} / ${JSON.stringify(m)}`);
+  check('an unreported knob role is empty, not factory',
+        p.blobs.slice(3).join(',') === ',,,' && m.knob1 === '' && m.knob4 === '',
+        `${JSON.stringify(p.blobs.slice(3))}`);
+}
+
+{
+  // The remap off: the page names every knob factory itself.
+  const env = fakeEnv();
+  await post({ ...REAL, remap_knobs: false,
+               knob1: 'factory', knob2: 'factory', knob3: 'factory', knob4: 'factory',
+               arp_patterns: 0 }, env);
+  const m = env.keys[0].opts.metadata;
+  check('a knob handed back is recorded as factory',
+        m.knobs === 0 && m.knob1 === 'factory' && m.knob2 === 'factory'
+        && m.patterns === 0, JSON.stringify(m));
 }
 
 {
@@ -106,7 +160,8 @@ const REAL = {
   const env = fakeEnv();
   await post({ ...REAL, platform: 'mac', volts_per_octave: 1 }, env);
   check('1 V/oct is not confused with 1.2',
-        env.written[0].blobs.join(',') === 'mac,1.1.0,1', env.written[0].blobs.join(','));
+        env.written[0].blobs.slice(0, 3).join(',') === 'mac,2.2.0,1',
+        env.written[0].blobs.join(','));
 }
 
 {
@@ -116,15 +171,25 @@ const REAL = {
     platform: '"; DROP TABLE builds; --', version: '<script>alert(1)</script>',
     volts_per_octave: '1; DROP', latching_arp: 'yes',
     remap_knobs: 1, pressure_fix: null, pressure_portamento: {},
-    alternate_tunings: 99999, pitch_correction: 'true'
+    alternate_tunings: 99999, pitch_correction: 'true',
+    sequencer: 'on', clock_divide: 1, pitch_offset: 'false',
+    knob1: '<b>', knob2: 'patterns; DROP', knob3: 'vibrato', knob4: 42,
+    arp_patterns: 33
   }, env);
   const p = env.written[0];
   check('hostile strings never reach the dataset',
-        p.blobs.join(',') === 'other,other,other', p.blobs.join(','));
+        p.blobs.join(',') === 'other,other,other,other,other,other,other',
+        p.blobs.join(','));
   check('a truthy non-boolean is not counted as chosen',
         p.doubles.slice(0, 4).join(',') === '0,0,0,0', p.doubles.join(','));
   check('a slot count out of range is marked, not stored',
         p.doubles[4] === -1, String(p.doubles[4]));
+  check('a truthy non-boolean 2.x flag is unreported, not chosen',
+        p.doubles.slice(6, 9).join(',') === '-1,-1,-1', p.doubles.join(','));
+  check('a role from the wrong knob is refused too',
+        p.blobs[5] === 'other', p.blobs[5]);
+  check('a bank bigger than the page allows is marked, not stored',
+        p.doubles[9] === -1, String(p.doubles[9]));
 }
 
 {
@@ -143,7 +208,7 @@ const REAL = {
   // The cap is on the body, so a single enormous field is dropped by it
   // before any field check has to deal with the size.
   const env = fakeEnv();
-  await post({ ...REAL, version: 'x'.repeat(600) }, env);
+  await post({ ...REAL, version: 'x'.repeat(1200) }, env);
   check('one enormous field is dropped with the body', env.written.length === 0);
 }
 

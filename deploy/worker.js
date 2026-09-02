@@ -37,9 +37,37 @@ const BEACON = PUBLIC + '/beacon';
 // arbitrary strings into the dataset.
 const PLATFORMS = ['mac', 'win'];
 const VOLTS = ['1', '1.2'];
+// The roles each knob can take, as the page's own picker names them, plus
+// 'factory' for a knob the remap handed back.
+const KNOBS = {
+  knob1: ['order', 'orders', 'factory'],
+  knob2: ['spacing', 'swing', 'patterns', 'factory'],
+  knob3: ['octaves', 'factory'],
+  knob4: ['vibrato', 'trn', 'factory'],
+};
+// The most patterns the page lets into a bank.
+const MAX_PATTERNS = 32;
 
 function flag(value) {
   return value === true ? 1 : 0;
+}
+
+// For an option the page did not always send: a page older than the option
+// reports nothing about it, which is not the same as reporting it off.  -1
+// is "not reported", so the dashboard can count it out of the denominator
+// rather than as a build that turned the option down.
+function tri(value) {
+  if (value === true) return 1;
+  if (value === false) return 0;
+  return -1;
+}
+
+// A knob role is one of the names above or it is not recorded as itself:
+// '' when the page said nothing (older than the picker), 'other' when it
+// said something the picker cannot say.
+function role(knob, value) {
+  if (value === undefined) return '';
+  return KNOBS[knob].includes(value) ? value : 'other';
 }
 
 async function record(request, env, context) {
@@ -54,11 +82,11 @@ async function record(request, env, context) {
   }
   let body;
   try {
-    // The page's body is a couple of hundred bytes.  Refused rather than
+    // The page's body is a few hundred bytes.  Refused rather than
     // truncated: slicing and then parsing would accept whatever the first
-    // 512 bytes of a much larger body happened to spell.
+    // kilobyte of a much larger body happened to spell.
     const text = await request.text();
-    if (text.length > 512) return new Response(null, { status: 204 });
+    if (text.length > 1024) return new Response(null, { status: 204 });
     body = JSON.parse(text);
   } catch (e) {
     return new Response(null, { status: 204 });
@@ -75,6 +103,11 @@ async function record(request, env, context) {
   const tunings = Number.isInteger(body.alternate_tunings)
     && body.alternate_tunings >= 0 && body.alternate_tunings <= 3
     ? body.alternate_tunings : -1;
+  // The size of the pattern bank, never its contents.  Absent from a page
+  // older than the bank, so like the flags it has a "not reported".
+  const patterns = Number.isInteger(body.arp_patterns)
+    && body.arp_patterns >= 0 && body.arp_patterns <= MAX_PATTERNS
+    ? body.arp_patterns : -1;
 
   const point = {
     platform, version, volts,
@@ -84,14 +117,27 @@ async function record(request, env, context) {
     portamento: flag(body.pressure_portamento),
     tunings,
     calibration: flag(body.pitch_correction),
+    // Added with firmware 2.x; every field from here on can be unreported.
+    sequencer: tri(body.sequencer),
+    clock_divide: tri(body.clock_divide),
+    pitch_offset: tri(body.pitch_offset),
+    knob1: role('knob1', body.knob1),
+    knob2: role('knob2', body.knob2),
+    knob3: role('knob3', body.knob3),
+    knob4: role('knob4', body.knob4),
+    patterns,
   };
 
   env.BUILDS.writeDataPoint({
     // One index, which Analytics Engine samples on.
     indexes: [platform],
-    blobs: [platform, version, volts],
+    // Positional, and read back by position: the newer columns follow the
+    // older ones so a row written before they existed still reads right.
+    blobs: [platform, version, volts,
+            point.knob1, point.knob2, point.knob3, point.knob4],
     doubles: [point.arp, point.knobs, point.pressure, point.portamento,
-              tunings, point.calibration],
+              tunings, point.calibration,
+              point.sequencer, point.clock_divide, point.pitch_offset, patterns],
   });
 
   // And the same thing where it can be read back without a credential.  One

@@ -616,8 +616,10 @@ written to a Cloudflare Analytics Engine dataset.
 What is deliberately **not** in it: any identifier, any header (no IP, no
 user-agent), the factory image, the calibration numbers, and the names of any
 Scala files — a slot can hold a tuning someone wrote themselves, so the beacon
-carries how many slots were filled and not which. The build still happens
-entirely in the browser; these nine values are all that leave it.
+carries how many slots were filled and not which. The pattern bank is treated
+the same way: its size, never its patterns. Each knob's role is sent by name,
+since the names are the page's own. The build still happens entirely in the
+browser; these values are all that leave it.
 
 The URL is relative on purpose. Only the deployment behind the worker has
 anywhere to put this, so a clone served from somewhere else, or the page opened
@@ -678,7 +680,12 @@ nothing. A missing or misconfigured binding must never break the page, so that
 direction is the safe one.
 
 Each download is written twice: to the Analytics Engine dataset, and as one
-key in the `COUNTS` KV namespace whose metadata carries the same nine values.
+key in the `COUNTS` KV namespace whose metadata carries the same values.
+An option the page did not always offer — the clock divider, the sequencer,
+the knob roles, the pitch offset, the pattern bank — is recorded as
+*unreported* (`-1`, or an empty role) when a page older than the option sends
+nothing for it, so an old build is never read as having turned it down. The
+Analytics Engine columns are positional, so the newer ones follow the older.
 The second exists because an Analytics Engine binding can only write — reading
 one back means the SQL API and an API token to go with it, while a namespace
 can simply be bound to whatever reads it. One key per download rather than a
