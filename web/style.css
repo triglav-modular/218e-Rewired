@@ -1678,6 +1678,20 @@ strong {
 .field-row {
   margin-top: 8px;
 }
+/* A labelled row picker is one field.  The picker brings its own 10px top
+   margin from .vpo, which on top of the row's 8px pushed the label away from
+   its control while the next field's label sat flush against this one's
+   picker - the gap was on the wrong side.  The field owns the rhythm now:
+   8px label to control, 20px between fields, matching the toggle below. */
+.field .vpo.rowpick {
+  margin-top: 0;
+}
+.field + .field {
+  margin-top: 20px;
+}
+.field-note {
+  margin: 8px 0 0;
+}
 /* label.opt already sets gap:14px at the same weight a lone class would
    carry, so these have to match its specificity to win. */
 .opt.opt-toggle {
