@@ -1176,7 +1176,7 @@
     // platform, which version.  No identifier of any kind, nothing that
     // could carry one, and never the factory image or the calibration - the
     // build still happens entirely in this browser and nothing about it
-    // leaves except these nine values.
+    // leaves except these values.
     //
     // The URL is relative on purpose.  Only the deployment behind the worker
     // has anywhere to put this; a clone served from somewhere else, or the
@@ -1196,6 +1196,15 @@
                 remap_knobs: !!o.remap_knobs,
                 pressure_fix: !!o.pressure_fix,
                 pressure_portamento: !!o.pressure_portamento,
+                sequencer: !!o.sequencer,
+                clock_divide: !!o.clock_divide,
+                // Which role each knob took - a name from the page's own
+                // picker, or 'factory' when the remap is off.
+                knob1: o.knob1, knob2: o.knob2, knob3: o.knob3, knob4: o.knob4,
+                // How many patterns the bank holds, not what they are: the
+                // page's own CLIX bank and a bank someone typed both count
+                // the same way, as a size.
+                arp_patterns: (o.arp_patterns || []).length,
                 // How many slots were filled, not which.  A slot can hold a
                 // Scala file someone wrote themselves, and its name is
                 // theirs, not ours to collect.
