@@ -388,6 +388,58 @@ point is that reading further hands the selector three bytes of unrelated
 state as held keys, and gained a check that the touch flag is what gets
 copied.
 
+### The keyboard plays over a take, and wins (2026-09-02)
+
+The 2.1 rule - the mono keyboard silent on MIDI while a take plays, and the
+sound taken away in every mode by `seq_noteon_mute` - is reversed.  The owner
+wants to enter a sequence full of rests and play the other half live, on the
+CV and on MIDI alike, and the live keyboard is to have **priority**: while a
+key is under a finger the take only keeps time.
+
+What holds now, with the arp switch OFF (the only position in which the
+factory keyboard is live at all):
+
+- A press during PLAY sounds through the factory's own contact path - pitch,
+  pulse, MIDI on both ports, the 208 bus.  A lift ends it.  Nothing is muted
+  and nothing is ended at the PLAY boundary; `seq_key_release` and the twelve
+  guarded send pools are gone.
+- A press ends the note the sequencer is sounding, on the bus and both ports
+  (`seq_key_takes`, on the two factory pool words that read a key's MIDI
+  note: the press, and the note handed back to a key still held when another
+  is let go).  A receiver holding both lines hears the keyboard alone, as the
+  CV does.
+- A note step under a held key is spent without sounding: `seq_select`'s
+  pitch/rest bound comes from `seq_key_priority`, which answers -0x8000 while a
+  key is held, so every step reads as a rest - no pitch, no spike, no MIDI -
+  and the cursor moves on.  Let go, and the next step sounds again.
+- A held key holds the gate: `seq_gate`'s length is asked through
+  `seq_gate_held`, which answers a count the countdown never reaches, and
+  `seq_gate_clear` asks `seq_gate`, so both of the arp engine's drops - the
+  clear as a step fires and the half-step compare - leave a held note alone.
+- A key held INTO play keeps sounding: `seq_release`'s gate drop goes through
+  `seq_release_gate`, which keeps the gate while a key is held.  STOP is the
+  other way round: `seq_transport` goes on to the factory's enable
+  transition, whose arp-off half (`0x80002c96`) ends every note and drops the
+  gate whatever is under a finger - the same silence the arp switch makes
+  when it is turned off under a held key.  Left as the factory has it.
+- Poly mode gets the same CV behaviour, since the contact path is shared;
+  poly MIDI was already live.
+
+With the arp switch ON a press still means nothing (`seq_noteon_mute` keeps
+its test for those two positions).  That is deliberate: with the arp engaged
+a press joins the held table, and the contact handler's first-key rule then
+steps the arp at once and reloads its countdown from RATE, which under the
+sequencer is a stolen step and a thrown-away phase.  Making the keyboard live
+in that position would want record's audition mechanism (`0x6230`) in play
+mode; not asked for.  Known and unchanged: in that position a lift of the last
+key still drops the sequencer's gate through the factory's own arp-on lift
+path (`0x80005f94`), as it did before 2.1.
+
+The 2.1 audit's collision argument - a mono keyboard note-off ending the
+sequencer's note - no longer arises, because the sequencer's note is ended by
+the press itself.  `src/PolyMidiProbe.java` pins all of it, and fails on the
+2.1 image for every claim that is new.
+
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
   them in lockstep).  Table expression generalised from 12/1200 to map
@@ -564,7 +616,8 @@ copied.
   That byte is actually the RATE low-end/internal-clock-disable flag (1
   disables internal ticks), not the engine's run flag. See [CLOCK.md](CLOCK.md).
   THE KEYBOARD IS NOT SILENCED, which an earlier draft of this section
-  claimed it would be.  What actually holds: while playing, held keys no
+  claimed it would be - and 2.1 briefly did; see "The keyboard plays over a
+  take, and wins" above for what holds now.  What actually holds: while playing, held keys no
   longer choose the arp's notes - the sequence's pitches replace the
   selector's answer - but note-ons still run their bookkeeping (MIDI note
   messages, the latch, pressure).  Audit note 2026-08-27: silencing was

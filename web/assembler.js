@@ -5636,7 +5636,7 @@ function assembleProgram() {
         emit("BR{eq} 0x8001d750");
         emit("CP.W R1,0x2");
         emit("BR{ne} 0x8001d670");
-        emit("MCALL PC[0x8001d76c]");    // end the keyboard's note, then the arp's
+        emit("MCALL PC[0x8001d76c]");    // seq_release: end the arp's note
         padTo(0x8001d670);
         emit("ST.B R12[0x4],R1");
         emit("CP.W R0,0x2");
@@ -5676,7 +5676,7 @@ function assembleProgram() {
         emit("LDM SP++,R0,R1,R2,R7,R9,R12,PC");
         padTo(0x8001d768);
         word(0x8001b6c0);
-        word(0x8001bec0); // seq_key_release, which tails into seq_release
+        word(0x8001b448); // seq_release
         word(0x00003560);
         word(0x80002b28);
         finish("seq_transport", 0x8001d780);
@@ -7340,7 +7340,7 @@ function assembleProgram() {
         word(0x8000f160); // give the bus back
         word(0x80007e44); // MIDI note off, port one
         word(0x800081f0); // MIDI note off, port two
-        word(0x80002440); // gate to zero and flush it
+        word(0x8001beb0); // seq_release_gate: gate to zero, unless a key is held
         word(0x800068cc); // led_clear(ch)
         finish("seq_release", 0x8001b4f0);
 
@@ -7366,15 +7366,20 @@ function assembleProgram() {
         word(0x80007540); // the factory's own drop to the sustain
         finish("seq_pulse_drop", 0x8001b32c);
 
-        // While the sequencer PLAYS, the keyboard is silent: the note-on
-        // pool points here instead of at the filter-reset wrapper, and a
-        // press in play mode simply never becomes a note - no sound, no
-        // MIDI, no latch churn, no press-order entry - so the running take
-        // cannot be yanked off pitch by a stray finger.  Releases are not
+        // While the sequencer PLAYS with the arp switch OFF the keyboard is
+        // LIVE: a press sounds over the take - pitch, gate, trigger, MIDI and
+        // the 208 bus, all through the factory's own contact path - and the
+        // caves at 0x8001be50 settle who owns the one voice.  The mute is
+        // kept only for the two switch positions where the keyboard is not
+        // live anyway.  With the arp engaged a press joins the held table,
+        // and the contact handler's first-key rule then steps the arp at
+        // once and reloads its countdown from RATE - which, while the
+        // sequencer owns that engine, is a step stolen from the take and its
+        // phase thrown away.  So there the press means nothing: no held
+        // count, no latch churn, no press-order entry.  Releases are not
         // routed through this pool and still land; a press swallowed here
         // leaves nothing for its release to find, which the release path's
-        // own guards already treat as a no-op.  Every other surface - the
-        // pads, the knobs, the strip - keeps its transport and edit jobs.
+        // own guards already treat as a no-op.
         // R8/R9 are restored because the factory caller had the wrapper's
         // own STM preserving them.
         begin(0x8001b330);
@@ -7383,13 +7388,18 @@ function assembleProgram() {
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x2");
-        emit("BR{eq} 0x8001b346");      // playing: the press means nothing
-        emit("MCALL PC[0x8001b34c]");   // anything else: the real note-on
-        padTo(0x8001b346);
+        emit("BR{ne} 0x8001b34a");      // stopped or recording: the real note-on
+        emit("MOV R8,0x38a0");          // state+0x340/341 in one halfword
+        emit("LD.UH R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001b34e");      // playing, arp engaged: the press means nothing
+        padTo(0x8001b34a);
+        emit("MCALL PC[0x8001b354]");   // the real note-on
+        padTo(0x8001b34e);
         emit("LDM SP++,R7,R8,R9,PC");
-        padTo(0x8001b34c);
+        padTo(0x8001b354);
         word(0x80018d00); // note_on_reset_raw_filter
-        finish("seq_noteon_mute", 0x8001b350);
+        finish("seq_noteon_mute", 0x8001b358);
 
         // How long the arp holds its gate.  Three counts from the end of the
         // step, as the factory does, everywhere but play mode.  A playing
@@ -7444,11 +7454,11 @@ function assembleProgram() {
         emit("MOV R8,-0x8000");         // a tie next: carry the gate into it
         emit("RJMP 0x8001b53c");
         padTo(0x8001b538);
-        emit("MCALL PC[0x8001b548]");   // seq_gate_length -> R8
+        emit("MCALL PC[0x8001b548]");   // seq_gate_held, then seq_gate_length -> R8
         padTo(0x8001b53c);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b548);
-        word(0x8001b740); // seq_gate_length
+        word(0x8001bed0); // seq_gate_held: a held key holds the gate, else seq_gate_length
         word(0x8001b4f0); // this cave, for the caller too far away to pool it
         finish("seq_gate", 0x8001b550);
 
@@ -7867,9 +7877,9 @@ function assembleProgram() {
         // A rest and a tie are kept where a pitch cannot reach.  Both answer
         // -1, so nothing is retriggered; what separates them is the gate,
         // which seq_gate holds up across a tie and lets fall on a rest.
-        emit("MOV R12,0x7ffe");
+        emit("MCALL PC[0x8001b440]");   // seq_key_priority: 0x7ffe, or -0x8000 under a held key
         emit("CP.W R8,R12");
-        emit("BR{ge} 0x8001b3d4");
+        emit("BR{ge} 0x8001b3d4");      // a rest, a tie, or a note the keyboard outranks
         emit("MOV R12,0x61e2");
         emit("ST.H R12[0x0],R8");       // the pitch this step sounds
         // and the key it was played on, which is what MIDI names it by.  R0
@@ -7902,7 +7912,9 @@ function assembleProgram() {
         // A rest or a tie: step past it, sound nothing new.  A tie arms the
         // slide into whatever follows; a rest ENDS one, so the note after a
         // rest attacks cleanly rather than sliding in from a note two steps
-        // back that the rest already silenced.
+        // back that the rest already silenced.  A note under a held key
+        // arrives here too, reading as a rest: the keyboard has the voice,
+        // and the step is spent without sounding.
         emit("MOV R12,0x7fff");
         emit("CP.W R8,R12");
         emit("MOV R8,0x0");             // a rest: the slide ends here
@@ -7942,7 +7954,8 @@ function assembleProgram() {
         word(arpSelector);
         word(0x8001b2e8); // what the selector answers while recording
         word(0x8001d860); // preview-aware next step; normal play still shuffles
-        finish("seq_select", 0x8001b440);
+        word(0x8001be80); // seq_key_priority
+        finish("seq_select", 0x8001b444);
 
         // Which step plays next.
         //
@@ -8048,185 +8061,178 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("clock_gate", 0x8001bb34);
 
-        // While the sequencer plays, the keyboard stops sending outward.
+        // The keyboard over a running take.
         //
-        // seq_noteon_mute already takes the sound away - it owns the pool
-        // word for an inner call of the contact handler at 0x80005b6c, so a
-        // press in PLAY reaches no pitch, no gate and no trigger.  What it
-        // never took was the notes: the contact handler sends the key's own
-        // Note On further down, past that call, the lift handler at
-        // 0x80005edc sends the Note Off, and both drive the 208 bus beside
-        // the two MIDI ports.  So a press during a take made no sound here
-        // and a real note on every output over there.
+        // With the arp switch OFF the keyboard is live while the sequencer
+        // plays, through the factory's own contact and lift handlers: a
+        // press sets the pitch, sends its MIDI note on both ports and the
+        // 208 bus, and fires the pulse; a lift ends the note.  And the
+        // keyboard has PRIORITY: for as long as a key is under a finger the
+        // take is silent on every output and only keeps time.
         //
-        // Whether that is a defect depends on the destination, and on how
-        // many notes it can hold.  The sequencer is playing its own steps
-        // down all three at once, one note at a time.
+        //   - a press ends the note the sequencer is sounding, on the bus
+        //     and both ports, the way STOP would (seq_key_takes, on the two
+        //     factory sites that read a key's MIDI note: the press, and the
+        //     note handed back to a key still held when another is let go);
+        //   - a note step under a held key is spent without sounding
+        //     (seq_key_priority): no pitch, no spike, no MIDI - it reads as
+        //     a rest and the cursor moves on, so the take is in the right
+        //     place when the key is let go;
+        //   - a held key holds the gate (seq_gate_held): the sequencer's
+        //     half-step drop and its rests do not cut a note the player is
+        //     holding, and its own lift is what ends it;
+        //   - a key held into PLAY keeps sounding (seq_release_gate): the
+        //     arp note seq_release ends on the way in is not the key's, so
+        //     the gate it would drop stays up.  On the way OUT the factory's
+        //     own arp-off transition then ends every note and drops the
+        //     gate, keyboard included, as it does whenever the arp switch is
+        //     turned off under a held key; STOP is that switch.
         //
-        //   MIDI in mono - a second monophonic line on the sequencer's own
-        //   channel.  The two collide: press a key whose note the sequence
-        //   is holding and its release ends the sequencer's note instead of
-        //   yours.  Silenced.
-        //
-        //   MIDI in poly - each key holds its own note and the receiver has
-        //   the voices for it.  That is what the mode is for, so it is left
-        //   live: this is the one way to play over a running take.
-        //
-        //   The 208 bus - a link to one 208, which is monophonic hardware
-        //   whatever the keyboard is set to.  The firmware knows it: both
-        //   handlers drive the bus from the single current-note byte at
-        //   state+0x2e1, BEFORE their poly/mono fork, so poly reaches it
-        //   too and reaches it one note at a time.  It collides with the
-        //   take exactly the way mono MIDI does, so it is silenced in every
-        //   mode - which is why the bus entries take the bare transport
-        //   test and the MIDI entries take the mode test as well.
-        //
-        // Twelve pool words, one caller each, all of them the physical
-        // key's: the previous note's release at 0x80005d22/0x80005d68/
-        // 0x80005d84, the press at 0x80005df6/0x80005e3a/0x80005e5c, the
-        // lift at 0x80006162/0x8000619c/0x800061b4, and the note handed back
-        // to a key still held at 0x80006342/0x80006380/0x8000639c.  The
-        // arpeggiator, the sequencer and the panic reach the same six
-        // senders through their own pool words and are untouched.
-        //
-        // R8 carries the real target in from the entry and R9 is dead at
-        // every one of the twelve sites; the senders clobber R8..R12
-        // themselves, so the tail is a plain jump and the sender returns
-        // straight home.
-        begin(0x8001be50);
-        emit("LDDPC R8,0x8001bea0");
-        emit("RJMP 0x8001be74");
-        emit("LDDPC R8,0x8001bea4");
-        emit("RJMP 0x8001be74");
-        emit("LDDPC R8,0x8001bea8");
-        emit("RJMP 0x8001be74");
-        emit("LDDPC R8,0x8001beac");
-        emit("RJMP 0x8001be74");
-        emit("LDDPC R8,0x8001beb0");
-        emit("RJMP 0x8001be68");
-        emit("LDDPC R8,0x8001beb4");
-        emit("RJMP 0x8001be68");
-        padTo(0x8001be68);
-        // The bus: monophonic hardware, so playing is the whole test.
-        emit("MOV R9,0x6154");
-        emit("LD.UB R9,R9[0x4]");
-        emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001be9c");
-        emit("RJMP 0x8001be98");
-        padTo(0x8001be74);
-        // MIDI: silenced only where the keyboard is monophonic too.
-        emit("MOV R9,0x6154");
-        emit("LD.UB R9,R9[0x4]");
-        emit("CP.W R9,0x2");
-        emit("BR{ne} 0x8001be98");      // stopped or recording: the real sender
-        emit("MOV R9,0x3560");
-        emit("LD.UB R9,R9[0x84]");
-        emit("CP.W R9,0x0");
-        emit("BR{eq} 0x8001be9c");      // playing, mono: send nothing
-        emit("MOV R9,0x3560");
-        emit("LD.UB R9,R9[0x85]");
-        emit("CP.W R9,0x0");
-        emit("BR{ne} 0x8001be9c");      // the arp owns the mono path too
-        padTo(0x8001be98);
-        emit("MOV PC,R8");
-        padTo(0x8001be9c);
-        emit("MOV PC,LR");
-        padTo(0x8001bea0);
-        word(0x80007e44); // MIDI note off, port one
-        word(0x800081f0); // MIDI note off, port two
-        word(0x80007de8); // MIDI note on, port one
-        word(0x80008170); // MIDI note on, port two
-        word(0x8000f2c0); // note on, 208 bus
-        word(0x8000f3a8); // note off, 208 bus
-        finish("seq_key_send_mute", 0x8001beb8);
+        // With the arp switch ON the keyboard is not live in any mode, and
+        // seq_noteon_mute keeps a press off the take entirely.
 
-        // Entering PLAY ends what the keyboard is holding, where it stands.
-        //
-        // The mute above starts at the transition, so anything already
-        // sounding owns a note nobody will end: its press went out before
-        // the mute applied and its lift is swallowed after.  Both halves are
-        // ended here instead, each on the destinations the mute took.
-        //
-        // The bus, in every mode, because it is silenced in every mode.  It
-        // keeps no "sounding" flag of its own - the factory sends it an
-        // unmatched note-off on every press - so the test is whether a key
-        // is under a finger at all, state+0x238, the count the contact
-        // handler itself keeps.  Nothing is written back: a second bus
-        // note-off after STOP, for a note already ended, is the same no-op
-        // the factory sends routinely, where a note number invented here
-        // would not be.
-        //
-        // MIDI, only where the keyboard is monophonic, on 0x33c5 - the
-        // factory's own "the keyboard owns a sounding note", set only inside
-        // the mono section the poly modes skip.  A poly note held into PLAY
-        // keeps its MIDI: poly stays live through the take and its own
-        // release still ends it.  Clearing the flag is what stops that note
-        // being ended a second time.
-        //
-        // seq_transport calls this on the way into PLAY, BEFORE it publishes
-        // the new mode, so the mute is not yet in the way.  It tails into
-        // seq_release, whose pool word it took over, so the arp note is
-        // ended exactly as before.
-        //
-        // It keeps R9 and R12 the way seq_release does, because it took over
-        // seq_release's pool word and inherits its contract: seq_transport
-        // publishes the mode through R12 the moment this returns, and the
-        // senders below leave their own R12 behind.  Without them in the
-        // frame the mode byte went out through a note number instead of the
-        // sequencer's block - a stray store into low RAM on every PLAY that
-        // found a key under a finger.
-        begin(0x8001bec0);
-        emit("STM --SP,R0,R1,R7,R9,R12,LR");
+        // Whether the keyboard is live and a key is under a finger.  R8 = 1
+        // if so, else 0.  A leaf that keeps R9-R12: it answers for callers
+        // that are packed to the register.
+        begin(0x8001be50);
+        emit("ST.W --SP,R9");
+        emit("MOV R8,0x0");
+        emit("MOV R9,0x38a0");          // state+0x340/341 in one halfword
+        emit("LD.UH R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001be6c");      // arp engaged: the keyboard is not live
+        emit("LDDPC R9,0x8001be74");
+        emit("LD.UB R9,R9[0x238]");     // a key under a finger?
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001be6c");
+        emit("MOV R8,0x1");
+        padTo(0x8001be6c);
+        emit("LD.W R9,SP++");
+        emit("MOV PC,LR");
+        padTo(0x8001be74);
+        word(0x00003560); // global state base
+        finish("seq_key_held", 0x8001be78);
+
+        // seq_select's bound between a pitch and a rest or tie.  R8 = the
+        // step, R9-R11 seq_select's own; R12 = 0x7ffe, or -0x8000 while a
+        // key is held so that every step reads as silent and is spent.
+        begin(0x8001be80);
+        emit("STM --SP,R7,R8,LR");
         emit("MOV R7,SP");
-        emit("LDDPC R1,0x8001bf50");    // global state base
-        emit("LD.UB R0,R1[0x2e1]");     // the note the keyboard is holding
-        emit("LD.UB R8,R1[0x238]");     // is a key under a finger at all?
+        emit("MCALL PC[0x8001bea8]");   // seq_key_held -> R8
+        emit("MOV R12,0x7ffe");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001bf00");
+        emit("BR{eq} 0x8001be9a");
+        emit("MOV R12,-0x8000");        // the keyboard has the voice
+        padTo(0x8001be9a);
+        emit("LDM SP++,R7,R8,PC");
+        padTo(0x8001bea8);
+        word(0x8001be50); // seq_key_held
+        finish("seq_key_priority", 0x8001beac);
+
+        // seq_release's gate drop: a key under a finger keeps its gate;
+        // otherwise the factory's gate to zero, flushed.  Decisive on the
+        // way into PLAY.  On the way out seq_transport goes on to the
+        // factory's enable transition, whose arp-off half ends every note
+        // and drops the gate itself (0x80002c96), so a key held through
+        // STOP goes silent there exactly as it does when the arp switch is
+        // turned off under it.
+        begin(0x8001beb0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001bec8]");   // seq_key_held -> R8
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001bec2");      // held: the gate stays up
+        emit("MCALL PC[0x8001becc]");   // nobody's: gate to zero and flushed
+        padTo(0x8001bec2);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001bec8);
+        word(0x8001be50); // seq_key_held
+        word(0x80002440); // gate to zero and flush it
+        finish("seq_release_gate", 0x8001bed0);
+
+        // seq_gate's pool word for seq_gate_length: a held key answers a
+        // count the countdown never reaches, so the gate stays; otherwise
+        // the length as before.  Reached only while playing, for a step
+        // that is not a tie.
+        begin(0x8001bed0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001bef0]");   // seq_key_held -> R8
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bee8");
+        emit("MOV R8,-0x8000");         // held: the gate never falls
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001bee8);
+        emit("LDM SP++,R7,LR");
+        emit("LDDPC R8,0x8001bef4");
+        emit("MOV PC,R8");              // on to seq_gate_length
+        padTo(0x8001bef0);
+        word(0x8001be50); // seq_key_held
+        word(0x8001b740); // seq_gate_length
+        finish("seq_gate_held", 0x8001bef8);
+
+        // The key-to-MIDI-note helper's pool words in the contact handler's
+        // live path and in the hand-back helper: the keyboard is taking the
+        // voice, so the note the sequencer is sounding ends here, the way
+        // seq_release ends it - the bus when it carries the note, then both
+        // ports, then the active flag - so a receiver holding both lines
+        // hears the keyboard alone, as the CV does.  R12 is the key and
+        // goes through to the helper untouched.
+        begin(0x8001bf00);
+        emit("STM --SP,R0,R1,R7,R12,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x6154");
+        emit("LD.UB R8,R8[0x4]");
+        emit("CP.W R8,0x2");
+        emit("BR{ne} 0x8001bf70");      // not playing
+        emit("MOV R8,0x2eed");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001bf70");      // the sequencer sounds nothing
+        emit("LDDPC R1,0x8001bf80");    // global state base
+        emit("MOV R8,0x2ee4");
+        emit("LD.UB R0,R8[0x1]");       // the note, kept where a call cannot reach it
         emit("MOV R8,0x2efa");
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001bf00");
+        emit("BR{eq} 0x8001bf4a");
         emit("LD.W R8,R1[0x4]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001bf00");
+        emit("BR{eq} 0x8001bf4a");
         emit("LD.UB R12,R1[0x0]");
-        emit("MCALL PC[0x8001bf54]");   // take the 208 bus
-        emit("MOV R10,0x0");
+        emit("MCALL PC[0x8001bf84]");   // take the bus
+        emit("MOV R10,R0");
         emit("LD.W R11,R1[0x4]");
-        emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bf58]");   // note off, on the bus
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001bf88]");   // note off, on the bus
         emit("LD.UB R12,R1[0x0]");
-        emit("MCALL PC[0x8001bf5c]");   // and give it back
-        padTo(0x8001bf00);
-        emit("MOV R8,0x33c5");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001bf40");      // no mono keyboard note is sounding
+        emit("MCALL PC[0x8001bf8c]");   // and give it back
+        padTo(0x8001bf4a);
         emit("LD.UB R10,R1[0x2e7]");
-        emit("MOV R11,0x0");
-        emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bf60]");   // note off, one port
+        emit("MOV R11,R0");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001bf90]");   // note off, one port
         emit("LD.UB R10,R1[0x2e7]");
-        emit("MOV R11,0x0");
-        emit("MOV R12,R0");
-        emit("MCALL PC[0x8001bf64]");   // and the other
-        emit("MOV R8,0x33c5");
+        emit("MOV R11,R0");
+        emit("LD.UB R12,R1[0x34e]");
+        emit("MCALL PC[0x8001bf94]");   // and the other
+        emit("MOV R8,0x2eed");
         emit("MOV R9,0x0");
-        emit("ST.B R8[0x0],R9");        // the keyboard owns no MIDI note now
-        padTo(0x8001bf40);
-        emit("LDM SP++,R0,R1,R7,R9,R12,LR");
-        emit("LDDPC R8,0x8001bf68");
-        emit("MOV PC,R8");              // on to the arp/sequencer release
-        padTo(0x8001bf50);
+        emit("ST.B R8[0x0],R9");        // the sequencer sounds nothing now
+        padTo(0x8001bf70);
+        emit("LDM SP++,R0,R1,R7,R12,LR");
+        emit("LDDPC R8,0x8001bf98");
+        emit("MOV PC,R8");              // the key's MIDI note, as before
+        padTo(0x8001bf80);
         word(0x00003560); // global state base
         word(0x8000f1f0); // take the 208 bus
         word(0x8000f3a8); // note off on the bus
         word(0x8000f160); // give the bus back
         word(0x80007e44); // MIDI note off, port one
         word(0x800081f0); // MIDI note off, port two
-        word(0x8001b448); // seq_release, whose pool word this took over
-        finish("seq_key_release", 0x8001bf6c);
+        word(0x800057a8); // key -> MIDI note
+        finish("seq_key_takes", 0x8001bf9c);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
         // The divider and the sequencer's rest/tie decision have already run.
@@ -9231,50 +9237,17 @@ function assembleProgram() {
         wordPatch("note_on_pool", 0x80005e8c,
             block("seq_pitch") ? 0x8001b330 : 0x80018d00,
             "note-on pointer -> filter-reset wrapper");
-        // Every send the physical key owns -> the play-mode guard.  Off the
-        // sequencer these keep their factory targets, so a build without it
-        // never reaches the cave.  Four groups of three: the previous note's
-        // release, the press, the lift, and the note handed back to a key
-        // still held when another is let go.
-        wordPatch("key_prev_bus_pool", 0x80005ea8,
-            block("seq_pitch") ? 0x8001be64 : 0x8000f3a8,
-            "previous note off, 208 bus -> play-mode guard");
-        wordPatch("key_prev_pool_1", 0x80005eb4,
-            block("seq_pitch") ? 0x8001be50 : 0x80007e44,
-            "previous note off, port one -> play-mode guard");
-        wordPatch("key_prev_pool_2", 0x80005eb8,
-            block("seq_pitch") ? 0x8001be54 : 0x800081f0,
-            "previous note off, port two -> play-mode guard");
-        wordPatch("key_noteon_bus_pool", 0x80005ec4,
-            block("seq_pitch") ? 0x8001be60 : 0x8000f2c0,
-            "key note on, 208 bus -> play-mode guard");
-        wordPatch("key_noteon_pool_1", 0x80005ec8,
-            block("seq_pitch") ? 0x8001be58 : 0x80007de8,
-            "key note on, port one -> play-mode guard");
-        wordPatch("key_noteon_pool_2", 0x80005ecc,
-            block("seq_pitch") ? 0x8001be5c : 0x80008170,
-            "key note on, port two -> play-mode guard");
-        wordPatch("key_noteoff_bus_pool", 0x8000629c,
-            block("seq_pitch") ? 0x8001be64 : 0x8000f3a8,
-            "key note off, 208 bus -> play-mode guard");
-        wordPatch("key_noteoff_pool_1", 0x800062a4,
-            block("seq_pitch") ? 0x8001be50 : 0x80007e44,
-            "key note off, port one -> play-mode guard");
-        wordPatch("key_noteoff_pool_2", 0x800062a8,
-            block("seq_pitch") ? 0x8001be54 : 0x800081f0,
-            "key note off, port two -> play-mode guard");
-        // Letting a key go in mono hands the note back to one still under a
-        // finger, which is a fresh note from the helper at 0x800062b4 -
-        // reached from the lift handler and nowhere else.
-        wordPatch("key_restore_bus_pool", 0x800063e0,
-            block("seq_pitch") ? 0x8001be60 : 0x8000f2c0,
-            "restored note on, 208 bus -> play-mode guard");
-        wordPatch("key_restore_pool_1", 0x800063e8,
-            block("seq_pitch") ? 0x8001be58 : 0x80007de8,
-            "restored note on, port one -> play-mode guard");
-        wordPatch("key_restore_pool_2", 0x800063ec,
-            block("seq_pitch") ? 0x8001be5c : 0x80008170,
-            "restored note on, port two -> play-mode guard");
+        // The keyboard over a running take: the two sites where the keyboard
+        // takes the one voice - the press, and the note handed back to a key
+        // still held when another is let go - end the note the sequencer is
+        // sounding first.  Off the sequencer these keep their factory
+        // targets.
+        wordPatch("key_note_pool", 0x80005ebc,
+            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            "key -> MIDI note on the press -> the sequencer's note ends");
+        wordPatch("key_restore_note_pool", 0x800063d0,
+            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            "key -> MIDI note on the hand-back -> the sequencer's note ends");
         wordPatch("pad_select_pool", 0x8000a810,
             block("seq_chord") ? 0x8001b790 : 0x8000698c,
             "press-time select_pad -> chord-armed guard");
