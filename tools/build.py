@@ -131,6 +131,17 @@ ENABLED_WHEN = {
 }
 
 
+def display_path(path: Path) -> str:
+    """Name a path the way the summary prints it: repo-relative when it lies
+    inside the checkout, absolute otherwise.
+
+    A config may point output_hex or a calibration file outside the
+    repository (a per-session scratch directory, say), and Path.relative_to
+    raises for those, which used to kill the build after the image had already
+    been written."""
+    return str(path.relative_to(REPO)) if path.is_relative_to(REPO) else str(path)
+
+
 def get(cfg: dict, dotted: str):
     node = cfg
     for part in dotted.split("."):
@@ -767,7 +778,7 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
             trailing += 1
         out.append(cal_delim.join(parts))
     calibration.write_text("\n".join(out) + "\n")
-    print(f"folded {applied} reading(s) into {calibration.relative_to(REPO)}")
+    print(f"folded {applied} reading(s) into {display_path(calibration)}")
     if trailing:
         print(f"  {trailing} extrapolated row(s) above semitone {highest} followed it")
     print("  rebuild to apply them")
@@ -1492,7 +1503,7 @@ def main() -> None:
     if local.exists():
         for key, value in tomllib.loads(local.read_text()).get("tools", {}).items():
             cfg.setdefault("tools", {})[key] = value
-    cfg["_config_name"] = str(config_path.relative_to(REPO)) if config_path.is_relative_to(REPO) else str(config_path)
+    cfg["_config_name"] = display_path(config_path)
     BUILD.mkdir(exist_ok=True)
     calibration = REPO / cfg["pitch"]["calibration_csv"]
 
@@ -2274,7 +2285,7 @@ def main() -> None:
             replace_atomically(updater, patched)
             print(f"updated {updater.name} checksum and summary")
 
-    print(f"wrote {out_path.relative_to(REPO)}")
+    print(f"wrote {display_path(out_path)}")
     print(f"  {changed} bytes changed, {added} newly programmed into erased flash")
     print("  all differences from the factory image lie inside declared patches")
     print(f"  SHA-256 {digest}")
