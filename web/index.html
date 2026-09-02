@@ -271,7 +271,7 @@
 
         <div class="group">
           <h3>Keyboard scaling</h3>
-          <div>
+          <div class="field">
             <span class="t field-label">Volts per octave</span>
             <div class="row field-row">
               <div class="vpo rowpick" id="vpo">
@@ -279,6 +279,16 @@
                 <button data-v="1.0" aria-pressed="false">1 V/oct<span class="why">Serge, Eurorack &amp; others</span></button>
               </div>
             </div>
+          </div>
+          <div class="field">
+            <span class="t field-label">Pitch offset</span>
+            <div class="row field-row">
+              <div class="vpo rowpick" id="offset">
+                <button data-v="1" aria-pressed="true">3 semitones<span class="why">208, 208r, 208p</span></button>
+                <button data-v="0" aria-pressed="false">None<span class="why">208c</span></button>
+              </div>
+            </div>
+            <p class="d muted field-note" id="offsetNote">The lowest key will output 0.3V.</p>
           </div>
 
 

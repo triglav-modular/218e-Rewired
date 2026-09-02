@@ -77,6 +77,13 @@ var BUILDLIB = (function () {
         }
         cfg.pitch.volts_per_octave = vpo;
 
+        // Same rule as tools/options.py: the firmware reads the bottom key
+        // three entries up the table, so a 208, 208r or 208p - which start
+        // from A - keep the 0 V pitch at entry 0 and the bottom C three above
+        // it; the 208c starts from C, and its table is laid out three entries
+        // later so the bottom key reads the 0 V pitch.
+        cfg.pitch.bottom_key_semitone = want('pitch_offset', true) ? 3 : 0;
+
         if (!want('pressure_fix', true)) {
             cfg.pressure.multi_key = 'factory';
             cfg.pressure.common_mode = false;
@@ -602,9 +609,20 @@ var BUILDLIB = (function () {
             throw new Error('calibration has ' + (top + 1) + ' rows, the firmware reads ' +
                             GEN.pitchTableEntries);
         }
+        // Entry 3 is what the bottom key reads; bottom_key_semitone says
+        // which calibration semitone goes there.  A 208c build lays the
+        // curve out three entries later, and the entries under the 0 V
+        // pitch - reachable only by a vibrato dipping below the lowest
+        // note - sit at 0 V.  Same layout as tools/build.py pitch_table().
+        var bottom = cfg.pitch.bottom_key_semitone;
+        if (bottom !== 3 && bottom !== 0) {
+            throw new Error('bottom_key_semitone must be 3 or 0, got ' + bottom);
+        }
+        var shift = GEN.bottomKeyIndex - bottom;
         var table = [];
-        for (i = 0; i <= top; i++) {
-            table.push(floorHalf(scale * (i / 12.0 + offsets[i] / 1200.0)));
+        for (i = 0; i < shift; i++) table.push(0);
+        for (var s = 0; s <= top - shift; s++) {
+            table.push(floorHalf(scale * (s / 12.0 + offsets[s] / 1200.0)));
         }
         if (table.length !== GEN.pitchTableEntries) {
             throw new Error('Pitch curve has ' + table.length + ' entries, firmware needs ' +
@@ -614,10 +632,12 @@ var BUILDLIB = (function () {
             // <=, not <: two adjacent entries at the same DAC count is a
             // semitone that plays its neighbour's pitch, and nothing further
             // down can tell.  The real tables step by 25 counts at the closest.
+            // The zeroed entries under the 0 V pitch are exempt: they repeat
+            // on purpose.
             if (table[i] < table[i - 1]) throw new Error('Pitch curve is not monotonic. Check the calibration table.');
-            if (table[i] === table[i - 1]) throw new Error('Pitch curve repeats a DAC count at semitone ' + i + ' - that semitone would play its neighbour\'s pitch. Check the calibration table.');
+            if (i > shift && table[i] === table[i - 1]) throw new Error('Pitch curve repeats a DAC count at semitone ' + (i - shift) + ' - that semitone would play its neighbour\'s pitch. Check the calibration table.');
         }
-        if (table[0] < 0 || table[table.length - 1] > 4095) {
+        if (table[shift] < 0 || table[table.length - 1] > 4095) {
             throw new Error('Pitch curve leaves the 12-bit DAC range.');
         }
         return table;

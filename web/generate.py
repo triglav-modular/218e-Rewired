@@ -40,6 +40,7 @@ def main() -> None:
         f"  version: {json.dumps(cfg['firmware'].get('version', '0.0.0'))},",
         f"  factoryKeyTable: {B.FACTORY_KEY_TABLE},",
         f"  pitchTableEntries: {B.PITCH_TABLE_ENTRIES},",
+        f"  bottomKeyIndex: {B.BOTTOM_KEY_INDEX},",
         f"  calibrationVoltsPerOctave: {B.CALIBRATION_VOLTS_PER_OCTAVE},",
         f"  internalDefaults: {json.dumps(O.INTERNAL_DEFAULTS, sort_keys=True)},",
         f"  featureMap: {json.dumps({k: list(v) for k, v in B.FEATURE_MAP.items()}, sort_keys=True)},",

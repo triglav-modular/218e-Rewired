@@ -59,6 +59,12 @@ NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 # firmware would read as pitch values.
 PITCH_TABLE_ENTRIES = 0x4D + 2
 
+# The pitch remap adds 120 units - three semitones at 484 to the octave -
+# before it reads the table, so the bottom key at the lowest octave position
+# (raw pitch 1) lands on entry 3.  That is fixed in the firmware; which pitch
+# the build puts there is [pitch].bottom_key_semitone, below.
+BOTTOM_KEY_INDEX = 3
+
 
 # ---------------------------------------------------------------------------
 # Feature map: which patches carry which behaviour.
@@ -123,6 +129,17 @@ ENABLED_WHEN = {
     "diagnostics.latch_probe": True,
     "diagnostics.pressure_ab_switch": True,
 }
+
+
+def display_path(path: Path) -> str:
+    """Name a path the way the summary prints it: repo-relative when it lies
+    inside the checkout, absolute otherwise.
+
+    A config may point output_hex or a calibration file outside the
+    repository (a per-session scratch directory, say), and Path.relative_to
+    raises for those, which used to kill the build after the image had already
+    been written."""
+    return str(path.relative_to(REPO)) if path.is_relative_to(REPO) else str(path)
 
 
 def get(cfg: dict, dotted: str):
@@ -612,15 +629,28 @@ CALIBRATION_VOLTS_PER_OCTAVE = 1.0
 def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
     """Per-semitone pitch curve, in DAC counts.
 
-    counts(i) = counts_per_volt * vpo/1.2 * (i/12 + offset(i)/1200): an ideal
+    counts(s) = counts_per_volt * vpo/1.2 * (s/12 + offset(s)/1200): an ideal
     1 V/octave ramp displaced by the measured calibration, then scaled from the
     1.2 V/oct the calibration assumes to the configured volts_per_octave.
+
+    Entry BOTTOM_KEY_INDEX is what the bottom key reads at the lowest octave
+    position, and [pitch].bottom_key_semitone says which calibration semitone
+    belongs there.  3 - a 208, 208r or 208p, which start from A - puts the
+    table's 0 V pitch at entry 0, three semitones under the bottom C.  0 is
+    the 208c, which starts from C: the curve is laid out three entries later
+    so the bottom key reads the 0 V pitch, and the entries under it, which
+    only a vibrato dipping below the lowest note can reach, sit at 0 V.
     """
     vpo = cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE)
     scale = counts_per_volt(cfg) * (vpo / CALIBRATION_VOLTS_PER_OCTAVE)
-    table = [
-        math.floor(scale * (i / 12.0 + offsets[i] / 1200.0) + 0.5)
-        for i in range(max(offsets) + 1)
+    bottom = cfg["pitch"].get("bottom_key_semitone", BOTTOM_KEY_INDEX)
+    if bottom not in (0, BOTTOM_KEY_INDEX):
+        raise ValueError(
+            f"[pitch].bottom_key_semitone must be {BOTTOM_KEY_INDEX} or 0, got {bottom!r}")
+    shift = BOTTOM_KEY_INDEX - bottom
+    table = [0] * shift + [
+        math.floor(scale * (s / 12.0 + offsets[s] / 1200.0) + 0.5)
+        for s in range(max(offsets) + 1 - shift)
     ]
     if len(table) != PITCH_TABLE_ENTRIES:
         raise ValueError(
@@ -628,17 +658,18 @@ def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
     # Strictly increasing, not merely non-descending.  Two adjacent entries at
     # the same DAC count is a semitone that plays the pitch of its neighbour,
     # and the remap has no way to say so; the real tables step by 25 counts at
-    # the closest, so a repeat is a corrupt table rather than a fine one.
-    flat = [i for i in range(1, len(table)) if table[i] == table[i - 1]]
+    # the closest, so a repeat is a corrupt table rather than a fine one.  The
+    # entries under the 0 V pitch are 0 V on purpose and are not read as one.
+    flat = [i for i in range(shift + 1, len(table)) if table[i] == table[i - 1]]
     if flat:
         raise ValueError(
             f"Pitch curve repeats a DAC count at semitone{'s' if len(flat) > 1 else ''} "
-            f"{', '.join(str(i) for i in flat[:6])}"
+            f"{', '.join(str(i - shift) for i in flat[:6])}"
             f"{'...' if len(flat) > 6 else ''} - that semitone would play its "
             f"neighbour's pitch. Check the calibration table.")
     if table != sorted(table):
         raise ValueError("Pitch curve is not monotonic. Check the calibration table.")
-    if table[0] < 0 or table[-1] > 4095:
+    if table[shift] < 0 or table[-1] > 4095:
         raise ValueError("Pitch curve leaves the 12-bit DAC range.")
     return table
 
@@ -671,20 +702,23 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     lines = [ln for ln in read_lines(measurement) if not ln.lstrip().startswith("#")]
     delimiter = ";" if lines[0].count(";") else ","
     updates: dict[int, float] = {}
+    # Where the bottom key sits in the table: three semitones above the 0 V
+    # pitch with the offset, on it for a 208c build - see pitch_table().
+    bottom = cfg.get("pitch", {}).get("bottom_key_semitone", BOTTOM_KEY_INDEX)
     for row in csv.DictReader(lines, delimiter=delimiter):
         raw = (row.get("Measured_Cents") or "").strip()
         if not raw:
             continue
         # Three accepted ways to say which note was measured.  "Semitone" is an
-        # index into the calibration table (0 = the 208's 0 V pitch, an A);
-        # "Semitones" and "Key" are relative to the bottom key, which is a C,
-        # three semitones higher.
+        # index into the calibration table (0 = the 208's 0 V pitch);
+        # "Semitones" and "Key" are relative to the bottom key, a C, which the
+        # build puts `bottom` semitones above that.  Keys are numbered from 1.
         if (row.get("Semitone") or "").strip():
             semitone = int(row["Semitone"])
         elif (row.get("Semitones") or "").strip():
-            semitone = int(row["Semitones"]) + 3
+            semitone = int(row["Semitones"]) + bottom
         elif (row.get("Key") or "").strip():
-            semitone = int(row["Key"]) + 2
+            semitone = int(row["Key"]) - 1 + bottom
         else:
             raise SystemExit(f"{measurement.name}: rows need a Semitone, Semitones or Key column")
         if semitone not in offsets:
@@ -744,7 +778,7 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
             trailing += 1
         out.append(cal_delim.join(parts))
     calibration.write_text("\n".join(out) + "\n")
-    print(f"folded {applied} reading(s) into {calibration.relative_to(REPO)}")
+    print(f"folded {applied} reading(s) into {display_path(calibration)}")
     if trailing:
         print(f"  {trailing} extrapolated row(s) above semitone {highest} followed it")
     print("  rebuild to apply them")
@@ -1469,7 +1503,7 @@ def main() -> None:
     if local.exists():
         for key, value in tomllib.loads(local.read_text()).get("tools", {}).items():
             cfg.setdefault("tools", {})[key] = value
-    cfg["_config_name"] = str(config_path.relative_to(REPO)) if config_path.is_relative_to(REPO) else str(config_path)
+    cfg["_config_name"] = display_path(config_path)
     BUILD.mkdir(exist_ok=True)
     calibration = REPO / cfg["pitch"]["calibration_csv"]
 
@@ -1523,6 +1557,10 @@ def main() -> None:
         ),
         "pitch_remap": pitch_table(cfg, read_calibration(calibration)),
     }
+    print("  pitch offset: " + (
+        "three semitones - the bottom key sounds three above the 0 V pitch (208, 208r, 208p)"
+        if cfg["pitch"].get("bottom_key_semitone", BOTTOM_KEY_INDEX)
+        else "none - the bottom key sounds the 0 V pitch (208c)"))
     reference_key = tuning.get("reference_key", 9)
     # What one step of the octave controls should be, in DAC units.  The
     # factory temperament and every 2/1 scale make this 484.
@@ -2247,7 +2285,7 @@ def main() -> None:
             replace_atomically(updater, patched)
             print(f"updated {updater.name} checksum and summary")
 
-    print(f"wrote {out_path.relative_to(REPO)}")
+    print(f"wrote {display_path(out_path)}")
     print(f"  {changed} bytes changed, {added} newly programmed into erased flash")
     print("  all differences from the factory image lie inside declared patches")
     print(f"  SHA-256 {digest}")

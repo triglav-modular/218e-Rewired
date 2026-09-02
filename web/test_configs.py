@@ -151,6 +151,14 @@ CONFIGS = [
                           {"volts_per_octave": 1.0}),
     ("pitch_correction",  [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
                           {"pitch_correction": calibration_rows()}),
+    # The 208c layout: the pitch table alone moves, so both builders have to
+    # lay it out three entries later and zero what is under it - with the
+    # flat ramp and with a measured table, whose top three rows drop off.
+    ("no_offset",         [(r"^pitch_offset = true", "pitch_offset = false")],
+                          {"pitch_offset": False}),
+    ("no_offset_corrected", [(r"^pitch_offset = true", "pitch_offset = false"),
+                             (r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
+                            {"pitch_offset": False, "pitch_correction": calibration_rows()}),
     ("tunings_one",       [(r"^alternate_tunings = false",
                             'alternate_tunings = ["tunings/12TET.scl"]')],
                           {"alternate_tunings": scala(["tunings/12TET.scl"])}),

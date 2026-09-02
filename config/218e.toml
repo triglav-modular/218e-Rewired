@@ -155,6 +155,12 @@ sequencer = true
 # MCU input must be low for >250 us before each rising edge; see docs/CLOCK.md.
 clock_divide = true
 
+# 12. PITCH OFFSET
+# The pitch CV starts three semitones above the 208's 0 V pitch.  A 208, 208r
+# or 208p starts from A, so that offset is what puts the bottom C in tune.
+# The 208c starts from C: set false and the bottom key sounds the 0 V pitch.
+pitch_offset = true
+
 # Save the remapped preset voltages and sequence across power cycles.
 # Save a changed sequence when leaving record or clearing it; save a
 # changed preset when its pad is released. No idle or arp-off requirement.
@@ -184,12 +190,12 @@ updaters       = ["mac/Program218e_v3_Rewired_macOS.command",
 # SHA-256, which is derived and cannot drift; this is the part people can say
 # out loud.  The build reports them together as "Rewired <version> (<sha8>)"
 # and writes that into both flashers.
-version        = "2.1.0"
+version        = "2.2.0"
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "c6622897da3470110eea06d34a7b19574a0277dd2f68c541b56561e0d1376c72"
+golden_sha256  = "b997485bbfa87148b6c37bf9e5c681a20e0e3c2694609d5128aacd8b472bea5b"
 
 
 [tools]

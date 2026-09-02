@@ -543,6 +543,55 @@ public class ControlRegression extends SequenceEditRegression {
             Math.abs((short)r(0x60e2,2)-olderToggleBlend)<=1);
         println("PASS pressure ownership: allocated slots carry their finger's weight, orphaned and older-toggle latches carry none");
     }
+    void staleAnchor() throws Exception {
+        // With the arp off, the last arp key is never written: it holds
+        // whatever the last step left, or key 0 from a cold boot.  The
+        // blend's anchor used to be translated through that key's map
+        // entry, and the entry outlived the press - so once key 1 had been
+        // pressed and released, every later single key was measured
+        // against key 1's pitch, thresholded as a non-anchor, and bent
+        // sharp by the whole interval (BlendAnchorProbe).  The arp-off
+        // pressure fixture is the probe's: contact, raw reading, cache pass.
+        setup(0,false,0);
+        w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x344,4,2); w(S+0x2ef,1,1);
+        w(S+0x306,2,900); w(S+0x310,2,0);
+        for(int i=0;i<8;i++){ controlScan(); musicalScan(); }
+        touchOn(9); w(0x3490+9,1,2); w(0x3686+18,2,900); call(0x8001aa10L);
+        for(int i=0;i<60;i++){ controlScan(); musicalScan(); }
+        long fresh=r(S+0x358,2);
+        check("a single key on a fresh instrument bends nothing",
+            r(0x60e2,2)==0&&r(S+0x352,2)==r(0x854+18,2));
+        w(0x3490+9,1,0); w(0x3686+18,2,110); call(0x8001aa10L); touchOff(9);
+        for(int i=0;i<30;i++){ controlScan(); musicalScan(); }
+        check("a release gives up the key's slot ownership",r(0x6521+9,1)==0);
+        touchOn(0); w(0x3490,1,2); w(0x3686,2,900); call(0x8001aa10L);
+        for(int i=0;i<30;i++){ controlScan(); musicalScan(); }
+        check("key 1 alone bends nothing either",r(0x60e2,2)==0);
+        w(0x3490,1,0); w(0x3686,2,110); call(0x8001aa10L); touchOff(0);
+        for(int i=0;i<30;i++){ controlScan(); musicalScan(); }
+        check("key 1's ownership is gone with its finger",r(0x6521,1)==0&&r(S+0x34d,1)==0);
+        touchOn(9); w(0x3490+9,1,2); w(0x3686+18,2,900); call(0x8001aa10L);
+        for(int i=0;i<60;i++){ controlScan(); musicalScan(); }
+        check("a single key after key 1 sounds exactly as it did before",
+            r(0x60e2,2)==0&&r(0x60e0,2)==0&&r(S+0x358,2)==fresh);
+        w(0x3490+9,1,0); w(0x3686+18,2,110); call(0x8001aa10L); touchOff(9);
+        for(int i=0;i<30;i++){ controlScan(); musicalScan(); }
+        // Key 1 held, then key 9 on top: with the arp off the last key
+        // touched sounds, and it is the anchor, so the finger underneath
+        // pulls toward its own, lower, note - never above the top.  The
+        // stale anchor had it the other way round, pushing above key 9.
+        touchOn(0); w(0x3490,1,2); w(0x3686,2,900); call(0x8001aa10L);
+        for(int i=0;i<10;i++){ controlScan(); musicalScan(); }
+        touchOn(9); w(0x3490+9,1,2); w(0x3686+18,2,900); call(0x8001aa10L);
+        for(int i=0;i<60;i++){ controlScan(); musicalScan(); }
+        check("a lower key held underneath pulls the pitch down, not up",
+            r(S+0x350,2)==r(0x854+18,2)&&(short)r(0x60e2,2)<0&&r(S+0x358,2)<fresh);
+        w(0x3490,1,0); w(0x3490+9,1,0); w(0x3686,2,110); w(0x3686+18,2,110);
+        call(0x8001aa10L); touchOff(0); touchOff(9);
+        for(int i=0;i<30;i++){ controlScan(); musicalScan(); }
+        check("releasing both clears the blend",r(0x60e2,2)==0);
+        println("PASS stale anchor: a released key no longer anchors the blend, with the arp off");
+    }
     void previewBoundaries() throws Exception {
         // The end of a one-shot preview is a sentinel, not a wrap: no step
         // follows it, so the last gate falls and the last MIDI note ends,
@@ -709,6 +758,7 @@ public class ControlRegression extends SequenceEditRegression {
             if(seq&&!transpose)try { recordedOctaves(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { capacityAudition(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { pressureOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(!lean)try { staleAnchor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { previewBoundaries(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&transpose)try { recordedBounds(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { playbackPressure(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

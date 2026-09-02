@@ -14,6 +14,7 @@ and the JavaScript toolchain underneath are all unchanged.
     pitch_correction    = "<csv>"/false  per-key offsets, or a flat ramp
     alternate_tunings   = [scl,...]/false  up to 3 Scala files, or factory
     volts_per_octave    = 1.2 / 1.0      pitch ramp scaling
+    pitch_offset        = true/false     bottom key three semitones up / at 0 V
     pressure_fix        = true/false     the reworked pressure path, or factory
     pressure_portamento = true/false     pitch follows relative pressure
 """
@@ -53,7 +54,8 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                  'knob3': 'arp_octaves',
                  'knob4': 'vibrato'},
     'midi': {'poly_default': 'off'},
-    'pitch': {   'calibration_csv': 'calibration/218e-pitch-calibration.csv',
+    'pitch': {   'bottom_key_semitone': 3,
+                 'calibration_csv': 'calibration/218e-pitch-calibration.csv',
                  'dac_counts': 4096,
                  'dac_gain': 4.09,
                  'dac_vref': 2.5},
@@ -196,6 +198,7 @@ OPTION_TYPES = {
     "pressure_fix":        bool,
     "pressure_portamento": bool,
     "volts_per_octave":    float,
+    "pitch_offset":        bool,
     "pitch_correction":    (bool, str),
     "alternate_tunings":   (bool, list),
     "knob1":               str,
@@ -487,6 +490,16 @@ def expand(options: dict) -> dict:
     if vpo not in (1.0, 1.2):
         raise SystemExit("volts_per_octave must be 1.2 (standard Buchla) or 1.0")
     cfg["pitch"]["volts_per_octave"] = vpo
+
+    # 12. Pitch offset -------------------------------------------------------
+    # Which calibration semitone the bottom key sounds at the lowest octave
+    # position.  The pitch remap adds three semitones before it reads the
+    # table, so the bottom C lands three semitones above the table's 0 V
+    # pitch - the A a 208, 208r or 208p starts from.  The 208c starts from C,
+    # so there the bottom key belongs AT the 0 V pitch: tools/build.py lays
+    # the table out three entries later and the firmware's fixed add cancels
+    # out, with no change to the assembled code.
+    cfg["pitch"]["bottom_key_semitone"] = 3 if want("pitch_offset", True) else 0
 
     # 6. Pressure response fix ----------------------------------------------
     # One switch over the whole reworked pressure path.  Off returns every
