@@ -373,7 +373,16 @@ IF ERRORLEVEL 1 (
     GOTO :fail_early
 )
 DEL "%TEMP%\rewired_midi.txt" >NUL 2>&1
-ECHO Asking the 218e V3 to enter DFU mode over MIDI.
+
+REM The instrument ignores the request now and then: it stays enumerated as
+REM itself and nothing detaches.  Re-sending costs nothing - no erase has
+REM happened and the ISP request carries no state - so the ignored case gets
+REM four goes, as it does on macOS.
+SET "DFU_ATTEMPTS=4"
+SET "DFU_ATTEMPT=1"
+
+:dfu_request
+ECHO Asking the 218e V3 to enter DFU mode over MIDI (attempt !DFU_ATTEMPT! of %DFU_ATTEMPTS%).
 REM SendMIDI can report a failure in its output while still exiting zero, so
 REM the text is checked as well as the status - the macOS flasher has always
 REM done this and the Windows one did not.
@@ -407,6 +416,40 @@ FOR /L %%I IN (1,1,30) DO (
         IF "!FOUND!"=="0" PING -n 3 127.0.0.1 >NUL
     )
 )
+REM Before blaming the driver: no Atmel DFU device on USB at all, with the
+REM instrument still offering its MIDI port, means the request was ignored
+REM rather than accepted.  Zadig has nothing to fix in that state, and used to
+REM be launched into it anyway.
+IF "!FOUND!"=="0" (
+    SET "USBSTATE="
+    FOR /F "delims=" %%S IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Find-DfuDevice.ps1" 2^>NUL') DO SET "USBSTATE=%%S"
+    IF NOT "!USBSTATE:~0,7!"=="PRESENT" (
+        "%SENDMIDI%" list > "%TEMP%\rewired_midi.txt" 2>&1
+        FINDSTR /I "218e" "%TEMP%\rewired_midi.txt" >NUL
+        SET "STILL_MIDI=!ERRORLEVEL!"
+        DEL "%TEMP%\rewired_midi.txt" >NUL 2>&1
+        IF "!STILL_MIDI!"=="0" (
+            IF !DFU_ATTEMPT! LSS %DFU_ATTEMPTS% (
+                SET /A DFU_ATTEMPT=!DFU_ATTEMPT!+1
+                ECHO.
+                ECHO   The 218e V3 is still on USB in application mode, so the
+                ECHO   request was ignored rather than accepted.  Nothing was erased.
+                ECHO.
+                ECHO   Asking again ^(attempt !DFU_ATTEMPT! of %DFU_ATTEMPTS%^).
+                ECHO.
+                ECHO Request ignored; asking again ^(attempt !DFU_ATTEMPT!^). >> "%LOG_FILE%"
+                GOTO :dfu_request
+            )
+            ECHO.
+            ECHO   The 218e V3 ignored %DFU_ATTEMPTS% DFU requests and stayed in
+            ECHO   application mode.  Nothing was erased; power-cycle the
+            ECHO   instrument and run this again.
+            ECHO Ignored %DFU_ATTEMPTS% DFU requests; still in application mode. >> "%LOG_FILE%"
+            GOTO :fail_early
+        )
+    )
+)
+
 REM Not appearing almost always means one thing on Windows: the DFU device is
 REM not bound to WinUSB, so libusb cannot open it.  Zadig fixes that, and it
 REM can only do so while the device is present - which it is, right now.  So
