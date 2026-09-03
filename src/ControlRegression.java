@@ -178,6 +178,34 @@ public class ControlRegression extends SequenceEditRegression {
         check("reverse rejects invalid history count",select(4,255)==-1);
         println("PASS forward/reverse after real release"+(lean?"":" and unlatch")+"; empty and corrupt history bounded");
     }
+    // A quick tap: the contact is confirmed on one scan and the key is gone on
+    // the next.  The deferred trigger then expires AFTER the lift, and before
+    // pulse_guard it raised the gate over a key nobody was holding; the
+    // factory drop then parked it at the sustain with no release left to end
+    // it.  One pitch pass per scan here, as the instrument runs it.
+    void tapScan() throws Exception {
+        controlScan(); call(0x80004d4eL,0x80004d52L);
+        call(0x80003590L); call(0x8000307cL);
+    }
+    void quickTapGate() throws Exception {
+        setup(0,false,0);
+        w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x344,4,2); w(S+0x2ef,1,1);
+        w(S+0x306,2,0); w(S+0x30a,2,0); w(S+0x30c,2,0); w(S+0x30e,2,0); w(S+0x310,2,0);
+        for(int i=0;i<8;i++) tapScan();
+        check("gate at rest",r(S+0x354,2)==0&&r(0x60ee,1)==0);
+        touchOn(9); w(0x6100+18,2,600); tapScan();
+        check("the note-on leaves its trigger pending",r(0x60ee,1)==1&&r(S+0x21a,1)==1);
+        w(0x6100+18,2,0); touchOff(9); tapScan();
+        check("a lift on the next scan leaves the gate down",
+            r(S+0x354,2)==0&&r(0x60ee,1)==0&&r(S+0x21a,1)==0&&r(S+0x238,1)==0);
+        for(int i=0;i<3;i++) tapScan();
+        check("and nothing raises it afterwards",r(S+0x354,2)==0);
+        touchOn(9); w(0x6100+18,2,600); tapScan(); tapScan();
+        check("a key held two scans still gets its trigger",r(S+0x354,2)==0xfff&&r(0x60ee,1)==0);
+        w(0x6100+18,2,0); touchOff(9); tapScan();
+        check("and its release drops the gate",r(S+0x354,2)==0);
+        println("PASS quick tap: a trigger expiring after the lift is dropped, a held key keeps its trigger");
+    }
     // The factory touch scan, which is what actually knows where the
     // fingers are: 0x80005b6a on contact, 0x80005edc on lift.  Neither is
     // latch-aware, so they stay true across the switch while the note pair
@@ -748,6 +776,7 @@ public class ControlRegression extends SequenceEditRegression {
         List<String> failures=new ArrayList<>();
         try {
             try { presetOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { quickTapGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

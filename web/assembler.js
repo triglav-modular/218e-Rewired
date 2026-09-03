@@ -2106,7 +2106,7 @@ function assembleProgram() {
         // helper now saves LR before its gate-off call; the
         // four pulse pools point THERE in a divider build.
         begin(0x8001a268);
-        word(0x800077f8); // real pulse-high routine
+        word(0x8001e100); // pulse_guard, in front of the real pulse-high routine
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
@@ -2117,6 +2117,44 @@ function assembleProgram() {
         padTo(0x8001a27a);
         emit("MOV PC,LR");
         finish("pulse_defer_set", 0x8001a280);
+
+        // Pulse guard.  Every deferred trigger reaches the factory pulse-high
+        // routine (0x800077f8) through this cave, which drops the trigger
+        // when nothing is sounding.  The factory raised the gate inside the
+        // note-on itself, so a key could not be released before its own
+        // trigger.  The deferral opened that window: a lift on the scan after
+        // the note-on zeroes the gate (0x80005f9a / 0x800060be), the pitch
+        // store of that same scan then runs the countdown out and raises it,
+        // and the factory's scheduled drop to the sustain (0x80007540) skips
+        // only a gate that is already zero - so the gate stood at 5 V with no
+        // key held, lamp lit, until a key was held long enough to release
+        // after its trigger.  "Sounding" is the factory's own test at
+        // 0x80005f56, the held-note count plus the count at state+0x258, or
+        // the sequencer playing, whose steps hold no key (seq_trigger_led
+        // makes the same exception).  A leaf that keeps LR, so the real
+        // routine returns to whoever asked for the trigger; R8/R9 are that
+        // routine's own scratch.
+        begin(0x8001e100);
+        emit("LDDPC R8,0x8001e120");
+        emit("LD.UB R9,R8[0x21a]");
+        emit("LD.UB R8,R8[0x258]");
+        emit("ADD R8,R9");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001e11c");
+        if (block("seq_gate")) {
+            emit("MOV R8,0x6154");
+            emit("LD.UB R8,R8[0x4]");       // 0x6158, the sequencer mode
+            emit("CP.W R8,0x2");            // 2: playing
+            emit("BR{eq} 0x8001e11c");
+        }
+        emit("MOV PC,LR");                  // nothing sounding: drop it
+        padTo(0x8001e11c);
+        emit("LDDPC R8,0x8001e124");
+        emit("MOV PC,R8");
+        padTo(0x8001e120);
+        word(0x00003560); // global state base
+        word(0x800077f8); // the real pulse-high routine
+        finish("pulse_guard", 0x8001e128);
 
         // Latch mode (arp switch position 1). Three pieces:
         //   latch_noteoff  — physical releases are ignored while latched;
@@ -4439,7 +4477,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001bca0]");   // the real pulse-high routine
             emit("LDM SP++,R7,PC");
             padTo(0x8001bca0);
-            word(0x800077f8);
+            word(0x8001e100);          // pulse_guard -> the real pulse-high routine
             // The INTERNAL beat, which the external half above cannot touch:
             // it has no accepted edge, so 0x6240 is stale and edge-to-gate is
             // meaningless for it.  What it does share is everything DOWNSTREAM
@@ -6805,7 +6843,7 @@ function assembleProgram() {
         padTo(0x8001c6b0);
         // Diagnostic builds route the gate through the latency shim, which
         // stamps the delay and tail-calls the real routine.
-        word(block("clock_latency") ? 0x8001bbc0 : 0x800077f8);
+        word(block("clock_latency") ? 0x8001bbc0 : 0x8001e100); // via pulse_guard
         word(0x8001c600);
         if (holdPitchToGate()) word(0x00003560); // state base, for the restore
         finish("clock_output", 0x8001c6c0);
@@ -7287,7 +7325,7 @@ function assembleProgram() {
         padTo(fastPool);
         word(0x8001be30); // prepare the selected step's transposed pitch target
         word(0x8001c0e0); // remap, minus the per-scan chain
-        word(block("clock_latency") ? 0x8001bbc0 : 0x800077f8);
+        word(block("clock_latency") ? 0x8001bbc0 : 0x8001e100); // via pulse_guard
         if (deadline) word(0x8001bd40); // the deadline, sized from the edge
         // Four pool words take the block right up to clock_capture, which
         // begins at 0x8001c200.  There is no room for a fifth.
