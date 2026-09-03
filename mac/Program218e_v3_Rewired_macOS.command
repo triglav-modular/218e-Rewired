@@ -1116,8 +1116,54 @@ while :; do
 
     wait_for_dfu_device && break
 
+    # Still enumerated as itself: the request was ignored rather than
+    # accepted.  Nothing detached, so there is nothing for a power cycle to
+    # bring back, and re-sending costs nothing - no erase has happened and the
+    # ISP request carries no state.  This used to stop on the first miss while
+    # the attempts existed only for the vanishing case below, so a single
+    # ignored request ended the run.
     if check_218_usb_device; then
-        fail "The 218e V3 stayed in application mode after the DFU request. Nothing was erased; power-cycle it and retry."
+        if [ "$attempt" -ge "$DFU_ATTEMPTS" ]; then
+            echo
+            echo "  Nothing was erased, and nothing was written."
+            echo "  The 218e V3 has a MIDI port on this Mac and is not acting on"
+            echo "  what is sent to it.  Open ${C_BOLD}Audio MIDI Setup${C_RESET} (Window > Show"
+            echo "  MIDI Studio) and check the 218e V3 is listed there and not"
+            echo "  greyed out.  Power-cycle the instrument and run this again."
+            echo
+            fail "The 218e V3 ignored ${DFU_ATTEMPTS} DFU requests and stayed in application mode. Nothing was erased; power-cycle it and retry."
+        fi
+        echo
+        echo "  The 218e V3 is still on USB in application mode, so the request"
+        echo "  was ignored rather than accepted.  Nothing was erased."
+        echo "  ${C_BOLD}Asking again (attempt $((attempt + 1)) of ${DFU_ATTEMPTS}).${C_RESET}"
+        echo
+        log "DFU request ignored; 218e V3 still in application mode (attempt ${attempt}/${DFU_ATTEMPTS} failed)."
+        # Every report of this so far has had the same shape: the port is
+        # listed, sendmidi reports the send, and the instrument never hears
+        # it - and one of them went through immediately on a second machine
+        # with the same cable and the same instrument.  That is CoreMIDI
+        # holding a stale endpoint under the name this matches on, which
+        # restarting its server clears.  Once, before the second ask: nothing
+        # is erased by it, MIDIServer comes back the moment anything asks for
+        # MIDI, and the only cost is a momentary drop for other MIDI software.
+        if [ "$attempt" -eq 1 ]; then
+            echo "  Restarting CoreMIDI first, in case macOS is holding a stale"
+            echo "  port for the 218e V3.  Other MIDI software will reconnect."
+            killall MIDIServer 2>/dev/null
+            log "Restarted CoreMIDI (MIDIServer) before asking again."
+            settle=0
+            while [ "$settle" -lt 15 ]; do
+                "$SENDMIDI" list 2>/dev/null | grep -q "218e" && break
+                sleep 1
+                settle=$((settle + 1))
+            done
+        fi
+        # The same settling beat the power-cycle path takes, for the same
+        # reason: a re-send that races CoreMIDI is a wasted attempt.
+        sleep 2
+        attempt=$((attempt + 1))
+        continue
     fi
 
     if [ "$attempt" -ge "$DFU_ATTEMPTS" ]; then
