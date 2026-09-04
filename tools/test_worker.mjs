@@ -72,11 +72,9 @@ const OLD = {
   check('a real download is recorded', env.written.length === 1);
   check('its answer carries no body', res.status === 204, `status ${res.status}`);
   check('the options land in order',
-        p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory,release'
+        p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory'
         && p.doubles.join(',') === '1,1,1,0,3,1,1,0,0,22',
         p && `${p.blobs} / ${p.doubles}`);
-  check('a download from the released page says so',
-        env.keys[0] && env.keys[0].opts.metadata.channel === 'release');
 
   // The same download, in the form the dashboard can read without a token.
   const k = env.keys[0];
@@ -120,8 +118,8 @@ const OLD = {
         && m.pitch_offset === -1 && m.patterns === -1,
         `${p.doubles.slice(6)} / ${JSON.stringify(m)}`);
   check('an unreported knob role is empty, not factory',
-        p.blobs.slice(3, 7).join(',') === ',,,' && m.knob1 === '' && m.knob4 === '',
-        `${JSON.stringify(p.blobs.slice(3, 7))}`);
+        p.blobs.slice(3).join(',') === ',,,' && m.knob1 === '' && m.knob4 === '',
+        `${JSON.stringify(p.blobs.slice(3))}`);
 }
 
 {
@@ -180,7 +178,7 @@ const OLD = {
   }, env);
   const p = env.written[0];
   check('hostile strings never reach the dataset',
-        p.blobs.join(',') === 'other,other,other,other,other,other,other,release',
+        p.blobs.join(',') === 'other,other,other,other,other,other,other',
         p.blobs.join(','));
   check('a truthy non-boolean is not counted as chosen',
         p.doubles.slice(0, 4).join(',') === '0,0,0,0', p.doubles.join(','));
@@ -195,19 +193,16 @@ const OLD = {
 }
 
 {
-  // The dev page posts to its own beacon.  Counted, and told apart: the
-  // channel comes from the path, so a body claiming otherwise changes nothing.
+  // The dev page posts to its own beacon.  Answered like a real one, so the
+  // page never sees an error, and written nowhere: the counts are the
+  // released page's.
   const env = fakeEnv();
   const res = await worker.fetch(new Request(BEACON.replace('/beacon', '/dev/beacon'), {
-    method: 'POST', body: JSON.stringify({ ...REAL, channel: 'release' })
+    method: 'POST', body: JSON.stringify(REAL)
   }), env, ctx);
   await Promise.all(pending.splice(0));
-  const p = env.written[0];
-  check('a dev download is recorded', res.status === 204 && env.written.length === 1);
-  check('as a dev download, in the last blob and the metadata',
-        p && p.blobs[7] === 'dev' && p.blobs.length === 8
-        && env.keys[0].opts.metadata.channel === 'dev',
-        p && p.blobs.join(','));
+  check('a dev download is answered', res.status === 204, `status ${res.status}`);
+  check('and not counted', env.written.length === 0 && env.keys.length === 0);
 }
 
 {

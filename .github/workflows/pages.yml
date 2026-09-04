@@ -343,7 +343,7 @@ jobs:
           sys.exit(1 if missing else 0)
           CHECK
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: site-${{ matrix.site }}
           path: _site
@@ -357,11 +357,11 @@ jobs:
       # The released page at the root, the development page beneath it.  The
       # dev copy is a whole site of its own - its own kit, its own stamped
       # assets - so nothing it fetches resolves into the released one.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: site-release
           path: _site
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: site-dev
           path: _site/dev

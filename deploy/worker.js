@@ -35,10 +35,10 @@ const FORWARD = ['if-none-match', 'if-modified-since',
 // Without a usable binding this route answers 204 and writes nothing, which is
 // the right way round - a missing or wrong binding must not break the page.
 const BEACON = PUBLIC + '/beacon';
-// The dev page posts to its own beacon, relative to itself.  Recorded, with
-// the channel beside it, so a dev download never passes for a released one.
+// The dev page posts to its own beacon, relative to itself.  Answered and
+// dropped: the counts describe the released page, and a build of whatever
+// the development branch held that afternoon is not one of those.
 const DEV_BEACON = PUBLIC + DEV + '/beacon';
-const CHANNELS = ['release', 'dev'];
 
 // Nothing here is trusted: it arrives from anyone who can reach the route.
 // Every value is checked against what the page can actually send and dropped
@@ -79,7 +79,7 @@ function role(knob, value) {
   return KNOBS[knob].includes(value) ? value : 'other';
 }
 
-async function record(request, env, context, channel) {
+async function record(request, env, context) {
   // No IP, no user-agent, no header of any kind: what is not written cannot
   // later turn an option set into a person.
   if (request.method !== 'POST') return new Response(null, { status: 405 });
@@ -138,9 +138,6 @@ async function record(request, env, context, channel) {
     knob3: role('knob3', body.knob3),
     knob4: role('knob4', body.knob4),
     patterns,
-    // From the path the page posted to, never from the body: which page a
-    // download came from is not the page's to claim.
-    channel: CHANNELS.includes(channel) ? channel : 'other',
   };
 
   env.BUILDS.writeDataPoint({
@@ -149,10 +146,7 @@ async function record(request, env, context, channel) {
     // Positional, and read back by position: the newer columns follow the
     // older ones so a row written before they existed still reads right.
     blobs: [platform, version, volts,
-            point.knob1, point.knob2, point.knob3, point.knob4,
-            // Appended last, after the knobs: a row from before the dev page
-            // has no eighth blob, and reads as a release.
-            point.channel],
+            point.knob1, point.knob2, point.knob3, point.knob4],
     doubles: [point.arp, point.knobs, point.pressure, point.portamento,
               tunings, point.calibration,
               point.sequencer, point.clock_divide, point.pitch_offset, patterns],
@@ -179,8 +173,8 @@ export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
 
-    if (url.pathname === BEACON) return record(request, env, context, 'release');
-    if (url.pathname === DEV_BEACON) return record(request, env, context, 'dev');
+    if (url.pathname === BEACON) return record(request, env, context);
+    if (url.pathname === DEV_BEACON) return new Response(null, { status: 204 });
 
     // Without the trailing slash every relative asset resolves into /mods/.
     // The dev page the same: the origin would answer its own redirect to the

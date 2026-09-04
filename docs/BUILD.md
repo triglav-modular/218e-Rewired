@@ -496,11 +496,10 @@ broken `main` does - and the reverse: the notarised app on `development` has
 to match its sources too, or nothing publishes.
 
 The worker treats everything under `/dev/` as the page it is - the same cache
-rules, the same beacon - with two differences. It is marked `noindex`, so the
-released page is the one search finds. And its downloads are recorded with a
-`channel` of `dev` in the last blob and in the KV metadata, where a released
-download says `release` and a row from before the dev page existed says
-nothing; the dashboard should count only what it means to.
+rules - with two differences. It is marked `noindex`, so the released page is
+the one search finds. And its beacon is answered but written nowhere: the
+download counts describe the released page, and a build of whatever the
+development branch held that afternoon is not one of those.
 
 ### The remaining ten minutes
 
