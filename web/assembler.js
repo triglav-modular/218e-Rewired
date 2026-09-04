@@ -3596,9 +3596,10 @@ function assembleProgram() {
         // blend anchors, the recorder - reads that table, so the whole
         // keyboard moves by N degrees and stays inside the scale, which is
         // what a transposition quantised to the mapping has to mean for a
-        // scale whose steps are not all the same size.  A recorded take keeps
-        // the pitches it was recorded at, exactly as it does across a change
-        // of tuning slot: the sequencer stores pitches, not keys.
+        // scale whose steps are not all the same size.  The sequencer
+        // follows too: a step is stored with the shift taken back out and
+        // plays under the shift as it stands (seq_record_pitch_cv and
+        // seq_cv_shift, below), the same relative model the pad uses.
         //
         // N is the CV in raw counts, less a zero, in units of one period per
         // transpose_cv_period counts and rounded to the nearest degree, with a
@@ -3795,6 +3796,115 @@ function assembleProgram() {
         word(0x800057a8); // key -> MIDI note
         word(0x00003560); // global state base
         finish("midi_transpose", 0x8001e320);
+
+        // The sequencer follows the jack transposer the way it follows the
+        // pad: a step is stored WITHOUT the shift and the live shift is
+        // added at playback, so a take recorded under one CV plays under
+        // whatever CV stands now, and a take recorded at rest transposes
+        // with the keyboard.  Two caves, both reached only with the jack
+        // transposing: seq_record_pitch becomes a jump here, and
+        // seq_preview_pin ends by jumping to the second.
+        //
+        // The recorder's leaf, with the same contract as seq_record_pitch
+        // (R12 = key, kept; R11 = the heard pitch relative to the take's
+        // reference, for the audition; R8 scratch), plus one more job: it
+        // writes the step itself, with the shift taken back out -
+        // heard - (table'[key] - slot[key]) - so seq_record no longer
+        // stores.  The slot's own entry parks in RAM 0x604e between the two
+        // halves, because only R8 and R11 are free here.
+        var srcEntry = 0x8001e320;
+        var srcSlot = 0x8001e33c;
+        var srcAdopt = 0x8001e380;
+        var srcPool = 0x8001e3b0;
+        begin(srcEntry);
+        emit("MOV R8,0x6090");                                    // slot[key], the flash table's own entry
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x2");
+        emit(StringFormat("BR{ls} 0x%x", srcSlot));
+        emit("MOV R8,0x0");
+        padTo(srcSlot);
+        emit("LSL R8,0x6");
+        emit("ADD R8,R8,R12 << 0x1");
+        emit(StringFormat("LDDPC R11,0x%x", srcPool));           // the three tuning tables
+        emit("ADD R8,R11");
+        emit("LD.SH R8,R8[0x0]");
+        emit("MOV R11,0x604e");
+        emit("ST.H R11[0x0],R8");
+        emit("MOV R11,0x854");                                    // the heard pitch, as seq_record_pitch has it
+        emit("ADD R11,R11,R12 << 0x1");
+        emit("LD.SH R11,R11[0x0]");
+        emit("MOV R8,0x60a0");
+        emit("LD.SH R8,R8[0x0]");
+        emit("ADD R11,R8");
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", srcAdopt));
+        emit("MOV R8,0x60a0");                                    // an empty take adopts today's transpose
+        emit("LD.SH R8,R8[0x0]");
+        emit("ST.W --SP,R11");
+        emit("MOV R11,0x62f4");
+        emit("ST.H R11[0x0],R8");
+        emit("LD.W R11,SP++");
+        padTo(srcAdopt);
+        emit("MOV R8,0x62f4");
+        emit("LD.SH R8,R8[0x0]");
+        emit("SUB R11,R8");                                       // R11 = heard, relative: the audition's
+        emit("ST.W --SP,R11");
+        emit("MOV R8,0x854");
+        emit("LD.SH R8,R8[R12 << 0x1]");
+        emit("SUB R11,R8");                                       // less the shifted entry
+        emit("MOV R8,0x604e");
+        emit("LD.SH R8,R8[0x0]");
+        emit("ADD R11,R8");                                       // plus the slot's own: the step
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("LSL R8,0x1");
+        emit("SUB R8,-0x6160");
+        emit("ST.H R8[0x0],R11");                                 // stored here, not by seq_record
+        emit("LD.W R11,SP++");
+        emit("MOV PC,LR");
+        padTo(srcPool);
+        word(0x80019af8); // the three tuning tables
+        finish("seq_record_pitch_cv", 0x8001e3b4);
+
+        // Playback's half: R8 = the step's pitch as seq_preview_pin leaves it,
+        // plus table'[key] - slot[key] for the key the step was recorded on,
+        // which is the shift as it stands now.  A rest or tie carries no key
+        // worth reading, and is left alone.  A leaf; R9-R12 scratch.
+        var scsEntry = 0x8001e3b4;
+        var scsSlot = 0x8001e3e4;
+        var scsDone = 0x8001e404;
+        var scsPool = 0x8001e408;
+        begin(scsEntry);
+        emit("MOV R9,0x6503");                                    // the step sounding now
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x40");
+        emit(StringFormat("BR{ge} 0x%x", scsDone));
+        emit("MOV R10,0x61ee");                                   // the key it was recorded on
+        emit("LD.UB R10,R10[R9 << 0x0]");
+        emit("CP.W R10,0x1d");
+        emit(StringFormat("BR{ge} 0x%x", scsDone));
+        emit("MOV R11,0x854");
+        emit("LD.SH R11,R11[R10 << 0x1]");                        // table'[key]
+        emit("MOV R12,0x6090");
+        emit("LD.UB R12,R12[0x0]");
+        emit("CP.W R12,0x2");
+        emit(StringFormat("BR{ls} 0x%x", scsSlot));
+        emit("MOV R12,0x0");
+        padTo(scsSlot);
+        emit("LSL R12,0x6");
+        emit("ADD R12,R12,R10 << 0x1");
+        emit(StringFormat("LDDPC R9,0x%x", scsPool));
+        emit("ADD R12,R9");
+        emit("LD.SH R12,R12[0x0]");                               // slot[key]
+        emit("SUB R11,R12");
+        emit("ADD R8,R11");
+        padTo(scsDone);
+        emit("MOV PC,LR");
+        padTo(scsPool);
+        word(0x80019af8); // the three tuning tables
+        finish("seq_cv_shift", 0x8001e410);
 
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,
@@ -6461,6 +6571,14 @@ function assembleProgram() {
         // reload has lost its reference to the boot clear - those appends
         // measure from neutral until the take is re-recorded.
         begin(0x8001dce0);
+        if (feature("cv_transpose")) {
+            // The same contract, answered by seq_record_pitch_cv, which also
+            // stores the step with the shift taken back out.
+            emit("LDDPC R8,0x8001dd1c");
+            emit("MOV PC,R8");
+            padTo(0x8001dd1c);
+            word(srcEntry);
+        } else {
         emit("MOV R11,0x854");
         emit("ADD R11,R11,R12 << 0x1");
         emit("LD.SH R11,R11[0x0]");
@@ -6491,6 +6609,7 @@ function assembleProgram() {
         emit("LD.SH R8,R8[0x0]");
         emit("SUB R11,R8");
         emit("MOV PC,LR");
+        }
         finish("seq_record_pitch", 0x8001dd20);
 
         // A bare pad 2 or 3 must be HELD before it means preview or
@@ -8202,9 +8321,13 @@ function assembleProgram() {
         emit("BR{ge} 0x8001ba28");
         // The pitch this key SOUNDS, transpose included.
         emit("MCALL PC[0x8001ba2c]");   // seq_record_pitch -> R11
-        emit("MOV R8,0x6160");
-        emit("ADD R8,R8,R9 << 0x1");
-        emit("ST.H R8[0x0],R11");
+        // With the jack transposing, the leaf has already stored the step
+        // with the shift taken out; R11 is the heard pitch for the audition.
+        if (!feature("cv_transpose")) {
+            emit("MOV R8,0x6160");
+            emit("ADD R8,R8,R9 << 0x1");
+            emit("ST.H R8[0x0],R11");
+        }
         // The KEY as well as the pitch.  The pitch is what the CV plays, and
         // keeping it is what makes a recording survive a change of tuning -
         // but MIDI names notes by key, and answering the arp's selector with
@@ -8869,7 +8992,16 @@ function assembleProgram() {
         emit("LD.SH R9,R9[0x0]");
         emit("SUB R8,R9");              // less the transpose the adder re-adds
         padTo(0x8001b95e);
-        emit("MOV PC,LR");
+        if (feature("cv_transpose")) {
+            // Then the jack transposer's shift for this step's key, as it
+            // stands now - play and preview alike.
+            emit("LDDPC R9,0x8001b964");
+            emit("MOV PC,R9");
+            padTo(0x8001b964);
+            word(scsEntry);
+        } else {
+            emit("MOV PC,LR");
+        }
         finish("seq_preview_pin", 0x8001b968);
 
         // Note-off pointer pools -> latch-gated wrapper.

@@ -103,7 +103,8 @@ FEATURE_MAP = {
     "portamento_in.transpose": (
         ["cv_transpose", "glide_cv_addend", "midi_transpose",
          "midi_transpose_arp_pool", "midi_transpose_poly_pool",
-         "midi_transpose_lift_pool", "midi_transpose_compare_pool"],
+         "midi_transpose_lift_pool", "midi_transpose_compare_pool",
+         "seq_record_pitch_cv", "seq_cv_shift"],
         ["cv_transpose"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
@@ -1047,6 +1048,7 @@ RAM_REGIONS = [
     (0x6044, 0x6046, "clock-latency edge-to-claim age"),
     (0x6046, 0x604C, "octave-switch shadow"),
     (0x604C, 0x604E, "octave-switch boot counter"),
+    (0x604E, 0x6050, "jack transposer: the slot's own pitch of the key being recorded"),
     (0x6050, 0x6080, "pressure history taps"),
     (0x6080, 0x6082, "filter sample count"),
     (0x6082, 0x6084, "filter depth"),

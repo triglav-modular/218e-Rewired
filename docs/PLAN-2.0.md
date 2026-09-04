@@ -752,10 +752,19 @@ with a hysteresis band around the last answer.  Shifting the table is what
 makes the transposition a transposition IN the scale: every reader of the
 table - arp, latch stamps, pitch ranking, blend anchors, recorder - sees
 the shifted scale, and the wrap past entry 31 steps the slot's own map
-size (12, or the .kbm's) and adds one period.  Recorded takes keep their
-pitches, exactly as across a tuning-slot change.  The raw cell is signed
+size (12, or the .kbm's) and adds one period.  The raw cell is signed
 and unconditioned; the jack has no negative range, so N is clamped at
 zero.  None of the three CV numbers has been measured on an instrument.
+
+The sequencer follows the same way the pad does, relatively: with the jack
+transposing, `seq_record_pitch` jumps to `seq_record_pitch_cv`
+(0x8001e320), which answers the audition with the heard pitch as before
+but stores the step itself with the shift taken back out -
+heard - (table'[key] - slot[key]) - and `seq_preview_pin` ends by jumping
+to `seq_cv_shift` (0x8001e3b4), which adds table'[key] - slot[key] for the
+key the sounding step (0x6503) was recorded on, play and preview alike.  A
+take recorded under one CV plays under whatever CV stands now; rests and
+ties, whose key is nothing, are left alone.
 
 MIDI follows.  The factory names a note in one routine, `0x800057a8` (key +
 36, or + 12 per trn zone, plus the octave pad), through six pool words;
