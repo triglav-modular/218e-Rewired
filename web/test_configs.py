@@ -152,6 +152,17 @@ CONFIGS = [
                           {"pressure_fix": False, "pressure_portamento": False}),
     ("portamento_off",    [(r"^pressure_portamento = true", "pressure_portamento = false")],
                           {"pressure_portamento": False}),
+    # The jack transposer: a cave in front of the housekeeping, a fixed patch
+    # over the factory's glide-index add, and a keys-per-period table the two
+    # builders have to derive the same way - here from a .kbm as well.
+    ("portamento_transpose", [(r'^portamento_in = "portamento"', 'portamento_in = "transpose"'),
+                              (r"^alternate_tunings = false",
+                               'alternate_tunings = [["tunings/diatonic7.scl", "tunings/diatonic7.kbm"], '
+                               '"tunings/12TET.scl"]')],
+                             {"portamento_in": "transpose",
+                              "alternate_tunings": mapped([
+                                  ("tunings/diatonic7.scl", "tunings/diatonic7.kbm")])
+                                  + scala(["tunings/12TET.scl"])}),
     ("one_volt",          [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")],
                           {"volts_per_octave": 1.0}),
     ("pitch_correction",  [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],

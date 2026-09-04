@@ -100,6 +100,7 @@ FEATURE_MAP = {
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "presets.quantize":       (["preset_quantize", "preset_quantize_pool"], []),
+    "portamento_in.transpose": (["cv_transpose", "glide_cv_addend"], ["cv_transpose"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -125,6 +126,7 @@ ENABLED_WHEN = {
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
     "presets.quantize": True,
+    "portamento_in.transpose": True,
     "diagnostics.scan_profiler": True,
     "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
@@ -1063,6 +1065,11 @@ RAM_REGIONS = [
     (0x60F4, 0x60F6, "blend previous base"),
     (0x60F6, 0x60F8, "blend target filter"),
     (0x60F8, 0x60FA, "blend hysteresis hold"),
+    # The jack transposer: 0xA000 | slot << 8 | degrees, so an unseeded cell
+    # reads as invalid; then the shifted table's first entry as written, so a
+    # warm restart's unshifted .data copy is noticed and redone.
+    (0x60FA, 0x60FC, "jack transposer state: slot and degree shift"),
+    (0x60FC, 0x60FE, "jack transposer: table entry 0 as last written"),
     # Decoupled preset voltages.  The stored value is what the preset output
     # and the pitch adder both read; the snapshot and the flag are what stop a
     # pad hold from snatching the stored value to wherever the knob happens to
@@ -1566,6 +1573,9 @@ def main() -> None:
     print("  preset voltages: " + (
         "quantised to the selected tuning when added to the pitch"
         if cfg.get("presets", {}).get("quantize") else "added to the pitch as they are"))
+    print("  portamento jack: " + (
+        "transposes the keyboard by degrees of the selected tuning"
+        if cfg.get("portamento_in", {}).get("transpose") else "adds to the portamento time"))
     reference_key = tuning.get("reference_key", 9)
     # What one step of the octave controls should be, in DAC units.  The
     # factory temperament and every 2/1 scale make this 484.
@@ -1597,10 +1607,14 @@ def main() -> None:
     # scale, for the latch-spacing check below.  The factory temperament is not
     # among them: it is copied bit-exact and its semitones are ~40 units apart.
     spacing_slots = []
+    # How many keys each slot repeats over: twelve, or the .kbm's map size.
+    # The jack transposer wraps its shift by this.
+    period_keys: list[int] = []
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             periods.add(tuning["units_per_octave"])
             tables[f"tuning_slot{index}"] = factory_tuning(memory)
+            period_keys.append(12)
             print(f"  tuning slot {index}: factory temperament (from the base image, "
                   "copied bit-exact, so the anchor does not apply)")
             continue
@@ -1644,6 +1658,7 @@ def main() -> None:
         except ValueError as error:
             raise SystemExit(str(error))
         tables[f"tuning_slot{index}"] = table
+        period_keys.append(12 if degrees is None else len(degrees))
         periods.add(period_units)
         spacing_slots.append((
             ideal_key_pitches(cents, degrees, period or 1200.0, offset),
@@ -1655,6 +1670,7 @@ def main() -> None:
         print(f"  tuning slot {index}: {path.name}"
               f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
     cfg["_min_key_spacing"] = min_key_spacing(spacing_slots)
+    tables["tuning_period_keys"] = period_keys
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that
@@ -1706,6 +1722,13 @@ def main() -> None:
         "curve_knob_steps": cfg["pressure"]["curve"].get("knob_max_level", 31) + 1,
         "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
         "multi_key_max": 1 if cfg["pressure"].get("multi_key", "max") == "max" else 0,
+        # The jack transposer: one period of the tuning per volts_per_octave
+        # of CV, at the jack's 1023 counts over 10 V.
+        "transpose_cv_period": int(math.floor(
+            cfg["portamento_in"]["cv_counts_per_volt"]
+            * cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE) + 0.5)),
+        "transpose_cv_zero": cfg["portamento_in"]["cv_zero"],
+        "transpose_cv_hysteresis": cfg["portamento_in"]["cv_hysteresis"],
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:

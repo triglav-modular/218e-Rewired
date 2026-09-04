@@ -21,6 +21,8 @@ keyboard.
 - **Selectable volts per octave**
 - **Quantized preset voltages**, snapping the add-to-pitch transposition to
   the selected tuning.
+- **The portamento jack as a transposer**, shifting the keyboard by whole
+  degrees of the selected tuning.
 
 
 ## Build it in your browser
@@ -50,6 +52,7 @@ after an interrupted flash. The second writes nothing.
 | Knob 3 | Random octave displacement per arp note. |
 | Knob 4 | Global vibrato, depth and rate together, up to 33 cents at ~6 Hz. Pressure scales it from half to full. |
 | Portamento | How much pressure a second held note needs to pull pitch toward it. Off at zero; no time-based glide at any setting. |
+| Portamento in | With `portamento_in = "transpose"`: transposes the keyboard by whole degrees of the current tuning, one octave per 1.2 V (or 1 V, to match the scaling). Otherwise adds to the portamento time, as the factory has it. |
 | Arp switch | latch / regular / off. In latch, keys are toggles. |
 
 

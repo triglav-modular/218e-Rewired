@@ -920,7 +920,8 @@
             pressure_portamento: $('pressure_portamento').checked,
             volts_per_octave: vpo,
             pitch_offset: pitchOffset,
-            quantize_presets: $('quantize_presets').checked
+            quantize_presets: $('quantize_presets').checked,
+            portamento_in: $('portamento_transpose').checked ? 'transpose' : 'portamento'
         };
         // The checkbox is the opt-in: off means factory everything, however
         // the slots are filled.  Trailing empty slots simply shorten the
@@ -948,7 +949,8 @@
     }
     $('pressure_fix').addEventListener('change', syncPortamento);
     ['latching_arp', 'sequencer', 'clock_divide',
-     'pressure_fix', 'pressure_portamento', 'quantize_presets']
+     'pressure_fix', 'pressure_portamento', 'quantize_presets',
+     'portamento_transpose']
         .forEach(function (id) {
             $(id).addEventListener('change', invalidate);
         });
@@ -1112,7 +1114,9 @@
                 ? 'none - 208c' : '3 semitones - 208, 208r, 208p'),
             'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off'),
             'Preset voltages: ' + (o.quantize_presets
-                ? 'quantized to the tuning when added to pitch' : 'not quantized')
+                ? 'quantized to the tuning when added to pitch' : 'not quantized'),
+            'Portamento jack: ' + (o.portamento_in === 'transpose'
+                ? 'transposes by degrees of the tuning' : 'adds portamento')
         ];
         if (o.alternate_tunings && o.alternate_tunings.length) {
             // A slot is { name, text }, so joining the array gave a row of

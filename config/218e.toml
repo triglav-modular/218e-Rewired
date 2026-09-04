@@ -164,6 +164,19 @@ pitch_offset = true
 # is not quantized.  false adds the voltage as it is.
 quantize_presets = false
 
+# 13. THE PORTAMENTO JACK
+# "portamento" is the factory behaviour: a CV into the PORTAMENTO IN jack
+# adds to the glide time the knob sets.  "transpose" makes the jack a
+# transposer instead: the CV shifts every key by whole degrees of the tuning
+# currently selected, one period (an octave, for a scale that repeats at
+# one) per volts_per_octave of CV, rounded to the nearest degree.  The
+# keyboard stays inside the scale whatever the CV, so with an unequal
+# tuning the intervals between keys change the way they would under a
+# different starting degree.  The knob keeps its own job in both settings.
+# A sequence keeps the pitches it was recorded at, as it does across a
+# change of tuning slot.  The jack only reads positive voltages.
+portamento_in = "portamento"
+
 # Save the remapped preset voltages and sequence across power cycles.
 # Save a changed sequence when leaving record or clearing it; save a
 # changed preset when its pad is released. No idle or arp-off requirement.
@@ -198,7 +211,7 @@ version        = "2.3.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "e817e9d1e05dc2eae5dd52f4d6188a4d4c7a44962ab26eb91f575faed148a4d0"
+golden_sha256  = "7a432585083d075ea5f34edc5db9011527301491a165e6e3fb44bd20c1cc19d1"
 
 
 [tools]

@@ -1709,7 +1709,10 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80005a50L); // original note-off
         word(0x80019a40L); // tuning applier
         word(0x8001a350L); // vibrato engine
-        word(0x8001a480L); // latch watch + poly-MIDI boot force + common-mode
+        // With the jack transposing, the housekeeping is reached through
+        // the transposer's cave, which calls it first and shifts the key
+        // table after - the applier has run by then.
+        word(feature("cv_transpose") ? 0x8001e1c0L : 0x8001a480L); // latch watch + poly-MIDI boot force + common-mode
         word(0x8001a750L); // octave-switch shadow sync
         finish("latch_v2", 0x8001a350L);
 
@@ -3044,6 +3047,162 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001e19cL);
         word(0x80013434L); // the factory float-to-int helper
         finish("preset_quantize", 0x8001e1c0L);
+
+        // The PORTAMENTO IN jack as a transposer, in scale degrees.
+        //
+        // The jack is not summed into the knob: it is ADC channel 6, read by
+        // the factory's second ADC pass (0x8000b8a4) into state+0x2f0, and the
+        // only thing the factory does with it is add max(0, cv/2 - 20) to
+        // the glide-rate index at 0x80003164.  That addend is patched to zero
+        // in this build (glide_cv_addend), so the knob keeps every job it has,
+        // and the jack's raw reading is free to mean something else.
+        //
+        // What it means is a shift of the key table by N degrees of whatever
+        // tuning slot is selected: the live 32-entry table at RAM 0x854 is
+        // rebuilt from the slot's own flash table as table'[k] = slot[k + N],
+        // wrapping past the top by however many keys the slot repeats over
+        // (twelve, or the .kbm's map size) and adding one period per wrap.
+        // Every consumer - the arp, the latch stamps, the pitch ranking, the
+        // blend anchors, the recorder - reads that table, so the whole
+        // keyboard moves by N degrees and stays inside the scale, which is
+        // what a transposition quantised to the mapping has to mean for a
+        // scale whose steps are not all the same size.  A recorded take keeps
+        // the pitches it was recorded at, exactly as it does across a change
+        // of tuning slot: the sequencer stores pitches, not keys.
+        //
+        // N is the CV in raw counts, less a zero, in units of one period per
+        // transpose_cv_period counts and rounded to the nearest degree, with a
+        // band of transpose_cv_hysteresis counts either side of the last
+        // answer so a CV sat near a boundary cannot chatter.  The raw cell is
+        // signed and unconditioned, hence the clamp at zero: the jack has no
+        // negative range, so N is never below zero and the shift only ever
+        // goes up.
+        //
+        // The state word at RAM 0x60fa is 0xA000 | slot << 8 | N, so an
+        // unseeded cell reads as invalid and a slot change reads as a change;
+        // 0x60fc keeps table'[0] as last written, which is how a warm restart
+        // - the factory's own .data copy puts the unshifted table back while
+        // SRAM keeps the state word - is told from a scan with nothing to do.
+        // Runs in the per-scan chain in front of the housekeeping, which is
+        // after the tuning applier, so a slot's fresh copy is shifted the
+        // same scan it lands.
+        //
+        //   R0 keys per period   R1 v*size, then the RAM table
+        //   R2 the period: in CV counts while quantising, in pitch units
+        //      while rebuilding   R3 state cell   R4 old state, then k
+        //   R8 v, then N         R10 slot, then the wrap offset
+        long cvEntry  = 0x8001e1c0L;
+        long cvClamp  = 0x8001e1daL;
+        long cvSlot   = 0x8001e1e8L;
+        long cvRecalc = 0x8001e226L;
+        long cvHaveN  = 0x8001e230L;
+        long cvCapped = 0x8001e23cL;
+        long cvBuild  = 0x8001e258L;
+        long cvLoop   = 0x8001e26aL;
+        long cvWrap   = 0x8001e270L;
+        long cvNoWrap = 0x8001e27cL;
+        long cvDone   = 0x8001e292L;
+        long cvPool   = 0x8001e298L;
+        long cvSizes  = 0x8001e2b8L;
+        begin(cvEntry);
+        emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
+        emit("MOV R7,SP");
+        emit(String.format("MCALL PC[0x%x]", cvPool));            // the housekeeping this stands in front of
+        emit(String.format("LDDPC R9,0x%x", cvPool + 4));         // global state base
+        emit("LD.SH R8,R9[0x2f0]");                               // the jack, raw
+        emit(String.format("LDDPC R10,0x%x", cvPool + 12));       // its zero
+        emit("SUB R8,R10");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ge} 0x%x", cvClamp));
+        emit("MOV R8,0x0");
+        padTo(cvClamp);
+        emit("MOV R10,0x6090");                                   // tuning slot
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x2");
+        emit(String.format("BR{ls} 0x%x", cvSlot));
+        emit("MOV R10,0x0");                                      // the applier's own fallback
+        padTo(cvSlot);
+        emit(String.format("LDDPC R11,0x%x", cvPool + 20));       // the keys-per-period table
+        emit("LD.UH R0,R11[R10 << 0x1]");
+        emit("MUL R1,R8,R0");                                     // v * size
+        emit(String.format("LDDPC R2,0x%x", cvPool + 8));         // one period, in CV counts
+        emit("MOV R3,0x60fa");
+        emit("LD.UH R4,R3[0x0]");
+        emit("LSR R8,R4,0xc");
+        emit("CP.W R8,0xa");
+        emit(String.format("BR{ne} 0x%x", cvRecalc));             // never seeded: no last answer
+        emit("MOV R8,R4");
+        emit("ANDL R8,0xff");                                     // the last N
+        emit("MUL R11,R8,R2");
+        emit("SUB R11,R1,R11 << 0x0");                            // distance from its centre
+        emit("ABS R11");
+        emit("LSR R12,R2,0x1");
+        emit(String.format("LDDPC R9,0x%x", cvPool + 16));        // hysteresis, raw counts
+        emit("MUL R9,R9,R0");                                     // in v*size units
+        emit("ADD R12,R9");
+        emit("CP.W R11,R12");
+        emit(String.format("BR{gt} 0x%x", cvRecalc));
+        emit(String.format("RJMP 0x%x", cvHaveN));                // inside the band: keep it
+        padTo(cvRecalc);
+        emit("LSR R12,R2,0x1");
+        emit("ADD R12,R1");
+        emit("DIVU R8,R12,R2");                                   // N, rounded; R9 takes the remainder
+        padTo(cvHaveN);
+        emit("CP.W R8,0xff");
+        emit(String.format("BR{le} 0x%x", cvCapped));
+        emit("MOV R8,0xff");                                      // the state word holds a byte
+        padTo(cvCapped);
+        emit("LSL R11,R10,0x8");
+        emit("OR R11,R8");
+        emit("MOV R12,0xa000");
+        emit("OR R11,R12");                                       // 0xA000 | slot << 8 | N
+        emit("CP.W R11,R4");
+        emit(String.format("BR{ne} 0x%x", cvBuild));
+        emit("LD.UH R9,R3[0x2]");                                 // table'[0] as last written
+        emit("MOV R12,0x854");
+        emit("LD.UH R12,R12[0x0]");
+        emit("CP.W R9,R12");
+        emit(String.format("BR{eq} 0x%x", cvDone));               // still ours: nothing to do
+        padTo(cvBuild);
+        emit("ST.H R3[0x0],R11");
+        emit(String.format("LDDPC R2,0x%x", cvPool + 28));        // one period, in pitch units
+        emit(String.format("LDDPC R12,0x%x", cvPool + 24));       // the three slot tables
+        emit("LSL R9,R10,0x6");
+        emit("ADD R12,R9");                                       // this slot's, 64 bytes each
+        emit("MOV R1,0x854");
+        emit("MOV R4,0x0");
+        padTo(cvLoop);
+        emit("ADD R9,R4,R8 << 0x0");                              // k + N
+        emit("MOV R10,0x0");
+        padTo(cvWrap);
+        emit("CP.W R9,0x1f");
+        emit(String.format("BR{le} 0x%x", cvNoWrap));
+        emit("SUB R9,R0");                                        // back one period of keys
+        emit("ADD R10,R2");                                       // up one period of pitch
+        emit(String.format("RJMP 0x%x", cvWrap));
+        padTo(cvNoWrap);
+        emit("LD.UH R11,R12[R9 << 0x1]");
+        emit("ADD R11,R10");
+        emit("ST.H R1[R4 << 0x1],R11");
+        emit("SUB R4,-0x1");
+        emit("CP.W R4,0x20");
+        emit(String.format("BR{lt} 0x%x", cvLoop));
+        emit("LD.UH R11,R1[0x0]");
+        emit("ST.H R3[0x2],R11");                                 // remember what we wrote
+        padTo(cvDone);
+        emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
+        padTo(cvPool);
+        word(0x8001a480L); // per-scan housekeeping: latch watch + poly-MIDI boot force + common-mode
+        word(0x00003560L); // global state base
+        word(number("transpose_cv_period", 123, 1, 1023));
+        word(number("transpose_cv_zero", 0, 0, 1023));
+        word(number("transpose_cv_hysteresis", 2, 0, 64));
+        word(cvSizes);
+        word(0x80019af8L); // the three tuning tables
+        word(number("octave_units", 484, 1, 2000));
+        padTo(cvSizes);
+        emitTable("tuning_period_keys");
+        finish("cv_transpose", 0x8001e2c0L);
 
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,
@@ -8869,6 +9028,11 @@ public class AssemblePressureFix extends GhidraScript {
         // the two-operand form is the same operation and the same width.
         fixedPatch("octave_scale_bias", 0x800035faL, 4,
             String.format("SUB R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
+
+        // With the jack transposing, the factory must stop adding it to the
+        // glide-rate index: the load at 0x8000313e becomes a constant that
+        // the halve-and-subtract-twenty below it turns into exactly zero.
+        fixedPatch("glide_cv_addend", 0x8000313eL, 4, "MOV R8,0x28");
 
         wordPatch("knob1_pool", 0x800043c4L, 0x800194c0L,
             "knob-1 pointer -> pressure-ceiling wrapper");

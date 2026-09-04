@@ -15,6 +15,9 @@ var WEBBUILD = (function () {
     function tablesFor(cfg, factoryMemory) {
         var tables = {};
         spacingSlots = [];
+        // How many keys each slot repeats over, for the jack transposer's
+        // wrap: twelve, or the .kbm's map size.  Mirrors tools/build.py.
+        tables.tuning_period_keys = [];
         tables.pressure_curve = BUILDLIB.pressureCurve(
             cfg.pressure.curve.span, cfg.pressure.curve.onset_db,
             cfg.pressure.curve.onset_fade);
@@ -22,6 +25,7 @@ var WEBBUILD = (function () {
         cfg._tunings.forEach(function (slot, index) {
             if (slot === 'factory') {
                 tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
+                tables.tuning_period_keys.push(12);
             } else {
                 var scale = BUILDLIB.slotScale(slot);
                 // Same rule as tools/build.py: without a .kbm there is one key
@@ -46,6 +50,7 @@ var WEBBUILD = (function () {
                 var periodUnits = BUILDLIB.floorHalf(period * perOctave / 1200);
                 BUILDLIB.checkTableRange(slot.name, table, periodUnits);
                 tables['tuning_slot' + index] = table;
+                tables.tuning_period_keys.push(scale.degrees ? scale.degrees.length : 12);
                 spacingSlots.push({
                     ideal: BUILDLIB.idealKeyPitches(
                         scale.cents, scale.degrees, period, offset),

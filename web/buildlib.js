@@ -85,6 +85,16 @@ var BUILDLIB = (function () {
         // voltage output is untouched.
         cfg.presets.quantize = !!want('quantize_presets', false);
 
+        // Same rule as tools/options.py: the portamento jack either adds to
+        // the knob's glide time (factory) or transposes the keyboard by
+        // degrees of the selected tuning; the knob is untouched either way.
+        var jack = want('portamento_in', 'portamento');
+        if (jack !== 'portamento' && jack !== 'transpose') {
+            throw new Error('portamento_in = ' + JSON.stringify(jack)
+                            + " is not one of 'portamento', 'transpose'");
+        }
+        cfg.portamento_in.transpose = jack === 'transpose';
+
         if (!want('pressure_fix', true)) {
             cfg.pressure.multi_key = 'factory';
             cfg.pressure.common_mode = false;
@@ -821,6 +831,12 @@ var BUILDLIB = (function () {
             resolution_bits: cfg.pressure.resolution_bits,
             multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0,
             octave_units: octaveUnits(cfg),
+            // The jack transposer, as tools/build.py derives it: one period
+            // per volts_per_octave of CV at 1023 counts over 10 V.
+            transpose_cv_period: floorHalf(cfg.portamento_in.cv_counts_per_volt
+                                           * cfg.pitch.volts_per_octave),
+            transpose_cv_zero: cfg.portamento_in.cv_zero,
+            transpose_cv_hysteresis: cfg.portamento_in.cv_hysteresis,
             knob1_orders: cfg.arp_order.knob1_orders,
             knob4_octaves: cfg.knob4.octaves,
             knob4_zones: 3 + Math.max(1, Math.floor(

@@ -728,6 +728,35 @@ Two things make it the right cell to read:
 reading off centre can be told where its own middle is; the rule is the
 middle.
 
+### The portamento jack is its own channel: `state+0x2f0` (2026-09-04)
+
+The manual says the PORTAMENTO IN CV "adds to the portamento time set by
+the knob", which reads like an analog sum into the knob's channel.  It is
+not.  The factory has a second ADC pass, `0x8000b8a4`, called from the
+event dispatcher at `0x80004cb6` with three pointers: it reads channel 6
+into `state+0x2f0`, channel 7 halved into `state+0x2fc` (the RATE knob's
+raw, which the divider already reads) and channel 5 into `state+0x2f4`
+(the pulse jack, thresholded at `0x7fe` by `0x80004b1a`).  The only
+reader of `0x2f0` is the glide-rate index at `0x80003164`:
+`index = knob(0x306) + max(0, cv/2 - 20)`, clamped to 1023 - so the sum
+is done in software, the knob mirror at `0x306` never carries the CV, and
+the jack can be given another meaning without touching the knob.
+
+That is what `portamento_in = "transpose"` does: `glide_cv_addend`
+replaces the load at `0x8000313e` with a constant the halve-and-subtract
+turns into zero, and `cv_transpose` (0x8001e1c0, in front of the per-scan
+housekeeping) rebuilds the live key table at RAM `0x854` from the slot's
+flash table shifted by N degrees - N being the raw CV less a zero, one
+period per `volts_per_octave` of CV at 1023 counts over 10 V, rounded,
+with a hysteresis band around the last answer.  Shifting the table is what
+makes the transposition a transposition IN the scale: every reader of the
+table - arp, latch stamps, pitch ranking, blend anchors, recorder - sees
+the shifted scale, and the wrap past entry 31 steps the slot's own map
+size (12, or the .kbm's) and adds one period.  Recorded takes keep their
+pitches, exactly as across a tuning-slot change.  The raw cell is signed
+and unconditioned; the jack has no negative range, so N is clamped at
+zero.  None of the three CV numbers has been measured on an instrument.
+
 ### The knobs, since this was got wrong once
 
 There are six knobs on the panel and six conditioned analog channels, and

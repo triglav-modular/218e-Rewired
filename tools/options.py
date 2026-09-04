@@ -16,6 +16,7 @@ and the JavaScript toolchain underneath are all unchanged.
     volts_per_octave    = 1.2 / 1.0      pitch ramp scaling
     pitch_offset        = true/false     bottom key three semitones up / at 0 V
     quantize_presets    = true/false     preset voltages snap to the tuning when added to pitch
+    portamento_in       = "portamento"/"transpose"  what the portamento jack does
     pressure_fix        = true/false     the reworked pressure path, or factory
     pressure_portamento = true/false     pitch follows relative pressure
 """
@@ -61,6 +62,16 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                  'dac_gain': 4.09,
                  'dac_vref': 2.5},
     'presets': {'quantize': False},
+    # The PORTAMENTO IN jack as a transposer.  cv_counts_per_volt is the
+    # jack's ADC scale, 1023 counts over 10 V, so one period of the tuning
+    # is volts_per_octave of CV; cv_zero is subtracted from the raw reading
+    # first, and cv_hysteresis is how far past a degree boundary the CV has
+    # to travel before the answer changes.  None of the three has been
+    # measured on an instrument yet.
+    'portamento_in': {   'transpose': False,
+                         'cv_counts_per_volt': 102.3,
+                         'cv_zero': 0,
+                         'cv_hysteresis': 2},
     'portamento': {   'blend_filter_shift': 2,
                       'blend_hysteresis': 3,
                       'blend_slew_taper': 1,
@@ -201,6 +212,7 @@ OPTION_TYPES = {
     "volts_per_octave":    float,
     "pitch_offset":        bool,
     "quantize_presets":    bool,
+    "portamento_in":       str,
     "pitch_correction":    (bool, str),
     "alternate_tunings":   (bool, list),
     "knob1":               str,
@@ -523,6 +535,17 @@ def expand(options: dict) -> dict:
     # keyboard map that leaves degrees off the keys leaves them out here as
     # well.  Off is the factory's continuous add, and the default.
     cfg["presets"]["quantize"] = bool(want("quantize_presets", False))
+
+    # 14. The portamento jack ----------------------------------------------
+    # "portamento" is the factory's: the CV adds to the knob's glide time.
+    # "transpose" shifts the keyboard by whole degrees of the selected
+    # tuning instead, one period per volts_per_octave of CV, and the knob
+    # keeps its own job either way - the jack is its own ADC channel.
+    jack = want("portamento_in", "portamento")
+    if jack not in ("portamento", "transpose"):
+        raise SystemExit(
+            f"portamento_in = {jack!r} is not one of 'portamento', 'transpose'")
+    cfg["portamento_in"]["transpose"] = jack == "transpose"
 
     # 6. Pressure response fix ----------------------------------------------
     # One switch over the whole reworked pressure path.  Off returns every

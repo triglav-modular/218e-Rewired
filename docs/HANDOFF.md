@@ -111,9 +111,12 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   that build numbers are compiled as immediates, so each one moved to
   runtime needs a RAM cell and a load. Good candidates are the numbers below.
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
-  `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250)
-  and `clock_lock_pulses`
-  (5). All are build numbers precisely so they can move. `chord_hold_scans`
+  `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
+  `clock_lock_pulses` (5), and the jack transposer's `cv_counts_per_volt`
+  (102.3, i.e. 1023 counts over 10 V), `cv_zero` (0) and `cv_hysteresis`
+  (2) in tools/options.py - measure a known CV into PORTAMENTO IN against
+  state+0x2f0 before trusting the first two. All are build numbers
+  precisely so they can move. `chord_hold_scans`
   is 200 because the owner asked for a second. For current clock timing
   values and their digital-input constraints, use [CLOCK.md](CLOCK.md).
 - **The trigger spike is measured and settled.** The factory schedules it

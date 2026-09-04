@@ -51,6 +51,10 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
+    ("portamento_transpose",  [(r'^portamento_in = "portamento"', 'portamento_in = "transpose"'),
+                               (r"^alternate_tunings = false",
+                                'alternate_tunings = [["tunings/diatonic7.scl", "tunings/diatonic7.kbm"], '
+                                '"tunings/12TET.scl"]')]),
     # Interactions the one-at-a-time rows cannot reach.
     ("arp_off_portamento_off",[(r"^latching_arp = true", "latching_arp = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
@@ -236,7 +240,7 @@ def audit_call_pools(image_path) -> list[str]:
 # released key 1 had been anchoring every later single key on its own pitch.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "af93c1986c2a5773ccde8bc271c4de511e5a64b64f3bd458c095a4a82bdc7c92",
+    "historical_config": "943b368a9e5368f7d9bedbfbf64bf2dfe7e8c1d620297f79be91a04cd7a55d6b",
 }
 
 
