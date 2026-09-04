@@ -32,6 +32,10 @@ replaces it with a linear response across a calibrated window.
   to the trimmer — the shift is computed so the reference key stays put.
 - **Per-note calibration** Correcting the 208's own tracking
   error.
+- **Quantized preset voltages.** Optional: with the add-to-pitch switch in
+  the middle, the preset voltage transposes the keyboard to a degree of the
+  selected tuning, and the per-note calibration applies to the result. The
+  preset voltage output itself is unchanged.
 
 ## Portamento
 

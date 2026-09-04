@@ -47,6 +47,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]')]),
     ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
     ("no_offset",             [(r"^pitch_offset = true", "pitch_offset = false")]),
+    ("quantize_presets",      [(r"^quantize_presets = false", "quantize_presets = true")]),
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
@@ -59,6 +60,11 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("no_offset_corrected",   [(r"^pitch_offset = true", "pitch_offset = false"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    # The quantiser reads whatever key table is live, so a build that also
+    # installs a scale is the case where its cave and the applier meet.
+    ("quantize_presets_tuned",[(r"^quantize_presets = false", "quantize_presets = true"),
+                               (r"^alternate_tunings = false",
+                                'alternate_tunings = ["tunings/12TET.scl"]')]),
     # The author's own instrument: the shipped calibration, three tunings, and
     # the 1 V/oct ramp that 208 is trimmed to.  Those go together — that table
     # was measured at that scaling — so this is the one configuration where
@@ -230,7 +236,7 @@ def audit_call_pools(image_path) -> list[str]:
 # released key 1 had been anchoring every later single key on its own pitch.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "ba8904815e07862dadaef150471f6945982edd692fc4724b672225be2fec88ee",
+    "historical_config": "af93c1986c2a5773ccde8bc271c4de511e5a64b64f3bd458c095a4a82bdc7c92",
 }
 
 

@@ -1513,6 +1513,17 @@ def test_option_messages() -> None:
           _options.expand({"pitch_offset": False})["pitch"]["bottom_key_semitone"] == 0)
     check("leaving pitch_offset out keeps the three semitones",
           _options.expand({})["pitch"]["bottom_key_semitone"] == 3)
+    raises("quantize_presets takes only true or false",
+           lambda: _options.check({"quantize_presets": "yes"}), "quantize_presets must be true or false")
+    check("quantize_presets = true asks for the quantiser",
+          _options.expand({"quantize_presets": True})["presets"]["quantize"] is True)
+    check("leaving quantize_presets out keeps the free add",
+          _options.expand({})["presets"]["quantize"] is False)
+    on, _, _ = B.resolve_flags(_options.expand({"quantize_presets": True}))
+    off, _, _ = B.resolve_flags(_options.expand({}))
+    check("the quantiser's cave and pool word are gated together",
+          on["preset_quantize"] and on["preset_quantize_pool"]
+          and not off["preset_quantize"] and not off["preset_quantize_pool"])
     check("arp_patterns = true is the default bank",
           _options.expand({"arp_patterns": True})["knob2"] == _options.expand({})["knob2"])
     slots = _options.expand({"alternate_tunings":

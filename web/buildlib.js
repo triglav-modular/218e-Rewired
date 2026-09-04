@@ -80,6 +80,11 @@ var BUILDLIB = (function () {
         // later so the bottom key reads the 0 V pitch.
         cfg.pitch.bottom_key_semitone = want('pitch_offset', true) ? 3 : 0;
 
+        // Same rule as tools/options.py: the offset the add-to-pitch middle
+        // position adds snaps to the selected tuning's intervals; the preset
+        // voltage output is untouched.
+        cfg.presets.quantize = !!want('quantize_presets', false);
+
         if (!want('pressure_fix', true)) {
             cfg.pressure.multi_key = 'factory';
             cfg.pressure.common_mode = false;

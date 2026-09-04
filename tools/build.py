@@ -99,6 +99,7 @@ FEATURE_MAP = {
     "pressure.error_diffusion": ([], ["error_diffusion"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
+    "presets.quantize":       (["preset_quantize", "preset_quantize_pool"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -123,6 +124,7 @@ ENABLED_WHEN = {
     "pressure.error_diffusion": True,
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
+    "presets.quantize": True,
     "diagnostics.scan_profiler": True,
     "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
@@ -1561,6 +1563,9 @@ def main() -> None:
         "three semitones - the bottom key sounds three above the 0 V pitch (208, 208r, 208p)"
         if cfg["pitch"].get("bottom_key_semitone", BOTTOM_KEY_INDEX)
         else "none - the bottom key sounds the 0 V pitch (208c)"))
+    print("  preset voltages: " + (
+        "quantised to the selected tuning when added to the pitch"
+        if cfg.get("presets", {}).get("quantize") else "added to the pitch as they are"))
     reference_key = tuning.get("reference_key", 9)
     # What one step of the octave controls should be, in DAC units.  The
     # factory temperament and every 2/1 scale make this 484.

@@ -2727,6 +2727,74 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("preset_editor", 0x8001aec0);
 
+        // Preset voltage quantiser.  The pitch adder's middle position adds
+        // the active pad's preset voltage to the pitch, and the factory turns
+        // the stored 0..1023 into pitch units by scaling it through the soft
+        // float library: (store << 2) * 0.33, then float-to-int through the
+        // pool word at 0x80003914.  That is the only consumer of the scaled
+        // value, so repointing that one pool word puts a quantiser between the
+        // scaling and the add without touching the preset voltage's own
+        // output, which is a plain shift at 0x8000a97e and stays free.
+        //
+        // The offset is snapped to the nearest interval the live key table at
+        // RAM 0x854 contains, measured from its bottom entry and reduced to
+        // one period, so the transposition lands on a degree of whatever
+        // tuning slot is selected - the factory temperament when no Scala
+        // file is installed.  Whole periods are stripped first and added back
+        // after, so the reach is unchanged.  The sum then goes through the
+        // pitch remap exactly as a key at that pitch would, so the per-key
+        // calibration applies to the transposed note as it does to the key.
+        //
+        // R12 in: the scaled float.  R12 out: the integer offset, quantised.
+        // The original conversion is called first through this cave's own
+        // pool word, so its result is what gets quantised.
+        //   R0 period   R1 best distance   R2 whole periods, in units
+        //   R3 offset within the period   R7 table[0]   R8 key index
+        //   R9 table base   R10 candidate   R11 distance   R12 best offset
+        begin(0x8001e140);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MCALL PC[0x8001e19c]");           // the factory float-to-int
+        emit("CP.W R12,0x0");
+        emit("BR{lt} 0x8001e196");              // never negative; leave it
+        emit(StringFormat("MOV R0,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("DIVU R2,R12,R0");                 // R2 = periods, R3 = remainder
+        emit("MUL R2,R2,R0");
+        emit("MOV R12,R0");                     // the period itself is a candidate
+        emit("SUB R1,R0,R3 << 0x0");            // its distance, from above
+        emit("MOV R9,0x854");
+        emit("LD.UH R7,R9[0x0]");
+        emit("MOV R8,0x0");                     // over all 32 entries
+        padTo(0x8001e166);
+        emit("LD.UH R10,R9[R8 << 0x1]");
+        emit("SUB R10,R10,R7 << 0x0");          // interval above the bottom key
+        padTo(0x8001e16e);
+        emit("CP.W R10,0x0");                   // reduce into [0, period)
+        emit("BR{ge} 0x8001e176");
+        emit("ADD R10,R0");
+        emit("RJMP 0x8001e16e");
+        padTo(0x8001e176);
+        emit("CP.W R10,R0");
+        emit("BR{lt} 0x8001e17e");
+        emit("SUB R10,R0");
+        emit("RJMP 0x8001e176");
+        padTo(0x8001e17e);
+        emit("SUB R11,R10,R3 << 0x0");
+        emit("ABS R11");
+        emit("CP.W R11,R1");
+        emit("BR{ge} 0x8001e18c");              // not nearer: keep the best so far
+        emit("MOV R1,R11");
+        emit("MOV R12,R10");
+        padTo(0x8001e18c);
+        emit("SUB R8,-0x1");
+        emit("CP.W R8,0x20");
+        emit("BR{lt} 0x8001e166");
+        emit("ADD R12,R2");                     // the whole periods back
+        padTo(0x8001e196);
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001e19c);
+        word(0x80013434); // the factory float-to-int helper
+        finish("preset_quantize", 0x8001e1c0);
+
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,
         // reverse press order, random - and the zone picks how the next key is
@@ -8526,6 +8594,12 @@ function assembleProgram() {
         fixedPatch("preset_out_2", 0x8000a98e, 4, "LD.SH R8,R8[0x2bdc]");
         fixedPatch("preset_out_3", 0x8000a99e, 4, "LD.SH R8,R8[0x2bde]");
         fixedPatch("preset_out_4", 0x8000a9ae, 4, "LD.SH R8,R8[0x2be0]");
+
+        // The pitch adder converts the scaled preset voltage to an integer
+        // through this pool word.  With the quantiser on it goes through the
+        // cave above, which calls the same helper and then snaps the result.
+        wordPatch("preset_quantize_pool", 0x80003914, 0x8001e140,
+            "float-to-int pointer -> preset voltage quantiser");
 
         // An octave is a 2/1 everywhere in the factory: the panel switch adds
         // -484, 0, +484 or +968 DAC units by position, and the stored octave

@@ -6,7 +6,7 @@ import java.util.*;
 
 public class ControlRegression extends SequenceEditRegression {
     static final long APPLIER=0x8001a2e8L;
-    boolean transpose, orders, lean;
+    boolean transpose, orders, lean, quantized;
     int zones=9;
 
     void controlScan() throws Exception { call(APPLIER); }
@@ -642,6 +642,97 @@ public class ControlRegression extends SequenceEditRegression {
             r(0x6158,1)==0&&r(0x2eed,1)==0);
         println("PASS preview boundaries: sentinel gates, loop wrap ties, WRITE exit releases");
     }
+    // The pitch adder's middle position, driven from the preset store the
+    // four getters read: the stored 0..1023 becomes int((store << 2) * 0.33f)
+    // through the factory soft float, then - in a quantising build - the
+    // nearest interval of the live key table above its bottom entry, whole
+    // periods stripped and restored.  The period is a build constant; every
+    // variant this suite builds repeats at the octave.
+    static final int PERIOD=484;
+    int presetUnits(int store) { return (int)(float)((double)(store<<2)*0.33); }
+    int quantised(int units) {
+        // A transcription of the cave, in the cave's own order: entries from
+        // the bottom up, first strictly nearer candidate wins.
+        if(units<0)return units;
+        int whole=units/PERIOD*PERIOD, rem=units%PERIOD;
+        int best=PERIOD, bestd=PERIOD-rem, t0=(int)r(0x854,2);
+        for(int k=0;k<32;k++) {
+            int c=(int)r(0x854+2*k,2)-t0;
+            while(c<0)c+=PERIOD;
+            while(c>=PERIOD)c-=PERIOD;
+            int d=Math.abs(c-rem);
+            if(d<bestd) { bestd=d; best=c; }
+        }
+        return best+whole;
+    }
+    long presetTarget(int base,int store) throws Exception {
+        w(S+0x350,2,base); w(0x613a,2,store); musicalScan(); return r(S+0x352,2);
+    }
+    void presetQuantize() throws Exception {
+        setup(0,false,0);
+        // Toggle in the middle, pad 1 active: the adder adds preset 1.
+        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x344,4,1); w(S+0x2ef,1,0);
+        // A build that forces transpose mode adds a constant period as well
+        // (-484 with the toggle off the octave position); measure it, then
+        // sit the fixture so the targets clear the factory's floor clamp at
+        // 9 and its +-1 fix-ups at 0x1e0 and 0x78a: base+K at the bottom
+        // key, and the whole knob span under 1930.
+        int k0=(int)presetTarget(1000,0)-1000;
+        int base=485-k0;
+        long rest=presetTarget(base,0);
+        check("preset 1 at zero adds nothing",rest==presetTarget(base,0));
+        Set<Integer> offsets=new TreeSet<>();
+        for(int store=0;store<=1023;store+=store<64?1:store<200?7:13) {
+            // The factory soft float truncates where Java rounds, so where
+            // (store << 2) * 0.33 lands within a rounding error of a whole
+            // number the firmware can read one unit under the model (store
+            // 25: 32 against 33).  Accept the model and the model one under.
+            int units=presetUnits(store);
+            long a=rest+(quantized?quantised(units):units);
+            long b=rest+(quantized?quantised(units-1):units-1);
+            long got=presetTarget(base,store);
+            check((quantized?"quantised":"free")+" preset offset at store "+store+": got "
+                +(got-rest)+", expected "+(a-rest),got==a||got==b);
+            offsets.add((int)(got-rest));
+        }
+        check("the top of the knob still reaches the same span",
+            presetTarget(base,1023)-rest>=1300&&presetTarget(base,1023)-rest<=1352);
+        if(quantized) {
+            // Every offset the knob produced is an interval of the live
+            // table, so the transposed pitch is one the keys themselves
+            // reach: the same raw value, the same remap, the same DAC.
+            for(int off:offsets) {
+                int rem=off%PERIOD, t0=(int)r(0x854,2); boolean member=rem==0;
+                for(int k=0;k<32&&!member;k++) {
+                    int c=(int)r(0x854+2*k,2)-t0; while(c<0)c+=PERIOD; while(c>=PERIOD)c-=PERIOD;
+                    member=c==rem;
+                }
+                check("offset "+off+" is a degree of the live table",member);
+            }
+            check("the knob reaches more than one degree",offsets.size()>=12);
+            int[] probes={1,3,5,7,12,17,24,31};
+            for(int k:probes) {
+                int target=(int)r(0x854+2*k,2), want=target-(int)r(0x854,2);
+                // Find a store whose quantised offset is this key's interval.
+                int store=-1;
+                for(int s=0;s<=1023&&store<0;s++)if(quantised(presetUnits(s))==want)store=s;
+                if(store<0)continue;
+                presetTarget(target-k0,0);
+                // A key whose direct route crosses a factory fix-up lands a
+                // unit off; it cannot serve as the reference, so skip it.
+                if(r(S+0x352,2)!=target)continue;
+                long direct=r(S+0x358,2);
+                presetTarget(base,store);
+                check("key "+k+" reached through the preset sounds the key's own DAC value",
+                    r(S+0x352,2)==target&&r(S+0x358,2)==direct);
+            }
+        } else {
+            // About 150 stores are sampled above; a snapped knob would give
+            // a few dozen distinct offsets, a free one nearly one per store.
+            check("a free preset is not snapped to the table",offsets.size()>100);
+        }
+        println("PASS preset voltage "+(quantized?"quantised to the live key table, whole periods kept, key-exact DAC":"added unquantised"));
+    }
     void recordedBounds() throws Exception {
         // A relative step is signed and deliberately unclamped: the DAC
         // guard belongs to the playback target, where the factory
@@ -772,11 +863,13 @@ public class ControlRegression extends SequenceEditRegression {
         orders=args.length>1&&args[1].equals("orders");
         zones=args.length>3?Integer.parseInt(args[3]):9;
         lean=args.length>4&&args[4].equals("lean");
+        quantized=args.length>5&&args[5].equals("quantized");
         seq=!lean; clock=!lean; persistent=args.length>2&&args[2].equals("persist");
         List<String> failures=new ArrayList<>();
         try {
             try { presetOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { quickTapGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { presetQuantize(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
@@ -794,7 +887,7 @@ public class ControlRegression extends SequenceEditRegression {
             if(seq)try { heldPresetEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(lean)try { retainedStartup(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
-            println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean);
+            println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized);
         } finally { if(e!=null)e.dispose(); }
     }
 }

@@ -15,6 +15,7 @@ and the JavaScript toolchain underneath are all unchanged.
     alternate_tunings   = [scl,...]/false  up to 3 Scala files, or factory
     volts_per_octave    = 1.2 / 1.0      pitch ramp scaling
     pitch_offset        = true/false     bottom key three semitones up / at 0 V
+    quantize_presets    = true/false     preset voltages snap to the tuning when added to pitch
     pressure_fix        = true/false     the reworked pressure path, or factory
     pressure_portamento = true/false     pitch follows relative pressure
 """
@@ -59,6 +60,7 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                  'dac_counts': 4096,
                  'dac_gain': 4.09,
                  'dac_vref': 2.5},
+    'presets': {'quantize': False},
     'portamento': {   'blend_filter_shift': 2,
                       'blend_hysteresis': 3,
                       'blend_slew_taper': 1,
@@ -198,6 +200,7 @@ OPTION_TYPES = {
     "pressure_portamento": bool,
     "volts_per_octave":    float,
     "pitch_offset":        bool,
+    "quantize_presets":    bool,
     "pitch_correction":    (bool, str),
     "alternate_tunings":   (bool, list),
     "knob1":               str,
@@ -506,6 +509,20 @@ def expand(options: dict) -> dict:
     # the table out three entries later and the firmware's fixed add cancels
     # out, with no change to the assembled code.
     cfg["pitch"]["bottom_key_semitone"] = 3 if want("pitch_offset", True) else 0
+
+    # 13. Preset voltage quantisation ----------------------------------------
+    # The add-to-pitch switch's middle position adds the active pad's preset
+    # voltage to the pitch.  On, that offset snaps to the nearest interval of
+    # the tuning slot currently selected (the factory temperament when no
+    # Scala file is installed), measured from the bottom key and repeating
+    # every period, so the transposition lands on a degree of the scale.  The
+    # sum then goes through the pitch remap like any key, so the per-key
+    # oscillator correction applies to the transposed note too.  Only the
+    # pitch path is quantised: the preset voltage's own output jack stays
+    # continuous.  Intervals come from the live 32-entry key table, so a
+    # keyboard map that leaves degrees off the keys leaves them out here as
+    # well.  Off is the factory's continuous add, and the default.
+    cfg["presets"]["quantize"] = bool(want("quantize_presets", False))
 
     # 6. Pressure response fix ----------------------------------------------
     # One switch over the whole reworked pressure path.  Off returns every

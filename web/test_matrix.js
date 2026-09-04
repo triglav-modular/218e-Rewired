@@ -33,13 +33,18 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
     [[1.2, true], [1.0, true], [1.2, false]].forEach(function (vo) {
         var v = vo[0];
     [null, rows].forEach(function (cal) {
-    [0, 1, 2, 3].forEach(function (nt) {
+    // The preset quantiser rides on the tunings dimension: it reads the
+    // live key table, so with and without a scale installed is the pair to
+    // cover, not its cross with every other flag.
+    [[0, false], [1, true], [2, false], [3, true]].forEach(function (nq) {
+        var nt = nq[0];
         // kn stands in for the old remap switch: every knob at its default
         // role, or every knob on None.
         var o = { latching_arp: arp, pressure_fix: fx,
                   knob1: kn ? 'order' : 'factory', knob2: kn ? 'spacing' : 'factory',
                   knob3: kn ? 'octaves' : 'factory', knob4: kn ? 'vibrato' : 'factory',
                   pressure_portamento: po, volts_per_octave: v, pitch_offset: vo[1],
+                  quantize_presets: nq[1],
                   sequencer: sq[0], clock_divide: sq[1], persist: persist };
         // buildlib refuses persist = false unless the caller says it means
         // it.  This matrix is where the unsupported build is characterised.
@@ -51,7 +56,7 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
                     ' persist=' + (persist ? 1 : 0) +
                     ' fix=' + (fx ? 1 : 0) + ' porta=' + (po ? 1 : 0) +
                     ' v=' + v + ' off=' + (vo[1] ? 1 : 0) +
-                    ' cal=' + (cal ? 1 : 0) + ' tun=' + nt;
+                    ' cal=' + (cal ? 1 : 0) + ' tun=' + nt + ' q=' + (nq[1] ? 1 : 0);
         try {
             var r = WEBBUILD.build(o, factory);
             built++;

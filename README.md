@@ -19,6 +19,8 @@ keyboard.
   maps** and scales that repeat at something other than the octave.
 - **Per-note pitch calibration.**
 - **Selectable volts per octave**
+- **Quantized preset voltages**, snapping the add-to-pitch transposition to
+  the selected tuning.
 
 
 ## Build it in your browser

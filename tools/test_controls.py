@@ -73,8 +73,14 @@ def main() -> None:
                 image = args.image.resolve() if args.image else work / f"{name}.hex"
                 if not args.image:
                     text = base
+                    # The preset quantiser rides on the default and tuned
+                    # variants, so it is exercised against the factory key
+                    # table and against an installed scale, and the other
+                    # two prove the free add is untouched.
+                    quantize = variant in ("default", "tuned")
                     for key, value in (("persist", persist), ("sequencer", variant != "lean"),
-                                       ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean")):
+                                       ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean"),
+                                       ("quantize_presets", quantize)):
                         text, count = re.subn(rf"^{key} = (?:true|false)$",
                                              f"{key} = {str(value).lower()}", text, flags=re.M)
                         if count != 1:
@@ -89,6 +95,12 @@ def main() -> None:
                             'alternate_tunings = ["tunings/12TET.scl"]', text, flags=re.M)
                         if count != 1:
                             raise SystemExit("Cannot enable tuning in regression config")
+                        # A measured correction, so the remap is not a straight
+                        # line and key-exact DAC values mean something.
+                        text, count = re.subn(r'^pitch_correction = false$',
+                            'pitch_correction = "calibration/218e-pitch-calibration.csv"', text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit("Cannot enable pitch correction in regression config")
                     text, count = re.subn(r'^output_hex\s*=\s*"[^"]*"',
                                          f'output_hex = "{image}"', text, flags=re.M)
                     if count != 1:
@@ -114,7 +126,8 @@ def main() -> None:
                     "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src"),
                     "-postScript", "ControlRegression.java", "vibrato" if variant == "default" else "trn",
                     "order" if variant == "default" else "orders", "persist" if persist else "volatile",
-                    "9", "lean" if variant == "lean" else "full"]))
+                    "9", "lean" if variant == "lean" else "full",
+                    "quantized" if variant in ("default", "tuned") else "free"]))
 
         def emulate(name: str, command: list[str]) -> str:
             result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)

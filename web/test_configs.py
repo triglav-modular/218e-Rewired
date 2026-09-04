@@ -164,6 +164,9 @@ CONFIGS = [
     ("no_offset_corrected", [(r"^pitch_offset = true", "pitch_offset = false"),
                              (r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
                             {"pitch_offset": False, "pitch_correction": calibration_rows()}),
+    # The preset quantiser: one cave and one pool word, gated together.
+    ("quantize_presets",  [(r"^quantize_presets = false", "quantize_presets = true")],
+                          {"quantize_presets": True}),
     ("tunings_one",       [(r"^alternate_tunings = false",
                             'alternate_tunings = ["tunings/12TET.scl"]')],
                           {"alternate_tunings": scala(["tunings/12TET.scl"])}),
