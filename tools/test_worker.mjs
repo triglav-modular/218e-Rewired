@@ -54,7 +54,7 @@ const REAL = {
   pressure_portamento: false, alternate_tunings: 3, pitch_correction: true,
   sequencer: true, clock_divide: false, pitch_offset: false,
   knob1: 'orders', knob2: 'patterns', knob3: 'octaves', knob4: 'factory',
-  arp_patterns: 22
+  arp_patterns: 22, quantize_presets: true, portamento_in: 'transpose'
 };
 
 // What a page from before the 2.x options sends: the first nine values and
@@ -72,8 +72,8 @@ const OLD = {
   check('a real download is recorded', env.written.length === 1);
   check('its answer carries no body', res.status === 204, `status ${res.status}`);
   check('the options land in order',
-        p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory'
-        && p.doubles.join(',') === '1,1,1,0,3,1,1,0,0,22',
+        p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory,transpose'
+        && p.doubles.join(',') === '1,1,1,0,3,1,1,0,0,22,1',
         p && `${p.blobs} / ${p.doubles}`);
 
   // The same download, in the form the dashboard can read without a token.
@@ -91,7 +91,9 @@ const OLD = {
         && k.opts.metadata.pitch_offset === 0
         && k.opts.metadata.knob2 === 'patterns'
         && k.opts.metadata.knob4 === 'factory'
-        && k.opts.metadata.patterns === 22,
+        && k.opts.metadata.patterns === 22
+        && k.opts.metadata.quantize_presets === 1
+        && k.opts.metadata.portamento_in === 'transpose',
         k && JSON.stringify(k.opts.metadata));
   check('and it is small enough for KV metadata',
         k && JSON.stringify(k.opts.metadata).length <= 1024,
@@ -113,12 +115,14 @@ const OLD = {
         && p.doubles.slice(0, 6).join(',') === '1,1,1,0,3,1',
         `${p.blobs} / ${p.doubles}`);
   check('an unreported flag is -1, not off',
-        p.doubles.slice(6).join(',') === '-1,-1,-1,-1'
+        p.doubles.slice(6).join(',') === '-1,-1,-1,-1,-1'
         && m.sequencer === -1 && m.clock_divide === -1
-        && m.pitch_offset === -1 && m.patterns === -1,
+        && m.pitch_offset === -1 && m.patterns === -1
+        && m.quantize_presets === -1,
         `${p.doubles.slice(6)} / ${JSON.stringify(m)}`);
   check('an unreported knob role is empty, not factory',
-        p.blobs.slice(3).join(',') === ',,,' && m.knob1 === '' && m.knob4 === '',
+        p.blobs.slice(3).join(',') === ',,,,' && m.knob1 === '' && m.knob4 === ''
+        && m.portamento_in === '',
         `${JSON.stringify(p.blobs.slice(3))}`);
 }
 
@@ -174,11 +178,11 @@ const OLD = {
     alternate_tunings: 99999, pitch_correction: 'true',
     sequencer: 'on', clock_divide: 1, pitch_offset: 'false',
     knob1: '<b>', knob2: 'patterns; DROP', knob3: 'vibrato', knob4: 42,
-    arp_patterns: 33
+    arp_patterns: 33, quantize_presets: 'yes', portamento_in: 'transpose; DROP'
   }, env);
   const p = env.written[0];
   check('hostile strings never reach the dataset',
-        p.blobs.join(',') === 'other,other,other,other,other,other,other',
+        p.blobs.join(',') === 'other,other,other,other,other,other,other,other',
         p.blobs.join(','));
   check('a truthy non-boolean is not counted as chosen',
         p.doubles.slice(0, 4).join(',') === '0,0,0,0', p.doubles.join(','));
@@ -190,6 +194,8 @@ const OLD = {
         p.blobs[5] === 'other', p.blobs[5]);
   check('a bank bigger than the page allows is marked, not stored',
         p.doubles[9] === -1, String(p.doubles[9]));
+  check('a truthy non-boolean 2.3 flag is unreported too',
+        p.doubles[10] === -1, String(p.doubles[10]));
 }
 
 {
@@ -390,6 +396,44 @@ const OLD = {
   check('the route covers the path the worker serves',
         prefix && route.includes(prefix) && route.endsWith('*'),
         `route ${route} vs PUBLIC ${prefix}`);
+}
+
+// And the other drift, the one that costs a column rather than a deploy: the
+// page grows an option, the worker's allowlist does not hear about it, and
+// every build using it is recorded as 'other'.  That is what happened to the
+// second knob-2 randomness role - it shipped, and the dashboard counted it as
+// a value the page cannot produce.  Nothing said so; the beacon answered 204
+// as it always does.
+{
+  const page = readFileSync(join(here, '..', 'web', 'index.html'), 'utf8');
+  const app = readFileSync(join(here, '..', 'web', 'app.js'), 'utf8');
+  const allowed = (knob) => {
+    const list = source.match(new RegExp(`${knob}: \\[([^\\]]*)\\]`));
+    return list ? list[1].match(/'([^']*)'/g).map((q) => q.slice(1, -1)) : null;
+  };
+  for (const knob of ['knob1', 'knob2', 'knob3', 'knob4']) {
+    const block = page.match(new RegExp(`id="${knob}"([\\s\\S]*?)</div>`));
+    const offered = block
+      ? (block[1].match(/data-v="([^"]+)"/g) || []).map((a) => a.slice(8, -1))
+      : [];
+    const known = allowed(knob) || [];
+    const unknown = offered.filter((v) => !known.includes(v));
+    check(`every role the page offers for ${knob} is one the worker knows`,
+          offered.length > 0 && unknown.length === 0,
+          offered.length ? `the worker would record ${unknown.join(', ')} as other`
+                         : 'no roles found in index.html');
+  }
+
+  // The same drift one level up: a field the page sends that the worker never
+  // reads is collected from the browser and thrown away.
+  const body = app.match(/var body = JSON\.stringify\(\{([\s\S]*?)\n            \}\);/);
+  const sent = body ? (body[1].match(/^\s{16}(\w+):/gm) || [])
+    .map((m) => m.trim().replace(':', '')) : [];
+  const ignored = sent.filter((f) => !source.includes(`body.${f}`));
+  check('every field the beacon sends is one the worker records',
+        sent.length > 0 && ignored.length === 0,
+        sent.length ? `the worker never reads ${ignored.join(', ')}`
+                    : 'could not read the beacon body from app.js');
 }
 
 console.log(failures ? `\n  ${failures} failure(s)` : '\n  the beacon only records what the page can send, and the deploy matches it');

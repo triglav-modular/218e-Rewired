@@ -50,10 +50,12 @@ const VOLTS = ['1', '1.2'];
 // 'factory' for a knob set to None - its preset voltage.
 const KNOBS = {
   knob1: ['order', 'orders', 'factory'],
-  knob2: ['spacing', 'swing', 'patterns', 'factory'],
+  knob2: ['spacing', 'quantized', 'swing', 'patterns', 'factory'],
   knob3: ['octaves', 'factory'],
   knob4: ['vibrato', 'trn', 'factory'],
 };
+// What the portamento banana jack was built to do.
+const PORTAMENTO_IN = ['portamento', 'transpose'];
 // The most patterns the page lets into a bank.
 const MAX_PATTERNS = 32;
 
@@ -77,6 +79,13 @@ function tri(value) {
 function role(knob, value) {
   if (value === undefined) return '';
   return KNOBS[knob].includes(value) ? value : 'other';
+}
+
+// The same rule for a value with its own list rather than a knob's: '' when
+// the page said nothing, 'other' when it said something the page cannot say.
+function oneOf(allowed, value) {
+  if (value === undefined) return '';
+  return allowed.includes(value) ? value : 'other';
 }
 
 async function record(request, env, context) {
@@ -138,6 +147,12 @@ async function record(request, env, context) {
     knob3: role('knob3', body.knob3),
     knob4: role('knob4', body.knob4),
     patterns,
+    // Added with 2.3: the preset-voltage quantisation and what the portamento
+    // banana jack does.  Both were on the page before they were counted, so
+    // 'unreported' here means an older page and not a build that turned the
+    // option down.
+    quantize_presets: tri(body.quantize_presets),
+    portamento_in: oneOf(PORTAMENTO_IN, body.portamento_in),
   };
 
   env.BUILDS.writeDataPoint({
@@ -146,10 +161,12 @@ async function record(request, env, context) {
     // Positional, and read back by position: the newer columns follow the
     // older ones so a row written before they existed still reads right.
     blobs: [platform, version, volts,
-            point.knob1, point.knob2, point.knob3, point.knob4],
+            point.knob1, point.knob2, point.knob3, point.knob4,
+            point.portamento_in],
     doubles: [point.arp, point.knobs, point.pressure, point.portamento,
               tunings, point.calibration,
-              point.sequencer, point.clock_divide, point.pitch_offset, patterns],
+              point.sequencer, point.clock_divide, point.pitch_offset, patterns,
+              point.quantize_presets],
   });
 
   // And the same thing where it can be read back without a credential.  One

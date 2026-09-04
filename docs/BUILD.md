@@ -167,6 +167,26 @@ hash; it is not a gate. What is a gate is `tools/validate_hex.py`, which mirrors
 declared record lengths, because each of those is a way for a file to be
 approved and something else to be written.
 
+**The log is written for a bug report, not for a post-mortem.** Both flashers
+open by writing everything about the run into it — which flasher, which OS and
+architecture, where it was launched from, which folders it can reach, which
+tools it will use — and then, as soon as an image is chosen and before the chip
+is touched, the image's path, size, checksum and every option the builder page
+recorded in the `image.txt` beside it. That happens on every run, so a log from
+a flash that *worked* carries as much as one from a flash that did not; most
+reports are about what the instrument does afterwards, and those cannot be
+answered without knowing which options are in the image on it. An image with no
+manifest beside it says so in as many words rather than logging nothing, which
+would read as a build with everything turned off.
+
+`image.txt` is the only channel a build option has into that log, so the page's
+`describe()` has to name all of them — see *Counting builds* for the same
+problem on the beacon, and the tests that now hold the two together.
+
+The macOS log is replaced on each run; the Windows one is appended to, with a
+dated banner at the top of each run so the settings below it belong to a
+particular attempt.
+
 **Windows needs the DFU device bound to WinUSB**, or `dfu-programmer` cannot
 open it. The flasher deals with this itself, in the only order that works:
 Zadig can only bind a device it can see, and the DFU device exists only while
@@ -701,10 +721,20 @@ direction is the safe one.
 Each download is written twice: to the Analytics Engine dataset, and as one
 key in the `COUNTS` KV namespace whose metadata carries the same values.
 An option the page did not always offer — the clock divider, the sequencer,
-the knob roles, the pitch offset, the pattern bank — is recorded as
+the knob roles, the pitch offset, the pattern bank, the preset-voltage
+quantisation and what the portamento banana jack does — is recorded as
 *unreported* (`-1`, or an empty role) when a page older than the option sends
 nothing for it, so an old build is never read as having turned it down. The
 Analytics Engine columns are positional, so the newer ones follow the older.
+
+Two ways the page and the worker drift apart, both of which have happened and
+neither of which shows as an error: the page grows a value the worker's
+allowlist does not know — the second knob-2 randomness role shipped that way
+and was counted as `other` — or the page sends a field the worker never reads,
+which is collected from the browser and thrown away. `tools/test_worker.mjs`
+reads `web/index.html` and `web/app.js` and holds both against
+`deploy/worker.js`, so either one fails the suite instead of quietly costing a
+column.
 The second exists because an Analytics Engine binding can only write — reading
 one back means the SQL API and an API token to go with it, while a namespace
 can simply be bound to whatever reads it. One key per download rather than a

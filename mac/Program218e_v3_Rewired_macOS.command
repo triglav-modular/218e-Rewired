@@ -28,6 +28,10 @@ EXPECTED_SHA256="5574fa35167e8ed698d1b2bae4c6f64763fa961eb6ecc527dec332362005bc2
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 FIRMWARE_VERSION="Rewired 2.3.0 (5574fa35)"
+# What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
+# by the manifest below and again by whichever image is chosen, so by the time
+# anything reaches the log it no longer says which flasher wrote it.
+FLASHER_BUILD="$FIRMWARE_VERSION"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
@@ -88,6 +92,12 @@ timestamp() {
 log() {
     echo "[$(timestamp)] $*" >> "$LOG_FILE"
     echo "${C_DIM}$*${C_RESET}"
+}
+
+# For the log and not the screen.  The screen says what is happening now; the
+# log has to answer questions asked days later by someone who was not there.
+note() {
+    echo "[$(timestamp)] $*" >> "$LOG_FILE"
 }
 
 # A step banner plus a progress bar, so it is obvious how far along this is and
@@ -325,6 +335,43 @@ read_fuse_decimal() {
 : > "$LOG_FILE"
 log "Starting Buchla LEM218 Rewired programming."
 log "Runtime directory: $RUNTIME_DIR"
+
+# Everything about this run that a bug report would otherwise have to ask for,
+# written before anything can go wrong.  A log from a flash that worked has to
+# carry as much as one from a flash that did not: most reports are about what
+# the instrument does afterwards, and answering those means knowing what went
+# into the image and where it was flashed from.
+note "--- this run ---"
+note "Flasher: $FLASHER_BUILD"
+note "Image this flasher was built for: $EXPECTED_SHA256"
+note "Factory image it recognises: $FACTORY_SHA256"
+note "macOS: $(sw_vers -productVersion 2>/dev/null) build $(sw_vers -buildVersion 2>/dev/null) on $(uname -m)"
+note "Bash: ${BASH_VERSION:-unknown}"
+note "Terminal: ${TERM_PROGRAM:-none}${TERM_PROGRAM_VERSION:+ $TERM_PROGRAM_VERSION}"
+note "Script: $0"
+note "Script directory: $SCRIPT_DIR"
+note "Package root: $PACKAGE_ROOT"
+note "Working directory: $WORK_DIR"
+note "Firmware directory: $FIRMWARE_DIR"
+# Where it is running from decides which paths are reachable at all, and a
+# translocated copy cannot see the folder it was unzipped into.
+case "$SCRIPT_DIR" in
+    */AppTranslocation/*) note "Launched from a translocated read-only copy of the app." ;;
+    *.app/Contents/*)     note "Launched from inside the app bundle." ;;
+    *)                    note "Launched loose from a folder." ;;
+esac
+if [ -f "$MANIFEST" ]; then
+    note "Manifest: $MANIFEST"
+else
+    note "Manifest: none at $MANIFEST"
+fi
+note "Image validator: ${VALIDATOR:-the built-in one}"
+# Paths only here.  A quarantined tool does not fail when it is launched -
+# macOS suspends it behind a dialog and it waits - so nothing is run until
+# the quarantine has been dealt with, and the versions are logged there.
+note "dfu-programmer: $DFU_BUNDLED"
+note "sendmidi: $SENDMIDI"
+note "--- end of this run ---"
 
 # Prevent macOS idle/system sleep for the lifetime of this launcher. The
 # instrument still needs its own stable power source throughout programming.
@@ -906,6 +953,7 @@ if [ -z "$FIRMWARE" ]; then
             [ -n "$opts" ] && detail="$detail
 $opts"
             MENU_DETAILS[$i]="$detail"
+            note "Candidate $((i + 1)): ${sha:0:8}  $candidate"
             i=$((i + 1))
         done <<EOF
 $images
@@ -913,6 +961,7 @@ EOF
         menu
         [ "$MENU_CHOICE" -ge 1 ] || fail "Nothing chosen. The instrument was not touched."
         chosen="$(printf '%s\n' "$images" | sed -n "${MENU_CHOICE}p")"
+        note "Chose candidate $MENU_CHOICE of $count."
         accept_choice "$chosen"
     elif [ "$count" -eq 1 ]; then
         accept_choice "$images"
@@ -964,6 +1013,31 @@ fi
 # again on the next run as a nameless extra entry in the list, checksummed but
 # with nothing to say where it came from.
 log "Using $FIRMWARE"
+
+# What was chosen and what is in it, written before the chip is touched so it
+# is in the log whichever way the run ends.  A flash that worked is where most
+# reports start - the instrument does something unexpected afterwards - and
+# that question cannot be answered without knowing which options were built
+# into the image that is on it.
+note "--- image and settings ---"
+note "Image: $FIRMWARE"
+note "Checksum: $actual_sha256"
+note "Size: $(wc -c < "$FIRMWARE" | tr -d " ") bytes"
+note "Modified: $(stat -f "%Sm" -t "%Y-%m-%d %H:%M:%S" "$FIRMWARE" 2>/dev/null)"
+note "Identified as: $FIRMWARE_VERSION"
+if [ -n "$chosen_options" ]; then
+    while IFS= read -r line; do
+        note "Setting: $line"
+    done <<OPTIONS
+$chosen_options
+OPTIONS
+else
+    # Not silence: an image with no manifest beside it is a different thing
+    # from an image built with nothing turned on, and a log that said nothing
+    # would read as the second.
+    note "Settings: no image.txt beside this image names it, so what went into the build is not known here."
+fi
+note "--- end of image and settings ---"
 
 # The bundled dfu-programmer is universal and carries its own libusb, so it
 # runs natively on both architectures with nothing installed.  Buchla's command
@@ -1080,6 +1154,12 @@ if [ "$probe_status" -ne 0 ] && \
     fail "The DFU tools are not usable. The instrument was not touched."
 fi
 ok "dfu-programmer runs"
+# Through the deadline, like the probe above: a version query is still a
+# launch, and a tool macOS is holding would hang on it just the same.
+run_with_deadline 10 "$DFUPATH" --version
+note "dfu-programmer: $(head -1 "$DEADLINE_OUT" 2>/dev/null)"
+run_with_deadline 10 "$SENDMIDI" --version
+note "sendmidi: $(head -1 "$DEADLINE_OUT" 2>/dev/null)"
 
 step "Putting the instrument into DFU"
 # The jump to the bootloader sometimes detaches from USB and never
@@ -1303,6 +1383,8 @@ $FIRMWARE_VERSION
 flashed  $(timestamp)
 image    ${actual_sha256:-$EXPECTED_SHA256}
 RECORD
+
+note "Result: success - $FIRMWARE_VERSION (${actual_sha256:-$EXPECTED_SHA256}) is on the instrument."
 
 # Clear first so the good news is the first line in the window rather than
 # the last line of a long scroll.  Only on the success path, and only

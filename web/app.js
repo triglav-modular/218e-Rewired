@@ -1105,7 +1105,13 @@
         var lines = [
             'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
             'Knobs 1-4: ' + [o.knob1, o.knob2, o.knob3, o.knob4].join(', '),
+            // How many patterns the bank holds, not what they are - the same
+            // line the flashers echo, so no brackets.
+            'Pattern bank: ' + (o.knob2 === 'patterns'
+                ? (o.arp_patterns || []).length + ' patterns'
+                : 'not in use - knob 2 is not on patterns'),
             'Sequencer: ' + (o.sequencer ? 'on' : 'off'),
+            'Clock divider: ' + (o.clock_divide ? 'on' : 'off'),
             'Pressure: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
             'Scaling: ' + o.volts_per_octave + ' V/octave',
@@ -1223,7 +1229,13 @@
                     .filter(function (t) { return t !== 'factory'; }).length,
                 // Whether a calibration was supplied - never the numbers,
                 // which are measurements of one person's instrument.
-                pitch_correction: !!o.pitch_correction
+                pitch_correction: !!o.pitch_correction,
+                // Whether a preset voltage is snapped to the tuning when it
+                // is added to pitch, and what the portamento banana jack was
+                // set to do.  Both were on the page for a while before they
+                // were counted, so a build using either was invisible here.
+                quantize_presets: !!o.quantize_presets,
+                portamento_in: o.portamento_in
             });
             // text/plain keeps this a simple request, so it needs no
             // preflight and no CORS reply to be delivered.

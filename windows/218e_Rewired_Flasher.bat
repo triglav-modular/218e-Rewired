@@ -32,6 +32,10 @@ REM Buchla's own v36.9 image.  Recognised so that going back to stock is an
 REM offered choice rather than something to be identified by hand.
 SET "FACTORY_SHA256=565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 SET "FIRMWARE_VERSION=Rewired 2.3.0 (5574fa35)"
+REM What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
+REM for whichever image is chosen, so by the time anything reaches the log it
+REM no longer says which flasher wrote it.
+SET "FLASHER_BUILD=%FIRMWARE_VERSION%"
 SET "DFU_SESSION_ACTIVE=0"
 SET "FLASH_VALIDATED=0"
 SET "ERASE_STARTED=0"
@@ -77,6 +81,34 @@ SET "SENDMIDI=%TOOLS%\sendmidi.exe"
 SET "FIRMWARE="
 SET "TOTAL_STEPS=7"
 SET "STEP=0"
+
+REM Everything about this run that a bug report would otherwise have to ask
+REM for, written before anything can go wrong.  A log from a flash that worked
+REM has to carry as much as one from a flash that did not: most reports are
+REM about what the instrument does afterwards, and answering those means
+REM knowing what went into the image and where it was flashed from.
+REM
+REM This log is added to rather than replaced, so a run needs a boundary of
+REM its own - without one the settings below belong to no particular attempt.
+REM Delayed expansion for every path: a folder called "218e Rewired (2)" is
+REM what Windows names a second download of the same zip, and a
+REM percent-expanded path would hand those brackets to the parser.
+>>"%LOG_FILE%" ECHO.
+>>"%LOG_FILE%" ECHO ======================================================================
+>>"%LOG_FILE%" ECHO Run started %DATE% %TIME%
+>>"%LOG_FILE%" ECHO ======================================================================
+>>"%LOG_FILE%" ECHO Flasher: !FLASHER_BUILD!
+>>"%LOG_FILE%" ECHO Image this flasher was built for: !EXPECTED_SHA256!
+>>"%LOG_FILE%" ECHO Factory image it recognises: !FACTORY_SHA256!
+FOR /F "tokens=*" %%V IN ('VER') DO >>"%LOG_FILE%" ECHO Windows: %%V
+>>"%LOG_FILE%" ECHO Architecture: !PROCESSOR_ARCHITECTURE!
+>>"%LOG_FILE%" ECHO Script: !SCRIPT_DIR!
+>>"%LOG_FILE%" ECHO Package root: !PACKAGE_ROOT!
+>>"%LOG_FILE%" ECHO Tools: !TOOLS!
+>>"%LOG_FILE%" ECHO PowerShell helpers: !PSTOOLS!
+>>"%LOG_FILE%" ECHO Firmware folder: !FIRMWARE_DIR!
+>>"%LOG_FILE%" ECHO dfu-programmer: !DFU!
+>>"%LOG_FILE%" ECHO sendmidi: !SENDMIDI!
 
 REM The console opens shorter than the banner, so its top scrolls away before
 REM anyone sees it.  A no-op under Windows Terminal, which is already taller.
@@ -258,6 +290,35 @@ REM canonical name only made it turn up again on the next run as a second
 REM entry in the list, checksummed but with nothing to say where it came from.
 ECHO Using !FIRMWARE!>> "%LOG_FILE%"
 
+REM What was chosen and what is in it, written before the chip is touched so
+REM it is in the log whichever way the run ends.
+>>"%LOG_FILE%" ECHO --- image and settings ---
+>>"%LOG_FILE%" ECHO Image: !FIRMWARE!
+>>"%LOG_FILE%" ECHO Checksum: !CHOSEN_SHA!
+FOR %%F IN ("!FIRMWARE!") DO SET "IMG_SIZE=%%~zF"
+FOR %%F IN ("!FIRMWARE!") DO SET "IMG_WHEN=%%~tF"
+>>"%LOG_FILE%" ECHO Size: !IMG_SIZE! bytes
+>>"%LOG_FILE%" ECHO Modified: !IMG_WHEN!
+>>"%LOG_FILE%" ECHO Identified as: !FIRMWARE_VERSION!
+REM Which PowerShell answered.  The menu, the image scan and the driver check
+REM all go through it, so its version is the first thing to know when one of
+REM them behaves oddly.  Asked here rather than at the top: the scan has just
+REM run, so this costs a start that was going to happen anyway.
+SET "PSVER="
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$PSVersionTable.PSVersion.ToString()" > "%TEMP%\rewired_psver.txt" 2>&1
+FOR /F "usebackq tokens=* delims=" %%L IN ("%TEMP%\rewired_psver.txt") DO IF NOT DEFINED PSVER SET "PSVER=%%L"
+DEL "%TEMP%\rewired_psver.txt" >NUL 2>&1
+>>"%LOG_FILE%" ECHO PowerShell: !PSVER!
+SET "IO_WROTE="
+CALL :image_options "!FIRMWARE!" "!CHOSEN_SHA!" "%LOG_FILE%" "Setting: "
+REM Not silence: an image with no manifest beside it is a different thing from
+REM an image built with nothing turned on, and a log that said nothing would
+REM read as the second.
+IF NOT DEFINED IO_WROTE (
+    >>"%LOG_FILE%" ECHO Settings: no image.txt beside this image names it, so what went into the build is not known here.
+)
+>>"%LOG_FILE%" ECHO --- end of image and settings ---
+
 ECHO.
 ECHO Before continuing:
 ECHO   - Windows needs the WinUSB driver bound to the keyboard's DFU mode.
@@ -297,6 +358,19 @@ IF NOT "%PROBE_RC%"=="0" IF NOT "%PROBE_ABSENT%"=="0" (
     GOTO :fail_early
 )
 CALL :ok dfu-programmer.exe runs
+REM Named here rather than in the header above: the probe is what proves
+REM dfu-programmer can be run at all.  Through a file, like :read_fuse and for
+REM the same reason - FOR /F hands an in-line command to a child cmd, whose
+REM quote rule strips the outer quotes when the path holds brackets.
+SET "TOOLVER="
+"%DFU%" --version > "%TEMP%\rewired_ver.txt" 2>&1
+FOR /F "usebackq tokens=* delims=" %%L IN ("%TEMP%\rewired_ver.txt") DO IF NOT DEFINED TOOLVER SET "TOOLVER=%%L"
+>>"%LOG_FILE%" ECHO dfu-programmer version: !TOOLVER!
+SET "TOOLVER="
+"%SENDMIDI%" --version > "%TEMP%\rewired_ver.txt" 2>&1
+FOR /F "usebackq tokens=* delims=" %%L IN ("%TEMP%\rewired_ver.txt") DO IF NOT DEFINED TOOLVER SET "TOOLVER=%%L"
+>>"%LOG_FILE%" ECHO sendmidi version: !TOOLVER!
+DEL "%TEMP%\rewired_ver.txt" >NUL 2>&1
 
 
 REM --- into DFU ----------------------------------------------------------
@@ -636,6 +710,8 @@ FOR %%F IN ("!FIRMWARE!") DO SET "RECORD_DIR=%%~dpF"
 >> "!RECORD_DIR!INSTALLED.txt" ECHO flashed  %DATE% %TIME%
 >> "!RECORD_DIR!INSTALLED.txt" ECHO image    !CHOSEN_SHA!
 
+>>"%LOG_FILE%" ECHO Result: success - !FIRMWARE_VERSION! ^(!CHOSEN_SHA!^) is on the instrument.
+
 REM Clear first so the good news is the first line in the window rather
 REM than the last line of a long scroll.  Success path only, and only
 REM after read-back validation has already passed.
@@ -710,6 +786,10 @@ REM when the manifest names the same checksum: a manifest left behind by an
 REM earlier download must not describe the wrong file.
 SET "IO_SHA=%~2"
 SET "IO_OUT=%~3"
+REM Optional: what to put in front of each line.  The menu passes nothing and
+REM gets the bare options it always got; the log passes a label.
+SET "IO_PREFIX=%~4"
+SET "IO_WROTE="
 SET "IO_MANIFEST=%~dp1image.txt"
 IF NOT EXIST "%IO_MANIFEST%" EXIT /B 0
 REM The manifest describes both images a download carries: the build it was
@@ -725,7 +805,8 @@ FOR /F "usebackq eol=# tokens=1,* delims==" %%K IN ("%IO_MANIFEST%") DO (
     REM Same quoted-SET idiom as :print_options, and for the same reason.
     IF /I "%%K"=="!IO_WANT!" (
         SET "IO_LINE=%%L"
-        >>"%IO_OUT%" ECHO(!IO_LINE!
+        >>"%IO_OUT%" ECHO(!IO_PREFIX!!IO_LINE!
+        SET "IO_WROTE=1"
     )
 )
 EXIT /B 0
