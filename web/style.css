@@ -475,6 +475,9 @@ h1 {
   border-radius: 50%;
   background: var(--accent);
 }
+/* Breaks in the subtitle that only a phone takes; the wide column fits the
+   sentence and both pills on one line. */
+.subbr { display: none; }
 .ver {
   display: inline-block;
   margin-left: 10px;
@@ -2228,6 +2231,18 @@ section,
   .hdr {
     display: block;
     margin: 0 0 12px;
+  }
+  /* The sentence wraps mid-phrase at this width and leaves the version pill
+     stranded at the end of a short line.  Broken by hand instead: the two
+     halves of the phrase get a line each, and the pills a line of their own.
+     The margin was the gap after the sentence; at the start of a line it
+     would read as an indent, so only the first pill loses it - the one
+     between the version and the changelog is still a gap. */
+  .subbr {
+    display: inline;
+  }
+  #ver {
+    margin-left: 0;
   }
   .banana {
     position: static;
