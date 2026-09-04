@@ -939,6 +939,10 @@ td input {
    pad map gets, and the block is a figure of the hardware rather than a note
    hanging off the option above. */
 .knobsel { margin: 14px 0 6px; }
+/* The knob header: an option row's title and description with nothing to
+   tick - the four pickers under it are the choice.  The same top padding a
+   ticked row has, so it sits in the list like one. */
+.knobsel > .opt { padding: 14px 0 0; }
 .knobsel > .knobmap:first-child { margin-top: 0; }
 .knobsel.hidden { display: none; }
 .knobmap {
