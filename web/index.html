@@ -128,18 +128,16 @@
               <span class="d">With a steady clock patched in, the <strong>rate knob</strong> becomes a
                 clock divider.</span></span></label>
 
-          <label class="opt"><input type="checkbox" id="remap_knobs" checked>
-            <span><span class="t">Remap the preset knobs</span><br>
-              <span class="d">Control the arpeggiator, sequencer, vibrato, and octaves
-                with the preset knobs. Preset voltages can still be set by holding down
-                a pad and turning the knob above it.</span></span></label>
-
           <div class="knobsel" id="knobsel">
+            <p class="d muted section-intro">Control the arpeggiator, sequencer, vibrato, and octaves
+              with the preset knobs. Preset voltages can still be set by holding down
+              a pad and turning the knob above it.</p>
             <div class="knobmap">
               <div class="knobfig"><span class="knobface"><svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="21" fill="var(--bg)" stroke="var(--line)" stroke-width="1.6"/><defs><clipPath id="knobcap1"><circle cx="24" cy="24" r="12.8"/></clipPath></defs><circle cx="24" cy="24" r="12.8" fill="color-mix(in srgb, var(--ink) 16%, var(--bg))"/><path d="M24 6V17.4" fill="none" stroke="var(--ink)" stroke-width="2.2" clip-path="url(#knobcap1)"/></svg><b>1</b></span>
                 <div class="vpo knobpick" id="knob1">
                   <button data-v="order" aria-pressed="true">Note order<span class="why">randomness</span></button>
                   <button data-v="orders" aria-pressed="false">Note order<span class="why">up,<br>down,<br>up&#8211;down,<br>as played,<br>backwards,<br>random</span></button>
+                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
 
@@ -148,12 +146,14 @@
                   <button data-v="spacing" aria-pressed="true">Trigger spacing<span class="why">randomness</span></button>
                   <button data-v="swing" aria-pressed="false">Trigger swing<span class="why">up to a triplet</span></button>
                   <button data-v="patterns" aria-pressed="false">Trigger patterns<span class="why">from a bank</span></button>
+                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
 
               <div class="knobfig"><span class="knobface"><svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="21" fill="var(--bg)" stroke="var(--line)" stroke-width="1.6"/><defs><clipPath id="knobcap3"><circle cx="24" cy="24" r="12.8"/></clipPath></defs><circle cx="24" cy="24" r="12.8" fill="color-mix(in srgb, var(--ink) 16%, var(--bg))"/><path d="M24 6V17.4" fill="none" stroke="var(--ink)" stroke-width="2.2" clip-path="url(#knobcap3)"/></svg><b>3</b></span>
                 <div class="vpo knobpick" id="knob3">
                   <button data-v="octaves" aria-pressed="true">Octave randomness<span class="why">per note</span></button>
+                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
 
@@ -161,6 +161,7 @@
                 <div class="vpo knobpick" id="knob4">
                   <button data-v="vibrato" aria-pressed="true">Vibrato<span class="why">depth and rate</span></button>
                   <button data-v="trn" aria-pressed="false">Octave switcher<span class="why">the factory trn</span></button>
+                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
             </div>

@@ -37,7 +37,9 @@ TEMP = REPO / "config" / "_sweep.toml"
 VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("defaults",              []),
     ("arp_off",               [(r"^latching_arp = true", "latching_arp = false")]),
-    ("knobs_off",             [(r"^remap_knobs = true", "remap_knobs = false")]),
+    ("knobs_off",             [(r"^latching_arp = true",
+                               'latching_arp = true\nknob1 = "factory"\nknob2 = "factory"\n'
+                               'knob3 = "factory"\nknob4 = "factory"')]),
     ("pitch_correction",      [(r"^pitch_correction = false",
                                'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     ("tunings_one",           [(r"^alternate_tunings = false",
@@ -89,11 +91,11 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("volatile_clock",        [(r"^persist = true", "persist = false"),
                                (r"^sequencer = true", "sequencer = false")]),
     ("volatile_only",         [(r"^persist = true", "persist = false")]),
-    ("knob_roles",            [(r"^remap_knobs = true",
-                               'remap_knobs = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
-    ("knob2_swing",           [(r"^remap_knobs = true", 'remap_knobs = true\nknob2 = "swing"')]),
-    ("arp_patterns",          [(r"^remap_knobs = true",
-                               'remap_knobs = true\nknob2 = "patterns"\n'
+    ("knob_roles",            [(r"^latching_arp = true",
+                               'latching_arp = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
+    ("knob2_swing",           [(r"^latching_arp = true", 'latching_arp = true\nknob2 = "swing"')]),
+    ("arp_patterns",          [(r"^latching_arp = true",
+                               'latching_arp = true\nknob2 = "patterns"\n'
                                'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')]),
     ("tuning_maps",           [(r"^alternate_tunings = false",
                                'alternate_tunings = [["tunings/24TET.scl", "tunings/24TET-full.kbm"]]')]),
@@ -105,8 +107,9 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"'),
                                (r"^alternate_tunings = false",
                                 'alternate_tunings = ["tunings/12TET.scl"]')]),
-    ("everything_off",        [(r"^latching_arp = true", "latching_arp = false"),
-                               (r"^remap_knobs = true", "remap_knobs = false"),
+    ("everything_off",        [(r"^latching_arp = true",
+                                'latching_arp = false\nknob1 = "factory"\nknob2 = "factory"\n'
+                                'knob3 = "factory"\nknob4 = "factory"'),
                                (r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
 ]

@@ -140,8 +140,13 @@ CONFIGS = [
     ("defaults",          [], {}),
     ("arp_off",           [(r"^latching_arp = true", "latching_arp = false")],
                           {"latching_arp": False}),
-    ("knobs_off",         [(r"^remap_knobs = true", "remap_knobs = false")],
-                          {"remap_knobs": False}),
+    # Every knob on None: the four-way factory image the old remap switch
+    # used to build in one line.
+    ("knobs_off",         [(r"^latching_arp = true",
+                            'latching_arp = true\nknob1 = "factory"\nknob2 = "factory"\n'
+                            'knob3 = "factory"\nknob4 = "factory"')],
+                          {"knob1": "factory", "knob2": "factory",
+                           "knob3": "factory", "knob4": "factory"}),
     ("pressure_off",      [(r"^pressure_fix = true", "pressure_fix = false"),
                            (r"^pressure_portamento = true", "pressure_portamento = false")],
                           {"pressure_fix": False, "pressure_portamento": False}),
@@ -183,16 +188,16 @@ CONFIGS = [
     # well as the table.  All three slots, because the period is one setting.
     # The three knob options together: knob 2's gate wraps knob 1's selector,
     # so both builders have to agree about the chain as well as the bank.
-    ("knob_options",      [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob1 = "orders"\n'
+    ("knob_options",      [(r"^latching_arp = true",
+                            'latching_arp = true\nknob1 = "orders"\n'
                             'knob2 = "patterns"\nknob4 = "trn"\n'
                             'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')],
                           {"knob1": "orders", "knob2": "patterns", "knob4": "trn",
                            "arp_patterns": ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]}),
     # Swing takes the rhythm randomiser's own hook, so the two builders have to
     # agree about which of the two the pool word names.
-    ("knob2_swing",       [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob2 = "swing"')],
+    ("knob2_swing",       [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "swing"')],
                           {"knob2": "swing"}),
     # Both ship ON now, so the configuration worth pinning is the one that
     # turns them OFF: that is the build whose housekeeping chain loses a call,
@@ -244,8 +249,8 @@ CONFIGS = [
                               [("tunings/12TET.scl", SHORT_MAP)] * 3)}),
     # The far end of the pattern bank.  22 fitted, 32 is what the editor, the
     # config and the validator all allow, and the table was cut for 22.
-    ("patterns_32",       [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob2 = "patterns"\n'
+    ("patterns_32",       [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "patterns"\n'
                             'arp_patterns = [' + ", ".join(['"x..."'] * 32) + ']')],
                           {"knob2": "patterns", "arp_patterns": ["x..."] * 32}),
     ("historical",        [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"'),
@@ -328,8 +333,8 @@ REFUSALS = [
                            "signed 16-bit", "signed 16-bit"),
     # One past the bank.  The page used to leave this to the assembler, which
     # answers "Code crossed target" - true, and no use to anyone.
-    ("patterns_33",       [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob2 = "patterns"\n'
+    ("patterns_33",       [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "patterns"\n'
                             'arp_patterns = [' + ", ".join(['"x..."'] * 33) + ']')],
                           {"knob2": "patterns", "arp_patterns": ["x..."] * 33},
                           "one to 32 patterns", "one to 32 patterns"),

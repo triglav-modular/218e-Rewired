@@ -34,7 +34,11 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
         var v = vo[0];
     [null, rows].forEach(function (cal) {
     [0, 1, 2, 3].forEach(function (nt) {
-        var o = { latching_arp: arp, remap_knobs: kn, pressure_fix: fx,
+        // kn stands in for the old remap switch: every knob at its default
+        // role, or every knob on None.
+        var o = { latching_arp: arp, pressure_fix: fx,
+                  knob1: kn ? 'order' : 'factory', knob2: kn ? 'spacing' : 'factory',
+                  knob3: kn ? 'octaves' : 'factory', knob4: kn ? 'vibrato' : 'factory',
                   pressure_portamento: po, volts_per_octave: v, pitch_offset: vo[1],
                   sequencer: sq[0], clock_divide: sq[1], persist: persist };
         // buildlib refuses persist = false unless the caller says it means

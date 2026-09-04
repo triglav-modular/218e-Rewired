@@ -123,7 +123,7 @@ const OLD = {
 }
 
 {
-  // The remap off: the page names every knob factory itself.
+  // Every knob on None: the page names each factory and reports no remap.
   const env = fakeEnv();
   await post({ ...REAL, remap_knobs: false,
                knob1: 'factory', knob2: 'factory', knob3: 'factory', knob4: 'factory',

@@ -1498,6 +1498,15 @@ def test_option_messages() -> None:
     import options as _options
     raises("a bare-type option refuses with a sentence",
            lambda: _options.check({"knob1": 1}), "knob1 must be str")
+    raises("the retired remap switch names what replaced it",
+           lambda: _options.check({"remap_knobs": False}), 'knob1 = "factory"')
+    knobs = _options.expand({"knob3": "factory"})["knobs"]
+    check("one knob on factory leaves the other three remapped",
+          knobs == {"knob1": "arp_order", "knob2": "arp_rhythm",
+                    "knob3": "factory", "knob4": "vibrato"}, str(knobs))
+    check("all four on factory is the old remap-off image",
+          all(v == "factory" for v in _options.expand(
+              {k: "factory" for k in ("knob1", "knob2", "knob3", "knob4")})["knobs"].values()))
     raises("pitch_offset takes only true or false",
            lambda: _options.check({"pitch_offset": "208c"}), "pitch_offset must be true or false")
     check("pitch_offset = false puts the bottom key on the 0 V pitch",

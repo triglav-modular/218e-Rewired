@@ -38,7 +38,7 @@ const BEACON = PUBLIC + '/beacon';
 const PLATFORMS = ['mac', 'win'];
 const VOLTS = ['1', '1.2'];
 // The roles each knob can take, as the page's own picker names them, plus
-// 'factory' for a knob the remap handed back.
+// 'factory' for a knob set to None - its preset voltage.
 const KNOBS = {
   knob1: ['order', 'orders', 'factory'],
   knob2: ['spacing', 'swing', 'patterns', 'factory'],
@@ -112,6 +112,9 @@ async function record(request, env, context) {
   const point = {
     platform, version, volts,
     arp: flag(body.latching_arp),
+    // Once a checkbox; the page now derives it - 1 when any knob does
+    // something other than its preset voltage - so the column keeps counting
+    // the same thing across the change.
     knobs: flag(body.remap_knobs),
     pressure: flag(body.pressure_fix),
     portamento: flag(body.pressure_portamento),

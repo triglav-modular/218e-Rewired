@@ -47,13 +47,9 @@ var BUILDLIB = (function () {
         }
         cfg.arp.switch = want('latching_arp', true) ? 'latch' : 'factory';
 
-        var remap = want('remap_knobs', true);
         var live = { knob1: 'arp_order', knob2: 'arp_rhythm',
                      knob3: 'arp_octaves', knob4: 'vibrato' };
         cfg.knobs = {};
-        Object.keys(live).forEach(function (k) {
-            cfg.knobs[k] = remap ? live[k] : 'factory';
-        });
 
         // Pitch correction arrives as rows, not a file path: the browser has
         // no filesystem and the UI edits the offsets directly.
@@ -104,15 +100,15 @@ var BUILDLIB = (function () {
         cfg.portamento.pressure_blend = blend;
         cfg.portamento.zero_snap = blend;
 
-        // Each knob's role, expanded the same way tools/options.py does.
+        // Each knob's role, expanded the same way tools/options.py does: a
+        // knob left out takes the first entry, 'factory' is the None row.
         var ROLES = { knob1: ['order', 'orders', 'factory'],
                       knob2: ['spacing', 'swing', 'patterns', 'factory'],
                       knob3: ['octaves', 'factory'],
                       knob4: ['vibrato', 'trn', 'factory'] };
         var roles = {};
         Object.keys(ROLES).forEach(function (k) {
-            var role = want(k, null);
-            if (role === null) role = remap ? ROLES[k][0] : 'factory';
+            var role = want(k, ROLES[k][0]);
             if (ROLES[k].indexOf(role) < 0) {
                 throw new Error(k + ' = ' + JSON.stringify(role) + ' is not one of '
                                 + ROLES[k].join(', '));

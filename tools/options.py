@@ -10,7 +10,7 @@ already consumed, so the generators, the safety checks, the Ghidra assembler
 and the JavaScript toolchain underneath are all unchanged.
 
     latching_arp        = true/false     arp switch: latch / factory
-    remap_knobs         = true/false     knobs 1-4: arp+vibrato / factory
+    knob1..knob4        = "<role>"       each preset knob's job, or "factory"
     pitch_correction    = "<csv>"/false  per-key offsets, or a flat ramp
     alternate_tunings   = [scl,...]/false  up to 3 Scala files, or factory
     volts_per_octave    = 1.2 / 1.0      pitch ramp scaling
@@ -194,7 +194,6 @@ def _write_flat_calibration() -> Path:
 # simply not there, and the default quietly took its place.
 OPTION_TYPES = {
     "latching_arp":        bool,
-    "remap_knobs":         bool,
     "pressure_fix":        bool,
     "pressure_portamento": bool,
     "volts_per_octave":    float,
@@ -211,9 +210,9 @@ OPTION_TYPES = {
     "persist":             bool,
 }
 
-# What each preset knob may be set to.  The first entry of each is what
-# remap_knobs = true has always meant, so a config that never mentions a knob
-# keeps the behaviour it had.
+# What each preset knob may be set to.  The first entry of each is the
+# default, so a config that never mentions a knob keeps the behaviour it had;
+# "factory" hands that one knob back to its preset voltage.
 KNOB_ROLES = {
     "knob1": ("order", "orders", "factory"),
     "knob2": ("spacing", "swing", "patterns", "factory"),
@@ -222,8 +221,19 @@ KNOB_ROLES = {
 }
 
 
+# Options that used to exist, and what took their place.  An old config is
+# refused with the replacement named, not as a misspelling.
+RETIRED = {
+    "remap_knobs": 'name each knob instead - knob1 = "factory" hands one back, '
+                   'and a knob left out keeps its default role',
+}
+
+
 def check(options: dict) -> None:
     """Refuse anything that is not one of the seven, as the thing it must be."""
+    for name, instead in RETIRED.items():
+        if name in options:
+            raise SystemExit(f"{name} is no longer an option: {instead}")
     unknown = sorted(set(options) - set(OPTION_TYPES))
     if unknown:
         known = ", ".join(sorted(OPTION_TYPES))
@@ -302,27 +312,23 @@ def expand(options: dict) -> dict:
     cfg["arp"]["switch"] = "latch" if want("latching_arp", True) else "factory"
 
     # 2. What each preset knob does -----------------------------------------
-    # remap_knobs still sets them all at once, and each knob can then be named
-    # individually - which is the only way to say "arpeggiator octaves on knob
-    # 3, preset voltage on the rest", and the only way to reach the roles that
-    # did not exist in 1.x.
-    remap = want("remap_knobs", True)
+    # Each knob is named on its own: a knob left out keeps its default role,
+    # and "factory" hands that one back to its preset voltage.  There is no
+    # switch for all four at once any more - four "factory" lines say that.
     live = {"knob1": "arp_order", "knob2": "arp_rhythm",
             "knob3": "arp_octaves", "knob4": "vibrato"}
-    cfg["knobs"] = {k: (v if remap else "factory") for k, v in live.items()}
+    cfg["knobs"] = {}
     roles = {}
     for knob, allowed in KNOB_ROLES.items():
-        role = want(knob, None)
-        if role is None:
-            role = allowed[0] if remap else "factory"
+        role = want(knob, allowed[0])
         if role not in allowed:
             raise SystemExit(
                 f"{knob} = {role!r} is not one of "
                 + ", ".join(repr(a) for a in allowed))
         roles[knob] = role
         cfg["knobs"][knob] = "factory" if role == "factory" else live[knob]
-    # The sequencer's controls live on a pad chord.  It does NOT require
-    # remap_knobs: with factory knobs the chord still works - the arm freezes
+    # The sequencer's controls live on a pad chord.  It does NOT need any knob
+    # remapped: with factory knobs the chord still works - the arm freezes
     # the active pad so the selecting press cannot change a preset, and the
     # knob-moved refusal reads the editor cave, which every build carries.
     # Where along the bend strip the line between a rest and a tie falls, in
