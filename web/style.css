@@ -475,8 +475,9 @@ h1 {
   border-radius: 50%;
   background: var(--accent);
 }
-/* Breaks in the subtitle that only a phone takes; the wide column fits the
-   sentence and both pills on one line. */
+/* A break the phone takes and the wide column does not, where the sentence
+   and both pills fit on one line.  The pills carry a wrapper rather than a
+   second break: a line made by <br> has nowhere to hang a margin. */
 .subbr { display: none; }
 .ver {
   display: inline-block;
@@ -2232,14 +2233,27 @@ section,
     display: block;
     margin: 0 0 12px;
   }
+  /* The title is the page's one piece of display type and a phone gives it
+     the width the desktop column never does, so it takes it: about 75px on a
+     375 screen, where the sentence under it sets 18.  The cap is what
+     "Rewired" fits in on its own line - 3.96em of it in the bold, 4.4 in the
+     system fallback - and the second line is the point rather than a cost. */
+  h1 {
+    font-size: clamp(56px, 20vw, 80px);
+  }
   /* The sentence wraps mid-phrase at this width and leaves the version pill
      stranded at the end of a short line.  Broken by hand instead: the two
-     halves of the phrase get a line each, and the pills a line of their own.
-     The margin was the gap after the sentence; at the start of a line it
-     would read as an indent, so only the first pill loses it - the one
-     between the version and the changelog is still a gap. */
+     halves of the phrase get a line each, and the pills a line of their own,
+     set down off the sentence so the three do not read as one block.  The
+     10px was the gap after the sentence; at the start of a line it would read
+     as an indent, so only the first pill loses it - the one between the
+     version and the changelog is still a gap. */
   .subbr {
     display: inline;
+  }
+  .subpills {
+    display: block;
+    margin-top: 12px;
   }
   #ver {
     margin-left: 0;
