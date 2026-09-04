@@ -72,9 +72,11 @@ const OLD = {
   check('a real download is recorded', env.written.length === 1);
   check('its answer carries no body', res.status === 204, `status ${res.status}`);
   check('the options land in order',
-        p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory'
+        p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory,release'
         && p.doubles.join(',') === '1,1,1,0,3,1,1,0,0,22',
         p && `${p.blobs} / ${p.doubles}`);
+  check('a download from the released page says so',
+        env.keys[0] && env.keys[0].opts.metadata.channel === 'release');
 
   // The same download, in the form the dashboard can read without a token.
   const k = env.keys[0];
@@ -118,8 +120,8 @@ const OLD = {
         && m.pitch_offset === -1 && m.patterns === -1,
         `${p.doubles.slice(6)} / ${JSON.stringify(m)}`);
   check('an unreported knob role is empty, not factory',
-        p.blobs.slice(3).join(',') === ',,,' && m.knob1 === '' && m.knob4 === '',
-        `${JSON.stringify(p.blobs.slice(3))}`);
+        p.blobs.slice(3, 7).join(',') === ',,,' && m.knob1 === '' && m.knob4 === '',
+        `${JSON.stringify(p.blobs.slice(3, 7))}`);
 }
 
 {
@@ -178,7 +180,7 @@ const OLD = {
   }, env);
   const p = env.written[0];
   check('hostile strings never reach the dataset',
-        p.blobs.join(',') === 'other,other,other,other,other,other,other',
+        p.blobs.join(',') === 'other,other,other,other,other,other,other,release',
         p.blobs.join(','));
   check('a truthy non-boolean is not counted as chosen',
         p.doubles.slice(0, 4).join(',') === '0,0,0,0', p.doubles.join(','));
@@ -190,6 +192,22 @@ const OLD = {
         p.blobs[5] === 'other', p.blobs[5]);
   check('a bank bigger than the page allows is marked, not stored',
         p.doubles[9] === -1, String(p.doubles[9]));
+}
+
+{
+  // The dev page posts to its own beacon.  Counted, and told apart: the
+  // channel comes from the path, so a body claiming otherwise changes nothing.
+  const env = fakeEnv();
+  const res = await worker.fetch(new Request(BEACON.replace('/beacon', '/dev/beacon'), {
+    method: 'POST', body: JSON.stringify({ ...REAL, channel: 'release' })
+  }), env, ctx);
+  await Promise.all(pending.splice(0));
+  const p = env.written[0];
+  check('a dev download is recorded', res.status === 204 && env.written.length === 1);
+  check('as a dev download, in the last blob and the metadata',
+        p && p.blobs[7] === 'dev' && p.blobs.length === 8
+        && env.keys[0].opts.metadata.channel === 'dev',
+        p && p.blobs.join(','));
 }
 
 {
@@ -320,6 +338,34 @@ const OLD = {
     new Request('https://triglavmodular.hu/mods/218e-Rewired/style.css'), {})
   check('while the real path still reaches the origin',
         res.status === 200 && fetched === 1, `status ${res.status}, fetched ${fetched}`)
+
+  // The dev page: a subdirectory of the same site, so it proxies like the
+  // rest - but it is never for search engines, and its bare path has to be
+  // redirected here rather than left to the origin, whose redirect would
+  // land on the github.io address.
+  res = await worker.fetch(
+    new Request('https://triglavmodular.hu/mods/218e-Rewired/dev'), {})
+  check('the bare dev path redirects to its own slash',
+        res.status === 301
+        && res.headers.get('location') === 'https://triglavmodular.hu/mods/218e-Rewired/dev/',
+        `status ${res.status}, location ${res.headers.get('location')}`)
+  origin = () => new Response('<html>', { status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' } })
+  globalThis.fetch = async () => origin()
+  res = await get('/dev/')
+  check('the dev page revalidates like the released one',
+        res.headers.get('cache-control') === 'no-cache')
+  check('and is marked noindex',
+        (res.headers.get('x-robots-tag') || '').includes('noindex'),
+        res.headers.get('x-robots-tag'))
+  origin = () => new Response('ok', { status: 200 })
+  res = await get('/dev/style.css?v=abc12345')
+  check('so is everything under it',
+        (res.headers.get('x-robots-tag') || '').includes('noindex')
+        && (res.headers.get('cache-control') || '').includes('immutable'))
+  res = await get('/')
+  check('while the released page is not',
+        res.headers.get('x-robots-tag') === null, res.headers.get('x-robots-tag'))
 
   globalThis.fetch = realFetch
 }

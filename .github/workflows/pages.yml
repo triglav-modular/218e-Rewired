@@ -8,10 +8,19 @@ name: Builder page
 # the deployed page can never describe a build the source no longer produces.
 # Everything it reads is tracked; the factory checksum comes from the config,
 # not from the image itself.
+#
+# Two pages from one site.  main is the page; the development branch is the
+# same page under /dev/, for trying a change on an instrument before it is
+# released.  Pages serves one site per repository and a deploy replaces all of
+# it, so every run builds BOTH branches, whichever one was pushed - a push to
+# main that built only main would take /dev/ down with it.  Each branch gets
+# the identical checks, from its own checkout of its own tools, and the two
+# results are put together only at the end.  The worker in deploy/worker.js
+# marks everything under /dev/ noindex and keeps its downloads apart.
 
 on:
   push:
-    branches: [main]
+    branches: [main, development]
     # Everything the job reads, not just the page.  generate.py embeds the
     # four flasher scripts and the job copies the validators and the tool
     # binaries into the kit, so a safety fix to any of them has to redeploy.
@@ -75,8 +84,13 @@ jobs:
   # is the one place in the pipeline that can actually ask Gatekeeper.
   verify-app:
     runs-on: macos-latest
+    strategy:
+      matrix:
+        ref: [main, development]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.ref }}
       - name: The committed app must carry a valid, notarised signature
         run: |
           ditto -x -k mac/Flasher.zip extracted
@@ -90,8 +104,17 @@ jobs:
   build:
     needs: verify-app
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - ref: main
+            site: release
+          - ref: development
+            site: dev
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.ref }}
 
       - uses: actions/setup-python@v7
         with:
@@ -320,12 +343,40 @@ jobs:
           sys.exit(1 if missing else 0)
           CHECK
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-${{ matrix.site }}
+          path: _site
+          include-hidden-files: true
+          if-no-files-found: error
+
+  assemble:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      # The released page at the root, the development page beneath it.  The
+      # dev copy is a whole site of its own - its own kit, its own stamped
+      # assets - so nothing it fetches resolves into the released one.
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-release
+          path: _site
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-dev
+          path: _site/dev
+      - name: Both pages are in place
+        run: |
+          test -f _site/index.html
+          test -f _site/dev/index.html
+          test -f _site/.nojekyll
+          find _site -maxdepth 2 -type f | sort
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
   deploy:
-    needs: build
+    needs: assemble
     runs-on: ubuntu-latest
     environment:
       name: github-pages

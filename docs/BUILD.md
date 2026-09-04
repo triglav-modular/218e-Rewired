@@ -483,6 +483,25 @@ font inside `style.css` changes `style.css` and its own hash has to be taken
 afterwards. The asset check that follows fails the build if any reference
 lost its stamp, because an unstamped file is one that will go stale silently.
 
+### The development page
+
+The `development` branch is published as the same page under
+`triglavmodular.hu/mods/218e-Rewired/dev/`, for trying a change on an
+instrument before it is released. Pages serves one site per repository and a
+deploy replaces all of it, so the workflow builds *both* branches on every
+run, whichever was pushed, and puts the development build under `dev/` in the
+released one. Each branch goes through the identical checks from its own
+checkout, so a broken development branch stops the deploy the same way a
+broken `main` does - and the reverse: the notarised app on `development` has
+to match its sources too, or nothing publishes.
+
+The worker treats everything under `/dev/` as the page it is - the same cache
+rules, the same beacon - with two differences. It is marked `noindex`, so the
+released page is the one search finds. And its downloads are recorded with a
+`channel` of `dev` in the last blob and in the KV metadata, where a released
+download says `release` and a row from before the dev page existed says
+nothing; the dashboard should count only what it means to.
+
 ### The remaining ten minutes
 
 `index.html` cannot be versioned - it is the URL people type - and GitHub Pages

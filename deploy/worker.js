@@ -11,6 +11,11 @@
 // does not.
 const PUBLIC = '/mods/218e-Rewired';
 const ORIGIN = 'https://triglav-modular.github.io/218e-Rewired';
+// The development branch, published by the same workflow into a subdirectory
+// of the same Pages site, so it rides the same route and the same origin.
+// Nothing under it is for search engines: the released page is the one that
+// should be found.
+const DEV = '/dev';
 
 // Forwarded to the origin.  Host is deliberately absent: GitHub Pages routes
 // on it, and passing triglavmodular.hu would ask it for a site it does not
@@ -30,6 +35,10 @@ const FORWARD = ['if-none-match', 'if-modified-since',
 // Without a usable binding this route answers 204 and writes nothing, which is
 // the right way round - a missing or wrong binding must not break the page.
 const BEACON = PUBLIC + '/beacon';
+// The dev page posts to its own beacon, relative to itself.  Recorded, with
+// the channel beside it, so a dev download never passes for a released one.
+const DEV_BEACON = PUBLIC + DEV + '/beacon';
+const CHANNELS = ['release', 'dev'];
 
 // Nothing here is trusted: it arrives from anyone who can reach the route.
 // Every value is checked against what the page can actually send and dropped
@@ -70,7 +79,7 @@ function role(knob, value) {
   return KNOBS[knob].includes(value) ? value : 'other';
 }
 
-async function record(request, env, context) {
+async function record(request, env, context, channel) {
   // No IP, no user-agent, no header of any kind: what is not written cannot
   // later turn an option set into a person.
   if (request.method !== 'POST') return new Response(null, { status: 405 });
@@ -129,6 +138,9 @@ async function record(request, env, context) {
     knob3: role('knob3', body.knob3),
     knob4: role('knob4', body.knob4),
     patterns,
+    // From the path the page posted to, never from the body: which page a
+    // download came from is not the page's to claim.
+    channel: CHANNELS.includes(channel) ? channel : 'other',
   };
 
   env.BUILDS.writeDataPoint({
@@ -137,7 +149,10 @@ async function record(request, env, context) {
     // Positional, and read back by position: the newer columns follow the
     // older ones so a row written before they existed still reads right.
     blobs: [platform, version, volts,
-            point.knob1, point.knob2, point.knob3, point.knob4],
+            point.knob1, point.knob2, point.knob3, point.knob4,
+            // Appended last, after the knobs: a row from before the dev page
+            // has no eighth blob, and reads as a release.
+            point.channel],
     doubles: [point.arp, point.knobs, point.pressure, point.portamento,
               tunings, point.calibration,
               point.sequencer, point.clock_divide, point.pitch_offset, patterns],
@@ -164,11 +179,15 @@ export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
 
-    if (url.pathname === BEACON) return record(request, env, context);
+    if (url.pathname === BEACON) return record(request, env, context, 'release');
+    if (url.pathname === DEV_BEACON) return record(request, env, context, 'dev');
 
     // Without the trailing slash every relative asset resolves into /mods/.
-    if (url.pathname === PUBLIC) {
-      return Response.redirect(url.origin + PUBLIC + '/', 301);
+    // The dev page the same: the origin would answer its own redirect to the
+    // github.io address, which fetch below follows silently, and the page
+    // would come back under a URL its assets resolve wrongly against.
+    if (url.pathname === PUBLIC || url.pathname === PUBLIC + DEV) {
+      return Response.redirect(url.origin + url.pathname + '/', 301);
     }
 
     const rest = url.pathname.slice(PUBLIC.length);   // "/style.css", "/kit/..."
@@ -201,6 +220,10 @@ export default {
     const ok = res.ok || res.status === 304;
     const isPage = rest === '/' || rest === '' || rest.endsWith('/') ||
                    rest.endsWith('.html');
+
+    if (rest.startsWith(DEV + '/')) {
+      out.headers.set('x-robots-tag', 'noindex, nofollow');
+    }
 
     if (isPage || type.includes('text/html')) {
       // The page is the one file that cannot carry a version - it is the URL
