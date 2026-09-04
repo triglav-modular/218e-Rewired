@@ -757,6 +757,17 @@ pitches, exactly as across a tuning-slot change.  The raw cell is signed
 and unconditioned; the jack has no negative range, so N is clamped at
 zero.  None of the three CV numbers has been measured on an instrument.
 
+MIDI follows.  The factory names a note in one routine, `0x800057a8` (key +
+36, or + 12 per trn zone, plus the octave pad), through six pool words;
+`midi_transpose` (0x8001e2c0) stands in front of it and adds N.  Two
+entries: the arp (which keeps its sent note at `0x2ee2`) and the
+polyphonic sender (one per key) never recompute at note-off, so they take
+the live shift; the mono keyboard paths recompute at the lift to compare
+against the sounding note at `state+0x2e1`, so their shift is frozen in
+RAM `0x60fe` for as long as `0x2e1` holds a note and taken fresh only when
+a note-on finds `0xff` there - otherwise a CV moving mid-hold left the
+lift unable to recognise its own note.
+
 ### The knobs, since this was got wrong once
 
 There are six knobs on the panel and six conditioned analog channels, and

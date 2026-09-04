@@ -1115,7 +1115,7 @@
             'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off'),
             'Preset voltages: ' + (o.quantize_presets
                 ? 'quantized to the tuning when added to pitch' : 'not quantized'),
-            'Portamento jack: ' + (o.portamento_in === 'transpose'
+            'Portamento banana jack: ' + (o.portamento_in === 'transpose'
                 ? 'transposes by degrees of the tuning' : 'adds portamento')
         ];
         if (o.alternate_tunings && o.alternate_tunings.length) {

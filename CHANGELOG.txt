@@ -1,7 +1,7 @@
 2.3 (2026-09-04)
 - Any preset knob can now be set to None, which leaves it as a preset voltage.
 - The add-to-pitch preset voltage can now be quantized to the selected tuning.
-- The portamento in jack can now transpose the keyboard by whole degrees of the selected tuning.
+- The portamento in banana jack can now transpose the keyboard by whole degrees of the selected tuning.
 
 2.2 (2026-09-02)
 - Fixed a portamento bug.

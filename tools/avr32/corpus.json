@@ -6,7 +6,7 @@
 "build/assemble.log",
 "build/assemble.nomulti.log"
 ],
-"count": 9087,
+"count": 9122,
 "entries": [
 {
 "addr": "80014300",
@@ -17326,8 +17326,8 @@
 },
 {
 "addr": "8001ab6c",
-"text": "MOV R11,0x6038",
-"bytes": "e06b6038",
+"text": "MOV R11,0xda68",
+"bytes": "e06bda68",
 "width": 4
 },
 {
@@ -18364,8 +18364,8 @@
 },
 {
 "addr": "8001ad1c",
-"text": "MOV R11,0x6038",
-"bytes": "e06b6038",
+"text": "MOV R11,0xda68",
+"bytes": "e06bda68",
 "width": 4
 },
 {
@@ -20152,6 +20152,210 @@
 },
 {
 "addr": "8001e2be",
+"text": "NOP",
+"bytes": "d703",
+"width": 2
+},
+{
+"addr": "8001e2c0",
+"text": "MOV R11,0x1",
+"bytes": "301b",
+"width": 2
+},
+{
+"addr": "8001e2c2",
+"text": "RJMP 0x8001e2c6",
+"bytes": "c028",
+"width": 2
+},
+{
+"addr": "8001e2c4",
+"text": "MOV R11,0x0",
+"bytes": "300b",
+"width": 2
+},
+{
+"addr": "8001e2c6",
+"text": "STM --SP,R0,R7,LR",
+"bytes": "ebcd4081",
+"width": 4
+},
+{
+"addr": "8001e2ca",
+"text": "MOV R7,SP",
+"bytes": "1a97",
+"width": 2
+},
+{
+"addr": "8001e2cc",
+"text": "MOV R0,R11",
+"bytes": "1690",
+"width": 2
+},
+{
+"addr": "8001e2ce",
+"text": "MCALL PC[0x8001e314]",
+"bytes": "f01f0012",
+"width": 4
+},
+{
+"addr": "8001e2d2",
+"text": "CP.W R12,0x7f",
+"bytes": "e04c007f",
+"width": 4
+},
+{
+"addr": "8001e2d6",
+"text": "BR{hi} 0x8001e30e",
+"bytes": "e08b001c",
+"width": 4
+},
+{
+"addr": "8001e2da",
+"text": "MOV R8,0x60fa",
+"bytes": "e06860fa",
+"width": 4
+},
+{
+"addr": "8001e2de",
+"text": "LD.UH R9,R8[0x0]",
+"bytes": "9089",
+"width": 2
+},
+{
+"addr": "8001e2e0",
+"text": "LSR R10,R9,0xc",
+"bytes": "f20a160c",
+"width": 4
+},
+{
+"addr": "8001e2e4",
+"text": "CP.W R10,0xa",
+"bytes": "58aa",
+"width": 2
+},
+{
+"addr": "8001e2e6",
+"text": "BR{ne} 0x8001e30e",
+"bytes": "c141",
+"width": 2
+},
+{
+"addr": "8001e2e8",
+"text": "ANDL R9,0xff",
+"bytes": "e01900ff",
+"width": 4
+},
+{
+"addr": "8001e2ec",
+"text": "CP.W R0,0x0",
+"bytes": "5800",
+"width": 2
+},
+{
+"addr": "8001e2ee",
+"text": "BR{ne} 0x8001e302",
+"bytes": "c0a1",
+"width": 2
+},
+{
+"addr": "8001e2f0",
+"text": "LDDPC R10,0x8001e318",
+"bytes": "48aa",
+"width": 2
+},
+{
+"addr": "8001e2f2",
+"text": "LD.UB R10,R10[0x2e1]",
+"bytes": "f53a02e1",
+"width": 4
+},
+{
+"addr": "8001e2f6",
+"text": "CP.W R10,0xff",
+"bytes": "e04a00ff",
+"width": 4
+},
+{
+"addr": "8001e2fa",
+"text": "BR{ne} 0x8001e300",
+"bytes": "c031",
+"width": 2
+},
+{
+"addr": "8001e2fc",
+"text": "ST.B R8[0x4],R9",
+"bytes": "b0c9",
+"width": 2
+},
+{
+"addr": "8001e2fe",
+"text": "RJMP 0x8001e302",
+"bytes": "c028",
+"width": 2
+},
+{
+"addr": "8001e300",
+"text": "LD.UB R9,R8[0x4]",
+"bytes": "11c9",
+"width": 2
+},
+{
+"addr": "8001e302",
+"text": "ADD R12,R9",
+"bytes": "120c",
+"width": 2
+},
+{
+"addr": "8001e304",
+"text": "CP.W R12,0x7f",
+"bytes": "e04c007f",
+"width": 4
+},
+{
+"addr": "8001e308",
+"text": "BR{le} 0x8001e30e",
+"bytes": "e08a0003",
+"width": 4
+},
+{
+"addr": "8001e30c",
+"text": "MOV R12,0x7f",
+"bytes": "37fc",
+"width": 2
+},
+{
+"addr": "8001e30e",
+"text": "LDM SP++,R0,R7,PC",
+"bytes": "e3cd8081",
+"width": 4
+},
+{
+"addr": "8001e312",
+"text": "NOP",
+"bytes": "d703",
+"width": 2
+},
+{
+"addr": "8001e314",
+"text": ".word 0x800057a8",
+"bytes": "800057a8",
+"width": 4
+},
+{
+"addr": "8001e318",
+"text": ".word 0x00003560",
+"bytes": "00003560",
+"width": 4
+},
+{
+"addr": "8001e31c",
+"text": "NOP",
+"bytes": "d703",
+"width": 2
+},
+{
+"addr": "8001e31e",
 "text": "NOP",
 "bytes": "d703",
 "width": 2
@@ -47218,8 +47422,8 @@
 },
 {
 "addr": "8001bf98",
-"text": ".word 0x800057a8",
-"bytes": "800057a8",
+"text": ".word 0x8001e2c4",
+"bytes": "8001e2c4",
 "width": 4
 },
 {
@@ -53805,6 +54009,12 @@
 "width": 2
 },
 {
+"addr": "8001bf98",
+"text": ".word 0x800057a8",
+"bytes": "800057a8",
+"width": 4
+},
+{
 "addr": "8001c70e",
 "text": "BR{ne} 0x8001c770",
 "bytes": "c311",
@@ -54531,5 +54741,5 @@
 "width": 4
 }
 ],
-"program_sha256": "055a27e1ae747dc901a9d6298a841ea1a8d4d71d2743ce9a1da6303ef2761150"
+"program_sha256": "e1405b37b6c88485616094b79fa6b0acb77e9540b02978a8e98e862157817c28"
 }

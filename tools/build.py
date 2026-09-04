@@ -100,7 +100,11 @@ FEATURE_MAP = {
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
     "presets.quantize":       (["preset_quantize", "preset_quantize_pool"], []),
-    "portamento_in.transpose": (["cv_transpose", "glide_cv_addend"], ["cv_transpose"]),
+    "portamento_in.transpose": (
+        ["cv_transpose", "glide_cv_addend", "midi_transpose",
+         "midi_transpose_arp_pool", "midi_transpose_poly_pool",
+         "midi_transpose_lift_pool", "midi_transpose_compare_pool"],
+        ["cv_transpose"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -1070,6 +1074,7 @@ RAM_REGIONS = [
     # warm restart's unshifted .data copy is noticed and redone.
     (0x60FA, 0x60FC, "jack transposer state: slot and degree shift"),
     (0x60FC, 0x60FE, "jack transposer: table entry 0 as last written"),
+    (0x60FE, 0x60FF, "jack transposer: the degree shift frozen for the sounding MIDI note"),
     # Decoupled preset voltages.  The stored value is what the preset output
     # and the pitch adder both read; the snapshot and the flag are what stop a
     # pad hold from snatching the stored value to wherever the knob happens to

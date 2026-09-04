@@ -3734,6 +3734,68 @@ function assembleProgram() {
         emitTable("tuning_period_keys");
         finish("cv_transpose", 0x8001e2c0);
 
+        // The same shift for MIDI.  The factory turns a key into a note
+        // number in one routine, 0x800057a8 (key + 36, or + 12 per trn zone,
+        // plus the octave pad), reached through six pool words.  With the
+        // table shifted by N keys the note has to move by N as well, or the
+        // pitch CV and the MIDI port would name different notes.
+        //
+        // Two entries, because of how the callers end a note.  The arp keeps
+        // the note it sent at 0x2ee2 and the polyphonic sender keeps one per
+        // key, so those note-offs never recompute and can take the LIVE
+        // shift: a CV moving under a running arp transposes the next step.
+        // The mono keyboard paths recompute the note at the lift to compare
+        // it with the sounding one at state+0x2e1 - so for them the shift is
+        // frozen (RAM 0x60fe) for as long as 0x2e1 holds a note, and taken
+        // fresh only when a note-on finds nothing sounding.  Otherwise a CV
+        // that moved mid-hold would leave the lift unable to recognise its
+        // own note, and the MIDI note stuck.  The routine's 0xff for a bad
+        // key is left alone, and the result is capped at 127.
+        var mtLive = 0x8001e2c0;
+        var mtHeld = 0x8001e2c4;
+        var mtLatched = 0x8001e300;
+        var mtAdd = 0x8001e302;
+        var mtDone = 0x8001e30e;
+        var mtPool = 0x8001e314;
+        begin(mtLive);
+        emit("MOV R11,0x1");                                      // live
+        emit(StringFormat("RJMP 0x%x", mtHeld + 2));
+        padTo(mtHeld);
+        emit("MOV R11,0x0");                                      // frozen while a note sounds
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R11");
+        emit(StringFormat("MCALL PC[0x%x]", mtPool));            // key -> MIDI note
+        emit("CP.W R12,0x7f");
+        emit(StringFormat("BR{hi} 0x%x", mtDone));               // 0xff: not a key
+        emit("MOV R8,0x60fa");
+        emit("LD.UH R9,R8[0x0]");
+        emit("LSR R10,R9,0xc");
+        emit("CP.W R10,0xa");
+        emit(StringFormat("BR{ne} 0x%x", mtDone));               // the transposer has not run
+        emit("ANDL R9,0xff");                                     // the live shift
+        emit("CP.W R0,0x0");
+        emit(StringFormat("BR{ne} 0x%x", mtAdd));
+        emit(StringFormat("LDDPC R10,0x%x", mtPool + 4));        // global state base
+        emit("LD.UB R10,R10[0x2e1]");
+        emit("CP.W R10,0xff");
+        emit(StringFormat("BR{ne} 0x%x", mtLatched));            // a note sounds: keep its shift
+        emit("ST.B R8[0x4],R9");                                  // nothing sounds: take the live one
+        emit(StringFormat("RJMP 0x%x", mtAdd));
+        padTo(mtLatched);
+        emit("LD.UB R9,R8[0x4]");
+        padTo(mtAdd);
+        emit("ADD R12,R9");
+        emit("CP.W R12,0x7f");
+        emit(StringFormat("BR{le} 0x%x", mtDone));
+        emit("MOV R12,0x7f");
+        padTo(mtDone);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(mtPool);
+        word(0x800057a8); // key -> MIDI note
+        word(0x00003560); // global state base
+        finish("midi_transpose", 0x8001e320);
+
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,
         // reverse press order, random - and the zone picks how the next key is
@@ -8573,7 +8635,7 @@ function assembleProgram() {
         word(0x8000f160); // give the bus back
         word(0x80007e44); // MIDI note off, port one
         word(0x800081f0); // MIDI note off, port two
-        word(0x800057a8); // key -> MIDI note
+        word(feature("cv_transpose") ? mtHeld : 0x800057a8); // key -> MIDI note, shifted with the jack transposing
         finish("seq_key_takes", 0x8001bf9c);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
@@ -9595,12 +9657,26 @@ function assembleProgram() {
         // still held when another is let go - end the note the sequencer is
         // sounding first.  Off the sequencer these keep their factory
         // targets.
+        // With the jack transposing, both go on through midi_transpose's
+        // frozen entry - the sequencer wrapper's own pool word does the same.
         wordPatch("key_note_pool", 0x80005ebc,
-            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            block("seq_pitch") ? 0x8001bf00 : (feature("cv_transpose") ? mtHeld : 0x800057a8),
             "key -> MIDI note on the press -> the sequencer's note ends");
         wordPatch("key_restore_note_pool", 0x800063d0,
-            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            block("seq_pitch") ? 0x8001bf00 : (feature("cv_transpose") ? mtHeld : 0x800057a8),
             "key -> MIDI note on the hand-back -> the sequencer's note ends");
+        // The other four readers of a key's MIDI note, with the jack
+        // transposing: the arp and the polyphonic sender keep the note they
+        // sent, so they take the live shift; the lift's comparison and the
+        // poly-mode comparison against the sounding note take the frozen one.
+        wordPatch("midi_transpose_arp_pool", 0x80002428, mtLive,
+            "key -> MIDI note at the arp step -> shifted live");
+        wordPatch("midi_transpose_poly_pool", 0x80005784, mtLive,
+            "key -> MIDI note in the polyphonic sender -> shifted live");
+        wordPatch("midi_transpose_lift_pool", 0x80006284, mtHeld,
+            "key -> MIDI note at the lift -> shifted as at the press");
+        wordPatch("midi_transpose_compare_pool", 0x80009830, mtHeld,
+            "key -> MIDI note in the poly-mode comparison -> shifted as at the press");
         wordPatch("pad_select_pool", 0x8000a810,
             block("seq_chord") ? 0x8001b790 : 0x8000698c,
             "press-time select_pad -> chord-armed guard");
