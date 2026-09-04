@@ -27,7 +27,7 @@ EXPECTED_SHA256="748bc3395574bf209832b38a2e359eb8c334b5ba4031c5904402bfa106d586f
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 2.2.0 (748bc339)"
+FIRMWARE_VERSION="Rewired 2.3.0 (748bc339)"
 
 # Support launching from either the package root or its mac directory.  The
 # macOS tools live under mac/, but the firmware image is shared with the
