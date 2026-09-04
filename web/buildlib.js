@@ -118,7 +118,7 @@ var BUILDLIB = (function () {
         // Each knob's role, expanded the same way tools/options.py does: a
         // knob left out takes the first entry, 'factory' is the None row.
         var ROLES = { knob1: ['order', 'orders', 'factory'],
-                      knob2: ['spacing', 'swing', 'patterns', 'factory'],
+                      knob2: ['spacing', 'quantized', 'swing', 'patterns', 'factory'],
                       knob3: ['octaves', 'factory'],
                       knob4: ['vibrato', 'trn', 'factory'] };
         var roles = {};
@@ -152,7 +152,8 @@ var BUILDLIB = (function () {
         cfg.clock = { divide: !!want('clock_divide', true) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
-        cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing')
+        cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing'
+                          || roles.knob2 === 'quantized')
             ? roles.knob2 : 'randomness';
         var patterns = want('arp_patterns', null);
         if (patterns) {
@@ -843,6 +844,7 @@ var BUILDLIB = (function () {
                 (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg))),
             knob2_patterns: cfg.knob2.mode === 'patterns' ? 1 : 0,
             knob2_swing: cfg.knob2.mode === 'swing' ? 1 : 0,
+            knob2_quantized: cfg.knob2.mode === 'quantized' ? 1 : 0,
             strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
             tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
             strip_ack_scans: (cfg.sequencer && cfg.sequencer.strip_ack_scans) || 20,

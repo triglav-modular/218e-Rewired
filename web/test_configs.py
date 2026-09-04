@@ -213,6 +213,10 @@ CONFIGS = [
     ("knob2_swing",       [(r"^latching_arp = true",
                             'latching_arp = true\nknob2 = "swing"')],
                           {"knob2": "swing"}),
+    # The quantized randomiser is the third reader of that pool word.
+    ("knob2_quantized",   [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "quantized"')],
+                          {"knob2": "quantized"}),
     # Both ship ON now, so the configuration worth pinning is the one that
     # turns them OFF: that is the build whose housekeeping chain loses a call,
     # and the one the defaults no longer cover.

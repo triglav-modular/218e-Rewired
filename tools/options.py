@@ -100,7 +100,8 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'arp_order': {'knob1_orders': 0},
     'knob4': {'octaves': 0},
     # Knob 2: 'randomness' is what 1.x does, 'patterns' turns the knob into a
-    # bank selector over step masks, 'swing' delays every other step.
+    # bank selector over step masks, 'swing' delays every other step,
+    # 'quantized' is the randomness snapped to an eighth-of-a-beat grid.
     'knob2': {'mode': 'randomness', 'patterns': [], 'lengths': []},
     'timing': {'gate_settle_scans': 1, 'scan_period_ms': 5},
     'tuning': {   'base_units': 485,
@@ -230,7 +231,7 @@ OPTION_TYPES = {
 # "factory" hands that one knob back to its preset voltage.
 KNOB_ROLES = {
     "knob1": ("order", "orders", "factory"),
-    "knob2": ("spacing", "swing", "patterns", "factory"),
+    "knob2": ("spacing", "quantized", "swing", "patterns", "factory"),
     "knob3": ("octaves", "factory"),
     "knob4": ("vibrato", "trn", "factory"),
 }
@@ -421,7 +422,7 @@ def expand(options: dict) -> dict:
                       "page_count": 8}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
     cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
-    cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing")
+    cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing", "quantized")
                             else "randomness")
 
     # 3. Per-key pitch correction -------------------------------------------

@@ -1526,6 +1526,11 @@ def test_option_messages() -> None:
           and not off["preset_quantize"] and not off["preset_quantize_pool"])
     check("arp_patterns = true is the default bank",
           _options.expand({"arp_patterns": True})["knob2"] == _options.expand({})["knob2"])
+    check("knob2 = quantized asks for the quantized randomiser",
+          _options.expand({"knob2": "quantized"})["knob2"]["mode"] == "quantized"
+          and _options.expand({"knob2": "quantized"})["knobs"]["knob2"] == "arp_rhythm")
+    raises("knob2 refuses a role it does not have",
+           lambda: _options.expand({"knob2": "grid"}), "'quantized'")
     slots = _options.expand({"alternate_tunings":
                              ["tunings/12TET.scl", "factory", "tunings/12TET.scl"]})["tuning"]["slots"]
     check("'factory' is accepted as a middle slot", slots[1] == "factory", str(slots))

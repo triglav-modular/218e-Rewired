@@ -1723,13 +1723,16 @@ function assembleProgram() {
         //     4x), a random-pulser spacing law; knob low = even pulses;
         //   knob 3 (0x30e -> 0x60ea latch): random +-octave per arp note.
         // Gate-off timing itself is factory (compare == 3 restored).
-        // Knob 2's latch has two other readers, one at a time: swing, which
-        // takes this same pool word, and the pattern gate, which sits at the
-        // note selector instead and turns the randomiser off.
+        // Knob 2's latch has three other readers, one at a time: swing and
+        // the quantized randomiser, which take this same pool word, and the
+        // pattern gate, which sits at the note selector instead and turns the
+        // randomiser off.
         begin(0x80019d38);
         word(0x80019d44); // gate/housekeeping entry (hook at 0x21a0)
         word(block("seq_pitch") ? 0x8001ba30 : 0x80019da8);
-        word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100 : 0x80019df8);
+        word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100
+           : number("knob2_quantized", 0, 0, 1) == 1 ? 0x8001e440
+           : 0x80019df8);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
         // return (LDM with PC would execute return-and-test-R12, destroying
@@ -4157,6 +4160,115 @@ function assembleProgram() {
         padTo(0x8001b160);
         word(0x00003560); // global state base
         finish("arp_swing", 0x8001b164);
+
+        // Knob 2 as quantized randomness.  The spacing randomiser draws each
+        // step's length from a continuous law, so its hits land anywhere.
+        // This one keeps the grid: the beat is cut into eighths, and every
+        // reload is a whole number of them, so a note can only ever fall on
+        // a beat, its half, a quarter or an eighth.  Same hook, same output
+        // cell, same knob latch and deadzone as the randomiser it stands in
+        // for.
+        //
+        // The law, in 1024ths per beat, with x the knob's travel 0..1: the
+        // mass that leaves the beat is M = 512x, so the beat itself sounds
+        // with 1024 - M - every beat with the knob down, one in two at the
+        // top.  Of that mass the two quarters take Q = 128x^2 between them
+        // and the four eighths E = 256x^3 between them; the half takes what
+        // is left, M - Q - E.  So the knob does two things as it goes up:
+        // more hits leave the beat, and the ones that do reach finer
+        // divisions - the half first, then the quarters, and the eighths
+        // arriving last.  The four chances still sum to one per beat at any
+        // setting, so the density, and the felt tempo, stays what RATE set.
+        //
+        // Each eighth in turn is asked whether it sounds, against the
+        // threshold of its level; a run of misses is cut at 32 eighths, the
+        // randomiser's own 4x ceiling.  RAM 0x6152 is which eighth of the
+        // beat the last hit fell on, the cell swing keeps its pair parity
+        // in; one knob, one role, one byte.  Below the deadzone a hit
+        // standing off the beat steps the rest of the way back onto it
+        // before the square reload resumes.
+        begin(0x8001e440);
+        emit("STM --SP,R0,R1,R2,R3,R4,R5,R6,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");             // the beat, in scans
+        emit("MOV R8,0x6152");
+        emit("LD.UB R1,R8[0x0]");
+        emit("ANDL R1,0x7");            // the eighth the last hit fell on
+        emit("MOV R2,0x0");             // eighths to the next hit
+        emit("MOV R8,0x60e6");
+        emit("LD.SH R8,R8[0x0]");       // the knob, 0..1023
+        emit("CP.W R8,0x30");
+        emit("BR{lt} 0x8001e4dc");      // deadzone: square, exactly as shipped
+        emit("MOV R4,R8");
+        emit("LSR R4,0x1");             // M = 512x: what leaves the beat
+        emit("MUL R5,R4,R8");
+        emit("LSR R5,0xa");             // 512x^2
+        emit("MUL R6,R5,R8");
+        emit("LSR R6,0xa");             // 512x^3
+        emit("LSR R6,0x1");             // E = 256x^3: the four eighths' share
+        emit("LSR R5,0x2");             // Q = 128x^2: the two quarters' share
+        emit("MOV R3,R4");
+        emit("SUB R3,R3,R5 << 0x0");
+        emit("SUB R3,R3,R6 << 0x0");    // the half: what is left of M
+        emit("MOV R9,0x400");
+        emit("RSUB R4,R9");             // the beat: 1024 - M
+        emit("LSR R5,0x1");             // each quarter
+        emit("LSR R6,0x2");             // each eighth
+        padTo(0x8001e488);
+        emit("SUB R2,-0x1");
+        emit("SUB R1,-0x1");
+        emit("ANDL R1,0x7");            // the next eighth of the beat
+        emit("MCALL PC[0x8001e500]");
+        emit("BFEXTU R8,R12,0xa,0xa");  // ten bits of the draw
+        emit("MOV R9,R6");              // an odd eighth
+        emit("MOV R10,R1");
+        emit("ANDL R10,0x1");
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001e4b8");
+        emit("MOV R9,R5");              // a quarter
+        emit("MOV R10,R1");
+        emit("ANDL R10,0x2");
+        emit("CP.W R10,0x0");
+        emit("BR{ne} 0x8001e4b8");
+        emit("MOV R9,R3");              // the half
+        emit("CP.W R1,0x4");
+        emit("BR{eq} 0x8001e4b8");
+        emit("MOV R9,R4");              // the beat
+        padTo(0x8001e4b8);
+        emit("CP.W R8,R9");
+        emit("BR{lt} 0x8001e4c2");      // a hit
+        emit("CP.W R2,0x20");
+        emit("BR{lt} 0x8001e488");      // a miss: ask the next eighth
+        padTo(0x8001e4c2);
+        emit("MUL R12,R2,R0");
+        emit("LSR R12,0x3");            // that many eighths of the beat
+        emit("CP.W R12,0x8");           // the randomiser's own limits
+        emit("BR{ge} 0x8001e4ce");
+        emit("MOV R12,0x8");
+        padTo(0x8001e4ce);
+        emit("MOV R8,0xfff");
+        emit("CP.W R12,R8");
+        emit("BR{le} 0x8001e4ea");
+        emit("MOV R12,R8");
+        emit("RJMP 0x8001e4ea");
+        padTo(0x8001e4dc);
+        emit("MOV R2,0x8");             // square: the whole beat
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001e4c2");
+        emit("RSUB R1,R2");             // off the beat: the rest of the way back
+        emit("MOV R2,R1");
+        emit("MOV R1,0x0");
+        emit("RJMP 0x8001e4c2");
+        padTo(0x8001e4ea);
+        emit("LDDPC R8,0x8001e4fc");
+        emit("ST.H R8[0x38e],R12");
+        emit("MOV R8,0x6152");
+        emit("ST.B R8[0x0],R1");
+        emit("LDM SP++,R0,R1,R2,R3,R4,R5,R6,R7,PC");
+        padTo(0x8001e4fc);
+        word(0x00003560); // global state base
+        word(0x80013e04); // factory PRNG
+        finish("arp_quantized", 0x8001e504);
 
         // The sequencer's controls, on a pad chord.  Hold pad 4 for about one
         // second to arm - its light blinks - then, still holding it, press

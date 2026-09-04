@@ -104,6 +104,7 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("knob_roles",            [(r"^latching_arp = true",
                                'latching_arp = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
     ("knob2_swing",           [(r"^latching_arp = true", 'latching_arp = true\nknob2 = "swing"')]),
+    ("knob2_quantized",       [(r"^latching_arp = true", 'latching_arp = true\nknob2 = "quantized"')]),
     ("arp_patterns",          [(r"^latching_arp = true",
                                'latching_arp = true\nknob2 = "patterns"\n'
                                'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')]),
@@ -240,7 +241,7 @@ def audit_call_pools(image_path) -> list[str]:
 # released key 1 had been anchoring every later single key on its own pitch.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "59c07c61324c4623d11b31ab0463fabc06d20f3cff4267ef65e8c292494afeae",
+    "historical_config": "ee128f7a72363b364ce4adfbce01633f147b934b47d8242b5f3ca3917c5f922d",
 }
 
 

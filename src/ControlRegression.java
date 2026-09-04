@@ -6,7 +6,7 @@ import java.util.*;
 
 public class ControlRegression extends SequenceEditRegression {
     static final long APPLIER=0x8001a2e8L;
-    boolean transpose, orders, lean, quantized;
+    boolean transpose, orders, lean, quantized, gridRhythm;
     int zones=9;
 
     void controlScan() throws Exception { call(APPLIER); }
@@ -842,6 +842,80 @@ public class ControlRegression extends SequenceEditRegression {
         }
         println("PASS preset edits during recording decline the bare-pad hold; editless holds still act");
     }
+    // Knob 2 as quantized randomness: the reload the rhythm hook stores is
+    // always a whole number of eighths of the beat, the byte at 0x6152 says
+    // which eighth the hit fell on, and the deadzone is the square reload.
+    static final long GRID=0x8001e440L;
+    long gridReload(long beat) throws Exception {
+        e.writeRegister("R12",beat); call(GRID); return r(S+0x38e,2);
+    }
+    // Hits by eighth of the beat over a run, at one knob setting: [0] is the
+    // beat, [4] the half, [2] and [6] the quarters, the odd ones eighths.
+    // Also records the total eighths stepped and whether the grid held.
+    long gridTotal; boolean gridHeld, gridFollows;
+    int[] gridHits(int knob,int hits,long beat) throws Exception {
+        w(0x60e6,2,knob); w(0x6152,1,0);
+        int[] at=new int[8]; int pos=0; gridTotal=0; gridHeld=true; gridFollows=true;
+        for(int i=0;i<hits;i++) {
+            long cd=gridReload(beat); int p=(int)r(0x6152,1);
+            if(cd%(beat/8)!=0||cd<beat/8||cd>4*beat) { gridHeld=false; break; }
+            int n=(int)(cd/(beat/8)); gridTotal+=n;
+            if(p!=((pos+n)&7)) { gridFollows=false; break; }
+            pos=p; at[p]++;
+        }
+        return at;
+    }
+    void quantizedRhythm() throws Exception {
+        fresh();
+        check("the rhythm hook's pool word names the quantized cave",r(0x80019d40L,4)==GRID);
+        long beat=400;
+        w(0x60e6,2,0); w(0x6152,1,0);
+        check("below the deadzone the reload is the beat itself",gridReload(beat)==beat&&r(0x6152,1)==0);
+        w(0x6152,1,4);
+        check("a hit standing on the half steps the other half back onto the beat",
+            gridReload(beat)==beat/2&&r(0x6152,1)==0);
+        w(0x6152,1,7);
+        check("a hit on the last eighth steps one eighth back onto the beat",
+            gridReload(beat)==beat/8&&r(0x6152,1)==0);
+        w(0x6152,1,0x0b);
+        check("only the low three bits of the position are read",
+            gridReload(beat)==beat*5/8&&r(0x6152,1)==0);
+        w(0x60e6,2,0x2f); w(0x6152,1,0);
+        check("the deadzone reaches the randomiser's own 0x30",gridReload(beat)==beat);
+        // Full travel: the beat one hit in two, the half one in eight, each
+        // quarter and each eighth one in sixteen, and the mean spacing still
+        // one beat.
+        int[] at=gridHits(1023,2000,beat);
+        check("full travel: every reload is one to thirty-two eighths",gridHeld);
+        check("full travel: the position follows the eighths stepped",gridFollows);
+        check("full travel: the beat keeps half the hits: "+at[0],at[0]>900&&at[0]<1100);
+        check("full travel: the half takes one in eight: "+at[4],at[4]>190&&at[4]<310);
+        int quarters=at[2]+at[6], eighths=at[1]+at[3]+at[5]+at[7];
+        check("full travel: the quarters take one in eight between them: "+quarters,quarters>190&&quarters<310);
+        check("full travel: the eighths take one in four between them: "+eighths,eighths>400&&eighths<600);
+        check("full travel: the mean spacing stays one beat: "+gridTotal,gridTotal>14500&&gridTotal<17500);
+        // Halfway: three hits in four on the beat, most of the rest on the
+        // half, the quarters and eighths only just arriving.
+        at=gridHits(512,2000,beat);
+        quarters=at[2]+at[6]; eighths=at[1]+at[3]+at[5]+at[7];
+        check("halfway: the grid holds",gridHeld&&gridFollows);
+        check("halfway: three hits in four land on the beat: "+at[0],at[0]>1350&&at[0]<1650);
+        check("halfway: the half takes most of the rest: "+at[4],at[4]>280&&at[4]<470);
+        check("halfway: quarters and eighths are rare but present: "+quarters+"/"+eighths,
+            quarters>20&&quarters<120&&eighths>20&&eighths<120);
+        // An eighth of the travel: a few hits on the half, none finer.
+        at=gridHits(128,2000,beat);
+        quarters=at[2]+at[6]; eighths=at[1]+at[3]+at[5]+at[7];
+        check("low: the grid holds",gridHeld&&gridFollows);
+        check("low: the half takes about one hit in sixteen: "+at[4],at[4]>70&&at[4]<180);
+        check("low: a stray quarter or two and no eighths yet: "+quarters+"/"+eighths,quarters<20&&eighths==0);
+        // The randomiser's own limits, in scans.
+        w(0x60e6,2,0); w(0x6152,1,7);
+        check("the reload never drops below eight scans",gridReload(4)==8);
+        w(0x6152,1,0);
+        check("the reload never exceeds 0xfff scans",gridReload(5000)==0xfff);
+        println("PASS quantized rhythm: eighth grid, position, shares at three settings, deadzone and clamps");
+    }
     void retainedStartup() throws Exception {
         // SRAM survives a DFU: another image's pickup stamps must not
         // freeze the knobs of a build without sequencer or persistence,
@@ -864,6 +938,7 @@ public class ControlRegression extends SequenceEditRegression {
         zones=args.length>3?Integer.parseInt(args[3]):9;
         lean=args.length>4&&args[4].equals("lean");
         quantized=args.length>5&&args[5].equals("quantized");
+        gridRhythm=args.length>6&&args[6].equals("quantized");
         seq=!lean; clock=!lean; persistent=args.length>2&&args[2].equals("persist");
         List<String> failures=new ArrayList<>();
         try {
@@ -886,8 +961,9 @@ public class ControlRegression extends SequenceEditRegression {
             if(seq)try { playbackPressure(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { heldPresetEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(lean)try { retainedStartup(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(gridRhythm)try { quantizedRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
-            println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized);
+            println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", gridRhythm="+gridRhythm);
         } finally { if(e!=null)e.dispose(); }
     }
 }

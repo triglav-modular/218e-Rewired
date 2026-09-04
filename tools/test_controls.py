@@ -87,8 +87,12 @@ def main() -> None:
                             raise SystemExit(f"Cannot set {key} in regression config")
                     # Replace explicit role choices as well as handling the
                     # shipped config, which leaves both at their defaults.
-                    text = re.sub(r'^knob[14]\s*=.*\n', "", text, flags=re.M)
-                    role = 'knob1 = "order"\nknob4 = "vibrato"\n' if variant == "default" else 'knob1 = "orders"\nknob4 = "trn"\n'
+                    text = re.sub(r'^knob[124]\s*=.*\n', "", text, flags=re.M)
+                    # The roles variant also puts knob 2 on quantized randomness,
+                    # so its cave is exercised against the other roles.
+                    role = ('knob1 = "order"\nknob2 = "spacing"\nknob4 = "vibrato"\n' if variant == "default"
+                            else 'knob1 = "orders"\nknob2 = "quantized"\nknob4 = "trn"\n' if variant == "roles"
+                            else 'knob1 = "orders"\nknob4 = "trn"\n')
                     text = text.replace("[firmware]", role + "\n[firmware]", 1)
                     if variant == "tuned":
                         text, count = re.subn(r'^alternate_tunings = false$',
@@ -127,7 +131,8 @@ def main() -> None:
                     "-postScript", "ControlRegression.java", "vibrato" if variant == "default" else "trn",
                     "order" if variant == "default" else "orders", "persist" if persist else "volatile",
                     "9", "lean" if variant == "lean" else "full",
-                    "quantized" if variant in ("default", "tuned") else "free"]))
+                    "quantized" if variant in ("default", "tuned") else "free",
+                    "quantized" if variant == "roles" else "spacing"]))
 
         def emulate(name: str, command: list[str]) -> str:
             result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)

@@ -23,7 +23,10 @@ latching_arp = true
 # preset voltage.
 #   knob1  "order"   press-order-into-random blend (default) | "orders" six
 #          fixed orders: up, down, up-down, as played, backwards, random
-#   knob2  "spacing" trigger randomness (default) | "swing" | "patterns"
+#   knob2  "spacing" trigger randomness (default) | "quantized" the same
+#          randomness kept on the grid: beats drop out and notes land on
+#          halves, quarters and eighths of the beat, the finer divisions
+#          growing likelier as the knob goes up | "swing" | "patterns"
 #   knob3  "octaves" random octave per note (default)
 #   knob4  "vibrato" depth and rate (default) | "trn" the factory octave switch
 # Edit-mode knob 1 (pressure calibration) and knob 4 (curve) are unaffected.
@@ -212,7 +215,7 @@ version        = "2.3.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "2b3552bf5871d784f72c34aa913d17df33b9d3ce398ea081758a55153c312f33"
+golden_sha256  = "5574fa35167e8ed698d1b2bae4c6f64763fa961eb6ecc527dec332362005bc2f"
 
 
 [tools]

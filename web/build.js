@@ -147,6 +147,7 @@ var WEBBUILD = (function () {
         // knob, and even spacing is what makes a pattern legible.
         if (blocks.arp_pattern_gate) blocks.arp_rhythm_hook = false;
         blocks.arp_swing = cfg.knob2.mode === 'swing';
+        blocks.arp_quantized = cfg.knob2.mode === 'quantized';
         var seq = !!(cfg.sequencer && cfg.sequencer.on);
         ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
          'seq_clock_enabled', 'seq_transport', 'seq_clock_rate_hook',

@@ -1088,8 +1088,9 @@ RAM_REGIONS = [
     (0x614E, 0x614F, "arp mirror direction"),
     # Where knob 2's pattern has got to, wrapped at that pattern's length.
     (0x6150, 0x6152, "arp pattern step"),
-    # Which half of the swung pair the next step is.
-    (0x6152, 0x6153, "arp swing parity"),
+    # Which half of the swung pair the next step is - or, with knob 2
+    # quantized instead, which eighth of the beat the last hit fell on.
+    (0x6152, 0x6153, "arp swing parity / quantized beat eighth"),
     # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
     # the selection is frozen at, last scan's touch levels, and the blink
     # counter every light this firmware adds shares.
@@ -2057,8 +2058,8 @@ def main() -> None:
     # different question from how long the step is, so it is gated at the note
     # selector rather than in the rhythm randomiser.
     k2 = cfg.get("knob2", {}).get("mode", "randomness")
-    if k2 not in ("randomness", "patterns", "swing"):
-        raise SystemExit("[knob2].mode must be 'randomness', 'swing' or 'patterns'")
+    if k2 not in ("randomness", "quantized", "patterns", "swing"):
+        raise SystemExit("[knob2].mode must be 'randomness', 'quantized', 'swing' or 'patterns'")
     bank = list(cfg.get("knob2", {}).get("patterns") or [])
     lens = list(cfg.get("knob2", {}).get("lengths") or [])
     if k2 == "patterns":
@@ -2099,6 +2100,7 @@ def main() -> None:
         blocks["arp_rhythm_hook"] = False
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
+    cfg["_numbers"]["knob2_quantized"] = 1 if k2 == "quantized" else 0
     cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 200))
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
@@ -2174,6 +2176,9 @@ def main() -> None:
     blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"
+    # Quantized randomness takes the randomiser's hook the way swing does;
+    # the pool word at 0x80019d40 names whichever of the three is built.
+    blocks["arp_quantized"] = k2 == "quantized"
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
     # The event-17 wrapper is shared: pressure smoothing runs its

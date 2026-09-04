@@ -2,6 +2,7 @@
 - Any preset knob can now be set to None, which leaves it as a preset voltage.
 - The add-to-pitch preset voltage can now be quantized to the selected tuning.
 - The portamento in banana jack can now transpose the keyboard by whole degrees of the selected tuning.
+- Knob 2 can now be set to quantized randomness: notes drop out and appear between beats, always on the grid; finer divisions grow likelier as the knob goes up.
 
 2.2 (2026-09-02)
 - Fixed a portamento bug.
