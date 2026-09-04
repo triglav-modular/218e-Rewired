@@ -729,8 +729,10 @@ Analytics Engine columns are positional, so the newer ones follow the older.
 
 Two ways the page and the worker drift apart, both of which have happened and
 neither of which shows as an error: the page grows a value the worker's
-allowlist does not know — the second knob-2 randomness role shipped that way
-and was counted as `other` — or the page sends a field the worker never reads,
+allowlist does not know — the second knob-2 randomness role reached the
+development page with the worker knowing nothing about it, and would have been
+counted as `other` from the moment it was released — or the page sends a field
+the worker never reads,
 which is collected from the browser and thrown away. `tools/test_worker.mjs`
 reads `web/index.html` and `web/app.js` and holds both against
 `deploy/worker.js`, so either one fails the suite instead of quietly costing a
