@@ -267,7 +267,7 @@ the options into the full internal settings the build has always used.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `latching_arp` | `true` | Arp switch becomes latch / regular / off. Latched notes are *pitches*, so a key held in three octaves stacks three notes. `false` restores the factory switch. |
+| `latching_arp` | `true` | Arp switch becomes latch / regular / off. Latched notes are *pitches*, so a key held in three octaves stacks three notes. Pads 2 and 3 held together for about a second choose whether the octave pads act *before* a note is entered or *after*, both pads flashing to confirm. Before, the default: the pads choose where each new note goes in, and held notes stay put. After: the pads move everything already held, the way they move a recorded take. The choice is saved across power cycles, and the gesture leaves the octave where it was before. It replaces the factory's own pads 2 & 3 latch, which is removed in this build. `false` restores the factory switch and the factory latch. |
 | `pitch_correction` | `false` | Path to a per-semitone correction CSV. `false` emits an ideal ramp with no per-key trim. |
 | `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` leaves the edit keys and their LEDs entirely alone. |
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
@@ -277,7 +277,7 @@ the options into the full internal settings the build has always used.
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 | `knob1`, `knob2`, `knob3`, `knob4` | per knob | What each preset knob does outside edit mode. Left out, a knob takes the first role listed: `knob1` `order`/`orders`, `knob2` `spacing`/`quantized`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back to its preset voltage. Edit-mode knobs 1 and 4 are unaffected. |
 | `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
-| `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
+| `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The hold puts the octave back where it was before pad 4 was pressed. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
 | `persist` | `true`, required | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). `false` is refused: it is a diagnostic shape, built only by the harnesses that characterise it. |
 | `clock_divide` | `true` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
 

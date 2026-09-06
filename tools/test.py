@@ -724,6 +724,12 @@ def test_blend(cfg: dict) -> None:
         text = re.sub(
             r'emit\("MOV R12,0x1f"\);\s*emit\("MCALL PC\[0x8001d5bc\]"\);',
             "", text)
+        # The persistence scan asks for the latch state with mask bit 5.
+        # Exempt only that load/or pair - the JS encoder has no ORL - never a
+        # loop using 32 keys.
+        text = re.sub(
+            r'emit\("MOV R8,0x20"\);[^\n]*\n\s*emit\("OR R2,R8"\);',
+            "", text)
         return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.

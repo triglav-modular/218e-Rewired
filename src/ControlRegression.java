@@ -427,6 +427,136 @@ public class ControlRegression extends SequenceEditRegression {
 
         println("PASS latch recording: fresh press, repeat, toggle-off audition, reused slot, relative store, transposed playback, pinned preview");
     }
+    // Aim the arp at a latched key the way a real step leaves it: the
+    // last arp key AND the published base (state+0x350, the key's table
+    // pitch) that the transpose shim measures the live transpose from.
+    void aim(int key) throws Exception { w(S+0x34d,1,key); w(S+0x350,2,r(0x854+2*key,2)); }
+    void latchTransposeState() throws Exception {
+        // The latch has two states, toggled by pads 2 and 3 held together
+        // for latch_state_hold_scans with pad 4 up.  The difference is
+        // whether the octave pads act BEFORE a note is entered or AFTER.
+        // Before, the default: the pads choose where each new note goes
+        // in, and held notes stay put.  After: the pads move everything
+        // already held, a new note still enters at the pad's pitch, and a
+        // press on a pitch that is sounding still releases it.  The toggle
+        // restores the octave the pads chose on the way in, lights both
+        // pads for a moment, saves once both are up, and never reaches
+        // the sequencer's preview or backspace.
+        setup(0,false,1); command(0); latchFixture();   // stopped, latch position
+        octavePad(1); key(0); aim(0); sound();
+        long entered=r(S+0x352,2);
+        octavePad(3); sound();
+        check("hold is the default state, and a latched note keeps its transpose in it",
+            r(0x62e2,1)==0&&Math.abs(r(S+0x352,2)-entered)<=1);
+        // Octave 2 is in force.  The pads choose 2 then 3 on the way in -
+        // the factory selects on the press edge - and the octave from
+        // before comes back, with the transpose it stands for as the
+        // set's reference: the toggle itself moves nothing.
+        octavePad(1); sound(); long preTranspose=livePad(); controlScan();
+        check("the octave and its transpose are shadowed while pads 2-4 are up",
+            r(0x615d,1)==1&&Math.abs((short)r(0x6584,2)-preTranspose)<=1);
+        octavePad(2); w(0x46f1,1,2); w(0x46f2,1,2);
+        int before=writes;
+        for(int i=0;i<199;i++)controlScan();
+        check("199 scans of pads 2 and 3 toggle nothing yet",
+            r(0x62e2,1)==0&&r(0x6582,2)==199&&r(0x615d,1)==1&&r(S+0x2ef,1)==2);
+        controlScan();
+        check("the 200th scan toggles into the transpose state",r(0x62e2,1)==1);
+        check("the reference is the transpose from before the gesture, not the gesture's own",
+            Math.abs((short)r(0x6580,2)-preTranspose)<=1&&Math.abs((short)r(0x609e,2)-preTranspose)<=1);
+        check("the octave from before the gesture is restored",r(S+0x2ef,1)==1);
+        check("the acknowledgment is counting",r(0x62e3,1)==0x2f);
+        check("nothing saves while the pads are held",writes==before);
+        sound();
+        check("the toggle itself moves nothing",Math.abs(r(S+0x352,2)-entered)<=1);
+        for(int i=0;i<50;i++)controlScan();
+        check("the hold saturates and fires once",r(0x6582,2)==201&&r(0x62e2,1)==1);
+        check("the acknowledgment ends on the restored octave",r(0x62e3,1)==0&&r(S+0x2ef,1)==1);
+        w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
+        check("release clears the count",r(0x6582,2)==0);
+        check("the state saves once both pads are up",persistent?writes>before:writes==before);
+        if(persistent)check("the record carries the state",r(call(NEWEST)+25,1)==1);
+        // TRANSPOSE: the set follows the pad.
+        octavePad(3); sound();
+        long ref=(short)r(0x6580,2);
+        check("transpose state: the latched note follows the pad",
+            Math.abs(r(S+0x352,2)-(entered+(livePad()-ref)))<=1);
+        key(6); aim(6); sound();
+        check("a note entered in the transpose state sounds at the pad's pitch",
+            Math.abs(r(S+0x352,2)-(r(0x854+12,2)+livePad()))<=1);
+        octavePad(1); aim(0); sound();
+        check("the set moves together: the first note is back where it was entered",
+            Math.abs(r(S+0x352,2)-entered)<=1);
+        aim(6); sound();
+        check("and the new note moved with it",
+            Math.abs(r(S+0x352,2)-(r(0x854+12,2)+livePad()))<=1);
+        // And through a real arp step, which selects the key and its base
+        // itself: whichever held note it lands on sounds its stamped pitch
+        // plus the set's shift.
+        w(S+0x2fc,2,0); externalBeat(); sound();
+        int stepped=(int)r(S+0x34d,1);
+        check("a real arp step sounds the stamped pitch plus the set's shift: key "+stepped,
+            (stepped==0||stepped==6)&&Math.abs(r(S+0x352,2)
+                -(r(0x854+2*stepped,2)+(short)r(0x60a2+2*stepped,2)+(livePad()-ref)))<=1);
+        octavePad(3); sound(); key(0);
+        check("a press on a pitch the pad moved a note onto releases that note",r(S+0x21b,1)==0);
+        // Back to BEFORE: nothing jumps, and the pad no longer reaches the set.
+        aim(6); sound(); long parked=r(S+0x352,2);
+        controlScan(); w(0x46f1,1,2); w(0x46f2,1,2);
+        for(int i=0;i<200;i++)controlScan();
+        check("the second hold toggles back to the hold state, octave kept",r(0x62e2,1)==0&&r(S+0x2ef,1)==3);
+        w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
+        aim(6); sound();
+        check("toggling back bakes the shift: the note keeps sounding where the pad had put it",
+            Math.abs(r(S+0x352,2)-parked)<=1);
+        octavePad(1); sound();
+        check("and in the hold state the pad no longer reaches it",Math.abs(r(S+0x352,2)-parked)<=1);
+        if(persistent) {
+            controlScan(); w(0x46f1,1,2); w(0x46f2,1,2);
+            for(int i=0;i<200;i++)controlScan();
+            w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
+            check("a third toggle saves again",r(0x62e2,1)==1&&r(call(NEWEST)+25,1)==1);
+            cold();
+            check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6409,1)==1);
+        }
+        // In WRITE a bare pad 2 or 3 held a third of a second previews or
+        // backspaces; two pads held for the toggle must do neither, and
+        // nor must a finger that lingers after it.
+        setup(2,false,1); latchFixture();
+        w(0x46f1,1,2); w(0x46f2,1,2);
+        for(int i=0;i<200;i++)controlScan();
+        check("the toggle fires in WRITE",r(0x62e2,1)==1);
+        check("without a preview or a backspace",r(0x62fe,1)==0&&r(0x61e0,1)==2&&r(0x6158,1)==1);
+        w(0x46f2,1,0);
+        for(int i=0;i<70;i++)controlScan();
+        check("a finger lingering after the toggle previews nothing",
+            r(0x62fe,1)==0&&r(0x61e0,1)==2&&r(0x6582,2)>=200&&r(0x625d,1)==0);
+        w(0x46f1,1,0); controlScan();
+        check("both up ends the gesture",r(0x6582,2)==0);
+        press(2,0); for(int i=0;i<59;i++)controlScan();
+        check("a bare hold on its own still backspaces",r(0x61e0,1)==1);
+        release(2);
+        // Pad 4 down makes pads 2 and 3 transport, not this gesture.
+        w(0x46f3,1,2); w(0x46f1,1,2); w(0x46f2,1,2);
+        for(int i=0;i<210;i++)controlScan();
+        check("pads 2 and 3 under a pad-4 hold count nothing",r(0x6582,2)==0&&r(0x62e2,1)==1);
+        w(0x46f3,1,0); w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
+        // The sequencer's pad-4 hold restores the octave the same way: the
+        // press chose octave 4 on its way in, and arming puts back what
+        // stood before it.
+        setup(0,false,1); command(0); octavePad(1); controlScan();
+        octavePad(3); w(0x46f3,1,2);
+        for(int i=0;i<199;i++)controlScan();
+        check("pad 4 chose its octave on the way in",r(S+0x2ef,1)==3&&r(0x6156,1)==0);
+        controlScan();
+        check("arming restores the octave from before pad 4 went down",
+            r(0x6156,1)==1&&r(0x6159,1)==1&&r(S+0x2ef,1)==1);
+        w(0x46f0,1,2); controlScan(); w(0x46f0,1,0); controlScan();
+        check("a chord press keeps it there",r(S+0x2ef,1)==1&&r(0x6158,1)==1);
+        w(0x46f3,1,0); controlScan();
+        check("and the release leaves it there",r(S+0x2ef,1)==1);
+        println("PASS latch transpose state: pads act before or after entry, toggle by pads 2 & 3, octave restored, saved on release, no preview or backspace; pad-4 hold restores the octave");
+    }
     void recordedOctaves() throws Exception {
         // The octave switch reaches a recording in EVERY arp position, the
         // way it reaches the latches: the same key entered at two octaves
@@ -950,6 +1080,7 @@ public class ControlRegression extends SequenceEditRegression {
             if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchExitHold(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(!lean)try { latchTransposeState(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { recordedOctaves(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

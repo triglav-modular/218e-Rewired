@@ -85,7 +85,11 @@ FEATURE_MAP = {
     ),
     "arp.switch":             (
         ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
-         "release_count_guard", "latch_owner"],
+         "release_count_guard", "latch_owner",
+         # The latch's two states: the hold shim, the toggle, and the factory
+         # pads 2 & 3 latch chord taken out.  latch_state itself is core: it
+         # also shadows the octave the sequencer's pad-4 hold restores.
+         "latch_hold", "latch_state_toggle", "factory_pad_latch_off"],
         ["arp_latch"],
     ),
     "midi.poly_default":      (
@@ -1060,6 +1064,11 @@ RAM_REGIONS = [
     # every unclaimed scan.  A claimed beat's scan puts it back, so the new
     # note's pitch cannot reach the output before the gate it belongs to.
     (0x609C, 0x609E, "held pitch, published for a claimed beat"),
+    # What the latch toggle stamps a press with and the hold re-bases to,
+    # republished every scan by latch_hold: the live transpose while each
+    # latched note keeps the transpose it was entered at, the set's
+    # reference (0x6580) while the whole set follows the pad.
+    (0x609E, 0x60A0, "latch transpose term for the toggle"),
     (0x60A0, 0x60A2, "live transpose offset"),
     (0x60A2, 0x60DC, "latch pitch stamps"),
     # The gate's absolute COUNT target.  Declared, so that the next cell to be
@@ -1092,8 +1101,10 @@ RAM_REGIONS = [
     # quantized instead, which eighth of the beat the last hit fell on.
     (0x6152, 0x6153, "arp swing parity / quantized beat eighth"),
     # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
-    # the selection is frozen at, last scan's touch levels, and the blink
-    # counter every light this firmware adds shares.
+    # the selection is frozen at, last scan's touch levels, the octave shadow
+    # (+9: the active pad while pads 2-4 are all up, which a completed chord
+    # or latch-state toggle restores), and the blink counter every light this
+    # firmware adds shares.
     (0x6154, 0x6160, "sequencer chord and mode"),
     # 64 recorded pitches, then how many there are, where play has got to,
     # and the pitch the step about to sound carries.
@@ -1135,6 +1146,11 @@ RAM_REGIONS = [
     # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
     (0x62E0, 0x62E1, "persistence request/result"),
     (0x62E1, 0x62E2, "which rotation page holds the newest record"),
+    # Both inside the block the boot wrapper zeroes before the record is
+    # restored: the state comes back from the record's byte 0x19, and a
+    # stale countdown would flash the pads at power-up.
+    (0x62E2, 0x62E3, "latch transpose state, persisted: 0 hold, 1 transpose"),
+    (0x62E3, 0x62E4, "pads 2 & 3 acknowledgment countdown, in scans"),
     (0x62E4, 0x62E8, "the sequence number that record carries"),
     # One stamp per knob, the raw ADC value plus one; zero means no edit has
     # parked anything and the knob's other job may follow it live.
@@ -1188,6 +1204,16 @@ RAM_REGIONS = [
     (0x657C, 0x657D, "strip lamp acknowledgment countdown, in scans"),
     (0x657D, 0x657E, "which lamp it is: 1 a rest, 2 a tie"),
     (0x657E, 0x657F, "last scan's step count, for spotting an append"),
+    # The latch's transpose state.  The reference is the transpose the state
+    # was entered under, set by the toggle before anything reads it; the
+    # count only means anything while both pads are down and is zeroed on
+    # every other scan, so neither needs the first-use fill.
+    (0x6580, 0x6582, "latch transpose reference"),
+    (0x6582, 0x6584, "pads 2 & 3 hold count, in scans"),
+    # Beside the octave shadow at 0x615d: the transpose that octave stands
+    # for, which is what the toggle's reference is measured from once the
+    # gesture's own pad choice is undone.
+    (0x6584, 0x6586, "live transpose shadowed while pads 2-4 are up"),
 ]
 
 # Factory-owned RAM the patches address absolutely.  Not ours to initialise —
