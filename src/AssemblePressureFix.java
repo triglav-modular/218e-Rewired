@@ -1201,7 +1201,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
         word(block("seq_pitch") ? 0x8001ba30L : 0x80019da8L);
         word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100L
-           : number("knob2_quantized", 0, 0, 1) == 1 ? 0x8001e440L
+           : number("knob2_quantized", 0, 0, 1) == 1 ? 0x8001ea00L
            : 0x80019df8L);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
@@ -1715,7 +1715,7 @@ public class AssemblePressureFix extends GhidraScript {
         // With the jack transposing, the housekeeping is reached through
         // the transposer's cave, which calls it first and shifts the key
         // table after - the applier has run by then.
-        word(feature("cv_transpose") ? 0x8001e1c0L : 0x8001a480L); // latch watch + poly-MIDI boot force + common-mode
+        word(feature("cv_transpose") ? 0x8001e7c0L : 0x8001a480L); // latch watch + poly-MIDI boot force + common-mode
         word(0x8001a750L); // octave-switch shadow sync
         finish("latch_v2", 0x8001a350L);
 
@@ -3079,19 +3079,34 @@ public class AssemblePressureFix extends GhidraScript {
         //   R2 the period: in CV counts while quantising, in pitch units
         //      while rebuilding   R3 state cell   R4 old state, then k
         //   R8 v, then N         R10 slot, then the wrap offset
-        long cvEntry  = 0x8001e1c0L;
-        long cvClamp  = 0x8001e1daL;
-        long cvSlot   = 0x8001e1e8L;
-        long cvRecalc = 0x8001e226L;
-        long cvHaveN  = 0x8001e230L;
-        long cvCapped = 0x8001e23cL;
-        long cvBuild  = 0x8001e258L;
-        long cvLoop   = 0x8001e26aL;
-        long cvWrap   = 0x8001e270L;
-        long cvNoWrap = 0x8001e27cL;
-        long cvDone   = 0x8001e292L;
-        long cvPool   = 0x8001e298L;
-        long cvSizes  = 0x8001e2b8L;
+        //
+        // Two things ride on the rebuild, in cv_stamps below.  A latched
+        // note in a borrowed slot carries a stamp against THAT slot's table
+        // entry, and in an unequal tuning the slot's degree moves by a
+        // different interval than the physical key's: so before the rebuild
+        // each such stamp is re-expressed against its key's entry, and after
+        // it against the slot's again, which lands the note where its own
+        // key went.  And the note already sounding took its base from the
+        // table at note-on - the factory's store at state+0x350 - so a CV
+        // that moved under a held key changed nothing until the next press;
+        // the base is refreshed from the new table, for the arp's note or
+        // the mono keyboard's, with the blend's base history alongside so
+        // the move is a jump, as the octave pads' is, not a folded glide.
+        long cvEntry  = 0x8001e7c0L;
+        long cvClamp  = 0x8001e7daL;
+        long cvSlot   = 0x8001e7e8L;
+        long cvRecalc = 0x8001e826L;
+        long cvHaveN  = 0x8001e830L;
+        long cvCapped = 0x8001e83cL;
+        long cvBuild  = 0x8001e858L;
+        long cvLoop   = 0x8001e870L;
+        long cvWrap   = 0x8001e876L;
+        long cvNoWrap = 0x8001e882L;
+        long cvDone   = 0x8001e8a0L;
+        long cvPool   = 0x8001e8a8L;
+        long cvSizes  = 0x8001e8d0L;
+        long cvStampsPre  = 0x8001e8e0L;
+        long cvStampsPost = 0x8001e940L;
         begin(cvEntry);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
         emit("MOV R7,SP");
@@ -3153,6 +3168,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("BR{eq} 0x%x", cvDone));               // still ours: nothing to do
         padTo(cvBuild);
         emit("ST.H R3[0x0],R11");
+        emit(String.format("MCALL PC[0x%x]", cvPool + 32));       // stamps: against the keys, not the slots
         emit(String.format("LDDPC R2,0x%x", cvPool + 28));        // one period, in pitch units
         emit(String.format("LDDPC R12,0x%x", cvPool + 24));       // the three slot tables
         emit("LSL R9,R10,0x6");
@@ -3177,6 +3193,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("BR{lt} 0x%x", cvLoop));
         emit("LD.UH R11,R1[0x0]");
         emit("ST.H R3[0x2],R11");                                 // remember what we wrote
+        emit(String.format("MCALL PC[0x%x]", cvPool + 36));       // stamps back against the slots; the sounding base
         padTo(cvDone);
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
         padTo(cvPool);
@@ -3188,9 +3205,119 @@ public class AssemblePressureFix extends GhidraScript {
         word(cvSizes);
         word(0x80019af8L); // the three tuning tables
         word(number("octave_units", 484, 1, 2000));
+        word(cvStampsPre);
+        word(cvStampsPost);
         padTo(cvSizes);
         emitTable("tuning_period_keys");
-        finish("cv_transpose", 0x8001e2c0L);
+        finish("cv_transpose", 0x8001e8e0L);
+
+        // cv_stamps: the two passes around the rebuild, and the refresh.
+        // Called from inside the rebuild with N in R8 and the slot in R10
+        // still live in the caller, so every scratch register is saved.
+        // A held slot j owned by another key o (latch_owner's map at 0x6504,
+        // key plus one) sounds at table[j] + stamp[j] = table[o] + its own
+        // pad offset.  Before the rebuild, stamp += table[j] - table[o]
+        // leaves stamp as that offset against the KEY's entry; after it,
+        // stamp += table'[o] - table'[j] puts it back against the slot's,
+        // now with the key's shift inside.  In an equal temperament the two
+        // shifts agree to a rounding unit and this is a no-op.
+        long cvStampsPreLoop  = 0x8001e8ecL;
+        long cvStampsPreNext  = 0x8001e928L;
+        long cvStampsPostLoop = 0x8001e94cL;
+        long cvStampsPostNext = 0x8001e988L;
+        long cvStampsMono     = 0x8001e9acL;
+        long cvStampsHave     = 0x8001e9bcL;
+        long cvStampsDone     = 0x8001e9d4L;
+        long cvStampsPool     = 0x8001e9d8L;
+        begin(cvStampsPre);
+        emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
+        emit("MOV R7,SP");
+        emit(String.format("LDDPC R0,0x%x", cvStampsPool));       // global state base
+        emit("MOV R1,0x1c");
+        padTo(cvStampsPreLoop);
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R8,R8[0x21b]");                               // held?
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{ne} 0x%x", cvStampsPreNext));
+        emit("MOV R8,0x6504");
+        emit("LD.UB R2,R8[R1 << 0x0]");                           // owner, plus one
+        emit("CP.W R2,0x0");
+        emit(String.format("BR{eq} 0x%x", cvStampsPreNext));
+        emit("SUB R2,0x1");
+        emit("CP.W R2,R1");
+        emit(String.format("BR{eq} 0x%x", cvStampsPreNext));      // its own key's slot
+        emit("MOV R8,0x854");
+        emit("LD.UH R9,R8[R1 << 0x1]");                           // table[j]
+        emit("LD.UH R10,R8[R2 << 0x1]");                          // table[o]
+        emit("SUB R9,R10");
+        emit("MOV R8,0x60a2");
+        emit("LD.SH R10,R8[R1 << 0x1]");
+        emit("ADD R10,R9");
+        emit("ST.H R8[R1 << 0x1],R10");
+        padTo(cvStampsPreNext);
+        emit("SUB R1,0x1");
+        emit(String.format("BR{ge} 0x%x", cvStampsPreLoop));
+        emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
+        padTo(cvStampsPost);
+        emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
+        emit("MOV R7,SP");
+        emit(String.format("LDDPC R0,0x%x", cvStampsPool));
+        emit("MOV R1,0x1c");
+        padTo(cvStampsPostLoop);
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R8,R8[0x21b]");
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{ne} 0x%x", cvStampsPostNext));
+        emit("MOV R8,0x6504");
+        emit("LD.UB R2,R8[R1 << 0x0]");
+        emit("CP.W R2,0x0");
+        emit(String.format("BR{eq} 0x%x", cvStampsPostNext));
+        emit("SUB R2,0x1");
+        emit("CP.W R2,R1");
+        emit(String.format("BR{eq} 0x%x", cvStampsPostNext));
+        emit("MOV R8,0x854");
+        emit("LD.UH R9,R8[R2 << 0x1]");                           // table'[o]
+        emit("LD.UH R10,R8[R1 << 0x1]");                          // table'[j]
+        emit("SUB R9,R10");
+        emit("MOV R8,0x60a2");
+        emit("LD.SH R10,R8[R1 << 0x1]");
+        emit("ADD R10,R9");
+        emit("ST.H R8[R1 << 0x1],R10");
+        padTo(cvStampsPostNext);
+        emit("SUB R1,0x1");
+        emit(String.format("BR{ge} 0x%x", cvStampsPostLoop));
+        // The sounding note's base, from the new table: the arp's note when
+        // the switch is in either arp position and a note is active, else
+        // the mono keyboard's active key while its note is in 0x2e1.
+        emit("LD.UB R8,R0[0x340]");
+        emit("LD.UB R9,R0[0x341]");
+        emit("OR R8,R9");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", cvStampsMono));
+        emit("MOV R8,0x2eed");
+        emit("LD.UB R8,R8[0x0]");                                 // arp active-note flag
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", cvStampsDone));
+        emit("LD.UB R9,R0[0x34d]");                               // the last arp key
+        emit(String.format("RJMP 0x%x", cvStampsHave));
+        padTo(cvStampsMono);
+        emit("LD.UB R8,R0[0x2e1]");                               // the sounding MIDI note
+        emit("CP.W R8,0xff");
+        emit(String.format("BR{eq} 0x%x", cvStampsDone));
+        emit("LD.UB R9,R0[0x256]");                               // the active key
+        padTo(cvStampsHave);
+        emit("CP.W R9,0x1d");
+        emit(String.format("BR{ge} 0x%x", cvStampsDone));
+        emit("MOV R8,0x854");
+        emit("LD.UH R10,R8[R9 << 0x1]");
+        emit("ST.H R0[0x350],R10");                               // the published base
+        emit("MOV R8,0x60f4");
+        emit("ST.H R8[0x0],R10");                                 // and the blend's base history
+        padTo(cvStampsDone);
+        emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
+        padTo(cvStampsPool);
+        word(0x00003560L); // global state base
+        finish("cv_stamps", 0x8001e9e0L);
 
         // The same shift for MIDI.  The factory turns a key into a note
         // number in one routine, 0x800057a8 (key + 36, or + 12 per trn zone,
@@ -3198,28 +3325,39 @@ public class AssemblePressureFix extends GhidraScript {
         // table shifted by N keys the note has to move by N as well, or the
         // pitch CV and the MIDI port would name different notes.
         //
-        // Two entries, because of how the callers end a note.  The arp keeps
-        // the note it sent at 0x2ee2 and the polyphonic sender keeps one per
-        // key, so those note-offs never recompute and can take the LIVE
-        // shift: a CV moving under a running arp transposes the next step.
-        // The mono keyboard paths recompute the note at the lift to compare
-        // it with the sounding one at state+0x2e1 - so for them the shift is
-        // frozen (RAM 0x60fe) for as long as 0x2e1 holds a note, and taken
-        // fresh only when a note-on finds nothing sounding.  Otherwise a CV
-        // that moved mid-hold would leave the lift unable to recognise its
-        // own note, and the MIDI note stuck.  The routine's 0xff for a bad
-        // key is left alone, and the result is capped at 127.
-        long mtLive    = 0x8001e2c0L;
-        long mtHeld    = 0x8001e2c4L;
-        long mtLatched = 0x8001e300L;
-        long mtAdd     = 0x8001e302L;
-        long mtDone    = 0x8001e30eL;
-        long mtPool    = 0x8001e314L;
+        // Three entries, because of how the callers end a note.  The arp
+        // keeps the note it sent at 0x2ee2 and the polyphonic sender keeps
+        // one per key, so those note-offs never recompute and can take the
+        // LIVE shift: a CV moving under a running arp transposes the next
+        // step.  The mono keyboard paths recompute the note at the lift to
+        // compare it with the sounding one at state+0x2e1 - so for them the
+        // shift is FROZEN (RAM 0x60fe) for as long as 0x2e1 holds a note.
+        // Otherwise a CV that moved mid-hold would leave the lift unable to
+        // recognise its own note, and the MIDI note stuck.  The PRESS takes
+        // the live shift and freezes it: a legato press arrives while the
+        // previous note is still in 0x2e1 - the factory has already sent
+        // its note-off, with the shift it was sent under - and used to
+        // inherit that note's shift, so its MIDI note disagreed with its
+        // pitch CV by however far the jack had moved.  The routine's 0xff
+        // for a bad key is left alone, and the result is capped at 127.
+        long mtLive    = 0x8001e740L;
+        long mtHeld    = 0x8001e744L;
+        long mtPress   = 0x8001e748L;
+        long mtCommon  = 0x8001e74aL;
+        long mtFreeze  = 0x8001e788L;
+        long mtLatched = 0x8001e790L;
+        long mtAdd     = 0x8001e798L;
+        long mtDone    = 0x8001e7a4L;
+        long mtPool    = 0x8001e7a8L;
         begin(mtLive);
         emit("MOV R11,0x1");                                      // live
-        emit(String.format("RJMP 0x%x", mtHeld + 2));
+        emit(String.format("RJMP 0x%x", mtCommon));
         padTo(mtHeld);
         emit("MOV R11,0x0");                                      // frozen while a note sounds
+        emit(String.format("RJMP 0x%x", mtCommon));
+        padTo(mtPress);
+        emit("MOV R11,0x2");                                      // a press: the live shift, frozen from now
+        padTo(mtCommon);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R11");
@@ -3232,13 +3370,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R10,0xa");
         emit(String.format("BR{ne} 0x%x", mtDone));               // the transposer has not run
         emit("ANDL R9,0xff");                                     // the live shift
-        emit("CP.W R0,0x0");
-        emit(String.format("BR{ne} 0x%x", mtAdd));
+        emit("CP.W R0,0x1");
+        emit(String.format("BR{eq} 0x%x", mtAdd));                // live: as it stands
+        emit("CP.W R0,0x2");
+        emit(String.format("BR{eq} 0x%x", mtFreeze));             // a press: this note's shift
         emit(String.format("LDDPC R10,0x%x", mtPool + 4));        // global state base
         emit("LD.UB R10,R10[0x2e1]");
         emit("CP.W R10,0xff");
         emit(String.format("BR{ne} 0x%x", mtLatched));            // a note sounds: keep its shift
-        emit("ST.B R8[0x4],R9");                                  // nothing sounds: take the live one
+        padTo(mtFreeze);
+        emit("ST.B R8[0x4],R9");                                  // 0x60fe: frozen
         emit(String.format("RJMP 0x%x", mtAdd));
         padTo(mtLatched);
         emit("LD.UB R9,R8[0x4]");
@@ -3252,7 +3393,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(mtPool);
         word(0x800057a8L); // key -> MIDI note
         word(0x00003560L); // global state base
-        finish("midi_transpose", 0x8001e320L);
+        finish("midi_transpose", 0x8001e7c0L);
 
         // The sequencer follows the jack transposer the way it follows the
         // pad: a step is stored WITHOUT the shift and the live shift is
@@ -3641,7 +3782,19 @@ public class AssemblePressureFix extends GhidraScript {
         // in; one knob, one role, one byte.  Below the deadzone a hit
         // standing off the beat steps the rest of the way back onto it
         // before the square reload resumes.
-        begin(0x8001e440L);
+        //
+        // A beat that is not a multiple of eight scans does not cut into
+        // whole eighths, and a reload that dropped the remainder each time
+        // ran early by it, cumulatively - a 401-scan beat lost 346 scans
+        // over a thousand hits.  So the remainder is carried, in eighths
+        // of a scan at 0x6153: each reload is floor((eighths * beat +
+        // carry) / 8) and the new carry is what that left, so the sum of
+        // the reloads tracks the grid exactly.  The randomiser's own limits
+        // are kept as a grid, not a clamp: a reload under eight scans asks
+        // for another eighth, one over 0xfff for one fewer, and the
+        // position byte moves with the eighths actually stepped, so what
+        // the byte says and what elapsed never disagree.
+        begin(0x8001ea00L);
         emit("STM --SP,R0,R1,R2,R3,R4,R5,R6,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");             // the beat, in scans
@@ -3652,7 +3805,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x60e6");
         emit("LD.SH R8,R8[0x0]");       // the knob, 0..1023
         emit("CP.W R8,0x30");
-        emit("BR{lt} 0x8001e4dc");      // deadzone: square, exactly as shipped
+        emit("BR{lt} 0x8001ead8");      // deadzone: square, exactly as shipped
         emit("MOV R4,R8");
         emit("LSR R4,0x1");             // M = 512x: what leaves the beat
         emit("MUL R5,R4,R8");
@@ -3668,61 +3821,81 @@ public class AssemblePressureFix extends GhidraScript {
         emit("RSUB R4,R9");             // the beat: 1024 - M
         emit("LSR R5,0x1");             // each quarter
         emit("LSR R6,0x2");             // each eighth
-        padTo(0x8001e488L);
+        padTo(0x8001ea48L);
         emit("SUB R2,-0x1");
         emit("SUB R1,-0x1");
         emit("ANDL R1,0x7");            // the next eighth of the beat
-        emit("MCALL PC[0x8001e500]");
+        emit("MCALL PC[0x8001eb04]");
         emit("BFEXTU R8,R12,0xa,0xa");  // ten bits of the draw
         emit("MOV R9,R6");              // an odd eighth
         emit("MOV R10,R1");
         emit("ANDL R10,0x1");
         emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001e4b8");
+        emit("BR{ne} 0x8001ea78");
         emit("MOV R9,R5");              // a quarter
         emit("MOV R10,R1");
         emit("ANDL R10,0x2");
         emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001e4b8");
+        emit("BR{ne} 0x8001ea78");
         emit("MOV R9,R3");              // the half
         emit("CP.W R1,0x4");
-        emit("BR{eq} 0x8001e4b8");
+        emit("BR{eq} 0x8001ea78");
         emit("MOV R9,R4");              // the beat
-        padTo(0x8001e4b8L);
+        padTo(0x8001ea78L);
         emit("CP.W R8,R9");
-        emit("BR{lt} 0x8001e4c2");      // a hit
+        emit("BR{lt} 0x8001ea82");      // a hit
         emit("CP.W R2,0x20");
-        emit("BR{lt} 0x8001e488");      // a miss: ask the next eighth
-        padTo(0x8001e4c2L);
-        emit("MUL R12,R2,R0");
-        emit("LSR R12,0x3");            // that many eighths of the beat
-        emit("CP.W R12,0x8");           // the randomiser's own limits
-        emit("BR{ge} 0x8001e4ce");
-        emit("MOV R12,0x8");
-        padTo(0x8001e4ceL);
-        emit("MOV R8,0xfff");
-        emit("CP.W R12,R8");
-        emit("BR{le} 0x8001e4ea");
-        emit("MOV R12,R8");
-        emit("RJMP 0x8001e4ea");
-        padTo(0x8001e4dcL);
+        emit("BR{lt} 0x8001ea48");      // a miss: ask the next eighth
+        padTo(0x8001ea82L);
+        emit("MOV R8,0x6153");
+        emit("LD.UB R8,R8[0x0]");       // the carry, in eighths of a scan
+        padTo(0x8001ea88L);
+        emit("MUL R12,R2,R0");          // eighths * beat
+        emit("ADD R12,R8");
+        emit("LSR R12,0x3");            // in scans
+        emit("CP.W R12,0x8");
+        emit("BR{ge} 0x8001eaa0");
+        emit("SUB R2,-0x1");            // under the limit: one more eighth
+        emit("SUB R1,-0x1");
+        emit("ANDL R1,0x7");
+        emit("RJMP 0x8001ea88");
+        padTo(0x8001eaa0L);
+        emit("MOV R9,0xfff");
+        emit("CP.W R12,R9");
+        emit("BR{le} 0x8001eac4");
+        emit("CP.W R2,0x1");
+        emit("BR{le} 0x8001eac0");      // one eighth already: the limit itself
+        emit("SUB R2,0x1");             // over the limit: one eighth fewer
+        emit("SUB R1,0x1");
+        emit("ANDL R1,0x7");
+        emit("RJMP 0x8001ea88");
+        padTo(0x8001eac0L);
+        emit("MOV R12,R9");
+        padTo(0x8001eac4L);
+        emit("MUL R9,R2,R0");
+        emit("ADD R9,R8");
+        emit("ANDL R9,0x7");            // what the division left
+        emit("MOV R8,0x6153");
+        emit("ST.B R8[0x0],R9");
+        emit("RJMP 0x8001eae8");
+        padTo(0x8001ead8L);
         emit("MOV R2,0x8");             // square: the whole beat
         emit("CP.W R1,0x0");
-        emit("BR{eq} 0x8001e4c2");
+        emit("BR{eq} 0x8001ea82");
         emit("RSUB R1,R2");             // off the beat: the rest of the way back
         emit("MOV R2,R1");
         emit("MOV R1,0x0");
-        emit("RJMP 0x8001e4c2");
-        padTo(0x8001e4eaL);
-        emit("LDDPC R8,0x8001e4fc");
+        emit("RJMP 0x8001ea82");
+        padTo(0x8001eae8L);
+        emit("LDDPC R8,0x8001eb00");
         emit("ST.H R8[0x38e],R12");
         emit("MOV R8,0x6152");
         emit("ST.B R8[0x0],R1");
         emit("LDM SP++,R0,R1,R2,R3,R4,R5,R6,R7,PC");
-        padTo(0x8001e4fcL);
+        padTo(0x8001eb00L);
         word(0x00003560L); // global state base
         word(0x80013e04L); // factory PRNG
-        finish("arp_quantized", 0x8001e504L);
+        finish("arp_quantized", 0x8001eb20L);
 
         // The sequencer's controls, on a pad chord.  Hold pad 4 for about one
         // second to arm - its light blinks - then, still holding it, press
@@ -6550,7 +6723,7 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001e600L);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
-        emit("LDDPC R0,0x8001e700");    // global state base
+        emit("LDDPC R0,0x8001e720");    // global state base
         emit("MOV R8,0x46f0");          // the pad touch array, 2 = held
         emit("LD.UB R9,R8[0x1]");
         emit("CP.W R9,0x2");
@@ -6571,91 +6744,105 @@ public class AssemblePressureFix extends GhidraScript {
         if (feature("arp_latch")) {
             emit("LD.UB R9,R8[0x1]");
             emit("CP.W R9,0x2");
-            emit("BR{ne} 0x8001e678");
+            emit("BR{ne} 0x8001e698");
             emit("LD.UB R9,R8[0x2]");
             emit("CP.W R9,0x2");
-            emit("BR{ne} 0x8001e678");
+            emit("BR{ne} 0x8001e698");
             emit("LD.UB R9,R8[0x3]");
             emit("CP.W R9,0x2");
-            emit("BR{eq} 0x8001e690");  // pad 4 down: the sequencer's chord
+            emit("BR{eq} 0x8001e6b0");  // pad 4 down: the sequencer's chord
+            // Not in edit mode, where the factory gives this same chord its
+            // own meaning and excluded its latch from it; and not while
+            // either pad is setting a preset voltage - a hold whose knob has
+            // moved is an edit, as the sequencer's bare hold already decides.
+            emit("LD.UB R9,R0[0x39]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001e6b0");
+            emit("MOV R10,0x614a");
+            emit("LD.UB R9,R10[0x1]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001e6b0");
+            emit("LD.UB R9,R10[0x2]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001e6b0");
             emit("MOV R10,0x6582");
             emit("LD.UH R9,R10[0x0]");
             emit(String.format("MOV R11,0x%x",
                  number("latch_state_hold_scans", 200, 20, 2000)));
             emit("CP.W R9,R11");
-            emit("BR{gt} 0x8001e690");  // fired already: wait for the release
+            emit("BR{gt} 0x8001e6b0");  // fired already: wait for the release
             emit("SUB R9,-0x1");
             emit("ST.H R10[0x0],R9");
             emit("CP.W R9,R11");
-            emit("BR{ne} 0x8001e690");  // not long enough yet
-            emit("MCALL PC[0x8001e704]"); // latch_state_toggle
+            emit("BR{ne} 0x8001e6b0");  // not long enough yet
+            emit("MCALL PC[0x8001e724]"); // latch_state_toggle
             emit("MOV R12,0x615d");
             emit("LD.UB R12,R12[0x0]");
-            emit("MCALL PC[0x8001e708]"); // select_pad: the octave from before
+            emit("MCALL PC[0x8001e728]"); // select_pad: the octave from before
             emit("MOV R9,0x30");        // the acknowledgment, in scans
             emit("MOV R10,0x62e3");
             emit("ST.B R10[0x0],R9");
-            emit("RJMP 0x8001e690");
-            padTo(0x8001e678L);
+            emit("RJMP 0x8001e6b0");
+            padTo(0x8001e698L);
             // Not both down.  One still down keeps the count where it is;
             // both up clears it.
             emit("LD.UB R9,R8[0x1]");
             emit("CP.W R9,0x2");
-            emit("BR{eq} 0x8001e690");
+            emit("BR{eq} 0x8001e6b0");
             emit("LD.UB R9,R8[0x2]");
             emit("CP.W R9,0x2");
-            emit("BR{eq} 0x8001e690");
+            emit("BR{eq} 0x8001e6b0");
             emit("MOV R10,0x6582");
             emit("MOV R9,0x0");
             emit("ST.H R10[0x0],R9");
-            padTo(0x8001e690L);
+            padTo(0x8001e6b0L);
             // A gesture in progress, or lingering: no bare hold counts.
             emit("MOV R10,0x6582");
             emit("LD.UH R9,R10[0x0]");
             emit("CP.W R9,0x0");
-            emit("BR{eq} 0x8001e6a4");
+            emit("BR{eq} 0x8001e6c4");
             emit("MOV R10,0x625c");     // the bare hold: which pad, and how long
             emit("MOV R9,0x0");
             emit("ST.H R10[0x0],R9");
-            padTo(0x8001e6a4L);
+            padTo(0x8001e6c4L);
             emit("MOV R10,0x62e3");
             emit("LD.UB R8,R10[0x0]");
             emit("CP.W R8,0x0");
-            emit("BR{eq} 0x8001e6f0");  // nothing to acknowledge
+            emit("BR{eq} 0x8001e710");  // nothing to acknowledge
             emit("SUB R8,0x1");
             emit("ST.B R10[0x0],R8");
             emit("CP.W R8,0x0");
-            emit("BR{ne} 0x8001e6c0");
+            emit("BR{ne} 0x8001e6e0");
             emit("LD.UB R12,R0[0x2ef]");
-            emit("MCALL PC[0x8001e708]"); // select_pad repaints all four
-            emit("RJMP 0x8001e6e8");
-            padTo(0x8001e6c0L);
+            emit("MCALL PC[0x8001e728]"); // select_pad repaints all four
+            emit("RJMP 0x8001e708");
+            padTo(0x8001e6e0L);
             emit("BFEXTU R9,R8,0x3,0x1"); // the blink phase
             emit("CP.W R9,0x0");
-            emit("BR{eq} 0x8001e6d8");
+            emit("BR{eq} 0x8001e6f8");
             emit("MOV R12,0x1");
-            emit("MCALL PC[0x8001e70c]"); // led_set: pad 2
+            emit("MCALL PC[0x8001e72c]"); // led_set: pad 2
             emit("MOV R12,0x2");
-            emit("MCALL PC[0x8001e70c]"); // led_set: pad 3
-            emit("RJMP 0x8001e6e8");
-            padTo(0x8001e6d8L);
+            emit("MCALL PC[0x8001e72c]"); // led_set: pad 3
+            emit("RJMP 0x8001e708");
+            padTo(0x8001e6f8L);
             emit("MOV R12,0x1");
-            emit("MCALL PC[0x8001e710]"); // led_clear: pad 2
+            emit("MCALL PC[0x8001e730]"); // led_clear: pad 2
             emit("MOV R12,0x2");
-            emit("MCALL PC[0x8001e710]"); // led_clear: pad 3
-            padTo(0x8001e6e8L);
-            emit("MCALL PC[0x8001e714]"); // led_flush
+            emit("MCALL PC[0x8001e730]"); // led_clear: pad 3
+            padTo(0x8001e708L);
+            emit("MCALL PC[0x8001e734]"); // led_flush
         }
-        padTo(0x8001e6f0L);
+        padTo(0x8001e710L);
         emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001e700L);
+        padTo(0x8001e720L);
         word(0x00003560L);              // global state base
         word(0x8001e580L);              // latch_state_toggle
         word(0x8000698cL);              // select_pad(0..3)
         word(0x80006808L);              // led_set(ch)
         word(0x800068ccL);              // led_clear(ch)
         word(0x8000673cL);              // led_flush()
-        finish("latch_state", 0x8001e720L);
+        finish("latch_state", 0x8001e740L);
 
         // Between the re-base shim and the blend cave, three per-scan jobs
         // that all need the sequencer's mode in hand.
@@ -8661,7 +8848,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8000f160L); // give the bus back
         word(0x80007e44L); // MIDI note off, port one
         word(0x800081f0L); // MIDI note off, port two
-        word(feature("cv_transpose") ? mtHeld : 0x800057a8L); // key -> MIDI note, shifted with the jack transposing
+        word(feature("cv_transpose") ? mtPress : 0x800057a8L); // key -> MIDI note, shifted with the jack transposing
         finish("seq_key_takes", 0x8001bf9cL);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
@@ -9045,7 +9232,8 @@ public class AssemblePressureFix extends GhidraScript {
         //   (b) latch-exit watch: on state+0x340 leaving 1 (prev at RAM
         //       0x60ef) clear the held count and all 29 held flags;
         //   (c) after the editor, the chord and persistence: the latch's
-        //       pads 2 & 3 state toggle and its acknowledgment (latch_state).
+        //       pads 2 & 3 state toggle and its acknowledgment (latch_state),
+        //       which stays out of edit mode and off pads that are editing.
         begin(0x8001a480L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -9713,12 +9901,12 @@ public class AssemblePressureFix extends GhidraScript {
         // sounding first.  Off the sequencer these keep their factory
         // targets.
         // With the jack transposing, both go on through midi_transpose's
-        // frozen entry - the sequencer wrapper's own pool word does the same.
+        // press entry - the sequencer wrapper's own pool word does the same.
         wordPatch("key_note_pool", 0x80005ebcL,
-            block("seq_pitch") ? 0x8001bf00L : (feature("cv_transpose") ? mtHeld : 0x800057a8L),
+            block("seq_pitch") ? 0x8001bf00L : (feature("cv_transpose") ? mtPress : 0x800057a8L),
             "key -> MIDI note on the press -> the sequencer's note ends");
         wordPatch("key_restore_note_pool", 0x800063d0L,
-            block("seq_pitch") ? 0x8001bf00L : (feature("cv_transpose") ? mtHeld : 0x800057a8L),
+            block("seq_pitch") ? 0x8001bf00L : (feature("cv_transpose") ? mtPress : 0x800057a8L),
             "key -> MIDI note on the hand-back -> the sequencer's note ends");
         // The other four readers of a key's MIDI note, with the jack
         // transposing: the arp and the polyphonic sender keep the note they

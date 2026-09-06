@@ -60,6 +60,16 @@ var WEBBUILD = (function () {
                 });
             }
         });
+        // Same rule as tools/build.py: the jack transposer shifts a 32-entry
+        // table and wraps by the map's size, so a wider map cannot be
+        // shifted and is refused with the transposer on.
+        var widest = Math.max.apply(null, tables.tuning_period_keys);
+        if (cfg.portamento_in.transpose && widest > 32) {
+            throw new Error('alternate_tunings: a keyboard map of ' + widest +
+                ' positions cannot be shifted by the jack transposer, whose ' +
+                'key table holds 32 entries - use a map of up to 32, or turn ' +
+                'the transposer off');
+        }
         var bank = BUILDLIB.patternBank(cfg);
         tables.arp_pattern_bank = [];
         bank.masks.forEach(function (m) {

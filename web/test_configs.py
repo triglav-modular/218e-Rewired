@@ -82,6 +82,11 @@ REORDERED_MAP = fixture(
 # One degree too many for a keyboard with one table entry per key.
 THIRTEEN = fixture("_thirteen.scl", equal_steps(13, 1200.0))
 
+# A map wider than the jack transposer's 32-entry table.  Fine on its own;
+# with the transposer the wrap by 36 keys reached before the table.
+WIDE = fixture("_wide36.scl", equal_steps(36, 1200.0))
+WIDE_MAP = fixture("_wide36.kbm", keyboard_map(list(range(36)), 36))
+
 # Comfortably spaced along the keyboard - 13 units at the closest - until key 0
 # is latched an octave up, where it lands 6 units from key 1.  A gap read off
 # the untransposed table calls this safe.
@@ -163,6 +168,11 @@ CONFIGS = [
                               "alternate_tunings": mapped([
                                   ("tunings/diatonic7.scl", "tunings/diatonic7.kbm")])
                                   + scala(["tunings/12TET.scl"])}),
+    # A keyboard map wider than the transposer's 32-entry table builds with
+    # the transposer off; wide_map_transposed below is the refusal.
+    ("wide_map",          [(r"^alternate_tunings = false",
+                            f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]')],
+                          {"alternate_tunings": mapped([(WIDE, WIDE_MAP)])}),
     ("one_volt",          [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")],
                           {"volts_per_octave": 1.0}),
     ("pitch_correction",  [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
@@ -294,6 +304,15 @@ REFUSALS = [
                           {"persist": False},
                           "not a supported configuration",
                           "not a supported configuration"),
+    # A map the transposer cannot shift.  The same map builds with the
+    # transposer off, which the wide_map row above proves.
+    ("wide_map_transposed", [(r"^alternate_tunings = false",
+                              f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]'),
+                             (r'^portamento_in = "portamento"', 'portamento_in = "transpose"')],
+                            {"alternate_tunings": mapped([(WIDE, WIDE_MAP)]),
+                             "portamento_in": "transpose"},
+                            "use a map of up to 32",
+                            "use a map of up to 32"),
     # A mapping finer than the latch can resolve.  The image is valid in every
     # other way, so nothing downstream would have caught it.
     ("fine_latch",        [(r"^alternate_tunings = false",

@@ -6,8 +6,11 @@ import java.util.*;
 
 public class ControlRegression extends SequenceEditRegression {
     static final long APPLIER=0x8001a2e8L;
-    boolean transpose, orders, lean, quantized, gridRhythm;
+    boolean transpose, orders, lean, quantized, gridRhythm, jack;
     int zones=9;
+    // Instructions executed, for the scan-budget figures below: counted in
+    // step(), reset by whoever measures.
+    long steps;
 
     void controlScan() throws Exception { call(APPLIER); }
     @Override void setup(int length,boolean internal,int position) throws Exception {
@@ -18,6 +21,7 @@ public class ControlRegression extends SequenceEditRegression {
     }
     @Override void command(int pad) throws Exception { if(seq)super.command(pad); }
     @Override void step() throws Exception {
+        steps++;
         // These helpers only update LED RAM. Execute them too, so a changed
         // call chain cannot accidentally rely on the peripheral stub's ABI.
         if(pc()==0x80006808L||pc()==0x800068ccL) {
@@ -541,6 +545,17 @@ public class ControlRegression extends SequenceEditRegression {
         for(int i=0;i<210;i++)controlScan();
         check("pads 2 and 3 under a pad-4 hold count nothing",r(0x6582,2)==0&&r(0x62e2,1)==1);
         w(0x46f3,1,0); w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
+        // In edit mode the factory gives the same chord its own meaning and
+        // kept its latch out of it; so does this.  And a pad whose knob is
+        // setting a preset voltage is editing, not gesturing.
+        w(S+0x39,1,1); w(0x46f1,1,2); w(0x46f2,1,2);
+        for(int i=0;i<210;i++)controlScan();
+        check("the chord in edit mode counts nothing",r(0x6582,2)==0&&r(0x62e2,1)==1);
+        w(S+0x39,1,0); w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
+        w(0x614b,1,1); w(0x46f1,1,2); w(0x46f2,1,2);
+        for(int i=0;i<210;i++)controlScan();
+        check("a pad editing its preset declines the gesture",r(0x6582,2)==0&&r(0x62e2,1)==1);
+        w(0x614b,1,0); w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
         // The sequencer's pad-4 hold restores the octave the same way: the
         // press chose octave 4 on its way in, and arming puts back what
         // stood before it.
@@ -556,6 +571,62 @@ public class ControlRegression extends SequenceEditRegression {
         w(0x46f3,1,0); controlScan();
         check("and the release leaves it there",r(S+0x2ef,1)==1);
         println("PASS latch transpose state: pads act before or after entry, toggle by pads 2 & 3, octave restored, saved on release, no preview or backspace; pad-4 hold restores the octave");
+    }
+    // The jack transposer, driven from the raw CV cell the factory's second
+    // ADC pass fills.  The variant carries the 5-limit JI scale, whose
+    // steps differ enough that a shift by degrees is not a shift by a
+    // constant - which is what separates the slot's interval from the key's.
+    void cv(int raw) throws Exception { w(S+0x2f0,2,raw); controlScan(); }
+    void jackTransposer() throws Exception {
+        // A held mono note follows the CV: the table moved, and so must the
+        // base the factory copied out of it at note-on.
+        setup(0,false,0); command(0); latchFixture(); octavePad(1); cv(0);
+        touchOn(9); sound();
+        long before=r(S+0x352,2), table=r(0x854+18,2);
+        check("a mono note sounds its table pitch",before==table);
+        // With the blend engaged, a base that moved without its history
+        // would be folded into the applied offset and slewed out: a glide.
+        w(S+0x306,2,900); sound();
+        cv(123); for(int i=0;i<4;i++)sound();
+        check("twelve degrees of a twelve-note scale are one period: "+r(0x854+18,2),
+            r(0x854+18,2)==table+484&&(r(0x60fa,2)&255)==12);
+        check("a held mono note follows the jack",r(S+0x352,2)==before+484);
+        check("and the blend's base history moved with it, so nothing folds",
+            (short)r(0x60f4,2)==r(0x854+18,2)&&r(0x60e2,2)==0);
+        // A legato press takes the shift as it stands now and freezes it,
+        // so its MIDI note and its pitch CV name the same note.
+        touchOn(4); sound();
+        e.writeRegister("R12",4); long plain=call(0x800057a8L);
+        check("a legato note's MIDI note carries the live shift",
+            r(S+0x2e1,1)==plain+(r(0x60fa,2)&255)&&r(S+0x352,2)==r(0x854+8,2));
+        touchOff(4); touchOff(9);
+        check("all keys released clears the MIDI note",r(S+0x2e1,1)==255);
+        // A latched note in a borrowed slot moves by its own key's degree,
+        // not the slot's: the same key an octave up lands in slot 1, whose
+        // step from degree 0 to 1 is a 16/15, while degree 1 to 2 is a 9/8.
+        setup(0,false,1); command(0); latchFixture(); cv(0);
+        octavePad(3); key(0); noteUp(0); octavePad(1); key(0); noteUp(0);
+        int other=-1; for(int i=1;i<29;i++)if(r(S+0x21b+i,1)==1){other=i;break;}
+        check("the octave repeat took a borrowed slot",other>0);
+        long stamped=r(0x854+2*other,2)+(short)r(0x60a2+2*other,2), root=r(0x854,2), oldSlot=r(0x854+2*other,2);
+        check("the borrowed slot stands for key 0's pitch",Math.abs(stamped-root)<=1);
+        cv(11);
+        long shift=r(0x854,2)-root, slotShift=r(0x854+2*other,2)-oldSlot;
+        check("one degree up moves key 0 by a 16/15: "+shift,shift>=44&&shift<=46);
+        check("the scale is unequal here, or this proves nothing: shift "+shift+" slot "+slotShift,Math.abs(shift-slotShift)>2);
+        check("the borrowed slot moved by its key's degree",
+            Math.abs(r(0x854+2*other,2)+(short)r(0x60a2+2*other,2)-(stamped+shift))<=1);
+        aim(other); sound();
+        check("and sounds there",Math.abs(r(S+0x352,2)-(stamped+shift))<=1);
+        // The arp's sounding note follows too, before its next step.
+        w(0x2eed,1,1); aim(0); sound();
+        long sounding=r(S+0x352,2); cv(22); sound();
+        check("the arp's sounding note follows the jack",
+            Math.abs(r(S+0x352,2)-(sounding+r(0x854,2)-root-shift))<=1);
+        // How much a rebuild costs, against the ~5 ms scan: printed, not gated.
+        cv(0); steps=0; cv(33); long rebuild=steps; steps=0; cv(33); long idle=steps;
+        println("SCAN BUDGET jack rebuild "+rebuild+" instructions, an idle control scan "+idle);
+        println("PASS jack transposer: a held mono note and the arp's note follow, legato MIDI takes the live shift, a borrowed slot moves by its key's degree");
     }
     void recordedOctaves() throws Exception {
         // The octave switch reaches a recording in EVERY arp position, the
@@ -975,7 +1046,7 @@ public class ControlRegression extends SequenceEditRegression {
     // Knob 2 as quantized randomness: the reload the rhythm hook stores is
     // always a whole number of eighths of the beat, the byte at 0x6152 says
     // which eighth the hit fell on, and the deadzone is the square reload.
-    static final long GRID=0x8001e440L;
+    static final long GRID=0x8001ea00L;
     long gridReload(long beat) throws Exception {
         e.writeRegister("R12",beat); call(GRID); return r(S+0x38e,2);
     }
@@ -1039,12 +1110,30 @@ public class ControlRegression extends SequenceEditRegression {
         check("low: the grid holds",gridHeld&&gridFollows);
         check("low: the half takes about one hit in sixteen: "+at[4],at[4]>70&&at[4]<180);
         check("low: a stray quarter or two and no eighths yet: "+quarters+"/"+eighths,quarters<20&&eighths==0);
-        // The randomiser's own limits, in scans.
-        w(0x60e6,2,0); w(0x6152,1,7);
-        check("the reload never drops below eight scans",gridReload(4)==8);
-        w(0x6152,1,0);
-        check("the reload never exceeds 0xfff scans",gridReload(5000)==0xfff);
-        println("PASS quantized rhythm: eighth grid, position, shares at three settings, deadzone and clamps");
+        // A beat that is not a multiple of eight: the remainder is carried,
+        // so a run of hits tracks the grid to within a scan instead of
+        // running early by the dropped fraction every reload.
+        w(0x60e6,2,1023); w(0x6152,1,0); w(0x6153,1,0);
+        long elapsed=0, stepped=0; int pos=0;
+        for(int i=0;i<1000;i++) {
+            long cd=gridReload(401); int p=(int)r(0x6152,1);
+            long n=((p-pos)&7)+8*((cd*8+8)/401/8);   // whole beats plus the eighths within
+            elapsed+=cd; stepped+=n; pos=p;
+        }
+        check("odd beat: a thousand hits stay within a scan of the grid: "+elapsed+" for "+stepped+" eighths",
+            Math.abs(elapsed-Math.round(stepped*401.0/8))<=1);
+        check("the carry is a remainder",r(0x6153,1)<8);
+        // The randomiser's own limits, kept as a grid: too short asks for
+        // another eighth, too long for one fewer, and the position byte
+        // moves with the eighths actually stepped.
+        w(0x60e6,2,0); w(0x6152,1,7); w(0x6153,1,0);
+        check("a reload under eight scans steps more eighths, and says so",gridReload(4)==8&&r(0x6152,1)==7);
+        w(0x6152,1,0); w(0x6153,1,0);
+        long slow=gridReload(5000);
+        check("a reload over 0xfff steps fewer eighths, and says so",
+            slow<=0xfff&&slow==6*5000/8&&r(0x6152,1)==6);
+        steps=0; gridReload(400); println("SCAN BUDGET quantized reload "+steps+" instructions");
+        println("PASS quantized rhythm: eighth grid, position, shares at three settings, deadzone, odd beats and the limits as grid");
     }
     void retainedStartup() throws Exception {
         // SRAM survives a DFU: another image's pickup stamps must not
@@ -1069,6 +1158,7 @@ public class ControlRegression extends SequenceEditRegression {
         lean=args.length>4&&args[4].equals("lean");
         quantized=args.length>5&&args[5].equals("quantized");
         gridRhythm=args.length>6&&args[6].equals("quantized");
+        jack=args.length>7&&args[7].equals("jack");
         seq=!lean; clock=!lean; persistent=args.length>2&&args[2].equals("persist");
         List<String> failures=new ArrayList<>();
         try {
@@ -1081,6 +1171,7 @@ public class ControlRegression extends SequenceEditRegression {
             if(orders)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchExitHold(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchTransposeState(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(jack)try { jackTransposer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { recordedOctaves(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

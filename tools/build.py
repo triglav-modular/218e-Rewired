@@ -108,7 +108,7 @@ FEATURE_MAP = {
         ["cv_transpose", "glide_cv_addend", "midi_transpose",
          "midi_transpose_arp_pool", "midi_transpose_poly_pool",
          "midi_transpose_lift_pool", "midi_transpose_compare_pool",
-         "seq_record_pitch_cv", "seq_cv_shift"],
+         "seq_record_pitch_cv", "seq_cv_shift", "cv_stamps"],
         ["cv_transpose"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
@@ -1100,6 +1100,9 @@ RAM_REGIONS = [
     # Which half of the swung pair the next step is - or, with knob 2
     # quantized instead, which eighth of the beat the last hit fell on.
     (0x6152, 0x6153, "arp swing parity / quantized beat eighth"),
+    # What the last quantized reload's division left, so a beat that is not
+    # a multiple of eight scans still keeps the grid over a run of hits.
+    (0x6153, 0x6154, "quantized rhythm: eighths of a scan carried between reloads"),
     # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
     # the selection is frozen at, last scan's touch levels, the octave shadow
     # (+9: the active pad while pads 2-4 are all up, which a completed chord
@@ -1705,6 +1708,16 @@ def main() -> None:
               f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
     cfg["_min_key_spacing"] = min_key_spacing(spacing_slots)
     tables["tuning_period_keys"] = period_keys
+    # The jack transposer shifts a 32-entry table and wraps by the map's
+    # size, so a map wider than the table cannot be shifted: index 32 less
+    # 36 keys is -4, and the rebuild read the flash before the table as
+    # pitches.  Refuse the pair; a wider map stays usable with the
+    # transposer off.  web/build.js applies the same rule.
+    if cfg.get("portamento_in", {}).get("transpose") and max(period_keys) > 32:
+        raise SystemExit(
+            f"alternate_tunings: a keyboard map of {max(period_keys)} positions "
+            "cannot be shifted by the jack transposer, whose key table holds "
+            "32 entries - use a map of up to 32, or turn the transposer off")
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that
