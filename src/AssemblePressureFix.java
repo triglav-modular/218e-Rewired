@@ -3225,10 +3225,10 @@ public class AssemblePressureFix extends GhidraScript {
         long cvStampsPreNext  = 0x8001e928L;
         long cvStampsPostLoop = 0x8001e94cL;
         long cvStampsPostNext = 0x8001e988L;
-        long cvStampsMono     = 0x8001e9acL;
-        long cvStampsHave     = 0x8001e9bcL;
-        long cvStampsDone     = 0x8001e9d4L;
-        long cvStampsPool     = 0x8001e9d8L;
+        long cvStampsMono     = 0x8001e9c0L;
+        long cvStampsHave     = 0x8001e9d0L;
+        long cvStampsDone     = 0x8001e9e8L;
+        long cvStampsPool     = 0x8001e9ecL;
         begin(cvStampsPre);
         emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
         emit("MOV R7,SP");
@@ -3288,7 +3288,19 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("BR{ge} 0x%x", cvStampsPostLoop));
         // The sounding note's base, from the new table: the arp's note when
         // the switch is in either arp position and a note is active, else
-        // the mono keyboard's active key while its note is in 0x2e1.
+        // the mono keyboard's active key while its note is in 0x2e1.  Not
+        // while the sequencer records, plays or previews: then the base is
+        // a step's pitch, or an audition's pinned one, which the sequencer
+        // shifts by its own path per step - refreshing it from the table
+        // snapped the playing step to the key's pitch until the next step.
+        emit("MOV R8,0x6158");
+        emit("LD.UB R8,R8[0x0]");       // sequencer mode
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", cvStampsDone));
+        emit("MOV R8,0x62fe");
+        emit("LD.UB R8,R8[0x0]");       // a one-shot preview
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", cvStampsDone));
         emit("LD.UB R8,R0[0x340]");
         emit("LD.UB R9,R0[0x341]");
         emit("OR R8,R9");
@@ -3317,7 +3329,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
         padTo(cvStampsPool);
         word(0x00003560L); // global state base
-        finish("cv_stamps", 0x8001e9e0L);
+        finish("cv_stamps", 0x8001ea00L);
 
         // The same shift for MIDI.  The factory turns a key into a note
         // number in one routine, 0x800057a8 (key + 36, or + 12 per trn zone,
@@ -3805,7 +3817,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x60e6");
         emit("LD.SH R8,R8[0x0]");       // the knob, 0..1023
         emit("CP.W R8,0x30");
-        emit("BR{lt} 0x8001ead8");      // deadzone: square, exactly as shipped
+        emit("BR{lt} 0x8001eae0");      // deadzone: square, exactly as shipped
         emit("MOV R4,R8");
         emit("LSR R4,0x1");             // M = 512x: what leaves the beat
         emit("MUL R5,R4,R8");
@@ -3825,7 +3837,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R2,-0x1");
         emit("SUB R1,-0x1");
         emit("ANDL R1,0x7");            // the next eighth of the beat
-        emit("MCALL PC[0x8001eb04]");
+        emit("MCALL PC[0x8001eb0c]");
         emit("BFEXTU R8,R12,0xa,0xa");  // ten bits of the draw
         emit("MOV R9,R6");              // an odd eighth
         emit("MOV R10,R1");
@@ -3854,31 +3866,39 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ADD R12,R8");
         emit("LSR R12,0x3");            // in scans
         emit("CP.W R12,0x8");
-        emit("BR{ge} 0x8001eaa0");
+        emit("BR{ge} 0x8001eaa8");
+        // Bounded: a beat of zero would never reach eight scans, and the
+        // factory guards only a reload of -1, so past 64 eighths the limit
+        // is taken as the reload itself rather than asked for again.
+        emit("CP.W R2,0x40");
+        emit("BR{ge} 0x8001eaa4");
         emit("SUB R2,-0x1");            // under the limit: one more eighth
         emit("SUB R1,-0x1");
         emit("ANDL R1,0x7");
         emit("RJMP 0x8001ea88");
-        padTo(0x8001eaa0L);
+        padTo(0x8001eaa4L);
+        emit("MOV R12,0x8");
+        emit("RJMP 0x8001eac8");
+        padTo(0x8001eaa8L);
         emit("MOV R9,0xfff");
         emit("CP.W R12,R9");
-        emit("BR{le} 0x8001eac4");
+        emit("BR{le} 0x8001eac8");
         emit("CP.W R2,0x1");
-        emit("BR{le} 0x8001eac0");      // one eighth already: the limit itself
+        emit("BR{le} 0x8001eac4");      // one eighth already: the limit itself
         emit("SUB R2,0x1");             // over the limit: one eighth fewer
         emit("SUB R1,0x1");
         emit("ANDL R1,0x7");
         emit("RJMP 0x8001ea88");
-        padTo(0x8001eac0L);
-        emit("MOV R12,R9");
         padTo(0x8001eac4L);
+        emit("MOV R12,R9");
+        padTo(0x8001eac8L);
         emit("MUL R9,R2,R0");
         emit("ADD R9,R8");
         emit("ANDL R9,0x7");            // what the division left
         emit("MOV R8,0x6153");
         emit("ST.B R8[0x0],R9");
-        emit("RJMP 0x8001eae8");
-        padTo(0x8001ead8L);
+        emit("RJMP 0x8001eaf0");
+        padTo(0x8001eae0L);
         emit("MOV R2,0x8");             // square: the whole beat
         emit("CP.W R1,0x0");
         emit("BR{eq} 0x8001ea82");
@@ -3886,13 +3906,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R2,R1");
         emit("MOV R1,0x0");
         emit("RJMP 0x8001ea82");
-        padTo(0x8001eae8L);
-        emit("LDDPC R8,0x8001eb00");
+        padTo(0x8001eaf0L);
+        emit("LDDPC R8,0x8001eb08");
         emit("ST.H R8[0x38e],R12");
         emit("MOV R8,0x6152");
         emit("ST.B R8[0x0],R1");
         emit("LDM SP++,R0,R1,R2,R3,R4,R5,R6,R7,PC");
-        padTo(0x8001eb00L);
+        padTo(0x8001eb08L);
         word(0x00003560L); // global state base
         word(0x80013e04L); // factory PRNG
         finish("arp_quantized", 0x8001eb20L);
@@ -5819,6 +5839,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R10,-0x2");
         emit("SUB R9,0x1");
         emit("BR{ge} 0x8001d56c");
+        // The latch's transpose reference, the pads 2 & 3 hold count and the
+        // transpose shadow at 0x6580..0x6585: outside every other clear, and
+        // a count that starts as SRAM garbage with the pads down at power-up
+        // would fire the toggle early.
+        emit("MOV R10,0x6580");
+        emit("ST.W R10[0x0],R8");
+        emit("ST.H R10[0x4],R8");
         emit("MOV R10,0x62e0");
         emit("MOV R9,-0x1");
         emit("ST.B R10[0x1],R9");
@@ -6584,8 +6611,7 @@ public class AssemblePressureFix extends GhidraScript {
         // acknowledgment countdown; 0x6584 the live transpose shadowed
         // beside the octave shadow at 0x615d while pads 2-4 are up.  The
         // state and the countdown sit in the block the boot wrapper zeroes
-        // before the record is restored; the others are written before
-        // anything reads them.
+        // before the record is restored, and it zeroes 0x6580..0x6585 too.
         //
         // latch_hold: called from transpose_capture with R8 = 0x60a0 and
         // R9 = the transpose just published, R12 = the pitch in hand.

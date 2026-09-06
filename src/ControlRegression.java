@@ -623,6 +623,14 @@ public class ControlRegression extends SequenceEditRegression {
         long sounding=r(S+0x352,2); cv(22); sound();
         check("the arp's sounding note follows the jack",
             Math.abs(r(S+0x352,2)-(sounding+r(0x854,2)-root-shift))<=1);
+        // While the sequencer plays, the base is a step's pitch and the
+        // sequencer shifts it by its own path: a jack move must not swap
+        // the key table in under it.
+        setup(2,false,1); command(1); cv(0);
+        w(S+0x2fc,2,0); externalBeat(); sound();
+        long stepBase=r(S+0x350,2); cv(123); sound();
+        check("a jack move leaves the playing step's base alone",r(S+0x350,2)==stepBase);
+        setup(0,false,1); command(0); latchFixture(); octavePad(1); cv(0);
         // How much a rebuild costs, against the ~5 ms scan: printed, not gated.
         cv(0); steps=0; cv(33); long rebuild=steps; steps=0; cv(33); long idle=steps;
         println("SCAN BUDGET jack rebuild "+rebuild+" instructions, an idle control scan "+idle);
@@ -1132,6 +1140,8 @@ public class ControlRegression extends SequenceEditRegression {
         long slow=gridReload(5000);
         check("a reload over 0xfff steps fewer eighths, and says so",
             slow<=0xfff&&slow==6*5000/8&&r(0x6152,1)==6);
+        w(0x6152,1,0); w(0x6153,1,0);
+        check("a beat of zero cannot spin: the limit is the reload",gridReload(0)==8);
         steps=0; gridReload(400); println("SCAN BUDGET quantized reload "+steps+" instructions");
         println("PASS quantized rhythm: eighth grid, position, shares at three settings, deadzone, odd beats and the limits as grid");
     }

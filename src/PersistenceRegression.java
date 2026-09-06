@@ -223,7 +223,10 @@ public class PersistenceRegression extends GhidraScript {
         check("the record carries the state and nothing else in the reserved bytes",
             p==BASE+512&&r(p+25,1)==1&&r(p+26,2)==0);
         check("an unchanged state skips flash",capture(32)==0);
+        w(0x6580,2,0x7fff); w(0x6582,2,0x1234); w(0x6584,2,0x5678);
         cold(); check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6409,1)==1);
+        check("the reference, the hold count and the shadow start at zero",
+            r(0x6580,2)==0&&r(0x6582,2)==0&&r(0x6584,2)==0);
         byte[] good=e.readMemory(toAddr(p),512);
         w(p+25,1,2); fixCrc(p);
         check("a state out of range is rejected",call(NEWEST)==BASE);

@@ -1207,10 +1207,10 @@ RAM_REGIONS = [
     (0x657C, 0x657D, "strip lamp acknowledgment countdown, in scans"),
     (0x657D, 0x657E, "which lamp it is: 1 a rest, 2 a tie"),
     (0x657E, 0x657F, "last scan's step count, for spotting an append"),
-    # The latch's transpose state.  The reference is the transpose the state
-    # was entered under, set by the toggle before anything reads it; the
-    # count only means anything while both pads are down and is zeroed on
-    # every other scan, so neither needs the first-use fill.
+    # The latch's transpose state: the reference is the transpose the state
+    # was entered under, set by the toggle; the count only means anything
+    # while both pads are down.  All three cells are zeroed by the boot
+    # wrapper (persist_boot), which every shipped build carries.
     (0x6580, 0x6582, "latch transpose reference"),
     (0x6582, 0x6584, "pads 2 & 3 hold count, in scans"),
     # Beside the octave shadow at 0x615d: the transpose that octave stands
