@@ -43,7 +43,10 @@ Pressure-controlled glide: press harder and the glide shortens.
 
 ## Arpeggiator
 
-- **Latching** — the arpeggio holds after you lift your hands.
+- **Latching** — the arpeggio holds after you lift your hands. Hold **pads 2
+  and 3** for a second to choose whether the octave pads act before a note is
+  entered or after; both pads flash to confirm. Before, they set where each
+  new note goes in; after, they move everything already held.
 - **Knob 1** sets note order, from strict press order through to fully
   random.
 - **Knob 2** sets rhythm, from even pulses to increasingly irregular
@@ -66,9 +69,9 @@ nothing is being held. Reset clears that, and recalibrates the keys as well, so
 it is worth doing before any session. Keep your hands off the keyboard for the
 few seconds the pad LEDs stay lit.
 
-The latch on **pads 2 & 3** is the instrument's own and still works. One
-interaction worth knowing: leaving the arpeggiator's latch position releases
-everything held, including a latch those pads set up.
+Pads 2 and 3 no longer set the instrument's own latch; they choose the
+octave pads' behaviour instead. Leaving the arpeggiator's latch position
+still releases everything held.
 
 ## Going back
 
