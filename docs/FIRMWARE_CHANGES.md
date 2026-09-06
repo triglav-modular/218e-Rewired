@@ -44,9 +44,10 @@ Pressure-controlled glide: press harder and the glide shortens.
 ## Arpeggiator
 
 - **Latching** — the arpeggio holds after you lift your hands. Hold **pads 2
-  and 3** together to toggle if “add to pitch” is applied before or after a
-  note is entered in latch mode; both pads flash to confirm. Before, it sets
-  where each new note goes in; after, it moves everything already held.
+  and 3** together to change if “add to pitch” is applied before or after a
+  note is entered in latch mode; both pads flash to confirm. The default state
+  is “before”, which sets where each new note goes in; “after” moves
+  everything already held.
 - **Knob 1** sets note order, from strict press order through to fully
   random.
 - **Knob 2** sets rhythm, from even pulses to increasingly irregular
