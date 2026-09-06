@@ -44,9 +44,9 @@ Pressure-controlled glide: press harder and the glide shortens.
 ## Arpeggiator
 
 - **Latching** — the arpeggio holds after you lift your hands. Hold **pads 2
-  and 3** for a second to choose whether the octave pads act before a note is
-  entered or after; both pads flash to confirm. Before, they set where each
-  new note goes in; after, they move everything already held.
+  and 3** for a second to choose whether the octave pads act before the note
+  is entered or after in latch mode; both pads flash to confirm. Before, they
+  set where each new note goes in; after, they move everything already held.
 - **Knob 1** sets note order, from strict press order through to fully
   random.
 - **Knob 2** sets rhythm, from even pulses to increasingly irregular
