@@ -373,8 +373,8 @@
         // A bank of one builds and plays; it is the knob that has nothing to
         // do, so this is advice and not a refusal.
         msg($('patMsg'), 'warn', state.patterns.length === 1
-            ? 'Add a second pattern — with only one in the bank, knob 2 has '
-              + 'nothing to switch between.'
+            ? 'With only one in the bank, knob 2 has nothing to switch '
+              + 'between. You should probably add more patterns.'
             : '');
     }
 
