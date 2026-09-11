@@ -370,6 +370,33 @@
         });
         $('patternBody').classList.toggle('hidden', knobRole.knob2 !== 'patterns');
         $('patAdd').disabled = state.patterns.length >= 32;
+        // A bank of one builds and plays; it is the knob that has nothing to
+        // do, so this is advice and not a refusal.
+        msg($('patMsg'), 'warn', state.patterns.length === 1
+            ? 'Add a second pattern — with only one in the bank, knob 2 has '
+              + 'nothing to switch between.'
+            : '');
+    }
+
+    // A CLIX mask is 32 bits, least significant step first.
+    function clixPattern(mask) {
+        var t = '';
+        for (var i = 0; i < 32; i++) t += (mask >>> i) & 1 ? 'x' : '.';
+        return { text: t, length: 32 };
+    }
+
+    // What switching knob 2 to patterns starts with.  Four unlike fills rather
+    // than one, because a bank of one gives the knob nothing to sweep through
+    // and the first thing anyone does is turn it.  CLIX numbering is 1-based.
+    var DEFAULT_CLIX = [2, 8, 12, 22];
+
+    function defaultPatterns() {
+        var picked = DEFAULT_CLIX.filter(function (n) {
+            return GEN.clix[n - 1] !== undefined;
+        });
+        return picked.length
+            ? picked.map(function (n) { return clixPattern(GEN.clix[n - 1]); })
+            : [{ text: 'x...x...x...x...', length: 16 }];
     }
 
     function renderSlots() {
@@ -551,11 +578,7 @@
         renderPatterns(); invalidate();
     });
     $('patClix').addEventListener('click', function () {
-        state.patterns = GEN.clix.map(function (mask) {
-            var t = '';
-            for (var i = 0; i < 32; i++) t += (mask >>> i) & 1 ? 'x' : '.';
-            return { text: t, length: 32 };
-        });
+        state.patterns = GEN.clix.map(clixPattern);
         renderPatterns(); invalidate();
     });
     $('patCopy').addEventListener('click', function () {
@@ -1404,7 +1427,7 @@
                 });
                 if (id === 'knob2' && b.dataset.v === 'patterns'
                         && !state.patterns.length) {
-                    state.patterns = [{ text: 'x...x...x...x...', length: 16 }];
+                    state.patterns = defaultPatterns();
                 }
                 renderPatterns();
                 invalidate();
