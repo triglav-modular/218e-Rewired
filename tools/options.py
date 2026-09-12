@@ -63,19 +63,18 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                  'dac_vref': 2.5},
     'presets': {'quantize': False},
     # The PORTAMENTO IN jack as a transposer.  cv_counts_per_volt is the
-    # jack's ADC scale, 4095 counts over 10 V, so one period of the tuning
-    # is cv_volts_per_period of CV; cv_zero is subtracted from the raw
-    # reading first, and cv_hysteresis is how far past a degree boundary the
-    # CV has to travel before the answer changes - which is the whole of the
-    # steadying now, see below.
+    # jack's ADC scale - 4095 counts over 20 V, so 10 V reads about half
+    # scale - and one period of the tuning costs cv_volts_per_period of CV;
+    # cv_zero is subtracted from the raw reading first, and cv_hysteresis is
+    # how far past a degree boundary the CV has to travel before the answer
+    # changes, which is the whole of the steadying.  Each is documented at
+    # its own line below, with the evidence for it.
     #
-    # This was 102.3 until 2026-09-12 — a plain 10-bit count, 1023 over 10 V,
-    # which is what every OTHER ADC channel in this firmware is (they all mask
-    # to 0x3ff).  The cell the second ADC pass leaves at state+0x2f0 is not
-    # one of those: measured on the instrument, the whole shift was spent by
-    # about 2.5 V instead of 10 V, four times too soon.  Four is the factor
-    # between a 10-bit count and the 12-bit-justified reading this cell
-    # actually holds, and 4095 counts over 10 V is what the jack is for.
+    # The scale was 102.3, then 409.5, before the factory's own arithmetic
+    # settled it at 204.75 on 2026-09-12.  Both earlier values came from
+    # reading "the whole shift was spent by about 2.5 V" as a measurement of
+    # the INPUT; it is a measurement of where the pitch OUTPUT saturates, and
+    # it constrains the input scale hardly at all.  Do not reach for it again.
     'portamento_in': {   'transpose': False,
                          # Counts the jack's cell gains per volt in.  Read off
                          # the FACTORY's own arithmetic, not fitted to a
@@ -136,20 +135,15 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                          # the cave and RAM 0x60e8 are still there, and the
                          # per-scan chain enters it instead.
                          'cv_filter_shift': 0,
-                         # How much CV one period of the tuning costs.  This
-                         # was volts_per_octave until 2026-09-12, so 1.2 V
-                         # bought an octave and the jack's full 10 V bought
-                         # 8.3 of them - which the PITCH OUTPUT cannot show.
-                         # The curve at 0x80019bc0 holds 79 semitones, so the
-                         # DAC stops at 3125 counts of the 4095 it can drive,
-                         # and from the lowest key the transposition ran out
-                         # around 6 V with the top third of the jack's range
-                         # doing nothing visible.  At 2 V the full 0-10 V is
-                         # five periods, which is inside what the output
-                         # reaches from the bottom key at the neutral octave
-                         # (5.25).  Set it back to volts_per_octave for the
-                         # old law.
-                         # 4.0, not the 2.0 this was set to on 2026-09-12:
+                         # How much CV one period of the tuning costs.  It
+                         # was volts_per_octave until 2026-09-12, which tied
+                         # the INPUT's law to the OUTPUT's scaling: 1.2 V
+                         # bought an octave, so the jack's range bought far
+                         # more of them than the pitch output can show - the
+                         # curve at 0x80019bc0 holds 79 semitones, so the DAC
+                         # stops at 3125 counts of the 4095 it can drive.
+                         #
+                         # 4.0, not the 2.0 it was first set to that day:
                          # that figure was chosen against cv_counts_per_volt =
                          # 409.5, so it asked for 819 counts per period and got
                          # 4 V on the instrument.  The owner has the 4 V and

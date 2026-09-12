@@ -1787,7 +1787,8 @@ def main() -> None:
         "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
         "multi_key_max": 1 if cfg["pressure"].get("multi_key", "max") == "max" else 0,
         # The jack transposer: one period of the tuning per
-        # cv_volts_per_period of CV, at the jack's 4095 counts over 10 V.
+        # cv_volts_per_period of CV, at the jack's 4095 counts over 20 V
+        # (10 V reads about half scale - see tools/options.py for the evidence).
         # Not volts_per_octave any more - see tools/options.py: tying it to
         # the OUTPUT's scaling spent the jack's range on a transposition the
         # output cannot render.

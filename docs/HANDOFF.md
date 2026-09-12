@@ -113,11 +113,13 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
   `clock_lock_pulses` (5), and the jack transposer's `cv_counts_per_volt`
-  (409.5, i.e. 4095 counts over 10 V — measured 2026-09-12; it was 102.3,
-  a plain 10-bit count, which made the jack four times too sensitive),
-  `cv_zero` (0) and `cv_hysteresis`
-  (2) in tools/options.py - measure a known CV into PORTAMENTO IN against
-  state+0x2f0 before trusting the first two. All are build numbers
+  (204.75, i.e. 4095 counts over 20 V — INFERRED, not measured: the factory's
+  own glide-index arithmetic at `0x80003142` spans its 0x3ff clamp with this
+  jack only at about 205 counts/V. It was 102.3, then 409.5, both read off an
+  observation of where the pitch OUTPUT saturates), `cv_zero` (0) and
+  `cv_hysteresis` (12) in tools/options.py - read the raw count at TWO known
+  voltages into PORTAMENTO IN against state+0x2f0 before trusting the first
+  two; one point cannot separate a slope from an intercept. All are build numbers
   precisely so they can move. `chord_hold_scans`
   is 200 because the owner asked for a second. For current clock timing
   values and their digital-input constraints, use [CLOCK.md](CLOCK.md).
