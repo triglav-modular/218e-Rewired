@@ -1260,6 +1260,25 @@ public class ControlRegression extends SequenceEditRegression {
         }
         return at;
     }
+    // Entering the lower half with a hit standing on the half.  Eight halves
+    // of silence return to the phase they started from, so the miss limit has
+    // to step past a position the law gives no hits at all, or it forces the
+    // off-beat hit the law forbids.  Counts how often the limit was actually
+    // reached, so a run that never exercised it fails instead of passing
+    // quietly - the reason the first version of this suite could not see the
+    // defect was a fixture property no assertion stated.
+    int limitReached;
+    int forcedHalves(int knob,int trials,long beat) throws Exception {
+        w(0x60e6,2,knob); w(0x6153,1,0);
+        int forced=0; limitReached=0;
+        for(int i=0;i<trials;i++) {
+            w(0x6152,1,1);
+            long cd=gridReload(beat);
+            if(cd>=8*beat/2) limitReached++;
+            if(r(0x6152,1)!=0||cd%(beat/2)!=0) forced++;
+        }
+        return forced;
+    }
     void quantizedRhythm() throws Exception {
         fresh();
         check("the rhythm hook's pool word names the quantized cave",r(0x80019d40L,4)==GRID);
@@ -1303,6 +1322,15 @@ public class ControlRegression extends SequenceEditRegression {
         check("full travel: the half takes the other half: "+at[1],at[1]>900&&at[1]<1100);
         check("full travel: the mean spacing is one beat again: "+gridTotal,
             gridTotal>3700&&gridTotal<4200);
+        // Lowering the knob out of the top half leaves the last hit standing
+        // on a half the law no longer allows.  The next hit must come back to
+        // the beat however long the silence runs.
+        int forced=forcedHalves(512,2000,beat);
+        check("at the midpoint a hit standing on the half never forces another: "+forced,forced==0);
+        check("and the miss limit was reached, so that was tested: "+limitReached,limitReached>0);
+        forced=forcedHalves(513,2000,beat);
+        check("nor just above it, where the half's share still rounds to zero: "+forced,forced==0);
+        check("and the miss limit was reached there too: "+limitReached,limitReached>0);
         // A beat that is not even: the remainder is carried, so a run of hits
         // tracks the grid to within a scan instead of running early by the
         // dropped fraction every reload.

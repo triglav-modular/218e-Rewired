@@ -1046,6 +1046,16 @@ own hit and an added half, or neither.  A run of misses is cut at 8 halves,
 matching the randomiser's 4x ceiling, and the reload keeps its 8..0xfff
 clamps.
 
+**The cut cannot land where the law gives nothing.**  Eight halves is an even
+number of them, so the limit returns to the phase it started from: a hit left
+standing on the half - by lowering the knob out of the top half, where halves
+do sound - was forced into another one at a probability of zero, about once in
+every 256 such crossings.  Found by an audit probe on 2026-09-12 and fixed by
+stepping past any position whose share is zero, which costs at most one more
+half and still terminates, the beat's own share never being zero.  The suite
+could not see it: its fixture started every run from phase 0, where the limit
+lands on the beat, and no assertion said so.
+
 **Where it sits.**  The cave at `0x8001ea00` takes the rhythm hook's pool
 word at `0x80019d40`, the third reader of it after the randomiser and swing,
 and reads the same knob latch (`0x60e6`) with the same deadzone.  RAM

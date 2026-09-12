@@ -4466,7 +4466,15 @@ function assembleProgram() {
         //
         // Each half in turn is asked whether it sounds, against the threshold
         // of its position; a run of misses is cut at 8 halves, the
-        // randomiser's own 4x ceiling.  RAM 0x6152 is which half of the beat
+        // randomiser's own 4x ceiling.  The cut never falls on a position
+        // whose share is zero: eight halves is an even number of them and so
+        // returns to the phase it started from, and a hit left standing on
+        // the half - by lowering the knob out of the top half, where halves
+        // do sound - would otherwise be forced into another one at a
+        // probability the law puts at nothing.  A position the law gives no
+        // hits is stepped past instead, which costs at most one more half and
+        // still terminates, since the beat's own share is never zero.
+        // RAM 0x6152 is which half of the beat
         // the last hit fell on, the cell swing keeps its pair parity in; one
         // knob, one role, one byte.  Below the deadzone a hit standing off
         // the beat steps the rest of the way back onto it before the square
@@ -4493,7 +4501,7 @@ function assembleProgram() {
         emit("MOV R8,0x60e6");
         emit("LD.SH R8,R8[0x0]");       // the knob, 0..1023
         emit("CP.W R8,0x30");
-        emit("BR{lt} 0x8001eab2");     // deadzone: square, exactly as shipped
+        emit("BR{lt} 0x8001eab6");     // deadzone: square, exactly as shipped
         emit("MOV R3,R8");
         emit("LSR R3,0x1");             // M = 512x: what leaves the beat
         emit("MOV R9,0x400");
@@ -4520,58 +4528,60 @@ function assembleProgram() {
         emit("MOV R9,R4");              // the beat
         padTo(0x8001ea58);
         emit("CP.W R8,R9");
-        emit("BR{lt} 0x8001ea60");      // a hit
+        emit("BR{lt} 0x8001ea64");      // a hit
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001ea40");      // the law gives this one nothing: step on
         emit("CP.W R2,0x8");
         emit("BR{lt} 0x8001ea40");      // a miss: ask the next half
-        padTo(0x8001ea60);
+        padTo(0x8001ea64);
         emit("MOV R8,0x6153");
         emit("LD.UB R8,R8[0x0]");       // the carry, in halves of a scan
-        padTo(0x8001ea66);
+        padTo(0x8001ea6a);
         emit("MUL R12,R2,R0");          // halves * beat
         emit("ADD R12,R8");
         emit("LSR R12,0x1");            // in scans
         emit("CP.W R12,0x8");
-        emit("BR{ge} 0x8001ea84");
+        emit("BR{ge} 0x8001ea88");
         // Bounded: a beat of zero would never reach eight scans, and the
         // factory guards only a reload of -1, so past 16 halves the limit is
         // taken as the reload itself rather than asked for again.
         emit("CP.W R2,0x10");
-        emit("BR{ge} 0x8001ea80");
+        emit("BR{ge} 0x8001ea84");
         emit("SUB R2,-0x1");            // under the limit: one more half
         emit("SUB R1,-0x1");
         emit("ANDL R1,0x1");
-        emit("RJMP 0x8001ea66");
-        padTo(0x8001ea80);
-        emit("MOV R12,0x8");
-        emit("RJMP 0x8001eaa0");
+        emit("RJMP 0x8001ea6a");
         padTo(0x8001ea84);
+        emit("MOV R12,0x8");
+        emit("RJMP 0x8001eaa4");
+        padTo(0x8001ea88);
         emit("MOV R9,0xfff");
         emit("CP.W R12,R9");
-        emit("BR{le} 0x8001eaa0");
+        emit("BR{le} 0x8001eaa4");
         emit("CP.W R2,0x1");
-        emit("BR{le} 0x8001ea9e");      // one half already: the limit itself
+        emit("BR{le} 0x8001eaa2");      // one half already: the limit itself
         emit("SUB R2,0x1");             // over the limit: one half fewer
         emit("SUB R1,0x1");
         emit("ANDL R1,0x1");
-        emit("RJMP 0x8001ea66");
-        padTo(0x8001ea9e);
+        emit("RJMP 0x8001ea6a");
+        padTo(0x8001eaa2);
         emit("MOV R12,R9");
-        padTo(0x8001eaa0);
+        padTo(0x8001eaa4);
         emit("MUL R9,R2,R0");
         emit("ADD R9,R8");
         emit("ANDL R9,0x1");            // what the division left
         emit("MOV R8,0x6153");
         emit("ST.B R8[0x0],R9");
-        emit("RJMP 0x8001eac0");
-        padTo(0x8001eab2);
+        emit("RJMP 0x8001eac4");
+        padTo(0x8001eab6);
         emit("MOV R2,0x2");             // square: the whole beat
         emit("CP.W R1,0x0");
-        emit("BR{eq} 0x8001ea60");
+        emit("BR{eq} 0x8001ea64");
         emit("RSUB R1,R2");             // off the beat: the rest of the way back
         emit("MOV R2,R1");
         emit("MOV R1,0x0");
-        emit("RJMP 0x8001ea60");
-        padTo(0x8001eac0);
+        emit("RJMP 0x8001ea64");
+        padTo(0x8001eac4);
         emit("LDDPC R8,0x8001eb08");
         emit("ST.H R8[0x38e],R12");
         emit("MOV R8,0x6152");
