@@ -992,7 +992,7 @@ nothing.  Everything else - the pitch, the gate, the trigger, the MIDI note -
 comes from the factory's own note machinery, already paired, rather than from
 a pulse fired on its own.
 
-### Quantized randomness on knob 2 (2026-09-04, halves only from 2026-09-12)
+### Quantized randomness on knob 2 (2026-09-04, halves only and ramped 2026-09-12)
 
 The spacing randomiser draws each step's length from a continuous law, so
 its hits land anywhere.  `knob2 = "quantized"` is the same blend kept on a
@@ -1004,14 +1004,23 @@ a dropped trigger, or one added on the half - so those levels are gone from
 the law rather than merely made unlikely.
 
 **The law**, in 1024ths per beat, with `x` the knob's travel 0..1.  The mass
-that leaves the beat is `M = 512x` and the half takes all of it, so the beat
-sounds with `1024 - M` - every beat with the knob down, one in two at the
-top - and the half with `M`.  Each position is drawn on its own against ten
-bits of the factory PRNG, so a beat can carry both its own hit and an added
-half, or neither, and the two shares sum to one per beat at any setting, so
-the density stays what RATE set - beats drop out and notes appear between
-them.  A run of misses is cut at 8 halves, matching the randomiser's 4x
-ceiling, and the reload keeps its 8..0xfff clamps.
+that leaves the beat is `M = 512x`, so the beat sounds with `1024 - M`:
+every beat with the knob down, one in two at the top.  The half takes none
+of that mass until halfway and all of it at the end - its share is
+`M * (2x - 1)` with `2x - 1` clamped at zero - so at or below the midpoint
+the half never sounds at all.
+
+**The two halves of the travel therefore do different things**, which is
+what the owner asked for after hearing the first version.  The bottom half
+only thins: beats drop and nothing replaces them, so the arpeggio is
+sparser than RATE set, most so at the midpoint, where three beats in four
+sound and a hit costs four thirds of a beat.  The top half fills the gaps
+back in, until at full travel the beat has one hit in two and the half the
+other, and the density is what RATE set again.  Each position is drawn on
+its own against ten bits of the factory PRNG, so a beat can carry both its
+own hit and an added half, or neither.  A run of misses is cut at 8 halves,
+matching the randomiser's 4x ceiling, and the reload keeps its 8..0xfff
+clamps.
 
 **Where it sits.**  The cave at `0x8001ea00` takes the rhythm hook's pool
 word at `0x80019d40`, the third reader of it after the randomiser and swing,
@@ -1025,14 +1034,17 @@ back onto it before the square reload resumes, so turning the knob down
 never leaves the arpeggio off the beat.
 
 Verified by emulating the shipped bytes (`ControlRegression.quantizedRhythm`,
-in the roles variant of `tools/test_controls.py`): over 2,000 hits at full
-travel every reload is a whole number of halves, one to eight, with the
-position following, the beat and the half take half the hits each, and the
-mean spacing holds at one beat; at half travel three hits in four stay on
-the beat and the rest land on the half, the density unchanged; at an eighth
-of the travel the half takes about one hit in sixteen; a thousand hits on a
-401-scan beat stay within a scan of the grid; plus the deadzone, the
-off-beat recovery and both clamps kept as a grid.
+in the roles variant of `tools/test_controls.py`), 2,000 hits at each of five
+settings: at an eighth of the travel and at the midpoint nothing sounds off
+the beat at all and the run is measurably thinner - a hit costs 2.14 and 2.63
+halves against the two halves a beat is - just past the midpoint the half
+arrives and is rare, at three quarters it takes about a fifth of the hits,
+and at full travel the beat and the half take half each with the mean
+spacing back at one beat.  Every reload at every setting is a whole number
+of halves with the position following it, which is what would catch a
+quarter or an eighth.  Plus a thousand hits on a 401-scan beat staying
+within a scan of the grid, the deadzone, the off-beat recovery and both
+clamps kept as a grid.
 
 ### The randomisers reach the sequence (2026-08-27)
 

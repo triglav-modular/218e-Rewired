@@ -1196,26 +1196,35 @@ public class ControlRegression extends SequenceEditRegression {
             gridReload(beat)==beat/2&&r(0x6152,1)==0);
         w(0x60e6,2,0x2f); w(0x6152,1,0);
         check("the deadzone reaches the randomiser's own 0x30",gridReload(beat)==beat);
-        // Full travel: the beat and the half take half the hits each, and the
-        // mean spacing is still one beat.
-        int[] at=gridHits(1023,2000,beat);
-        check("full travel: every reload is a whole number of halves, one to eight",gridHeld);
-        check("full travel: the position follows the halves stepped",gridFollows);
-        check("full travel: the beat keeps half the hits: "+at[0],at[0]>900&&at[0]<1100);
-        check("full travel: the half takes the other half: "+at[1],at[1]>900&&at[1]<1100);
-        check("full travel: the mean spacing stays one beat: "+gridTotal,gridTotal>3700&&gridTotal<4300);
-        // Halfway: three hits in four on the beat, the rest on the half, and
-        // the density unchanged.
+        // The bottom half of the travel only thins: beats drop, nothing is
+        // added, so every hit is on a beat and a hit costs more than a beat.
+        // 2000 hits at one eighth of the travel, then at the midpoint.
+        int[] at=gridHits(128,2000,beat);
+        check("low: every reload is a whole number of halves, one to eight",gridHeld);
+        check("low: the position follows the halves stepped",gridFollows);
+        check("low: nothing sounds off the beat: "+at[1],at[1]==0);
+        check("low: one beat in sixteen drops, so a hit costs a little over a beat: "+gridTotal,
+            gridTotal>4100&&gridTotal<4500);
         at=gridHits(512,2000,beat);
         check("halfway: the grid holds",gridHeld&&gridFollows);
-        check("halfway: three hits in four land on the beat: "+at[0],at[0]>1350&&at[0]<1650);
-        check("halfway: the half takes the rest: "+at[1],at[1]>350&&at[1]<650);
-        check("halfway: the mean spacing stays one beat: "+gridTotal,gridTotal>3700&&gridTotal<4300);
-        // An eighth of the travel: a few hits on the half and nothing else,
-        // where the old law had the quarters and eighths still to arrive.
-        at=gridHits(128,2000,beat);
-        check("low: the grid holds",gridHeld&&gridFollows);
-        check("low: the half takes about one hit in sixteen: "+at[1],at[1]>70&&at[1]<200);
+        check("halfway: the half still never sounds: "+at[1],at[1]==0);
+        check("halfway: a quarter of the beats have dropped, the thinnest the knob goes: "+gridTotal,
+            gridTotal>5000&&gridTotal<5600);
+        // Past the midpoint the half arrives, and goes on arriving: sparse
+        // just above it, a fifth of the hits at three quarters of the travel,
+        // and half of them at the end, where the density is what RATE set.
+        at=gridHits(600,2000,beat);
+        check("just past halfway: the half sounds, and rarely: "+at[1],at[1]>90&&at[1]<220);
+        at=gridHits(768,2000,beat);
+        check("three quarters: the half takes about a fifth of the hits: "+at[1],at[1]>330&&at[1]<550);
+        check("three quarters: still thinner than one hit a beat: "+gridTotal,
+            gridTotal>4600&&gridTotal<5100);
+        at=gridHits(1023,2000,beat);
+        check("full travel: the grid holds",gridHeld&&gridFollows);
+        check("full travel: the beat keeps half the hits: "+at[0],at[0]>900&&at[0]<1100);
+        check("full travel: the half takes the other half: "+at[1],at[1]>900&&at[1]<1100);
+        check("full travel: the mean spacing is one beat again: "+gridTotal,
+            gridTotal>3700&&gridTotal<4200);
         // A beat that is not even: the remainder is carried, so a run of hits
         // tracks the grid to within a scan instead of running early by the
         // dropped fraction every reload.
@@ -1243,7 +1252,7 @@ public class ControlRegression extends SequenceEditRegression {
         w(0x6152,1,0); w(0x6153,1,0);
         check("a beat of zero cannot spin: the limit is the reload",gridReload(0)==8);
         steps=0; gridReload(400); println("SCAN BUDGET quantized reload "+steps+" instructions");
-        println("PASS quantized rhythm: half grid, position, shares at three settings, deadzone, odd beats and the limits as grid");
+        println("PASS quantized rhythm: half grid, the bottom half thinning and the top half filling, position, deadzone, odd beats and the limits as grid");
     }
     void retainedStartup() throws Exception {
         // SRAM survives a DFU: another image's pickup stamps must not

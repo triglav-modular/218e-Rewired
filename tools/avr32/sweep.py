@@ -248,7 +248,7 @@ def audit_call_pools(image_path) -> list[str]:
 # moves this anchor even though it carries the jack turned off.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "20916ce9435c2a425c83ff119e3db8c10cb8776a59a02bbbda0b2f5c64e9a1a5",
+    "historical_config": "efbfcaaaf49c4df5ee4cb1cfd56d4b614fe01f515378391e8e714aca9c3df3bb",
 }
 
 
