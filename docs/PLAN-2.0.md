@@ -954,44 +954,47 @@ nothing.  Everything else - the pitch, the gate, the trigger, the MIDI note -
 comes from the factory's own note machinery, already paired, rather than from
 a pulse fired on its own.
 
-### Quantized randomness on knob 2 (2026-09-04)
+### Quantized randomness on knob 2 (2026-09-04, halves only from 2026-09-12)
 
 The spacing randomiser draws each step's length from a continuous law, so
 its hits land anywhere.  `knob2 = "quantized"` is the same blend kept on a
-grid: the beat is cut into eighths, and every reload the rhythm hook stores
-is a whole number of them, so a note can only fall on a beat, its half, a
-quarter or an eighth.
+grid: the beat is cut in half, and every reload the rhythm hook stores is a
+whole number of halves, so a note can only fall on a beat or on its half.
+Nothing finer is reachable.  The first shape of this reached quarters and
+eighths as the knob went up; the owner asked for the two outcomes alone -
+a dropped trigger, or one added on the half - so those levels are gone from
+the law rather than merely made unlikely.
 
 **The law**, in 1024ths per beat, with `x` the knob's travel 0..1.  The mass
-that leaves the beat is `M = 512x`, so the beat sounds with `1024 - M`:
-every beat with the knob down, one in two at the top.  Of that mass the two
-quarters take `Q = 128x^2` between them and the four eighths `E = 256x^3`
-between them; the half takes what is left, `M - Q - E`.  The knob therefore
-does two things as it goes up, which is what the owner asked for: more hits
-leave the beat, and the ones that do reach finer divisions - the half first,
-then the quarters, the eighths arriving last.  The shares still sum to one
-per beat at any setting, so the density stays what RATE set - beats drop out
-and notes appear between them.  Each eighth in turn is asked whether it
-sounds against its level's threshold with ten bits of the factory PRNG; a
-run of misses is cut at 32 eighths, matching the randomiser's 4x ceiling,
-and the reload keeps its 8..0xfff clamps.
+that leaves the beat is `M = 512x` and the half takes all of it, so the beat
+sounds with `1024 - M` - every beat with the knob down, one in two at the
+top - and the half with `M`.  Each position is drawn on its own against ten
+bits of the factory PRNG, so a beat can carry both its own hit and an added
+half, or neither, and the two shares sum to one per beat at any setting, so
+the density stays what RATE set - beats drop out and notes appear between
+them.  A run of misses is cut at 8 halves, matching the randomiser's 4x
+ceiling, and the reload keeps its 8..0xfff clamps.
 
-**Where it sits.**  The cave at `0x8001e440` takes the rhythm hook's pool
+**Where it sits.**  The cave at `0x8001ea00` takes the rhythm hook's pool
 word at `0x80019d40`, the third reader of it after the randomiser and swing,
 and reads the same knob latch (`0x60e6`) with the same deadzone.  RAM
-`0x6152`, swing's pair parity, is which eighth of the beat the last hit fell
-on - one knob, one role, one byte.  Below the deadzone a hit standing off
-the beat steps the rest of the way back onto it before the square reload
-resumes, so turning the knob down never leaves the arpeggio off the beat.
+`0x6152`, swing's pair parity, is which half of the beat the last hit fell
+on - one knob, one role, one byte.  A beat that is not an even number of
+scans carries its remainder in halves of a scan at `0x6153`, so a run of
+reloads tracks the grid instead of running early by the dropped fraction.
+Below the deadzone a hit standing off the beat steps the rest of the way
+back onto it before the square reload resumes, so turning the knob down
+never leaves the arpeggio off the beat.
 
 Verified by emulating the shipped bytes (`ControlRegression.quantizedRhythm`,
 in the roles variant of `tools/test_controls.py`): over 2,000 hits at full
-travel every reload is one to thirty-two eighths with the position
-following, the beat keeps half the hits, the half one in eight, the quarters
-and the eighths their shares, and the mean spacing holds at one beat; at half
-travel three hits in four stay on the beat and the finer divisions are rare
-but present; at an eighth of the travel the half has a few and nothing finer
-sounds at all; plus the deadzone, the off-beat recovery and both clamps.
+travel every reload is a whole number of halves, one to eight, with the
+position following, the beat and the half take half the hits each, and the
+mean spacing holds at one beat; at half travel three hits in four stay on
+the beat and the rest land on the half, the density unchanged; at an eighth
+of the travel the half takes about one hit in sixteen; a thousand hits on a
+401-scan beat stay within a scan of the grid; plus the deadzone, the
+off-beat recovery and both clamps kept as a grid.
 
 ### The randomisers reach the sequence (2026-08-27)
 

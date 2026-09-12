@@ -241,7 +241,7 @@ def audit_call_pools(image_path) -> list[str]:
 # released key 1 had been anchoring every later single key on its own pitch.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "2d758b984aa9e37a775a3edae97b22110a0d335ff3d4ab38f4846da9373f8c22",
+    "historical_config": "f300c6931fc5a95576842a7e882c2cebdc80a3f0adaa5638d33de9cf2b5d58cc",
 }
 
 

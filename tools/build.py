@@ -1098,11 +1098,11 @@ RAM_REGIONS = [
     # Where knob 2's pattern has got to, wrapped at that pattern's length.
     (0x6150, 0x6152, "arp pattern step"),
     # Which half of the swung pair the next step is - or, with knob 2
-    # quantized instead, which eighth of the beat the last hit fell on.
-    (0x6152, 0x6153, "arp swing parity / quantized beat eighth"),
+    # quantized instead, which half of the beat the last hit fell on.
+    (0x6152, 0x6153, "arp swing parity / quantized beat half"),
     # What the last quantized reload's division left, so a beat that is not
-    # a multiple of eight scans still keeps the grid over a run of hits.
-    (0x6153, 0x6154, "quantized rhythm: eighths of a scan carried between reloads"),
+    # an even number of scans still keeps the grid over a run of hits.
+    (0x6153, 0x6154, "quantized rhythm: halves of a scan carried between reloads"),
     # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
     # the selection is frozen at, last scan's touch levels, the octave shadow
     # (+9: the active pad while pads 2-4 are all up, which a completed chord

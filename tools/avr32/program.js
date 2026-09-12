@@ -3520,143 +3520,120 @@ function assembleProgram() {
 
         // Knob 2 as quantized randomness.  The spacing randomiser draws each
         // step's length from a continuous law, so its hits land anywhere.
-        // This one keeps the grid: the beat is cut into eighths, and every
-        // reload is a whole number of them, so a note can only ever fall on
-        // a beat, its half, a quarter or an eighth.  Same hook, same output
-        // cell, same knob latch and deadzone as the randomiser it stands in
-        // for.
+        // This one keeps the grid: the beat is cut in half, and every reload
+        // is a whole number of halves, so a note can only ever fall on a beat
+        // or on its half.  Nothing finer is reachable - no quarters, no
+        // eighths - so what the knob does is drop triggers and add off-beat
+        // ones.  Same hook, same output cell, same knob latch and deadzone as
+        // the randomiser it stands in for.
         //
         // The law, in 1024ths per beat, with x the knob's travel 0..1: the
-        // mass that leaves the beat is M = 512x, so the beat itself sounds
-        // with 1024 - M - every beat with the knob down, one in two at the
-        // top.  Of that mass the two quarters take Q = 128x^2 between them
-        // and the four eighths E = 256x^3 between them; the half takes what
-        // is left, M - Q - E.  So the knob does two things as it goes up:
-        // more hits leave the beat, and the ones that do reach finer
-        // divisions - the half first, then the quarters, and the eighths
-        // arriving last.  The four chances still sum to one per beat at any
+        // mass that leaves the beat is M = 512x and the half takes all of it,
+        // so the beat sounds with 1024 - M - every beat with the knob down,
+        // one in two at the top - and the half with M.  Each position is
+        // drawn on its own, so a beat can carry both its own hit and an added
+        // half, or neither, and the two chances sum to one per beat at any
         // setting, so the density, and the felt tempo, stays what RATE set.
         //
-        // Each eighth in turn is asked whether it sounds, against the
-        // threshold of its level; a run of misses is cut at 32 eighths, the
-        // randomiser's own 4x ceiling.  RAM 0x6152 is which eighth of the
-        // beat the last hit fell on, the cell swing keeps its pair parity
-        // in; one knob, one role, one byte.  Below the deadzone a hit
-        // standing off the beat steps the rest of the way back onto it
-        // before the square reload resumes.
+        // Each half in turn is asked whether it sounds, against the threshold
+        // of its position; a run of misses is cut at 8 halves, the
+        // randomiser's own 4x ceiling.  RAM 0x6152 is which half of the beat
+        // the last hit fell on, the cell swing keeps its pair parity in; one
+        // knob, one role, one byte.  Below the deadzone a hit standing off
+        // the beat steps the rest of the way back onto it before the square
+        // reload resumes.
         //
-        // A beat that is not a multiple of eight scans does not cut into
-        // whole eighths, and a reload that dropped the remainder each time
-        // ran early by it, cumulatively - a 401-scan beat lost 346 scans
-        // over a thousand hits.  So the remainder is carried, in eighths
-        // of a scan at 0x6153: each reload is floor((eighths * beat +
-        // carry) / 8) and the new carry is what that left, so the sum of
-        // the reloads tracks the grid exactly.  The randomiser's own limits
-        // are kept as a grid, not a clamp: a reload under eight scans asks
-        // for another eighth, one over 0xfff for one fewer, and the
-        // position byte moves with the eighths actually stepped, so what
-        // the byte says and what elapsed never disagree.
+        // A beat that is not an even number of scans does not cut into whole
+        // halves, and a reload that dropped the remainder each time ran early
+        // by it, cumulatively.  So the remainder is carried, in halves of a
+        // scan at 0x6153: each reload is floor((halves * beat + carry) / 2)
+        // and the new carry is what that left, so the sum of the reloads
+        // tracks the grid exactly.  The randomiser's own limits are kept as a
+        // grid, not a clamp: a reload under eight scans asks for another
+        // half, one over 0xfff for one fewer, and the position byte moves
+        // with the halves actually stepped, so what the byte says and what
+        // elapsed never disagree.
         begin(0x8001ea00);
         emit("STM --SP,R0,R1,R2,R3,R4,R5,R6,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");             // the beat, in scans
         emit("MOV R8,0x6152");
         emit("LD.UB R1,R8[0x0]");
-        emit("ANDL R1,0x7");            // the eighth the last hit fell on
-        emit("MOV R2,0x0");             // eighths to the next hit
+        emit("ANDL R1,0x1");            // the half the last hit fell on
+        emit("MOV R2,0x0");             // halves to the next hit
         emit("MOV R8,0x60e6");
         emit("LD.SH R8,R8[0x0]");       // the knob, 0..1023
         emit("CP.W R8,0x30");
-        emit("BR{lt} 0x8001eae0");      // deadzone: square, exactly as shipped
-        emit("MOV R4,R8");
-        emit("LSR R4,0x1");             // M = 512x: what leaves the beat
-        emit("MUL R5,R4,R8");
-        emit("LSR R5,0xa");             // 512x^2
-        emit("MUL R6,R5,R8");
-        emit("LSR R6,0xa");             // 512x^3
-        emit("LSR R6,0x1");             // E = 256x^3: the four eighths' share
-        emit("LSR R5,0x2");             // Q = 128x^2: the two quarters' share
-        emit("MOV R3,R4");
-        emit("SUB R3,R3,R5 << 0x0");
-        emit("SUB R3,R3,R6 << 0x0");    // the half: what is left of M
+        emit("BR{lt} 0x8001ea9e");      // deadzone: square, exactly as shipped
+        emit("MOV R3,R8");
+        emit("LSR R3,0x1");             // M = 512x: the half's whole share
         emit("MOV R9,0x400");
+        emit("MOV R4,R3");
         emit("RSUB R4,R9");             // the beat: 1024 - M
-        emit("LSR R5,0x1");             // each quarter
-        emit("LSR R6,0x2");             // each eighth
-        padTo(0x8001ea48);
+        padTo(0x8001ea2c);
         emit("SUB R2,-0x1");
         emit("SUB R1,-0x1");
-        emit("ANDL R1,0x7");            // the next eighth of the beat
+        emit("ANDL R1,0x1");            // the next half of the beat
         emit("MCALL PC[0x8001eb0c]");
         emit("BFEXTU R8,R12,0xa,0xa");  // ten bits of the draw
-        emit("MOV R9,R6");              // an odd eighth
-        emit("MOV R10,R1");
-        emit("ANDL R10,0x1");
-        emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001ea78");
-        emit("MOV R9,R5");              // a quarter
-        emit("MOV R10,R1");
-        emit("ANDL R10,0x2");
-        emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001ea78");
         emit("MOV R9,R3");              // the half
-        emit("CP.W R1,0x4");
-        emit("BR{eq} 0x8001ea78");
+        emit("CP.W R1,0x0");
+        emit("BR{ne} 0x8001ea44");
         emit("MOV R9,R4");              // the beat
-        padTo(0x8001ea78);
+        padTo(0x8001ea44);
         emit("CP.W R8,R9");
-        emit("BR{lt} 0x8001ea82");      // a hit
-        emit("CP.W R2,0x20");
-        emit("BR{lt} 0x8001ea48");      // a miss: ask the next eighth
-        padTo(0x8001ea82);
+        emit("BR{lt} 0x8001ea4c");     // a hit
+        emit("CP.W R2,0x8");
+        emit("BR{lt} 0x8001ea2c");      // a miss: ask the next half
+        padTo(0x8001ea4c);
         emit("MOV R8,0x6153");
-        emit("LD.UB R8,R8[0x0]");       // the carry, in eighths of a scan
-        padTo(0x8001ea88);
-        emit("MUL R12,R2,R0");          // eighths * beat
+        emit("LD.UB R8,R8[0x0]");       // the carry, in halves of a scan
+        padTo(0x8001ea52);
+        emit("MUL R12,R2,R0");          // halves * beat
         emit("ADD R12,R8");
-        emit("LSR R12,0x3");            // in scans
+        emit("LSR R12,0x1");            // in scans
         emit("CP.W R12,0x8");
-        emit("BR{ge} 0x8001eaa8");
+        emit("BR{ge} 0x8001ea70");
         // Bounded: a beat of zero would never reach eight scans, and the
-        // factory guards only a reload of -1, so past 64 eighths the limit
-        // is taken as the reload itself rather than asked for again.
-        emit("CP.W R2,0x40");
-        emit("BR{ge} 0x8001eaa4");
-        emit("SUB R2,-0x1");            // under the limit: one more eighth
+        // factory guards only a reload of -1, so past 16 halves the limit is
+        // taken as the reload itself rather than asked for again.
+        emit("CP.W R2,0x10");
+        emit("BR{ge} 0x8001ea6c");
+        emit("SUB R2,-0x1");            // under the limit: one more half
         emit("SUB R1,-0x1");
-        emit("ANDL R1,0x7");
-        emit("RJMP 0x8001ea88");
-        padTo(0x8001eaa4);
+        emit("ANDL R1,0x1");
+        emit("RJMP 0x8001ea52");
+        padTo(0x8001ea6c);
         emit("MOV R12,0x8");
-        emit("RJMP 0x8001eac8");
-        padTo(0x8001eaa8);
+        emit("RJMP 0x8001ea8c");
+        padTo(0x8001ea70);
         emit("MOV R9,0xfff");
         emit("CP.W R12,R9");
-        emit("BR{le} 0x8001eac8");
+        emit("BR{le} 0x8001ea8c");
         emit("CP.W R2,0x1");
-        emit("BR{le} 0x8001eac4");      // one eighth already: the limit itself
-        emit("SUB R2,0x1");             // over the limit: one eighth fewer
+        emit("BR{le} 0x8001ea8a");      // one half already: the limit itself
+        emit("SUB R2,0x1");             // over the limit: one half fewer
         emit("SUB R1,0x1");
-        emit("ANDL R1,0x7");
-        emit("RJMP 0x8001ea88");
-        padTo(0x8001eac4);
+        emit("ANDL R1,0x1");
+        emit("RJMP 0x8001ea52");
+        padTo(0x8001ea8a);
         emit("MOV R12,R9");
-        padTo(0x8001eac8);
+        padTo(0x8001ea8c);
         emit("MUL R9,R2,R0");
         emit("ADD R9,R8");
-        emit("ANDL R9,0x7");            // what the division left
+        emit("ANDL R9,0x1");            // what the division left
         emit("MOV R8,0x6153");
         emit("ST.B R8[0x0],R9");
-        emit("RJMP 0x8001eaf0");
-        padTo(0x8001eae0);
-        emit("MOV R2,0x8");             // square: the whole beat
+        emit("RJMP 0x8001eaac");
+        padTo(0x8001ea9e);
+        emit("MOV R2,0x2");             // square: the whole beat
         emit("CP.W R1,0x0");
-        emit("BR{eq} 0x8001ea82");
+        emit("BR{eq} 0x8001ea4c");
         emit("RSUB R1,R2");             // off the beat: the rest of the way back
         emit("MOV R2,R1");
         emit("MOV R1,0x0");
-        emit("RJMP 0x8001ea82");
-        padTo(0x8001eaf0);
+        emit("RJMP 0x8001ea4c");
+        padTo(0x8001eaac);
         emit("LDDPC R8,0x8001eb08");
         emit("ST.H R8[0x38e],R12");
         emit("MOV R8,0x6152");

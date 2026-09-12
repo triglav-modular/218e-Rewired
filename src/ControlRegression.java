@@ -1052,24 +1052,25 @@ public class ControlRegression extends SequenceEditRegression {
         println("PASS preset edits during recording decline the bare-pad hold; editless holds still act");
     }
     // Knob 2 as quantized randomness: the reload the rhythm hook stores is
-    // always a whole number of eighths of the beat, the byte at 0x6152 says
-    // which eighth the hit fell on, and the deadzone is the square reload.
+    // always a whole number of halves of the beat, the byte at 0x6152 says
+    // which half the hit fell on, and the deadzone is the square reload.
     static final long GRID=0x8001ea00L;
     long gridReload(long beat) throws Exception {
         e.writeRegister("R12",beat); call(GRID); return r(S+0x38e,2);
     }
-    // Hits by eighth of the beat over a run, at one knob setting: [0] is the
-    // beat, [4] the half, [2] and [6] the quarters, the odd ones eighths.
-    // Also records the total eighths stepped and whether the grid held.
+    // Hits by half of the beat over a run, at one knob setting: [0] is the
+    // beat, [1] the half.  Also records the total halves stepped and whether
+    // the grid held - a reload that is not a whole number of halves is how a
+    // quarter or an eighth would show up.
     long gridTotal; boolean gridHeld, gridFollows;
     int[] gridHits(int knob,int hits,long beat) throws Exception {
         w(0x60e6,2,knob); w(0x6152,1,0);
-        int[] at=new int[8]; int pos=0; gridTotal=0; gridHeld=true; gridFollows=true;
+        int[] at=new int[2]; int pos=0; gridTotal=0; gridHeld=true; gridFollows=true;
         for(int i=0;i<hits;i++) {
             long cd=gridReload(beat); int p=(int)r(0x6152,1);
-            if(cd%(beat/8)!=0||cd<beat/8||cd>4*beat) { gridHeld=false; break; }
-            int n=(int)(cd/(beat/8)); gridTotal+=n;
-            if(p!=((pos+n)&7)) { gridFollows=false; break; }
+            if(cd%(beat/2)!=0||cd<beat/2||cd>4*beat) { gridHeld=false; break; }
+            int n=(int)(cd/(beat/2)); gridTotal+=n;
+            if(p!=((pos+n)&1)) { gridFollows=false; break; }
             pos=p; at[p]++;
         }
         return at;
@@ -1080,70 +1081,62 @@ public class ControlRegression extends SequenceEditRegression {
         long beat=400;
         w(0x60e6,2,0); w(0x6152,1,0);
         check("below the deadzone the reload is the beat itself",gridReload(beat)==beat&&r(0x6152,1)==0);
-        w(0x6152,1,4);
+        w(0x6152,1,1);
         check("a hit standing on the half steps the other half back onto the beat",
             gridReload(beat)==beat/2&&r(0x6152,1)==0);
-        w(0x6152,1,7);
-        check("a hit on the last eighth steps one eighth back onto the beat",
-            gridReload(beat)==beat/8&&r(0x6152,1)==0);
         w(0x6152,1,0x0b);
-        check("only the low three bits of the position are read",
-            gridReload(beat)==beat*5/8&&r(0x6152,1)==0);
+        check("only the low bit of the position is read",
+            gridReload(beat)==beat/2&&r(0x6152,1)==0);
         w(0x60e6,2,0x2f); w(0x6152,1,0);
         check("the deadzone reaches the randomiser's own 0x30",gridReload(beat)==beat);
-        // Full travel: the beat one hit in two, the half one in eight, each
-        // quarter and each eighth one in sixteen, and the mean spacing still
-        // one beat.
+        // Full travel: the beat and the half take half the hits each, and the
+        // mean spacing is still one beat.
         int[] at=gridHits(1023,2000,beat);
-        check("full travel: every reload is one to thirty-two eighths",gridHeld);
-        check("full travel: the position follows the eighths stepped",gridFollows);
+        check("full travel: every reload is a whole number of halves, one to eight",gridHeld);
+        check("full travel: the position follows the halves stepped",gridFollows);
         check("full travel: the beat keeps half the hits: "+at[0],at[0]>900&&at[0]<1100);
-        check("full travel: the half takes one in eight: "+at[4],at[4]>190&&at[4]<310);
-        int quarters=at[2]+at[6], eighths=at[1]+at[3]+at[5]+at[7];
-        check("full travel: the quarters take one in eight between them: "+quarters,quarters>190&&quarters<310);
-        check("full travel: the eighths take one in four between them: "+eighths,eighths>400&&eighths<600);
-        check("full travel: the mean spacing stays one beat: "+gridTotal,gridTotal>14500&&gridTotal<17500);
-        // Halfway: three hits in four on the beat, most of the rest on the
-        // half, the quarters and eighths only just arriving.
+        check("full travel: the half takes the other half: "+at[1],at[1]>900&&at[1]<1100);
+        check("full travel: the mean spacing stays one beat: "+gridTotal,gridTotal>3700&&gridTotal<4300);
+        // Halfway: three hits in four on the beat, the rest on the half, and
+        // the density unchanged.
         at=gridHits(512,2000,beat);
-        quarters=at[2]+at[6]; eighths=at[1]+at[3]+at[5]+at[7];
         check("halfway: the grid holds",gridHeld&&gridFollows);
         check("halfway: three hits in four land on the beat: "+at[0],at[0]>1350&&at[0]<1650);
-        check("halfway: the half takes most of the rest: "+at[4],at[4]>280&&at[4]<470);
-        check("halfway: quarters and eighths are rare but present: "+quarters+"/"+eighths,
-            quarters>20&&quarters<120&&eighths>20&&eighths<120);
-        // An eighth of the travel: a few hits on the half, none finer.
+        check("halfway: the half takes the rest: "+at[1],at[1]>350&&at[1]<650);
+        check("halfway: the mean spacing stays one beat: "+gridTotal,gridTotal>3700&&gridTotal<4300);
+        // An eighth of the travel: a few hits on the half and nothing else,
+        // where the old law had the quarters and eighths still to arrive.
         at=gridHits(128,2000,beat);
-        quarters=at[2]+at[6]; eighths=at[1]+at[3]+at[5]+at[7];
         check("low: the grid holds",gridHeld&&gridFollows);
-        check("low: the half takes about one hit in sixteen: "+at[4],at[4]>70&&at[4]<180);
-        check("low: a stray quarter or two and no eighths yet: "+quarters+"/"+eighths,quarters<20&&eighths==0);
-        // A beat that is not a multiple of eight: the remainder is carried,
-        // so a run of hits tracks the grid to within a scan instead of
-        // running early by the dropped fraction every reload.
+        check("low: the half takes about one hit in sixteen: "+at[1],at[1]>70&&at[1]<200);
+        // A beat that is not even: the remainder is carried, so a run of hits
+        // tracks the grid to within a scan instead of running early by the
+        // dropped fraction every reload.
         w(0x60e6,2,1023); w(0x6152,1,0); w(0x6153,1,0);
-        long elapsed=0, stepped=0; int pos=0;
+        long elapsed=0, stepped=0; int pos=0; boolean walks=true;
         for(int i=0;i<1000;i++) {
             long cd=gridReload(401); int p=(int)r(0x6152,1);
-            long n=((p-pos)&7)+8*((cd*8+8)/401/8);   // whole beats plus the eighths within
+            long n=Math.round(cd*2.0/401);   // the halves that reload covers
+            if(p!=((pos+n)&1)) walks=false;
             elapsed+=cd; stepped+=n; pos=p;
         }
-        check("odd beat: a thousand hits stay within a scan of the grid: "+elapsed+" for "+stepped+" eighths",
-            Math.abs(elapsed-Math.round(stepped*401.0/8))<=1);
-        check("the carry is a remainder",r(0x6153,1)<8);
+        check("odd beat: the position follows the halves stepped",walks);
+        check("odd beat: a thousand hits stay within a scan of the grid: "+elapsed+" for "+stepped+" halves",
+            Math.abs(elapsed-Math.round(stepped*401.0/2))<=1);
+        check("the carry is a remainder",r(0x6153,1)<2);
         // The randomiser's own limits, kept as a grid: too short asks for
-        // another eighth, too long for one fewer, and the position byte
-        // moves with the eighths actually stepped.
-        w(0x60e6,2,0); w(0x6152,1,7); w(0x6153,1,0);
-        check("a reload under eight scans steps more eighths, and says so",gridReload(4)==8&&r(0x6152,1)==7);
+        // another half, too long for one fewer, and the position byte moves
+        // with the halves actually stepped.
+        w(0x60e6,2,0); w(0x6152,1,1); w(0x6153,1,0);
+        check("a reload under eight scans steps more halves, and says so",gridReload(4)==8&&r(0x6152,1)==1);
         w(0x6152,1,0); w(0x6153,1,0);
         long slow=gridReload(5000);
-        check("a reload over 0xfff steps fewer eighths, and says so",
-            slow<=0xfff&&slow==6*5000/8&&r(0x6152,1)==6);
+        check("a reload over 0xfff steps fewer halves, and says so",
+            slow<=0xfff&&slow==5000/2&&r(0x6152,1)==1);
         w(0x6152,1,0); w(0x6153,1,0);
         check("a beat of zero cannot spin: the limit is the reload",gridReload(0)==8);
         steps=0; gridReload(400); println("SCAN BUDGET quantized reload "+steps+" instructions");
-        println("PASS quantized rhythm: eighth grid, position, shares at three settings, deadzone, odd beats and the limits as grid");
+        println("PASS quantized rhythm: half grid, position, shares at three settings, deadzone, odd beats and the limits as grid");
     }
     void retainedStartup() throws Exception {
         // SRAM survives a DFU: another image's pickup stamps must not
