@@ -576,7 +576,17 @@ public class ControlRegression extends SequenceEditRegression {
     // ADC pass fills.  The variant carries the 5-limit JI scale, whose
     // steps differ enough that a shift by degrees is not a shift by a
     // constant - which is what separates the slot's interval from the key's.
-    void cv(int raw) throws Exception { w(S+0x2f0,2,raw); controlScan(); }
+    // The jack is one-poled now (cv_filter, RAM 0x60e8), so a step in the raw
+    // cell reaches the quantiser over ~20 scans rather than at once.  Every
+    // test below means "the CV is sitting at this value", not "one scan after
+    // it moved", so settle it - rewriting the cell each scan because the
+    // filter writes its own result back into it, exactly as the factory's ADC
+    // pass refills it on the instrument.  cvStep is the unsettled form, for
+    // the one test that wants a single scan.
+    void cvStep(int raw) throws Exception { w(S+0x2f0,2,raw); controlScan(); }
+    void cv(int raw) throws Exception {
+        for (int i=0;i<48;i++) { w(S+0x2f0,2,raw); controlScan(); if (r(0x60e8,2)==raw) break; }
+    }
     void jackTransposer() throws Exception {
         // A held mono note follows the CV: the table moved, and so must the
         // base the factory copied out of it at note-on.
@@ -584,10 +594,16 @@ public class ControlRegression extends SequenceEditRegression {
         touchOn(9); sound();
         long before=r(S+0x352,2), table=r(0x854+18,2);
         check("a mono note sounds its table pitch",before==table);
+        // The pole: one scan takes a quarter of the step at shift 2, not the
+        // whole of it.  A filter that settled at once would not be one.
+        cvStep(491);
+        check("the jack is filtered, not read raw: "+r(0x60e8,2),
+            r(0x60e8,2)>100&&r(0x60e8,2)<140);
+        cv(0); sound();
         // With the blend engaged, a base that moved without its history
         // would be folded into the applied offset and slewed out: a glide.
         w(S+0x306,2,900); sound();
-        cv(123); for(int i=0;i<4;i++)sound();
+        cv(491); for(int i=0;i<4;i++)sound();
         check("twelve degrees of a twelve-note scale are one period: "+r(0x854+18,2),
             r(0x854+18,2)==table+484&&(r(0x60fa,2)&255)==12);
         check("a held mono note follows the jack",r(S+0x352,2)==before+484);
@@ -601,6 +617,18 @@ public class ControlRegression extends SequenceEditRegression {
             r(S+0x2e1,1)==plain+(r(0x60fa,2)&255)&&r(S+0x352,2)==r(0x854+8,2));
         touchOff(4); touchOff(9);
         check("all keys released clears the MIDI note",r(S+0x2e1,1)==255);
+        // Nothing held, and the pitch output still stands at the last note -
+        // so the jack has to keep moving it.  Until 2026-09-12 the refresh
+        // gave up as soon as state+0x2e1 read 0xff, and a CV turned between
+        // phrases did nothing at all until the next press.
+        long idleBase=r(S+0x350,2), idleTable=r(0x854+2*r(S+0x256,1),2);
+        check("the last key is still there to follow",r(S+0x256,1)<29);
+        cv(491+41); sound();
+        check("with no key held the base follows the jack",
+            r(S+0x350,2)!=idleBase&&r(S+0x350,2)==r(0x854+2*r(S+0x256,1),2));
+        check("and it moved by the degree the table moved",
+            r(S+0x350,2)-idleBase==r(0x854+2*r(S+0x256,1),2)-idleTable);
+        cv(491);
         // A latched note in a borrowed slot moves by its own key's degree,
         // not the slot's: the same key an octave up lands in slot 1, whose
         // step from degree 0 to 1 is a 16/15, while degree 1 to 2 is a 9/8.
@@ -610,7 +638,7 @@ public class ControlRegression extends SequenceEditRegression {
         check("the octave repeat took a borrowed slot",other>0);
         long stamped=r(0x854+2*other,2)+(short)r(0x60a2+2*other,2), root=r(0x854,2), oldSlot=r(0x854+2*other,2);
         check("the borrowed slot stands for key 0's pitch",Math.abs(stamped-root)<=1);
-        cv(11);
+        cv(41);
         long shift=r(0x854,2)-root, slotShift=r(0x854+2*other,2)-oldSlot;
         check("one degree up moves key 0 by a 16/15: "+shift,shift>=44&&shift<=46);
         check("the scale is unequal here, or this proves nothing: shift "+shift+" slot "+slotShift,Math.abs(shift-slotShift)>2);
@@ -620,7 +648,7 @@ public class ControlRegression extends SequenceEditRegression {
         check("and sounds there",Math.abs(r(S+0x352,2)-(stamped+shift))<=1);
         // The arp's sounding note follows too, before its next step.
         w(0x2eed,1,1); aim(0); sound();
-        long sounding=r(S+0x352,2); cv(22); sound();
+        long sounding=r(S+0x352,2); cv(82); sound();
         check("the arp's sounding note follows the jack",
             Math.abs(r(S+0x352,2)-(sounding+r(0x854,2)-root-shift))<=1);
         // While the sequencer plays, the base is a step's pitch and the
@@ -628,11 +656,11 @@ public class ControlRegression extends SequenceEditRegression {
         // the key table in under it.
         setup(2,false,1); command(1); cv(0);
         w(S+0x2fc,2,0); externalBeat(); sound();
-        long stepBase=r(S+0x350,2); cv(123); sound();
+        long stepBase=r(S+0x350,2); cv(491); sound();
         check("a jack move leaves the playing step's base alone",r(S+0x350,2)==stepBase);
         setup(0,false,1); command(0); latchFixture(); octavePad(1); cv(0);
         // How much a rebuild costs, against the ~5 ms scan: printed, not gated.
-        cv(0); steps=0; cv(33); long rebuild=steps; steps=0; cv(33); long idle=steps;
+        cv(0); steps=0; cvStep(123); long rebuild=steps; steps=0; cvStep(123); long idle=steps;
         println("SCAN BUDGET jack rebuild "+rebuild+" instructions, an idle control scan "+idle);
         println("PASS jack transposer: a held mono note and the arp's note follow, legato MIDI takes the live shift, a borrowed slot moves by its key's degree");
     }

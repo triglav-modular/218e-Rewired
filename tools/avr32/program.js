@@ -931,9 +931,10 @@ function assembleProgram() {
         //   knob 3 (0x30e) -> random +-octave on each arp note with
         //     probability knob/1024 (bottom deadzone = off, factory-exact).
         // Knob values latch only outside edit mode so edit-mode knob use
-        // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60e8 last
-        // countdown, 0x60ea knob3 latch, 0x60ec gate threshold, 0x60f2
-        // knob1 latch.
+        // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60ea knob3
+        // latch, 0x60f2 knob1 latch.  0x60e8 and 0x60ec were a countdown and
+        // a gate threshold, found dead by the audit in tools/build.py and
+        // removed from its map; 0x60e8 is the jack filter's accumulator now.
         // Arp controls on the preset knobs (outside edit; latches edit-gated):
         //   knob 1 (0x30a>>3 -> 0x60f2 latch): press-order vs random key
         //     selection, applied by the replacement selector below;
@@ -1465,7 +1466,12 @@ function assembleProgram() {
         // With the jack transposing, the housekeeping is reached through
         // the transposer's cave, which calls it first and shifts the key
         // table after - the applier has run by then.
-        word(feature("cv_transpose") ? 0x8001e7c0 : 0x8001a480); // latch watch + poly-MIDI boot force + common-mode
+        // With a filter built, the chain enters there and it tail jumps into
+        // the transposer; without one it enters the transposer directly.
+        word(feature("cv_transpose")
+             ? (number("transpose_cv_filter_shift", 2, 0, 4) > 0
+                ? 0x8001eb20 : 0x8001e7c0)
+             : 0x8001a480); // latch watch + poly-MIDI boot force + common-mode
         word(0x8001a750); // octave-switch shadow sync
         finish("latch_v2", 0x8001a350);
 
@@ -2785,6 +2791,53 @@ function assembleProgram() {
         word(0x80013434); // the factory float-to-int helper
         finish("preset_quantize", 0x8001e1c0);
 
+        // One pole on the jack's raw count, standing in front of the
+        // transposer in the per-scan chain rather than inside it: cv_transpose
+        // is full to its last byte, and this needs no room there.
+        //
+        //   new = prev + (raw - prev) >> shift, accumulator in RAM 0x60e8,
+        //   result written back to state+0x2f0 so the transposer reads it
+        //   without knowing this ran.
+        //
+        // The cell is unconditioned and one degree is only period/size counts
+        // wide, so a few counts of noise walked the answer across a boundary.
+        // The hysteresis in the quantiser steadies an answer once chosen; it
+        // cannot stop a noisy reading choosing the wrong one.  ASR, not LSR:
+        // the cell is signed and a jack below its zero reads negative.
+        //
+        // Writing state+0x2f0 is safe because nothing else reads it - the
+        // factory's only use, the glide-rate addend, is patched to a constant
+        // zero in this build (glide_cv_addend) - and the factory's ADC pass
+        // refills it with a fresh raw count every scan, so the accumulator,
+        // not this cell, is what carries the filter's state.
+        //
+        // No stack frame: it runs before cv_transpose's own prologue and tail
+        // jumps into it, so the chain sees one routine.
+        var cvFilter = 0x8001eb20;
+        var cvFilterPool = 0x8001eb40;
+        var cvShift = number("transpose_cv_filter_shift", 2, 0, 4);
+        if (feature("cv_transpose") && cvShift > 0) {
+            begin(cvFilter);
+            emit(StringFormat("LDDPC R9,0x%x", cvFilterPool));   // global state base
+            emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
+            emit("MOV R11,0x60e8");
+            emit("LD.SH R12,R11[0x0]");                           // the pole
+            emit("SUB R8,R12");                                   // raw - prev
+            emit(StringFormat("ASR R8,0x%x", cvShift));
+            emit("ADD R8,R12");
+            emit("ST.H R11[0x0],R8");                             // carried to next scan
+            emit("ST.H R9[0x2f0],R8");                            // what the transposer reads
+            // MOV PC, not LDDPC PC: the literal-pool check reads the last
+            // emitted mnemonic to prove the words below cannot be fallen into,
+            // and it recognises this form.
+            emit(StringFormat("LDDPC R9,0x%x", cvFilterPool + 4));
+            emit("MOV PC,R9");
+            padTo(cvFilterPool);
+            word(0x00003560);                                    // global state base
+            word(0x8001e7c0);                                    // cv_transpose's entry
+            finish("cv_filter", 0x8001eb48);
+        }
+
         // The PORTAMENTO IN jack as a transposer, in scale degrees.
         //
         // The jack is not summed into the knob: it is ADC channel 6, read by
@@ -3063,10 +3116,13 @@ function assembleProgram() {
         emit("LD.UB R9,R0[0x34d]");                               // the last arp key
         emit(StringFormat("RJMP 0x%x", cvStampsHave));
         padTo(cvStampsMono);
-        emit("LD.UB R8,R0[0x2e1]");                               // the sounding MIDI note
-        emit("CP.W R8,0xff");
-        emit(StringFormat("BR{eq} 0x%x", cvStampsDone));
-        emit("LD.UB R9,R0[0x256]");                               // the active key
+        // No test on state+0x2e1 here.  With nothing sounding the pitch output
+        // still holds the last note, and the factory leaves that note's key in
+        // state+0x256 - so the base has to move with the table or a CV turned
+        // between phrases does nothing until the next press.  The key-range
+        // guard below is what keeps a cold boot, whose 0x256 has never been
+        // written, from publishing a base for a key nobody played.
+        emit("LD.UB R9,R0[0x256]");                               // the last key
         padTo(cvStampsHave);
         emit("CP.W R9,0x1d");
         emit(StringFormat("BR{ge} 0x%x", cvStampsDone));

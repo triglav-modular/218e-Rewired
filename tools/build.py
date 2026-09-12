@@ -1029,7 +1029,10 @@ RAM_REGIONS = [
     # 0x60E8 and 0x60EC were "arp last countdown" and "arp gate threshold".
     # Nothing in the firmware reads or writes either any more - the audit
     # walked every base-plus-offset access in the built image and found none -
-    # so they are gone rather than left looking like live state.
+    # so they were removed rather than left looking like live state.  0x60E8
+    # is live again from 2026-09-12 as the jack transposer's filter pole;
+    # 0x60EC is still free.
+    (0x60E8, 0x60EA, "jack CV filter, one pole on the raw count"),
     (0x60EA, 0x60EC, "arp knob 3 latch"),
     (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
     (0x60EF, 0x60F0, "previous switch position"),
@@ -1098,11 +1101,11 @@ RAM_REGIONS = [
     # Where knob 2's pattern has got to, wrapped at that pattern's length.
     (0x6150, 0x6152, "arp pattern step"),
     # Which half of the swung pair the next step is - or, with knob 2
-    # quantized instead, which half of the beat the last hit fell on.
-    (0x6152, 0x6153, "arp swing parity / quantized beat half"),
+    # quantized instead, which eighth of the beat the last hit fell on.
+    (0x6152, 0x6153, "arp swing parity / quantized beat eighth"),
     # What the last quantized reload's division left, so a beat that is not
-    # an even number of scans still keeps the grid over a run of hits.
-    (0x6153, 0x6154, "quantized rhythm: halves of a scan carried between reloads"),
+    # a multiple of eight scans still keeps the grid over a run of hits.
+    (0x6153, 0x6154, "quantized rhythm: eighths of a scan carried between reloads"),
     # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
     # the selection is frozen at, last scan's touch levels, the octave shadow
     # (+9: the active pad while pads 2-4 are all up, which a completed chord
@@ -1776,6 +1779,7 @@ def main() -> None:
             * cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE) + 0.5)),
         "transpose_cv_zero": cfg["portamento_in"]["cv_zero"],
         "transpose_cv_hysteresis": cfg["portamento_in"]["cv_hysteresis"],
+        "transpose_cv_filter_shift": cfg["portamento_in"]["cv_filter_shift"],
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:

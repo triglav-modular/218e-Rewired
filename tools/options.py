@@ -78,7 +78,16 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'portamento_in': {   'transpose': False,
                          'cv_counts_per_volt': 409.5,
                          'cv_zero': 0,
-                         'cv_hysteresis': 2},
+                         'cv_hysteresis': 2,
+                         # The raw cell is unconditioned, and the hysteresis
+                         # only steadies an answer once it is chosen - noise
+                         # still walks the reading across a degree boundary.
+                         # One pole, applied to the raw count before anything
+                         # reads it: new = prev + (raw - prev) >> shift.  At 2
+                         # that closes a quarter of the gap per 5 ms scan, so
+                         # ~17 ms to 63% and ~55 ms to 95%, which is below
+                         # what a hand turning a knob notices.  0 is off.
+                         'cv_filter_shift': 2},
     'portamento': {   'blend_filter_shift': 2,
                       'blend_hysteresis': 3,
                       'blend_slew_taper': 1,
@@ -108,7 +117,7 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'knob4': {'octaves': 0},
     # Knob 2: 'randomness' is what 1.x does, 'patterns' turns the knob into a
     # bank selector over step masks, 'swing' delays every other step,
-    # 'quantized' is the randomness snapped to a half-of-a-beat grid.
+    # 'quantized' is the randomness snapped to an eighth-of-a-beat grid.
     'knob2': {'mode': 'randomness', 'patterns': [], 'lengths': []},
     'timing': {'gate_settle_scans': 1, 'scan_period_ms': 5},
     'tuning': {   'base_units': 485,
