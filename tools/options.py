@@ -77,7 +77,32 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     # between a 10-bit count and the 12-bit-justified reading this cell
     # actually holds, and 4095 counts over 10 V is what the jack is for.
     'portamento_in': {   'transpose': False,
-                         'cv_counts_per_volt': 409.5,
+                         # Counts the jack's cell gains per volt in.  Read off
+                         # the FACTORY's own arithmetic, not fitted to a
+                         # reading: its only use of state+0x2f0 is the glide
+                         # index at 0x80003142 - CASTU.H, LSR 1, SUB 0x14, so
+                         # max(0, cv/2 - 20) - added to the PORTAMENTO knob at
+                         # state+0x306 and clamped to 0x3ff.  The knob is a
+                         # conditioned channel, 0..1023, so the index domain is
+                         # 1023, and the jack is meant to span it: at 204.75
+                         # ten volts is 2047 counts and the addend reaches 1004,
+                         # 98% of the clamp.  At 409.5 it would reach 2027 and
+                         # the jack's top half would do nothing, which is not a
+                         # thing anyone designs.  So 4095 counts over 20 V - the
+                         # front end has 2x headroom on a 10 V input.
+                         #
+                         # It was 102.3 until 2026-09-12 and then 409.5, and
+                         # both came from the same observation read as a scale:
+                         # "the whole shift was spent by 2.5 V".  That is where
+                         # the PITCH OUTPUT saturates, about 5.25 periods from
+                         # the bottom key, and it constrains no input scale at
+                         # all.  Measured on the instrument the same day, one
+                         # period took 4.1-4.4 V against the 3.89 V this
+                         # predicts; the residue is a dead band at the bottom of
+                         # the jack or slack in the reading, and cv_zero is
+                         # where it goes once somebody reads the raw count at
+                         # two known voltages.
+                         'cv_counts_per_volt': 204.75,
                          'cv_zero': 0,
                          # How far past a degree boundary the CV has to
                          # travel before the answer changes.  The band is
@@ -124,7 +149,18 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                          # reaches from the bottom key at the neutral octave
                          # (5.25).  Set it back to volts_per_octave for the
                          # old law.
-                         'cv_volts_per_period': 2.0},
+                         # 4.0, not the 2.0 this was set to on 2026-09-12:
+                         # that figure was chosen against cv_counts_per_volt =
+                         # 409.5, so it asked for 819 counts per period and got
+                         # 4 V on the instrument.  The owner has the 4 V and
+                         # likes it.  Correcting the hardware model without
+                         # correcting this would halve the period and change
+                         # behaviour nobody asked to change - the product
+                         # 204.75 x 4.0 = 819 is what the firmware emits, and it
+                         # is unchanged.  Five periods over the input range
+                         # still holds; the range is 20 V, so 0-10 V is two and
+                         # a half of them.
+                         'cv_volts_per_period': 4.0},
     'portamento': {   'blend_filter_shift': 2,
                       'blend_hysteresis': 3,
                       'blend_slew_taper': 1,
@@ -196,6 +232,56 @@ def _check_internal_diagnostics() -> None:
 
 
 _check_internal_diagnostics()
+
+
+def _check_jack_scale() -> None:
+    """The jack's hardware model, against the factory's own use of the cell.
+
+    cv_counts_per_volt has been wrong twice, in both directions, because the
+    only evidence anyone reached for was "how far did the pitch move" - and
+    that measures where the pitch OUTPUT saturates, not what the input reads.
+    There is better evidence sitting in the shipped image.
+
+    The factory's one use of state+0x2f0 is the glide-rate index at
+    0x80003142: CASTU.H, LSR 1, SUB 0x14 - so max(0, cv/2 - 20) - added to the
+    PORTAMENTO knob at state+0x306 and clamped to 0x3ff.  The knob is a
+    conditioned channel, 0..1023, so the index spans 1023 and the jack is
+    plainly meant to span it too.  That pins the cell's reading at the jack's
+    nominal 10 V to about twice the clamp, and it is a much tighter constraint
+    than any transposition measurement: at 409.5 the addend would reach 2027
+    and the top half of the jack would do nothing, and at 102.3 it reaches 492
+    and the bottom half would be wasted.  Only ~205 counts/V fits.
+
+    So refuse a model the factory's own arithmetic contradicts, rather than
+    letting it reach an instrument and be diagnosed a third time.  The band is
+    wide because the point is to catch a factor of two, not to pin a trim.
+
+    Unlike _check_internal_diagnostics this needs no mirror in the JavaScript
+    toolchain: that one guards a COMBINATION the page can select at runtime,
+    while this guards a constant no build option exposes.  The value reaches
+    the browser only by being baked into generated.js, and web/generate.py
+    imports this module to do it - so a refused value cannot get that far.
+    """
+    jack = INTERNAL_DEFAULTS["portamento_in"]
+    addend = jack["cv_counts_per_volt"] * JACK_NOMINAL_VOLTS / 2 - 20
+    if not 0.75 * GLIDE_INDEX_CLAMP <= addend <= 1.25 * GLIDE_INDEX_CLAMP:
+        raise SystemExit(
+            f"tools/options.py: cv_counts_per_volt = {jack['cv_counts_per_volt']} "
+            f"puts the factory's glide addend at {addend:.0f} for a "
+            f"{JACK_NOMINAL_VOLTS:g} V input,\n  against the {GLIDE_INDEX_CLAMP} "
+            "the factory clamps that index to (0x80003142, added to the "
+            "PORTAMENTO knob).\n  The factory spans its index with this jack, "
+            "so a model that leaves half of the\n  jack's travel doing nothing "
+            "- or runs out halfway up it - is the wrong scale.")
+
+
+# The jack's nominal full-scale input, and the clamp the factory applies to
+# the glide index the jack feeds.  Both are facts about the instrument, not
+# choices: 0-10 V is the 200e CV standard, and 0x3ff is read out of the image.
+JACK_NOMINAL_VOLTS = 10.0
+GLIDE_INDEX_CLAMP = 0x3ff
+
+_check_jack_scale()
 
 # A harness may need an image built with one internal constant changed - a
 # settle count, a diagnostic flag - and none of those is among the options a

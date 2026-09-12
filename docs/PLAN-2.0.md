@@ -756,6 +756,54 @@ size (12, or the .kbm's) and adds one period.  The raw cell is signed
 and unconditioned; the jack has no negative range, so N is clamped at
 zero.  None of the three CV numbers has been measured on an instrument.
 
+**The jack reads about 205 counts per volt, not 409.5, and the factory's own
+code says so** (2026-09-12).  `cv_counts_per_volt` has been wrong twice, in
+both directions, because the only evidence anyone reached for was how far the
+pitch moved - and that measures where the pitch OUTPUT saturates, not what the
+input reads.  "The whole shift was spent by about 2.5 V", which drove the
+correction from 102.3 to 409.5, is an output-saturation observation: at any
+input scale in a wide band it lands near the 5.25 periods the output can
+render from the bottom key, so it constrains the input scale hardly at all.
+
+The tighter evidence was in the image the whole time.  The factory's one use
+of `state+0x2f0` is the glide-rate index at `0x80003142` - `CASTU.H`, `LSR 1`,
+`SUB 0x14`, so `max(0, cv/2 - 20)` - added to the PORTAMENTO knob at
+`state+0x306` and clamped to `0x3ff`.  The knob is a conditioned channel,
+0..1023, so the index spans 1023, and the jack is plainly meant to span it:
+
+| counts/V | cell at 10 V | addend | against the 1023 clamp |
+|---|---|---|---|
+| 102.3 | 1023 | 492 | the bottom half of the jack wasted |
+| 409.5 | 4095 | 2027 | the top half of the jack dead |
+| 204.75 | 2047 | 1004 | 98% of full scale |
+
+Nobody designs a CV input whose upper half does nothing, so the scale is
+~205 counts/V: 4095 counts over 20 V, a front end with 2x headroom on a 10 V
+input.  `_check_jack_scale()` in `tools/options.py` now refuses a model this
+arithmetic contradicts, so the next wrong value is caught at build time rather
+than on an instrument.
+
+Measured against it on the day: one period took 4.1-4.4 V where this model
+predicts 3.89 V for the first scan that reaches it (eleven degrees, plus half
+a degree, plus the 12-count hysteresis).  The residue is a dead band at the
+bottom of the jack or slack in the reading; `cv_zero` is where it goes, and
+settling it needs the raw count read at two known voltages rather than one
+judgement of "an octave up" - one point cannot separate a slope from an
+intercept.
+
+`cv_volts_per_period` is 4.0 for the same reason, and the pair is what makes
+this a correction to the MODEL rather than to behaviour: the firmware emits
+only the product, `transpose_cv_period = 204.75 x 4.0 = 819`, which is exactly
+what it emitted under `409.5 x 2.0`.  The image is byte-identical, verified
+with `--expect-sha`.  So the instrument the owner has just called well-behaved
+is unchanged, and the config has stopped lying about the hardware.
+
+It also settles the output-range question from the same day's audit, in the
+other direction: two and a half periods is inside the 4.08 the output can
+render even from mid-keyboard, so the jack can no longer drive the pitch into
+the curve's ceiling from anywhere.  The 970 counts of unreachable DAC headroom
+are still there, but nothing the jack does can reach them.
+
 `cv_volts_per_period` was `volts_per_octave` until 2026-09-12, which tied the
 INPUT's law to the OUTPUT's scaling and is why the jack read as too sensitive:
 1.2 V bought an octave, so the full 10 V bought 8.3 of them, and the pitch
