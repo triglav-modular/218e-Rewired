@@ -1711,9 +1711,12 @@ function assembleProgram() {
         //   knob 3 (0x30e) -> random +-octave on each arp note with
         //     probability knob/1024 (bottom deadzone = off, factory-exact).
         // Knob values latch only outside edit mode so edit-mode knob use
-        // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60e8 last
-        // countdown, 0x60ea knob3 latch, 0x60ec gate threshold, 0x60f2
-        // knob1 latch.
+        // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60ea knob3
+        // latch, 0x60f2 knob1 latch.  0x60e8 and 0x60ec were a countdown and
+        // a gate threshold, found dead by the audit in tools/build.py and
+        // removed from its map; both belong to the jack transposer now,
+        // 0x60e8 as its filter accumulator and 0x60ec as the displacement
+        // its refresh carries across a table rebuild.
         // Arp controls on the preset knobs (outside edit; latches edit-gated):
         //   knob 1 (0x30a>>3 -> 0x60f2 latch): press-order vs random key
         //     selection, applied by the replacement selector below;
@@ -1723,13 +1726,16 @@ function assembleProgram() {
         //     4x), a random-pulser spacing law; knob low = even pulses;
         //   knob 3 (0x30e -> 0x60ea latch): random +-octave per arp note.
         // Gate-off timing itself is factory (compare == 3 restored).
-        // Knob 2's latch has two other readers, one at a time: swing, which
-        // takes this same pool word, and the pattern gate, which sits at the
-        // note selector instead and turns the randomiser off.
+        // Knob 2's latch has three other readers, one at a time: swing and
+        // the quantized randomiser, which take this same pool word, and the
+        // pattern gate, which sits at the note selector instead and turns the
+        // randomiser off.
         begin(0x80019d38);
         word(0x80019d44); // gate/housekeeping entry (hook at 0x21a0)
         word(block("seq_pitch") ? 0x8001ba30 : 0x80019da8);
-        word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100 : 0x80019df8);
+        word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100
+           : number("knob2_quantized", 0, 0, 1) == 1 ? 0x8001ea00
+           : 0x80019df8);
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
         // return (LDM with PC would execute return-and-test-R12, destroying
@@ -2106,7 +2112,7 @@ function assembleProgram() {
         // helper now saves LR before its gate-off call; the
         // four pulse pools point THERE in a divider build.
         begin(0x8001a268);
-        word(0x800077f8); // real pulse-high routine
+        word(0x8001e100); // pulse_guard, in front of the real pulse-high routine
         emit("MOV R8,0x60ee");
         emit("LD.UB R9,R8[0x0]");
         emit("CP.W R9,0x0");
@@ -2117,6 +2123,44 @@ function assembleProgram() {
         padTo(0x8001a27a);
         emit("MOV PC,LR");
         finish("pulse_defer_set", 0x8001a280);
+
+        // Pulse guard.  Every deferred trigger reaches the factory pulse-high
+        // routine (0x800077f8) through this cave, which drops the trigger
+        // when nothing is sounding.  The factory raised the gate inside the
+        // note-on itself, so a key could not be released before its own
+        // trigger.  The deferral opened that window: a lift on the scan after
+        // the note-on zeroes the gate (0x80005f9a / 0x800060be), the pitch
+        // store of that same scan then runs the countdown out and raises it,
+        // and the factory's scheduled drop to the sustain (0x80007540) skips
+        // only a gate that is already zero - so the gate stood at 5 V with no
+        // key held, lamp lit, until a key was held long enough to release
+        // after its trigger.  "Sounding" is the factory's own test at
+        // 0x80005f56, the held-note count plus the count at state+0x258, or
+        // the sequencer playing, whose steps hold no key (seq_trigger_led
+        // makes the same exception).  A leaf that keeps LR, so the real
+        // routine returns to whoever asked for the trigger; R8/R9 are that
+        // routine's own scratch.
+        begin(0x8001e100);
+        emit("LDDPC R8,0x8001e120");
+        emit("LD.UB R9,R8[0x21a]");
+        emit("LD.UB R8,R8[0x258]");
+        emit("ADD R8,R9");
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x8001e11c");
+        if (block("seq_gate")) {
+            emit("MOV R8,0x6154");
+            emit("LD.UB R8,R8[0x4]");       // 0x6158, the sequencer mode
+            emit("CP.W R8,0x2");            // 2: playing
+            emit("BR{eq} 0x8001e11c");
+        }
+        emit("MOV PC,LR");                  // nothing sounding: drop it
+        padTo(0x8001e11c);
+        emit("LDDPC R8,0x8001e124");
+        emit("MOV PC,R8");
+        padTo(0x8001e120);
+        word(0x00003560); // global state base
+        word(0x800077f8); // the real pulse-high routine
+        finish("pulse_guard", 0x8001e128);
 
         // Latch mode (arp switch position 1). Three pieces:
         //   latch_noteoff  — physical releases are ignored while latched;
@@ -2201,7 +2245,15 @@ function assembleProgram() {
         word(0x80005a50); // original note-off
         word(0x80019a40); // tuning applier
         word(0x8001a350); // vibrato engine
-        word(0x8001a480); // latch watch + poly-MIDI boot force + common-mode
+        // With the jack transposing, the housekeeping is reached through
+        // the transposer's cave, which calls it first and shifts the key
+        // table after - the applier has run by then.
+        // With a filter built, the chain enters there and it tail jumps into
+        // the transposer; without one it enters the transposer directly.
+        word(feature("cv_transpose")
+             ? (number("transpose_cv_filter_shift", 2, 0, 4) > 0
+                ? 0x8001eb20 : 0x8001e7c0)
+             : 0x8001a480); // latch watch + poly-MIDI boot force + common-mode
         word(0x8001a750); // octave-switch shadow sync
         finish("latch_v2", 0x8001a350);
 
@@ -2653,6 +2705,12 @@ function assembleProgram() {
         // re-based to the offset it was stamped with.  Doing this here makes
         // the hold exact within a single scan — no transient when the octave
         // switch flips between arp steps.
+        //
+        // The hold itself lives in latch_hold (0x8001e520): it outgrew this
+        // cave once the latch gained a second state, in which the whole
+        // latched set follows the pad instead of each note keeping the
+        // transpose it was entered at.  R8 = the publish base and R9 = the
+        // transpose just published go across the call as they stand.
         begin(0x8001a8a0);
         emit("STM --SP,R7,LR");
         emit("MCALL PC[0x8001ac80]");
@@ -2661,41 +2719,10 @@ function assembleProgram() {
         emit("RSUB R9,R12");
         emit("ST.H R8[0x0],R9");
         if (feature("arp_latch")) {
-            emit("MOV R10,0x38a0");
-            emit("LD.UB R11,R10[0x0]");
-            emit("CP.W R11,0x1");
-            emit("BR{ne} 0x8001a8e4");
-            // While the sequencer PLAYS, the sounding note is a recorded
-            // step whose pitch is already absolute, and the last arp key is
-            // whatever key that step happened to name.  Re-basing off that
-            // key's live latch slot would transpose the step a second time,
-            // so playback keeps the pitch it was handed.
-            emit("LD.UB R11,R8[0xb8]");     // 0x60a0 + 0xb8: sequencer mode
-            emit("CP.W R11,0x2");
-            emit("BR{eq} 0x8001a8e4");
-            emit("LD.UB R10,R10[0xd]");
-            // 0x1d with BR{ge}, not 0x1c with BR{hi}: the key arrives
-            // zero-extended from LD.UB, so the signed test is the same test,
-            // and {ge} has a two-byte encoding where {hi} does not.  The two
-            // bytes pay for the held check below.
-            emit("CP.W R10,0x1d");
-            emit("BR{ge} 0x8001a8e4");
-            // A stamp only means anything for a slot that is sounding, so
-            // gate on the held flag (state+0x21b) before reading it.  Without
-            // this the shim re-based the transpose off the last arp key's
-            // stamp cell even when that slot had never been latched, which
-            // replaced the live transpose with a stale one.
-            emit("MOV R11,0x377b");
-            emit("LD.UB R11,R11[R10 << 0x0]");
-            emit("CP.W R11,0x1");
-            emit("BR{ne} 0x8001a8e4");
-            emit("ADD R8,R8,R10 << 0x1");
-            emit("LD.SH R8,R8[0x2]");
-            // RSUB leaves transpose-now MINUS the stamp, so subtracting it
-            // rebases R12 onto the stamp - two bytes shorter than the sum
-            // the other way round, and those bytes pay for the mode check.
-            emit("RSUB R8,R9");
-            emit("SUB R12,R8");
+            emit("MCALL PC[0x8001a8e0]");
+            emit("RJMP 0x8001a8e4");    // over the pool word, never through it
+            padTo(0x8001a8e0);
+            word(0x8001e520);          // latch_hold
         }
         padTo(0x8001a8e4);
         emit("MCALL PC[0x8001a8ec]");
@@ -2766,7 +2793,16 @@ function assembleProgram() {
         emit("MOV R8,0x854");
         emit("ADD R8,R8,R12 << 0x1");
         emit("LD.UH R11,R8[0x0]");
-        emit("MOV R8,0x60a0");
+        // The transpose term the toggle works in, published for it at 0x609e
+        // by latch_hold every scan: the live transpose while each note keeps
+        // the transpose it was entered at, and the latched set's reference
+        // while the set follows the pad.  In that second state a press
+        // stamps against the reference, so it enters at the pad's pitch and
+        // the pad moves it with the rest of the set from then on; and a
+        // latched slot's frame pitch (table plus stamp) equals what it
+        // SOUNDS shifted back by the same amount, so the match below still
+        // asks "is this pitch already sounding?" in either state.
+        emit("MOV R8,0x609e");
         emit("LD.SH R8,R8[0x0]");
         emit("ADD R11,R8");
         if (feature("latch_probe")) {
@@ -2792,7 +2828,7 @@ function assembleProgram() {
         emit("LD.SH R8,R8[0x2]");
         emit("ADD R9,R8");
         // Match with a tolerance, not for bit-equality.  Both sides are built
-        // from the same transpose at 0x60A0, but that term is not stable:
+        // from the same transpose term (0x609e), but that term is not stable:
         // the latch probe measured it reading -485 on some presses and -484
         // on others, because the generated tuning tables round and adjacent
         // octaves land 484 or 485 units apart.  One unit is 2.48 cents, so an
@@ -3110,7 +3146,26 @@ function assembleProgram() {
         emit("MOV R9,0x60e4");
         emit("ST.H R9[0x0],R8");        // tuning-apply guard
         emit("ST.H R9[0x2],R8");        // 0x60e6 arp knob 2 latch
+        // 0x60e8, the jack filter's pole, belongs here with them.  It is read
+        // before it is written on the first scan of the pitch chain - the
+        // chain calls this bootstrap and then enters cv_filter - and SRAM
+        // survives a DFU, so without this the pole starts at whatever the
+        // previous image left in the cell.  A retained 4095 is a 75-degree
+        // shift at zero input; a retained negative value swallows the jack
+        // until the pole settles back through it.  Zero is the defined start:
+        // the pole opens at the bottom and closes on the jack within about
+        // twenty scans of the first pitch pass, with nothing sounding yet.
+        emit("ST.H R9[0x4],R8");        // 0x60e8 jack CV filter pole
         emit("ST.H R9[0x6],R8");        // 0x60ea arp knob 3 latch
+        // 0x60fc, table entry zero as the transposer last wrote it.  Zero is
+        // the sentinel for "this pass has never published", and no table entry
+        // can be zero - the slot tables start at the bottom key's pitch - so
+        // it cannot be mistaken for a real one.  The refresh needs to tell
+        // that state from "somebody replaced the table underneath us", which
+        // reads the same way if the cell is merely unwritten; without this
+        // it threw away the shift of a jack that was already patched when the
+        // instrument powered up, and never got it back.
+        emit("ST.H R9[0x18],R8");       // 0x60fc jack transposer, unpublished
         emit("ST.B R9[0xa],R8");        // 0x60ee deferred-pulse countdown
         emit("ST.H R9[0xc],R8");        // 0x60f0 vibrato knob latch
         emit("ST.B R9[0xe],R8");        // 0x60f2 arp knob 1 latch
@@ -3469,6 +3524,690 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("preset_editor", 0x8001aec0);
 
+        // Preset voltage quantiser.  The pitch adder's middle position adds
+        // the active pad's preset voltage to the pitch, and the factory turns
+        // the stored 0..1023 into pitch units by scaling it through the soft
+        // float library: (store << 2) * 0.33, then float-to-int through the
+        // pool word at 0x80003914.  That is the only consumer of the scaled
+        // value, so repointing that one pool word puts a quantiser between the
+        // scaling and the add without touching the preset voltage's own
+        // output, which is a plain shift at 0x8000a97e and stays free.
+        //
+        // The offset is snapped to the nearest interval the live key table at
+        // RAM 0x854 contains, measured from its bottom entry and reduced to
+        // one period, so the transposition lands on a degree of whatever
+        // tuning slot is selected - the factory temperament when no Scala
+        // file is installed.  Whole periods are stripped first and added back
+        // after, so the reach is unchanged.  The sum then goes through the
+        // pitch remap exactly as a key at that pitch would, so the per-key
+        // calibration applies to the transposed note as it does to the key.
+        //
+        // R12 in: the scaled float.  R12 out: the integer offset, quantised.
+        // The original conversion is called first through this cave's own
+        // pool word, so its result is what gets quantised.
+        //   R0 period   R1 best distance   R2 whole periods, in units
+        //   R3 offset within the period   R7 table[0]   R8 key index
+        //   R9 table base   R10 candidate   R11 distance   R12 best offset
+        begin(0x8001e140);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MCALL PC[0x8001e19c]");           // the factory float-to-int
+        emit("CP.W R12,0x0");
+        emit("BR{lt} 0x8001e196");              // never negative; leave it
+        emit(StringFormat("MOV R0,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("DIVU R2,R12,R0");                 // R2 = periods, R3 = remainder
+        emit("MUL R2,R2,R0");
+        emit("MOV R12,R0");                     // the period itself is a candidate
+        emit("SUB R1,R0,R3 << 0x0");            // its distance, from above
+        emit("MOV R9,0x854");
+        emit("LD.UH R7,R9[0x0]");
+        emit("MOV R8,0x0");                     // over all 32 entries
+        padTo(0x8001e166);
+        emit("LD.UH R10,R9[R8 << 0x1]");
+        emit("SUB R10,R10,R7 << 0x0");          // interval above the bottom key
+        padTo(0x8001e16e);
+        emit("CP.W R10,0x0");                   // reduce into [0, period)
+        emit("BR{ge} 0x8001e176");
+        emit("ADD R10,R0");
+        emit("RJMP 0x8001e16e");
+        padTo(0x8001e176);
+        emit("CP.W R10,R0");
+        emit("BR{lt} 0x8001e17e");
+        emit("SUB R10,R0");
+        emit("RJMP 0x8001e176");
+        padTo(0x8001e17e);
+        emit("SUB R11,R10,R3 << 0x0");
+        emit("ABS R11");
+        emit("CP.W R11,R1");
+        emit("BR{ge} 0x8001e18c");              // not nearer: keep the best so far
+        emit("MOV R1,R11");
+        emit("MOV R12,R10");
+        padTo(0x8001e18c);
+        emit("SUB R8,-0x1");
+        emit("CP.W R8,0x20");
+        emit("BR{lt} 0x8001e166");
+        emit("ADD R12,R2");                     // the whole periods back
+        padTo(0x8001e196);
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001e19c);
+        word(0x80013434); // the factory float-to-int helper
+        finish("preset_quantize", 0x8001e1c0);
+
+        // One pole on the jack's raw count, standing in front of the
+        // transposer in the per-scan chain rather than inside it: cv_transpose
+        // is full to its last byte, and this needs no room there.
+        //
+        //   new = prev + (raw - prev) >> shift, accumulator in RAM 0x60e8,
+        //   result written back to state+0x2f0 so the transposer reads it
+        //   without knowing this ran.
+        //
+        // The cell is unconditioned and one degree is only period/size counts
+        // wide, so a few counts of noise walked the answer across a boundary.
+        // The hysteresis in the quantiser steadies an answer once chosen; it
+        // cannot stop a noisy reading choosing the wrong one.  ASR, not LSR:
+        // the cell is signed and a jack below its zero reads negative.
+        //
+        // Writing state+0x2f0 is safe because nothing else reads it - the
+        // factory's only use, the glide-rate addend, is patched to a constant
+        // zero in this build (glide_cv_addend) - and the factory's ADC pass
+        // refills it with a fresh raw count every scan, so the accumulator,
+        // not this cell, is what carries the filter's state.
+        //
+        // No stack frame: it runs before cv_transpose's own prologue and tail
+        // jumps into it, so the chain sees one routine.
+        var cvFilter = 0x8001eb20;
+        var cvFilterPool = 0x8001eb40;
+        var cvShift = number("transpose_cv_filter_shift", 2, 0, 4);
+        if (feature("cv_transpose") && cvShift > 0) {
+            begin(cvFilter);
+            emit(StringFormat("LDDPC R9,0x%x", cvFilterPool));   // global state base
+            emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
+            emit("MOV R11,0x60e8");
+            emit("LD.SH R12,R11[0x0]");                           // the pole
+            emit("SUB R8,R12");                                   // raw - prev
+            emit(StringFormat("ASR R8,0x%x", cvShift));
+            emit("ADD R8,R12");
+            emit("ST.H R11[0x0],R8");                             // carried to next scan
+            emit("ST.H R9[0x2f0],R8");                            // what the transposer reads
+            // MOV PC, not LDDPC PC: the literal-pool check reads the last
+            // emitted mnemonic to prove the words below cannot be fallen into,
+            // and it recognises this form.
+            emit(StringFormat("LDDPC R9,0x%x", cvFilterPool + 4));
+            emit("MOV PC,R9");
+            padTo(cvFilterPool);
+            word(0x00003560);                                    // global state base
+            word(0x8001e7c0);                                    // cv_transpose's entry
+            finish("cv_filter", 0x8001eb48);
+        }
+
+        // The PORTAMENTO IN jack as a transposer, in scale degrees.
+        //
+        // The jack is not summed into the knob: it is ADC channel 6, read by
+        // the factory's second ADC pass (0x8000b8a4) into state+0x2f0, and the
+        // only thing the factory does with it is add max(0, cv/2 - 20) to
+        // the glide-rate index at 0x80003164.  That addend is patched to zero
+        // in this build (glide_cv_addend), so the knob keeps every job it has,
+        // and the jack's raw reading is free to mean something else.
+        //
+        // What it means is a shift of the key table by N degrees of whatever
+        // tuning slot is selected: the live 32-entry table at RAM 0x854 is
+        // rebuilt from the slot's own flash table as table'[k] = slot[k + N],
+        // wrapping past the top by however many keys the slot repeats over
+        // (twelve, or the .kbm's map size) and adding one period per wrap.
+        // Every consumer - the arp, the latch stamps, the pitch ranking, the
+        // blend anchors, the recorder - reads that table, so the whole
+        // keyboard moves by N degrees and stays inside the scale, which is
+        // what a transposition quantised to the mapping has to mean for a
+        // scale whose steps are not all the same size.  The sequencer
+        // follows too: a step is stored with the shift taken back out and
+        // plays under the shift as it stands (seq_record_pitch_cv and
+        // seq_cv_shift, below), the same relative model the pad uses.
+        //
+        // N is the CV in raw counts, less a zero, in units of one period per
+        // transpose_cv_period counts and rounded to the nearest degree, with a
+        // band of transpose_cv_hysteresis counts either side of the last
+        // answer so a CV sat near a boundary cannot chatter.  The raw cell is
+        // signed and unconditioned, hence the clamp at zero: the jack has no
+        // negative range, so N is never below zero and the shift only ever
+        // goes up.
+        //
+        // The state word at RAM 0x60fa is 0xA000 | slot << 8 | N, so an
+        // unseeded cell reads as invalid and a slot change reads as a change;
+        // 0x60fc keeps table'[0] as last written, which is how a warm restart
+        // - the factory's own .data copy puts the unshifted table back while
+        // SRAM keeps the state word - is told from a scan with nothing to do.
+        // Runs in the per-scan chain in front of the housekeeping, which is
+        // after the tuning applier, so a slot's fresh copy is shifted the
+        // same scan it lands.
+        //
+        //   R0 keys per period   R1 v*size, then the RAM table
+        //   R2 the period: in CV counts while quantising, in pitch units
+        //      while rebuilding   R3 state cell   R4 old state, then k
+        //   R8 v, then N         R10 slot, then the wrap offset
+        //
+        // Two things ride on the rebuild, in cv_stamps below.  A latched
+        // note in a borrowed slot carries a stamp against THAT slot's table
+        // entry, and in an unequal tuning the slot's degree moves by a
+        // different interval than the physical key's: so before the rebuild
+        // each such stamp is re-expressed against its key's entry, and after
+        // it against the slot's again, which lands the note where its own
+        // key went.  And the note already sounding took its base from the
+        // table at note-on - the factory's store at state+0x350 - so a CV
+        // that moved under a held key changed nothing until the next press;
+        // the base is refreshed by moving it the interval its own key moved,
+        // which keeps whatever the note was carrying on top of the table
+        // entry, with the blend's base history alongside so the move is a
+        // jump, as the octave pads' is, not a folded glide.
+        var cvEntry = 0x8001e7c0;
+        var cvClamp = 0x8001e7da;
+        var cvSlot = 0x8001e7e8;
+        var cvRecalc = 0x8001e826;
+        var cvHaveN = 0x8001e830;
+        var cvCapped = 0x8001e83c;
+        var cvBuild = 0x8001e858;
+        var cvLoop = 0x8001e870;
+        var cvWrap = 0x8001e876;
+        var cvNoWrap = 0x8001e882;
+        var cvDone = 0x8001e8a0;
+        var cvPool = 0x8001e8a8;
+        var cvSizes = 0x8001e8d0;
+        var cvStampsPre = 0x8001e8e0;
+        var cvStampsPost = 0x8001e98c;
+        begin(cvEntry);
+        emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("MCALL PC[0x%x]", cvPool));            // the housekeeping this stands in front of
+        emit(StringFormat("LDDPC R9,0x%x", cvPool + 4));         // global state base
+        emit("LD.SH R8,R9[0x2f0]");                               // the jack, raw
+        emit(StringFormat("LDDPC R10,0x%x", cvPool + 12));       // its zero
+        emit("SUB R8,R10");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ge} 0x%x", cvClamp));
+        emit("MOV R8,0x0");
+        padTo(cvClamp);
+        emit("MOV R10,0x6090");                                   // tuning slot
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x2");
+        emit(StringFormat("BR{ls} 0x%x", cvSlot));
+        emit("MOV R10,0x0");                                      // the applier's own fallback
+        padTo(cvSlot);
+        emit(StringFormat("LDDPC R11,0x%x", cvPool + 20));       // the keys-per-period table
+        emit("LD.UH R0,R11[R10 << 0x1]");
+        emit("MUL R1,R8,R0");                                     // v * size
+        emit(StringFormat("LDDPC R2,0x%x", cvPool + 8));         // one period, in CV counts
+        emit("MOV R3,0x60fa");
+        emit("LD.UH R4,R3[0x0]");
+        emit("LSR R8,R4,0xc");
+        emit("CP.W R8,0xa");
+        emit(StringFormat("BR{ne} 0x%x", cvRecalc));             // never seeded: no last answer
+        emit("MOV R8,R4");
+        emit("ANDL R8,0xff");                                     // the last N
+        emit("MUL R11,R8,R2");
+        emit("SUB R11,R1,R11 << 0x0");                            // distance from its centre
+        emit("ABS R11");
+        emit("LSR R12,R2,0x1");
+        emit(StringFormat("LDDPC R9,0x%x", cvPool + 16));        // hysteresis, raw counts
+        emit("MUL R9,R9,R0");                                     // in v*size units
+        emit("ADD R12,R9");
+        emit("CP.W R11,R12");
+        emit(StringFormat("BR{gt} 0x%x", cvRecalc));
+        emit(StringFormat("RJMP 0x%x", cvHaveN));                // inside the band: keep it
+        padTo(cvRecalc);
+        emit("LSR R12,R2,0x1");
+        emit("ADD R12,R1");
+        emit("DIVU R8,R12,R2");                                   // N, rounded; R9 takes the remainder
+        padTo(cvHaveN);
+        emit("CP.W R8,0xff");
+        emit(StringFormat("BR{le} 0x%x", cvCapped));
+        emit("MOV R8,0xff");                                      // the state word holds a byte
+        padTo(cvCapped);
+        emit("LSL R11,R10,0x8");
+        emit("OR R11,R8");
+        emit("MOV R12,0xa000");
+        emit("OR R11,R12");                                       // 0xA000 | slot << 8 | N
+        emit("CP.W R11,R4");
+        emit(StringFormat("BR{ne} 0x%x", cvBuild));
+        emit("LD.UH R9,R3[0x2]");                                 // table'[0] as last written
+        emit("MOV R12,0x854");
+        emit("LD.UH R12,R12[0x0]");
+        emit("CP.W R9,R12");
+        emit(StringFormat("BR{eq} 0x%x", cvDone));               // still ours: nothing to do
+        padTo(cvBuild);
+        emit("ST.H R3[0x0],R11");
+        emit(StringFormat("MCALL PC[0x%x]", cvPool + 32));       // stamps: against the keys, not the slots
+        emit(StringFormat("LDDPC R2,0x%x", cvPool + 28));        // one period, in pitch units
+        emit(StringFormat("LDDPC R12,0x%x", cvPool + 24));       // the three slot tables
+        emit("LSL R9,R10,0x6");
+        emit("ADD R12,R9");                                       // this slot's, 64 bytes each
+        emit("MOV R1,0x854");
+        emit("MOV R4,0x0");
+        padTo(cvLoop);
+        emit("ADD R9,R4,R8 << 0x0");                              // k + N
+        emit("MOV R10,0x0");
+        padTo(cvWrap);
+        emit("CP.W R9,0x1f");
+        emit(StringFormat("BR{le} 0x%x", cvNoWrap));
+        emit("SUB R9,R0");                                        // back one period of keys
+        emit("ADD R10,R2");                                       // up one period of pitch
+        emit(StringFormat("RJMP 0x%x", cvWrap));
+        padTo(cvNoWrap);
+        emit("LD.UH R11,R12[R9 << 0x1]");
+        emit("ADD R11,R10");
+        emit("ST.H R1[R4 << 0x1],R11");
+        emit("SUB R4,-0x1");
+        emit("CP.W R4,0x20");
+        emit(StringFormat("BR{lt} 0x%x", cvLoop));
+        emit("LD.UH R11,R1[0x0]");
+        emit("ST.H R3[0x2],R11");                                 // remember what we wrote
+        emit(StringFormat("MCALL PC[0x%x]", cvPool + 36));       // stamps back against the slots; the sounding base
+        padTo(cvDone);
+        emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
+        padTo(cvPool);
+        word(0x8001a480); // per-scan housekeeping: latch watch + poly-MIDI boot force + common-mode
+        word(0x00003560); // global state base
+        word(number("transpose_cv_period", 123, 1, 1023));
+        word(number("transpose_cv_zero", 0, 0, 1023));
+        word(number("transpose_cv_hysteresis", 2, 0, 64));
+        word(cvSizes);
+        word(0x80019af8); // the three tuning tables
+        word(number("octave_units", 484, 1, 2000));
+        word(cvStampsPre);
+        word(cvStampsPost);
+        padTo(cvSizes);
+        emitTable("tuning_period_keys");
+        finish("cv_transpose", 0x8001e8e0);
+
+        // cv_stamps: the two passes around the rebuild, and the refresh.
+        // Called from inside the rebuild with N in R8 and the slot in R10
+        // still live in the caller, so every scratch register is saved.
+        // The first pass also decides which key the sounding base belongs
+        // to and how far it stands from that key's entry (0x60ff, 0x60ec);
+        // the second republishes it.  Splitting it that way is what lets the
+        // refresh read the table before AND after the rebuild without two
+        // copies of the same selection.
+        // A held slot j owned by another key o (latch_owner's map at 0x6504,
+        // key plus one) sounds at table[j] + stamp[j] = table[o] + its own
+        // pad offset.  Before the rebuild, stamp += table[j] - table[o]
+        // leaves stamp as that offset against the KEY's entry; after it,
+        // stamp += table'[o] - table'[j] puts it back against the slot's,
+        // now with the key's shift inside.  In an equal temperament the two
+        // shifts agree to a rounding unit and this is a no-op.
+        var cvStampsPreLoop = 0x8001e8ec;
+        var cvStampsPreNext = 0x8001e928;
+        var cvStampsMono = 0x8001e954;
+        var cvStampsHave = 0x8001e95e;
+        var cvStampsOurs = 0x8001e976;
+        var cvStampsKey = 0x8001e982;
+        var cvStampsPostLoop = 0x8001e998;
+        var cvStampsPostNext = 0x8001e9d4;
+        var cvStampsDone = 0x8001e9f8;
+        var cvStampsPool = 0x8001e9fc;
+        begin(cvStampsPre);
+        emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("LDDPC R0,0x%x", cvStampsPool));       // global state base
+        emit("MOV R1,0x1c");
+        padTo(cvStampsPreLoop);
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R8,R8[0x21b]");                               // held?
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{ne} 0x%x", cvStampsPreNext));
+        emit("MOV R8,0x6504");
+        emit("LD.UB R2,R8[R1 << 0x0]");                           // owner, plus one
+        emit("CP.W R2,0x0");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsPreNext));
+        emit("SUB R2,0x1");
+        emit("CP.W R2,R1");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsPreNext));      // its own key's slot
+        emit("MOV R8,0x854");
+        emit("LD.UH R9,R8[R1 << 0x1]");                           // table[j]
+        emit("LD.UH R10,R8[R2 << 0x1]");                          // table[o]
+        emit("SUB R9,R10");
+        emit("MOV R8,0x60a2");
+        emit("LD.SH R10,R8[R1 << 0x1]");
+        emit("ADD R10,R9");
+        emit("ST.H R8[R1 << 0x1],R10");
+        padTo(cvStampsPreNext);
+        emit("SUB R1,0x1");
+        emit(StringFormat("BR{ge} 0x%x", cvStampsPreLoop));
+        // Which key the sounding base belongs to, and how far that base
+        // stands from the key's table entry.  Decided HERE, once, on the way
+        // into the rebuild: the pass after it reads these two cells rather
+        // than carrying a second copy of the same reasoning.
+        //
+        // The displacement is what makes the refresh a transposition instead
+        // of a re-read.  The factory stores the arp's note at state+0x350
+        // AFTER knob 3's octave randomiser has moved it, so the base that is
+        // sounding is table[key] plus or minus a period - and republishing
+        // the bare table entry threw that octave away every time the CV
+        // moved, dropping a note an octave mid-phrase.  Carrying the
+        // difference across the rebuild republishes table'[key] + d, which
+        // moves the note by exactly the interval its own key moved and keeps
+        // whatever else it was carrying: the random octave, a latched slot's
+        // stamp, a step's pitch left standing after a take.  d is bounded by
+        // what put it there, so the published base stays inside the range
+        // the bare entry had, give or take the period the randomiser adds.
+        //
+        // 0xff means "leave the base alone".  While the sequencer records,
+        // plays or previews, the base is a step's pitch or an audition's
+        // pinned one, which the sequencer shifts by its own path per step -
+        // refreshing it from the table snapped the playing step to the key's
+        // pitch until the next step.
+        //
+        // With the arp switch in either position the last arp key answers
+        // whether or not a note is sounding.  The pitch output holds the
+        // last note between phrases there exactly as it does with the arp
+        // off, so a CV turned between phrases has to move it in all three
+        // positions; the earlier shape gave up on 0x2eed and left both arp
+        // positions frozen.  The mono keyboard's last key is the fallback
+        // for all three, and key 0 - the bottom of the keyboard - is the
+        // reference when nothing has been played at all.  That last case
+        // costs nothing at rest: with state+0x350 still at the zero the
+        // bootstrap leaves, d is -table[0], so the published base is the
+        // shift alone and a jack turned before the first touch walks the
+        // output up from its rest instead of jumping to the bottom key.
+        emit("MOV R9,0xff");
+        emit("MOV R10,0x60ec");                                   // d, and 0x60fc/0x60ff off it
+        emit("MOV R8,0x6158");
+        emit("LD.UB R1,R8[0x0]");                                 // sequencer mode
+        emit("LD.UB R2,R8[0x1a6]");                               // 0x62fe, a one-shot preview
+        emit("OR R1,R2");
+        emit("CP.W R1,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cvStampsKey));
+        // Both arp switch flags in one aligned halfword: the pair is nonzero
+        // exactly when either byte is, and the six bytes that saves are what
+        // pay for the sentinel test below.
+        emit("LD.UH R8,R0[0x340]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsMono));
+        emit("LD.UB R9,R0[0x34d]");                               // the last arp key
+        emit("CP.W R9,0x1d");
+        emit(StringFormat("BR{lt} 0x%x", cvStampsHave));
+        padTo(cvStampsMono);
+        emit("LD.UB R9,R0[0x256]");                               // the mono keyboard's last key
+        emit("CP.W R9,0x1d");
+        emit(StringFormat("BR{lt} 0x%x", cvStampsHave));
+        emit("MOV R9,0x0");                                       // nothing played yet: the bottom key
+        padTo(cvStampsHave);
+        // The displacement is only meaningful against the table the sounding
+        // base was actually derived from, and this pass is NOT the only writer
+        // of RAM 0x854.  The tuning applier is, and it runs ahead of the
+        // transposer in the same per-scan chain - so on the scan a tuning slot
+        // changes it has already dropped the new slot's UNTRANSPOSED table in
+        // there.  Measuring against that reads the whole CV shift as though it
+        // were a per-note offset, and the rebuild then adds the shift again:
+        // a slot round trip walked a sounding key 9 from 1332 to 1816 to 2300
+        // with the jack standing still.
+        //
+        // 0x60fc already carries table'[0] as this pass last wrote it, for the
+        // warm-restart check, and it answers the same question here: if entry
+        // zero is not what we left there, the table is somebody else's and no
+        // displacement can be read off it.  Leave the base alone for that
+        // rebuild - which is also what the factory does when a slot changes
+        // under a sounding note - and the next rebuild, against our own table
+        // again, measures normally.
+        //
+        // Zero is the third case and it has to be separated from the second,
+        // because an unwritten cell looks exactly like a replaced table.  The
+        // bootstrap now writes zero there, no table entry can BE zero, and
+        // zero means this pass has never published - which is the state a cold
+        // boot is in.  Then the table is still the factory's own .data copy,
+        // untransposed, which is the correct baseline: measure against it.
+        // Reading that as "somebody else's table" is what discarded the shift
+        // of a jack already patched at power-up, permanently - the degree
+        // state committed, the table rebuilt, and every later move measured
+        // against the shifted table with the base still at zero, so the whole
+        // boot-time transposition went missing and stayed missing.
+        emit("MOV R8,0x854");
+        emit("LD.UH R2,R10[0x10]");                               // 0x60fc, as we last wrote it
+        emit("CP.W R2,0x0");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsOurs));         // nothing published yet
+        emit("LD.UH R1,R8[0x0]");                                 // entry zero as it stands
+        emit("CP.W R1,R2");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsOurs));
+        emit("MOV R9,0xff");                                      // not our table: publish nothing
+        emit(StringFormat("RJMP 0x%x", cvStampsKey));
+        padTo(cvStampsOurs);
+        emit("LD.UH R1,R8[R9 << 0x1]");                           // table[key], before the rebuild
+        emit("LD.SH R8,R0[0x350]");
+        emit("SUB R8,R1");                                        // d, the displacement to carry
+        emit("ST.H R10[0x0],R8");
+        padTo(cvStampsKey);
+        emit("ST.B R10[0x13],R9");                                // 0x60ff, whose key this is
+        emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
+        padTo(cvStampsPost);
+        emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("LDDPC R0,0x%x", cvStampsPool));
+        emit("MOV R1,0x1c");
+        padTo(cvStampsPostLoop);
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R8,R8[0x21b]");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{ne} 0x%x", cvStampsPostNext));
+        emit("MOV R8,0x6504");
+        emit("LD.UB R2,R8[R1 << 0x0]");
+        emit("CP.W R2,0x0");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsPostNext));
+        emit("SUB R2,0x1");
+        emit("CP.W R2,R1");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsPostNext));
+        emit("MOV R8,0x854");
+        emit("LD.UH R9,R8[R2 << 0x1]");                           // table'[o]
+        emit("LD.UH R10,R8[R1 << 0x1]");                          // table'[j]
+        emit("SUB R9,R10");
+        emit("MOV R8,0x60a2");
+        emit("LD.SH R10,R8[R1 << 0x1]");
+        emit("ADD R10,R9");
+        emit("ST.H R8[R1 << 0x1],R10");
+        padTo(cvStampsPostNext);
+        emit("SUB R1,0x1");
+        emit(StringFormat("BR{ge} 0x%x", cvStampsPostLoop));
+        // The sounding note's base, republished from the new table with the
+        // displacement cvStampsPre measured still on it.  Both cells are
+        // written by that pass on the way into every rebuild and read only
+        // here, inside the same rebuild, so neither is first-use initialised:
+        // there is no path that reads one before it is written.
+        emit("MOV R8,0x60ec");
+        emit("LD.UB R9,R8[0x13]");                                // 0x60ff, whose key this is
+        emit("CP.W R9,0x1d");
+        emit(StringFormat("BR{ge} 0x%x", cvStampsDone));         // 0xff: leave the base alone
+        emit("LD.SH R2,R8[0x0]");                                 // d
+        emit("MOV R1,0x854");
+        emit("LD.UH R10,R1[R9 << 0x1]");                          // table'[key]
+        emit("ADD R10,R2");
+        emit("ST.H R0[0x350],R10");                               // the published base
+        emit("ST.H R8[0x8],R10");                                 // 0x60f4, the blend's base history
+        padTo(cvStampsDone);
+        emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
+        padTo(cvStampsPool);
+        word(0x00003560); // global state base
+        finish("cv_stamps", 0x8001ea00);
+
+        // The same shift for MIDI.  The factory turns a key into a note
+        // number in one routine, 0x800057a8 (key + 36, or + 12 per trn zone,
+        // plus the octave pad), reached through six pool words.  With the
+        // table shifted by N keys the note has to move by N as well, or the
+        // pitch CV and the MIDI port would name different notes.
+        //
+        // Three entries, because of how the callers end a note.  The arp
+        // keeps the note it sent at 0x2ee2 and the polyphonic sender keeps
+        // one per key, so those note-offs never recompute and can take the
+        // LIVE shift: a CV moving under a running arp transposes the next
+        // step.  The mono keyboard paths recompute the note at the lift to
+        // compare it with the sounding one at state+0x2e1 - so for them the
+        // shift is FROZEN (RAM 0x60fe) for as long as 0x2e1 holds a note.
+        // Otherwise a CV that moved mid-hold would leave the lift unable to
+        // recognise its own note, and the MIDI note stuck.  The PRESS takes
+        // the live shift and freezes it: a legato press arrives while the
+        // previous note is still in 0x2e1 - the factory has already sent
+        // its note-off, with the shift it was sent under - and used to
+        // inherit that note's shift, so its MIDI note disagreed with its
+        // pitch CV by however far the jack had moved.  The routine's 0xff
+        // for a bad key is left alone, and the result is capped at 127.
+        var mtLive = 0x8001e740;
+        var mtHeld = 0x8001e744;
+        var mtPress = 0x8001e748;
+        var mtCommon = 0x8001e74a;
+        var mtFreeze = 0x8001e788;
+        var mtLatched = 0x8001e790;
+        var mtAdd = 0x8001e798;
+        var mtDone = 0x8001e7a4;
+        var mtPool = 0x8001e7a8;
+        begin(mtLive);
+        emit("MOV R11,0x1");                                      // live
+        emit(StringFormat("RJMP 0x%x", mtCommon));
+        padTo(mtHeld);
+        emit("MOV R11,0x0");                                      // frozen while a note sounds
+        emit(StringFormat("RJMP 0x%x", mtCommon));
+        padTo(mtPress);
+        emit("MOV R11,0x2");                                      // a press: the live shift, frozen from now
+        padTo(mtCommon);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R11");
+        emit(StringFormat("MCALL PC[0x%x]", mtPool));            // key -> MIDI note
+        emit("CP.W R12,0x7f");
+        emit(StringFormat("BR{hi} 0x%x", mtDone));               // 0xff: not a key
+        emit("MOV R8,0x60fa");
+        emit("LD.UH R9,R8[0x0]");
+        emit("LSR R10,R9,0xc");
+        emit("CP.W R10,0xa");
+        emit(StringFormat("BR{ne} 0x%x", mtDone));               // the transposer has not run
+        emit("ANDL R9,0xff");                                     // the live shift
+        emit("CP.W R0,0x1");
+        emit(StringFormat("BR{eq} 0x%x", mtAdd));                // live: as it stands
+        emit("CP.W R0,0x2");
+        emit(StringFormat("BR{eq} 0x%x", mtFreeze));             // a press: this note's shift
+        emit(StringFormat("LDDPC R10,0x%x", mtPool + 4));        // global state base
+        emit("LD.UB R10,R10[0x2e1]");
+        emit("CP.W R10,0xff");
+        emit(StringFormat("BR{ne} 0x%x", mtLatched));            // a note sounds: keep its shift
+        padTo(mtFreeze);
+        emit("ST.B R8[0x4],R9");                                  // 0x60fe: frozen
+        emit(StringFormat("RJMP 0x%x", mtAdd));
+        padTo(mtLatched);
+        emit("LD.UB R9,R8[0x4]");
+        padTo(mtAdd);
+        emit("ADD R12,R9");
+        emit("CP.W R12,0x7f");
+        emit(StringFormat("BR{le} 0x%x", mtDone));
+        emit("MOV R12,0x7f");
+        padTo(mtDone);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(mtPool);
+        word(0x800057a8); // key -> MIDI note
+        word(0x00003560); // global state base
+        finish("midi_transpose", 0x8001e7c0);
+
+        // The sequencer follows the jack transposer the way it follows the
+        // pad: a step is stored WITHOUT the shift and the live shift is
+        // added at playback, so a take recorded under one CV plays under
+        // whatever CV stands now, and a take recorded at rest transposes
+        // with the keyboard.  Two caves, both reached only with the jack
+        // transposing: seq_record_pitch becomes a jump here, and
+        // seq_preview_pin ends by jumping to the second.
+        //
+        // The recorder's leaf, with the same contract as seq_record_pitch
+        // (R12 = key, kept; R11 = the heard pitch relative to the take's
+        // reference, for the audition; R8 scratch), plus one more job: it
+        // writes the step itself, with the shift taken back out -
+        // heard - (table'[key] - slot[key]) - so seq_record no longer
+        // stores.  The slot's own entry parks in RAM 0x604e between the two
+        // halves, because only R8 and R11 are free here.
+        var srcEntry = 0x8001e320;
+        var srcSlot = 0x8001e33c;
+        var srcAdopt = 0x8001e380;
+        var srcPool = 0x8001e3b0;
+        begin(srcEntry);
+        emit("MOV R8,0x6090");                                    // slot[key], the flash table's own entry
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x2");
+        emit(StringFormat("BR{ls} 0x%x", srcSlot));
+        emit("MOV R8,0x0");
+        padTo(srcSlot);
+        emit("LSL R8,0x6");
+        emit("ADD R8,R8,R12 << 0x1");
+        emit(StringFormat("LDDPC R11,0x%x", srcPool));           // the three tuning tables
+        emit("ADD R8,R11");
+        emit("LD.SH R8,R8[0x0]");
+        emit("MOV R11,0x604e");
+        emit("ST.H R11[0x0],R8");
+        emit("MOV R11,0x854");                                    // the heard pitch, as seq_record_pitch has it
+        emit("ADD R11,R11,R12 << 0x1");
+        emit("LD.SH R11,R11[0x0]");
+        emit("MOV R8,0x60a0");
+        emit("LD.SH R8,R8[0x0]");
+        emit("ADD R11,R8");
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", srcAdopt));
+        emit("MOV R8,0x60a0");                                    // an empty take adopts today's transpose
+        emit("LD.SH R8,R8[0x0]");
+        emit("ST.W --SP,R11");
+        emit("MOV R11,0x62f4");
+        emit("ST.H R11[0x0],R8");
+        emit("LD.W R11,SP++");
+        padTo(srcAdopt);
+        emit("MOV R8,0x62f4");
+        emit("LD.SH R8,R8[0x0]");
+        emit("SUB R11,R8");                                       // R11 = heard, relative: the audition's
+        emit("ST.W --SP,R11");
+        emit("MOV R8,0x854");
+        emit("LD.SH R8,R8[R12 << 0x1]");
+        emit("SUB R11,R8");                                       // less the shifted entry
+        emit("MOV R8,0x604e");
+        emit("LD.SH R8,R8[0x0]");
+        emit("ADD R11,R8");                                       // plus the slot's own: the step
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R8,R8[0x0]");
+        emit("LSL R8,0x1");
+        emit("SUB R8,-0x6160");
+        emit("ST.H R8[0x0],R11");                                 // stored here, not by seq_record
+        emit("LD.W R11,SP++");
+        emit("MOV PC,LR");
+        padTo(srcPool);
+        word(0x80019af8); // the three tuning tables
+        finish("seq_record_pitch_cv", 0x8001e3b4);
+
+        // Playback's half: R8 = the step's pitch as seq_preview_pin leaves it,
+        // plus table'[key] - slot[key] for the key the step was recorded on,
+        // which is the shift as it stands now.  A rest or tie carries no key
+        // worth reading, and is left alone.  A leaf; R9-R12 scratch.
+        var scsEntry = 0x8001e3b4;
+        var scsSlot = 0x8001e3e4;
+        var scsDone = 0x8001e404;
+        var scsPool = 0x8001e408;
+        begin(scsEntry);
+        emit("MOV R9,0x6503");                                    // the step sounding now
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x40");
+        emit(StringFormat("BR{ge} 0x%x", scsDone));
+        emit("MOV R10,0x61ee");                                   // the key it was recorded on
+        emit("LD.UB R10,R10[R9 << 0x0]");
+        emit("CP.W R10,0x1d");
+        emit(StringFormat("BR{ge} 0x%x", scsDone));
+        emit("MOV R11,0x854");
+        emit("LD.SH R11,R11[R10 << 0x1]");                        // table'[key]
+        emit("MOV R12,0x6090");
+        emit("LD.UB R12,R12[0x0]");
+        emit("CP.W R12,0x2");
+        emit(StringFormat("BR{ls} 0x%x", scsSlot));
+        emit("MOV R12,0x0");
+        padTo(scsSlot);
+        emit("LSL R12,0x6");
+        emit("ADD R12,R12,R10 << 0x1");
+        emit(StringFormat("LDDPC R9,0x%x", scsPool));
+        emit("ADD R12,R9");
+        emit("LD.SH R12,R12[0x0]");                               // slot[key]
+        emit("SUB R11,R12");
+        emit("ADD R8,R11");
+        padTo(scsDone);
+        emit("MOV PC,LR");
+        padTo(scsPool);
+        word(0x80019af8); // the three tuning tables
+        finish("seq_cv_shift", 0x8001e410);
+
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,
         // reverse press order, random - and the zone picks how the next key is
@@ -3721,6 +4460,175 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("arp_swing", 0x8001b164);
 
+        // Knob 2 as quantized randomness.  The spacing randomiser draws each
+        // step's length from a continuous law, so its hits land anywhere.
+        // This one keeps the grid: the beat is cut in half, and every reload
+        // is a whole number of halves, so a note can only ever fall on a beat
+        // or on its half.  Nothing finer is reachable - no quarters, no
+        // eighths - so what the knob does is drop triggers and add off-beat
+        // ones.  Same hook, same output cell, same knob latch and deadzone as
+        // the randomiser it stands in for.
+        //
+        // The law, in 1024ths per beat, with x the knob's travel 0..1: the
+        // mass that leaves the beat is M = 512x, so the beat sounds with
+        // 1024 - M - every beat with the knob down, one in two at the top.
+        // The half takes none of that mass until halfway and all of it at the
+        // end: its share is M * (2x - 1), and 2x - 1 is clamped at zero, so
+        // at or below the midpoint the half never sounds.
+        //
+        // The two halves of the travel therefore do different things, which
+        // is what the owner asked for.  The bottom half only thins: beats
+        // drop and nothing replaces them, so the arp is sparser than RATE
+        // set, most so at the midpoint, where three beats in four sound and a
+        // hit costs four thirds of a beat.  The top half fills the gaps back
+        // in, until at full travel the beat has one hit in two and the half
+        // the other, and the density is what RATE set again.  Each position
+        // is drawn on its own, so a beat can carry both its own hit and an
+        // added half, or neither.
+        //
+        // Each half in turn is asked whether it sounds, against the threshold
+        // of its position; a run of misses is cut at 8 halves, the
+        // randomiser's own 4x ceiling.  The cut never falls on a position
+        // whose share is zero: eight halves is an even number of them and so
+        // returns to the phase it started from, and a hit left standing on
+        // the half - by lowering the knob out of the top half, where halves
+        // do sound - would otherwise be forced into another one at a
+        // probability the law puts at nothing.  A position the law gives no
+        // hits is stepped past instead, which costs at most one more half and
+        // still terminates, since the beat's own share is never zero.  The
+        // upper clamp answers to the same rule: shortening an interval that
+        // came out over 0xfff moves the phase by one half like anything else,
+        // so it asks again rather than accepting whatever it lands on - at a
+        // slow enough tempo the shortening is what would land the forbidden
+        // hit, and nine halves of a 995-scan beat is exactly that case.
+        // RAM 0x6152 is which half of the beat
+        // the last hit fell on, the cell swing keeps its pair parity in; one
+        // knob, one role, one byte.  Below the deadzone a hit standing off
+        // the beat steps the rest of the way back onto it before the square
+        // reload resumes.
+        //
+        // A beat that is not an even number of scans does not cut into whole
+        // halves, and a reload that dropped the remainder each time ran early
+        // by it, cumulatively.  So the remainder is carried, in halves of a
+        // scan at 0x6153: each reload is floor((halves * beat + carry) / 2)
+        // and the new carry is what that left, so the sum of the reloads
+        // tracks the grid exactly.  The randomiser's own limits are kept as a
+        // grid, not a clamp: a reload under eight scans asks for another
+        // half, one over 0xfff for one fewer, and the position byte moves
+        // with the halves actually stepped, so what the byte says and what
+        // elapsed never disagree.
+        begin(0x8001ea00);
+        emit("STM --SP,R0,R1,R2,R3,R4,R5,R6,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");             // the beat, in scans
+        emit("MOV R8,0x6152");
+        emit("LD.UB R1,R8[0x0]");
+        emit("ANDL R1,0x1");            // the half the last hit fell on
+        emit("MOV R2,0x0");             // halves to the next hit
+        emit("MOV R8,0x60e6");
+        emit("LD.SH R8,R8[0x0]");       // the knob, 0..1023
+        emit("CP.W R8,0x30");
+        emit("BR{lt} 0x8001eabe");     // deadzone: square, exactly as shipped
+        emit("MOV R3,R8");
+        emit("LSR R3,0x1");             // M = 512x: what leaves the beat
+        emit("MOV R9,0x400");
+        emit("MOV R4,R3");
+        emit("RSUB R4,R9");             // the beat: 1024 - M
+        emit("MOV R5,R8");
+        emit("LSL R5,0x1");
+        emit("SUB R5,R9");              // 2x - 1, in 1024ths: negative below halfway
+        emit("CP.W R5,0x0");
+        emit("BR{gt} 0x8001ea3a");
+        emit("MOV R5,0x0");             // at or below halfway: no halves at all
+        padTo(0x8001ea3a);
+        emit("MUL R3,R3,R5");
+        emit("LSR R3,0xa");             // the half: M * (2x - 1)
+        padTo(0x8001ea40);
+        emit("SUB R2,-0x1");
+        emit("SUB R1,-0x1");
+        emit("ANDL R1,0x1");            // the next half of the beat
+        emit("MCALL PC[0x8001eb0c]");
+        emit("BFEXTU R8,R12,0xa,0xa");  // ten bits of the draw
+        emit("MOV R9,R3");              // the half
+        emit("CP.W R1,0x0");
+        emit("BR{ne} 0x8001ea58");
+        emit("MOV R9,R4");              // the beat
+        padTo(0x8001ea58);
+        emit("CP.W R8,R9");
+        emit("BR{lt} 0x8001ea64");      // a hit
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001ea40");      // the law gives this one nothing: step on
+        emit("CP.W R2,0x8");
+        emit("BR{lt} 0x8001ea40");      // a miss: ask the next half
+        padTo(0x8001ea64);
+        emit("MOV R8,0x6153");
+        emit("LD.UB R8,R8[0x0]");       // the carry, in halves of a scan
+        padTo(0x8001ea6a);
+        emit("MUL R12,R2,R0");          // halves * beat
+        emit("ADD R12,R8");
+        emit("LSR R12,0x1");            // in scans
+        emit("CP.W R12,0x8");
+        emit("BR{ge} 0x8001ea88");
+        // Bounded: a beat of zero would never reach eight scans, and the
+        // factory guards only a reload of -1, so past 16 halves the limit is
+        // taken as the reload itself rather than asked for again.
+        emit("CP.W R2,0x10");
+        emit("BR{ge} 0x8001ea84");
+        emit("SUB R2,-0x1");            // under the limit: one more half
+        emit("SUB R1,-0x1");
+        emit("ANDL R1,0x1");
+        emit("RJMP 0x8001ea6a");
+        padTo(0x8001ea84);
+        emit("MOV R12,0x8");
+        emit("RJMP 0x8001eaac");
+        padTo(0x8001ea88);
+        emit("MOV R9,0xfff");
+        emit("CP.W R12,R9");
+        emit("BR{gt} 0x8001ea9a");      // too long: shorten it
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001eaac");      // the beat always sounds
+        emit("CP.W R3,0x0");
+        emit("BR{ne} 0x8001eaac");      // and the half, when it has a share
+        padTo(0x8001ea9a);
+        emit("CP.W R2,0x1");
+        emit("BR{le} 0x8001eaaa");      // one half already: the limit itself
+        emit("SUB R2,0x1");             // one half fewer, then ask again
+        // Step the phase FORWARD to flip it, never back: ANDL masks the low
+        // halfword and leaves the high one alone, so subtracting from a zero
+        // phase leaves 0xffff0001 - a byte store of that is still 1, which is
+        // why it never mattered until something compared the whole word.
+        emit("SUB R1,-0x1");
+        emit("ANDL R1,0x1");
+        emit("RJMP 0x8001ea6a");
+        padTo(0x8001eaaa);
+        emit("MOV R12,R9");
+        padTo(0x8001eaac);
+        emit("MUL R9,R2,R0");
+        emit("ADD R9,R8");
+        emit("ANDL R9,0x1");            // what the division left
+        emit("MOV R8,0x6153");
+        emit("ST.B R8[0x0],R9");
+        emit("RJMP 0x8001ead0");
+        padTo(0x8001eabe);
+        emit("MOV R3,0x1");             // the square reload has no forbidden phase
+        emit("MOV R2,0x2");             // square: the whole beat
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001ea64");
+        emit("RSUB R1,R2");             // off the beat: the rest of the way back
+        emit("MOV R2,R1");
+        emit("MOV R1,0x0");
+        emit("RJMP 0x8001ea64");
+        padTo(0x8001ead0);
+        emit("LDDPC R8,0x8001eb08");
+        emit("ST.H R8[0x38e],R12");
+        emit("MOV R8,0x6152");
+        emit("ST.B R8[0x0],R1");
+        emit("LDM SP++,R0,R1,R2,R3,R4,R5,R6,R7,PC");
+        padTo(0x8001eb08);
+        word(0x00003560); // global state base
+        word(0x80013e04); // factory PRNG
+        finish("arp_quantized", 0x8001eb20);
+
         // The sequencer's controls, on a pad chord.  Hold pad 4 for about one
         // second to arm - its light blinks - then, still holding it, press
         // pad 1 to record, pad 2 to play, pad 3 to stop.  The add-to-pitch
@@ -3734,7 +4642,8 @@ function assembleProgram() {
         // RAM off one base at 0x6154: +0 hold counter (halfword; scans are
         // ~5 ms, so one second is 200 of them), +2 armed, +3 selected,
         // +4 mode, +5 the pad to hold the selection at, +6..8 last scan's
-        // touch levels for pads 1-3, +0xa a free-running blink counter.
+        // touch levels for pads 1-3, +9 the octave shadow latch_state keeps
+        // while pads 2-4 are up, +0xa a free-running blink counter.
         // One counter drives every blink this firmware adds, so they share a
         // rate and a phase; bit 6 of it toggles every 64 scans, ~1.6 Hz.
         begin(0x8001b180);
@@ -3775,8 +4684,12 @@ function assembleProgram() {
         emit("BR{ne} 0x8001b200");
         emit("MOV R10,0x1");
         emit("ST.B R1[0x2],R10");       // armed
-        emit("LD.UB R10,R0[0x2ef]");
-        emit("ST.B R1[0x5],R10");       // hold the selection where it stands
+        // Hold the selection at the octave from BEFORE pad 4 went down, the
+        // shadow latch_state keeps at +9 while pads 2-4 are up: the press
+        // that started this hold chose octave 4 on its way in, and the
+        // freeze below puts the old one straight back.
+        emit("LD.UB R10,R1[0x9]");
+        emit("ST.B R1[0x5],R10");
 
         padTo(0x8001b1cc);
         // The selecting press must not also pick a preset, so the active pad
@@ -4439,7 +5352,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001bca0]");   // the real pulse-high routine
             emit("LDM SP++,R7,PC");
             padTo(0x8001bca0);
-            word(0x800077f8);
+            word(0x8001e100);          // pulse_guard -> the real pulse-high routine
             // The INTERNAL beat, which the external half above cannot touch:
             // it has no accepted edge, so 0x6240 is stale and edge-to-gate is
             // meaningless for it.  What it does share is everything DOWNSTREAM
@@ -4911,7 +5824,8 @@ function assembleProgram() {
         finish("clock_attack_guard", 0x8001cb20);
 
         // ---------------------------------------------------------------
-        // Persistence v2. Only musical data is serialized, never mode,
+        // Persistence v2. Only musical data and the latch's transpose state
+        // are serialized, never mode,
         // touch history, clock state or knob pickup state. A verified body
         // is committed by programming its still-erased marker word LAST.
         // Keep the newest valid page out of every retry lap. Completed edit
@@ -4919,9 +5833,12 @@ function assembleProgram() {
         // separate musical snapshot excludes other edits still in progress.
         //
         // Header: marker[4], version[2]=2, length[2]=204, generation[4],
-        // CRC32[4]. Payload: presets[8], count[1], reserved[3], pitches[128],
-        // keys[64]. Unused steps, reserved bytes and alignment padding are
-        // zero. CRC-32/ISO-HDLC covers header bytes 4..11 then the payload.
+        // CRC32[4]. Payload: presets[8], count[1], latch state[1],
+        // reserved[2], pitches[128], keys[64]. Unused steps, reserved bytes
+        // and alignment padding are zero. CRC-32/ISO-HDLC covers header
+        // bytes 4..11 then the payload.  The latch state took the first
+        // reserved byte: a record written before it existed reads as zero,
+        // which is the hold state every latch had until then.
         // The 224-byte staging buffer and both writes are 8-byte aligned.
         // ---------------------------------------------------------------
 
@@ -5000,6 +5917,11 @@ function assembleProgram() {
         emit("LD.W R8,R0[0xc]");
         emit("CP.W R12,R8");
         emit("BR{ne} 0x8001cde0");
+        // The latch state is a value the shim acts on, so it is bounded
+        // like the presets and steps: 0 hold, 1 transpose, nothing else.
+        emit("LD.UB R8,R0[0x19]");
+        emit("CP.W R8,0x1");
+        emit("BR{hi} 0x8001cde0");
         emit("MOV R1,0x0");
         padTo(0x8001cd30);
         emit("ADD R8,R0,R1 << 0x1");
@@ -5167,6 +6089,12 @@ function assembleProgram() {
         emit("SUB R1,-0x1");
         emit("RJMP 0x8001cf10");
         padTo(0x8001cf90);
+        // The latch state, from the snapshot the same way as the rest:
+        // 0x6409 in the payload, 0x0019 in the record.
+        emit("MOV R8,0x6409");
+        emit("LD.UB R9,R8[0x0]");
+        emit("MOV R8,0x6319");
+        emit("ST.B R8[0x0],R9");
         emit("MOV R12,0x6300");
         emit("MCALL PC[0x8001cfbc]");
         emit("MOV R8,0x6300");
@@ -5216,6 +6144,12 @@ function assembleProgram() {
         emit("SUB R1,-0x1");
         emit("CP.W R1,0x40");
         emit("BR{lt} 0x8001d010");
+        // The latch's transpose state, into the cell latch_hold and the
+        // toggle read.  The boot wrapper zeroed it before this ran, so a
+        // missing or rejected record leaves the hold state.
+        emit("LD.UB R9,R0[0x19]");
+        emit("MOV R8,0x62e2");
+        emit("ST.B R8[0x0],R9");
         padTo(0x8001d070);
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001d07c);
@@ -5371,9 +6305,10 @@ function assembleProgram() {
         finish("persist_save", 0x8001d280);
 
         // Capture only completed musical edits into 0x6400..0x64cb.
-        // R12 mask: bits 0..3 = released preset pads, bit 4 = sequence.
+        // R12 mask: bits 0..3 = released preset pads, bit 4 = sequence,
+        // bit 5 = the latch's transpose state.
         // Return R12 = changed. Unchanged gestures (including empty clear)
-        // never write even on a blank ring. Mask 0x1f initializes every
+        // never write even on a blank ring. Mask 0x3f initializes every
         // snapshot byte at boot; no snapshot survives a warm reset.
         begin(0x8001d280);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
@@ -5404,60 +6339,79 @@ function assembleProgram() {
         emit("SUB R1,-0x1");
         emit("RJMP 0x8001d294");
         padTo(0x8001d2e0);
-        emit("CP.W R2,0x0");
-        emit("BR{eq} 0x8001d3d8");
+        // Bit 4 alone means the sequence: a mask can name the latch state
+        // (bit 5) without it.
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x1");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d3a0");
         emit("MOV R8,0x61e0");
         emit("LD.UB R4,R8[0x0]");
         emit("CP.W R4,0x40");
-        emit("BR{ls} 0x8001d2f8");
+        emit("BR{ls} 0x8001d2fc");
         emit("MOV R4,0x40");
-        padTo(0x8001d2f8);
+        padTo(0x8001d2fc);
         emit("LD.UB R9,R3[0x8]");
         emit("CP.W R4,R9");
-        emit("BR{eq} 0x8001d308");
+        emit("BR{eq} 0x8001d30c");
         emit("MOV R0,0x1");
-        padTo(0x8001d308);
+        padTo(0x8001d30c);
         emit("ST.B R3[0x8],R4");
         emit("MOV R8,0x0");
-        emit("ST.B R3[0x9],R8");
+        // 0x640a..0x640b stay reserved zero; 0x6409 is the latch state's
+        // and is left alone here, or a sequence capture would wipe it.
         emit("ST.H R3[0xa],R8");
         emit("MOV R1,0x0");
-        padTo(0x8001d318);
+        padTo(0x8001d320);
         emit("CP.W R1,0x40");
-        emit("BR{ge} 0x8001d3d8");
+        emit("BR{ge} 0x8001d3a0");
         emit("MOV R9,0x0");
         emit("MOV R11,0x0");
         emit("CP.W R1,R4");
-        emit("BR{ge} 0x8001d350");
+        emit("BR{ge} 0x8001d358");
         emit("MOV R8,0x6160");
         emit("ADD R8,R8,R1 << 0x1");
         // Signed, as persist_pack reads it: a negative step is a pitch
         // with a key, not a rest.
         emit("LD.SH R9,R8[0x0]");
         emit("CP.W R9,0x7ffe");
-        emit("BR{ge} 0x8001d350");
+        emit("BR{ge} 0x8001d358");
         emit("MOV R8,0x61ee");
         emit("ADD R8,R8,R1 << 0x0");
         emit("LD.UB R11,R8[0x0]");
-        padTo(0x8001d350);
+        padTo(0x8001d358);
         emit("ADD R10,R3,R1 << 0x1");
         // The snapshot must be read the same way, or a negative step would
         // never compare equal and every capture would write flash again.
         emit("LD.SH R8,R10[0xc]");
         emit("CP.W R8,R9");
-        emit("BR{eq} 0x8001d366");
+        emit("BR{eq} 0x8001d36e");
         emit("MOV R0,0x1");
-        padTo(0x8001d366);
+        padTo(0x8001d36e);
         emit("ST.H R10[0xc],R9");
         emit("ADD R10,R3,R1 << 0x0");
         emit("LD.UB R8,R10[0x8c]");
         emit("CP.W R8,R11");
-        emit("BR{eq} 0x8001d382");
+        emit("BR{eq} 0x8001d38a");
         emit("MOV R0,0x1");
-        padTo(0x8001d382);
+        padTo(0x8001d38a);
         emit("ST.B R10[0x8c],R11");
         emit("SUB R1,-0x1");
-        emit("RJMP 0x8001d318");
+        emit("RJMP 0x8001d320");
+        padTo(0x8001d3a0);
+        // Bit 5: the latch's transpose state, a byte compared like the rest.
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x2");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d3d8");
+        emit("MOV R8,0x62e2");
+        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R8,R3[0x9]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001d3c0");
+        emit("MOV R0,0x1");
+        padTo(0x8001d3c0);
+        emit("ST.B R3[0x9],R9");
         padTo(0x8001d3d8);
         emit("MOV R12,R0");
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
@@ -5530,16 +6484,32 @@ function assembleProgram() {
         emit("LSL R3,0x1");
         emit("RJMP 0x8001d474");
         padTo(0x8001d4c0);
+        // The latch's transpose state is asked for whenever pads 2 and 3
+        // are both up: the capture compares it and answers "unchanged" on
+        // every scan but the first after a toggle, and the release is the
+        // end of that gesture - a preset saves on its pad's release for the
+        // same reason.  A save stalls playback for a moment, and the moment
+        // is chosen to be one the player is already spending on the hold.
+        emit("MOV R8,0x46f0");
+        emit("LD.UB R9,R8[0x1]");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001d4d8");
+        emit("LD.UB R9,R8[0x2]");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001d4d8");
+        emit("MOV R8,0x20");            // bit 5: the latch state
+        emit("OR R2,R8");
+        padTo(0x8001d4d8);
         emit("CP.W R2,0x0");
-        emit("BR{eq} 0x8001d4e0");
+        emit("BR{eq} 0x8001d4f0");
         emit("MOV R12,R2");
         emit("MCALL PC[0x8001d518]");
         emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001d4e0");
+        emit("BR{eq} 0x8001d4f0");
         emit("MOV R8,0x1");
         emit("ST.B R0[0x0],R8");
         emit("MCALL PC[0x8001d51c]");
-        padTo(0x8001d4e0);
+        padTo(0x8001d4f0);
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
         padTo(0x8001d518);
         word(0x8001d280);
@@ -5581,11 +6551,18 @@ function assembleProgram() {
         emit("SUB R10,-0x2");
         emit("SUB R9,0x1");
         emit("BR{ge} 0x8001d56c");
+        // The latch's transpose reference, the pads 2 & 3 hold count and the
+        // transpose shadow at 0x6580..0x6585: outside every other clear, and
+        // a count that starts as SRAM garbage with the pads down at power-up
+        // would fire the toggle early.
+        emit("MOV R10,0x6580");
+        emit("ST.W R10[0x0],R8");
+        emit("ST.H R10[0x4],R8");
         emit("MOV R10,0x62e0");
         emit("MOV R9,-0x1");
         emit("ST.B R10[0x1],R9");
         emit("MCALL PC[0x8001d5b4]");
-        emit("MOV R12,0x1f");
+        emit("MOV R12,0x3f");
         emit("MCALL PC[0x8001d5bc]");   // initialize completed-edit snapshot
         emit("MOV R10,0x62e0");
         emit("MOV R9,0x1");
@@ -6111,8 +7088,10 @@ function assembleProgram() {
         // is left as the caller had it.  A leaf, and it must stay one.
         //
         // With the latching arp the key table is only half the answer: a
-        // press is worth the table pitch plus TODAY'S transpose - the same
-        // sum the latch toggle stamps when it lets the press through.  An
+        // press is worth the table pitch plus TODAY'S transpose - the sum
+        // the latch toggle stamps when it lets the press through, and in
+        // the latch's transpose state still the pitch the press SOUNDS,
+        // which is what a recording is of.  An
         // earlier version read the SLOT stamp at 0x60a2 instead, but the
         // recorder runs before the toggle, so a fresh press read a stamp
         // that had not been written yet and a reused slot read the note
@@ -6134,6 +7113,14 @@ function assembleProgram() {
         // reload has lost its reference to the boot clear - those appends
         // measure from neutral until the take is re-recorded.
         begin(0x8001dce0);
+        if (feature("cv_transpose")) {
+            // The same contract, answered by seq_record_pitch_cv, which also
+            // stores the step with the shift taken back out.
+            emit("LDDPC R8,0x8001dd1c");
+            emit("MOV PC,R8");
+            padTo(0x8001dd1c);
+            word(srcEntry);
+        } else {
         emit("MOV R11,0x854");
         emit("ADD R11,R11,R12 << 0x1");
         emit("LD.SH R11,R11[0x0]");
@@ -6164,6 +7151,7 @@ function assembleProgram() {
         emit("LD.SH R8,R8[0x0]");
         emit("SUB R11,R8");
         emit("MOV PC,LR");
+        }
         finish("seq_record_pitch", 0x8001dd20);
 
         // A bare pad 2 or 3 must be HELD before it means preview or
@@ -6307,6 +7295,292 @@ function assembleProgram() {
         padTo(0x8001de1c);
         word(0x8001a930);              // pitch-aware latch toggle
         finish("latch_owner", 0x8001de20);
+
+        // The latch has two states, toggled from the instrument.
+        //
+        // HOLD (the default, and every latch before this): a slot sounds at
+        // table[k] plus the stamp its press left, so each note keeps the
+        // transpose it was entered at and the pad only reaches new notes.
+        // TRANSPOSE: the whole latched set follows the pad, the way a
+        // recorded take does - a slot sounds at table[k] + stamp + (transpose
+        // now - the set's reference), the reference being the transpose the
+        // state was entered under.  A note entered in this state is stamped
+        // against the reference, so it enters at the pad's pitch and moves
+        // with the set from then on; a note carried in from the hold state
+        // keeps the octave it was played at relative to the rest.  Both
+        // shims below say this in one substitution: the transpose term the
+        // toggle stamps with and the hold re-bases to is the LIVE transpose
+        // in the hold state and the REFERENCE in the transpose state.
+        //
+        // The owner's model for the two states: whether the octave pads act
+        // BEFORE a note is entered (the default - they choose where it goes
+        // in, and what is held stays put) or AFTER (they move everything
+        // already held).  The names HOLD and TRANSPOSE below are those two.
+        //
+        // RAM: 0x62e2 the state (persisted, bounded 0..1); 0x6580 the
+        // reference; 0x609e the term as published this scan, for the
+        // toggle; 0x6582 the pads 2 & 3 hold count; 0x62e3 the
+        // acknowledgment countdown; 0x6584 the live transpose shadowed
+        // beside the octave shadow at 0x615d while pads 2-4 are up.  The
+        // state and the countdown sit in the block the boot wrapper zeroes
+        // before the record is restored, and it zeroes 0x6580..0x6585 too.
+        //
+        // latch_hold: called from transpose_capture with R8 = 0x60a0 and
+        // R9 = the transpose just published, R12 = the pitch in hand.
+        // Publishes the term, then re-bases the sounding note if its slot
+        // is latched.  R12 is the answer; R8..R11 are spent.
+        begin(0x8001e520);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R10,0x62e2");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit("BR{eq} 0x8001e538");      // hold: the live transpose, as it arrived
+        emit("MOV R10,0x6580");
+        emit("LD.SH R9,R10[0x0]");      // transpose: the set's reference
+        padTo(0x8001e538);
+        emit("ST.H R8[-0x2],R9");       // 0x609e, for the toggle
+        emit("MOV R10,0x38a0");
+        emit("LD.UB R11,R10[0x0]");
+        emit("CP.W R11,0x1");
+        emit("BR{ne} 0x8001e570");      // not the latch position
+        // While the sequencer PLAYS, the sounding note is a recorded step
+        // whose pitch is already absolute, and the last arp key is whatever
+        // key that step happened to name.  Re-basing off that key's live
+        // latch slot would transpose the step a second time, so playback
+        // keeps the pitch it was handed.
+        emit("LD.UB R11,R8[0xb8]");     // 0x60a0 + 0xb8: sequencer mode
+        emit("CP.W R11,0x2");
+        emit("BR{eq} 0x8001e570");
+        emit("LD.UB R10,R10[0xd]");     // the last arp key
+        emit("CP.W R10,0x1d");
+        emit("BR{ge} 0x8001e570");
+        // A stamp only means anything for a slot that is sounding, so gate
+        // on the held flag (state+0x21b) before reading it.  Without this
+        // the shim re-based the transpose off the last arp key's stamp cell
+        // even when that slot had never been latched, which replaced the
+        // live transpose with a stale one.
+        emit("MOV R11,0x377b");
+        emit("LD.UB R11,R11[R10 << 0x0]");
+        emit("CP.W R11,0x1");
+        emit("BR{ne} 0x8001e570");
+        emit("ADD R8,R8,R10 << 0x1");
+        emit("LD.SH R8,R8[0x2]");
+        // RSUB leaves the term MINUS the stamp, so subtracting it re-bases
+        // R12 onto the stamp: in the hold state that is table[k] + stamp,
+        // in the transpose state the same plus (transpose now - reference),
+        // because the live transpose is still inside R12.
+        emit("RSUB R8,R9");
+        emit("SUB R12,R8");
+        padTo(0x8001e570);
+        emit("LDM SP++,R7,PC");
+        finish("latch_hold", 0x8001e580);
+
+        // latch_state_toggle: flip the state without a jump in what sounds
+        // once the octave is put back.  The pads that make the gesture
+        // choose an octave on the way in, so the transpose live at the
+        // moment the hold completes is the gesture's, not the player's; the
+        // one that counts is the shadow latch_state kept while the pads were
+        // up, which is what the restore brings back.  Into TRANSPOSE the
+        // reference is that shadow, so the set's shift is zero once the
+        // octave is restored.  Back to HOLD the shift from the reference to
+        // the shadow is baked into every stamp instead, so each note keeps
+        // sounding where the pad had put it before the gesture.  The term
+        // the toggle reads is republished here rather than a pitch scan
+        // later.  All 29 stamps are shifted: a free slot's stamp means
+        // nothing and is rewritten by its next press.
+        begin(0x8001e580);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x62e2");
+        emit("LD.UB R9,R8[0x0]");
+        emit("MOV R10,0x6584");
+        emit("LD.SH R10,R10[0x0]");     // the transpose from before the gesture
+        emit("MOV R11,0x6580");
+        emit("MOV R12,0x609e");
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001e5a8");
+        emit("ST.H R11[0x0],R10");      // reference := before
+        emit("ST.H R12[0x0],R10");      // and the term is the reference from now
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x0],R9");        // state := transpose
+        emit("RJMP 0x8001e5d0");
+        padTo(0x8001e5a8);
+        emit("LD.SH R11,R11[0x0]");
+        emit("ST.H R12[0x0],R10");      // the term is the live transpose again, which the restore makes this
+        emit("SUB R10,R11");            // the shift the set sounds under once restored
+        emit("MOV R11,0x60a2");
+        emit("MOV R9,0x1c");
+        padTo(0x8001e5b8);
+        emit("LD.SH R12,R11[R9 << 0x1]");
+        emit("ADD R12,R10");
+        emit("ST.H R11[R9 << 0x1],R12");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001e5b8");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // state := hold
+        padTo(0x8001e5d0);
+        emit("LDM SP++,R7,PC");
+        finish("latch_state_toggle", 0x8001e600);
+
+        // latch_state, once per control scan from scan_housekeeping, in
+        // every build.  Two jobs:
+        //
+        // (1) The octave shadow.  Pressing a pad chooses an octave (ADD TO
+        // PITCH set to octaves), so a gesture that starts on pads 2, 3 or 4
+        // has changed the octave on its way in.  While all three are up
+        // the active pad (state+0x2ef) is copied to 0x615d, and the live
+        // transpose (0x60a0) beside it to 0x6584; a completed gesture puts
+        // the pad back - the pads 2 & 3 toggle below, and the sequencer's
+        // pad-4 hold in seq_chord - so a mode change leaves the octave
+        // where the player had it, and the toggle measures its reference
+        // from the transpose that octave stands for.
+        //
+        // (2) With the latching arp: pads 2 and 3 held together for
+        // latch_state_hold_scans, with pad 4 up, toggle the latch's state
+        // once per hold, restore the octave and light both pads for a
+        // moment.  This is the factory's own latch chord (three seconds;
+        // factory_pad_latch_off takes it out of this build) shortened to
+        // one, and it must not be the sequencer's: pad 4 down makes those
+        // pads transport, so the count only runs with pad 4 up; and while
+        // recording, a bare pad 2 or 3 held a third of a second previews or
+        // backspaces, so for as long as both are down the bare-hold count
+        // at 0x625c is zeroed behind seq_hold - it never reaches its
+        // threshold, on the way in or on a finger that lingers after.
+        //
+        // The count runs only while both are down with pad 4 up, saturates
+        // one past the threshold, and clears only once BOTH pads are up: so
+        // one hold is one toggle, and a finger that lingers after it keeps
+        // the bare-hold counter zeroed rather than starting a preview or
+        // backspace of its own.  The acknowledgment is a countdown of
+        // scans: bit 3 blinks both pads every eight, and the last tick
+        // repaints all four from the active preset, the same repaint the
+        // pad-4 release uses, so the lights end as the truth has them.
+        // Written every scan while it runs, because select_pad repaints on
+        // every pad press and would wipe a single write.
+        begin(0x8001e600);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("LDDPC R0,0x8001e720");    // global state base
+        emit("MOV R8,0x46f0");          // the pad touch array, 2 = held
+        emit("LD.UB R9,R8[0x1]");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001e634");
+        emit("LD.UB R9,R8[0x2]");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001e634");
+        emit("LD.UB R9,R8[0x3]");
+        emit("CP.W R9,0x2");
+        emit("BR{eq} 0x8001e634");
+        emit("LD.UB R9,R0[0x2ef]");
+        emit("MOV R10,0x615d");
+        emit("ST.B R10[0x0],R9");       // the octave shadow
+        emit("MOV R10,0x60a0");
+        emit("LD.SH R9,R10[0x0]");
+        emit("ST.H R10[0x4e4],R9");     // 0x6584: the transpose shadow
+        padTo(0x8001e634);
+        if (feature("arp_latch")) {
+            emit("LD.UB R9,R8[0x1]");
+            emit("CP.W R9,0x2");
+            emit("BR{ne} 0x8001e698");
+            emit("LD.UB R9,R8[0x2]");
+            emit("CP.W R9,0x2");
+            emit("BR{ne} 0x8001e698");
+            emit("LD.UB R9,R8[0x3]");
+            emit("CP.W R9,0x2");
+            emit("BR{eq} 0x8001e6b0");  // pad 4 down: the sequencer's chord
+            // Not in edit mode, where the factory gives this same chord its
+            // own meaning and excluded its latch from it; and not while
+            // either pad is setting a preset voltage - a hold whose knob has
+            // moved is an edit, as the sequencer's bare hold already decides.
+            emit("LD.UB R9,R0[0x39]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001e6b0");
+            emit("MOV R10,0x614a");
+            emit("LD.UB R9,R10[0x1]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001e6b0");
+            emit("LD.UB R9,R10[0x2]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001e6b0");
+            emit("MOV R10,0x6582");
+            emit("LD.UH R9,R10[0x0]");
+            emit(StringFormat("MOV R11,0x%x",
+                 number("latch_state_hold_scans", 200, 20, 2000)));
+            emit("CP.W R9,R11");
+            emit("BR{gt} 0x8001e6b0");  // fired already: wait for the release
+            emit("SUB R9,-0x1");
+            emit("ST.H R10[0x0],R9");
+            emit("CP.W R9,R11");
+            emit("BR{ne} 0x8001e6b0");  // not long enough yet
+            emit("MCALL PC[0x8001e724]"); // latch_state_toggle
+            emit("MOV R12,0x615d");
+            emit("LD.UB R12,R12[0x0]");
+            emit("MCALL PC[0x8001e728]"); // select_pad: the octave from before
+            emit("MOV R9,0x30");        // the acknowledgment, in scans
+            emit("MOV R10,0x62e3");
+            emit("ST.B R10[0x0],R9");
+            emit("RJMP 0x8001e6b0");
+            padTo(0x8001e698);
+            // Not both down.  One still down keeps the count where it is;
+            // both up clears it.
+            emit("LD.UB R9,R8[0x1]");
+            emit("CP.W R9,0x2");
+            emit("BR{eq} 0x8001e6b0");
+            emit("LD.UB R9,R8[0x2]");
+            emit("CP.W R9,0x2");
+            emit("BR{eq} 0x8001e6b0");
+            emit("MOV R10,0x6582");
+            emit("MOV R9,0x0");
+            emit("ST.H R10[0x0],R9");
+            padTo(0x8001e6b0);
+            // A gesture in progress, or lingering: no bare hold counts.
+            emit("MOV R10,0x6582");
+            emit("LD.UH R9,R10[0x0]");
+            emit("CP.W R9,0x0");
+            emit("BR{eq} 0x8001e6c4");
+            emit("MOV R10,0x625c");     // the bare hold: which pad, and how long
+            emit("MOV R9,0x0");
+            emit("ST.H R10[0x0],R9");
+            padTo(0x8001e6c4);
+            emit("MOV R10,0x62e3");
+            emit("LD.UB R8,R10[0x0]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8001e710");  // nothing to acknowledge
+            emit("SUB R8,0x1");
+            emit("ST.B R10[0x0],R8");
+            emit("CP.W R8,0x0");
+            emit("BR{ne} 0x8001e6e0");
+            emit("LD.UB R12,R0[0x2ef]");
+            emit("MCALL PC[0x8001e728]"); // select_pad repaints all four
+            emit("RJMP 0x8001e708");
+            padTo(0x8001e6e0);
+            emit("BFEXTU R9,R8,0x3,0x1"); // the blink phase
+            emit("CP.W R9,0x0");
+            emit("BR{eq} 0x8001e6f8");
+            emit("MOV R12,0x1");
+            emit("MCALL PC[0x8001e72c]"); // led_set: pad 2
+            emit("MOV R12,0x2");
+            emit("MCALL PC[0x8001e72c]"); // led_set: pad 3
+            emit("RJMP 0x8001e708");
+            padTo(0x8001e6f8);
+            emit("MOV R12,0x1");
+            emit("MCALL PC[0x8001e730]"); // led_clear: pad 2
+            emit("MOV R12,0x2");
+            emit("MCALL PC[0x8001e730]"); // led_clear: pad 3
+            padTo(0x8001e708);
+            emit("MCALL PC[0x8001e734]"); // led_flush
+        }
+        padTo(0x8001e710);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001e720);
+        word(0x00003560);              // global state base
+        word(0x8001e580);              // latch_state_toggle
+        word(0x8000698c);              // select_pad(0..3)
+        word(0x80006808);              // led_set(ch)
+        word(0x800068cc);              // led_clear(ch)
+        word(0x8000673c);              // led_flush()
+        finish("latch_state", 0x8001e740);
 
         // Between the re-base shim and the blend cave, three per-scan jobs
         // that all need the sequencer's mode in hand.
@@ -6805,7 +8079,7 @@ function assembleProgram() {
         padTo(0x8001c6b0);
         // Diagnostic builds route the gate through the latency shim, which
         // stamps the delay and tail-calls the real routine.
-        word(block("clock_latency") ? 0x8001bbc0 : 0x800077f8);
+        word(block("clock_latency") ? 0x8001bbc0 : 0x8001e100); // via pulse_guard
         word(0x8001c600);
         if (holdPitchToGate()) word(0x00003560); // state base, for the restore
         finish("clock_output", 0x8001c6c0);
@@ -7287,7 +8561,7 @@ function assembleProgram() {
         padTo(fastPool);
         word(0x8001be30); // prepare the selected step's transposed pitch target
         word(0x8001c0e0); // remap, minus the per-scan chain
-        word(block("clock_latency") ? 0x8001bbc0 : 0x800077f8);
+        word(block("clock_latency") ? 0x8001bbc0 : 0x8001e100); // via pulse_guard
         if (deadline) word(0x8001bd40); // the deadline, sized from the edge
         // Four pool words take the block right up to clock_capture, which
         // begins at 0x8001c200.  There is no room for a fifth.
@@ -7875,9 +9149,13 @@ function assembleProgram() {
         emit("BR{ge} 0x8001ba28");
         // The pitch this key SOUNDS, transpose included.
         emit("MCALL PC[0x8001ba2c]");   // seq_record_pitch -> R11
-        emit("MOV R8,0x6160");
-        emit("ADD R8,R8,R9 << 0x1");
-        emit("ST.H R8[0x0],R11");
+        // With the jack transposing, the leaf has already stored the step
+        // with the shift taken out; R11 is the heard pitch for the audition.
+        if (!feature("cv_transpose")) {
+            emit("MOV R8,0x6160");
+            emit("ADD R8,R8,R9 << 0x1");
+            emit("ST.H R8[0x0],R11");
+        }
         // The KEY as well as the pitch.  The pitch is what the CV plays, and
         // keeping it is what makes a recording survive a change of tuning -
         // but MIDI names notes by key, and answering the arp's selector with
@@ -8308,7 +9586,7 @@ function assembleProgram() {
         word(0x8000f160); // give the bus back
         word(0x80007e44); // MIDI note off, port one
         word(0x800081f0); // MIDI note off, port two
-        word(0x800057a8); // key -> MIDI note
+        word(feature("cv_transpose") ? mtPress : 0x800057a8); // key -> MIDI note, shifted with the jack transposing
         finish("seq_key_takes", 0x8001bf9c);
 
         // A selected OUTPUT note owns gate-low, not a raw GPIO interrupt.
@@ -8542,7 +9820,16 @@ function assembleProgram() {
         emit("LD.SH R9,R9[0x0]");
         emit("SUB R8,R9");              // less the transpose the adder re-adds
         padTo(0x8001b95e);
-        emit("MOV PC,LR");
+        if (feature("cv_transpose")) {
+            // Then the jack transposer's shift for this step's key, as it
+            // stands now - play and preview alike.
+            emit("LDDPC R9,0x8001b964");
+            emit("MOV PC,R9");
+            padTo(0x8001b964);
+            word(scsEntry);
+        } else {
+            emit("MOV PC,LR");
+        }
         finish("seq_preview_pin", 0x8001b968);
 
         // Note-off pointer pools -> latch-gated wrapper.
@@ -8683,6 +9970,9 @@ function assembleProgram() {
         //   (a) run the shared first-use bootstrap before reading custom RAM;
         //   (b) latch-exit watch: on state+0x340 leaving 1 (prev at RAM
         //       0x60ef) clear the held count and all 29 held flags;
+        //   (c) after the editor, the chord and persistence: the latch's
+        //       pads 2 & 3 state toggle and its acknowledgment (latch_state),
+        //       which stays out of edit mode and off pads that are editing.
         begin(0x8001a480);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -8740,6 +10030,11 @@ function assembleProgram() {
         if (block("seq_chord") && !block("persist")) {
             emit("MCALL PC[0x8001a524]"); // the sequencer's pad chord
         }
+        // After the chord, so its lights are painted first and the latch's
+        // acknowledgment flash lands on top of them, and after its bare-hold
+        // counter has counted, so a two-pad hold can zero it.  Every build:
+        // the cave also shadows the octave the chord restores.
+        emit("MCALL PC[0x8001a52c]");   // latch_state: pads 2 & 3, octave shadow
         // Clock dequeue runs only from the main loop, never inside a pitch
         // remap whose input pitch has already been calculated.
         emit("LDM SP++,R7,PC");
@@ -8750,6 +10045,8 @@ function assembleProgram() {
         word(block("persist") ? 0x8001d520 : 0x8001ae1c);
         word(0x8001b180);              // the sequencer chord
         word(0x8001b980);              // the external clock, per scan
+        padTo(0x8001a52c);
+        word(0x8001e600);              // latch_state
         padTo(0x8001a534);
         word(0x00003560); // global state base
         finish("scan_housekeeping", 0x8001a53c);
@@ -9219,6 +10516,18 @@ function assembleProgram() {
         fixedPatch("poly_powerup_default_off", 0x800071d6, 2, "MOV R8,0x0");
         fixedPatch("poly_factory_reset_default_off", 0x8000a444, 2, "MOV R8,0x0");
         fixedPatch("poly_persistence_marker", 0x80009fc2, 4, "MOV R8,0xa5");
+
+        // The factory's pad chord dispatcher (0x800047ac) counts the pressed
+        // pads and, for pads 2 and 3 alone outside edit mode, calls the
+        // three-second hold timer at 0x800045e8 through this pool word.  That
+        // timer is the factory latch: it sets the sustain gate at state+0x2ea
+        // and sends MIDI CC 64, and nothing else ever sets that gate.  With
+        // the latching arp the same two pads toggle the latch's transpose
+        // state instead, so the call is taken out and the factory latch is
+        // gone completely - not shadowed, not conditional.  The dispatcher's
+        // own bookkeeping before the call (the pad code, the timer reset)
+        // and the edit-mode meaning of the chord are untouched.
+        fixedPatch("factory_pad_latch_off", 0x8000491e, 4, "NOP");
         wordPatch("poly_settings_loader_pool", 0x80007da8, 0x8001aca4,
             "settings loader -> one-time poly-MIDI migration wrapper");
 
@@ -9269,6 +10578,12 @@ function assembleProgram() {
         fixedPatch("preset_out_3", 0x8000a99e, 4, "LD.SH R8,R8[0x2bde]");
         fixedPatch("preset_out_4", 0x8000a9ae, 4, "LD.SH R8,R8[0x2be0]");
 
+        // The pitch adder converts the scaled preset voltage to an integer
+        // through this pool word.  With the quantiser on it goes through the
+        // cave above, which calls the same helper and then snaps the result.
+        wordPatch("preset_quantize_pool", 0x80003914, 0x8001e140,
+            "float-to-int pointer -> preset voltage quantiser");
+
         // An octave is a 2/1 everywhere in the factory: the panel switch adds
         // -484, 0, +484 or +968 DAC units by position, and the stored octave
         // setting multiplies by 484 with a two-octave bias.  With a scale that
@@ -9288,6 +10603,11 @@ function assembleProgram() {
         // the two-operand form is the same operation and the same width.
         fixedPatch("octave_scale_bias", 0x800035fa, 4,
             StringFormat("SUB R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
+
+        // With the jack transposing, the factory must stop adding it to the
+        // glide-rate index: the load at 0x8000313e becomes a constant that
+        // the halve-and-subtract-twenty below it turns into exactly zero.
+        fixedPatch("glide_cv_addend", 0x8000313e, 4, "MOV R8,0x28");
 
         wordPatch("knob1_pool", 0x800043c4, 0x800194c0,
             "knob-1 pointer -> pressure-ceiling wrapper");
@@ -9319,12 +10639,26 @@ function assembleProgram() {
         // still held when another is let go - end the note the sequencer is
         // sounding first.  Off the sequencer these keep their factory
         // targets.
+        // With the jack transposing, both go on through midi_transpose's
+        // press entry - the sequencer wrapper's own pool word does the same.
         wordPatch("key_note_pool", 0x80005ebc,
-            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            block("seq_pitch") ? 0x8001bf00 : (feature("cv_transpose") ? mtPress : 0x800057a8),
             "key -> MIDI note on the press -> the sequencer's note ends");
         wordPatch("key_restore_note_pool", 0x800063d0,
-            block("seq_pitch") ? 0x8001bf00 : 0x800057a8,
+            block("seq_pitch") ? 0x8001bf00 : (feature("cv_transpose") ? mtPress : 0x800057a8),
             "key -> MIDI note on the hand-back -> the sequencer's note ends");
+        // The other four readers of a key's MIDI note, with the jack
+        // transposing: the arp and the polyphonic sender keep the note they
+        // sent, so they take the live shift; the lift's comparison and the
+        // poly-mode comparison against the sounding note take the frozen one.
+        wordPatch("midi_transpose_arp_pool", 0x80002428, mtLive,
+            "key -> MIDI note at the arp step -> shifted live");
+        wordPatch("midi_transpose_poly_pool", 0x80005784, mtLive,
+            "key -> MIDI note in the polyphonic sender -> shifted live");
+        wordPatch("midi_transpose_lift_pool", 0x80006284, mtHeld,
+            "key -> MIDI note at the lift -> shifted as at the press");
+        wordPatch("midi_transpose_compare_pool", 0x80009830, mtHeld,
+            "key -> MIDI note in the poly-mode comparison -> shifted as at the press");
         wordPatch("pad_select_pool", 0x8000a810,
             block("seq_chord") ? 0x8001b790 : 0x8000698c,
             "press-time select_pad -> chord-armed guard");

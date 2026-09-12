@@ -1,3 +1,11 @@
+2.3 (2026-09-12)
+- Any preset knob can now be set to None, which leaves it as a preset voltage.
+- The add-to-pitch preset voltage can now be quantized to the selected tuning.
+- The portamento in banana jack can now transpose the keyboard by whole degrees of the selected tuning. This feature also allows the keyboard to act as a basic pitch quantizer.
+- Knob 2 can now be set to quantized random triggers.
+- Hold pads 2 and 3 together to change if “add to pitch” is applied before or after a note is entered in latch mode. The default state is “before”.
+- Holding pad 4 for the sequencer, or pads 2 and 3 for the latch, now restore the original octave.
+
 2.2 (2026-09-02)
 - Fixed a portamento bug.
 - The pitch offset can now be disabled.

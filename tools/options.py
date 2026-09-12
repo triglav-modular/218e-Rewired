@@ -10,11 +10,13 @@ already consumed, so the generators, the safety checks, the Ghidra assembler
 and the JavaScript toolchain underneath are all unchanged.
 
     latching_arp        = true/false     arp switch: latch / factory
-    remap_knobs         = true/false     knobs 1-4: arp+vibrato / factory
+    knob1..knob4        = "<role>"       each preset knob's job, or "factory"
     pitch_correction    = "<csv>"/false  per-key offsets, or a flat ramp
     alternate_tunings   = [scl,...]/false  up to 3 Scala files, or factory
     volts_per_octave    = 1.2 / 1.0      pitch ramp scaling
     pitch_offset        = true/false     bottom key three semitones up / at 0 V
+    quantize_presets    = true/false     preset voltages snap to the tuning when added to pitch
+    portamento_in       = "portamento"/"transpose"  what the portamento jack does
     pressure_fix        = true/false     the reworked pressure path, or factory
     pressure_portamento = true/false     pitch follows relative pressure
 """
@@ -59,6 +61,100 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                  'dac_counts': 4096,
                  'dac_gain': 4.09,
                  'dac_vref': 2.5},
+    'presets': {'quantize': False},
+    # The PORTAMENTO IN jack as a transposer.  cv_counts_per_volt is the
+    # jack's ADC scale - 4095 counts over 20 V, so 10 V reads about half
+    # scale - and one period of the tuning costs cv_volts_per_period of CV;
+    # cv_zero is subtracted from the raw reading first, and cv_hysteresis is
+    # how far past a degree boundary the CV has to travel before the answer
+    # changes, which is the whole of the steadying.  Each is documented at
+    # its own line below, with the evidence for it.
+    #
+    # The scale was 102.3, then 409.5, before the factory's own arithmetic
+    # settled it at 204.75 on 2026-09-12.  Both earlier values came from
+    # reading "the whole shift was spent by about 2.5 V" as a measurement of
+    # the INPUT; it is a measurement of where the pitch OUTPUT saturates, and
+    # it constrains the input scale hardly at all.  Do not reach for it again.
+    'portamento_in': {   'transpose': False,
+                         # Counts the jack's cell gains per volt in.  Read off
+                         # the FACTORY's own arithmetic, not fitted to a
+                         # reading: its only use of state+0x2f0 is the glide
+                         # index at 0x80003142 - CASTU.H, LSR 1, SUB 0x14, so
+                         # max(0, cv/2 - 20) - added to the PORTAMENTO knob at
+                         # state+0x306 and clamped to 0x3ff.  The knob is a
+                         # conditioned channel, 0..1023, so the index domain is
+                         # 1023, and the jack is meant to span it: at 204.75
+                         # ten volts is 2047 counts and the addend reaches 1004,
+                         # 98% of the clamp.  At 409.5 it would reach 2027 and
+                         # the jack's top half would do nothing, which is not a
+                         # thing anyone designs.  So 4095 counts over 20 V - the
+                         # front end has 2x headroom on a 10 V input.
+                         #
+                         # It was 102.3 until 2026-09-12 and then 409.5, and
+                         # both came from the same observation read as a scale:
+                         # "the whole shift was spent by 2.5 V".  That is where
+                         # the PITCH OUTPUT saturates, about 5.25 periods from
+                         # the bottom key, and it constrains no input scale at
+                         # all.  Measured on the instrument the same day, one
+                         # period took 4.1-4.4 V against the 3.89 V this
+                         # predicts; the residue is a dead band at the bottom of
+                         # the jack or slack in the reading, and cv_zero is
+                         # where it goes once somebody reads the raw count at
+                         # two known voltages.
+                         'cv_counts_per_volt': 204.75,
+                         'cv_zero': 0,
+                         # How far past a degree boundary the CV has to
+                         # travel before the answer changes.  The band is
+                         # period/24 + this, either side of the LAST answer's
+                         # centre, so what noise has to swing across to make
+                         # the answer chatter is 2x this many raw counts -
+                         # independent of the period, which is why widening
+                         # the period bought no noise immunity.  12 counts is
+                         # ~59 mV peak to peak swallowed, and moves the point
+                         # where the answer changes from 53% of the way
+                         # through a degree to 68%.  It was 2 - about 10 mV,
+                         # which is nothing - until 2026-09-12, when this took
+                         # over the whole job from the filter below.  This is
+                         # the number to turn if the jack still glitches, or
+                         # if it now feels like it lags.
+                         'cv_hysteresis': 12,
+                         # One pole on the raw count, ahead of the quantiser:
+                         # new = prev + (raw - prev) >> shift.  OFF, and the
+                         # hysteresis above does this job instead.
+                         #
+                         # It cannot do it without being heard.  The quantiser
+                         # republishes the sounding pitch on every scan its
+                         # answer changes, so a pole travelling towards a new
+                         # reading is a run up through every degree it passes,
+                         # not a transposition: measured at shift 2, a step of
+                         # two periods visited TEN pitches over 13 scans, ~65
+                         # ms, which the owner heard as a slew.  Smoothing the
+                         # input of a quantiser whose output is a pitch is the
+                         # wrong shape; the answer has to be steadied, not the
+                         # reading.  Set it back to 2 to have the pole again -
+                         # the cave and RAM 0x60e8 are still there, and the
+                         # per-scan chain enters it instead.
+                         'cv_filter_shift': 0,
+                         # How much CV one period of the tuning costs.  It
+                         # was volts_per_octave until 2026-09-12, which tied
+                         # the INPUT's law to the OUTPUT's scaling: 1.2 V
+                         # bought an octave, so the jack's range bought far
+                         # more of them than the pitch output can show - the
+                         # curve at 0x80019bc0 holds 79 semitones, so the DAC
+                         # stops at 3125 counts of the 4095 it can drive.
+                         #
+                         # 4.0, not the 2.0 it was first set to that day:
+                         # that figure was chosen against cv_counts_per_volt =
+                         # 409.5, so it asked for 819 counts per period and got
+                         # 4 V on the instrument.  The owner has the 4 V and
+                         # likes it.  Correcting the hardware model without
+                         # correcting this would halve the period and change
+                         # behaviour nobody asked to change - the product
+                         # 204.75 x 4.0 = 819 is what the firmware emits, and it
+                         # is unchanged.  Five periods over the input range
+                         # still holds; the range is 20 V, so 0-10 V is two and
+                         # a half of them.
+                         'cv_volts_per_period': 4.0},
     'portamento': {   'blend_filter_shift': 2,
                       'blend_hysteresis': 3,
                       'blend_slew_taper': 1,
@@ -87,7 +183,8 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'arp_order': {'knob1_orders': 0},
     'knob4': {'octaves': 0},
     # Knob 2: 'randomness' is what 1.x does, 'patterns' turns the knob into a
-    # bank selector over step masks, 'swing' delays every other step.
+    # bank selector over step masks, 'swing' delays every other step,
+    # 'quantized' is the randomness snapped to a half-of-a-beat grid.
     'knob2': {'mode': 'randomness', 'patterns': [], 'lengths': []},
     'timing': {'gate_settle_scans': 1, 'scan_period_ms': 5},
     'tuning': {   'base_units': 485,
@@ -129,6 +226,56 @@ def _check_internal_diagnostics() -> None:
 
 
 _check_internal_diagnostics()
+
+
+def _check_jack_scale() -> None:
+    """The jack's hardware model, against the factory's own use of the cell.
+
+    cv_counts_per_volt has been wrong twice, in both directions, because the
+    only evidence anyone reached for was "how far did the pitch move" - and
+    that measures where the pitch OUTPUT saturates, not what the input reads.
+    There is better evidence sitting in the shipped image.
+
+    The factory's one use of state+0x2f0 is the glide-rate index at
+    0x80003142: CASTU.H, LSR 1, SUB 0x14 - so max(0, cv/2 - 20) - added to the
+    PORTAMENTO knob at state+0x306 and clamped to 0x3ff.  The knob is a
+    conditioned channel, 0..1023, so the index spans 1023 and the jack is
+    plainly meant to span it too.  That pins the cell's reading at the jack's
+    nominal 10 V to about twice the clamp, and it is a much tighter constraint
+    than any transposition measurement: at 409.5 the addend would reach 2027
+    and the top half of the jack would do nothing, and at 102.3 it reaches 492
+    and the bottom half would be wasted.  Only ~205 counts/V fits.
+
+    So refuse a model the factory's own arithmetic contradicts, rather than
+    letting it reach an instrument and be diagnosed a third time.  The band is
+    wide because the point is to catch a factor of two, not to pin a trim.
+
+    Unlike _check_internal_diagnostics this needs no mirror in the JavaScript
+    toolchain: that one guards a COMBINATION the page can select at runtime,
+    while this guards a constant no build option exposes.  The value reaches
+    the browser only by being baked into generated.js, and web/generate.py
+    imports this module to do it - so a refused value cannot get that far.
+    """
+    jack = INTERNAL_DEFAULTS["portamento_in"]
+    addend = jack["cv_counts_per_volt"] * JACK_NOMINAL_VOLTS / 2 - 20
+    if not 0.75 * GLIDE_INDEX_CLAMP <= addend <= 1.25 * GLIDE_INDEX_CLAMP:
+        raise SystemExit(
+            f"tools/options.py: cv_counts_per_volt = {jack['cv_counts_per_volt']} "
+            f"puts the factory's glide addend at {addend:.0f} for a "
+            f"{JACK_NOMINAL_VOLTS:g} V input,\n  against the {GLIDE_INDEX_CLAMP} "
+            "the factory clamps that index to (0x80003142, added to the "
+            "PORTAMENTO knob).\n  The factory spans its index with this jack, "
+            "so a model that leaves half of the\n  jack's travel doing nothing "
+            "- or runs out halfway up it - is the wrong scale.")
+
+
+# The jack's nominal full-scale input, and the clamp the factory applies to
+# the glide index the jack feeds.  Both are facts about the instrument, not
+# choices: 0-10 V is the 200e CV standard, and 0x3ff is read out of the image.
+JACK_NOMINAL_VOLTS = 10.0
+GLIDE_INDEX_CLAMP = 0x3ff
+
+_check_jack_scale()
 
 # A harness may need an image built with one internal constant changed - a
 # settle count, a diagnostic flag - and none of those is among the options a
@@ -194,11 +341,12 @@ def _write_flat_calibration() -> Path:
 # simply not there, and the default quietly took its place.
 OPTION_TYPES = {
     "latching_arp":        bool,
-    "remap_knobs":         bool,
     "pressure_fix":        bool,
     "pressure_portamento": bool,
     "volts_per_octave":    float,
     "pitch_offset":        bool,
+    "quantize_presets":    bool,
+    "portamento_in":       str,
     "pitch_correction":    (bool, str),
     "alternate_tunings":   (bool, list),
     "knob1":               str,
@@ -211,19 +359,30 @@ OPTION_TYPES = {
     "persist":             bool,
 }
 
-# What each preset knob may be set to.  The first entry of each is what
-# remap_knobs = true has always meant, so a config that never mentions a knob
-# keeps the behaviour it had.
+# What each preset knob may be set to.  The first entry of each is the
+# default, so a config that never mentions a knob keeps the behaviour it had;
+# "factory" hands that one knob back to its preset voltage.
 KNOB_ROLES = {
     "knob1": ("order", "orders", "factory"),
-    "knob2": ("spacing", "swing", "patterns", "factory"),
+    "knob2": ("spacing", "quantized", "swing", "patterns", "factory"),
     "knob3": ("octaves", "factory"),
     "knob4": ("vibrato", "trn", "factory"),
 }
 
 
+# Options that used to exist, and what took their place.  An old config is
+# refused with the replacement named, not as a misspelling.
+RETIRED = {
+    "remap_knobs": 'name each knob instead - knob1 = "factory" hands one back, '
+                   'and a knob left out keeps its default role',
+}
+
+
 def check(options: dict) -> None:
     """Refuse anything that is not one of the seven, as the thing it must be."""
+    for name, instead in RETIRED.items():
+        if name in options:
+            raise SystemExit(f"{name} is no longer an option: {instead}")
     unknown = sorted(set(options) - set(OPTION_TYPES))
     if unknown:
         known = ", ".join(sorted(OPTION_TYPES))
@@ -302,27 +461,23 @@ def expand(options: dict) -> dict:
     cfg["arp"]["switch"] = "latch" if want("latching_arp", True) else "factory"
 
     # 2. What each preset knob does -----------------------------------------
-    # remap_knobs still sets them all at once, and each knob can then be named
-    # individually - which is the only way to say "arpeggiator octaves on knob
-    # 3, preset voltage on the rest", and the only way to reach the roles that
-    # did not exist in 1.x.
-    remap = want("remap_knobs", True)
+    # Each knob is named on its own: a knob left out keeps its default role,
+    # and "factory" hands that one back to its preset voltage.  There is no
+    # switch for all four at once any more - four "factory" lines say that.
     live = {"knob1": "arp_order", "knob2": "arp_rhythm",
             "knob3": "arp_octaves", "knob4": "vibrato"}
-    cfg["knobs"] = {k: (v if remap else "factory") for k, v in live.items()}
+    cfg["knobs"] = {}
     roles = {}
     for knob, allowed in KNOB_ROLES.items():
-        role = want(knob, None)
-        if role is None:
-            role = allowed[0] if remap else "factory"
+        role = want(knob, allowed[0])
         if role not in allowed:
             raise SystemExit(
                 f"{knob} = {role!r} is not one of "
                 + ", ".join(repr(a) for a in allowed))
         roles[knob] = role
         cfg["knobs"][knob] = "factory" if role == "factory" else live[knob]
-    # The sequencer's controls live on a pad chord.  It does NOT require
-    # remap_knobs: with factory knobs the chord still works - the arm freezes
+    # The sequencer's controls live on a pad chord.  It does NOT need any knob
+    # remapped: with factory knobs the chord still works - the arm freezes
     # the active pad so the selecting press cannot change a preset, and the
     # knob-moved refusal reads the editor cave, which every build carries.
     # Where along the bend strip the line between a rest and a tie falls, in
@@ -400,7 +555,7 @@ def expand(options: dict) -> dict:
                       "page_count": 8}
     cfg["arp_order"]["knob1_orders"] = 1 if roles["knob1"] == "orders" else 0
     cfg["knob4"]["octaves"] = 1 if roles["knob4"] == "trn" else 0
-    cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing")
+    cfg["knob2"]["mode"] = (roles["knob2"] if roles["knob2"] in ("patterns", "swing", "quantized")
                             else "randomness")
 
     # 3. Per-key pitch correction -------------------------------------------
@@ -500,6 +655,31 @@ def expand(options: dict) -> dict:
     # the table out three entries later and the firmware's fixed add cancels
     # out, with no change to the assembled code.
     cfg["pitch"]["bottom_key_semitone"] = 3 if want("pitch_offset", True) else 0
+
+    # 13. Preset voltage quantisation ----------------------------------------
+    # The add-to-pitch switch's middle position adds the active pad's preset
+    # voltage to the pitch.  On, that offset snaps to the nearest interval of
+    # the tuning slot currently selected (the factory temperament when no
+    # Scala file is installed), measured from the bottom key and repeating
+    # every period, so the transposition lands on a degree of the scale.  The
+    # sum then goes through the pitch remap like any key, so the per-key
+    # oscillator correction applies to the transposed note too.  Only the
+    # pitch path is quantised: the preset voltage's own output jack stays
+    # continuous.  Intervals come from the live 32-entry key table, so a
+    # keyboard map that leaves degrees off the keys leaves them out here as
+    # well.  Off is the factory's continuous add, and the default.
+    cfg["presets"]["quantize"] = bool(want("quantize_presets", False))
+
+    # 14. The portamento jack ----------------------------------------------
+    # "portamento" is the factory's: the CV adds to the knob's glide time.
+    # "transpose" shifts the keyboard by whole degrees of the selected
+    # tuning instead, one period per cv_volts_per_period of CV, and the knob
+    # keeps its own job either way - the jack is its own ADC channel.
+    jack = want("portamento_in", "portamento")
+    if jack not in ("portamento", "transpose"):
+        raise SystemExit(
+            f"portamento_in = {jack!r} is not one of 'portamento', 'transpose'")
+    cfg["portamento_in"]["transpose"] = jack == "transpose"
 
     # 6. Pressure response fix ----------------------------------------------
     # One switch over the whole reworked pressure path.  Off returns every

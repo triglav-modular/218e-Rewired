@@ -21,10 +21,10 @@ name: Firmware and flashers
 
 on:
   push:
-    # 2.0 is a long-lived development branch, so it gets the same checks as
-    # main.  The page workflow deliberately does NOT: the live site deploys
-    # from main only, or an unfinished 2.0 would publish itself.
-    branches: [main, '2.0']
+    # development is long-lived and is where the work lands, so it gets the
+    # same checks as main.  The page workflow takes the same two branches, but
+    # publishes development under /dev/ rather than over the live site.
+    branches: [main, development]
     # The page's own presentation files, which nothing here reads: generate.py
     # writes generated.js and assembler.js out of tools/avr32 and config and
     # never opens the page, test_configs.py loads only the build JavaScript,

@@ -724,6 +724,12 @@ def test_blend(cfg: dict) -> None:
         text = re.sub(
             r'emit\("MOV R12,0x1f"\);\s*emit\("MCALL PC\[0x8001d5bc\]"\);',
             "", text)
+        # The persistence scan asks for the latch state with mask bit 5.
+        # Exempt only that load/or pair - the JS encoder has no ORL - never a
+        # loop using 32 keys.
+        text = re.sub(
+            r'emit\("MOV R8,0x20"\);[^\n]*\n\s*emit\("OR R2,R8"\);',
+            "", text)
         return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
@@ -1498,14 +1504,39 @@ def test_option_messages() -> None:
     import options as _options
     raises("a bare-type option refuses with a sentence",
            lambda: _options.check({"knob1": 1}), "knob1 must be str")
+    raises("the retired remap switch names what replaced it",
+           lambda: _options.check({"remap_knobs": False}), 'knob1 = "factory"')
+    knobs = _options.expand({"knob3": "factory"})["knobs"]
+    check("one knob on factory leaves the other three remapped",
+          knobs == {"knob1": "arp_order", "knob2": "arp_rhythm",
+                    "knob3": "factory", "knob4": "vibrato"}, str(knobs))
+    check("all four on factory is the old remap-off image",
+          all(v == "factory" for v in _options.expand(
+              {k: "factory" for k in ("knob1", "knob2", "knob3", "knob4")})["knobs"].values()))
     raises("pitch_offset takes only true or false",
            lambda: _options.check({"pitch_offset": "208c"}), "pitch_offset must be true or false")
     check("pitch_offset = false puts the bottom key on the 0 V pitch",
           _options.expand({"pitch_offset": False})["pitch"]["bottom_key_semitone"] == 0)
     check("leaving pitch_offset out keeps the three semitones",
           _options.expand({})["pitch"]["bottom_key_semitone"] == 3)
+    raises("quantize_presets takes only true or false",
+           lambda: _options.check({"quantize_presets": "yes"}), "quantize_presets must be true or false")
+    check("quantize_presets = true asks for the quantiser",
+          _options.expand({"quantize_presets": True})["presets"]["quantize"] is True)
+    check("leaving quantize_presets out keeps the free add",
+          _options.expand({})["presets"]["quantize"] is False)
+    on, _, _ = B.resolve_flags(_options.expand({"quantize_presets": True}))
+    off, _, _ = B.resolve_flags(_options.expand({}))
+    check("the quantiser's cave and pool word are gated together",
+          on["preset_quantize"] and on["preset_quantize_pool"]
+          and not off["preset_quantize"] and not off["preset_quantize_pool"])
     check("arp_patterns = true is the default bank",
           _options.expand({"arp_patterns": True})["knob2"] == _options.expand({})["knob2"])
+    check("knob2 = quantized asks for the quantized randomiser",
+          _options.expand({"knob2": "quantized"})["knob2"]["mode"] == "quantized"
+          and _options.expand({"knob2": "quantized"})["knobs"]["knob2"] == "arp_rhythm")
+    raises("knob2 refuses a role it does not have",
+           lambda: _options.expand({"knob2": "grid"}), "'quantized'")
     slots = _options.expand({"alternate_tunings":
                              ["tunings/12TET.scl", "factory", "tunings/12TET.scl"]})["tuning"]["slots"]
     check("'factory' is accepted as a middle slot", slots[1] == "factory", str(slots))

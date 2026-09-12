@@ -47,13 +47,9 @@ var BUILDLIB = (function () {
         }
         cfg.arp.switch = want('latching_arp', true) ? 'latch' : 'factory';
 
-        var remap = want('remap_knobs', true);
         var live = { knob1: 'arp_order', knob2: 'arp_rhythm',
                      knob3: 'arp_octaves', knob4: 'vibrato' };
         cfg.knobs = {};
-        Object.keys(live).forEach(function (k) {
-            cfg.knobs[k] = remap ? live[k] : 'factory';
-        });
 
         // Pitch correction arrives as rows, not a file path: the browser has
         // no filesystem and the UI edits the offsets directly.
@@ -84,6 +80,21 @@ var BUILDLIB = (function () {
         // later so the bottom key reads the 0 V pitch.
         cfg.pitch.bottom_key_semitone = want('pitch_offset', true) ? 3 : 0;
 
+        // Same rule as tools/options.py: the offset the add-to-pitch middle
+        // position adds snaps to the selected tuning's intervals; the preset
+        // voltage output is untouched.
+        cfg.presets.quantize = !!want('quantize_presets', false);
+
+        // Same rule as tools/options.py: the portamento jack either adds to
+        // the knob's glide time (factory) or transposes the keyboard by
+        // degrees of the selected tuning; the knob is untouched either way.
+        var jack = want('portamento_in', 'portamento');
+        if (jack !== 'portamento' && jack !== 'transpose') {
+            throw new Error('portamento_in = ' + JSON.stringify(jack)
+                            + " is not one of 'portamento', 'transpose'");
+        }
+        cfg.portamento_in.transpose = jack === 'transpose';
+
         if (!want('pressure_fix', true)) {
             cfg.pressure.multi_key = 'factory';
             cfg.pressure.common_mode = false;
@@ -104,15 +115,15 @@ var BUILDLIB = (function () {
         cfg.portamento.pressure_blend = blend;
         cfg.portamento.zero_snap = blend;
 
-        // Each knob's role, expanded the same way tools/options.py does.
+        // Each knob's role, expanded the same way tools/options.py does: a
+        // knob left out takes the first entry, 'factory' is the None row.
         var ROLES = { knob1: ['order', 'orders', 'factory'],
-                      knob2: ['spacing', 'swing', 'patterns', 'factory'],
+                      knob2: ['spacing', 'quantized', 'swing', 'patterns', 'factory'],
                       knob3: ['octaves', 'factory'],
                       knob4: ['vibrato', 'trn', 'factory'] };
         var roles = {};
         Object.keys(ROLES).forEach(function (k) {
-            var role = want(k, null);
-            if (role === null) role = remap ? ROLES[k][0] : 'factory';
+            var role = want(k, ROLES[k][0]);
             if (ROLES[k].indexOf(role) < 0) {
                 throw new Error(k + ' = ' + JSON.stringify(role) + ' is not one of '
                                 + ROLES[k].join(', '));
@@ -141,7 +152,8 @@ var BUILDLIB = (function () {
         cfg.clock = { divide: !!want('clock_divide', true) };
         cfg.arp_order.knob1_orders = roles.knob1 === 'orders' ? 1 : 0;
         cfg.knob4.octaves = roles.knob4 === 'trn' ? 1 : 0;
-        cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing')
+        cfg.knob2.mode = (roles.knob2 === 'patterns' || roles.knob2 === 'swing'
+                          || roles.knob2 === 'quantized')
             ? roles.knob2 : 'randomness';
         var patterns = want('arp_patterns', null);
         if (patterns) {
@@ -820,12 +832,20 @@ var BUILDLIB = (function () {
             resolution_bits: cfg.pressure.resolution_bits,
             multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0,
             octave_units: octaveUnits(cfg),
+            // The jack transposer, as tools/build.py derives it: one period
+            // per cv_volts_per_period of CV at 4095 counts over 20 V.
+            transpose_cv_filter_shift: cfg.portamento_in.cv_filter_shift,
+            transpose_cv_period: floorHalf(cfg.portamento_in.cv_counts_per_volt
+                                           * cfg.portamento_in.cv_volts_per_period),
+            transpose_cv_zero: cfg.portamento_in.cv_zero,
+            transpose_cv_hysteresis: cfg.portamento_in.cv_hysteresis,
             knob1_orders: cfg.arp_order.knob1_orders,
             knob4_octaves: cfg.knob4.octaves,
             knob4_zones: 3 + Math.max(1, Math.floor(
                 (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg))),
             knob2_patterns: cfg.knob2.mode === 'patterns' ? 1 : 0,
             knob2_swing: cfg.knob2.mode === 'swing' ? 1 : 0,
+            knob2_quantized: cfg.knob2.mode === 'quantized' ? 1 : 0,
             strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
             tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
             strip_ack_scans: (cfg.sequencer && cfg.sequencer.strip_ack_scans) || 20,

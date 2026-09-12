@@ -32,6 +32,10 @@ replaces it with a linear response across a calibrated window.
   to the trimmer — the shift is computed so the reference key stays put.
 - **Per-note calibration** Correcting the 208's own tracking
   error.
+- **Quantized preset voltages.** Optional: with the add-to-pitch switch in
+  the middle, the preset voltage transposes the keyboard to a degree of the
+  selected tuning, and the per-note calibration applies to the result. The
+  preset voltage output itself is unchanged.
 
 ## Portamento
 
@@ -39,7 +43,11 @@ Pressure-controlled glide: press harder and the glide shortens.
 
 ## Arpeggiator
 
-- **Latching** — the arpeggio holds after you lift your hands.
+- **Latching** — the arpeggio holds after you lift your hands. Hold **pads 2
+  and 3** together to change if “add to pitch” is applied before or after a
+  note is entered in latch mode; both pads flash to confirm. The default state
+  is “before”, which sets where each new note goes in; “after” moves
+  everything already held.
 - **Knob 1** sets note order, from strict press order through to fully
   random.
 - **Knob 2** sets rhythm, from even pulses to increasingly irregular
@@ -62,9 +70,9 @@ nothing is being held. Reset clears that, and recalibrates the keys as well, so
 it is worth doing before any session. Keep your hands off the keyboard for the
 few seconds the pad LEDs stay lit.
 
-The latch on **pads 2 & 3** is the instrument's own and still works. One
-interaction worth knowing: leaving the arpeggiator's latch position releases
-everything held, including a latch those pads set up.
+Pads 2 and 3 no longer set the instrument's own latch; they choose the
+octave pads' behaviour instead. Leaving the arpeggiator's latch position
+still releases everything held.
 
 ## Going back
 

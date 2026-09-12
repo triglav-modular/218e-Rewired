@@ -32,7 +32,7 @@ import options  # noqa: E402
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variant", choices=("default", "roles", "tuned", "lean", "all"), default="all")
+    parser.add_argument("--variant", choices=("default", "roles", "tuned", "lean", "jack", "all"), default="all")
     parser.add_argument("--persist", choices=("on", "off", "both"), default="both")
     parser.add_argument("--image", type=Path)
     parser.add_argument("--ghidra", type=Path)
@@ -58,7 +58,7 @@ def main() -> None:
         name: (REPO / "build" / name).read_bytes() if (REPO / "build" / name).exists() else None
         for name in METADATA
     }
-    variants = ("default", "roles", "tuned", "lean") if args.variant == "all" else (args.variant,)
+    variants = ("default", "roles", "tuned", "lean", "jack") if args.variant == "all" else (args.variant,)
     persists = (False, True) if args.persist == "both" else (args.persist == "on",)
     failures = []
     # Built one at a time - every build writes the same fixed paths under
@@ -73,22 +73,52 @@ def main() -> None:
                 image = args.image.resolve() if args.image else work / f"{name}.hex"
                 if not args.image:
                     text = base
+                    # The preset quantiser rides on the default and tuned
+                    # variants, so it is exercised against the factory key
+                    # table and against an installed scale, and the other
+                    # two prove the free add is untouched.
+                    quantize = variant in ("default", "tuned")
                     for key, value in (("persist", persist), ("sequencer", variant != "lean"),
-                                       ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean")):
+                                       ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean"),
+                                       ("quantize_presets", quantize)):
                         text, count = re.subn(rf"^{key} = (?:true|false)$",
                                              f"{key} = {str(value).lower()}", text, flags=re.M)
                         if count != 1:
                             raise SystemExit(f"Cannot set {key} in regression config")
                     # Replace explicit role choices as well as handling the
                     # shipped config, which leaves both at their defaults.
-                    text = re.sub(r'^knob[14]\s*=.*\n', "", text, flags=re.M)
-                    role = 'knob1 = "order"\nknob4 = "vibrato"\n' if variant == "default" else 'knob1 = "orders"\nknob4 = "trn"\n'
+                    text = re.sub(r'^knob[124]\s*=.*\n', "", text, flags=re.M)
+                    # The roles variant also puts knob 2 on quantized randomness,
+                    # so its cave is exercised against the other roles.
+                    role = ('knob1 = "order"\nknob2 = "spacing"\nknob4 = "vibrato"\n' if variant == "default"
+                            else 'knob1 = "orders"\nknob2 = "quantized"\nknob4 = "trn"\n' if variant == "roles"
+                            else 'knob1 = "orders"\nknob4 = "trn"\n')
                     text = text.replace("[firmware]", role + "\n[firmware]", 1)
+                    if variant == "jack":
+                        # The jack transposer over an unequal scale: the one
+                        # configuration where a shift by degrees is not a
+                        # shift by a constant, so a borrowed latch slot's
+                        # interval and its key's differ.
+                        text, count = re.subn(r'^portamento_in = "portamento"$',
+                            'portamento_in = "transpose"', text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit("Cannot enable the jack transposer in regression config")
+                        text, count = re.subn(r'^alternate_tunings = false$',
+                            'alternate_tunings = ["tunings/5-Limit JI with Septimal 7th.scl"]',
+                            text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit("Cannot enable tuning in regression config")
                     if variant == "tuned":
                         text, count = re.subn(r'^alternate_tunings = false$',
                             'alternate_tunings = ["tunings/12TET.scl"]', text, flags=re.M)
                         if count != 1:
                             raise SystemExit("Cannot enable tuning in regression config")
+                        # A measured correction, so the remap is not a straight
+                        # line and key-exact DAC values mean something.
+                        text, count = re.subn(r'^pitch_correction = false$',
+                            'pitch_correction = "calibration/218e-pitch-calibration.csv"', text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit("Cannot enable pitch correction in regression config")
                     text, count = re.subn(r'^output_hex\s*=\s*"[^"]*"',
                                          f'output_hex = "{image}"', text, flags=re.M)
                     if count != 1:
@@ -114,7 +144,10 @@ def main() -> None:
                     "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src"),
                     "-postScript", "ControlRegression.java", "vibrato" if variant == "default" else "trn",
                     "order" if variant == "default" else "orders", "persist" if persist else "volatile",
-                    "9", "lean" if variant == "lean" else "full"]))
+                    "9", "lean" if variant == "lean" else "full",
+                    "quantized" if variant in ("default", "tuned") else "free",
+                    "quantized" if variant == "roles" else "spacing",
+                    "jack" if variant == "jack" else "knob"]))
 
         def emulate(name: str, command: list[str]) -> str:
             result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)

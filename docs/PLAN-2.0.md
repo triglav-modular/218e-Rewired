@@ -728,6 +728,165 @@ Two things make it the right cell to read:
 reading off centre can be told where its own middle is; the rule is the
 middle.
 
+### The portamento jack is its own channel: `state+0x2f0` (2026-09-04)
+
+The manual says the PORTAMENTO IN CV "adds to the portamento time set by
+the knob", which reads like an analog sum into the knob's channel.  It is
+not.  The factory has a second ADC pass, `0x8000b8a4`, called from the
+event dispatcher at `0x80004cb6` with three pointers: it reads channel 6
+into `state+0x2f0`, channel 7 halved into `state+0x2fc` (the RATE knob's
+raw, which the divider already reads) and channel 5 into `state+0x2f4`
+(the pulse jack, thresholded at `0x7fe` by `0x80004b1a`).  The only
+reader of `0x2f0` is the glide-rate index at `0x80003164`:
+`index = knob(0x306) + max(0, cv/2 - 20)`, clamped to 1023 - so the sum
+is done in software, the knob mirror at `0x306` never carries the CV, and
+the jack can be given another meaning without touching the knob.
+
+That is what `portamento_in = "transpose"` does: `glide_cv_addend`
+replaces the load at `0x8000313e` with a constant the halve-and-subtract
+turns into zero, and `cv_transpose` (0x8001e1c0, in front of the per-scan
+housekeeping) rebuilds the live key table at RAM `0x854` from the slot's
+flash table shifted by N degrees - N being the raw CV less a zero, one
+period per `cv_volts_per_period` of CV at 4095 counts over 20 V, rounded,
+with a hysteresis band around the last answer.  Shifting the table is what
+makes the transposition a transposition IN the scale: every reader of the
+table - arp, latch stamps, pitch ranking, blend anchors, recorder - sees
+the shifted scale, and the wrap past entry 31 steps the slot's own map
+size (12, or the .kbm's) and adds one period.  The raw cell is signed
+and unconditioned; the jack has no negative range, so N is clamped at
+zero.  None of the three CV numbers has been measured on an instrument.
+
+**The jack reads about 205 counts per volt, not 409.5, and the factory's own
+code says so** (2026-09-12).  `cv_counts_per_volt` has been wrong twice, in
+both directions, because the only evidence anyone reached for was how far the
+pitch moved - and that measures where the pitch OUTPUT saturates, not what the
+input reads.  "The whole shift was spent by about 2.5 V", which drove the
+correction from 102.3 to 409.5, is an output-saturation observation: at any
+input scale in a wide band it lands near the 5.25 periods the output can
+render from the bottom key, so it constrains the input scale hardly at all.
+
+The tighter evidence was in the image the whole time.  The factory's one use
+of `state+0x2f0` is the glide-rate index at `0x80003142` - `CASTU.H`, `LSR 1`,
+`SUB 0x14`, so `max(0, cv/2 - 20)` - added to the PORTAMENTO knob at
+`state+0x306` and clamped to `0x3ff`.  The knob is a conditioned channel,
+0..1023, so the index spans 1023, and the jack is plainly meant to span it:
+
+| counts/V | cell at 10 V | addend | against the 1023 clamp |
+|---|---|---|---|
+| 102.3 | 1023 | 492 | the bottom half of the jack wasted |
+| 409.5 | 4095 | 2027 | the top half of the jack dead |
+| 204.75 | 2047 | 1004 | 98% of full scale |
+
+Nobody designs a CV input whose upper half does nothing, so the scale is
+~205 counts/V: 4095 counts over 20 V, a front end with 2x headroom on a 10 V
+input.  `_check_jack_scale()` in `tools/options.py` now refuses a model this
+arithmetic contradicts, so the next wrong value is caught at build time rather
+than on an instrument.
+
+Measured against it on the day: one period took 4.1-4.4 V where this model
+predicts 3.89 V for the first scan that reaches it (eleven degrees, plus half
+a degree, plus the 12-count hysteresis).  The residue is a dead band at the
+bottom of the jack or slack in the reading; `cv_zero` is where it goes, and
+settling it needs the raw count read at two known voltages rather than one
+judgement of "an octave up" - one point cannot separate a slope from an
+intercept.
+
+`cv_volts_per_period` is 4.0 for the same reason, and the pair is what makes
+this a correction to the MODEL rather than to behaviour: the firmware emits
+only the product, `transpose_cv_period = 204.75 x 4.0 = 819`, which is exactly
+what it emitted under `409.5 x 2.0`.  The image is byte-identical, verified
+with `--expect-sha`.  So the instrument the owner has just called well-behaved
+is unchanged, and the config has stopped lying about the hardware.
+
+It also settles the output-range question from the same day's audit, in the
+other direction: two and a half periods is inside the 4.08 the output can
+render even from mid-keyboard, so the jack can no longer drive the pitch into
+the curve's ceiling from anywhere.  The 970 counts of unreachable DAC headroom
+are still there, but nothing the jack does can reach them.
+
+`cv_volts_per_period` was `volts_per_octave` until 2026-09-12, which tied the
+INPUT's law to the OUTPUT's scaling and is why the jack read as too sensitive:
+1.2 V bought an octave, so the full 10 V bought 8.3 of them, and the pitch
+output cannot show that.  `pitch_remap` at `0x80019bc0` holds 79 semitones and
+`pitch_remap_calibration` clamps its index at 77, so the DAC stops at 3125
+counts - 7.80 V of the 10.22 V it can drive - and from the bottom key at the
+neutral octave only 5.25 periods are reachable at all.  At 2 V per period the
+jack's whole range is five of them, inside that, and the top third of the
+knob's travel does something again.  The remaining 970 counts of DAC headroom
+are a separate matter: they need the curve extended past semitone 78, which
+needs its table moved (`0x80019bc0` is boxed in at `0x80019c60`) and
+calibration rows it does not have.
+
+What is already sounding follows too, and by an interval rather than by a
+re-read (2026-09-12).  A note copied its base out of the table at note-on,
+so a rebuild underneath it changed nothing; `cv_stamps` therefore
+republishes `state+0x350` after every rebuild.  It republishes
+`table'[key] + d`, where `d` is how far the base stood from that key's
+entry *before* the rebuild - so whatever the note was carrying on top of
+the table survives: the arp's random octave from knob 3, a latched slot's
+stamp, a step's pitch left standing after a take.  Republishing the bare
+entry instead dropped knob 3's octave every time the CV moved.  Which key
+it is, is decided once on the way into the rebuild and left in `0x60ff`
+with `d` in `0x60ec`: the last arp key in either arp position, sounding or
+not, the mono keyboard's last key as the fallback for all three positions,
+and key 0 as the reference before anything has been played - which costs
+nothing at rest, because a base still at the bootstrap's zero makes `d`
+equal `-table[0]` and the published base the shift alone.  `0xff` there
+means "leave it": while the sequencer records, plays or previews, the base
+is a step's pitch the sequencer shifts by its own path.
+
+Steadying the reading is the hysteresis's job alone, and that is a
+correction (2026-09-12).  A one-pole filter was put in front of the
+transposer first - `new = prev + (raw - prev) >> shift`, accumulator in RAM
+`0x60e8`, cave at `0x8001eb20` - on the reasoning that the hysteresis steadies
+an answer once chosen but cannot stop a noisy reading choosing the wrong one.
+True, and the wrong shape: **the quantiser republishes the sounding pitch on
+every scan its answer changes**, so a pole travelling towards a new reading is
+heard as a run up through every degree it passes.  Measured in the jack
+regression build at shift 2, a step of two periods visited TEN pitches over 13
+scans - 848, 1103, 1258, 1414, 1504, 1587, 1660, 1694, 1742, 1787, 1816 - about
+65 ms of audible slew where a transposition belonged.  Smoothing the input of
+a quantiser whose output is a pitch cannot be done quietly; what has to be
+steadied is the answer, not the reading.
+
+So `cv_filter_shift` is 0 and `cv_hysteresis` is 12 rather than 2.  The band is
+`period/24 + cv_hysteresis` counts either side of the LAST answer's centre, so
+what a noisy count has to swing across to make the answer chatter is
+`2 x cv_hysteresis` raw counts - **independent of the period**, which is why
+widening the period bought no noise immunity at a boundary, only fewer
+boundaries.  12 counts swallows about 59 mV peak to peak and moves the point
+where the answer changes from 53% of the way through a degree to 68%.  The
+filter's cave and its RAM cell are still there behind the option, and the
+bootstrap still clears `0x60e8` so that turning it back on is safe.
+
+If a widened hysteresis alone turns out not to hold on the instrument, the
+next thing to try is not a wider one - the lag becomes a feel problem - but
+time rather than amplitude: require the quantised answer to repeat for K scans
+before acting on it.  That rejects any glitch shorter than K scans outright and
+still arrives as one jump, because the intermediate readings never survive K
+scans.  It needs a cave and a cell; neither exists yet.
+
+The sequencer follows the same way the pad does, relatively: with the jack
+transposing, `seq_record_pitch` jumps to `seq_record_pitch_cv`
+(0x8001e320), which answers the audition with the heard pitch as before
+but stores the step itself with the shift taken back out -
+heard - (table'[key] - slot[key]) - and `seq_preview_pin` ends by jumping
+to `seq_cv_shift` (0x8001e3b4), which adds table'[key] - slot[key] for the
+key the sounding step (0x6503) was recorded on, play and preview alike.  A
+take recorded under one CV plays under whatever CV stands now; rests and
+ties, whose key is nothing, are left alone.
+
+MIDI follows.  The factory names a note in one routine, `0x800057a8` (key +
+36, or + 12 per trn zone, plus the octave pad), through six pool words;
+`midi_transpose` (0x8001e2c0) stands in front of it and adds N.  Two
+entries: the arp (which keeps its sent note at `0x2ee2`) and the
+polyphonic sender (one per key) never recompute at note-off, so they take
+the live shift; the mono keyboard paths recompute at the lift to compare
+against the sounding note at `state+0x2e1`, so their shift is frozen in
+RAM `0x60fe` for as long as `0x2e1` holds a note and taken fresh only when
+a note-on finds `0xff` there - otherwise a CV moving mid-hold left the
+lift unable to recognise its own note.
+
 ### The knobs, since this was got wrong once
 
 There are six knobs on the panel and six conditioned analog channels, and
@@ -904,6 +1063,81 @@ waiting key and spends it, so the arp's own steps after it still sound
 nothing.  Everything else - the pitch, the gate, the trigger, the MIDI note -
 comes from the factory's own note machinery, already paired, rather than from
 a pulse fired on its own.
+
+### Quantized randomness on knob 2 (2026-09-04, halves only and ramped 2026-09-12)
+
+The spacing randomiser draws each step's length from a continuous law, so
+its hits land anywhere.  `knob2 = "quantized"` is the same blend kept on a
+grid: the beat is cut in half, and every reload the rhythm hook stores is a
+whole number of halves, so a note can only fall on a beat or on its half.
+Nothing finer is reachable.  The first shape of this reached quarters and
+eighths as the knob went up; the owner asked for the two outcomes alone -
+a dropped trigger, or one added on the half - so those levels are gone from
+the law rather than merely made unlikely.
+
+**The law**, in 1024ths per beat, with `x` the knob's travel 0..1.  The mass
+that leaves the beat is `M = 512x`, so the beat sounds with `1024 - M`:
+every beat with the knob down, one in two at the top.  The half takes none
+of that mass until halfway and all of it at the end - its share is
+`M * (2x - 1)` with `2x - 1` clamped at zero - so at or below the midpoint
+the half never sounds at all.
+
+**The two halves of the travel therefore do different things**, which is
+what the owner asked for after hearing the first version.  The bottom half
+only thins: beats drop and nothing replaces them, so the arpeggio is
+sparser than RATE set, most so at the midpoint, where three beats in four
+sound and a hit costs four thirds of a beat.  The top half fills the gaps
+back in, until at full travel the beat has one hit in two and the half the
+other, and the density is what RATE set again.  Each position is drawn on
+its own against ten bits of the factory PRNG, so a beat can carry both its
+own hit and an added half, or neither.  A run of misses is cut at 8 halves,
+matching the randomiser's 4x ceiling, and the reload keeps its 8..0xfff
+clamps.
+
+**The cut cannot land where the law gives nothing.**  Eight halves is an even
+number of them, so the limit returns to the phase it started from: a hit left
+standing on the half - by lowering the knob out of the top half, where halves
+do sound - was forced into another one at a probability of zero, about once in
+every 256 such crossings.  Found by an audit probe on 2026-09-12 and fixed by
+stepping past any position whose share is zero, which costs at most one more
+half and still terminates, the beat's own share never being zero.  The suite
+could not see it: its fixture started every run from phase 0, where the limit
+lands on the beat, and no assertion said so.
+
+**And the upper clamp answers to the same rule**, which the first fix missed.
+A reload that comes out over `0xfff` is shortened by a half, and a half is
+exactly what moves the phase - so at a tempo slow enough for the ceiling to
+bite, the shortening put the forbidden hit back.  Nine halves of a 995-scan
+beat is 4477, does not fit, and becomes eight, which returns to the phase it
+started from.  The clamp now asks the same question the selection does and
+shortens again, to seven halves, which lands on the beat.  Found by a
+re-verification probe on 2026-09-12 at a real tempo - RATE 35 through the
+factory's period routine - where the first suite's hand-picked 400-scan beat
+could not reach the ceiling at all: nine halves of it is 1800.
+
+**Where it sits.**  The cave at `0x8001ea00` takes the rhythm hook's pool
+word at `0x80019d40`, the third reader of it after the randomiser and swing,
+and reads the same knob latch (`0x60e6`) with the same deadzone.  RAM
+`0x6152`, swing's pair parity, is which half of the beat the last hit fell
+on - one knob, one role, one byte.  A beat that is not an even number of
+scans carries its remainder in halves of a scan at `0x6153`, so a run of
+reloads tracks the grid instead of running early by the dropped fraction.
+Below the deadzone a hit standing off the beat steps the rest of the way
+back onto it before the square reload resumes, so turning the knob down
+never leaves the arpeggio off the beat.
+
+Verified by emulating the shipped bytes (`ControlRegression.quantizedRhythm`,
+in the roles variant of `tools/test_controls.py`), 2,000 hits at each of five
+settings: at an eighth of the travel and at the midpoint nothing sounds off
+the beat at all and the run is measurably thinner - a hit costs 2.14 and 2.63
+halves against the two halves a beat is - just past the midpoint the half
+arrives and is rare, at three quarters it takes about a fifth of the hits,
+and at full travel the beat and the half take half each with the mean
+spacing back at one beat.  Every reload at every setting is a whole number
+of halves with the position following it, which is what would catch a
+quarter or an eighth.  Plus a thousand hits on a 401-scan beat staying
+within a scan of the grid, the deadzone, the off-beat recovery and both
+clamps kept as a grid.
 
 ### The randomisers reach the sequence (2026-08-27)
 

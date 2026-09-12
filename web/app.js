@@ -368,9 +368,35 @@
             row.appendChild(x);
             list.appendChild(row);
         });
-        $('patternBody').classList.toggle(
-            'hidden', !$('remap_knobs').checked || knobRole.knob2 !== 'patterns');
+        $('patternBody').classList.toggle('hidden', knobRole.knob2 !== 'patterns');
         $('patAdd').disabled = state.patterns.length >= 32;
+        // A bank of one builds and plays; it is the knob that has nothing to
+        // do, so this is advice and not a refusal.
+        msg($('patMsg'), 'warn', state.patterns.length === 1
+            ? 'With only one pattern, knob 2 has nothing to switch between. '
+              + 'You should probably add more patterns.'
+            : '');
+    }
+
+    // A CLIX mask is 32 bits, least significant step first.
+    function clixPattern(mask) {
+        var t = '';
+        for (var i = 0; i < 32; i++) t += (mask >>> i) & 1 ? 'x' : '.';
+        return { text: t, length: 32 };
+    }
+
+    // What switching knob 2 to patterns starts with.  Four unlike fills rather
+    // than one, because a bank of one gives the knob nothing to sweep through
+    // and the first thing anyone does is turn it.  CLIX numbering is 1-based.
+    var DEFAULT_CLIX = [2, 8, 12, 22];
+
+    function defaultPatterns() {
+        var picked = DEFAULT_CLIX.filter(function (n) {
+            return GEN.clix[n - 1] !== undefined;
+        });
+        return picked.length
+            ? picked.map(function (n) { return clixPattern(GEN.clix[n - 1]); })
+            : [{ text: 'x...x...x...x...', length: 16 }];
     }
 
     function renderSlots() {
@@ -552,11 +578,7 @@
         renderPatterns(); invalidate();
     });
     $('patClix').addEventListener('click', function () {
-        state.patterns = GEN.clix.map(function (mask) {
-            var t = '';
-            for (var i = 0; i < 32; i++) t += (mask >>> i) & 1 ? 'x' : '.';
-            return { text: t, length: 32 };
-        });
+        state.patterns = GEN.clix.map(clixPattern);
         renderPatterns(); invalidate();
     });
     $('patCopy').addEventListener('click', function () {
@@ -907,20 +929,22 @@
     function options() {
         var o = {
             latching_arp: $('latching_arp').checked,
-            remap_knobs: $('remap_knobs').checked,
             sequencer: $('sequencer').checked,
             clock_divide: $('clock_divide').checked,
-            knob1: $('remap_knobs').checked ? knobRole.knob1 : 'factory',
-            knob2: $('remap_knobs').checked ? knobRole.knob2 : 'factory',
-            knob3: $('remap_knobs').checked ? knobRole.knob3 : 'factory',
-            knob4: $('remap_knobs').checked ? knobRole.knob4 : 'factory',
-            arp_patterns: ($('remap_knobs').checked && knobRole.knob2 === 'patterns')
+            // Each knob's own pick; 'factory' is the None row.
+            knob1: knobRole.knob1,
+            knob2: knobRole.knob2,
+            knob3: knobRole.knob3,
+            knob4: knobRole.knob4,
+            arp_patterns: knobRole.knob2 === 'patterns'
                 ? state.patterns.map(function (p) { return [p.text, p.length]; })
                 : null,
             pressure_fix: $('pressure_fix').checked,
             pressure_portamento: $('pressure_portamento').checked,
             volts_per_octave: vpo,
-            pitch_offset: pitchOffset
+            pitch_offset: pitchOffset,
+            quantize_presets: $('quantize_presets').checked,
+            portamento_in: $('portamento_transpose').checked ? 'transpose' : 'portamento'
         };
         // The checkbox is the opt-in: off means factory everything, however
         // the slots are filled.  Trailing empty slots simply shorten the
@@ -947,8 +971,9 @@
         if (!fix.checked) porta.checked = false;
     }
     $('pressure_fix').addEventListener('change', syncPortamento);
-    ['latching_arp', 'remap_knobs', 'sequencer', 'clock_divide',
-     'pressure_fix', 'pressure_portamento']
+    ['latching_arp', 'sequencer', 'clock_divide',
+     'pressure_fix', 'pressure_portamento', 'quantize_presets',
+     'portamento_transpose']
         .forEach(function (id) {
             $(id).addEventListener('change', invalidate);
         });
@@ -1103,14 +1128,24 @@
         var lines = [
             'Arpeggiator: ' + (o.latching_arp ? 'latching' : 'factory'),
             'Knobs 1-4: ' + [o.knob1, o.knob2, o.knob3, o.knob4].join(', '),
+            // How many patterns the bank holds, not what they are - the same
+            // line the flashers echo, so no brackets.
+            'Pattern bank: ' + (o.knob2 === 'patterns'
+                ? (o.arp_patterns || []).length + ' patterns'
+                : 'not in use - knob 2 is not on patterns'),
             'Sequencer: ' + (o.sequencer ? 'on' : 'off'),
+            'Clock divider: ' + (o.clock_divide ? 'on' : 'off'),
             'Pressure: ' + (o.pressure_fix ? 'rewired' : 'factory') +
                 (o.pressure_portamento ? ', portamento' : ''),
             'Scaling: ' + o.volts_per_octave + ' V/octave',
             // No brackets: echoed by both flashers, see the tunings line.
             'Pitch offset: ' + (o.pitch_offset === false
                 ? 'none - 208c' : '3 semitones - 208, 208r, 208p'),
-            'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off')
+            'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off'),
+            'Preset voltages: ' + (o.quantize_presets
+                ? 'quantized to the tuning when added to pitch' : 'not quantized'),
+            'Portamento banana jack: ' + (o.portamento_in === 'transpose'
+                ? 'transposes by degrees of the tuning' : 'adds portamento')
         ];
         if (o.alternate_tunings && o.alternate_tunings.length) {
             // A slot is { name, text }, so joining the array gave a row of
@@ -1193,13 +1228,18 @@
                 volts_per_octave: o.volts_per_octave,
                 pitch_offset: o.pitch_offset !== false,
                 latching_arp: !!o.latching_arp,
-                remap_knobs: !!o.remap_knobs,
+                // The remap checkbox this column counted is gone; it now
+                // means "any knob doing something other than its preset
+                // voltage", which is what the checkbox meant when it was on.
+                remap_knobs: ['knob1', 'knob2', 'knob3', 'knob4'].some(function (k) {
+                    return o[k] !== 'factory';
+                }),
                 pressure_fix: !!o.pressure_fix,
                 pressure_portamento: !!o.pressure_portamento,
                 sequencer: !!o.sequencer,
                 clock_divide: !!o.clock_divide,
                 // Which role each knob took - a name from the page's own
-                // picker, or 'factory' when the remap is off.
+                // picker, 'factory' for the None row.
                 knob1: o.knob1, knob2: o.knob2, knob3: o.knob3, knob4: o.knob4,
                 // How many patterns the bank holds, not what they are: the
                 // page's own CLIX bank and a bank someone typed both count
@@ -1212,7 +1252,13 @@
                     .filter(function (t) { return t !== 'factory'; }).length,
                 // Whether a calibration was supplied - never the numbers,
                 // which are measurements of one person's instrument.
-                pitch_correction: !!o.pitch_correction
+                pitch_correction: !!o.pitch_correction,
+                // Whether a preset voltage is snapped to the tuning when it
+                // is added to pitch, and what the portamento banana jack was
+                // set to do.  Both were on the page for a while before they
+                // were counted, so a build using either was invisible here.
+                quantize_presets: !!o.quantize_presets,
+                portamento_in: o.portamento_in
             });
             // text/plain keeps this a simple request, so it needs no
             // preflight and no CORS reply to be delivered.
@@ -1369,13 +1415,9 @@
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
 
     // Each preset knob picks its own role, the same control the volts-per-
-    // octave choice uses.  The pattern editor belongs to knob 2 and only
-    // appears when that knob is set to patterns.
-    $('remap_knobs').addEventListener('change', function () {
-        $('knobsel').classList.toggle('hidden', !$('remap_knobs').checked);
-        renderPatterns();
-    });
-    $('knobsel').classList.toggle('hidden', !$('remap_knobs').checked);
+    // octave choice uses; None hands that knob back to its preset voltage.
+    // The pattern editor belongs to knob 2 and only appears when that knob
+    // is set to patterns.
     ['knob1', 'knob2', 'knob3', 'knob4'].forEach(function (id) {
         Array.prototype.forEach.call($(id).children, function (b) {
             b.addEventListener('click', function () {
@@ -1385,7 +1427,7 @@
                 });
                 if (id === 'knob2' && b.dataset.v === 'patterns'
                         && !state.patterns.length) {
-                    state.patterns = [{ text: 'x...x...x...x...', length: 16 }];
+                    state.patterns = defaultPatterns();
                 }
                 renderPatterns();
                 invalidate();

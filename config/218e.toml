@@ -17,12 +17,23 @@
 # false restores the factory ascending / random / off switch.
 latching_arp = true
 
-# 2. REMAP KNOBS 1-4
-# Outside edit mode the four preset-voltage knobs become arpeggiator note
-# order, arpeggiator rhythm, random octave displacement, and global vibrato.
-# false hands all four back to the factory preset voltages.
+# 2. WHAT EACH PRESET KNOB DOES
+# Outside edit mode each of the four preset-voltage knobs takes a role.  Leave
+# a knob out and it keeps its default; "factory" hands that one back to its
+# preset voltage.
+#   knob1  "order"   press-order-into-random blend (default) | "orders" six
+#          fixed orders: up, down, up-down, as played, backwards, random
+#   knob2  "spacing" trigger randomness (default) | "quantized" the same
+#          randomness kept on the grid: beats drop out, thinning the
+#          arpeggio, and past halfway notes land on the half of the beat
+#          and fill it back in, never anything finer | "swing" | "patterns"
+#   knob3  "octaves" random octave per note (default)
+#   knob4  "vibrato" depth and rate (default) | "trn" the factory octave switch
 # Edit-mode knob 1 (pressure calibration) and knob 4 (curve) are unaffected.
-remap_knobs = true
+# knob1 = "orders"
+# knob2 = "swing"
+# knob3 = "factory"
+# knob4 = "trn"
 
 # 3. PER-KEY PITCH CORRECTION
 # Corrects the 208's measured tracking error per semitone.  Point this at a
@@ -105,28 +116,14 @@ pressure_fix = true
 pressure_portamento = true
 
 
-# 8. WHAT EACH PRESET KNOB DOES
-# With remap_knobs on, each knob can be named individually instead of taking
-# the default role.  Leave a knob out and it keeps that default.
-#   knob1  "order"   press-order-into-random blend (default) | "orders" six
-#          fixed orders: up, down, up-down, as played, backwards, random
-#   knob2  "spacing" trigger randomness (default) | "swing" | "patterns"
-#   knob3  "octaves" random octave per note (default)
-#   knob4  "vibrato" depth and rate (default) | "trn" the factory octave switch
-# Any knob may also be "factory" to hand that one back to its preset voltage.
-# knob1 = "orders"
-# knob2 = "swing"
-# knob3 = "factory"
-# knob4 = "trn"
-
-# 9. ARPEGGIATOR STEP PATTERNS
+# 8. ARPEGGIATOR STEP PATTERNS
 # Only read when knob2 = "patterns".  Each entry is a string of steps - a dot
 # is a rest, anything else a hit - or a [pattern, length] pair to make it
 # repeat sooner than it is written.  Up to 32 patterns of up to 32 steps.
 # Left out, the bank is the 22 CLIX fills from the Clockwork Card.
 # arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]
 
-# 10. STEP SEQUENCER
+# 9. STEP SEQUENCER
 # Sixty-four steps, recorded and played from the preset pads.  Hold pad 4 for
 # about a second until it blinks, then - still holding it - press pad 1
 # to record (pad 1 again finishes the take), pad 2 to play or stop, pad 3
@@ -147,7 +144,7 @@ pressure_portamento = true
 # always plays the take exactly as recorded.
 sequencer = true
 
-# 11. EXTERNAL CLOCK DIVIDE
+# 10. EXTERNAL CLOCK DIVIDE
 # With a steady clock patched in, the arpeggiator RATE knob becomes a divider
 # instead: every pulse with the knob at zero, one in eight at the top.  It
 # acquires after five consistent measured intervals and releases after more
@@ -155,11 +152,37 @@ sequencer = true
 # MCU input must be low for >250 us before each rising edge; see docs/CLOCK.md.
 clock_divide = true
 
-# 12. PITCH OFFSET
+# 11. PITCH OFFSET
 # The pitch CV starts three semitones above the 208's 0 V pitch.  A 208, 208r
 # or 208p starts from A, so that offset is what puts the bottom C in tune.
 # The 208c starts from C: set false and the bottom key sounds the 0 V pitch.
 pitch_offset = true
+
+# 12. PRESET VOLTAGE QUANTIZATION
+# With the add-to-pitch switch in its middle position the active pad's preset
+# voltage is added to the pitch.  true snaps that offset to the nearest
+# interval of the tuning currently selected, measured from the bottom key, so
+# the keyboard transposes to a degree of the scale, and the per-key pitch
+# correction applies to the transposed note.  The preset voltage output jack
+# is not quantized.  false adds the voltage as it is.
+quantize_presets = false
+
+# 13. THE PORTAMENTO BANANA JACK
+# "portamento" is the factory behaviour: a CV into the PORTAMENTO IN banana
+# jack adds to the glide time the knob sets.  "transpose" makes the banana
+# jack a transposer instead: the CV shifts every key by whole degrees of the
+# tuning currently selected, one period (an octave, for a scale that repeats
+# at one) per 4 V of CV, so the jack's 0-10 V spans about two and a half
+# periods, rounded to the nearest degree, and the MIDI notes move with the
+# keys.  Two and a half is inside what the pitch output can render from any
+# starting key, so the whole of the jack's travel does something wherever you
+# are on the keyboard.  The keyboard stays inside the scale
+# whatever the CV, so with an unequal tuning the intervals between keys
+# change the way they would under a different starting degree.  The knob
+# keeps its own job in both settings.  A recorded sequence follows the CV
+# as it plays, the way it follows the octave pads.  The banana jack only
+# reads positive voltages.
+portamento_in = "portamento"
 
 # Save the remapped preset voltages and sequence across power cycles.
 # Save a changed sequence when leaving record or clearing it; save a
@@ -190,12 +213,12 @@ updaters       = ["mac/Program218e_v3_Rewired_macOS.command",
 # SHA-256, which is derived and cannot drift; this is the part people can say
 # out loud.  The build reports them together as "Rewired <version> (<sha8>)"
 # and writes that into both flashers.
-version        = "2.2.0"
+version        = "2.3.0"
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "b997485bbfa87148b6c37bf9e5c681a20e0e3c2694609d5128aacd8b472bea5b"
+golden_sha256  = "79f3668bc88d31e3c89cd55302849e6101c2b89df9bf1d5c2d89f61a3a2769a7"
 
 
 [tools]

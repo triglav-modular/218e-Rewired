@@ -209,6 +209,38 @@ public class PersistenceRegression extends GhidraScript {
             &&r(0x6166,2)==0x7fff&&r(0x61f1,1)==0);
         println("PASS negative relative step: key saved, unchanged, restored");
     }
+    void latchState() throws Exception {
+        // The latch's transpose state rides in the record's first reserved
+        // byte (0x19), captured by its own mask bit, asked for by the scan
+        // only while pads 2 and 3 are both up, bounded like every other
+        // active value, and restored beside the musical data.
+        fresh(); seed();
+        check("the state starts clear in record and snapshot",r(call(NEWEST)+25,1)==0&&r(0x6409,1)==0);
+        w(0x62e2,1,1);
+        check("a musical capture ignores the state",capture(31)==0&&saveLive()==0&&writes==2);
+        check("the state's own bit captures the change",capture(32)==1&&call(SAVE)==0&&writes==4);
+        long p=call(NEWEST);
+        check("the record carries the state and nothing else in the reserved bytes",
+            p==BASE+512&&r(p+25,1)==1&&r(p+26,2)==0);
+        check("an unchanged state skips flash",capture(32)==0);
+        w(0x6580,2,0x7fff); w(0x6582,2,0x1234); w(0x6584,2,0x5678);
+        cold(); check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6409,1)==1);
+        check("the reference, the hold count and the shadow start at zero",
+            r(0x6580,2)==0&&r(0x6582,2)==0&&r(0x6584,2)==0);
+        byte[] good=e.readMemory(toAddr(p),512);
+        w(p+25,1,2); fixCrc(p);
+        check("a state out of range is rejected",call(NEWEST)==BASE);
+        e.writeMemory(toAddr(p),good);
+        check("and the bounded one accepted again",call(NEWEST)==p);
+        w(0x62e2,1,0); w(0x46f1,1,2); call(TICK);
+        check("a held pad defers the save",writes==4&&r(0x62e2,1)==0);
+        w(0x46f1,1,0); w(0x46f2,1,2); call(TICK);
+        check("either pad held defers it",writes==4);
+        w(0x46f2,1,0); call(TICK);
+        check("both up commits the state",writes==6&&r(call(NEWEST)+25,1)==0);
+        call(TICK); check("and only once",writes==6);
+        println("PASS latch state: own capture bit, saved on release, bounded, restored");
+    }
     void retries() throws Exception {
         for(String fault:new String[]{"locked","body","commit"}) {
             fresh(); seed(); w(0x613a,2,901); int before=writes;
@@ -468,7 +500,7 @@ public class PersistenceRegression extends GhidraScript {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
         try {
-            basic(); relativeSteps(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
+            basic(); relativeSteps(); latchState(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
             println("PERSISTENCE REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash/analog testing.");
         } finally { if(e!=null)e.dispose(); }
     }

@@ -37,7 +37,9 @@ TEMP = REPO / "config" / "_sweep.toml"
 VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("defaults",              []),
     ("arp_off",               [(r"^latching_arp = true", "latching_arp = false")]),
-    ("knobs_off",             [(r"^remap_knobs = true", "remap_knobs = false")]),
+    ("knobs_off",             [(r"^latching_arp = true",
+                               'latching_arp = true\nknob1 = "factory"\nknob2 = "factory"\n'
+                               'knob3 = "factory"\nknob4 = "factory"')]),
     ("pitch_correction",      [(r"^pitch_correction = false",
                                'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     ("tunings_one",           [(r"^alternate_tunings = false",
@@ -45,9 +47,14 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]')]),
     ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
     ("no_offset",             [(r"^pitch_offset = true", "pitch_offset = false")]),
+    ("quantize_presets",      [(r"^quantize_presets = false", "quantize_presets = true")]),
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
+    ("portamento_transpose",  [(r'^portamento_in = "portamento"', 'portamento_in = "transpose"'),
+                               (r"^alternate_tunings = false",
+                                'alternate_tunings = [["tunings/diatonic7.scl", "tunings/diatonic7.kbm"], '
+                                '"tunings/12TET.scl"]')]),
     # Interactions the one-at-a-time rows cannot reach.
     ("arp_off_portamento_off",[(r"^latching_arp = true", "latching_arp = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
@@ -57,6 +64,11 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("no_offset_corrected",   [(r"^pitch_offset = true", "pitch_offset = false"),
                                (r"^pitch_correction = false",
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
+    # The quantiser reads whatever key table is live, so a build that also
+    # installs a scale is the case where its cave and the applier meet.
+    ("quantize_presets_tuned",[(r"^quantize_presets = false", "quantize_presets = true"),
+                               (r"^alternate_tunings = false",
+                                'alternate_tunings = ["tunings/12TET.scl"]')]),
     # The author's own instrument: the shipped calibration, three tunings, and
     # the 1 V/oct ramp that 208 is trimmed to.  Those go together — that table
     # was measured at that scaling — so this is the one configuration where
@@ -89,11 +101,12 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("volatile_clock",        [(r"^persist = true", "persist = false"),
                                (r"^sequencer = true", "sequencer = false")]),
     ("volatile_only",         [(r"^persist = true", "persist = false")]),
-    ("knob_roles",            [(r"^remap_knobs = true",
-                               'remap_knobs = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
-    ("knob2_swing",           [(r"^remap_knobs = true", 'remap_knobs = true\nknob2 = "swing"')]),
-    ("arp_patterns",          [(r"^remap_knobs = true",
-                               'remap_knobs = true\nknob2 = "patterns"\n'
+    ("knob_roles",            [(r"^latching_arp = true",
+                               'latching_arp = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
+    ("knob2_swing",           [(r"^latching_arp = true", 'latching_arp = true\nknob2 = "swing"')]),
+    ("knob2_quantized",       [(r"^latching_arp = true", 'latching_arp = true\nknob2 = "quantized"')]),
+    ("arp_patterns",          [(r"^latching_arp = true",
+                               'latching_arp = true\nknob2 = "patterns"\n'
                                'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')]),
     ("tuning_maps",           [(r"^alternate_tunings = false",
                                'alternate_tunings = [["tunings/24TET.scl", "tunings/24TET-full.kbm"]]')]),
@@ -105,8 +118,9 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"'),
                                (r"^alternate_tunings = false",
                                 'alternate_tunings = ["tunings/12TET.scl"]')]),
-    ("everything_off",        [(r"^latching_arp = true", "latching_arp = false"),
-                               (r"^remap_knobs = true", "remap_knobs = false"),
+    ("everything_off",        [(r"^latching_arp = true",
+                                'latching_arp = false\nknob1 = "factory"\nknob2 = "factory"\n'
+                                'knob3 = "factory"\nknob4 = "factory"'),
                                (r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
 ]
@@ -225,9 +239,28 @@ def audit_call_pools(image_path) -> list[str]:
 # And again when the blend's anchor stopped trusting the last arp key with
 # the arp off, and a release started clearing the key's slot ownership: a
 # released key 1 had been anchoring every later single key on its own pitch.
+# And again for the jack transposer's September 12 audit: the filter pole
+# cleared at first use, and the refresh carrying the sounding note's
+# displacement across a rebuild so knob 3's random octave survives a CV move
+# and every switch position follows the jack with nothing held; then again
+# when one period of transposition stopped costing volts_per_octave of CV and
+# started costing cv_volts_per_period, which is a number in every build and so
+# moves this anchor even though it carries the jack turned off; and once more
+# when the pole in front of the transposer came out again - it was heard as a
+# slew, because the quantiser republishes the sounding pitch on every scan its
+# answer changes - leaving the hysteresis, widened from 2 counts to 12, to do
+# the steadying on its own; and again when the displacement capture learned
+# that RAM 0x854 has another writer - the tuning applier runs ahead of the
+# transposer in the same chain - and stopped reading a table that is not its
+# own, which had been re-applying the whole CV shift on every slot change.
+# And again when the refresh learned to tell an unpublished transposer from a
+# table somebody else replaced: both read as "not ours", so a jack already
+# patched at power-up had its whole boot-time shift discarded and never got it
+# back.  0x60fc is seeded to zero as the unpublished sentinel now, which no
+# table entry can be.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "b8dbeed4d5934b7ad919bf4d46a5f37c38109cd4b157341c5ecb73b44562d528",
+    "historical_config": "3930e696c55f0a51db83e4558151e3a8113a261abcf72dbce6552ca89e52587b",
 }
 
 

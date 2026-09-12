@@ -82,6 +82,11 @@ REORDERED_MAP = fixture(
 # One degree too many for a keyboard with one table entry per key.
 THIRTEEN = fixture("_thirteen.scl", equal_steps(13, 1200.0))
 
+# A map wider than the jack transposer's 32-entry table.  Fine on its own;
+# with the transposer the wrap by 36 keys reached before the table.
+WIDE = fixture("_wide36.scl", equal_steps(36, 1200.0))
+WIDE_MAP = fixture("_wide36.kbm", keyboard_map(list(range(36)), 36))
+
 # Comfortably spaced along the keyboard - 13 units at the closest - until key 0
 # is latched an octave up, where it lands 6 units from key 1.  A gap read off
 # the untransposed table calls this safe.
@@ -140,13 +145,34 @@ CONFIGS = [
     ("defaults",          [], {}),
     ("arp_off",           [(r"^latching_arp = true", "latching_arp = false")],
                           {"latching_arp": False}),
-    ("knobs_off",         [(r"^remap_knobs = true", "remap_knobs = false")],
-                          {"remap_knobs": False}),
+    # Every knob on None: the four-way factory image the old remap switch
+    # used to build in one line.
+    ("knobs_off",         [(r"^latching_arp = true",
+                            'latching_arp = true\nknob1 = "factory"\nknob2 = "factory"\n'
+                            'knob3 = "factory"\nknob4 = "factory"')],
+                          {"knob1": "factory", "knob2": "factory",
+                           "knob3": "factory", "knob4": "factory"}),
     ("pressure_off",      [(r"^pressure_fix = true", "pressure_fix = false"),
                            (r"^pressure_portamento = true", "pressure_portamento = false")],
                           {"pressure_fix": False, "pressure_portamento": False}),
     ("portamento_off",    [(r"^pressure_portamento = true", "pressure_portamento = false")],
                           {"pressure_portamento": False}),
+    # The jack transposer: a cave in front of the housekeeping, a fixed patch
+    # over the factory's glide-index add, and a keys-per-period table the two
+    # builders have to derive the same way - here from a .kbm as well.
+    ("portamento_transpose", [(r'^portamento_in = "portamento"', 'portamento_in = "transpose"'),
+                              (r"^alternate_tunings = false",
+                               'alternate_tunings = [["tunings/diatonic7.scl", "tunings/diatonic7.kbm"], '
+                               '"tunings/12TET.scl"]')],
+                             {"portamento_in": "transpose",
+                              "alternate_tunings": mapped([
+                                  ("tunings/diatonic7.scl", "tunings/diatonic7.kbm")])
+                                  + scala(["tunings/12TET.scl"])}),
+    # A keyboard map wider than the transposer's 32-entry table builds with
+    # the transposer off; wide_map_transposed below is the refusal.
+    ("wide_map",          [(r"^alternate_tunings = false",
+                            f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]')],
+                          {"alternate_tunings": mapped([(WIDE, WIDE_MAP)])}),
     ("one_volt",          [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")],
                           {"volts_per_octave": 1.0}),
     ("pitch_correction",  [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
@@ -159,6 +185,9 @@ CONFIGS = [
     ("no_offset_corrected", [(r"^pitch_offset = true", "pitch_offset = false"),
                              (r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
                             {"pitch_offset": False, "pitch_correction": calibration_rows()}),
+    # The preset quantiser: one cave and one pool word, gated together.
+    ("quantize_presets",  [(r"^quantize_presets = false", "quantize_presets = true")],
+                          {"quantize_presets": True}),
     ("tunings_one",       [(r"^alternate_tunings = false",
                             'alternate_tunings = ["tunings/12TET.scl"]')],
                           {"alternate_tunings": scala(["tunings/12TET.scl"])}),
@@ -183,17 +212,21 @@ CONFIGS = [
     # well as the table.  All three slots, because the period is one setting.
     # The three knob options together: knob 2's gate wraps knob 1's selector,
     # so both builders have to agree about the chain as well as the bank.
-    ("knob_options",      [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob1 = "orders"\n'
+    ("knob_options",      [(r"^latching_arp = true",
+                            'latching_arp = true\nknob1 = "orders"\n'
                             'knob2 = "patterns"\nknob4 = "trn"\n'
                             'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]')],
                           {"knob1": "orders", "knob2": "patterns", "knob4": "trn",
                            "arp_patterns": ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]}),
     # Swing takes the rhythm randomiser's own hook, so the two builders have to
     # agree about which of the two the pool word names.
-    ("knob2_swing",       [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob2 = "swing"')],
+    ("knob2_swing",       [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "swing"')],
                           {"knob2": "swing"}),
+    # The quantized randomiser is the third reader of that pool word.
+    ("knob2_quantized",   [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "quantized"')],
+                          {"knob2": "quantized"}),
     # Both ship ON now, so the configuration worth pinning is the one that
     # turns them OFF: that is the build whose housekeeping chain loses a call,
     # and the one the defaults no longer cover.
@@ -244,8 +277,8 @@ CONFIGS = [
                               [("tunings/12TET.scl", SHORT_MAP)] * 3)}),
     # The far end of the pattern bank.  22 fitted, 32 is what the editor, the
     # config and the validator all allow, and the table was cut for 22.
-    ("patterns_32",       [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob2 = "patterns"\n'
+    ("patterns_32",       [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "patterns"\n'
                             'arp_patterns = [' + ", ".join(['"x..."'] * 32) + ']')],
                           {"knob2": "patterns", "arp_patterns": ["x..."] * 32}),
     ("historical",        [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"'),
@@ -271,6 +304,15 @@ REFUSALS = [
                           {"persist": False},
                           "not a supported configuration",
                           "not a supported configuration"),
+    # A map the transposer cannot shift.  The same map builds with the
+    # transposer off, which the wide_map row above proves.
+    ("wide_map_transposed", [(r"^alternate_tunings = false",
+                              f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]'),
+                             (r'^portamento_in = "portamento"', 'portamento_in = "transpose"')],
+                            {"alternate_tunings": mapped([(WIDE, WIDE_MAP)]),
+                             "portamento_in": "transpose"},
+                            "use a map of up to 32",
+                            "use a map of up to 32"),
     # A mapping finer than the latch can resolve.  The image is valid in every
     # other way, so nothing downstream would have caught it.
     ("fine_latch",        [(r"^alternate_tunings = false",
@@ -328,8 +370,8 @@ REFUSALS = [
                            "signed 16-bit", "signed 16-bit"),
     # One past the bank.  The page used to leave this to the assembler, which
     # answers "Code crossed target" - true, and no use to anyone.
-    ("patterns_33",       [(r"^remap_knobs = true",
-                            'remap_knobs = true\nknob2 = "patterns"\n'
+    ("patterns_33",       [(r"^latching_arp = true",
+                            'latching_arp = true\nknob2 = "patterns"\n'
                             'arp_patterns = [' + ", ".join(['"x..."'] * 33) + ']')],
                           {"knob2": "patterns", "arp_patterns": ["x..."] * 33},
                           "one to 32 patterns", "one to 32 patterns"),

@@ -11,6 +11,11 @@
 // does not.
 const PUBLIC = '/mods/218e-Rewired';
 const ORIGIN = 'https://triglav-modular.github.io/218e-Rewired';
+// The development branch, published by the same workflow into a subdirectory
+// of the same Pages site, so it rides the same route and the same origin.
+// Nothing under it is for search engines: the released page is the one that
+// should be found.
+const DEV = '/dev';
 
 // Forwarded to the origin.  Host is deliberately absent: GitHub Pages routes
 // on it, and passing triglavmodular.hu would ask it for a site it does not
@@ -30,6 +35,10 @@ const FORWARD = ['if-none-match', 'if-modified-since',
 // Without a usable binding this route answers 204 and writes nothing, which is
 // the right way round - a missing or wrong binding must not break the page.
 const BEACON = PUBLIC + '/beacon';
+// The dev page posts to its own beacon, relative to itself.  Answered and
+// dropped: the counts describe the released page, and a build of whatever
+// the development branch held that afternoon is not one of those.
+const DEV_BEACON = PUBLIC + DEV + '/beacon';
 
 // Nothing here is trusted: it arrives from anyone who can reach the route.
 // Every value is checked against what the page can actually send and dropped
@@ -38,13 +47,15 @@ const BEACON = PUBLIC + '/beacon';
 const PLATFORMS = ['mac', 'win'];
 const VOLTS = ['1', '1.2'];
 // The roles each knob can take, as the page's own picker names them, plus
-// 'factory' for a knob the remap handed back.
+// 'factory' for a knob set to None - its preset voltage.
 const KNOBS = {
   knob1: ['order', 'orders', 'factory'],
-  knob2: ['spacing', 'swing', 'patterns', 'factory'],
+  knob2: ['spacing', 'quantized', 'swing', 'patterns', 'factory'],
   knob3: ['octaves', 'factory'],
   knob4: ['vibrato', 'trn', 'factory'],
 };
+// What the portamento banana jack was built to do.
+const PORTAMENTO_IN = ['portamento', 'transpose'];
 // The most patterns the page lets into a bank.
 const MAX_PATTERNS = 32;
 
@@ -68,6 +79,13 @@ function tri(value) {
 function role(knob, value) {
   if (value === undefined) return '';
   return KNOBS[knob].includes(value) ? value : 'other';
+}
+
+// The same rule for a value with its own list rather than a knob's: '' when
+// the page said nothing, 'other' when it said something the page cannot say.
+function oneOf(allowed, value) {
+  if (value === undefined) return '';
+  return allowed.includes(value) ? value : 'other';
 }
 
 async function record(request, env, context) {
@@ -112,6 +130,9 @@ async function record(request, env, context) {
   const point = {
     platform, version, volts,
     arp: flag(body.latching_arp),
+    // Once a checkbox; the page now derives it - 1 when any knob does
+    // something other than its preset voltage - so the column keeps counting
+    // the same thing across the change.
     knobs: flag(body.remap_knobs),
     pressure: flag(body.pressure_fix),
     portamento: flag(body.pressure_portamento),
@@ -126,6 +147,12 @@ async function record(request, env, context) {
     knob3: role('knob3', body.knob3),
     knob4: role('knob4', body.knob4),
     patterns,
+    // Added with 2.3: the preset-voltage quantisation and what the portamento
+    // banana jack does.  Both were on the page before they were counted, so
+    // 'unreported' here means an older page and not a build that turned the
+    // option down.
+    quantize_presets: tri(body.quantize_presets),
+    portamento_in: oneOf(PORTAMENTO_IN, body.portamento_in),
   };
 
   env.BUILDS.writeDataPoint({
@@ -134,10 +161,12 @@ async function record(request, env, context) {
     // Positional, and read back by position: the newer columns follow the
     // older ones so a row written before they existed still reads right.
     blobs: [platform, version, volts,
-            point.knob1, point.knob2, point.knob3, point.knob4],
+            point.knob1, point.knob2, point.knob3, point.knob4,
+            point.portamento_in],
     doubles: [point.arp, point.knobs, point.pressure, point.portamento,
               tunings, point.calibration,
-              point.sequencer, point.clock_divide, point.pitch_offset, patterns],
+              point.sequencer, point.clock_divide, point.pitch_offset, patterns,
+              point.quantize_presets],
   });
 
   // And the same thing where it can be read back without a credential.  One
@@ -162,10 +191,14 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === BEACON) return record(request, env, context);
+    if (url.pathname === DEV_BEACON) return new Response(null, { status: 204 });
 
     // Without the trailing slash every relative asset resolves into /mods/.
-    if (url.pathname === PUBLIC) {
-      return Response.redirect(url.origin + PUBLIC + '/', 301);
+    // The dev page the same: the origin would answer its own redirect to the
+    // github.io address, which fetch below follows silently, and the page
+    // would come back under a URL its assets resolve wrongly against.
+    if (url.pathname === PUBLIC || url.pathname === PUBLIC + DEV) {
+      return Response.redirect(url.origin + url.pathname + '/', 301);
     }
 
     const rest = url.pathname.slice(PUBLIC.length);   // "/style.css", "/kit/..."
@@ -198,6 +231,10 @@ export default {
     const ok = res.ok || res.status === 304;
     const isPage = rest === '/' || rest === '' || rest.endsWith('/') ||
                    rest.endsWith('.html');
+
+    if (rest.startsWith(DEV + '/')) {
+      out.headers.set('x-robots-tag', 'noindex, nofollow');
+    }
 
     if (isPage || type.includes('text/html')) {
       // The page is the one file that cannot carry a version - it is the URL

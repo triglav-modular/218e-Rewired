@@ -167,6 +167,26 @@ hash; it is not a gate. What is a gate is `tools/validate_hex.py`, which mirrors
 declared record lengths, because each of those is a way for a file to be
 approved and something else to be written.
 
+**The log is written for a bug report, not for a post-mortem.** Both flashers
+open by writing everything about the run into it — which flasher, which OS and
+architecture, where it was launched from, which folders it can reach, which
+tools it will use — and then, as soon as an image is chosen and before the chip
+is touched, the image's path, size, checksum and every option the builder page
+recorded in the `image.txt` beside it. That happens on every run, so a log from
+a flash that *worked* carries as much as one from a flash that did not; most
+reports are about what the instrument does afterwards, and those cannot be
+answered without knowing which options are in the image on it. An image with no
+manifest beside it says so in as many words rather than logging nothing, which
+would read as a build with everything turned off.
+
+`image.txt` is the only channel a build option has into that log, so the page's
+`describe()` has to name all of them — see *Counting builds* for the same
+problem on the beacon, and the tests that now hold the two together.
+
+The macOS log is replaced on each run; the Windows one is appended to, with a
+dated banner at the top of each run so the settings below it belong to a
+particular attempt.
+
 **Windows needs the DFU device bound to WinUSB**, or `dfu-programmer` cannot
 open it. The flasher deals with this itself, in the only order that works:
 Zadig can only bind a device it can see, and the DFU device exists only while
@@ -247,17 +267,18 @@ the options into the full internal settings the build has always used.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `latching_arp` | `true` | Arp switch becomes latch / regular / off. Latched notes are *pitches*, so a key held in three octaves stacks three notes. `false` restores the factory switch. |
-| `remap_knobs` | `true` | Remaps knobs 1–4 to arpeggiator and vibrato controls: arp order, arp rhythm, random octaves, vibrato. `false` hands all four back. Edit-mode knobs 1 and 4 are unaffected. |
+| `latching_arp` | `true` | Arp switch becomes latch / regular / off. Latched notes are *pitches*, so a key held in three octaves stacks three notes. Pads 2 and 3 held together for about a second choose whether the octave pads act *before* a note is entered or *after*, both pads flashing to confirm. Before, the default: the pads choose where each new note goes in, and held notes stay put. After: the pads move everything already held, the way they move a recorded take. The choice is saved across power cycles, and the gesture leaves the octave where it was before. It replaces the factory's own pads 2 & 3 latch, which is removed in this build. `false` restores the factory switch and the factory latch. |
 | `pitch_correction` | `false` | Path to a per-semitone correction CSV. `false` emits an ideal ramp with no per-key trim. |
 | `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` leaves the edit keys and their LEDs entirely alone. |
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
 | `pitch_offset` | `true` | The pitch CV starts three semitones above the 208's 0 V pitch, which puts the bottom C in tune on a 208, 208r or 208p — they start from A. `false` is for the 208c, which starts from C: the bottom key sounds the 0 V pitch. |
+| `quantize_presets` | `false` | With the add-to-pitch switch in the middle, the active pad's preset voltage snaps to the nearest interval of the tuning currently selected, measured from the bottom key, so the keyboard transposes to a degree of the scale and the per-key correction applies to the transposed note. The preset voltage output jack is not quantized. `false` adds the voltage as it is. |
+| `portamento_in` | `"portamento"` | What the **portamento in** banana jack does. `"transpose"` shifts the whole keyboard by whole degrees of the selected tuning, one period of it per 4 V of CV — so the jack's 0–10 V is about two and a half periods, which the pitch output can render from any starting key — quantised with hysteresis and upward only; everything already sounding moves with it, held keys, the latch, the arp and a playing take alike, and a held key's MIDI note keeps the shift it was pressed under. Keyboard maps of more than 32 positions cannot be shifted and are refused with the transposer on. `"portamento"` leaves the jack adding to the portamento time, as the factory does. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
-| `knob1`, `knob2`, `knob3`, `knob4` | per knob | With `remap_knobs` on, names one knob's role instead of taking its default: `knob1` `order`/`orders`, `knob2` `spacing`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back alone. |
+| `knob1`, `knob2`, `knob3`, `knob4` | per knob | What each preset knob does outside edit mode. Left out, a knob takes the first role listed: `knob1` `order`/`orders`, `knob2` `spacing`/`quantized`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back to its preset voltage. Edit-mode knobs 1 and 4 are unaffected. |
 | `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
-| `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
+| `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The hold puts the octave back where it was before pad 4 was pressed. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
 | `persist` | `true`, required | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). `false` is refused: it is a diagnostic shape, built only by the harnesses that characterise it. |
 | `clock_divide` | `true` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
 
@@ -315,10 +336,11 @@ applier that drives them is not called. There is nothing to switch between, so
 nothing is taken over.
 
 Transpose *mode* needs one more thing to survive: the knobs. It is driven from
-the knobs the remap takes over, so `remap_knobs` retires it as surely as a
-tuning does. With both off, the three `transpose_force_*` patches are skipped
-and transpose works as it shipped; with either on, they are applied and it does
-not. That is the only place two options combine to decide a third thing.
+the knobs the roles take over, so any knob not set to `factory` retires it as
+surely as a tuning does. With no tuning and all four knobs `factory`, the three
+`transpose_force_*` patches are skipped and transpose works as it shipped; with
+either a tuning or a remapped knob, they are applied and it does not. That is
+the only place two options combine to decide a third thing.
 
 **Anchoring.** Each scale is shifted so that **A** lands on the 12-TET grid,
 which keeps the note you tuned the 208 to in the same place in every slot;
@@ -482,6 +504,24 @@ background follow the same rule; stylesheets are done first, since versioning a
 font inside `style.css` changes `style.css` and its own hash has to be taken
 afterwards. The asset check that follows fails the build if any reference
 lost its stamp, because an unstamped file is one that will go stale silently.
+
+### The development page
+
+The `development` branch is published as the same page under
+`triglavmodular.hu/mods/218e-Rewired/dev/`, for trying a change on an
+instrument before it is released. Pages serves one site per repository and a
+deploy replaces all of it, so the workflow builds *both* branches on every
+run, whichever was pushed, and puts the development build under `dev/` in the
+released one. Each branch goes through the identical checks from its own
+checkout, so a broken development branch stops the deploy the same way a
+broken `main` does - and the reverse: the notarised app on `development` has
+to match its sources too, or nothing publishes.
+
+The worker treats everything under `/dev/` as the page it is - the same cache
+rules - with two differences. It is marked `noindex`, so the released page is
+the one search finds. And its beacon is answered but written nowhere: the
+download counts describe the released page, and a build of whatever the
+development branch held that afternoon is not one of those.
 
 ### The remaining ten minutes
 
@@ -682,10 +722,22 @@ direction is the safe one.
 Each download is written twice: to the Analytics Engine dataset, and as one
 key in the `COUNTS` KV namespace whose metadata carries the same values.
 An option the page did not always offer — the clock divider, the sequencer,
-the knob roles, the pitch offset, the pattern bank — is recorded as
+the knob roles, the pitch offset, the pattern bank, the preset-voltage
+quantisation and what the portamento banana jack does — is recorded as
 *unreported* (`-1`, or an empty role) when a page older than the option sends
 nothing for it, so an old build is never read as having turned it down. The
 Analytics Engine columns are positional, so the newer ones follow the older.
+
+Two ways the page and the worker drift apart, both of which have happened and
+neither of which shows as an error: the page grows a value the worker's
+allowlist does not know — the second knob-2 randomness role reached the
+development page with the worker knowing nothing about it, and would have been
+counted as `other` from the moment it was released — or the page sends a field
+the worker never reads,
+which is collected from the browser and thrown away. `tools/test_worker.mjs`
+reads `web/index.html` and `web/app.js` and holds both against
+`deploy/worker.js`, so either one fails the suite instead of quietly costing a
+column.
 The second exists because an Analytics Engine binding can only write — reading
 one back means the SQL API and an API token to go with it, while a namespace
 can simply be bound to whatever reads it. One key per download rather than a

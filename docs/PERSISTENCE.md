@@ -1,9 +1,10 @@
 # Preset and sequencer persistence
 
 `persist = true` in `[options]`, which is required: the build refuses
-`persist = false`. This saves the four remapped preset voltages and the
-sequence, not the factory's settings. The factory preset path is unchanged
-when knob remapping is disabled.
+`persist = false`. This saves the four remapped preset voltages, the
+sequence and the latching arpeggiator's transpose state, not the factory's
+settings. The factory preset path is unchanged when knob remapping is
+disabled.
 
 ## Saving and restarting
 
@@ -21,6 +22,9 @@ Saving is automatic at the end of an edit:
   that preset, not the unfinished sequence.
 - A preset saves when its pad is fully released after a new value was
   written. The intermediate touched-but-not-held state is not a release.
+- The latch's transpose state (pads 2 and 3 held together for a second,
+  with `latching_arp`) saves once both pads are up again after a toggle,
+  the same release rule as a preset.
 - Only changed musical data causes a commit. An unchanged take, an empty
   clear, a pad tap without editing, or a value returned to its old setting
   does not write flash, including when storage is still empty.
@@ -74,7 +78,8 @@ one version-2 record; multi-byte values are big-endian.
 | `0x0c` | 4 | CRC-32/ISO-HDLC |
 | `0x10` | 8 | Four presets, `0..1023` |
 | `0x18` | 1 | Sequence length, `0..64` |
-| `0x19` | 3 | Reserved, zero |
+| `0x19` | 1 | Latch transpose state: `0` the octave pads act before a note is entered, `1` after, on everything held |
+| `0x1a` | 2 | Reserved, zero |
 | `0x1c` | 128 | 64 pitches, signed and relative to the take's reference, `-0x2000..0x2000`; rest `0x7ffe`, tie `0x7fff` |
 | `0x9c` | 64 | Key indexes `0..28`; rest/tie and inactive keys are zero |
 | `0xdc` | 4 | Zero alignment padding |
@@ -120,8 +125,11 @@ preview flag. Explicit CLEAR latches an event at `0x62ff`, consumed by the
 same scan. Length reaching zero is not used to infer CLEAR.
 `0x62f9..0x62fc` latch which presets were edited until each pad is fully
 released. `persist_capture` at `0x8001d280` accepts a mask: bits 0–3 select
-preset pads and bit 4 selects the sequence. It canonicalizes and compares
-only selected data before the save code stages the combined record.
+preset pads, bit 4 selects the sequence and bit 5 the latch transpose
+state (RAM `0x62e2`, snapshot byte `0x6409`). It canonicalizes and
+compares only selected data before the save code stages the combined
+record. Records written before the state existed carry a zero there,
+which is the state every latch had until then.
 
 ## Verification and remaining bench checks
 

@@ -85,7 +85,11 @@ FEATURE_MAP = {
     ),
     "arp.switch":             (
         ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
-         "release_count_guard", "latch_owner"],
+         "release_count_guard", "latch_owner",
+         # The latch's two states: the hold shim, the toggle, and the factory
+         # pads 2 & 3 latch chord taken out.  latch_state itself is core: it
+         # also shadows the octave the sequencer's pad-4 hold restores.
+         "latch_hold", "latch_state_toggle", "factory_pad_latch_off"],
         ["arp_latch"],
     ),
     "midi.poly_default":      (
@@ -99,6 +103,13 @@ FEATURE_MAP = {
     "pressure.error_diffusion": ([], ["error_diffusion"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
+    "presets.quantize":       (["preset_quantize", "preset_quantize_pool"], []),
+    "portamento_in.transpose": (
+        ["cv_transpose", "glide_cv_addend", "midi_transpose",
+         "midi_transpose_arp_pool", "midi_transpose_poly_pool",
+         "midi_transpose_lift_pool", "midi_transpose_compare_pool",
+         "seq_record_pitch_cv", "seq_cv_shift", "cv_stamps"],
+        ["cv_transpose"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -123,6 +134,8 @@ ENABLED_WHEN = {
     "pressure.error_diffusion": True,
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
+    "presets.quantize": True,
+    "portamento_in.transpose": True,
     "diagnostics.scan_profiler": True,
     "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
@@ -1016,8 +1029,22 @@ RAM_REGIONS = [
     # 0x60E8 and 0x60EC were "arp last countdown" and "arp gate threshold".
     # Nothing in the firmware reads or writes either any more - the audit
     # walked every base-plus-offset access in the built image and found none -
-    # so they are gone rather than left looking like live state.
+    # so they were removed rather than left looking like live state.  Both are
+    # live again from 2026-09-12, for the jack transposer: 0x60E8 as the
+    # filter pole, 0x60EC as the displacement carried across a table rebuild.
+    # Only live with portamento_in.cv_filter_shift above zero, which is not
+    # the default: the pole was audible as a slew and the hysteresis does the
+    # steadying instead.  The bootstrap clears this unconditionally anyway, so
+    # turning the option back on cannot start from a retained value.
+    (0x60E8, 0x60EA, "jack CV filter, one pole on the raw count (option, off)"),
     (0x60EA, 0x60EC, "arp knob 3 latch"),
+    # How far the sounding base stands from its key's table entry - the arp's
+    # random octave, a latched slot's stamp, a step's pitch left standing -
+    # measured before a rebuild and put back after it, so the refresh moves
+    # the note by the interval its key moved instead of re-reading the table
+    # and flattening it.  Written and read inside one rebuild, so neither
+    # this nor the key below is first-use initialised.
+    (0x60EC, 0x60EE, "jack transposer: the sounding base's displacement"),
     (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
     (0x60EF, 0x60F0, "previous switch position"),
     (0x60F0, 0x60F2, "knob 4 latch: vibrato raw value or transpose zone"),
@@ -1039,6 +1066,7 @@ RAM_REGIONS = [
     (0x6044, 0x6046, "clock-latency edge-to-claim age"),
     (0x6046, 0x604C, "octave-switch shadow"),
     (0x604C, 0x604E, "octave-switch boot counter"),
+    (0x604E, 0x6050, "jack transposer: the slot's own pitch of the key being recorded"),
     (0x6050, 0x6080, "pressure history taps"),
     (0x6080, 0x6082, "filter sample count"),
     (0x6082, 0x6084, "filter depth"),
@@ -1050,6 +1078,11 @@ RAM_REGIONS = [
     # every unclaimed scan.  A claimed beat's scan puts it back, so the new
     # note's pitch cannot reach the output before the gate it belongs to.
     (0x609C, 0x609E, "held pitch, published for a claimed beat"),
+    # What the latch toggle stamps a press with and the hold re-bases to,
+    # republished every scan by latch_hold: the live transpose while each
+    # latched note keeps the transpose it was entered at, the set's
+    # reference (0x6580) while the whole set follows the pad.
+    (0x609E, 0x60A0, "latch transpose term for the toggle"),
     (0x60A0, 0x60A2, "live transpose offset"),
     (0x60A2, 0x60DC, "latch pitch stamps"),
     # The gate's absolute COUNT target.  Declared, so that the next cell to be
@@ -1061,6 +1094,15 @@ RAM_REGIONS = [
     (0x60F4, 0x60F6, "blend previous base"),
     (0x60F6, 0x60F8, "blend target filter"),
     (0x60F8, 0x60FA, "blend hysteresis hold"),
+    # The jack transposer: 0xA000 | slot << 8 | degrees, so an unseeded cell
+    # reads as invalid; then the shifted table's first entry as written, so a
+    # warm restart's unshifted .data copy is noticed and redone.
+    (0x60FA, 0x60FC, "jack transposer state: slot and degree shift"),
+    (0x60FC, 0x60FE, "jack transposer: table entry 0 as last written"),
+    (0x60FE, 0x60FF, "jack transposer: the degree shift frozen for the sounding MIDI note"),
+    # Which key that displacement belongs to; 0xFF while the sequencer owns
+    # the base, and the refresh then leaves it alone.
+    (0x60FF, 0x6100, "jack transposer: the key the refresh belongs to"),
     # Decoupled preset voltages.  The stored value is what the preset output
     # and the pitch adder both read; the snapshot and the flag are what stop a
     # pad hold from snatching the stored value to wherever the knob happens to
@@ -1072,11 +1114,17 @@ RAM_REGIONS = [
     (0x614E, 0x614F, "arp mirror direction"),
     # Where knob 2's pattern has got to, wrapped at that pattern's length.
     (0x6150, 0x6152, "arp pattern step"),
-    # Which half of the swung pair the next step is.
-    (0x6152, 0x6153, "arp swing parity"),
+    # Which half of the swung pair the next step is - or, with knob 2
+    # quantized instead, which half of the beat the last hit fell on.
+    (0x6152, 0x6153, "arp swing parity / quantized beat half"),
+    # What the last quantized reload's division left, so a beat that is not
+    # an even number of scans still keeps the grid over a run of hits.
+    (0x6153, 0x6154, "quantized rhythm: halves of a scan carried between reloads"),
     # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
-    # the selection is frozen at, last scan's touch levels, and the blink
-    # counter every light this firmware adds shares.
+    # the selection is frozen at, last scan's touch levels, the octave shadow
+    # (+9: the active pad while pads 2-4 are all up, which a completed chord
+    # or latch-state toggle restores), and the blink counter every light this
+    # firmware adds shares.
     (0x6154, 0x6160, "sequencer chord and mode"),
     # 64 recorded pitches, then how many there are, where play has got to,
     # and the pitch the step about to sound carries.
@@ -1118,6 +1166,11 @@ RAM_REGIONS = [
     # lap is latched, not retried on every scan: 0 clean, 1 pending, 2 failed.
     (0x62E0, 0x62E1, "persistence request/result"),
     (0x62E1, 0x62E2, "which rotation page holds the newest record"),
+    # Both inside the block the boot wrapper zeroes before the record is
+    # restored: the state comes back from the record's byte 0x19, and a
+    # stale countdown would flash the pads at power-up.
+    (0x62E2, 0x62E3, "latch transpose state, persisted: 0 hold, 1 transpose"),
+    (0x62E3, 0x62E4, "pads 2 & 3 acknowledgment countdown, in scans"),
     (0x62E4, 0x62E8, "the sequence number that record carries"),
     # One stamp per knob, the raw ADC value plus one; zero means no edit has
     # parked anything and the knob's other job may follow it live.
@@ -1171,6 +1224,16 @@ RAM_REGIONS = [
     (0x657C, 0x657D, "strip lamp acknowledgment countdown, in scans"),
     (0x657D, 0x657E, "which lamp it is: 1 a rest, 2 a tie"),
     (0x657E, 0x657F, "last scan's step count, for spotting an append"),
+    # The latch's transpose state: the reference is the transpose the state
+    # was entered under, set by the toggle; the count only means anything
+    # while both pads are down.  All three cells are zeroed by the boot
+    # wrapper (persist_boot), which every shipped build carries.
+    (0x6580, 0x6582, "latch transpose reference"),
+    (0x6582, 0x6584, "pads 2 & 3 hold count, in scans"),
+    # Beside the octave shadow at 0x615d: the transpose that octave stands
+    # for, which is what the toggle's reference is measured from once the
+    # gesture's own pad choice is undone.
+    (0x6584, 0x6586, "live transpose shadowed while pads 2-4 are up"),
 ]
 
 # Factory-owned RAM the patches address absolutely.  Not ours to initialise —
@@ -1561,6 +1624,12 @@ def main() -> None:
         "three semitones - the bottom key sounds three above the 0 V pitch (208, 208r, 208p)"
         if cfg["pitch"].get("bottom_key_semitone", BOTTOM_KEY_INDEX)
         else "none - the bottom key sounds the 0 V pitch (208c)"))
+    print("  preset voltages: " + (
+        "quantised to the selected tuning when added to the pitch"
+        if cfg.get("presets", {}).get("quantize") else "added to the pitch as they are"))
+    print("  portamento jack: " + (
+        "transposes the keyboard by degrees of the selected tuning"
+        if cfg.get("portamento_in", {}).get("transpose") else "adds to the portamento time"))
     reference_key = tuning.get("reference_key", 9)
     # What one step of the octave controls should be, in DAC units.  The
     # factory temperament and every 2/1 scale make this 484.
@@ -1592,10 +1661,14 @@ def main() -> None:
     # scale, for the latch-spacing check below.  The factory temperament is not
     # among them: it is copied bit-exact and its semitones are ~40 units apart.
     spacing_slots = []
+    # How many keys each slot repeats over: twelve, or the .kbm's map size.
+    # The jack transposer wraps its shift by this.
+    period_keys: list[int] = []
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             periods.add(tuning["units_per_octave"])
             tables[f"tuning_slot{index}"] = factory_tuning(memory)
+            period_keys.append(12)
             print(f"  tuning slot {index}: factory temperament (from the base image, "
                   "copied bit-exact, so the anchor does not apply)")
             continue
@@ -1639,6 +1712,7 @@ def main() -> None:
         except ValueError as error:
             raise SystemExit(str(error))
         tables[f"tuning_slot{index}"] = table
+        period_keys.append(12 if degrees is None else len(degrees))
         periods.add(period_units)
         spacing_slots.append((
             ideal_key_pitches(cents, degrees, period or 1200.0, offset),
@@ -1650,6 +1724,17 @@ def main() -> None:
         print(f"  tuning slot {index}: {path.name}"
               f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
     cfg["_min_key_spacing"] = min_key_spacing(spacing_slots)
+    tables["tuning_period_keys"] = period_keys
+    # The jack transposer shifts a 32-entry table and wraps by the map's
+    # size, so a map wider than the table cannot be shifted: index 32 less
+    # 36 keys is -4, and the rebuild read the flash before the table as
+    # pitches.  Refuse the pair; a wider map stays usable with the
+    # transposer off.  web/build.js applies the same rule.
+    if cfg.get("portamento_in", {}).get("transpose") and max(period_keys) > 32:
+        raise SystemExit(
+            f"alternate_tunings: a keyboard map of {max(period_keys)} positions "
+            "cannot be shifted by the jack transposer, whose key table holds "
+            "32 entries - use a map of up to 32, or turn the transposer off")
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that
@@ -1701,6 +1786,18 @@ def main() -> None:
         "curve_knob_steps": cfg["pressure"]["curve"].get("knob_max_level", 31) + 1,
         "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
         "multi_key_max": 1 if cfg["pressure"].get("multi_key", "max") == "max" else 0,
+        # The jack transposer: one period of the tuning per
+        # cv_volts_per_period of CV, at the jack's 4095 counts over 20 V
+        # (10 V reads about half scale - see tools/options.py for the evidence).
+        # Not volts_per_octave any more - see tools/options.py: tying it to
+        # the OUTPUT's scaling spent the jack's range on a transposition the
+        # output cannot render.
+        "transpose_cv_period": int(math.floor(
+            cfg["portamento_in"]["cv_counts_per_volt"]
+            * cfg["portamento_in"]["cv_volts_per_period"] + 0.5)),
+        "transpose_cv_zero": cfg["portamento_in"]["cv_zero"],
+        "transpose_cv_hysteresis": cfg["portamento_in"]["cv_hysteresis"],
+        "transpose_cv_filter_shift": cfg["portamento_in"]["cv_filter_shift"],
     }
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:
@@ -2022,8 +2119,8 @@ def main() -> None:
     # different question from how long the step is, so it is gated at the note
     # selector rather than in the rhythm randomiser.
     k2 = cfg.get("knob2", {}).get("mode", "randomness")
-    if k2 not in ("randomness", "patterns", "swing"):
-        raise SystemExit("[knob2].mode must be 'randomness', 'swing' or 'patterns'")
+    if k2 not in ("randomness", "quantized", "patterns", "swing"):
+        raise SystemExit("[knob2].mode must be 'randomness', 'quantized', 'swing' or 'patterns'")
     bank = list(cfg.get("knob2", {}).get("patterns") or [])
     lens = list(cfg.get("knob2", {}).get("lengths") or [])
     if k2 == "patterns":
@@ -2064,6 +2161,7 @@ def main() -> None:
         blocks["arp_rhythm_hook"] = False
     cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
     cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
+    cfg["_numbers"]["knob2_quantized"] = 1 if k2 == "quantized" else 0
     cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 200))
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
@@ -2139,6 +2237,9 @@ def main() -> None:
     blocks["seq_clock_input_hook"] = seq and not div
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"
+    # Quantized randomness takes the randomiser's hook the way swing does;
+    # the pool word at 0x80019d40 names whichever of the three is built.
+    blocks["arp_quantized"] = k2 == "quantized"
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
     # The event-17 wrapper is shared: pressure smoothing runs its

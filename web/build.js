@@ -15,6 +15,9 @@ var WEBBUILD = (function () {
     function tablesFor(cfg, factoryMemory) {
         var tables = {};
         spacingSlots = [];
+        // How many keys each slot repeats over, for the jack transposer's
+        // wrap: twelve, or the .kbm's map size.  Mirrors tools/build.py.
+        tables.tuning_period_keys = [];
         tables.pressure_curve = BUILDLIB.pressureCurve(
             cfg.pressure.curve.span, cfg.pressure.curve.onset_db,
             cfg.pressure.curve.onset_fade);
@@ -22,6 +25,7 @@ var WEBBUILD = (function () {
         cfg._tunings.forEach(function (slot, index) {
             if (slot === 'factory') {
                 tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
+                tables.tuning_period_keys.push(12);
             } else {
                 var scale = BUILDLIB.slotScale(slot);
                 // Same rule as tools/build.py: without a .kbm there is one key
@@ -46,6 +50,7 @@ var WEBBUILD = (function () {
                 var periodUnits = BUILDLIB.floorHalf(period * perOctave / 1200);
                 BUILDLIB.checkTableRange(slot.name, table, periodUnits);
                 tables['tuning_slot' + index] = table;
+                tables.tuning_period_keys.push(scale.degrees ? scale.degrees.length : 12);
                 spacingSlots.push({
                     ideal: BUILDLIB.idealKeyPitches(
                         scale.cents, scale.degrees, period, offset),
@@ -55,6 +60,16 @@ var WEBBUILD = (function () {
                 });
             }
         });
+        // Same rule as tools/build.py: the jack transposer shifts a 32-entry
+        // table and wraps by the map's size, so a wider map cannot be
+        // shifted and is refused with the transposer on.
+        var widest = Math.max.apply(null, tables.tuning_period_keys);
+        if (cfg.portamento_in.transpose && widest > 32) {
+            throw new Error('alternate_tunings: a keyboard map of ' + widest +
+                ' positions cannot be shifted by the jack transposer, whose ' +
+                'key table holds 32 entries - use a map of up to 32, or turn ' +
+                'the transposer off');
+        }
         var bank = BUILDLIB.patternBank(cfg);
         tables.arp_pattern_bank = [];
         bank.masks.forEach(function (m) {
@@ -142,6 +157,7 @@ var WEBBUILD = (function () {
         // knob, and even spacing is what makes a pattern legible.
         if (blocks.arp_pattern_gate) blocks.arp_rhythm_hook = false;
         blocks.arp_swing = cfg.knob2.mode === 'swing';
+        blocks.arp_quantized = cfg.knob2.mode === 'quantized';
         var seq = !!(cfg.sequencer && cfg.sequencer.on);
         ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
          'seq_clock_enabled', 'seq_transport', 'seq_clock_rate_hook',
