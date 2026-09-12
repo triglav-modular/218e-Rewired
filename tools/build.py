@@ -92,7 +92,7 @@ def rotation_hysteresis_limit(cv_period: int, widest: int) -> int:
 
 
 TABLE_ROTATION = [
-    "cv_transpose", "midi_transpose", "preset_entry",
+    "cv_transpose", "midi_transpose", "preset_entry", "latch_preset_pin",
     "midi_transpose_arp_pool", "midi_transpose_poly_pool",
     "midi_transpose_lift_pool", "midi_transpose_compare_pool",
     "seq_record_pitch_cv", "seq_cv_shift", "cv_stamps",
@@ -1088,6 +1088,7 @@ RAM_REGIONS = [
     # against this, not the live count, or the preset cancels out and a
     # playing take cannot be transposed at all.
     (0x6091, 0x6092, "the preset degrees a take was born under"),
+    (0x6092, 0x6093, "the preset degrees the last rebuild saw, for the latch"),
     (0x6000, 0x6021, "arp press-order list"),
     (0x6024, 0x6026, "vibrato LFO phase"),
     (0x6026, 0x6028, "vibrato smoothed depth"),

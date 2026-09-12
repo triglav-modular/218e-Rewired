@@ -27,11 +27,11 @@ REM instrument leave DFU.  Buchla's own ProgramLEM218.bat does none of those and
 REM flashes whatever .hex it finds first, which is why this is a separate
 REM script.
 
-SET "EXPECTED_SHA256=bbb40f0f31cc4e1a11bc7c361deac6e2bb3be84a5406ea2ff9d17e1f572b6de3"
+SET "EXPECTED_SHA256=fc59aada1ac2e559625f97fa6bb3d9e31208d04e78e69279862dbce2c2e155de"
 REM Buchla's own v36.9 image.  Recognised so that going back to stock is an
 REM offered choice rather than something to be identified by hand.
 SET "FACTORY_SHA256=565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-SET "FIRMWARE_VERSION=Rewired 2.4.0 (bbb40f0f)"
+SET "FIRMWARE_VERSION=Rewired 2.4.0 (fc59aada)"
 REM What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
 REM for whichever image is chosen, so by the time anything reaches the log it
 REM no longer says which flasher wrote it.

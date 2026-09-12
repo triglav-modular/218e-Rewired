@@ -3185,6 +3185,74 @@ function assembleProgram() {
         word(0x8001e1c0); // preset_degrees
         finish("cv_transpose", 0x8001e8e0);
 
+        // latch_preset_pin: the preset's half of the latch's hold state.
+        //
+        // Called at the end of every rebuild.  In the TRANSPOSE state the set
+        // is meant to follow, so there is nothing to do; in HOLD each latched
+        // note must stay where it was entered, so its stamp absorbs however
+        // far the preset moved its own key.  The jack is deliberately NOT
+        // compensated - everything sounding follows the jack, latch included -
+        // so only the preset's movement is taken out, which is why the two
+        // counts are read separately rather than the table being compared
+        // with itself.
+        //
+        // 0x6092 carries the count the last rebuild saw, and is updated here
+        // whichever state is in force, so a switch into hold starts from the
+        // preset standing now rather than from one two rebuilds old.
+        var lppEntry = 0x8001eca8, lppLoop = 0x8001ecd0, lppOwn = 0x8001ecf4;
+        var lppHave = 0x8001ecfc, lppNext = 0x8001ed28, lppSave = 0x8001ed30;
+        var lppDone = 0x8001ed38, lppPool = 0x8001ed40;
+        begin(lppEntry);
+        emit("STM --SP,R0,R1,R2,R3,R7,R8,R9,R10,R11,R12,LR");
+        emit("MOV R3,0x60f3");
+        emit("LD.UB R3,R3[0x0]");                                 // the count now
+        emit("MOV R2,0x6092");
+        emit("LD.UB R2,R2[0x0]");                                 // and as the last rebuild saw it
+        emit("CP.W R3,R2");
+        emit(StringFormat("BR{eq} 0x%x", lppDone));              // the preset did not move
+        emit("MOV R0,0x62e2");
+        emit("LD.UB R0,R0[0x0]");
+        emit("CP.W R0,0x0");
+        emit(StringFormat("BR{ne} 0x%x", lppSave));              // transpose: the set follows
+        emit("MOV R1,0x1c");
+        padTo(lppLoop);
+        emit("MOV R0,0x377b");                                    // state+0x21b, the held flags
+        emit("LD.UB R0,R0[R1 << 0x0]");
+        emit("CP.W R0,0x1");
+        emit(StringFormat("BR{ne} 0x%x", lppNext));
+        emit("MOV R0,0x6504");                                    // the owner map, key plus one
+        emit("LD.UB R0,R0[R1 << 0x0]");
+        emit("CP.W R0,0x0");
+        emit(StringFormat("BR{eq} 0x%x", lppOwn));
+        emit("SUB R0,0x1");
+        emit(StringFormat("RJMP 0x%x", lppHave));
+        padTo(lppOwn);
+        emit("MOV R0,R1");                                        // its own slot
+        padTo(lppHave);
+        emit("MOV R12,R0");
+        emit("MOV R9,0x60f3");
+        emit(StringFormat("MCALL PC[0x%x]", lppPool));           // preset_entry, at the count now
+        emit("MOV R11,R12");
+        emit("MOV R12,R0");
+        emit("MOV R9,0x6092");
+        emit(StringFormat("MCALL PC[0x%x]", lppPool));           // and at the one before
+        emit("SUB R11,R12");                                      // how far this key moved
+        emit("MOV R10,0x60a2");
+        emit("LD.SH R12,R10[R1 << 0x1]");
+        emit("SUB R12,R11");                                      // taken out of the stamp
+        emit("ST.H R10[R1 << 0x1],R12");
+        padTo(lppNext);
+        emit("SUB R1,0x1");
+        emit(StringFormat("BR{ge} 0x%x", lppLoop));
+        padTo(lppSave);
+        emit("MOV R2,0x6092");
+        emit("ST.B R2[0x0],R3");
+        padTo(lppDone);
+        emit("LDM SP++,R0,R1,R2,R3,R7,R8,R9,R10,R11,R12,PC");
+        padTo(lppPool);
+        word(0x8001e420); // preset_entry
+        finish("latch_preset_pin", 0x8001ed48);
+
         // cv_stamps: the two passes around the rebuild, and the refresh.
         // Called from inside the rebuild with N in R8 and the slot in R10
         // still live in the caller, so every scratch register is saved.
@@ -3209,8 +3277,8 @@ function assembleProgram() {
         var cvStampsKey = 0x8001ec1e;
         var cvStampsPostLoop = 0x8001ec34;
         var cvStampsPostNext = 0x8001ec70;
-        var cvStampsDone = 0x8001ec94;
-        var cvStampsPool = 0x8001ec98;
+        var cvStampsDone = 0x8001ec9c;
+        var cvStampsPool = 0x8001eca0;
         begin(cvStampsPre);
         emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
         emit("MOV R7,SP");
@@ -3396,6 +3464,13 @@ function assembleProgram() {
         padTo(cvStampsPostNext);
         emit("SUB R1,0x1");
         emit(StringFormat("BR{ge} 0x%x", cvStampsPostLoop));
+        // In the latch's HOLD state a latched note keeps the transpose it was
+        // entered at, and the preset is a transpose like any other - but the
+        // rotation moves the table underneath the whole set, so every latched
+        // note followed the pad whatever the switch said.  Measured: the
+        // octave moves 0 units in hold and 968 in transpose, the preset moved
+        // 484 in both (audit probe, 2026-09-13).
+        emit(StringFormat("MCALL PC[0x%x]", cvStampsPool + 4));
         // The sounding note's base, republished from the new table with the
         // displacement cvStampsPre measured still on it.  Both cells are
         // written by that pass on the way into every rebuild and read only
@@ -3415,7 +3490,8 @@ function assembleProgram() {
         emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
         padTo(cvStampsPool);
         word(0x00003560); // global state base
-        finish("cv_stamps", 0x8001ec9c);
+        word(0x8001eca8); // latch_preset_pin
+        finish("cv_stamps", 0x8001eca8);
 
         // The same shift for MIDI.  The factory turns a key into a note
         // number in one routine, 0x800057a8 (key + 36, or + 12 per trn zone,
@@ -6021,6 +6097,8 @@ function assembleProgram() {
         emit("MOV R10,0x6580");
         emit("ST.W R10[0x0],R8");
         emit("ST.H R10[0x4],R8");
+        emit("MOV R10,0x6092");         // the preset count the last rebuild saw
+        emit("ST.B R10[0x0],R8");
         emit("MOV R10,0x62e0");
         emit("MOV R9,-0x1");
         emit("ST.B R10[0x1],R9");

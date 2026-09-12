@@ -1177,6 +1177,25 @@ public class ControlRegression extends SequenceEditRegression {
         externalBeat(); sound();
         externalBeat(); sound(); long a1=r(S+0x352,2);
         check("and the next step arrives transposed: "+a1+" -> "+b1, b1>a1);
+        // 5. The latch's before/after switch governs the preset the way it
+        //    governs the octave.  In hold a latched note keeps the preset it
+        //    was entered at; in transpose the whole set follows.  The
+        //    rotation moves the table under the set, so without the pin every
+        //    latched note followed the pad whatever the switch said - the
+        //    octave measured 0 and 968 across the two states while the preset
+        //    measured 484 in both.
+        for(int state=0;state<2;state++) {
+            setup(0,false,1); command(0); latchFixture();
+            w(0x62e2,1,state);
+            presetSwitch(0,0); key(0); aim(0); sound();
+            long entered=r(S+0x352,2);
+            presetSwitch(0,367); sound();
+            long moved=r(S+0x352,2)-entered;
+            check("latch state "+state+": a preset move "
+                  +(state==0?"leaves a latched note where it was entered"
+                            :"carries the whole set")+", moved "+moved,
+                  state==0 ? moved==0 : moved>0);
+        }
         println("PASS preset voltage downstream: takes keep their intervals, "
                 +"previews stay pinned, sounding notes follow the pad");
     }
