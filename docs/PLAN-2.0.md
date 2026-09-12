@@ -747,7 +747,7 @@ replaces the load at `0x8000313e` with a constant the halve-and-subtract
 turns into zero, and `cv_transpose` (0x8001e1c0, in front of the per-scan
 housekeeping) rebuilds the live key table at RAM `0x854` from the slot's
 flash table shifted by N degrees - N being the raw CV less a zero, one
-period per `volts_per_octave` of CV at 1023 counts over 10 V, rounded,
+period per `volts_per_octave` of CV at 4095 counts over 10 V, rounded,
 with a hysteresis band around the last answer.  Shifting the table is what
 makes the transposition a transposition IN the scale: every reader of the
 table - arp, latch stamps, pitch ranking, blend anchors, recorder - sees

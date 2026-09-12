@@ -833,7 +833,7 @@ var BUILDLIB = (function () {
             multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0,
             octave_units: octaveUnits(cfg),
             // The jack transposer, as tools/build.py derives it: one period
-            // per volts_per_octave of CV at 1023 counts over 10 V.
+            // per volts_per_octave of CV at 4095 counts over 10 V.
             transpose_cv_period: floorHalf(cfg.portamento_in.cv_counts_per_volt
                                            * cfg.pitch.volts_per_octave),
             transpose_cv_zero: cfg.portamento_in.cv_zero,

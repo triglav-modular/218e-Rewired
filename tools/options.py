@@ -63,13 +63,20 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                  'dac_vref': 2.5},
     'presets': {'quantize': False},
     # The PORTAMENTO IN jack as a transposer.  cv_counts_per_volt is the
-    # jack's ADC scale, 1023 counts over 10 V, so one period of the tuning
+    # jack's ADC scale, 4095 counts over 10 V, so one period of the tuning
     # is volts_per_octave of CV; cv_zero is subtracted from the raw reading
     # first, and cv_hysteresis is how far past a degree boundary the CV has
-    # to travel before the answer changes.  None of the three has been
-    # measured on an instrument yet.
+    # to travel before the answer changes.
+    #
+    # This was 102.3 until 2026-09-12 — a plain 10-bit count, 1023 over 10 V,
+    # which is what every OTHER ADC channel in this firmware is (they all mask
+    # to 0x3ff).  The cell the second ADC pass leaves at state+0x2f0 is not
+    # one of those: measured on the instrument, the whole shift was spent by
+    # about 2.5 V instead of 10 V, four times too soon.  Four is the factor
+    # between a 10-bit count and the 12-bit-justified reading this cell
+    # actually holds, and 4095 counts over 10 V is what the jack is for.
     'portamento_in': {   'transpose': False,
-                         'cv_counts_per_volt': 102.3,
+                         'cv_counts_per_volt': 409.5,
                          'cv_zero': 0,
                          'cv_hysteresis': 2},
     'portamento': {   'blend_filter_shift': 2,

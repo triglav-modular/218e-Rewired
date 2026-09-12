@@ -113,7 +113,9 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
   `clock_lock_pulses` (5), and the jack transposer's `cv_counts_per_volt`
-  (102.3, i.e. 1023 counts over 10 V), `cv_zero` (0) and `cv_hysteresis`
+  (409.5, i.e. 4095 counts over 10 V — measured 2026-09-12; it was 102.3,
+  a plain 10-bit count, which made the jack four times too sensitive),
+  `cv_zero` (0) and `cv_hysteresis`
   (2) in tools/options.py - measure a known CV into PORTAMENTO IN against
   state+0x2f0 before trusting the first two. All are build numbers
   precisely so they can move. `chord_hold_scans`

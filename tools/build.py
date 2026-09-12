@@ -1770,7 +1770,7 @@ def main() -> None:
         "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
         "multi_key_max": 1 if cfg["pressure"].get("multi_key", "max") == "max" else 0,
         # The jack transposer: one period of the tuning per volts_per_octave
-        # of CV, at the jack's 1023 counts over 10 V.
+        # of CV, at the jack's 4095 counts over 10 V.
         "transpose_cv_period": int(math.floor(
             cfg["portamento_in"]["cv_counts_per_volt"]
             * cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE) + 0.5)),
