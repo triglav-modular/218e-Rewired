@@ -3157,6 +3157,15 @@ function assembleProgram() {
         // twenty scans of the first pitch pass, with nothing sounding yet.
         emit("ST.H R9[0x4],R8");        // 0x60e8 jack CV filter pole
         emit("ST.H R9[0x6],R8");        // 0x60ea arp knob 3 latch
+        // 0x60fc, table entry zero as the transposer last wrote it.  Zero is
+        // the sentinel for "this pass has never published", and no table entry
+        // can be zero - the slot tables start at the bottom key's pitch - so
+        // it cannot be mistaken for a real one.  The refresh needs to tell
+        // that state from "somebody replaced the table underneath us", which
+        // reads the same way if the cell is merely unwritten; without this
+        // it threw away the shift of a jack that was already patched when the
+        // instrument powered up, and never got it back.
+        emit("ST.H R9[0x18],R8");       // 0x60fc jack transposer, unpublished
         emit("ST.B R9[0xa],R8");        // 0x60ee deferred-pulse countdown
         emit("ST.H R9[0xc],R8");        // 0x60f0 vibrato knob latch
         emit("ST.B R9[0xe],R8");        // 0x60f2 arp knob 1 latch
@@ -3824,10 +3833,10 @@ function assembleProgram() {
         // shifts agree to a rounding unit and this is a no-op.
         var cvStampsPreLoop = 0x8001e8ec;
         var cvStampsPreNext = 0x8001e928;
-        var cvStampsMono = 0x8001e95a;
-        var cvStampsHave = 0x8001e964;
-        var cvStampsOurs = 0x8001e978;
-        var cvStampsKey = 0x8001e984;
+        var cvStampsMono = 0x8001e954;
+        var cvStampsHave = 0x8001e95e;
+        var cvStampsOurs = 0x8001e976;
+        var cvStampsKey = 0x8001e982;
         var cvStampsPostLoop = 0x8001e998;
         var cvStampsPostNext = 0x8001e9d4;
         var cvStampsDone = 0x8001e9f8;
@@ -3904,9 +3913,10 @@ function assembleProgram() {
         emit("OR R1,R2");
         emit("CP.W R1,0x0");
         emit(StringFormat("BR{ne} 0x%x", cvStampsKey));
-        emit("LD.UB R8,R0[0x340]");
-        emit("LD.UB R2,R0[0x341]");
-        emit("OR R8,R2");
+        // Both arp switch flags in one aligned halfword: the pair is nonzero
+        // exactly when either byte is, and the six bytes that saves are what
+        // pay for the sentinel test below.
+        emit("LD.UH R8,R0[0x340]");
         emit("CP.W R8,0x0");
         emit(StringFormat("BR{eq} 0x%x", cvStampsMono));
         emit("LD.UB R9,R0[0x34d]");                               // the last arp key
@@ -3934,12 +3944,24 @@ function assembleProgram() {
         // displacement can be read off it.  Leave the base alone for that
         // rebuild - which is also what the factory does when a slot changes
         // under a sounding note - and the next rebuild, against our own table
-        // again, measures normally.  A cold boot takes the same path, its
-        // 0x60fc never having been written, and that is why the output still
-        // rests at zero until the jack first moves it.
+        // again, measures normally.
+        //
+        // Zero is the third case and it has to be separated from the second,
+        // because an unwritten cell looks exactly like a replaced table.  The
+        // bootstrap now writes zero there, no table entry can BE zero, and
+        // zero means this pass has never published - which is the state a cold
+        // boot is in.  Then the table is still the factory's own .data copy,
+        // untransposed, which is the correct baseline: measure against it.
+        // Reading that as "somebody else's table" is what discarded the shift
+        // of a jack already patched at power-up, permanently - the degree
+        // state committed, the table rebuilt, and every later move measured
+        // against the shifted table with the base still at zero, so the whole
+        // boot-time transposition went missing and stayed missing.
         emit("MOV R8,0x854");
-        emit("LD.UH R1,R8[0x0]");                                 // entry zero as it stands
         emit("LD.UH R2,R10[0x10]");                               // 0x60fc, as we last wrote it
+        emit("CP.W R2,0x0");
+        emit(StringFormat("BR{eq} 0x%x", cvStampsOurs));         // nothing published yet
+        emit("LD.UH R1,R8[0x0]");                                 // entry zero as it stands
         emit("CP.W R1,R2");
         emit(StringFormat("BR{eq} 0x%x", cvStampsOurs));
         emit("MOV R9,0xff");                                      // not our table: publish nothing

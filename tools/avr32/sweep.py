@@ -253,9 +253,14 @@ def audit_call_pools(image_path) -> list[str]:
 # that RAM 0x854 has another writer - the tuning applier runs ahead of the
 # transposer in the same chain - and stopped reading a table that is not its
 # own, which had been re-applying the whole CV shift on every slot change.
+# And again when the refresh learned to tell an unpublished transposer from a
+# table somebody else replaced: both read as "not ours", so a jack already
+# patched at power-up had its whole boot-time shift discarded and never got it
+# back.  0x60fc is seeded to zero as the unpublished sentinel now, which no
+# table entry can be.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "d0613128c4e378c5363f35ceab0281d97ea56cd40dda4ee7fffbb038e99e0137",
+    "historical_config": "3930e696c55f0a51db83e4558151e3a8113a261abcf72dbce6552ca89e52587b",
 }
 
 

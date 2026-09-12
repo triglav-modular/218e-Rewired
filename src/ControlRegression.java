@@ -775,6 +775,34 @@ public class ControlRegression extends SequenceEditRegression {
                 +r(S+0x350,2)+" against "+shifted,r(S+0x350,2)==shifted);
         }
         touchOff(9); sound();
+        // A jack already patched when the instrument powers up.  The
+        // ownership guard has to tell "nobody has published yet" from
+        // "somebody replaced the table" - 0x60fc reads as unwritten in both -
+        // or the boot-time shift is discarded and never comes back, and every
+        // later move carries the missing periods.  Note there is no cv(0)
+        // here: establishing zero first is exactly what hid this, because it
+        // seeds 0x60fc through a rebuild that shifts nothing.
+        setup(0,false,0); command(0); latchFixture(); octavePad(1);
+        // Back to the state a cold boot actually leaves, AFTER those fixtures
+        // have had their scans: an unseeded transposer.  latchFixture() runs a
+        // control scan, and that scan rebuilds at CV zero and seeds 0x60fc -
+        // which is precisely the condition under which this defect cannot
+        // appear, and precisely why the first shape of this test passed.
+        w(0x602a,2,0); call(0x8001ab60L);
+        w(S+0x256,1,255); w(S+0x34d,1,255); w(0x2eed,1,0);
+        w(S+0x350,2,0); w(0x60fa,2,0); w(0x60fc,2,0); w(0x60ec,2,0);
+        check("the transposer is unseeded, or this proves nothing",
+            r(0x60fc,2)==0&&(r(0x60fa,2)>>12)!=0xa);
+        long rest=r(0x854,2), restDac2=r(S+0x358,2);
+        cv(period); sound();
+        check("a jack already patched at power-up is applied, not discarded: "
+            +r(S+0x350,2),r(S+0x350,2)==r(0x854,2)-rest&&r(S+0x350,2)==484);
+        check("and the DAC shows it",r(S+0x358,2)!=restDac2);
+        cv(2*period); sound();
+        check("the next move carries no missing period: "+r(S+0x350,2),
+            r(S+0x350,2)==r(0x854,2)-rest&&r(S+0x350,2)==968);
+        cv(period); sound();
+        check("and it comes back to where it was",r(S+0x350,2)==484);
         // Both arp positions follow the jack with nothing sounding.  The
         // pitch output holds the last note there exactly as it does with the
         // arp off, so a CV turned between phrases has to move it in all
