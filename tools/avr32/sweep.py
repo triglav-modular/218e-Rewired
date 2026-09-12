@@ -242,10 +242,13 @@ def audit_call_pools(image_path) -> list[str]:
 # And again for the jack transposer's September 12 audit: the filter pole
 # cleared at first use, and the refresh carrying the sounding note's
 # displacement across a rebuild so knob 3's random octave survives a CV move
-# and every switch position follows the jack with nothing held.
+# and every switch position follows the jack with nothing held; then again
+# when one period of transposition stopped costing volts_per_octave of CV and
+# started costing cv_volts_per_period, which is a number in every build and so
+# moves this anchor even though it carries the jack turned off.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "8fc5f0a0bb0650d2c91fa79820bcf68265a1d2b74c5b37ca6d6047794afce728",
+    "historical_config": "20916ce9435c2a425c83ff119e3db8c10cb8776a59a02bbbda0b2f5c64e9a1a5",
 }
 
 

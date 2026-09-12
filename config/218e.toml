@@ -172,8 +172,9 @@ quantize_presets = false
 # jack adds to the glide time the knob sets.  "transpose" makes the banana
 # jack a transposer instead: the CV shifts every key by whole degrees of the
 # tuning currently selected, one period (an octave, for a scale that repeats
-# at one) per volts_per_octave of CV, rounded to the nearest degree, and the
-# MIDI notes move with the keys.  The keyboard stays inside the scale
+# at one) per 2 V of CV - so the jack's whole 0-10 V spans five periods, about
+# as far as the pitch output itself reaches - rounded to the nearest degree,
+# and the MIDI notes move with the keys.  The keyboard stays inside the scale
 # whatever the CV, so with an unequal tuning the intervals between keys
 # change the way they would under a different starting degree.  The knob
 # keeps its own job in both settings.  A recorded sequence follows the CV
@@ -215,7 +216,7 @@ version        = "2.3.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "63a71be43aea7d90c83d78d4d2a018ea9b9a603b417a6c6a7b6f6c16c4747c28"
+golden_sha256  = "9e6c24a6a235476ba0042b13f02f4a9050c9d82d846991cf266439922921945e"
 
 
 [tools]

@@ -1782,11 +1782,14 @@ def main() -> None:
         "curve_knob_steps": cfg["pressure"]["curve"].get("knob_max_level", 31) + 1,
         "resolution_bits": cfg["pressure"].get("resolution_bits", 4),
         "multi_key_max": 1 if cfg["pressure"].get("multi_key", "max") == "max" else 0,
-        # The jack transposer: one period of the tuning per volts_per_octave
-        # of CV, at the jack's 4095 counts over 10 V.
+        # The jack transposer: one period of the tuning per
+        # cv_volts_per_period of CV, at the jack's 4095 counts over 10 V.
+        # Not volts_per_octave any more - see tools/options.py: tying it to
+        # the OUTPUT's scaling spent the jack's range on a transposition the
+        # output cannot render.
         "transpose_cv_period": int(math.floor(
             cfg["portamento_in"]["cv_counts_per_volt"]
-            * cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE) + 0.5)),
+            * cfg["portamento_in"]["cv_volts_per_period"] + 0.5)),
         "transpose_cv_zero": cfg["portamento_in"]["cv_zero"],
         "transpose_cv_hysteresis": cfg["portamento_in"]["cv_hysteresis"],
         "transpose_cv_filter_shift": cfg["portamento_in"]["cv_filter_shift"],

@@ -747,7 +747,7 @@ replaces the load at `0x8000313e` with a constant the halve-and-subtract
 turns into zero, and `cv_transpose` (0x8001e1c0, in front of the per-scan
 housekeeping) rebuilds the live key table at RAM `0x854` from the slot's
 flash table shifted by N degrees - N being the raw CV less a zero, one
-period per `volts_per_octave` of CV at 4095 counts over 10 V, rounded,
+period per `cv_volts_per_period` of CV at 4095 counts over 10 V, rounded,
 with a hysteresis band around the last answer.  Shifting the table is what
 makes the transposition a transposition IN the scale: every reader of the
 table - arp, latch stamps, pitch ranking, blend anchors, recorder - sees
@@ -755,6 +755,19 @@ the shifted scale, and the wrap past entry 31 steps the slot's own map
 size (12, or the .kbm's) and adds one period.  The raw cell is signed
 and unconditioned; the jack has no negative range, so N is clamped at
 zero.  None of the three CV numbers has been measured on an instrument.
+
+`cv_volts_per_period` was `volts_per_octave` until 2026-09-12, which tied the
+INPUT's law to the OUTPUT's scaling and is why the jack read as too sensitive:
+1.2 V bought an octave, so the full 10 V bought 8.3 of them, and the pitch
+output cannot show that.  `pitch_remap` at `0x80019bc0` holds 79 semitones and
+`pitch_remap_calibration` clamps its index at 77, so the DAC stops at 3125
+counts - 7.80 V of the 10.22 V it can drive - and from the bottom key at the
+neutral octave only 5.25 periods are reachable at all.  At 2 V per period the
+jack's whole range is five of them, inside that, and the top third of the
+knob's travel does something again.  The remaining 970 counts of DAC headroom
+are a separate matter: they need the curve extended past semitone 78, which
+needs its table moved (`0x80019bc0` is boxed in at `0x80019c60`) and
+calibration rows it does not have.
 
 What is already sounding follows too, and by an interval rather than by a
 re-read (2026-09-12).  A note copied its base out of the table at note-on,

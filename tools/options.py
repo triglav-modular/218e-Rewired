@@ -87,7 +87,21 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                          # that closes a quarter of the gap per 5 ms scan, so
                          # ~17 ms to 63% and ~55 ms to 95%, which is below
                          # what a hand turning a knob notices.  0 is off.
-                         'cv_filter_shift': 2},
+                         'cv_filter_shift': 2,
+                         # How much CV one period of the tuning costs.  This
+                         # was volts_per_octave until 2026-09-12, so 1.2 V
+                         # bought an octave and the jack's full 10 V bought
+                         # 8.3 of them - which the PITCH OUTPUT cannot show.
+                         # The curve at 0x80019bc0 holds 79 semitones, so the
+                         # DAC stops at 3125 counts of the 4095 it can drive,
+                         # and from the lowest key the transposition ran out
+                         # around 6 V with the top third of the jack's range
+                         # doing nothing visible.  At 2 V the full 0-10 V is
+                         # five periods, which is inside what the output
+                         # reaches from the bottom key at the neutral octave
+                         # (5.25).  Set it back to volts_per_octave for the
+                         # old law.
+                         'cv_volts_per_period': 2.0},
     'portamento': {   'blend_filter_shift': 2,
                       'blend_hysteresis': 3,
                       'blend_slew_taper': 1,
@@ -556,7 +570,7 @@ def expand(options: dict) -> dict:
     # 14. The portamento jack ----------------------------------------------
     # "portamento" is the factory's: the CV adds to the knob's glide time.
     # "transpose" shifts the keyboard by whole degrees of the selected
-    # tuning instead, one period per volts_per_octave of CV, and the knob
+    # tuning instead, one period per cv_volts_per_period of CV, and the knob
     # keeps its own job either way - the jack is its own ADC channel.
     jack = want("portamento_in", "portamento")
     if jack not in ("portamento", "transpose"):
