@@ -658,11 +658,80 @@ public class ControlRegression extends SequenceEditRegression {
         w(S+0x2fc,2,0); externalBeat(); sound();
         long stepBase=r(S+0x350,2); cv(491); sound();
         check("a jack move leaves the playing step's base alone",r(S+0x350,2)==stepBase);
+        // The pole is read before anything writes it, and SRAM survives a
+        // DFU: a value the previous image left in the cell is a shift the
+        // jack is not asking for.  cold() zeroes the whole region, which is
+        // what hid this - so dirty it on purpose, invalidate the marker and
+        // run the real bootstrap.  4095 retained is 75 degrees at zero in.
+        setup(0,false,0); command(0); latchFixture();
+        w(0x60e8,2,4095); w(0x602a,2,0);
+        call(0x8001ab60L);
+        check("first use clears the jack filter's pole",r(0x60e8,2)==0);
+        w(S+0x2f0,2,0); w(0x60fa,2,0); controlScan();
+        check("so a jack at rest is read as rest, not as a retained shift",
+            r(0x60e8,2)==0&&(r(0x60fa,2)&255)==0);
+        // The arp's note carries knob 3's random octave on top of its table
+        // entry, and the refresh has to carry it too: republishing the bare
+        // entry dropped the note an octave whenever the CV moved under it.
+        // The displacement comes from the firmware's own randomiser, not a
+        // constant here, so this cannot pass against the wrong octave.
+        setup(0,false,1); command(0); latchFixture(); octavePad(1); cv(0);
+        w(0x60ea,2,1023); aim(9);
+        long plainBase=r(0x854+18,2), displaced=plainBase;
+        for(int i=0;i<64&&displaced==plainBase;i++) {
+            e.writeRegister("R8",plainBase); call(0x80019da8L); displaced=(short)reg("R8");
+        }
+        check("knob 3 displaces an arp note by a whole period: "+(displaced-plainBase),
+            Math.abs(displaced-plainBase)==484);
+        w(0x2eed,1,1); w(S+0x350,2,displaced); sound();
+        cv(491); sound();
+        check("the arp's random octave survives the jack moving under it",
+            r(S+0x350,2)==r(0x854+18,2)+(displaced-plainBase));
+        // Both arp positions follow the jack with nothing sounding.  The
+        // pitch output holds the last note there exactly as it does with the
+        // arp off, so a CV turned between phrases has to move it in all
+        // three; the earlier shape gave up as soon as 0x2eed read zero and
+        // left both arp positions frozen.
+        for(int position:new int[]{1,2}) {
+            setup(0,false,position); command(0); latchFixture(); octavePad(1); cv(0);
+            aim(9); w(0x2eed,1,0); sound();
+            long idle=r(S+0x350,2), wasDac=r(S+0x358,2);
+            long key9=r(0x854+18,2), key0=r(0x854,2);
+            // One degree, not a whole period.  A period moves every key by
+            // the same 484, so a refresh following the WRONG key lands on
+            // the right answer anyway - which is how the first shape of this
+            // test passed with the arp path neutered.  One degree of an
+            // unequal tuning separates them, and the assertion below says so
+            // rather than assuming it.
+            cv(41); sound();
+            check("the scale is unequal at these two keys, or this proves nothing: "
+                +(r(0x854+18,2)-key9)+" vs "+(r(0x854,2)-key0),
+                Math.abs((r(0x854+18,2)-key9)-(r(0x854,2)-key0))>2);
+            check("the arp stopped, the jack still moves the pitch by the last arp key's degree, position "+position,
+                r(S+0x350,2)==r(0x854+18,2)&&r(S+0x350,2)!=idle);
+            check("and the DAC moved with it, position "+position,r(S+0x358,2)!=wasDac);
+        }
+        // And before the first touch, when the factory's last-key byte has
+        // never been written.  The bottom key is the reference; because the
+        // base is still the bootstrap's zero, what the jack adds is the
+        // shift alone, so the output walks up from its rest rather than
+        // jumping to the bottom key's pitch.
+        setup(0,false,0); command(0); latchFixture(); octavePad(1);
+        w(0x60e8,2,0); w(0x602a,2,0); call(0x8001ab60L);
+        w(S+0x256,1,255); w(S+0x34d,1,255); w(0x2eed,1,0);
+        w(S+0x350,2,0); w(0x60fa,2,0); cv(0); sound();
+        check("nothing played yet leaves the pitch at its rest",r(S+0x350,2)==0);
+        long bottom=r(0x854,2), restDac=r(S+0x358,2);
+        cv(491); sound();
+        check("and the jack moves it by the shift alone: "+r(S+0x350,2),
+            r(S+0x350,2)==r(0x854,2)-bottom&&r(S+0x350,2)==484);
+        check("which the DAC shows",r(S+0x358,2)!=restDac);
         setup(0,false,1); command(0); latchFixture(); octavePad(1); cv(0);
         // How much a rebuild costs, against the ~5 ms scan: printed, not gated.
         cv(0); steps=0; cvStep(123); long rebuild=steps; steps=0; cvStep(123); long idle=steps;
         println("SCAN BUDGET jack rebuild "+rebuild+" instructions, an idle control scan "+idle);
-        println("PASS jack transposer: a held mono note and the arp's note follow, legato MIDI takes the live shift, a borrowed slot moves by its key's degree");
+        println("PASS jack transposer: a held mono note and the arp's note follow, legato MIDI takes the live shift, a borrowed slot moves by its key's degree, "
+            +"the filter's pole starts from a known zero, the random octave survives a move, and nothing held follows in every switch position");
     }
     void recordedOctaves() throws Exception {
         // The octave switch reaches a recording in EVERY arp position, the

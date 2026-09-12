@@ -239,9 +239,13 @@ def audit_call_pools(image_path) -> list[str]:
 # And again when the blend's anchor stopped trusting the last arp key with
 # the arp off, and a release started clearing the key's slot ownership: a
 # released key 1 had been anchoring every later single key on its own pitch.
+# And again for the jack transposer's September 12 audit: the filter pole
+# cleared at first use, and the refresh carrying the sounding note's
+# displacement across a rebuild so knob 3's random octave survives a CV move
+# and every switch position follows the jack with nothing held.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "f300c6931fc5a95576842a7e882c2cebdc80a3f0adaa5638d33de9cf2b5d58cc",
+    "historical_config": "8fc5f0a0bb0650d2c91fa79820bcf68265a1d2b74c5b37ca6d6047794afce728",
 }
 
 

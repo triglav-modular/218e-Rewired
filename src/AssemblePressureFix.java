@@ -1184,7 +1184,9 @@ public class AssemblePressureFix extends GhidraScript {
         // never disturbs the arp.  RAM: 0x60e6 knob2 latch, 0x60ea knob3
         // latch, 0x60f2 knob1 latch.  0x60e8 and 0x60ec were a countdown and
         // a gate threshold, found dead by the audit in tools/build.py and
-        // removed from its map; 0x60e8 is the jack filter's accumulator now.
+        // removed from its map; both belong to the jack transposer now,
+        // 0x60e8 as its filter accumulator and 0x60ec as the displacement
+        // its refresh carries across a table rebuild.
         // Arp controls on the preset knobs (outside edit; latches edit-gated):
         //   knob 1 (0x30a>>3 -> 0x60f2 latch): press-order vs random key
         //     selection, applied by the replacement selector below;
@@ -2614,6 +2616,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x60e4");
         emit("ST.H R9[0x0],R8");        // tuning-apply guard
         emit("ST.H R9[0x2],R8");        // 0x60e6 arp knob 2 latch
+        // 0x60e8, the jack filter's pole, belongs here with them.  It is read
+        // before it is written on the first scan of the pitch chain - the
+        // chain calls this bootstrap and then enters cv_filter - and SRAM
+        // survives a DFU, so without this the pole starts at whatever the
+        // previous image left in the cell.  A retained 4095 is a 75-degree
+        // shift at zero input; a retained negative value swallows the jack
+        // until the pole settles back through it.  Zero is the defined start:
+        // the pole opens at the bottom and closes on the jack within about
+        // twenty scans of the first pitch pass, with nothing sounding yet.
+        emit("ST.H R9[0x4],R8");        // 0x60e8 jack CV filter pole
         emit("ST.H R9[0x6],R8");        // 0x60ea arp knob 3 latch
         emit("ST.B R9[0xa],R8");        // 0x60ee deferred-pulse countdown
         emit("ST.H R9[0xc],R8");        // 0x60f0 vibrato knob latch
@@ -3142,9 +3154,10 @@ public class AssemblePressureFix extends GhidraScript {
         // key went.  And the note already sounding took its base from the
         // table at note-on - the factory's store at state+0x350 - so a CV
         // that moved under a held key changed nothing until the next press;
-        // the base is refreshed from the new table, for the arp's note or
-        // the mono keyboard's, with the blend's base history alongside so
-        // the move is a jump, as the octave pads' is, not a folded glide.
+        // the base is refreshed by moving it the interval its own key moved,
+        // which keeps whatever the note was carrying on top of the table
+        // entry, with the blend's base history alongside so the move is a
+        // jump, as the octave pads' is, not a folded glide.
         long cvEntry  = 0x8001e7c0L;
         long cvClamp  = 0x8001e7daL;
         long cvSlot   = 0x8001e7e8L;
@@ -3159,7 +3172,7 @@ public class AssemblePressureFix extends GhidraScript {
         long cvPool   = 0x8001e8a8L;
         long cvSizes  = 0x8001e8d0L;
         long cvStampsPre  = 0x8001e8e0L;
-        long cvStampsPost = 0x8001e940L;
+        long cvStampsPost = 0x8001e980L;
         begin(cvEntry);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
         emit("MOV R7,SP");
@@ -3267,6 +3280,11 @@ public class AssemblePressureFix extends GhidraScript {
         // cv_stamps: the two passes around the rebuild, and the refresh.
         // Called from inside the rebuild with N in R8 and the slot in R10
         // still live in the caller, so every scratch register is saved.
+        // The first pass also decides which key the sounding base belongs
+        // to and how far it stands from that key's entry (0x60ff, 0x60ec);
+        // the second republishes it.  Splitting it that way is what lets the
+        // refresh read the table before AND after the rebuild without two
+        // copies of the same selection.
         // A held slot j owned by another key o (latch_owner's map at 0x6504,
         // key plus one) sounds at table[j] + stamp[j] = table[o] + its own
         // pad offset.  Before the rebuild, stamp += table[j] - table[o]
@@ -3276,12 +3294,13 @@ public class AssemblePressureFix extends GhidraScript {
         // shifts agree to a rounding unit and this is a no-op.
         long cvStampsPreLoop  = 0x8001e8ecL;
         long cvStampsPreNext  = 0x8001e928L;
-        long cvStampsPostLoop = 0x8001e94cL;
-        long cvStampsPostNext = 0x8001e988L;
-        long cvStampsMono     = 0x8001e9c0L;
-        long cvStampsHave     = 0x8001e9d0L;
-        long cvStampsDone     = 0x8001e9e8L;
-        long cvStampsPool     = 0x8001e9ecL;
+        long cvStampsMono     = 0x8001e956L;
+        long cvStampsHave     = 0x8001e960L;
+        long cvStampsKey      = 0x8001e974L;
+        long cvStampsPostLoop = 0x8001e98cL;
+        long cvStampsPostNext = 0x8001e9c8L;
+        long cvStampsDone     = 0x8001e9f8L;
+        long cvStampsPool     = 0x8001e9fcL;
         begin(cvStampsPre);
         emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
         emit("MOV R7,SP");
@@ -3310,6 +3329,72 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(cvStampsPreNext);
         emit("SUB R1,0x1");
         emit(String.format("BR{ge} 0x%x", cvStampsPreLoop));
+        // Which key the sounding base belongs to, and how far that base
+        // stands from the key's table entry.  Decided HERE, once, on the way
+        // into the rebuild: the pass after it reads these two cells rather
+        // than carrying a second copy of the same reasoning.
+        //
+        // The displacement is what makes the refresh a transposition instead
+        // of a re-read.  The factory stores the arp's note at state+0x350
+        // AFTER knob 3's octave randomiser has moved it, so the base that is
+        // sounding is table[key] plus or minus a period - and republishing
+        // the bare table entry threw that octave away every time the CV
+        // moved, dropping a note an octave mid-phrase.  Carrying the
+        // difference across the rebuild republishes table'[key] + d, which
+        // moves the note by exactly the interval its own key moved and keeps
+        // whatever else it was carrying: the random octave, a latched slot's
+        // stamp, a step's pitch left standing after a take.  d is bounded by
+        // what put it there, so the published base stays inside the range
+        // the bare entry had, give or take the period the randomiser adds.
+        //
+        // 0xff means "leave the base alone".  While the sequencer records,
+        // plays or previews, the base is a step's pitch or an audition's
+        // pinned one, which the sequencer shifts by its own path per step -
+        // refreshing it from the table snapped the playing step to the key's
+        // pitch until the next step.
+        //
+        // With the arp switch in either position the last arp key answers
+        // whether or not a note is sounding.  The pitch output holds the
+        // last note between phrases there exactly as it does with the arp
+        // off, so a CV turned between phrases has to move it in all three
+        // positions; the earlier shape gave up on 0x2eed and left both arp
+        // positions frozen.  The mono keyboard's last key is the fallback
+        // for all three, and key 0 - the bottom of the keyboard - is the
+        // reference when nothing has been played at all.  That last case
+        // costs nothing at rest: with state+0x350 still at the zero the
+        // bootstrap leaves, d is -table[0], so the published base is the
+        // shift alone and a jack turned before the first touch walks the
+        // output up from its rest instead of jumping to the bottom key.
+        emit("MOV R9,0xff");
+        emit("MOV R8,0x6158");
+        emit("LD.UB R2,R8[0x0]");                                 // sequencer mode
+        emit("LD.UB R10,R8[0x1a6]");                              // 0x62fe, a one-shot preview
+        emit("OR R2,R10");
+        emit("CP.W R2,0x0");
+        emit(String.format("BR{ne} 0x%x", cvStampsKey));
+        emit("LD.UB R8,R0[0x340]");
+        emit("LD.UB R10,R0[0x341]");
+        emit("OR R8,R10");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", cvStampsMono));
+        emit("LD.UB R9,R0[0x34d]");                               // the last arp key
+        emit("CP.W R9,0x1d");
+        emit(String.format("BR{lt} 0x%x", cvStampsHave));
+        padTo(cvStampsMono);
+        emit("LD.UB R9,R0[0x256]");                               // the mono keyboard's last key
+        emit("CP.W R9,0x1d");
+        emit(String.format("BR{lt} 0x%x", cvStampsHave));
+        emit("MOV R9,0x0");                                       // nothing played yet: the bottom key
+        padTo(cvStampsHave);
+        emit("MOV R8,0x854");
+        emit("LD.UH R10,R8[R9 << 0x1]");                          // table[key], before the rebuild
+        emit("LD.SH R8,R0[0x350]");
+        emit("SUB R8,R10");                                       // d, the displacement to carry
+        emit("MOV R10,0x60ec");
+        emit("ST.H R10[0x0],R8");
+        padTo(cvStampsKey);
+        emit("MOV R8,0x60ff");
+        emit("ST.B R8[0x0],R9");
         emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
         padTo(cvStampsPost);
         emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
@@ -3339,45 +3424,19 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(cvStampsPostNext);
         emit("SUB R1,0x1");
         emit(String.format("BR{ge} 0x%x", cvStampsPostLoop));
-        // The sounding note's base, from the new table: the arp's note when
-        // the switch is in either arp position and a note is active, else
-        // the mono keyboard's active key while its note is in 0x2e1.  Not
-        // while the sequencer records, plays or previews: then the base is
-        // a step's pitch, or an audition's pinned one, which the sequencer
-        // shifts by its own path per step - refreshing it from the table
-        // snapped the playing step to the key's pitch until the next step.
-        emit("MOV R8,0x6158");
-        emit("LD.UB R8,R8[0x0]");       // sequencer mode
-        emit("CP.W R8,0x0");
-        emit(String.format("BR{ne} 0x%x", cvStampsDone));
-        emit("MOV R8,0x62fe");
-        emit("LD.UB R8,R8[0x0]");       // a one-shot preview
-        emit("CP.W R8,0x0");
-        emit(String.format("BR{ne} 0x%x", cvStampsDone));
-        emit("LD.UB R8,R0[0x340]");
-        emit("LD.UB R9,R0[0x341]");
-        emit("OR R8,R9");
-        emit("CP.W R8,0x0");
-        emit(String.format("BR{eq} 0x%x", cvStampsMono));
-        emit("MOV R8,0x2eed");
-        emit("LD.UB R8,R8[0x0]");                                 // arp active-note flag
-        emit("CP.W R8,0x0");
-        emit(String.format("BR{eq} 0x%x", cvStampsDone));
-        emit("LD.UB R9,R0[0x34d]");                               // the last arp key
-        emit(String.format("RJMP 0x%x", cvStampsHave));
-        padTo(cvStampsMono);
-        // No test on state+0x2e1 here.  With nothing sounding the pitch output
-        // still holds the last note, and the factory leaves that note's key in
-        // state+0x256 - so the base has to move with the table or a CV turned
-        // between phrases does nothing until the next press.  The key-range
-        // guard below is what keeps a cold boot, whose 0x256 has never been
-        // written, from publishing a base for a key nobody played.
-        emit("LD.UB R9,R0[0x256]");                               // the last key
-        padTo(cvStampsHave);
+        // The sounding note's base, republished from the new table with the
+        // displacement cvStampsPre measured still on it.  Both cells are
+        // written by that pass on the way into every rebuild and read only
+        // here, inside the same rebuild, so neither is first-use initialised:
+        // there is no path that reads one before it is written.
+        emit("MOV R8,0x60ec");
+        emit("LD.UB R9,R8[0x13]");                                // 0x60ff, whose key this is
         emit("CP.W R9,0x1d");
-        emit(String.format("BR{ge} 0x%x", cvStampsDone));
+        emit(String.format("BR{ge} 0x%x", cvStampsDone));         // 0xff: leave the base alone
+        emit("LD.SH R2,R8[0x0]");                                 // d
         emit("MOV R8,0x854");
-        emit("LD.UH R10,R8[R9 << 0x1]");
+        emit("LD.UH R10,R8[R9 << 0x1]");                          // table'[key]
+        emit("ADD R10,R2");
         emit("ST.H R0[0x350],R10");                               // the published base
         emit("MOV R8,0x60f4");
         emit("ST.H R8[0x0],R10");                                 // and the blend's base history

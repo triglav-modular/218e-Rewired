@@ -756,6 +756,31 @@ size (12, or the .kbm's) and adds one period.  The raw cell is signed
 and unconditioned; the jack has no negative range, so N is clamped at
 zero.  None of the three CV numbers has been measured on an instrument.
 
+What is already sounding follows too, and by an interval rather than by a
+re-read (2026-09-12).  A note copied its base out of the table at note-on,
+so a rebuild underneath it changed nothing; `cv_stamps` therefore
+republishes `state+0x350` after every rebuild.  It republishes
+`table'[key] + d`, where `d` is how far the base stood from that key's
+entry *before* the rebuild - so whatever the note was carrying on top of
+the table survives: the arp's random octave from knob 3, a latched slot's
+stamp, a step's pitch left standing after a take.  Republishing the bare
+entry instead dropped knob 3's octave every time the CV moved.  Which key
+it is, is decided once on the way into the rebuild and left in `0x60ff`
+with `d` in `0x60ec`: the last arp key in either arp position, sounding or
+not, the mono keyboard's last key as the fallback for all three positions,
+and key 0 as the reference before anything has been played - which costs
+nothing at rest, because a base still at the bootstrap's zero makes `d`
+equal `-table[0]` and the published base the shift alone.  `0xff` there
+means "leave it": while the sequencer records, plays or previews, the base
+is a step's pitch the sequencer shifts by its own path.
+
+The raw cell is one-poled before any of this reads it -
+`new = prev + (raw - prev) >> shift`, accumulator in RAM `0x60e8`, cleared
+by the first-use bootstrap because SRAM survives a DFU and a retained value
+is a shift the jack never asked for.  One degree is only `period/size`
+counts wide, and the hysteresis in the quantiser steadies an answer once
+chosen; it cannot stop a noisy reading choosing the wrong one.
+
 The sequencer follows the same way the pad does, relatively: with the jack
 transposing, `seq_record_pitch` jumps to `seq_record_pitch_cv`
 (0x8001e320), which answers the audition with the heard pitch as before

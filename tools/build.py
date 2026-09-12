@@ -1029,11 +1029,18 @@ RAM_REGIONS = [
     # 0x60E8 and 0x60EC were "arp last countdown" and "arp gate threshold".
     # Nothing in the firmware reads or writes either any more - the audit
     # walked every base-plus-offset access in the built image and found none -
-    # so they were removed rather than left looking like live state.  0x60E8
-    # is live again from 2026-09-12 as the jack transposer's filter pole;
-    # 0x60EC is still free.
+    # so they were removed rather than left looking like live state.  Both are
+    # live again from 2026-09-12, for the jack transposer: 0x60E8 as the
+    # filter pole, 0x60EC as the displacement carried across a table rebuild.
     (0x60E8, 0x60EA, "jack CV filter, one pole on the raw count"),
     (0x60EA, 0x60EC, "arp knob 3 latch"),
+    # How far the sounding base stands from its key's table entry - the arp's
+    # random octave, a latched slot's stamp, a step's pitch left standing -
+    # measured before a rebuild and put back after it, so the refresh moves
+    # the note by the interval its key moved instead of re-reading the table
+    # and flattening it.  Written and read inside one rebuild, so neither
+    # this nor the key below is first-use initialised.
+    (0x60EC, 0x60EE, "jack transposer: the sounding base's displacement"),
     (0x60EE, 0x60EF, "deferred-pulse countdown, in scans"),
     (0x60EF, 0x60F0, "previous switch position"),
     (0x60F0, 0x60F2, "knob 4 latch: vibrato raw value or transpose zone"),
@@ -1089,6 +1096,9 @@ RAM_REGIONS = [
     (0x60FA, 0x60FC, "jack transposer state: slot and degree shift"),
     (0x60FC, 0x60FE, "jack transposer: table entry 0 as last written"),
     (0x60FE, 0x60FF, "jack transposer: the degree shift frozen for the sounding MIDI note"),
+    # Which key that displacement belongs to; 0xFF while the sequencer owns
+    # the base, and the refresh then leaves it alone.
+    (0x60FF, 0x6100, "jack transposer: the key the refresh belongs to"),
     # Decoupled preset voltages.  The stored value is what the preset output
     # and the pitch adder both read; the snapshot and the flag are what stop a
     # pad hold from snatching the stored value to wherever the knob happens to
@@ -1101,11 +1111,11 @@ RAM_REGIONS = [
     # Where knob 2's pattern has got to, wrapped at that pattern's length.
     (0x6150, 0x6152, "arp pattern step"),
     # Which half of the swung pair the next step is - or, with knob 2
-    # quantized instead, which eighth of the beat the last hit fell on.
-    (0x6152, 0x6153, "arp swing parity / quantized beat eighth"),
+    # quantized instead, which half of the beat the last hit fell on.
+    (0x6152, 0x6153, "arp swing parity / quantized beat half"),
     # What the last quantized reload's division left, so a beat that is not
-    # a multiple of eight scans still keeps the grid over a run of hits.
-    (0x6153, 0x6154, "quantized rhythm: eighths of a scan carried between reloads"),
+    # an even number of scans still keeps the grid over a run of hits.
+    (0x6153, 0x6154, "quantized rhythm: halves of a scan carried between reloads"),
     # The sequencer's pad chord: hold counter, armed, selected, mode, the pad
     # the selection is frozen at, last scan's touch levels, the octave shadow
     # (+9: the active pad while pads 2-4 are all up, which a completed chord
