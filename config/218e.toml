@@ -165,7 +165,7 @@ pitch_offset = true
 # the keyboard transposes to a degree of the scale, and the per-key pitch
 # correction applies to the transposed note.  The preset voltage output jack
 # is not quantized.  false adds the voltage as it is.
-quantize_presets = false
+quantize_presets = true
 
 # 13. THE PORTAMENTO BANANA JACK
 # "portamento" is the factory behaviour: a CV into the PORTAMENTO IN banana
@@ -182,7 +182,7 @@ quantize_presets = false
 # keeps its own job in both settings.  A recorded sequence follows the CV
 # as it plays, the way it follows the octave pads.  The banana jack only
 # reads positive voltages.
-portamento_in = "portamento"
+portamento_in = "transpose"
 
 # Save the remapped preset voltages and sequence across power cycles.
 # Save a changed sequence when leaving record or clearing it; save a
@@ -218,7 +218,7 @@ version        = "2.3.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "fc59aada1ac2e559625f97fa6bb3d9e31208d04e78e69279862dbce2c2e155de"
+golden_sha256  = "8fcdc0b6ce8a0de1f499ef1a5da9c76007218b19de9508b8bd294c4247071b85"
 
 
 [tools]
