@@ -1772,6 +1772,47 @@ def test_encoder_refusals() -> None:
           (result.stdout + result.stderr).strip().splitlines()[-1] or "no output")
 
 
+def test_divu_destinations() -> None:
+    """AVR32's DIVU writes the remainder to Rd+1, so Rd must be even.
+
+    Ghidra's assembler encodes an odd destination happily and the emulator
+    then refuses to decode it, so the cost is a whole emulation pass rather
+    than a build error.  That is exactly the shape a cheap source check pays
+    for.
+    """
+    print("DIVU destinations")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    odd = sorted({m for m in re.findall(r'emit\("DIVU (R\d+)', source)
+                  if int(m[1:]) % 2})
+    check("every DIVU destination is an even register", not odd,
+          f"odd destinations: {odd}")
+
+
+def test_rotation_hysteresis() -> None:
+    """One degree of the rotation must cross the hysteresis band.
+
+    The band is period/2 + hysteresis x keys and a degree is worth `period`,
+    so a wide hysteresis beside a wide keyboard map leaves the shift unable to
+    move at all.  The preset voltage used to add its offset outright, with no
+    hysteresis anywhere near it, so this pairing only became reachable when
+    the rotation took the preset over.  The permitted twin is the point of the
+    test: a limit that refused everything would pass a refusal check alone.
+    """
+    print("rotation hysteresis")
+    period = 819
+    for keys in (12, 24, 32):
+        limit = B.rotation_hysteresis_limit(period, keys)
+        check(f"at the limit ({limit}) a degree still moves {keys} keys",
+              period // 2 + limit * keys < period,
+              f"band {period // 2 + limit * keys} does not leave room for {period}")
+        check(f"one past the limit a degree is swallowed at {keys} keys",
+              period // 2 + (limit + 1) * keys >= period,
+              "the limit is lower than it needs to be")
+    check("the shipped default clears every map size the builder allows",
+          B.rotation_hysteresis_limit(period, 32) >= 12,
+          "cv_hysteresis 12 would be refused with a 32-position map")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden", action="store_true",
@@ -1791,6 +1832,8 @@ def main() -> None:
     test_keyboard_maps()
     test_latch_spacing()
     test_table_range()
+    test_rotation_hysteresis()
+    test_divu_destinations()
     test_tables(cfg)
     test_resolution(cfg)
     test_blend(cfg)

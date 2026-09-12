@@ -2994,73 +2994,183 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         finish("preset_editor", 0x8001aec0L);
 
-        // Preset voltage quantiser.  The pitch adder's middle position adds
-        // the active pad's preset voltage to the pitch, and the factory turns
-        // the stored 0..1023 into pitch units by scaling it through the soft
-        // float library: (store << 2) * 0.33, then float-to-int through the
-        // pool word at 0x80003914.  That is the only consumer of the scaled
-        // value, so repointing that one pool word puts a quantiser between the
-        // scaling and the add without touching the preset voltage's own
-        // output, which is a plain shift at 0x8000a97e and stays free.
+        // Preset voltage: the factory adds nothing, the rotation carries it.
         //
-        // The offset is snapped to the nearest interval the live key table at
-        // RAM 0x854 contains, measured from its bottom entry and reduced to
-        // one period, so the transposition lands on a degree of whatever
-        // tuning slot is selected - the factory temperament when no Scala
-        // file is installed.  Whole periods are stripped first and added back
-        // after, so the reach is unchanged.  The sum then goes through the
-        // pitch remap exactly as a key at that pitch would, so the per-key
-        // calibration applies to the transposed note as it does to the key.
+        // The add-to-pitch switch's middle position adds the active pad's
+        // preset voltage to the pitch.  The factory turns the stored 0..1023
+        // into pitch units through the float-to-int pool word at 0x80003914,
+        // and tools/factory_control_flow.txt shows exactly one caller of it
+        // (0x8000374e), so repointing that word decides the whole of what the
+        // preset contributes to pitch.  It contributes zero: the
+        // transposition arrives instead as a rotation of the live key table
+        // by whole degrees, the same path the banana jack takes, so every
+        // pitch it can produce is a degree of the selected tuning.
         //
-        // R12 in: the scaled float.  R12 out: the integer offset, quantised.
-        // The original conversion is called first through this cave's own
-        // pool word, so its result is what gets quantised.
-        //   R0 period   R1 best distance   R2 whole periods, in units
-        //   R3 offset within the period   R7 table[0]   R8 key index
-        //   R9 table base   R10 candidate   R11 distance   R12 best offset
+        // What this cave used to do was snap the ADDED OFFSET to the nearest
+        // interval of the key table.  That is a true transposition of the
+        // scale, and in an unequal one it lands off the scale on every key
+        // but the reference: measured 22 cents on Sabat II and 52 on the
+        // 5-limit slot.  Only the offset was ever checked against the table,
+        // and only from the bottom key, so the suite agreed with it.
+        //
+        // R12 in: the scaled float.  R12 out: zero.
         begin(0x8001e140L);
-        emit("STM --SP,R0,R1,R2,R3,R7,LR");
-        emit("MCALL PC[0x8001e19c]");           // the factory float-to-int
+        emit("MOV R12,0x0");
+        emit("MOV PC,LR");
+        finish("preset_quantize", 0x8001e1c0L);
+
+        // The preset voltage as a DEGREE COUNT, for the key-table rotation.
+        //
+        // Called from cv_transpose, which keeps its own N, the slot, the keys
+        // per period and its state cell live across the call site, so this
+        // saves every register it touches rather than the ABI's set: a
+        // pre-pass into this same rebuild returned a garbage table in
+        // 2026-09-06 by reusing the caller's scratch.  R12 out: the shift in
+        // the quantiser's units (degrees x one period of CV), and zero unless
+        // the add-to-pitch switch is in its middle position - the only one
+        // that adds the preset voltage to pitch at all.
+        //
+        //   R0 period in pitch units, then keys per period
+        //   R1 the store, then units   R2 whole periods   R3 the remainder
+        //   R4 best distance   R7 table[0]   R8 k   R9/R10 scratch
+        //   R11 best k (0xff = the whole period itself)
+        long pdEntry = 0x8001e1c0L, pdGo   = 0x8001e1e4L, pdPad  = 0x8001e1f8L;
+        long pdLoop  = 0x8001e23cL, pdRed  = 0x8001e244L, pdRedHi = 0x8001e24eL;
+        long pdCmp   = 0x8001e258L, pdNext = 0x8001e268L, pdSlot = 0x8001e280L;
+        long pdMod   = 0x8001e292L, pdSum  = 0x8001e29aL, pdDone = 0x8001e2a8L;
+        long pdNone  = 0x8001e1dcL, pdBase = 0x8001e230L;
+        long pdPool  = 0x8001e2b0L, pdEnd  = 0x8001e2c0L;
+        begin(pdEntry);
+        emit("STM --SP,R0,R1,R2,R3,R4,R7,R8,R9,R10,R11,LR");
+        // The add-to-pitch switch, read the way the factory reads it at
+        // 0x8000379c: a nonzero state+0x342 takes the OCTAVE term, and only
+        // with that byte zero does a nonzero state+0x343 take the PRESET
+        // term; both zero adds neither.  So the middle position - the one
+        // this feature is about - is 0x342 == 0 and 0x343 != 0, and nothing
+        // else may rotate the table, or the preset would transpose from a
+        // switch position that is not asking it to.
+        emit("MOV R9,0x38a2");                       // state+0x342
+        emit("LD.UB R12,R9[0x0]");
         emit("CP.W R12,0x0");
-        emit("BR{lt} 0x8001e196");              // never negative; leave it
+        emit(String.format("BR{ne} 0x%x", pdNone));
+        emit("LD.UB R12,R9[0x1]");                   // state+0x343
+        emit("CP.W R12,0x0");
+        emit(String.format("BR{ne} 0x%x", pdGo));
+        padTo(pdNone);
+        emit("MOV R12,0x0");
+        emit(String.format("RJMP 0x%x", pdDone));
+        padTo(pdGo);
+        emit("MOV R9,0x384f");                       // state+0x2ef, the active pad
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x3");
+        emit(String.format("BR{ls} 0x%x", pdPad));
+        emit("MOV R9,0x0");
+        padTo(pdPad);
+        emit("MOV R10,0x613a");                      // four stored presets, 0..1023
+        emit("LD.UH R1,R10[R9 << 0x1]");
+        // (store << 2) * 0.33 as integers: store * 33 / 25.  The factory soft
+        // float truncates where Java rounds and so does this.
+        // 132/100, not 33/25: the same ratio, and neither constant reads to
+        // tools/test.py's key-walk guard as a loop bound over the keys.
+        emit("MOV R10,0x84");
+        emit("MUL R1,R1,R10");
+        emit("MOV R10,0x64");
+        emit("DIVU R2,R1,R10");                      // R2 units, R3 remainder
+        emit("MOV R1,R2");
         emit(String.format("MOV R0,0x%x", number("octave_units", 484, 1, 2000)));
-        emit("DIVU R2,R12,R0");                 // R2 = periods, R3 = remainder
-        emit("MUL R2,R2,R0");
-        emit("MOV R12,R0");                     // the period itself is a candidate
-        emit("SUB R1,R0,R3 << 0x0");            // its distance, from above
-        emit("MOV R9,0x854");
-        emit("LD.UH R7,R9[0x0]");
-        emit("MOV R8,0x0");                     // over all 32 entries
-        padTo(0x8001e166L);
-        emit("LD.UH R10,R9[R8 << 0x1]");
-        emit("SUB R10,R10,R7 << 0x0");          // interval above the bottom key
-        padTo(0x8001e16eL);
-        emit("CP.W R10,0x0");                   // reduce into [0, period)
-        emit("BR{ge} 0x8001e176");
-        emit("ADD R10,R0");
-        emit("RJMP 0x8001e16e");
-        padTo(0x8001e176L);
-        emit("CP.W R10,R0");
-        emit("BR{lt} 0x8001e17e");
-        emit("SUB R10,R0");
-        emit("RJMP 0x8001e176");
-        padTo(0x8001e17eL);
-        emit("SUB R11,R10,R3 << 0x0");
-        emit("ABS R11");
-        emit("CP.W R11,R1");
-        emit("BR{ge} 0x8001e18c");              // not nearer: keep the best so far
-        emit("MOV R1,R11");
-        emit("MOV R12,R10");
-        padTo(0x8001e18cL);
+        emit("DIVU R2,R1,R0");                       // R2 whole periods, R3 within one
+        // Seed the search with the whole period above: degree `keys`, which
+        // the sentinel below stands for, at distance period - remainder.
+        emit("SUB R4,R0,R3 << 0x0");
+        // 0xff, not 0x20: a table index is 0..31, so any value outside that
+        // would do, and 0x20 would read to tools/test.py's key-walk guard as
+        // a loop bound of 32 over the 29 real keys.
+        emit("MOV R11,0xff");
+        // The intervals come from the SLOT'S OWN table in flash, never from
+        // the live copy at RAM 0x854.  The applier only refreshes 0x854 when
+        // the slot changes - its guard at 0x60e4 skips the copy otherwise -
+        // so once the rotation is running, 0x854 is the table cv_transpose
+        // rotated on the previous scan.  Enumerating intervals from that
+        // would measure this routine's own output, and N would chatter
+        // between degrees every scan with the preset knob standing still.
+        emit("MOV R9,0x6090");                       // the selected tuning slot
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x2");
+        emit(String.format("BR{ls} 0x%x", pdBase));
+        emit("MOV R9,0x0");
+        padTo(pdBase);
+        emit(String.format("LDDPC R7,0x%x", pdPool + 4));
+        emit("LSL R9,R9,0x6");                       // 64 bytes a slot
+        emit("ADD R7,R9");
+        emit("LD.UH R12,R7[0x0]");                   // table[0], the bottom key
+        emit("MOV R8,0x0");
+        padTo(pdLoop);
+        emit("LD.UH R9,R7[R8 << 0x1]");
+        emit("SUB R9,R9,R12 << 0x0");                // its interval above the bottom
+        padTo(pdRed);
+        emit("CP.W R9,0x0");                         // reduce into [0, period)
+        emit(String.format("BR{ge} 0x%x", pdRedHi));
+        emit("ADD R9,R0");
+        emit(String.format("RJMP 0x%x", pdRed));
+        padTo(pdRedHi);
+        emit("CP.W R9,R0");
+        emit(String.format("BR{lt} 0x%x", pdCmp));
+        emit("SUB R9,R0");
+        emit(String.format("RJMP 0x%x", pdRedHi));
+        padTo(pdCmp);
+        emit("SUB R10,R9,R3 << 0x0");
+        emit("ABS R10");
+        emit("CP.W R10,R4");
+        emit(String.format("BR{ge} 0x%x", pdNext));
+        emit("MOV R4,R10");
+        emit("MOV R11,R8");
+        padTo(pdNext);
         emit("SUB R8,-0x1");
         emit("CP.W R8,0x20");
-        emit("BR{lt} 0x8001e166");
-        emit("ADD R12,R2");                     // the whole periods back
-        padTo(0x8001e196L);
-        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
-        padTo(0x8001e19cL);
-        word(0x80013434L); // the factory float-to-int helper
-        finish("preset_quantize", 0x8001e1c0L);
+        emit(String.format("BR{lt} 0x%x", pdLoop));
+        emit("MOV R9,0x6090");                       // the selected tuning slot
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x2");
+        emit(String.format("BR{ls} 0x%x", pdSlot));
+        emit("MOV R9,0x0");
+        padTo(pdSlot);
+        emit(String.format("LDDPC R10,0x%x", pdPool));
+        emit("LD.UH R0,R10[R9 << 0x1]");             // keys per period, this slot
+        // A winner still at the sentinel is the period itself, which is
+        // `keys` degrees.  Any other is a table index, and its degree within
+        // the period is the index reduced by the map's size.
+        emit("CP.W R11,0xff");
+        emit(String.format("BR{ne} 0x%x", pdMod));
+        emit("MOV R12,R0");
+        emit(String.format("RJMP 0x%x", pdSum));
+        padTo(pdMod);
+        // An EVEN destination: AVR32's DIVU puts the quotient in Rd and the
+        // remainder in Rd+1, and an odd Rd assembles but will not decode -
+        // R9 here cost a whole emulation pass.  R8 is the finished loop
+        // counter and dead, and R9 takes the remainder this wants.
+        emit("DIVU R8,R11,R0");                      // R8 quotient, R9 remainder
+        emit("MOV R12,R9");
+        padTo(pdSum);
+        emit("MUL R2,R2,R0");
+        emit("ADD R12,R2");                          // the shift, in degrees
+        // Handed back in the quantiser's own units - one period of CV per
+        // period of the tuning - so cv_transpose adds it to the jack's
+        // position with nothing but an ADD, which is all the room it has.
+        emit(String.format("MOV R9,0x%x", number("transpose_cv_period", 123, 1, 1023)));
+        emit("MUL R12,R12,R9");
+        padTo(pdDone);
+        emit("LDM SP++,R0,R1,R2,R3,R4,R7,R8,R9,R10,R11,PC");
+        padTo(pdPool);
+        word(0x8001e2c0L);                           // the keys-per-period table
+        word(0x80019af8L);                           // the three slot tables, in flash
+        finish("preset_degrees", pdEnd);
+
+        // tuning_period_keys, moved out of cv_transpose so its pool can carry
+        // one more word.  Reached only through pool words, so its address is
+        // free to sit anywhere.
+        begin(0x8001e2c0L);
+        emitTable("tuning_period_keys");
+        finish("tuning_period_keys_table", 0x8001e2d0L);
 
         // One pole on the jack's raw count, standing in front of the
         // transposer in the per-scan chain rather than inside it: cv_transpose
@@ -3087,7 +3197,7 @@ public class AssemblePressureFix extends GhidraScript {
         long cvFilter     = 0x8001eb20L;
         long cvFilterPool = 0x8001eb40L;
         int cvShift = number("transpose_cv_filter_shift", 2, 0, 4);
-        if (feature("cv_transpose") && cvShift > 0) {
+        if (feature("cv_jack") && cvShift > 0) {
             begin(cvFilter);
             emit(String.format("LDDPC R9,0x%x", cvFilterPool));   // global state base
             emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
@@ -3170,29 +3280,40 @@ public class AssemblePressureFix extends GhidraScript {
         long cvEntry  = 0x8001e7c0L;
         long cvClamp  = 0x8001e7daL;
         long cvSlot   = 0x8001e7e8L;
-        long cvRecalc = 0x8001e826L;
-        long cvHaveN  = 0x8001e830L;
-        long cvCapped = 0x8001e83cL;
-        long cvBuild  = 0x8001e858L;
-        long cvLoop   = 0x8001e870L;
-        long cvWrap   = 0x8001e876L;
-        long cvNoWrap = 0x8001e882L;
-        long cvDone   = 0x8001e8a0L;
-        long cvPool   = 0x8001e8a8L;
-        long cvSizes  = 0x8001e8d0L;
+        // Eight bytes further along than they were: the preset's own shift
+        // is folded into the jack's before the quantiser, so that one
+        // hysteresis band and one cache word cover both inputs.
+        long cvRecalc = 0x8001e82eL;
+        long cvHaveN  = 0x8001e838L;
+        long cvCapped = 0x8001e844L;
+        long cvBuild  = 0x8001e860L;
+        long cvLoop   = 0x8001e878L;
+        long cvWrap   = 0x8001e87eL;
+        long cvNoWrap = 0x8001e88aL;
+        long cvDone   = 0x8001e8a8L;
+        long cvPool   = 0x8001e8b0L;
         long cvStampsPre  = 0x8001e8e0L;
         long cvStampsPost = 0x8001e98cL;
         begin(cvEntry);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
         emit("MOV R7,SP");
         emit(String.format("MCALL PC[0x%x]", cvPool));            // the housekeeping this stands in front of
-        emit(String.format("LDDPC R9,0x%x", cvPool + 4));         // global state base
-        emit("LD.SH R8,R9[0x2f0]");                               // the jack, raw
-        emit(String.format("LDDPC R10,0x%x", cvPool + 12));       // its zero
-        emit("SUB R8,R10");
-        emit("CP.W R8,0x0");
-        emit(String.format("BR{ge} 0x%x", cvClamp));
-        emit("MOV R8,0x0");
+        // Only when the jack is the transposer.  With it left on portamento
+        // the factory still reads its own glide-rate addend off state+0x2f0
+        // (glide_cv_addend is not patched in that build), so this must not
+        // read a shift out of it either: the rotation is then the preset
+        // voltage's alone.
+        if (feature("cv_jack")) {
+            emit(String.format("LDDPC R9,0x%x", cvPool + 4));     // global state base
+            emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
+            emit(String.format("LDDPC R10,0x%x", cvPool + 12));   // its zero
+            emit("SUB R8,R10");
+            emit("CP.W R8,0x0");
+            emit(String.format("BR{ge} 0x%x", cvClamp));
+            emit("MOV R8,0x0");
+        } else {
+            emit("MOV R8,0x0");
+        }
         padTo(cvClamp);
         emit("MOV R10,0x6090");                                   // tuning slot
         emit("LD.UB R10,R10[0x0]");
@@ -3204,6 +3325,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UH R0,R11[R10 << 0x1]");
         emit("MUL R1,R8,R0");                                     // v * size
         emit(String.format("LDDPC R2,0x%x", cvPool + 8));         // one period, in CV counts
+        // The preset voltage's own shift, already scaled to these units, so
+        // the hysteresis and the cache word below see one combined position
+        // rather than two that could disagree about which N is current.
+        if (feature("preset_rotate")) {
+            emit(String.format("MCALL PC[0x%x]", cvPool + 40));
+            emit("ADD R1,R12");
+        }
         emit("MOV R3,0x60fa");
         emit("LD.UH R4,R3[0x0]");
         emit("LSR R8,R4,0xc");
@@ -3277,13 +3405,12 @@ public class AssemblePressureFix extends GhidraScript {
         word(number("transpose_cv_period", 123, 1, 1023));
         word(number("transpose_cv_zero", 0, 0, 1023));
         word(number("transpose_cv_hysteresis", 2, 0, 64));
-        word(cvSizes);
+        word(0x8001e2c0L); // the keys-per-period table, relocated out of this cave
         word(0x80019af8L); // the three tuning tables
         word(number("octave_units", 484, 1, 2000));
         word(cvStampsPre);
         word(cvStampsPost);
-        padTo(cvSizes);
-        emitTable("tuning_period_keys");
+        word(0x8001e1c0L); // preset_degrees
         finish("cv_transpose", 0x8001e8e0L);
 
         // cv_stamps: the two passes around the rebuild, and the refresh.

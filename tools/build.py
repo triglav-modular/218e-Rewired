@@ -75,6 +75,29 @@ BOTTOM_KEY_INDEX = 3
 # intact.  Blocks not named here are core and are always applied.
 #
 #   setting -> (blocks gated by it, in-cave sections gated by it)
+# The key-table rotation: one machinery, two inputs.  The jack transposer and
+# the quantised preset voltage both shift the live 32-entry table by whole
+# degrees of the selected tuning, and everything that has to follow a shift -
+# the stamps under a sounding note, MIDI, the sequencer - follows it the same
+# way whichever input moved.  glide_cv_addend is deliberately NOT here: it
+# silences the jack's factory glide-rate job, which belongs to the jack alone.
+def rotation_hysteresis_limit(cv_period: int, widest: int) -> int:
+    """The largest cv_hysteresis at which one degree still moves the answer.
+
+    The firmware's band is `period/2 + hysteresis x keys` and a degree is
+    worth `period` in the same units, so the answer follows a single-degree
+    shift only while `hysteresis x keys < period - period/2`.
+    """
+    return (cv_period - cv_period // 2 - 1) // widest
+
+
+TABLE_ROTATION = [
+    "cv_transpose", "midi_transpose",
+    "midi_transpose_arp_pool", "midi_transpose_poly_pool",
+    "midi_transpose_lift_pool", "midi_transpose_compare_pool",
+    "seq_record_pitch_cv", "seq_cv_shift", "cv_stamps",
+]
+
 FEATURE_MAP = {
     "knobs.knob1":            (["arp_selector_pool"], []),
     "knobs.knob2":            (["arp_rhythm_hook"], []),
@@ -103,13 +126,12 @@ FEATURE_MAP = {
     "pressure.error_diffusion": ([], ["error_diffusion"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
-    "presets.quantize":       (["preset_quantize", "preset_quantize_pool"], []),
+    "presets.quantize":       (
+        ["preset_quantize", "preset_quantize_pool"] + TABLE_ROTATION,
+        ["cv_transpose", "preset_rotate"]),
     "portamento_in.transpose": (
-        ["cv_transpose", "glide_cv_addend", "midi_transpose",
-         "midi_transpose_arp_pool", "midi_transpose_poly_pool",
-         "midi_transpose_lift_pool", "midi_transpose_compare_pool",
-         "seq_record_pitch_cv", "seq_cv_shift", "cv_stamps"],
-        ["cv_transpose"]),
+        ["glide_cv_addend"] + TABLE_ROTATION,
+        ["cv_transpose", "cv_jack"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -888,10 +910,14 @@ def resolve_flags(cfg: dict) -> tuple[dict[str, bool], dict[str, bool], list[str
                 f"{setting}: {value!r} is not a known setting "
                 f"(expected {expected!r} or 'factory')"
             )
+        # A block can carry more than one behaviour: the key-table rotation
+        # serves the jack transposer and the quantised preset voltage alike.
+        # Accumulate rather than assign, or whichever setting the map happens
+        # to visit last switches off a cave the other one asked for.
         for name in block_names:
-            blocks[name] = enabled
+            blocks[name] = blocks.get(name, False) or enabled
         for name in feature_names:
-            features[name] = enabled
+            features[name] = features.get(name, False) or enabled
         summary.append(f"  {setting:28s} {value!r}{'' if enabled else '  (factory)'}")
     return blocks, features, summary
 
@@ -1241,6 +1267,14 @@ RAM_REGIONS = [
 # be placed on top of one without the coverage check noticing.
 FACTORY_CELLS = [
     (0x29CC, 0x29D0, "CPU frequency, also used by the factory COUNT delay"),
+    # The two cells preset_degrees reads to decide what the preset voltage is
+    # worth: which pad is active, and whether the add-to-pitch switch is in
+    # the middle position - the only one that adds the preset to the pitch.
+    # ControlRegression drives both directly; 0x342/0x343 read 1/0 in every
+    # other position the suite sets up.
+    (0x384F, 0x3850, "state+0x2ef: the active preset pad"),
+    # The switch byte preset_degrees reads lives inside the region below at
+    # 0x38A0, so it needs no entry of its own.
     # 32 halfwords - the tuning applier loop counts MOV R9,0x20 - so the
     # cell ends at 0x894.  It was declared 6 bytes short, which left the
     # last three entries outside the overlap protection this map exists
@@ -1729,12 +1763,16 @@ def main() -> None:
     # size, so a map wider than the table cannot be shifted: index 32 less
     # 36 keys is -4, and the rebuild read the flash before the table as
     # pitches.  Refuse the pair; a wider map stays usable with the
-    # transposer off.  web/build.js applies the same rule.
-    if cfg.get("portamento_in", {}).get("transpose") and max(period_keys) > 32:
+    # transposer off.  web/build.js applies the same rule, word for word.
+    # Either input to the rotation is enough to need it: the preset voltage
+    # shifts the same table by the same path.
+    if (cfg.get("portamento_in", {}).get("transpose")
+            or cfg.get("presets", {}).get("quantize")) and max(period_keys) > 32:
         raise SystemExit(
             f"alternate_tunings: a keyboard map of {max(period_keys)} positions "
-            "cannot be shifted by the jack transposer, whose key table holds "
-            "32 entries - use a map of up to 32, or turn the transposer off")
+            "cannot be shifted by the key-table rotation, whose table holds "
+            "32 entries - use a map of up to 32, or turn off both the jack "
+            "transposer and preset quantisation")
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that
@@ -1799,6 +1837,30 @@ def main() -> None:
         "transpose_cv_hysteresis": cfg["portamento_in"]["cv_hysteresis"],
         "transpose_cv_filter_shift": cfg["portamento_in"]["cv_filter_shift"],
     }
+    # The hysteresis steadies the rotation's answer, and one degree has to be
+    # able to cross it or the shift never changes.  The firmware's band is
+    # period/2 + hysteresis x keys, in the same units a degree is worth
+    # `period`, so a degree moves the answer only while
+    # hysteresis x keys < period - period/2.  At the defaults - 819 counts and
+    # twelve keys - the limit is 34 and nothing is near it; a 32-position map
+    # brings it down to 12, which the default hysteresis sits exactly on.  The
+    # preset voltage used to add its offset outright, with no hysteresis at
+    # all, so this pairing is only reachable since the rotation carries it.
+    # web/build.js applies the same rule, word for word.
+    if cfg.get("portamento_in", {}).get("transpose") or cfg.get("presets", {}).get("quantize"):
+        cv_period = cfg["_numbers"]["transpose_cv_period"]
+        widest = max(tables["tuning_period_keys"])
+        hyst = cfg["portamento_in"]["cv_hysteresis"]
+        headroom = cv_period - cv_period // 2
+        if hyst > rotation_hysteresis_limit(cv_period, widest):
+            raise SystemExit(
+                f"portamento_in.cv_hysteresis: {hyst} is too wide beside a "
+                f"keyboard map of {widest} positions - one degree of the "
+                f"rotation moves the reading {cv_period} counts and the "
+                f"hysteresis band is {cv_period // 2 + hyst * widest}, so a "
+                f"single-degree shift would be ignored.  Use a hysteresis of "
+                f"at most {rotation_hysteresis_limit(cv_period, widest)}, "
+                f"or a map with fewer positions.")
     period = cfg["timing"]["scan_period_ms"]
     if period != 5:
         print(f"  scan period {period} ms ({1000/period:.0f} Hz) — NON-DEFAULT.")

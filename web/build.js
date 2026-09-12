@@ -60,15 +60,34 @@ var WEBBUILD = (function () {
                 });
             }
         });
-        // Same rule as tools/build.py: the jack transposer shifts a 32-entry
-        // table and wraps by the map's size, so a wider map cannot be
-        // shifted and is refused with the transposer on.
+        // Same rule as tools/build.py, word for word: the rotation shifts a
+        // 32-entry table and wraps by the map's size, so a wider map cannot
+        // be shifted and is refused with either input to it on.
         var widest = Math.max.apply(null, tables.tuning_period_keys);
-        if (cfg.portamento_in.transpose && widest > 32) {
+        if ((cfg.portamento_in.transpose || cfg.presets.quantize) && widest > 32) {
             throw new Error('alternate_tunings: a keyboard map of ' + widest +
-                ' positions cannot be shifted by the jack transposer, whose ' +
-                'key table holds 32 entries - use a map of up to 32, or turn ' +
-                'the transposer off');
+                ' positions cannot be shifted by the key-table rotation, ' +
+                'whose table holds 32 entries - use a map of up to 32, or ' +
+                'turn off both the jack transposer and preset quantisation');
+        }
+        // Same rule as tools/build.py, word for word: one degree has to be
+        // able to cross the rotation's hysteresis band or the shift never
+        // changes.
+        if (cfg.portamento_in.transpose || cfg.presets.quantize) {
+            var cvPeriod = Math.floor(cfg.portamento_in.cv_counts_per_volt
+                                      * cfg.portamento_in.cv_volts_per_period + 0.5);
+            var hyst = cfg.portamento_in.cv_hysteresis;
+            var headroom = cvPeriod - Math.floor(cvPeriod / 2);
+            if (hyst * widest >= headroom) {
+                throw new Error('portamento_in.cv_hysteresis: ' + hyst +
+                    ' is too wide beside a keyboard map of ' + widest +
+                    ' positions - one degree of the rotation moves the ' +
+                    'reading ' + cvPeriod + ' counts and the hysteresis band ' +
+                    'is ' + (Math.floor(cvPeriod / 2) + hyst * widest) + ', so a ' +
+                    'single-degree shift would be ignored.  Use a hysteresis of ' +
+                    'at most ' + Math.floor((headroom - 1) / widest) + ', or a ' +
+                    'map with fewer positions.');
+            }
         }
         var bank = BUILDLIB.patternBank(cfg);
         tables.arp_pattern_bank = [];
