@@ -787,12 +787,36 @@ equal `-table[0]` and the published base the shift alone.  `0xff` there
 means "leave it": while the sequencer records, plays or previews, the base
 is a step's pitch the sequencer shifts by its own path.
 
-The raw cell is one-poled before any of this reads it -
-`new = prev + (raw - prev) >> shift`, accumulator in RAM `0x60e8`, cleared
-by the first-use bootstrap because SRAM survives a DFU and a retained value
-is a shift the jack never asked for.  One degree is only `period/size`
-counts wide, and the hysteresis in the quantiser steadies an answer once
-chosen; it cannot stop a noisy reading choosing the wrong one.
+Steadying the reading is the hysteresis's job alone, and that is a
+correction (2026-09-12).  A one-pole filter was put in front of the
+transposer first - `new = prev + (raw - prev) >> shift`, accumulator in RAM
+`0x60e8`, cave at `0x8001eb20` - on the reasoning that the hysteresis steadies
+an answer once chosen but cannot stop a noisy reading choosing the wrong one.
+True, and the wrong shape: **the quantiser republishes the sounding pitch on
+every scan its answer changes**, so a pole travelling towards a new reading is
+heard as a run up through every degree it passes.  Measured in the jack
+regression build at shift 2, a step of two periods visited TEN pitches over 13
+scans - 848, 1103, 1258, 1414, 1504, 1587, 1660, 1694, 1742, 1787, 1816 - about
+65 ms of audible slew where a transposition belonged.  Smoothing the input of
+a quantiser whose output is a pitch cannot be done quietly; what has to be
+steadied is the answer, not the reading.
+
+So `cv_filter_shift` is 0 and `cv_hysteresis` is 12 rather than 2.  The band is
+`period/24 + cv_hysteresis` counts either side of the LAST answer's centre, so
+what a noisy count has to swing across to make the answer chatter is
+`2 x cv_hysteresis` raw counts - **independent of the period**, which is why
+widening the period bought no noise immunity at a boundary, only fewer
+boundaries.  12 counts swallows about 59 mV peak to peak and moves the point
+where the answer changes from 53% of the way through a degree to 68%.  The
+filter's cave and its RAM cell are still there behind the option, and the
+bootstrap still clears `0x60e8` so that turning it back on is safe.
+
+If a widened hysteresis alone turns out not to hold on the instrument, the
+next thing to try is not a wider one - the lag becomes a feel problem - but
+time rather than amplitude: require the quantised answer to repeat for K scans
+before acting on it.  That rejects any glitch shorter than K scans outright and
+still arrives as one jump, because the intermediate readings never survive K
+scans.  It needs a cave and a cell; neither exists yet.
 
 The sequencer follows the same way the pad does, relatively: with the jack
 transposing, `seq_record_pitch` jumps to `seq_record_pitch_cv`

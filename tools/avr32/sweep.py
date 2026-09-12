@@ -245,10 +245,14 @@ def audit_call_pools(image_path) -> list[str]:
 # and every switch position follows the jack with nothing held; then again
 # when one period of transposition stopped costing volts_per_octave of CV and
 # started costing cv_volts_per_period, which is a number in every build and so
-# moves this anchor even though it carries the jack turned off.
+# moves this anchor even though it carries the jack turned off; and once more
+# when the pole in front of the transposer came out again - it was heard as a
+# slew, because the quantiser republishes the sounding pitch on every scan its
+# answer changes - leaving the hysteresis, widened from 2 counts to 12, to do
+# the steadying on its own.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "efbfcaaaf49c4df5ee4cb1cfd56d4b614fe01f515378391e8e714aca9c3df3bb",
+    "historical_config": "6835b3551afaad2cc4222ef6585798aae2f6244e7f142f3ca47cda736bd9f6a1",
 }
 
 

@@ -64,9 +64,10 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'presets': {'quantize': False},
     # The PORTAMENTO IN jack as a transposer.  cv_counts_per_volt is the
     # jack's ADC scale, 4095 counts over 10 V, so one period of the tuning
-    # is volts_per_octave of CV; cv_zero is subtracted from the raw reading
-    # first, and cv_hysteresis is how far past a degree boundary the CV has
-    # to travel before the answer changes.
+    # is cv_volts_per_period of CV; cv_zero is subtracted from the raw
+    # reading first, and cv_hysteresis is how far past a degree boundary the
+    # CV has to travel before the answer changes - which is the whole of the
+    # steadying now, see below.
     #
     # This was 102.3 until 2026-09-12 — a plain 10-bit count, 1023 over 10 V,
     # which is what every OTHER ADC channel in this firmware is (they all mask
@@ -78,16 +79,38 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
     'portamento_in': {   'transpose': False,
                          'cv_counts_per_volt': 409.5,
                          'cv_zero': 0,
-                         'cv_hysteresis': 2,
-                         # The raw cell is unconditioned, and the hysteresis
-                         # only steadies an answer once it is chosen - noise
-                         # still walks the reading across a degree boundary.
-                         # One pole, applied to the raw count before anything
-                         # reads it: new = prev + (raw - prev) >> shift.  At 2
-                         # that closes a quarter of the gap per 5 ms scan, so
-                         # ~17 ms to 63% and ~55 ms to 95%, which is below
-                         # what a hand turning a knob notices.  0 is off.
-                         'cv_filter_shift': 2,
+                         # How far past a degree boundary the CV has to
+                         # travel before the answer changes.  The band is
+                         # period/24 + this, either side of the LAST answer's
+                         # centre, so what noise has to swing across to make
+                         # the answer chatter is 2x this many raw counts -
+                         # independent of the period, which is why widening
+                         # the period bought no noise immunity.  12 counts is
+                         # ~59 mV peak to peak swallowed, and moves the point
+                         # where the answer changes from 53% of the way
+                         # through a degree to 68%.  It was 2 - about 10 mV,
+                         # which is nothing - until 2026-09-12, when this took
+                         # over the whole job from the filter below.  This is
+                         # the number to turn if the jack still glitches, or
+                         # if it now feels like it lags.
+                         'cv_hysteresis': 12,
+                         # One pole on the raw count, ahead of the quantiser:
+                         # new = prev + (raw - prev) >> shift.  OFF, and the
+                         # hysteresis above does this job instead.
+                         #
+                         # It cannot do it without being heard.  The quantiser
+                         # republishes the sounding pitch on every scan its
+                         # answer changes, so a pole travelling towards a new
+                         # reading is a run up through every degree it passes,
+                         # not a transposition: measured at shift 2, a step of
+                         # two periods visited TEN pitches over 13 scans, ~65
+                         # ms, which the owner heard as a slew.  Smoothing the
+                         # input of a quantiser whose output is a pitch is the
+                         # wrong shape; the answer has to be steadied, not the
+                         # reading.  Set it back to 2 to have the pole again -
+                         # the cave and RAM 0x60e8 are still there, and the
+                         # per-scan chain enters it instead.
+                         'cv_filter_shift': 0,
                          # How much CV one period of the tuning costs.  This
                          # was volts_per_octave until 2026-09-12, so 1.2 V
                          # bought an octave and the jack's full 10 V bought

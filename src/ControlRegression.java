@@ -583,9 +583,18 @@ public class ControlRegression extends SequenceEditRegression {
     // filter writes its own result back into it, exactly as the factory's ADC
     // pass refills it on the instrument.  cvStep is the unsettled form, for
     // the one test that wants a single scan.
+    // Whether this build has the one pole in front of the transposer, asked of
+    // the image rather than assumed: the per-scan chain's pool word points at
+    // cv_filter when it does and straight at cv_transpose when it does not.
+    // Default builds do not, since 2026-09-12 - the pole was audible - but the
+    // option is still there and the tests below have to work either way.
+    boolean cvFiltered;
     void cvStep(int raw) throws Exception { w(S+0x2f0,2,raw); controlScan(); }
     void cv(int raw) throws Exception {
-        for (int i=0;i<48;i++) { w(S+0x2f0,2,raw); controlScan(); if (r(0x60e8,2)==raw) break; }
+        for (int i=0;i<48;i++) {
+            w(S+0x2f0,2,raw); controlScan();
+            if (!cvFiltered||r(0x60e8,2)==raw) break;
+        }
     }
     void jackTransposer() throws Exception {
         // Every CV below is a multiple of the transposer's OWN period, read
@@ -598,17 +607,70 @@ public class ControlRegression extends SequenceEditRegression {
         int period=(int)r(0x8001e8b0L,4), degree=(period+6)/12;
         check("the transposer's period is the one this build carries: "+period,
             period>100&&period<2048);
+        cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
+        int hyst=(int)r(0x8001e8b8L,4);
+        println("JACK SHAPE period "+period+" counts, one degree "+degree
+            +", hysteresis "+hyst+", "
+            +(cvFiltered?"one pole in front":"no pole: hysteresis only"));
+        // With nothing smoothing the reading, the hysteresis is the whole of
+        // what stops a noisy count choosing the wrong degree.  Its contract is
+        // that the band reaches cv_hysteresis counts PAST the half degree, so
+        // park the jack on a degree boundary - the worst place - and jitter it
+        // by three quarters of that, the way an unconditioned ADC does.  The
+        // answer must not move once.  The band arithmetic is what this holds:
+        // drop the hysteresis term from it and 64 scans chatter.
+        setup(0,false,0); command(0); latchFixture(); octavePad(1); cv(0);
+        int edge=period/24, swing=Math.max(1,hyst*3/4), chatter=0;
+        long settled=r(0x60fa,2)&255;
+        for(int i=0;i<64;i++) {
+            w(S+0x2f0,2,edge+(i%2==0?swing:-swing)); controlScan();
+            if((r(0x60fa,2)&255)!=settled)chatter++;
+        }
+        check("noise inside the band cannot walk the degree: "+chatter
+            +" change(s) over 64 scans on the boundary, swing +-"+swing+" counts",
+            chatter==0);
         // A held mono note follows the CV: the table moved, and so must the
         // base the factory copied out of it at note-on.
         setup(0,false,0); command(0); latchFixture(); octavePad(1); cv(0);
         touchOn(9); sound();
         long before=r(S+0x352,2), table=r(0x854+18,2);
         check("a mono note sounds its table pitch",before==table);
-        // The pole: one scan takes a quarter of the step at shift 2, not the
-        // whole of it.  A filter that settled at once would not be one.
-        cvStep(period);
-        check("the jack is filtered, not read raw: "+r(0x60e8,2),
-            Math.abs(r(0x60e8,2)-period/4)<=period/24);
+        // A step on the jack has to ARRIVE as a step.  The quantiser publishes
+        // a new base on every scan its answer changes, so anything that walks
+        // the reading towards its target is heard as a run up through the
+        // degrees in between, not as a transposition - the reported symptom
+        // was an audible slew.  Drive two periods in one scan, holding the
+        // raw cell the way the factory's ADC pass refills it, and count how
+        // many distinct pitches the output visits on the way.
+        long fromBase=r(S+0x350,2), prevBase=fromBase; int visits=0;
+        StringBuilder walk=new StringBuilder();
+        for(int i=0;i<40;i++) {
+            w(S+0x2f0,2,2*period); controlScan(); call(0x80003590L); pitch();
+            if(r(S+0x350,2)!=prevBase) {
+                prevBase=r(S+0x350,2); visits++;
+                if(visits<=12)walk.append(" ").append(i).append(":").append(prevBase);
+            }
+        }
+        println("JACK STEP two periods: "+visits+" pitch(es) visited -"+walk
+            +(visits>12?" ...":""));
+        check("a jack step arrives as one jump, not a run through the degrees between: "
+            +visits+" visited",visits==1);
+        check("and it lands on the two periods it asked for",
+            prevBase==fromBase+2*484&&(r(0x60fa,2)&255)==24);
+        cv(0); sound();
+        if(cvFiltered) {
+            // The pole: one scan takes a quarter of the step at shift 2, not
+            // the whole of it.  A filter that settled at once would not be one.
+            cvStep(period);
+            check("the jack is filtered, not read raw: "+r(0x60e8,2),
+                Math.abs(r(0x60e8,2)-period/4)<=period/24);
+        } else {
+            // Without one, the quantiser reads the cell the factory's ADC pass
+            // left, and the pole's accumulator is never touched.
+            w(0x60e8,2,0x5a5a); cvStep(period);
+            check("no pole: the jack is read as the ADC pass left it",
+                r(0x60e8,2)==0x5a5a&&(r(0x60fa,2)&255)==12);
+        }
         cv(0); sound();
         // With the blend engaged, a base that moved without its history
         // would be folded into the applied offset and slewed out: a glide.

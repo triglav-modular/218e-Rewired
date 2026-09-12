@@ -1032,7 +1032,11 @@ RAM_REGIONS = [
     # so they were removed rather than left looking like live state.  Both are
     # live again from 2026-09-12, for the jack transposer: 0x60E8 as the
     # filter pole, 0x60EC as the displacement carried across a table rebuild.
-    (0x60E8, 0x60EA, "jack CV filter, one pole on the raw count"),
+    # Only live with portamento_in.cv_filter_shift above zero, which is not
+    # the default: the pole was audible as a slew and the hysteresis does the
+    # steadying instead.  The bootstrap clears this unconditionally anyway, so
+    # turning the option back on cannot start from a retained value.
+    (0x60E8, 0x60EA, "jack CV filter, one pole on the raw count (option, off)"),
     (0x60EA, 0x60EC, "arp knob 3 latch"),
     # How far the sounding base stands from its key's table entry - the arp's
     # random octave, a latched slot's stamp, a step's pitch left standing -
