@@ -4473,7 +4473,12 @@ function assembleProgram() {
         // do sound - would otherwise be forced into another one at a
         // probability the law puts at nothing.  A position the law gives no
         // hits is stepped past instead, which costs at most one more half and
-        // still terminates, since the beat's own share is never zero.
+        // still terminates, since the beat's own share is never zero.  The
+        // upper clamp answers to the same rule: shortening an interval that
+        // came out over 0xfff moves the phase by one half like anything else,
+        // so it asks again rather than accepting whatever it lands on - at a
+        // slow enough tempo the shortening is what would land the forbidden
+        // hit, and nine halves of a 995-scan beat is exactly that case.
         // RAM 0x6152 is which half of the beat
         // the last hit fell on, the cell swing keeps its pair parity in; one
         // knob, one role, one byte.  Below the deadzone a hit standing off
@@ -4501,7 +4506,7 @@ function assembleProgram() {
         emit("MOV R8,0x60e6");
         emit("LD.SH R8,R8[0x0]");       // the knob, 0..1023
         emit("CP.W R8,0x30");
-        emit("BR{lt} 0x8001eab6");     // deadzone: square, exactly as shipped
+        emit("BR{lt} 0x8001eabe");     // deadzone: square, exactly as shipped
         emit("MOV R3,R8");
         emit("LSR R3,0x1");             // M = 512x: what leaves the beat
         emit("MOV R9,0x400");
@@ -4553,27 +4558,37 @@ function assembleProgram() {
         emit("RJMP 0x8001ea6a");
         padTo(0x8001ea84);
         emit("MOV R12,0x8");
-        emit("RJMP 0x8001eaa4");
+        emit("RJMP 0x8001eaac");
         padTo(0x8001ea88);
         emit("MOV R9,0xfff");
         emit("CP.W R12,R9");
-        emit("BR{le} 0x8001eaa4");
+        emit("BR{gt} 0x8001ea9a");      // too long: shorten it
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001eaac");      // the beat always sounds
+        emit("CP.W R3,0x0");
+        emit("BR{ne} 0x8001eaac");      // and the half, when it has a share
+        padTo(0x8001ea9a);
         emit("CP.W R2,0x1");
-        emit("BR{le} 0x8001eaa2");      // one half already: the limit itself
-        emit("SUB R2,0x1");             // over the limit: one half fewer
-        emit("SUB R1,0x1");
+        emit("BR{le} 0x8001eaaa");      // one half already: the limit itself
+        emit("SUB R2,0x1");             // one half fewer, then ask again
+        // Step the phase FORWARD to flip it, never back: ANDL masks the low
+        // halfword and leaves the high one alone, so subtracting from a zero
+        // phase leaves 0xffff0001 - a byte store of that is still 1, which is
+        // why it never mattered until something compared the whole word.
+        emit("SUB R1,-0x1");
         emit("ANDL R1,0x1");
         emit("RJMP 0x8001ea6a");
-        padTo(0x8001eaa2);
+        padTo(0x8001eaaa);
         emit("MOV R12,R9");
-        padTo(0x8001eaa4);
+        padTo(0x8001eaac);
         emit("MUL R9,R2,R0");
         emit("ADD R9,R8");
         emit("ANDL R9,0x1");            // what the division left
         emit("MOV R8,0x6153");
         emit("ST.B R8[0x0],R9");
-        emit("RJMP 0x8001eac4");
-        padTo(0x8001eab6);
+        emit("RJMP 0x8001ead0");
+        padTo(0x8001eabe);
+        emit("MOV R3,0x1");             // the square reload has no forbidden phase
         emit("MOV R2,0x2");             // square: the whole beat
         emit("CP.W R1,0x0");
         emit("BR{eq} 0x8001ea64");
@@ -4581,7 +4596,7 @@ function assembleProgram() {
         emit("MOV R2,R1");
         emit("MOV R1,0x0");
         emit("RJMP 0x8001ea64");
-        padTo(0x8001eac4);
+        padTo(0x8001ead0);
         emit("LDDPC R8,0x8001eb08");
         emit("ST.H R8[0x38e],R12");
         emit("MOV R8,0x6152");

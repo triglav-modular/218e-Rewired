@@ -1104,6 +1104,17 @@ half and still terminates, the beat's own share never being zero.  The suite
 could not see it: its fixture started every run from phase 0, where the limit
 lands on the beat, and no assertion said so.
 
+**And the upper clamp answers to the same rule**, which the first fix missed.
+A reload that comes out over `0xfff` is shortened by a half, and a half is
+exactly what moves the phase - so at a tempo slow enough for the ceiling to
+bite, the shortening put the forbidden hit back.  Nine halves of a 995-scan
+beat is 4477, does not fit, and becomes eight, which returns to the phase it
+started from.  The clamp now asks the same question the selection does and
+shortens again, to seven halves, which lands on the beat.  Found by a
+re-verification probe on 2026-09-12 at a real tempo - RATE 35 through the
+factory's period routine - where the first suite's hand-picked 400-scan beat
+could not reach the ceiling at all: nine halves of it is 1800.
+
 **Where it sits.**  The cave at `0x8001ea00` takes the rhythm hook's pool
 word at `0x80019d40`, the third reader of it after the randomiser and swing,
 and reads the same knob latch (`0x60e6`) with the same deadzone.  RAM

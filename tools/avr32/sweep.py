@@ -255,7 +255,7 @@ def audit_call_pools(image_path) -> list[str]:
 # own, which had been re-applying the whole CV shift on every slot change.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "c1c8eb51aa0d69851bfe83beb8105547f594c24eeaf1b411adab150b31428a58",
+    "historical_config": "d0613128c4e378c5363f35ceab0281d97ea56cd40dda4ee7fffbb038e99e0137",
 }
 
 

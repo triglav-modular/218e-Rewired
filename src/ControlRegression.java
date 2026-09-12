@@ -1267,15 +1267,19 @@ public class ControlRegression extends SequenceEditRegression {
     // reached, so a run that never exercised it fails instead of passing
     // quietly - the reason the first version of this suite could not see the
     // defect was a fixture property no assertion stated.
-    int limitReached;
+    int limitReached, longestHalves;
     int forcedHalves(int knob,int trials,long beat) throws Exception {
         w(0x60e6,2,knob); w(0x6153,1,0);
-        int forced=0; limitReached=0;
+        int forced=0; limitReached=0; longestHalves=0;
         for(int i=0;i<trials;i++) {
             w(0x6152,1,1);
             long cd=gridReload(beat);
-            if(cd>=8*beat/2) limitReached++;
-            if(r(0x6152,1)!=0||cd%(beat/2)!=0) forced++;
+            // Whole halves even on an odd beat: the carry keeps the sum on
+            // the grid, so the rounding recovers exactly what was stepped.
+            int halves=(int)Math.round(cd*2.0/beat);
+            if(halves>=8) limitReached++;
+            if(halves>longestHalves) longestHalves=halves;
+            if(r(0x6152,1)!=0||cd>0xfff) forced++;
         }
         return forced;
     }
@@ -1331,6 +1335,16 @@ public class ControlRegression extends SequenceEditRegression {
         forced=forcedHalves(513,2000,beat);
         check("nor just above it, where the half's share still rounds to zero: "+forced,forced==0);
         check("and the miss limit was reached there too: "+limitReached,limitReached>0);
+        // A tempo where the reload ceiling bites, which beat=400 cannot show:
+        // nine halves of it is 1800, nowhere near 0xfff.  Nine halves of a
+        // 995-scan beat is 4477 and does not fit, so the interval is
+        // shortened - and shortening moves the phase by one half, which is
+        // how the forbidden hit came back after the selection loop alone was
+        // guarded.  995 scans is a real tempo, not a round number: RATE 35
+        // through the factory's own period routine.
+        forced=forcedHalves(512,4000,995);
+        check("a beat whose longest intervals will not fit still forces none: "+forced,forced==0);
+        check("and they were shortened to seven halves, never eight: "+longestHalves,longestHalves==7);
         // A beat that is not even: the remainder is carried, so a run of hits
         // tracks the grid to within a scan instead of running early by the
         // dropped fraction every reload.
