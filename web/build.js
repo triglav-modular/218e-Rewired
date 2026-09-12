@@ -201,6 +201,15 @@ var WEBBUILD = (function () {
             .forEach(function (n) { blocks[n] = keep; });
         var div = !!(cfg.clock && cfg.clock.divide);
         blocks.seq_clock_input_hook = seq && !div;
+        // Same rule as tools/build.py: transpose_capture lives inside the
+        // blend hook and is what keeps 0x60a0 current, which the sequencer
+        // reads as the take's reference.  The hook exists whenever the
+        // sequencer does; the pressure following inside it stays independent.
+        if (seq) {
+            blocks.pitch_target_blend_hook = true;
+            blocks.blend_offset_apply = true;
+            blocks.blend_target_conditioner = true;
+        }
         ['clock_scan', 'clock_pulse', 'clock_hook',
          'clock_tempo', 'clock_tempo_hook',
          'clock_ms_tick', 'clock_ms_pool',

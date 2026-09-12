@@ -92,7 +92,7 @@ def rotation_hysteresis_limit(cv_period: int, widest: int) -> int:
 
 
 TABLE_ROTATION = [
-    "cv_transpose", "midi_transpose",
+    "cv_transpose", "midi_transpose", "preset_entry",
     "midi_transpose_arp_pool", "midi_transpose_poly_pool",
     "midi_transpose_lift_pool", "midi_transpose_compare_pool",
     "seq_record_pitch_cv", "seq_cv_shift", "cv_stamps",
@@ -1079,6 +1079,10 @@ RAM_REGIONS = [
     # factory-knobs build still had knob 1 writing over a live factory
     # setting.
     (0x60F2, 0x60F3, "arp knob 1 latch"),
+    # Published by preset_degrees every scan and read by preset_entry: the
+    # preset's own contribution in degrees, kept apart from the jack's so the
+    # recorder can bake one in and normalise the other out.
+    (0x60F3, 0x60F4, "the preset voltage's shift, in degrees"),
     (0x6000, 0x6021, "arp press-order list"),
     (0x6024, 0x6026, "vibrato LFO phase"),
     (0x6026, 0x6028, "vibrato smoothed depth"),
@@ -2297,6 +2301,20 @@ def main() -> None:
                  "seq_restart_init", "seq_boot"):
         blocks[name] = seq
     blocks["seq_clock_input_hook"] = seq and not div
+    # transpose_capture lives inside the blend hook, and it is what keeps
+    # 0x60a0 - the live transpose - current.  The sequencer reads that cell as
+    # the take's reference and as the term every recorded step is stored
+    # relative to, so the hook has to exist whenever the sequencer does.  This
+    # is the same decoupling the latch gets above and for the same reason:
+    # the pressure *following* inside these caves (feature.pressure_blend)
+    # stays independently switchable.  Without it, sequencer = true with
+    # latching_arp = false and pressure_portamento = false silently dropped
+    # every per-note octave change from a take - measured two octaves apart
+    # sounding, both steps stored identical (audit 2026-09-13).
+    if seq:
+        blocks["pitch_target_blend_hook"] = True
+        blocks["blend_offset_apply"] = True
+        blocks["blend_target_conditioner"] = True
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
     blocks["arp_swing"] = k2 == "swing"
     # Quantized randomness takes the randomiser's hook the way swing does;

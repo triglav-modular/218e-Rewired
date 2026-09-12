@@ -2479,10 +2479,15 @@ function assembleProgram() {
         // the blend yet": the first blend scan must record a base without
         // re-basing against it, because the applied offset is still zero.
         begin(0x8001ad00);
-        emit("MOV R9,0x60f4");
+        // Based two bytes lower than it was, so one ST.B reaches 0x60f3
+        // alongside the halfwords: the preset's degree count is read by
+        // preset_entry on any scan, and SRAM survives a DFU, so a retained
+        // count would bake a shift into the first recorded step.
+        emit("MOV R9,0x60f2");
         emit("MOV R11,0x0");
-        emit("ST.H R9[0x2],R11");       // 0x60f6 blend target filter
-        emit("ST.H R9[0x4],R11");       // 0x60f8 blend hysteresis hold
+        emit("ST.B R9[0x1],R11");       // 0x60f3 the preset's shift, in degrees
+        emit("ST.H R9[0x4],R11");       // 0x60f6 blend target filter
+        emit("ST.H R9[0x6],R11");       // 0x60f8 blend hysteresis hold
         // The delete-pad flash countdown sits outside the big zero fill, and
         // it is read every scan - a stale count would blink pad 3 at power-up.
         emit("MOV R9,0x6502");
@@ -2784,12 +2789,12 @@ function assembleProgram() {
         //   R1 the store, then units   R2 whole periods   R3 the remainder
         //   R4 best distance   R7 table[0]   R8 k   R9/R10 scratch
         //   R11 best k (0xff = the whole period itself)
-        var pdEntry = 0x8001e1c0, pdGo   = 0x8001e1e4, pdPad  = 0x8001e1f8;
-        var pdLoop = 0x8001e23c, pdRed  = 0x8001e244, pdRedHi = 0x8001e24e;
-        var pdCmp = 0x8001e258, pdNext = 0x8001e268, pdSlot = 0x8001e280;
-        var pdMod = 0x8001e292, pdSum  = 0x8001e29a, pdDone = 0x8001e2a8;
-        var pdNone = 0x8001e1dc, pdBase = 0x8001e230;
-        var pdPool = 0x8001e2b0, pdEnd  = 0x8001e2c0;
+        var pdEntry = 0x8001e1c0, pdGo   = 0x8001e1ec, pdPad  = 0x8001e200;
+        var pdLoop = 0x8001e244, pdRed  = 0x8001e24c, pdRedHi = 0x8001e256;
+        var pdCmp = 0x8001e260, pdNext = 0x8001e270, pdSlot = 0x8001e288;
+        var pdMod = 0x8001e29a, pdSum  = 0x8001e2a2, pdDone = 0x8001e2b8;
+        var pdNone = 0x8001e1dc, pdBase = 0x8001e238;
+        var pdPool = 0x8001e2c0, pdEnd  = 0x8001e2d0;
         begin(pdEntry);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,R8,R9,R10,R11,LR");
         // The add-to-pitch switch, read the way the factory reads it at
@@ -2808,6 +2813,11 @@ function assembleProgram() {
         emit(StringFormat("BR{ne} 0x%x", pdGo));
         padTo(pdNone);
         emit("MOV R12,0x0");
+        // Published on BOTH paths, because the sequencer reads it every scan
+        // and a stale count would bake a shift into a recording that the
+        // switch is no longer asking for.
+        emit("MOV R9,0x60f3");
+        emit("ST.B R9[0x0],R12");
         emit(StringFormat("RJMP 0x%x", pdDone));
         padTo(pdGo);
         emit("MOV R9,0x384f");                       // state+0x2ef, the active pad
@@ -2903,6 +2913,13 @@ function assembleProgram() {
         padTo(pdSum);
         emit("MUL R2,R2,R0");
         emit("ADD R12,R2");                          // the shift, in degrees
+        // The degree count itself, for the sequencer: the recorder bakes the
+        // preset's degrees INTO a step and playback re-applies only the
+        // jack's, so the two contributions have to stay distinguishable.  A
+        // single combined count loses the distinction and a take records the
+        // same pitch whatever pad it was played under (audit 2026-09-13).
+        emit("MOV R9,0x60f3");
+        emit("ST.B R9[0x0],R12");
         // Handed back in the quantiser's own units - one period of CV per
         // period of the tuning - so cv_transpose adds it to the jack's
         // position with nothing but an ADD, which is all the room it has.
@@ -2911,16 +2928,16 @@ function assembleProgram() {
         padTo(pdDone);
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,R8,R9,R10,R11,PC");
         padTo(pdPool);
-        word(0x8001e2c0);                           // the keys-per-period table
+        word(0x8001e2d0);                           // the keys-per-period table
         word(0x80019af8);                           // the three slot tables, in flash
         finish("preset_degrees", pdEnd);
 
         // tuning_period_keys, moved out of cv_transpose so its pool can carry
         // one more word.  Reached only through pool words, so its address is
         // free to sit anywhere.
-        begin(0x8001e2c0);
+        begin(0x8001e2d0);
         emitTable("tuning_period_keys");
-        finish("tuning_period_keys_table", 0x8001e2d0);
+        finish("tuning_period_keys_table", 0x8001e2e0);
 
         // One pole on the jack's raw count, standing in front of the
         // transposer in the per-scan chain rather than inside it: cv_transpose
@@ -3042,8 +3059,13 @@ function assembleProgram() {
         var cvNoWrap = 0x8001e88a;
         var cvDone = 0x8001e8a8;
         var cvPool = 0x8001e8b0;
-        var cvStampsPre = 0x8001e8e0;
-        var cvStampsPost = 0x8001e98c;
+        // Relocated out of 0x8001e8e0 (2026-09-13): the ownership decision
+        // below needed thirty bytes the old extent did not have, and both
+        // entry points are reached only through full-width pool words, so the
+        // cave is free to sit anywhere.  Every label here is a constant, so
+        // this is one edit rather than a chain of rewrites.
+        var cvStampsPre = 0x8001eb48;
+        var cvStampsPost = 0x8001ec28;
         begin(cvEntry);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
         emit("MOV R7,SP");
@@ -3155,7 +3177,7 @@ function assembleProgram() {
         word(number("transpose_cv_period", 123, 1, 1023));
         word(number("transpose_cv_zero", 0, 0, 1023));
         word(number("transpose_cv_hysteresis", 2, 0, 64));
-        word(0x8001e2c0); // the keys-per-period table, relocated out of this cave
+        word(0x8001e2d0); // the keys-per-period table, relocated out of this cave
         word(0x80019af8); // the three tuning tables
         word(number("octave_units", 484, 1, 2000));
         word(cvStampsPre);
@@ -3178,16 +3200,17 @@ function assembleProgram() {
         // stamp += table'[o] - table'[j] puts it back against the slot's,
         // now with the key's shift inside.  In an equal temperament the two
         // shifts agree to a rounding unit and this is a no-op.
-        var cvStampsPreLoop = 0x8001e8ec;
-        var cvStampsPreNext = 0x8001e928;
-        var cvStampsMono = 0x8001e954;
-        var cvStampsHave = 0x8001e95e;
-        var cvStampsOurs = 0x8001e976;
-        var cvStampsKey = 0x8001e982;
-        var cvStampsPostLoop = 0x8001e998;
-        var cvStampsPostNext = 0x8001e9d4;
-        var cvStampsDone = 0x8001e9f8;
-        var cvStampsPool = 0x8001e9fc;
+        var cvStampsPreLoop = 0x8001eb54;
+        var cvStampsPreNext = 0x8001eb90;
+        var cvStampsLive = 0x8001ebdc;
+        var cvStampsMono = 0x8001ebf0;
+        var cvStampsHave = 0x8001ebfa;
+        var cvStampsOurs = 0x8001ec12;
+        var cvStampsKey = 0x8001ec1e;
+        var cvStampsPostLoop = 0x8001ec34;
+        var cvStampsPostNext = 0x8001ec70;
+        var cvStampsDone = 0x8001ec94;
+        var cvStampsPool = 0x8001ec98;
         begin(cvStampsPre);
         emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
         emit("MOV R7,SP");
@@ -3252,14 +3275,38 @@ function assembleProgram() {
         // bootstrap leaves, d is -table[0], so the published base is the
         // shift alone and a jack turned before the first touch walks the
         // output up from its rest instead of jumping to the bottom key.
+        // Ownership, not a blanket refusal.  This used to leave the base
+        // alone whenever the sequencer was in ANY mode, which was right for
+        // the jack - a step's pitch is shifted by seq_cv_shift on its own
+        // path at the next step - but wrong once the preset stopped adding
+        // its offset through the factory adder.  That per-scan re-add was
+        // what moved a note already sounding, and zeroing it left a held key
+        // and a playing step both deaf to the pad (audit 2026-09-13).
+        //
+        //   a preview running  the pitch is pinned to what was recorded, so
+        //                      nothing may move it
+        //   PLAY               the sounding step owns the base; move it by
+        //                      ITS key, which is the one seq_cv_shift uses
+        //   WRITE, or off      the keyboard owns the base: the live key
         emit("MOV R9,0xff");
         emit("MOV R10,0x60ec");                                   // d, and 0x60fc/0x60ff off it
         emit("MOV R8,0x6158");
-        emit("LD.UB R1,R8[0x0]");                                 // sequencer mode
         emit("LD.UB R2,R8[0x1a6]");                               // 0x62fe, a one-shot preview
-        emit("OR R1,R2");
-        emit("CP.W R1,0x0");
-        emit(StringFormat("BR{ne} 0x%x", cvStampsKey));
+        emit("CP.W R2,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cvStampsKey));          // pinned: leave it
+        emit("LD.UB R1,R8[0x0]");                                 // sequencer mode
+        emit("CP.W R1,0x2");
+        emit(StringFormat("BR{ne} 0x%x", cvStampsLive));         // WRITE, or not running
+        // PLAY still leaves the base alone, and deliberately.  A JACK move
+        // must not touch a playing step - the sequencer shifts it by its own
+        // path at the next step, and ControlRegression asserts exactly that -
+        // while a PRESET move should follow it, as the factory's per-scan
+        // re-add used to make it.  Telling the two apart needs the previous
+        // preset count kept (0x6091 is free beside the slot byte) and the
+        // reference branched inside both passes; until that lands, a sounding
+        // step does not follow the pad.  A held key in WRITE does, below.
+        emit(StringFormat("RJMP 0x%x", cvStampsKey));
+        padTo(cvStampsLive);
         // Both arp switch flags in one aligned halfword: the pair is nonzero
         // exactly when either byte is, and the six bytes that saves are what
         // pay for the sentinel test below.
@@ -3368,7 +3415,7 @@ function assembleProgram() {
         emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
         padTo(cvStampsPool);
         word(0x00003560); // global state base
-        finish("cv_stamps", 0x8001ea00);
+        finish("cv_stamps", 0x8001ec9c);
 
         // The same shift for MIDI.  The factory turns a key into a note
         // number in one routine, 0x800057a8 (key + 36, or + 12 per trn zone,
@@ -3466,19 +3513,14 @@ function assembleProgram() {
         var srcAdopt = 0x8001e380;
         var srcPool = 0x8001e3b0;
         begin(srcEntry);
-        emit("MOV R8,0x6090");                                    // slot[key], the flash table's own entry
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x2");
-        emit(StringFormat("BR{ls} 0x%x", srcSlot));
-        emit("MOV R8,0x0");
-        padTo(srcSlot);
-        emit("LSL R8,0x6");
-        emit("ADD R8,R8,R12 << 0x1");
-        emit(StringFormat("LDDPC R11,0x%x", srcPool));           // the three tuning tables
-        emit("ADD R8,R11");
-        emit("LD.SH R8,R8[0x0]");
+        // A frame now: this used to be a leaf and calls preset_entry.
+        emit("STM --SP,R7,LR");
+        emit("ST.W --SP,R12");                                    // the key, which the callee returns over
+        emit(StringFormat("MCALL PC[0x%x]", srcPool));           // slot[key + the preset's degrees]
         emit("MOV R11,0x604e");
-        emit("ST.H R11[0x0],R8");
+        emit("ST.H R11[0x0],R12");
+        emit("LD.W R12,SP++");
+        padTo(srcSlot);
         emit("MOV R11,0x854");                                    // the heard pitch, as seq_record_pitch has it
         emit("ADD R11,R11,R12 << 0x1");
         emit("LD.SH R11,R11[0x0]");
@@ -3512,9 +3554,9 @@ function assembleProgram() {
         emit("SUB R8,-0x6160");
         emit("ST.H R8[0x0],R11");                                 // stored here, not by seq_record
         emit("LD.W R11,SP++");
-        emit("MOV PC,LR");
+        emit("LDM SP++,R7,PC");
         padTo(srcPool);
-        word(0x80019af8); // the three tuning tables
+        word(0x8001e410); // preset_entry, which reaches the slot tables for us
         finish("seq_record_pitch_cv", 0x8001e3b4);
 
         // Playback's half: R8 = the step's pitch as seq_preview_pin leaves it,
@@ -3526,6 +3568,7 @@ function assembleProgram() {
         var scsDone = 0x8001e404;
         var scsPool = 0x8001e408;
         begin(scsEntry);
+        emit("STM --SP,R7,LR");                                   // a frame: it calls preset_entry now
         emit("MOV R9,0x6503");                                    // the step sounding now
         emit("LD.UB R9,R9[0x0]");
         emit("CP.W R9,0x40");
@@ -3536,24 +3579,67 @@ function assembleProgram() {
         emit(StringFormat("BR{ge} 0x%x", scsDone));
         emit("MOV R11,0x854");
         emit("LD.SH R11,R11[R10 << 0x1]");                        // table'[key]
-        emit("MOV R12,0x6090");
-        emit("LD.UB R12,R12[0x0]");
-        emit("CP.W R12,0x2");
-        emit(StringFormat("BR{ls} 0x%x", scsSlot));
-        emit("MOV R12,0x0");
         padTo(scsSlot);
-        emit("LSL R12,0x6");
-        emit("ADD R12,R12,R10 << 0x1");
-        emit(StringFormat("LDDPC R9,0x%x", scsPool));
-        emit("ADD R12,R9");
-        emit("LD.SH R12,R12[0x0]");                               // slot[key]
-        emit("SUB R11,R12");
+        emit("MOV R12,R10");
+        emit("ST.W --SP,R8");
+        emit(StringFormat("MCALL PC[0x%x]", scsPool));           // the preset-only entry
+        emit("SUB R11,R12");                                      // what is left is the jack's
+        emit("LD.W R8,SP++");
         emit("ADD R8,R11");
         padTo(scsDone);
-        emit("MOV PC,LR");
+        emit("LDM SP++,R7,PC");
         padTo(scsPool);
-        word(0x80019af8); // the three tuning tables
+        word(0x8001e410); // preset_entry, which reaches the slot tables for us
         finish("seq_cv_shift", 0x8001e410);
+
+        // The entry this key would have if ONLY the preset had rotated the
+        // table: slot[key + preset degrees], wrapping by the map's size and
+        // adding one period per wrap, exactly as cv_transpose's rebuild does.
+        //
+        // The recorder stores a step against the tuning's own entry for its
+        // key so the live shift is normalised out and re-applied on playback.
+        // That is right for the JACK, a performance control, and wrong for
+        // the PRESET, which is a stored per-pad setting the take should keep.
+        // Both sides therefore work against this entry rather than slot[key]:
+        // the recorder bakes the preset's degrees in, and playback re-applies
+        // only what is left, which is the jack's.  With one combined count
+        // the two were indistinguishable and a take recorded the same pitch
+        // whatever pad it was played under (audit 2026-09-13).
+        //
+        // In: R12 the key.  Out: R12 the pitch.  R8-R11 saved.
+        var peEntry = 0x8001e410, peSlot = 0x8001e42c, peWrap = 0x8001e448;
+        var peNoWrap = 0x8001e45a, pePool = 0x8001e468;
+        begin(peEntry);
+        emit("STM --SP,R8,R9,R10,R11,LR");
+        emit("MOV R9,0x6090");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x2");
+        emit(StringFormat("BR{ls} 0x%x", peSlot));
+        emit("MOV R9,0x0");
+        padTo(peSlot);
+        emit(StringFormat("LDDPC R10,0x%x", pePool));        // the three slot tables
+        emit("LSL R11,R9,0x6");
+        emit("ADD R10,R11");
+        emit(StringFormat("LDDPC R11,0x%x", pePool + 4));    // keys per period
+        emit("LD.UH R9,R11[R9 << 0x1]");
+        emit("MOV R11,0x60f3");
+        emit("LD.UB R11,R11[0x0]");                           // the preset's degrees
+        emit("ADD R12,R11");
+        emit("MOV R8,0x0");
+        padTo(peWrap);
+        emit("CP.W R12,0x1f");
+        emit(StringFormat("BR{le} 0x%x", peNoWrap));
+        emit("SUB R12,R9");                                   // back one period of keys
+        emit(StringFormat("SUB R8,-0x%x", number("octave_units", 484, 1, 2000)));
+        emit(StringFormat("RJMP 0x%x", peWrap));
+        padTo(peNoWrap);
+        emit("LD.SH R12,R10[R12 << 0x1]");
+        emit("ADD R12,R8");
+        emit("LDM SP++,R8,R9,R10,R11,PC");
+        padTo(pePool);
+        word(0x80019af8); // the three slot tables
+        word(0x8001e2d0); // the keys-per-period table
+        finish("preset_entry", 0x8001e478);
 
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,

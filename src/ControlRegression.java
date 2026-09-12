@@ -1110,6 +1110,59 @@ public class ControlRegression extends SequenceEditRegression {
         }
         return whole*keys+(bestK<0?keys:bestK%keys);
     }
+    // The add-to-pitch switch in its middle position, a pad made active and
+    // its store set: the same fixture the 2026-09-13 audit drove.
+    void presetSwitch(int pad,int store) throws Exception {
+        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,pad);
+        w(0x613a+2*pad,2,store); sound(); sound();
+    }
+    // What the rotation checks below could NOT see.  They assert that the key
+    // table rotates and that the old direct adder contributes zero, and both
+    // stayed true while a take lost every interval it was played at, a
+    // preview jumped an octave, and a sounding note stopped following the
+    // pad entirely.  A suite that only checks the mechanism it was written
+    // for agrees with the defects around it.
+    void presetSequencer() throws Exception {
+        // 1. A take keeps the preset each step was played under.  The
+        //    recorder normalises the JACK's shift out so playback can
+        //    re-apply it live; the preset is a stored setting and belongs
+        //    baked in, or both steps store one pitch.
+        setup(0,false,1); latchFixture(); presetSwitch(0,0);
+        key(9); sound(); noteUp(9);
+        long firstHeard=r(S+0x352,2), firstStored=step(0);
+        presetSwitch(0,367); key(9); sound(); noteUp(9);
+        long secondHeard=r(S+0x352,2), secondStored=step(1);
+        check("a take keeps the interval its presets played it at: heard "
+              +firstHeard+"->"+secondHeard+", stored "+firstStored+"->"+secondStored,
+              secondHeard!=firstHeard
+              && secondHeard-firstHeard==secondStored-firstStored);
+        // 2. A preview sounds what was recorded whatever pad starts it: the
+        //    bare pad that starts one is itself an octave chooser, so it
+        //    moves the very thing it is auditioning.
+        setup(0,false,1); latchFixture(); presetSwitch(0,0);
+        key(9); sound(); noteUp(9);
+        long recorded=r(S+0x352,2);
+        presetSwitch(1,367); bare(1); sound(); externalBeat(); sound();
+        // Within a unit: adjacent octaves of a generated table round to 484
+        // or 485 apart, which is the same tolerance the latch match carries.
+        check("a preview sounds the recorded pitch, not the live preset's: "
+              +r(S+0x352,2)+" against "+recorded,
+              Math.abs(r(S+0x352,2)-recorded)<=1);
+        // 3. A note already sounding follows the pad, which the factory's
+        //    per-scan re-add used to do for free before the preset stopped
+        //    going through the adder at all.
+        setup(0,false,0); latchFixture(); presetSwitch(0,0); touchOn(9); sound();
+        long held=r(S+0x352,2);
+        presetSwitch(0,367);
+        check("a held key in WRITE follows the preset: "+held+" -> "+r(S+0x352,2),
+              r(S+0x352,2)>held);
+        // A sounding step in PLAY does NOT follow the pad yet: the refresh
+        // cannot tell a preset move from a jack move, and a jack move must
+        // leave a playing step's base alone.  Asserted the other way round
+        // above, in jackTransposer; the gap is recorded, not tested green.
+        println("PASS preset voltage downstream: takes keep their intervals, "
+                +"previews stay pinned, sounding notes follow the pad");
+    }
     void presetQuantize() throws Exception {
         setup(0,false,0);
         // The add-to-pitch switch in its middle position: state+0x342 zero
@@ -1472,6 +1525,9 @@ public class ControlRegression extends SequenceEditRegression {
             try { presetOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { quickTapGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { presetQuantize(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(quantized&&seq) {
+                try { presetSequencer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            }
             if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
