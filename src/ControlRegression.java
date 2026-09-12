@@ -1156,10 +1156,27 @@ public class ControlRegression extends SequenceEditRegression {
         presetSwitch(0,367);
         check("a held key in WRITE follows the preset: "+held+" -> "+r(S+0x352,2),
               r(S+0x352,2)>held);
-        // A sounding step in PLAY does NOT follow the pad yet: the refresh
-        // cannot tell a preset move from a jack move, and a jack move must
-        // leave a playing step's base alone.  Asserted the other way round
-        // above, in jackTransposer; the gap is recorded, not tested green.
+        // 4. A playing take transposes with the preset, and it arrives at the
+        //    NEXT step rather than under the note already sounding - which is
+        //    exactly what the octave pads do, and what the jack does.  The
+        //    preset is normalised against the take's own reference, so this
+        //    is the whole point of that reference existing: reading the live
+        //    count on both sides cancels out and a take cannot be transposed
+        //    at all.  No equality between the two deltas is asserted: the
+        //    shift is per-key, and on an unequal scale two steps move by
+        //    different intervals.
+        setup(0,false,1); latchFixture(); presetSwitch(0,0);
+        key(9); sound(); noteUp(9); key(11); sound(); noteUp(11);
+        setup(2,false,1); command(1); presetSwitch(0,0);
+        externalBeat(); sound(); long a0=r(S+0x352,2);
+        presetSwitch(0,367);
+        check("a preset move leaves the step already sounding alone: "
+              +a0+" -> "+r(S+0x352,2), r(S+0x352,2)==a0);
+        externalBeat(); sound(); long b1=r(S+0x352,2);
+        setup(2,false,1); command(1); presetSwitch(0,0);
+        externalBeat(); sound();
+        externalBeat(); sound(); long a1=r(S+0x352,2);
+        check("and the next step arrives transposed: "+a1+" -> "+b1, b1>a1);
         println("PASS preset voltage downstream: takes keep their intervals, "
                 +"previews stay pinned, sounding notes follow the pad");
     }

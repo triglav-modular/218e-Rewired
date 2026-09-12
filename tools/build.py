@@ -1083,6 +1083,11 @@ RAM_REGIONS = [
     # preset's own contribution in degrees, kept apart from the jack's so the
     # recorder can bake one in and normalise the other out.
     (0x60F3, 0x60F4, "the preset voltage's shift, in degrees"),
+    # The preset degrees a take was born under, adopted by the first note into
+    # an empty one exactly as 0x62f4 adopts the transpose.  Playback works
+    # against this, not the live count, or the preset cancels out and a
+    # playing take cannot be transposed at all.
+    (0x6091, 0x6092, "the preset degrees a take was born under"),
     (0x6000, 0x6021, "arp press-order list"),
     (0x6024, 0x6026, "vibrato LFO phase"),
     (0x6026, 0x6028, "vibrato smoothed depth"),

@@ -3763,9 +3763,13 @@ public class AssemblePressureFix extends GhidraScript {
         long srcAdopt  = 0x8001e380L;
         long srcPool   = 0x8001e3b0L;
         begin(srcEntry);
-        // A frame now: this used to be a leaf and calls preset_entry.
-        emit("STM --SP,R7,LR");
+        // A frame now: this used to be a leaf and calls preset_entry.  R9 is
+        // saved with it because selecting the degree count clobbers a
+        // register this routine never used to touch, and its caller keeps the
+        // key there - which recorded every step as key 0 until it was.
+        emit("STM --SP,R7,R9,LR");
         emit("ST.W --SP,R12");                                    // the key, which the callee returns over
+        emit("MOV R9,0x60f3");                                    // the LIVE degrees: this step keeps them
         emit(String.format("MCALL PC[0x%x]", srcPool));           // slot[key + the preset's degrees]
         emit("MOV R11,0x604e");
         emit("ST.H R11[0x0],R12");
@@ -3781,11 +3785,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
         emit(String.format("BR{ne} 0x%x", srcAdopt));
+        emit("ST.W --SP,R11");
         emit("MOV R8,0x60a0");                                    // an empty take adopts today's transpose
         emit("LD.SH R8,R8[0x0]");
-        emit("ST.W --SP,R11");
         emit("MOV R11,0x62f4");
         emit("ST.H R11[0x0],R8");
+        emit("MOV R8,0x60f3");                                    // and today's preset degrees, the same way
+        emit("LD.UB R8,R8[0x0]");
+        emit("MOV R11,0x6091");
+        emit("ST.B R11[0x0],R8");
         emit("LD.W R11,SP++");
         padTo(srcAdopt);
         emit("MOV R8,0x62f4");
@@ -3804,9 +3812,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R8,-0x6160");
         emit("ST.H R8[0x0],R11");                                 // stored here, not by seq_record
         emit("LD.W R11,SP++");
-        emit("LDM SP++,R7,PC");
+        emit("LDM SP++,R7,R9,PC");
         padTo(srcPool);
-        word(0x8001e410L); // preset_entry, which reaches the slot tables for us
+        word(0x8001e420L); // preset_entry, which reaches the slot tables for us
         finish("seq_record_pitch_cv", 0x8001e3b4L);
 
         // Playback's half: R8 = the step's pitch as seq_preview_pin leaves it,
@@ -3815,8 +3823,9 @@ public class AssemblePressureFix extends GhidraScript {
         // worth reading, and is left alone.  A leaf; R9-R12 scratch.
         long scsEntry = 0x8001e3b4L;
         long scsSlot  = 0x8001e3e4L;
-        long scsDone  = 0x8001e404L;
-        long scsPool  = 0x8001e408L;
+        long scsGo    = 0x8001e400L;
+        long scsDone  = 0x8001e410L;
+        long scsPool  = 0x8001e418L;
         begin(scsEntry);
         emit("STM --SP,R7,LR");                                   // a frame: it calls preset_entry now
         emit("MOV R9,0x6503");                                    // the step sounding now
@@ -3832,15 +3841,30 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(scsSlot);
         emit("MOV R12,R10");
         emit("ST.W --SP,R8");
-        emit(String.format("MCALL PC[0x%x]", scsPool));           // the preset-only entry
-        emit("SUB R11,R12");                                      // what is left is the jack's
+        // Against the take's REFERENCE, so what survives is the jack's live
+        // shift plus the preset's movement away from where the take was born
+        // - the same thing 0x62f4 does for the octave.  A one-shot preview is
+        // the exception: the bare pad that starts one selects a preset as
+        // well as a step, so it would move the very note it is auditioning,
+        // and the live count is used instead to cancel it - exactly why
+        // seq_preview_pin cancels the octave.
+        emit("MOV R9,0x6091");
+        emit("MOV R12,0x62fe");
+        emit("LD.UB R12,R12[0x0]");
+        emit("CP.W R12,0x0");
+        emit(String.format("BR{eq} 0x%x", scsGo));
+        emit("MOV R9,0x60f3");
+        padTo(scsGo);
+        emit("MOV R12,R10");
+        emit(String.format("MCALL PC[0x%x]", scsPool));           // the reference entry
+        emit("SUB R11,R12");
         emit("LD.W R8,SP++");
         emit("ADD R8,R11");
         padTo(scsDone);
         emit("LDM SP++,R7,PC");
         padTo(scsPool);
-        word(0x8001e410L); // preset_entry, which reaches the slot tables for us
-        finish("seq_cv_shift", 0x8001e410L);
+        word(0x8001e420L); // preset_entry, which reaches the slot tables for us
+        finish("seq_cv_shift", 0x8001e420L);
 
         // The entry this key would have if ONLY the preset had rotated the
         // table: slot[key + preset degrees], wrapping by the map's size and
@@ -3856,11 +3880,19 @@ public class AssemblePressureFix extends GhidraScript {
         // the two were indistinguishable and a take recorded the same pitch
         // whatever pad it was played under (audit 2026-09-13).
         //
-        // In: R12 the key.  Out: R12 the pitch.  R8-R11 saved.
-        long peEntry = 0x8001e410L, peSlot = 0x8001e42cL, peWrap = 0x8001e448L;
-        long peNoWrap = 0x8001e45aL, pePool = 0x8001e468L;
+        // In: R12 the key, R9 the ADDRESS of the degree count to use -
+        // 0x60f3 live, 0x6091 the reference the take was born under.  The
+        // recorder wants the live one, so a step keeps the interval it was
+        // played at; playback wants the reference, so what it re-applies is
+        // the jack's shift plus the preset's movement AWAY from that
+        // reference.  Reading the live count on both sides cancels the
+        // preset exactly and a playing take stops transposing at all.
+        // Out: R12 the pitch.  R8-R11 saved.
+        long peEntry = 0x8001e420L, peSlot = 0x8001e43cL, peWrap = 0x8001e458L;
+        long peNoWrap = 0x8001e46aL, pePool = 0x8001e478L;
         begin(peEntry);
         emit("STM --SP,R8,R9,R10,R11,LR");
+        emit("LD.UB R11,R9[0x0]");                            // the count the caller chose
         emit("MOV R9,0x6090");
         emit("LD.UB R9,R9[0x0]");
         emit("CP.W R9,0x2");
@@ -3868,13 +3900,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x0");
         padTo(peSlot);
         emit(String.format("LDDPC R10,0x%x", pePool));        // the three slot tables
-        emit("LSL R11,R9,0x6");
-        emit("ADD R10,R11");
-        emit(String.format("LDDPC R11,0x%x", pePool + 4));    // keys per period
-        emit("LD.UH R9,R11[R9 << 0x1]");
-        emit("MOV R11,0x60f3");
-        emit("LD.UB R11,R11[0x0]");                           // the preset's degrees
-        emit("ADD R12,R11");
+        emit("LSL R8,R9,0x6");
+        emit("ADD R10,R8");
+        emit(String.format("LDDPC R8,0x%x", pePool + 4));     // keys per period
+        emit("LD.UH R9,R8[R9 << 0x1]");
+        emit("ADD R12,R11");                                  // key + those degrees
         emit("MOV R8,0x0");
         padTo(peWrap);
         emit("CP.W R12,0x1f");
@@ -3889,7 +3919,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(pePool);
         word(0x80019af8L); // the three slot tables
         word(0x8001e2d0L); // the keys-per-period table
-        finish("preset_entry", 0x8001e478L);
+        finish("preset_entry", 0x8001e488L);
 
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,
@@ -7468,6 +7498,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001dfc4]");
         emit("MCALL PC[0x8001dfc8]");
+        // The preset degrees a take is born under, cleared like 0x62f4 and
+        // for the same reason: SRAM survives a DFU, and a retained reference
+        // would transpose the first take against a preset nobody chose.  Only
+        // sequencer playback reads it, so this is its whole lifetime.
+        emit("MOV R8,0x0");
+        emit("MOV R9,0x6091");
+        emit("ST.B R9[0x0],R8");
         emit("LDM SP++,R7,PC");
         padTo(0x8001dfc4L);
         word(0x8001df80L);
