@@ -759,6 +759,22 @@ public class ControlRegression extends SequenceEditRegression {
         cv(period); sound();
         check("the arp's random octave survives the jack moving under it",
             r(S+0x350,2)==r(0x854+18,2)+(displaced-plainBase));
+        // Changing the tuning slot must not re-apply the CV shift.  The
+        // tuning applier runs BEFORE the transposer in the per-scan chain and
+        // leaves the new slot's UNTRANSPOSED table in RAM 0x854, so a
+        // displacement measured against that table reads as the whole shift,
+        // and the rebuild then adds the shift a second time.  Round trip the
+        // slot with the CV standing still: the sounding base must not move.
+        setup(0,false,0); command(0); latchFixture(); octavePad(1); cv(0);
+        touchOn(9); sound();
+        cv(period); sound();
+        long shifted=r(S+0x350,2);
+        for(int slot:new int[]{1,0,2,0}) {
+            w(0x6090,1,slot); sound(); sound();
+            check("a change to tuning slot "+slot+" leaves the sounding base alone: "
+                +r(S+0x350,2)+" against "+shifted,r(S+0x350,2)==shifted);
+        }
+        touchOff(9); sound();
         // Both arp positions follow the jack with nothing sounding.  The
         // pitch output holds the last note there exactly as it does with the
         // arp off, so a CV turned between phrases has to move it in all

@@ -249,10 +249,13 @@ def audit_call_pools(image_path) -> list[str]:
 # when the pole in front of the transposer came out again - it was heard as a
 # slew, because the quantiser republishes the sounding pitch on every scan its
 # answer changes - leaving the hysteresis, widened from 2 counts to 12, to do
-# the steadying on its own.
+# the steadying on its own; and again when the displacement capture learned
+# that RAM 0x854 has another writer - the tuning applier runs ahead of the
+# transposer in the same chain - and stopped reading a table that is not its
+# own, which had been re-applying the whole CV shift on every slot change.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "6835b3551afaad2cc4222ef6585798aae2f6244e7f142f3ca47cda736bd9f6a1",
+    "historical_config": "28864657dc346858e93702a7558b25571ca81475879a797826850ce9a5b9e311",
 }
 
 

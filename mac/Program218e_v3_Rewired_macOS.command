@@ -23,11 +23,11 @@ mkdir -p "$WORK_DIR" 2>/dev/null
 LOG_FILE="$WORK_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT"; printf "\033[?25h"' EXIT
-EXPECTED_SHA256="5a01bb0fcf876276174112387c6e1ff98b0147628b2b0da2ae6882472475f4d9"
+EXPECTED_SHA256="b24b423a0b33f74d8e9e0c04e6e17ae16a3b092013f3dd8b7ef834e64a4ff114"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 2.3.0 (5a01bb0f)"
+FIRMWARE_VERSION="Rewired 2.3.0 (b24b423a)"
 # What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
 # by the manifest below and again by whichever image is chosen, so by the time
 # anything reaches the log it no longer says which flasher wrote it.

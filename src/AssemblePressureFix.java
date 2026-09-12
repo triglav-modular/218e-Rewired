@@ -3172,7 +3172,7 @@ public class AssemblePressureFix extends GhidraScript {
         long cvPool   = 0x8001e8a8L;
         long cvSizes  = 0x8001e8d0L;
         long cvStampsPre  = 0x8001e8e0L;
-        long cvStampsPost = 0x8001e980L;
+        long cvStampsPost = 0x8001e98cL;
         begin(cvEntry);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
         emit("MOV R7,SP");
@@ -3294,11 +3294,12 @@ public class AssemblePressureFix extends GhidraScript {
         // shifts agree to a rounding unit and this is a no-op.
         long cvStampsPreLoop  = 0x8001e8ecL;
         long cvStampsPreNext  = 0x8001e928L;
-        long cvStampsMono     = 0x8001e956L;
-        long cvStampsHave     = 0x8001e960L;
-        long cvStampsKey      = 0x8001e974L;
-        long cvStampsPostLoop = 0x8001e98cL;
-        long cvStampsPostNext = 0x8001e9c8L;
+        long cvStampsMono     = 0x8001e95aL;
+        long cvStampsHave     = 0x8001e964L;
+        long cvStampsOurs     = 0x8001e978L;
+        long cvStampsKey      = 0x8001e984L;
+        long cvStampsPostLoop = 0x8001e998L;
+        long cvStampsPostNext = 0x8001e9d4L;
         long cvStampsDone     = 0x8001e9f8L;
         long cvStampsPool     = 0x8001e9fcL;
         begin(cvStampsPre);
@@ -3366,15 +3367,16 @@ public class AssemblePressureFix extends GhidraScript {
         // shift alone and a jack turned before the first touch walks the
         // output up from its rest instead of jumping to the bottom key.
         emit("MOV R9,0xff");
+        emit("MOV R10,0x60ec");                                   // d, and 0x60fc/0x60ff off it
         emit("MOV R8,0x6158");
-        emit("LD.UB R2,R8[0x0]");                                 // sequencer mode
-        emit("LD.UB R10,R8[0x1a6]");                              // 0x62fe, a one-shot preview
-        emit("OR R2,R10");
-        emit("CP.W R2,0x0");
+        emit("LD.UB R1,R8[0x0]");                                 // sequencer mode
+        emit("LD.UB R2,R8[0x1a6]");                               // 0x62fe, a one-shot preview
+        emit("OR R1,R2");
+        emit("CP.W R1,0x0");
         emit(String.format("BR{ne} 0x%x", cvStampsKey));
         emit("LD.UB R8,R0[0x340]");
-        emit("LD.UB R10,R0[0x341]");
-        emit("OR R8,R10");
+        emit("LD.UB R2,R0[0x341]");
+        emit("OR R8,R2");
         emit("CP.W R8,0x0");
         emit(String.format("BR{eq} 0x%x", cvStampsMono));
         emit("LD.UB R9,R0[0x34d]");                               // the last arp key
@@ -3386,15 +3388,39 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("BR{lt} 0x%x", cvStampsHave));
         emit("MOV R9,0x0");                                       // nothing played yet: the bottom key
         padTo(cvStampsHave);
+        // The displacement is only meaningful against the table the sounding
+        // base was actually derived from, and this pass is NOT the only writer
+        // of RAM 0x854.  The tuning applier is, and it runs ahead of the
+        // transposer in the same per-scan chain - so on the scan a tuning slot
+        // changes it has already dropped the new slot's UNTRANSPOSED table in
+        // there.  Measuring against that reads the whole CV shift as though it
+        // were a per-note offset, and the rebuild then adds the shift again:
+        // a slot round trip walked a sounding key 9 from 1332 to 1816 to 2300
+        // with the jack standing still.
+        //
+        // 0x60fc already carries table'[0] as this pass last wrote it, for the
+        // warm-restart check, and it answers the same question here: if entry
+        // zero is not what we left there, the table is somebody else's and no
+        // displacement can be read off it.  Leave the base alone for that
+        // rebuild - which is also what the factory does when a slot changes
+        // under a sounding note - and the next rebuild, against our own table
+        // again, measures normally.  A cold boot takes the same path, its
+        // 0x60fc never having been written, and that is why the output still
+        // rests at zero until the jack first moves it.
         emit("MOV R8,0x854");
-        emit("LD.UH R10,R8[R9 << 0x1]");                          // table[key], before the rebuild
+        emit("LD.UH R1,R8[0x0]");                                 // entry zero as it stands
+        emit("LD.UH R2,R10[0x10]");                               // 0x60fc, as we last wrote it
+        emit("CP.W R1,R2");
+        emit(String.format("BR{eq} 0x%x", cvStampsOurs));
+        emit("MOV R9,0xff");                                      // not our table: publish nothing
+        emit(String.format("RJMP 0x%x", cvStampsKey));
+        padTo(cvStampsOurs);
+        emit("LD.UH R1,R8[R9 << 0x1]");                           // table[key], before the rebuild
         emit("LD.SH R8,R0[0x350]");
-        emit("SUB R8,R10");                                       // d, the displacement to carry
-        emit("MOV R10,0x60ec");
+        emit("SUB R8,R1");                                        // d, the displacement to carry
         emit("ST.H R10[0x0],R8");
         padTo(cvStampsKey);
-        emit("MOV R8,0x60ff");
-        emit("ST.B R8[0x0],R9");
+        emit("ST.B R10[0x13],R9");                                // 0x60ff, whose key this is
         emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
         padTo(cvStampsPost);
         emit("STM --SP,R0,R1,R2,R7,R8,R9,R10,LR");
@@ -3434,12 +3460,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R9,0x1d");
         emit(String.format("BR{ge} 0x%x", cvStampsDone));         // 0xff: leave the base alone
         emit("LD.SH R2,R8[0x0]");                                 // d
-        emit("MOV R8,0x854");
-        emit("LD.UH R10,R8[R9 << 0x1]");                          // table'[key]
+        emit("MOV R1,0x854");
+        emit("LD.UH R10,R1[R9 << 0x1]");                          // table'[key]
         emit("ADD R10,R2");
         emit("ST.H R0[0x350],R10");                               // the published base
-        emit("MOV R8,0x60f4");
-        emit("ST.H R8[0x0],R10");                                 // and the blend's base history
+        emit("ST.H R8[0x8],R10");                                 // 0x60f4, the blend's base history
         padTo(cvStampsDone);
         emit("LDM SP++,R0,R1,R2,R7,R8,R9,R10,PC");
         padTo(cvStampsPool);
