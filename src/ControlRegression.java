@@ -604,11 +604,15 @@ public class ControlRegression extends SequenceEditRegression {
         // one period stopped costing volts_per_octave - and the first move
         // shipped a red suite, because cv(123) silently stopped meaning one
         // period.  A fixture derived from the image cannot go stale that way.
-        int period=(int)r(0x8001e8b0L,4), degree=(period+6)/12;
+        // The base is named because the OFFSETS are the fragile half: this
+        // pool moved 8 bytes when it took a word for preset_degrees, and the
+        // suite went red reading the housekeeping pointer as a period.  One
+        // edit here covers the next move.
+        int period=(int)r(CV_POOL+8,4), degree=(period+6)/12;
         check("the transposer's period is the one this build carries: "+period,
             period>100&&period<2048);
         cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
-        int hyst=(int)r(0x8001e8b8L,4);
+        int hyst=(int)r(CV_POOL+16,4);
         println("JACK SHAPE period "+period+" counts, one degree "+degree
             +", hysteresis "+hyst+", "
             +(cvFiltered?"one pole in front":"no pole: hysteresis only"));
@@ -1071,89 +1075,214 @@ public class ControlRegression extends SequenceEditRegression {
     // periods stripped and restored.  The period is a build constant; every
     // variant this suite builds repeats at the octave.
     static final int PERIOD=484;
+    // cv_transpose's pool base.  The offsets off it are what go stale - this
+    // moved 8 bytes when the pool took a word for preset_degrees and the
+    // suite read the housekeeping pointer as a period.
+    static final long CV_POOL=0x8001e8b0L;
+    // The shift the firmware actually settled on, slot and degrees packed as
+    // 0xA000 | slot << 8 | N.  Reading it keeps the checks below honest on
+    // the jack variant, where the jack is contributing degrees of its own.
+    int liveN() { return (int)(r(0x60fa,2)&0xff); }
     int presetUnits(int store) { return (int)(float)((double)(store<<2)*0.33); }
-    int quantised(int units) {
-        // A transcription of the cave, in the cave's own order: entries from
-        // the bottom up, first strictly nearer candidate wins.
-        if(units<0)return units;
-        int whole=units/PERIOD*PERIOD, rem=units%PERIOD;
-        int best=PERIOD, bestd=PERIOD-rem, t0=(int)r(0x854,2);
-        for(int k=0;k<32;k++) {
-            int c=(int)r(0x854+2*k,2)-t0;
-            while(c<0)c+=PERIOD;
-            while(c>=PERIOD)c-=PERIOD;
-            int d=Math.abs(c-rem);
-            if(d<bestd) { bestd=d; best=c; }
-        }
-        return best+whole;
-    }
     long presetTarget(int base,int store) throws Exception {
         w(S+0x350,2,base); w(0x613a,2,store); musicalScan(); return r(S+0x352,2);
     }
+    // The slot tables in flash, 32 halfwords each.  This is the rotation's
+    // source and the only table intervals may be read from: RAM 0x854 is the
+    // applier's copy, the applier refreshes it only when the slot CHANGES
+    // (its guard at 0x60e4), and cv_transpose overwrites it with its own
+    // rotated output - so a model that reads 0x854 measures the firmware's
+    // last answer instead of the tuning.
+    int slotEntry(int j) { return (int)r(0x80019af8L+2L*j,2); }
+    // A transcription of preset_degrees, in the cave's own order: entries from
+    // the bottom up, first strictly nearer candidate wins, the whole period
+    // seeded ahead of them all.
+    int presetDegrees(int store,int keys) {
+        int units=store*132/100;
+        int whole=units/PERIOD, rem=units%PERIOD;
+        int bestK=-1, bestD=PERIOD-rem, t0=slotEntry(0);
+        for(int k=0;k<32;k++) {
+            int c=slotEntry(k)-t0;
+            while(c<0)c+=PERIOD;
+            while(c>=PERIOD)c-=PERIOD;
+            int d=Math.abs(c-rem);
+            if(d<bestD) { bestD=d; bestK=k; }
+        }
+        return whole*keys+(bestK<0?keys:bestK%keys);
+    }
+    // The add-to-pitch switch in its middle position, a pad made active and
+    // its store set: the same fixture the 2026-09-13 audit drove.
+    void presetSwitch(int pad,int store) throws Exception {
+        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,pad);
+        w(0x613a+2*pad,2,store); sound(); sound();
+    }
+    // What the rotation checks below could NOT see.  They assert that the key
+    // table rotates and that the old direct adder contributes zero, and both
+    // stayed true while a take lost every interval it was played at, a
+    // preview jumped an octave, and a sounding note stopped following the
+    // pad entirely.  A suite that only checks the mechanism it was written
+    // for agrees with the defects around it.
+    void presetSequencer() throws Exception {
+        // 1. A take keeps the preset each step was played under.  The
+        //    recorder normalises the JACK's shift out so playback can
+        //    re-apply it live; the preset is a stored setting and belongs
+        //    baked in, or both steps store one pitch.
+        setup(0,false,1); latchFixture(); presetSwitch(0,0);
+        key(9); sound(); noteUp(9);
+        long firstHeard=r(S+0x352,2), firstStored=step(0);
+        presetSwitch(0,367); key(9); sound(); noteUp(9);
+        long secondHeard=r(S+0x352,2), secondStored=step(1);
+        check("a take keeps the interval its presets played it at: heard "
+              +firstHeard+"->"+secondHeard+", stored "+firstStored+"->"+secondStored,
+              secondHeard!=firstHeard
+              && secondHeard-firstHeard==secondStored-firstStored);
+        // 2. A preview sounds what was recorded whatever pad starts it: the
+        //    bare pad that starts one is itself an octave chooser, so it
+        //    moves the very thing it is auditioning.
+        setup(0,false,1); latchFixture(); presetSwitch(0,0);
+        key(9); sound(); noteUp(9);
+        long recorded=r(S+0x352,2);
+        presetSwitch(1,367); bare(1); sound(); externalBeat(); sound();
+        // Within a unit: adjacent octaves of a generated table round to 484
+        // or 485 apart, which is the same tolerance the latch match carries.
+        check("a preview sounds the recorded pitch, not the live preset's: "
+              +r(S+0x352,2)+" against "+recorded,
+              Math.abs(r(S+0x352,2)-recorded)<=1);
+        // 3. A note already sounding follows the pad, which the factory's
+        //    per-scan re-add used to do for free before the preset stopped
+        //    going through the adder at all.
+        setup(0,false,0); latchFixture(); presetSwitch(0,0); touchOn(9); sound();
+        long held=r(S+0x352,2);
+        presetSwitch(0,367);
+        check("a held key in WRITE follows the preset: "+held+" -> "+r(S+0x352,2),
+              r(S+0x352,2)>held);
+        // 4. A playing take transposes with the preset, and it arrives at the
+        //    NEXT step rather than under the note already sounding - which is
+        //    exactly what the octave pads do, and what the jack does.  The
+        //    preset is normalised against the take's own reference, so this
+        //    is the whole point of that reference existing: reading the live
+        //    count on both sides cancels out and a take cannot be transposed
+        //    at all.  No equality between the two deltas is asserted: the
+        //    shift is per-key, and on an unequal scale two steps move by
+        //    different intervals.
+        setup(0,false,1); latchFixture(); presetSwitch(0,0);
+        key(9); sound(); noteUp(9); key(11); sound(); noteUp(11);
+        setup(2,false,1); command(1); presetSwitch(0,0);
+        externalBeat(); sound(); long a0=r(S+0x352,2);
+        presetSwitch(0,367);
+        check("a preset move leaves the step already sounding alone: "
+              +a0+" -> "+r(S+0x352,2), r(S+0x352,2)==a0);
+        externalBeat(); sound(); long b1=r(S+0x352,2);
+        setup(2,false,1); command(1); presetSwitch(0,0);
+        externalBeat(); sound();
+        externalBeat(); sound(); long a1=r(S+0x352,2);
+        check("and the next step arrives transposed: "+a1+" -> "+b1, b1>a1);
+        // 5. The latch's before/after switch governs the preset the way it
+        //    governs the octave.  In hold a latched note keeps the preset it
+        //    was entered at; in transpose the whole set follows.  The
+        //    rotation moves the table under the set, so without the pin every
+        //    latched note followed the pad whatever the switch said - the
+        //    octave measured 0 and 968 across the two states while the preset
+        //    measured 484 in both.
+        for(int state=0;state<2;state++) {
+            setup(0,false,1); command(0); latchFixture();
+            w(0x62e2,1,state);
+            presetSwitch(0,0); key(0); aim(0); sound();
+            long entered=r(S+0x352,2);
+            presetSwitch(0,367); sound();
+            long moved=r(S+0x352,2)-entered;
+            check("latch state "+state+": a preset move "
+                  +(state==0?"leaves a latched note where it was entered"
+                            :"carries the whole set")+", moved "+moved,
+                  state==0 ? moved==0 : moved>0);
+        }
+        println("PASS preset voltage downstream: takes keep their intervals, "
+                +"previews stay pinned, sounding notes follow the pad");
+    }
     void presetQuantize() throws Exception {
         setup(0,false,0);
-        // Toggle in the middle, pad 1 active: the adder adds preset 1.
+        // The add-to-pitch switch in its middle position: state+0x342 zero
+        // and state+0x343 not.  That is the only combination the factory adds
+        // the preset voltage in - it branches on exactly these two at
+        // 0x8000379c, taking the octave term whenever 0x342 is nonzero and
+        // neither when both are zero.  Pad 1 active, so 0x613a is the live
+        // store.
         w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x344,4,1); w(S+0x2ef,1,0);
         // A build that forces transpose mode adds a constant period as well
         // (-484 with the toggle off the octave position); measure it, then
         // sit the fixture so the targets clear the factory's floor clamp at
-        // 9 and its +-1 fix-ups at 0x1e0 and 0x78a: base+K at the bottom
-        // key, and the whole knob span under 1930.
+        // 9 and its +-1 fix-ups at 0x1e0 and 0x78a.
         int k0=(int)presetTarget(1000,0)-1000;
         int base=485-k0;
         long rest=presetTarget(base,0);
-        check("preset 1 at zero adds nothing",rest==presetTarget(base,0));
-        Set<Integer> offsets=new TreeSet<>();
-        for(int store=0;store<=1023;store+=store<64?1:store<200?7:13) {
-            // The factory soft float truncates where Java rounds, so where
-            // (store << 2) * 0.33 lands within a rounding error of a whole
-            // number the firmware can read one unit under the model (store
-            // 25: 32 against 33).  Accept the model and the model one under.
-            int units=presetUnits(store);
-            long a=rest+(quantized?quantised(units):units);
-            long b=rest+(quantized?quantised(units-1):units-1);
-            long got=presetTarget(base,store);
-            check((quantized?"quantised":"free")+" preset offset at store "+store+": got "
-                +(got-rest)+", expected "+(a-rest),got==a||got==b);
-            offsets.add((int)(got-rest));
-        }
-        check("the top of the knob still reaches the same span",
-            presetTarget(base,1023)-rest>=1300&&presetTarget(base,1023)-rest<=1352);
+        int[] stores={0,37,113,264,509,777,1023};
         if(quantized) {
-            // Every offset the knob produced is an interval of the live
-            // table, so the transposed pitch is one the keys themselves
-            // reach: the same raw value, the same remap, the same DAC.
-            for(int off:offsets) {
-                int rem=off%PERIOD, t0=(int)r(0x854,2); boolean member=rem==0;
-                for(int k=0;k<32&&!member;k++) {
-                    int c=(int)r(0x854+2*k,2)-t0; while(c<0)c+=PERIOD; while(c>=PERIOD)c-=PERIOD;
-                    member=c==rem;
-                }
-                check("offset "+off+" is a degree of the live table",member);
-            }
-            check("the knob reaches more than one degree",offsets.size()>=12);
-            int[] probes={1,3,5,7,12,17,24,31};
-            for(int k:probes) {
-                int target=(int)r(0x854+2*k,2), want=target-(int)r(0x854,2);
-                // Find a store whose quantised offset is this key's interval.
-                int store=-1;
-                for(int s=0;s<=1023&&store<0;s++)if(quantised(presetUnits(s))==want)store=s;
-                if(store<0)continue;
-                presetTarget(target-k0,0);
-                // A key whose direct route crosses a factory fix-up lands a
-                // unit off; it cannot serve as the reference, so skip it.
-                if(r(S+0x352,2)!=target)continue;
-                long direct=r(S+0x358,2);
+            // 1.  Nothing reaches the pitch through the adder any more.  The
+            //     whole transposition is a rotation of the key table, so the
+            //     preset's own contribution to the sum is exactly zero - which
+            //     is what preset_quantize returns.
+            for(int store:stores)
+                check("store "+store+" adds nothing to the pitch directly",
+                      presetTarget(base,store)==rest);
+            presetTarget(base,0);
+            int n0=liveN(), d0=presetDegrees(0,12);
+            // 2.  The live table is the slot's own, rotated by whole degrees.
+            //     Twelve keys to the period: the factory temperament, which is
+            //     what every slot carries in this image.
+            int keys=12;
+            for(int store:stores) {
                 presetTarget(base,store);
-                check("key "+k+" reached through the preset sounds the key's own DAC value",
-                    r(S+0x352,2)==target&&r(S+0x358,2)==direct);
+                int n=liveN();
+                // The preset's own contribution, measured against the same
+                // baseline so whatever the jack adds cancels out.
+                check("store "+store+" moves the shift by the degrees the cave computes",
+                      n-n0==presetDegrees(store,keys)-d0);
+                // And the table really is the slot rotated by that much -
+                // absolute, against flash, not against a model of itself.
+                for(int k=0;k<32;k++) {
+                    int j=k+n, up=0;
+                    while(j>31) { j-=keys; up+=PERIOD; }
+                    check("store "+store+": key "+k+" plays degree "+j,
+                          r(0x854+2*k,2)==slotEntry(j)+up);
+                }
             }
+            // 3.  The absolute one.  Everything above compares the table with
+            //     a model of the same table, and a relative check passes on
+            //     garbage - that cost a cycle on this very cave in 2026-09-06.
+            //     Twelve degrees of a twelve-note scale must be exactly one
+            //     period, measured off the image itself.
+            check("twelve degrees is exactly one period",
+                  slotEntry(12)-slotEntry(0)==PERIOD);
+            // 4.  And the switch decides it.  In the octave position the
+            //     factory never adds the preset, so nothing may rotate either,
+            //     or the preset would transpose from a position that is not
+            //     asking it to.
+            w(S+0x342,1,1); w(S+0x343,1,0);
+            presetTarget(base,1023);
+            // n0 less the preset's own contribution is whatever the jack is
+            // worth, and that is all that may survive the switch moving.
+            check("the octave position drops the preset's degrees entirely",
+                  liveN()==n0-d0);
+            w(S+0x342,1,0); w(S+0x343,1,1);
         } else {
-            // About 150 stores are sampled above; a snapped knob would give
-            // a few dozen distinct offsets, a free one nearly one per store.
+            // The factory's free add, untouched by any of this.  The soft
+            // float truncates where Java rounds, so accept the model and the
+            // model one under (store 25: 32 against 33).
+            Set<Integer> offsets=new TreeSet<>();
+            for(int store=0;store<=1023;store+=store<64?1:store<200?7:13) {
+                int units=presetUnits(store);
+                long got=presetTarget(base,store);
+                check("free preset offset at store "+store+": got "+(got-rest)
+                      +", expected "+units, got==rest+units||got==rest+units-1);
+                offsets.add((int)(got-rest));
+            }
             check("a free preset is not snapped to the table",offsets.size()>100);
+            check("the top of the knob still reaches the same span",
+                presetTarget(base,1023)-rest>=1300&&presetTarget(base,1023)-rest<=1352);
         }
-        println("PASS preset voltage "+(quantized?"quantised to the live key table, whole periods kept, key-exact DAC":"added unquantised"));
+        println("PASS preset voltage "+(quantized
+            ?"rotates the key table by whole degrees, nothing added to the pitch"
+            :"added unquantised"));
     }
     void recordedBounds() throws Exception {
         // A relative step is signed and deliberately unclamped: the DAC
@@ -1432,6 +1561,9 @@ public class ControlRegression extends SequenceEditRegression {
             try { presetOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { quickTapGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { presetQuantize(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(quantized&&seq) {
+                try { presetSequencer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            }
             if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

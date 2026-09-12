@@ -154,9 +154,20 @@ LAUNCH
 chmod +x "$APP/Contents/Resources/launch.sh"
 
 # The entry point itself: universal, so the app is unambiguously native.
+#
+# -isysroot explicitly, because neither `clang` nor `xcrun clang` can be
+# trusted to pick the right SDK: both resolve to
+# /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk even with xcode-select
+# pointing at a full Xcode, and a Command Line Tools SDK newer than the
+# linker declares architectures it cannot parse -- "tapi error: malformed
+# file ... unknown architecture arm64e.x1-macos", which reads as a broken
+# source file rather than a wrong SDK.  `xcrun --show-sdk-path` does report
+# Xcode's, so ask it and pass the answer through.  Falls back to the default
+# where there is no Xcode, which is the machine where the default works.
+SDK="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
 for A in arm64 x86_64; do
-    clang -O2 -target $A-apple-macos11 -o "$REPO/build/_launcher-$A" \
-          "$REPO/mac/support/Launcher.c"
+    clang -O2 -target $A-apple-macos11 ${SDK:+-isysroot "$SDK"} \
+          -o "$REPO/build/_launcher-$A" "$REPO/mac/support/Launcher.c"
 done
 lipo -create -output "$APP/Contents/MacOS/launcher" \
      "$REPO/build/_launcher-arm64" "$REPO/build/_launcher-x86_64"

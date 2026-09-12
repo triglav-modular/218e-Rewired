@@ -754,8 +754,12 @@ var BUILDLIB = (function () {
             if (setting === 'pressure.multi_key') {
                 enabled = (value === 'mean' || value === 'max');
             }
-            entry[0].forEach(function (n) { blocks[n] = enabled; });
-            entry[1].forEach(function (n) { features[n] = enabled; });
+            // Accumulate, as tools/build.py does: one block can carry more
+            // than one behaviour - the key-table rotation serves the jack
+            // transposer and the quantised preset voltage alike - and the
+            // setting visited last must not switch off what another asked for.
+            entry[0].forEach(function (n) { blocks[n] = blocks[n] || enabled; });
+            entry[1].forEach(function (n) { features[n] = features[n] || enabled; });
         });
         return { blocks: blocks, features: features };
     }

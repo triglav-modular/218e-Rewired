@@ -73,11 +73,15 @@ def main() -> None:
                 image = args.image.resolve() if args.image else work / f"{name}.hex"
                 if not args.image:
                     text = base
-                    # The preset quantiser rides on the default and tuned
-                    # variants, so it is exercised against the factory key
-                    # table and against an installed scale, and the other
-                    # two prove the free add is untouched.
-                    quantize = variant in ("default", "tuned")
+                    # The preset rotation rides on default, tuned and jack:
+                    # the factory key table, an installed 12-TET scale, and -
+                    # the case the whole feature is about - the 5-limit JI on
+                    # the jack variant, where an unequal scale is the only
+                    # thing that can tell a rotation from the constant-interval
+                    # add it replaced.  The jack variant also puts BOTH inputs
+                    # to the rotation in one image, which nothing else does.
+                    # lean and roles prove the free add is untouched.
+                    quantize = variant in ("default", "tuned", "jack")
                     for key, value in (("persist", persist), ("sequencer", variant != "lean"),
                                        ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean"),
                                        ("quantize_presets", quantize)):
@@ -145,7 +149,7 @@ def main() -> None:
                     "-postScript", "ControlRegression.java", "vibrato" if variant == "default" else "trn",
                     "order" if variant == "default" else "orders", "persist" if persist else "volatile",
                     "9", "lean" if variant == "lean" else "full",
-                    "quantized" if variant in ("default", "tuned") else "free",
+                    "quantized" if variant in ("default", "tuned", "jack") else "free",
                     "quantized" if variant == "roles" else "spacing",
                     "jack" if variant == "jack" else "knob"]))
 

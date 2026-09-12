@@ -34,8 +34,11 @@ replaces it with a linear response across a calibrated window.
   error.
 - **Quantized preset voltages.** Optional: with the add-to-pitch switch in
   the middle, the preset voltage transposes the keyboard to a degree of the
-  selected tuning, and the per-note calibration applies to the result. The
-  preset voltage output itself is unchanged.
+  selected tuning, shifting it by whole degrees so every key still plays a
+  note of the scale. On a scale whose steps are uneven, the intervals between
+  the keys move with the shift, as they do for the banana jack. The per-note
+  calibration applies to the result, and the preset voltage output itself is
+  unchanged.
 
 ## Portamento
 
