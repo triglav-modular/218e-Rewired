@@ -27,7 +27,7 @@ EXPECTED_SHA256="79f3668bc88d31e3c89cd55302849e6101c2b89df9bf1d5c2d89f61a3a2769a
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 2.3.0 (79f3668b)"
+FIRMWARE_VERSION="Rewired 2.4.0 (79f3668b)"
 # What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
 # by the manifest below and again by whichever image is chosen, so by the time
 # anything reaches the log it no longer says which flasher wrote it.
