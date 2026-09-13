@@ -1138,6 +1138,7 @@
         $('calRun').disabled = on;
         $('calStop').disabled = !on;
         $('calMidi').disabled = on;
+        $('calMidiChan').disabled = on;
         $('calAudio').disabled = on;
         $('calChan').disabled = on || (chanFor[$('calAudio').value || ''] || 1) < 2;
     }
@@ -1160,9 +1161,21 @@
             setRunning(true);
             autoNote('Listening for the bottom C\u2026', 0);
             sweep = new CALIBRATE.Sweep({
-                output: chosen, channel: null, deviceId: $('calAudio').value || null,
+                output: chosen,
+                // Empty means Auto: the sweep finds the channel by playing on
+                // each in turn and watching for the pitch to move.
+                channel: $('calMidiChan').value === '' ? null
+                                                       : Number($('calMidiChan').value),
+                deviceId: $('calAudio').value || null,
                 audioChannel: parseInt($('calChan').value, 10) || 0,
                 low: PLAYABLE_LOW, high: PLAYABLE_HIGH, octaveTerm: false, velocity: 100,
+                onProbe: function (ch) {
+                    autoNote('Looking for the keyboard on MIDI channel ' + (ch + 1) +
+                             '\u2026', 0);
+                },
+                onChannel: function (ch) {
+                    $('calMidiChan').value = String(ch);
+                },
                 onNote: function (step, reading, i, total) {
                     got[step.index] = reading ? reading.cents : null;
                     var name = CALIBRATE.noteLabel(step.index);
@@ -1182,7 +1195,8 @@
                 var heard = out.readings.filter(function (r) { return r.cents !== null; });
                 autoNote('');
                 var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
-                    ' notes. Bottom C was ' + out.anchorHz.toFixed(2) + ' Hz; the ' +
+                    ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
+                    out.anchorHz.toFixed(2) + ' Hz; the ' +
                     'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
                     'which has been taken out of every reading.';
                 if (bridged) {

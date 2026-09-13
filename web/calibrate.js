@@ -239,16 +239,18 @@
         return new Promise(function (done) { root.setTimeout(done, ms); });
     }
 
-    // A note, on every channel unless one is named.  The handler compares the
-    // message channel against the instrument's own and ignores the rest, so
-    // sixteen note-ons sound one note - which saves asking for a setting that
-    // is only discoverable by trying it.
+    // One channel, never sixteen.
+    //
+    // Sending on every channel looked free - the instrument ignores the ones
+    // that are not its own - but the ignoring happens at the far end of its
+    // event queue, not at the parser: each received note is queued whatever
+    // its channel, and the queue is 32 entries that already carry the 1 kHz
+    // DAC flush.  Sixteen note-offs and sixteen note-ons per step is 32 events
+    // in a burst, so events were dropped, and a dropped note-on leaves the
+    // pitch sitting on the note before it.  Which reads, on a rising sweep,
+    // as the pitch falling back now and then.
     function send(out, status, note, vel, channel) {
-        if (channel === null || channel === undefined) {
-            for (var c = 0; c < 16; c++) out.send([status | c, note, vel]);
-        } else {
-            out.send([status | (channel & 15), note, vel]);
-        }
+        out.send([status | (channel & 15), note, vel]);
     }
 
     // --- the sweep --------------------------------------------------------
@@ -348,14 +350,17 @@
         var fill = 1000 * analyser.fftSize / rate;
         var held = null;
 
+        var heldOn = 0;
         function release() {
-            if (held !== null) { send(o.output, 0x80, held, 0, o.channel); held = null; }
+            if (held !== null) { send(o.output, 0x80, held, 0, heldOn); held = null; }
         }
 
-        async function hear(note, expectHz) {
+        async function hear(note, expectHz, channel) {
+            var ch = channel === undefined ? o.channel : channel;
             release();
-            send(o.output, 0x90, note, o.velocity || 100, o.channel);
+            send(o.output, 0x90, note, o.velocity || 100, ch);
             held = note;
+            heldOn = ch;
             await sleep(SETTLE_MS + fill);
             analyser.getFloatTimeDomainData(buf);
             release();
@@ -366,6 +371,31 @@
 
         var anchor = steps[0], results = [], marks = [], warnings = [];
         try {
+            // Which channel the instrument is listening on.  There is no way
+            // to ask it, so this plays two notes two octaves apart on each
+            // channel in turn and watches for the pitch to move: on the wrong
+            // channel nothing is heard and the oscillator holds whatever it
+            // was already droning, so no movement is the answer "not this one".
+            if (o.channel === null || o.channel === undefined) {
+                var found = null;
+                for (var ch = 0; ch < 16 && found === null; ch++) {
+                    if (self.stopped) throw new Error('Stopped.');
+                    if (o.onProbe) o.onProbe(ch);
+                    var lo = await hear(anchor.note, null, ch);
+                    var hi = await hear(anchor.note + 24, lo.ok ? lo.hz * 4 : null, ch);
+                    if (lo.ok && hi.ok && Math.abs(cents(hi.hz, lo.hz) - 2400) < 300) {
+                        found = ch;
+                    }
+                }
+                if (found === null) {
+                    throw new Error('No MIDI channel moved the pitch. Check the ' +
+                        'keyboard is on the chosen MIDI port and that the 208 is ' +
+                        'droning into the chosen audio input and channel.');
+                }
+                o.channel = found;
+                if (o.onChannel) o.onChannel(found);
+            }
+
             var first = await hear(anchor.note, null);
             if (!first.ok) {
                 throw new Error('Nothing heard on the audio input (' + first.why +
@@ -419,6 +449,7 @@
             try { await ctx.close(); } catch (e) {}
         }
         return { readings: results, warnings: warnings, anchorHz: first.hz,
+                 channel: o.channel,
                  drift: marks.length > 1 ?
                      cents(marks[marks.length - 1].hz, marks[0].hz) : 0 };
     };
