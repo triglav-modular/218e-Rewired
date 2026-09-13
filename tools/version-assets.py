@@ -9,7 +9,11 @@ style.css?v=0b32ee17, so there is nothing stale to serve.
 Only the page itself still has to be revalidated, and it is the one file small
 enough for that to cost nothing.
 
-    tools/version-assets.py _site
+    tools/version-assets.py _site [--published-under <subpath>]
+
+--published-under says where this directory is served from, relative to the
+site root, and is checked against the page's own canonical before any absolute
+URL is stamped.  See stamp_meta.
 """
 import hashlib
 import re
@@ -60,12 +64,24 @@ def stamp(text, pattern, group, base, site, seen):
     return pattern.sub(replace, text)
 
 
-def stamp_meta(text, base, site, seen):
+def stamp_meta(text, base, site, seen, under=""):
     """Stamp any <meta content> that names a file of this site absolutely."""
     canonical = CANONICAL.search(text)
     if not canonical:
         return text
     href = canonical.group(1)
+    # These URLs are stamped with the hash of a file in THIS build, so they
+    # have to be URLs this build serves.  The development page carried the
+    # released site's canonical, so its og:image named the released card and
+    # was stamped with the hash of the dev card: a scraper asking for that URL
+    # gets the released bytes and may hold them for a year, immutable, under
+    # the hash the new bytes are going to be given.  Refusing here is not
+    # enough on its own - it is what makes the mismatch loud.
+    if under and href.rstrip("/").rsplit("/", 1)[-1] != under.strip("/"):
+        sys.exit(f"the page's canonical is {href}, which is not the "
+                 f"{under.strip('/')}/ site being built: its absolute URLs "
+                 f"name another site's files and must not be stamped with "
+                 f"this build's hashes")
     # The canonical is the URL of the directory this page sits in, so a URL
     # under it is a path relative to the page, resolved the way every other
     # reference in the file is.
@@ -91,7 +107,14 @@ def stamp_meta(text, base, site, seen):
 
 
 def main(argv):
-    site = Path(argv[1] if len(argv) > 1 else "_site")
+    args = [a for a in argv[1:] if not a.startswith("--")]
+    under = ""
+    for i, a in enumerate(argv):
+        if a == "--published-under":
+            under = argv[i + 1] if i + 1 < len(argv) else ""
+        elif a.startswith("--published-under="):
+            under = a.split("=", 1)[1]
+    site = Path(args[0] if args else "_site")
     if not site.is_dir():
         sys.exit(f"{site} is not a directory")
 
@@ -115,7 +138,7 @@ def main(argv):
     for html in sorted(site.rglob("*.html")):
         text = html.read_text(encoding="utf-8")
         out = stamp(text, HTML_REF, 3, html, site, stamped)
-        out = stamp_meta(out, html, site, stamped)
+        out = stamp_meta(out, html, site, stamped, under)
         if out != text:
             html.write_text(out, encoding="utf-8")
 

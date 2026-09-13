@@ -229,11 +229,40 @@ jobs:
           cp tools/Scan-Images.ps1 tools/Find-DfuDevice.ps1 tools/Show-Menu.ps1 \
              tools/validate_hex.py _site/kit/tools/
           du -sh _site/kit/mac _site/kit/windows
+          # The dev site is the same page served from /dev/, and it went out
+          # carrying the released site's canonical - so its og:image named the
+          # released card's URL, and version-assets.py below stamped that URL
+          # with the hash of the DEV card.  A scraper asking for it gets the
+          # released bytes and may keep them for a year, immutable, under the
+          # hash the new bytes are going to be given.  Point the dev page at
+          # itself instead, before anything is stamped.
+          python3 - "${{ matrix.site }}" <<'DEVURL'
+          import re, sys
+          from pathlib import Path
+          if sys.argv[1] != "dev":
+              raise SystemExit(0)
+          page = Path("_site/index.html")
+          text = page.read_text(encoding="utf-8")
+          m = re.search(r'<link\b[^>]*\brel="canonical"[^>]*\bhref="([^"]+)"', text)
+          if not m:
+              sys.exit("_site/index.html has no canonical link to move under /dev/")
+          root = m.group(1).rstrip("/") + "/"
+          n = text.count(root)
+          if not n:
+              sys.exit(f"nothing in the page references {root}")
+          page.write_text(text.replace(root, root + "dev/"), encoding="utf-8")
+          print(f"dev build: {n} absolute reference(s) moved to {root}dev/")
+          DEVURL
           # Every asset URL carries a hash of the file it points at, so an
           # update cannot be served from a cache that still holds the old one.
           # Without this a changed style.css keeps its name, and a browser
           # told it may hold that name for ten minutes does exactly that.
-          python3 tools/version-assets.py _site
+          #
+          # --published-under says where this directory is served from, so the
+          # absolute og: URLs can be refused rather than stamped when the page
+          # claims to live somewhere this build does not - which is the trap
+          # the rewrite above closes, and this is what keeps it closed.
+          python3 tools/version-assets.py _site ${{ matrix.site == 'dev' && '--published-under dev' || '' }}
           # No Jekyll: filenames here are ordinary, but underscore-prefixed
           # paths would be dropped silently and that is a nasty way to find out.
           touch _site/.nojekyll

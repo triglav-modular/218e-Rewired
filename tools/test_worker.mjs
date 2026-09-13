@@ -149,6 +149,34 @@ const OLD = {
 }
 
 {
+  // And the other way round.  The namespace is the half that can be read back
+  // without an API token, so it is the half you reach for when the dataset is
+  // the thing that has gone wrong - and a bad dataset binding used to take it
+  // down too, returning 204 before the KV write was ever reached.
+  const env = fakeEnv();
+  env.BUILDS = 'builds';                // a text variable, the documented slip
+  const res = await post(REAL, env);
+  check('no usable dataset still writes the namespace',
+        res.status === 204 && env.keys.length === 1,
+        `${res.status}, ${env.keys.length} key(s)`);
+  const m = env.keys[0] && env.keys[0].opts.metadata;
+  check('and the key carries the whole point, not a stub',
+        m && m.platform === 'win' && m.portamento_in === 'transpose',
+        JSON.stringify(m));
+}
+
+{
+  // Neither binding is usable: there is nowhere to write, so it says so by
+  // doing nothing at all.
+  const env = fakeEnv();
+  env.BUILDS = 'builds';
+  delete env.COUNTS;
+  const res = await post(REAL, env);
+  check('no dataset and no namespace records nothing',
+        res.status === 204 && env.written.length === 0 && env.keys.length === 0);
+}
+
+{
   // KV is a network call.  A namespace having a bad day must not turn a
   // download into an error.
   const env = fakeEnv();
@@ -284,15 +312,28 @@ const OLD = {
         sawHeaders && JSON.stringify([...sawHeaders]))
   globalThis.fetch = async () => origin()
 
-  origin = () => new Response('not here', { status: 404 })
+  // text/html, because that is what the origin actually sends: GitHub Pages
+  // answers every 404 with its own error page, verified against
+  // triglav-modular.github.io.  These two used to send no content-type at
+  // all - Response('not here') defaults to text/plain - so they passed on a
+  // shape the origin never produces, while a real 404 fell into the page rule
+  // and was told no-cache.
+  const errorPage = (status) => () => new Response('<html>not here</html>',
+    { status, headers: { 'content-type': 'text/html; charset=utf-8' } })
+  origin = errorPage(404)
   res = await get('/style.css?v=abc12345')
-  check('a versioned 404 is never cached',
+  check('a versioned 404 is never cached, even dressed as the error page',
         res.headers.get('cache-control') === 'no-store',
         res.headers.get('cache-control'))
-  origin = () => new Response('broken', { status: 502 })
+  origin = errorPage(502)
   res = await get('/style.css?v=abc12345')
   check('a versioned 5xx is never cached',
         res.headers.get('cache-control') === 'no-store')
+  origin = errorPage(404)
+  res = await get('/nothing-here/')
+  check('a page that is not there is not kept either',
+        res.headers.get('cache-control') === 'no-store',
+        res.headers.get('cache-control'))
 
   origin = () => new Response('<html>', { status: 200,
     headers: { 'content-type': 'text/html; charset=utf-8',

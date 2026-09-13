@@ -95,7 +95,13 @@ async function record(request, env, context) {
   // Not just "is it there": a dataset bound as a text variable arrives as the
   // string "builds", which is truthy and would throw on the write below.  Ask
   // for the one thing this needs from it instead.
-  if (typeof env?.BUILDS?.writeDataPoint !== 'function') {
+  const dataset = typeof env?.BUILDS?.writeDataPoint === 'function';
+  // Only when there is nowhere at all to write.  The dataset and the namespace
+  // are two sinks for two reasons - the dataset is the rich one, the namespace
+  // is the one that can be read back without an API token - and stopping here
+  // on a bad dataset binding took the credential-free counts down with it,
+  // which is the half you would be reaching for.
+  if (!dataset && !env.COUNTS) {
     return new Response(null, { status: 204 });
   }
   let body;
@@ -155,7 +161,7 @@ async function record(request, env, context) {
     portamento_in: oneOf(PORTAMENTO_IN, body.portamento_in),
   };
 
-  env.BUILDS.writeDataPoint({
+  if (dataset) env.BUILDS.writeDataPoint({
     // One index, which Analytics Engine samples on.
     indexes: [platform],
     // Positional, and read back by position: the newer columns follow the
@@ -236,7 +242,14 @@ export default {
       out.headers.set('x-robots-tag', 'noindex, nofollow');
     }
 
-    if (isPage || type.includes('text/html')) {
+    if (!ok) {
+      // A failure is never worth keeping, whatever it is dressed as.  First,
+      // because the origin answers every 404 with its own text/html error
+      // page: a missing style.css?v=... matched the page rule below and was
+      // told no-cache, and the versioned rule under it - the one that
+      // promises a failure is never cached - could not run at all.
+      out.headers.set('cache-control', 'no-store');
+    } else if (isPage || type.includes('text/html')) {
       // The page is the one file that cannot carry a version - it is the URL
       // people type - so it is the one that has to be checked every time.
       // no-cache, not no-store: it is still kept and still revalidated, so an
@@ -247,13 +260,10 @@ export default {
     } else if (url.searchParams.has('v')) {
       // Everything the page asks for carries a hash of its own contents in
       // the URL, so this exact URL can never mean different bytes later.
-      // Only when it worked: an origin 404 or 5xx stamped immutable would sit
-      // in browsers for a year under the exact URL the page keeps asking for.
-      if (ok) {
-        out.headers.set('cache-control', 'public, max-age=31536000, immutable');
-      } else {
-        out.headers.set('cache-control', 'no-store');
-      }
+      // Only when it worked, which the branch above has already settled: an
+      // origin 404 or 5xx stamped immutable would sit in browsers for a year
+      // under the exact URL the page keeps asking for.
+      out.headers.set('cache-control', 'public, max-age=31536000, immutable');
     }
     return out;
   }
