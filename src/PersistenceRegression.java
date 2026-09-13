@@ -220,8 +220,8 @@ public class PersistenceRegression extends GhidraScript {
         check("a musical capture ignores the state",capture(31)==0&&saveLive()==0&&writes==2);
         check("the state's own bit captures the change",capture(32)==1&&call(SAVE)==0&&writes==4);
         long p=call(NEWEST);
-        check("the record carries the state and nothing else in the reserved bytes",
-            p==BASE+512&&r(p+25,1)==1&&r(p+26,2)==0);
+        check("the record carries the state and leaves the tuning slot alone",
+            p==BASE+512&&r(p+25,1)==1&&r(p+26,1)==0&&r(p+27,1)==0);
         check("an unchanged state skips flash",capture(32)==0);
         w(0x6580,2,0x7fff); w(0x6582,2,0x1234); w(0x6584,2,0x5678);
         cold(); check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6409,1)==1);
@@ -240,6 +240,49 @@ public class PersistenceRegression extends GhidraScript {
         check("both up commits the state",writes==6&&r(call(NEWEST)+25,1)==0);
         call(TICK); check("and only once",writes==6);
         println("PASS latch state: own capture bit, saved on release, bounded, restored");
+    }
+    void tuningSlot() throws Exception {
+        // The selected tuning rides in the record's second reserved byte
+        // (0x1a), captured by its own mask bit, asked for by the scan on
+        // every pass, bounded to the three emitted tables, and restored
+        // into the cell the applier selects with.
+        fresh(); seed();
+        check("the slot starts at zero in record and snapshot",
+            r(call(NEWEST)+26,1)==0&&r(0x640a,1)==0);
+        w(0x6090,1,2);
+        check("a musical capture ignores the slot",capture(31)==0&&saveLive()==0&&writes==2);
+        check("a latch capture ignores it too",capture(32)==0&&writes==2);
+        // The sequence shares the snapshot's reserved bytes with the slot,
+        // and used to clear both of them with a single halfword store.
+        w(0x61e0,1,3);
+        check("a sequence capture leaves the slot's snapshot byte alone",
+            capture(16)==1&&r(0x640a,1)==0);
+        w(0x61e0,1,4); capture(16);
+        check("the slot's own bit captures the change",capture(64)==1&&call(SAVE)==0&&writes==4);
+        long p=call(NEWEST);
+        check("the record carries the slot and the last reserved byte stays zero",
+            p==BASE+512&&r(p+26,1)==2&&r(p+27,1)==0);
+        check("an unchanged slot skips flash",capture(64)==0);
+        byte[] good=e.readMemory(toAddr(p),512);
+        w(p+26,1,3); fixCrc(p);
+        check("a slot past the third table is rejected",call(NEWEST)==BASE);
+        e.writeMemory(toAddr(p),good);
+        check("and the bounded one accepted again",call(NEWEST)==p);
+        cold();
+        check("the slot survives a power cycle",r(0x6090,1)==2&&r(0x640a,1)==2);
+        // Restoring the number is only half of it: the applier skips the
+        // table copy while its guard says the slot in the cell is already
+        // the one in RAM 0x854.  The bootstrap clears the guard, so the
+        // first scan applies the restored slot and lights its LEDs.
+        check("the apply guard is clear, so the first scan applies it",r(0x60e4,2)==0);
+        // There is no gesture to wait out - an edit key steps the slot once
+        // per press - so the scan asks for it every pass and the capture's
+        // own compare is what keeps a press to a single write.
+        w(0x6090,1,1); call(TICK);
+        check("a slot change commits on the scan that sees it",
+            writes==6&&r(call(NEWEST)+26,1)==1);
+        call(TICK); check("and only once",writes==6);
+        println("PASS tuning slot: own capture bit, saved on change, bounded, restored");
     }
     void retries() throws Exception {
         for(String fault:new String[]{"locked","body","commit"}) {
@@ -286,7 +329,7 @@ public class PersistenceRegression extends GhidraScript {
     void corruption() throws Exception {
         fresh(); seed(); w(0x613a,2,0); saveLive(); long p=BASE+512;
         byte[] good=e.readMemory(toAddr(p),512);
-        for(int off:new int[]{0,4,6,8,12,16,17,24,25,28,155,156,219}) {
+        for(int off:new int[]{0,4,6,8,12,16,17,24,25,26,28,155,156,219}) {
             e.writeMemory(toAddr(p),good); w(p+off,1,r(p+off,1)^1);
             check("CRC/metadata rejects corruption at "+off,call(NEWEST)==BASE);
         }
@@ -296,7 +339,7 @@ public class PersistenceRegression extends GhidraScript {
         w(p+16,2,1L<<bit); w(p+12,4,sum|(1L<<bit));
         check("old additive-checksum collision rejected",call(NEWEST)==BASE);
         // Semantic checks remain necessary even with a correctly formed CRC.
-        for(long[] invalid:new long[][]{{16,2,1024},{24,1,65},{28,2,0x4000},{156,1,29},{4,2,1},{8,4,0}}) {
+        for(long[] invalid:new long[][]{{16,2,1024},{24,1,65},{26,1,3},{28,2,0x4000},{156,1,29},{4,2,1},{8,4,0}}) {
             e.writeMemory(toAddr(p),good); w(p+invalid[0],(int)invalid[1],invalid[2]); fixCrc(p);
             check("out-of-range record rejected",call(NEWEST)==BASE);
         }
@@ -500,7 +543,7 @@ public class PersistenceRegression extends GhidraScript {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
         try {
-            basic(); relativeSteps(); latchState(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
+            basic(); relativeSteps(); latchState(); tuningSlot(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
             println("PERSISTENCE REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash/analog testing.");
         } finally { if(e!=null)e.dispose(); }
     }

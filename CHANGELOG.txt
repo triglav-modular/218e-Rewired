@@ -1,3 +1,6 @@
+2.4 (2026-09-13)
+- The selected tuning is now remembered between power cycles.
+
 2.3 (2026-09-12)
 - Any preset knob can now be set to None, which leaves it as a preset voltage.
 - The add-to-pitch preset voltage can now be quantized to the selected tuning.

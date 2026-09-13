@@ -1203,8 +1203,9 @@ RAM_REGIONS = [
     (0x62E0, 0x62E1, "persistence request/result"),
     (0x62E1, 0x62E2, "which rotation page holds the newest record"),
     # Both inside the block the boot wrapper zeroes before the record is
-    # restored: the state comes back from the record's byte 0x19, and a
-    # stale countdown would flash the pads at power-up.
+    # restored: the state comes back from the record's byte 0x19 - the
+    # tuning slot comes back from 0x1a in the same pass - and a stale
+    # countdown would flash the pads at power-up.
     (0x62E2, 0x62E3, "latch transpose state, persisted: 0 hold, 1 transpose"),
     (0x62E3, 0x62E4, "pads 2 & 3 acknowledgment countdown, in scans"),
     (0x62E4, 0x62E8, "the sequence number that record carries"),
@@ -1232,7 +1233,7 @@ RAM_REGIONS = [
     (0x6300, 0x63E0, "canonical v2 record, staged for body then marker commit"),
     (0x6400, 0x64CC, "canonical musical payload from completed edit gestures"),
     (0x608E, 0x608F, "latch-position mirror"),
-    (0x6090, 0x6091, "tuning slot"),
+    (0x6090, 0x6091, "tuning slot, persisted: 0..2"),
     (0x6094, 0x6098, "output error accumulator"),
     (0x6098, 0x609A, "vibrato error accumulator"),
     # Two bytes, not four: the second halfword was reserved for a pressed-

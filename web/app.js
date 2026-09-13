@@ -207,10 +207,10 @@
 
     // --- Scala files ------------------------------------------------------
     // The three slots are not interchangeable, so which file goes where is a
-    // real choice rather than upload order: slot 0 is what the instrument
-    // powers up in, and the two edit keys each toggle against slot 2.
+    // real choice rather than upload order: the two edit keys each toggle
+    // against slot 2, and the selection is remembered between power cycles.
     var SLOTS = [
-        { name: 'Slot 0', note: 'power-on default · rem-en LED lit · edit key 28 toggles it against slot 2' },
+        { name: 'Slot 0', note: 'rem-en LED lit · edit key 28 toggles it against slot 2' },
         { name: 'Slot 1', note: 'trn LED lit · edit key 27 toggles it against slot 2' },
         { name: 'Slot 2', note: 'both LEDs dark · the slot the other two toggle against' }
     ];

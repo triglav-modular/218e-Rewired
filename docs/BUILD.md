@@ -324,8 +324,10 @@ Each must have 12 degrees unless a `.kbm` says otherwise, and may repeat at
 whatever interval it declares — the table steps that period and the octave
 controls are rebuilt to match it, so a scale that never reaches a 2/1 still
 plays in tune with its own switches. All three slots must agree about the
-period, because there is one set of octave controls. Slot 0 is the power-on default; in edit mode
-key 28 toggles slot 0 against slot 2 and key 27 toggles slot 1 against slot 2.
+period, because there is one set of octave controls. In edit mode
+key 28 toggles slot 0 against slot 2 and key 27 toggles slot 1 against slot 2,
+and the slot left selected is the one the keyboard powers up in. A DFU update
+erases the stored selection, so a freshly flashed keyboard starts on slot 0.
 Slots you do not fill keep the factory temperament, and a slot left empty
 between two filled ones stays empty rather than collapsing.
 

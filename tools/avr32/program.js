@@ -5475,6 +5475,13 @@ function assembleProgram() {
         emit("LD.UB R8,R0[0x19]");
         emit("CP.W R8,0x1");
         emit("BR{hi} 0x8001cde0");
+        // The tuning slot indexes the three emitted tables, so it is
+        // bounded here rather than left to the applier's own clamp: a
+        // record naming a fourth slot is a corrupt record, not a request
+        // for slot 0.
+        emit("LD.UB R8,R0[0x1a]");
+        emit("CP.W R8,0x2");
+        emit("BR{hi} 0x8001cde0");
         emit("MOV R1,0x0");
         padTo(0x8001cd30);
         emit("ADD R8,R0,R1 << 0x1");
@@ -5642,12 +5649,16 @@ function assembleProgram() {
         emit("SUB R1,-0x1");
         emit("RJMP 0x8001cf10");
         padTo(0x8001cf90);
-        // The latch state, from the snapshot the same way as the rest:
-        // 0x6409 in the payload, 0x0019 in the record.
+        // The latch state and the tuning slot, from the snapshot the same
+        // way as the rest: 0x6409 and 0x640a in the payload, 0x0019 and
+        // 0x001a in the record.  Two byte copies, not one halfword: both
+        // addresses are odd.
         emit("MOV R8,0x6409");
         emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R10,R8[0x1]");
         emit("MOV R8,0x6319");
         emit("ST.B R8[0x0],R9");
+        emit("ST.B R8[0x1],R10");
         emit("MOV R12,0x6300");
         emit("MCALL PC[0x8001cfbc]");
         emit("MOV R8,0x6300");
@@ -5702,6 +5713,15 @@ function assembleProgram() {
         // missing or rejected record leaves the hold state.
         emit("LD.UB R9,R0[0x19]");
         emit("MOV R8,0x62e2");
+        emit("ST.B R8[0x0],R9");
+        // The tuning slot, into the cell the applier selects with.  The
+        // first-use bootstrap put slot 0 there before this ran, so a
+        // missing or rejected record still powers up on slot 0.  The
+        // apply guard at 0x60e4 is zero either way, so the first scan
+        // copies whichever table this names into RAM 0x854 and lights the
+        // LEDs for it - the selection is restored, not just the number.
+        emit("LD.UB R9,R0[0x1a]");
+        emit("MOV R8,0x6090");
         emit("ST.B R8[0x0],R9");
         padTo(0x8001d070);
         emit("LDM SP++,R0,R1,R7,PC");
@@ -5859,9 +5879,9 @@ function assembleProgram() {
 
         // Capture only completed musical edits into 0x6400..0x64cb.
         // R12 mask: bits 0..3 = released preset pads, bit 4 = sequence,
-        // bit 5 = the latch's transpose state.
+        // bit 5 = the latch's transpose state, bit 6 = the tuning slot.
         // Return R12 = changed. Unchanged gestures (including empty clear)
-        // never write even on a blank ring. Mask 0x3f initializes every
+        // never write even on a blank ring. Mask 0x7f initializes every
         // snapshot byte at boot; no snapshot survives a warm reset.
         begin(0x8001d280);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
@@ -5911,9 +5931,11 @@ function assembleProgram() {
         padTo(0x8001d30c);
         emit("ST.B R3[0x8],R4");
         emit("MOV R8,0x0");
-        // 0x640a..0x640b stay reserved zero; 0x6409 is the latch state's
-        // and is left alone here, or a sequence capture would wipe it.
-        emit("ST.H R3[0xa],R8");
+        // 0x640b alone is still reserved zero.  0x6409 and 0x640a hold the
+        // latch state and the tuning slot, and a sequence capture has to
+        // leave both alone; the halfword store that used to stand here
+        // reached 0x640a and would now wipe the slot.
+        emit("ST.B R3[0xb],R8");
         emit("MOV R1,0x0");
         padTo(0x8001d320);
         emit("CP.W R1,0x40");
@@ -5956,7 +5978,7 @@ function assembleProgram() {
         emit("MOV R8,R2");
         emit("ANDL R8,0x2");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001d3d8");
+        emit("BR{eq} 0x8001d3c8");
         emit("MOV R8,0x62e2");
         emit("LD.UB R9,R8[0x0]");
         emit("LD.UB R8,R3[0x9]");
@@ -5965,7 +5987,21 @@ function assembleProgram() {
         emit("MOV R0,0x1");
         padTo(0x8001d3c0);
         emit("ST.B R3[0x9],R9");
-        padTo(0x8001d3d8);
+        padTo(0x8001d3c8);
+        // Bit 6: the selected tuning slot, a byte compared like the rest.
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x4");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d3f0");
+        emit("MOV R8,0x6090");
+        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R8,R3[0xa]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001d3e8");
+        emit("MOV R0,0x1");
+        padTo(0x8001d3e8);
+        emit("ST.B R3[0xa],R9");
+        padTo(0x8001d3f0);
         emit("MOV R12,R0");
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
         finish("persist_capture", 0x8001d400);
@@ -6053,16 +6089,25 @@ function assembleProgram() {
         emit("MOV R8,0x20");            // bit 5: the latch state
         emit("OR R2,R8");
         padTo(0x8001d4d8);
+        // The tuning slot is asked for on every scan, with no release to
+        // wait for.  It is not a value a held control keeps moving: the
+        // edit keys step it once per press, so the capture's own compare
+        // already bounds a press to a single flash write, and the moment
+        // the write lands is the press - which is in edit mode, where
+        // nothing is being played by hand.
+        emit("MOV R8,0x40");            // bit 6: the tuning slot
+        emit("OR R2,R8");
+        padTo(0x8001d4e0);
         emit("CP.W R2,0x0");
-        emit("BR{eq} 0x8001d4f0");
+        emit("BR{eq} 0x8001d4f8");
         emit("MOV R12,R2");
         emit("MCALL PC[0x8001d518]");
         emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001d4f0");
+        emit("BR{eq} 0x8001d4f8");
         emit("MOV R8,0x1");
         emit("ST.B R0[0x0],R8");
         emit("MCALL PC[0x8001d51c]");
-        padTo(0x8001d4f0);
+        padTo(0x8001d4f8);
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
         padTo(0x8001d518);
         word(0x8001d280);
@@ -6117,7 +6162,7 @@ function assembleProgram() {
         emit("MOV R9,-0x1");
         emit("ST.B R10[0x1],R9");
         emit("MCALL PC[0x8001d5b4]");
-        emit("MOV R12,0x3f");
+        emit("MOV R12,0x7f");
         emit("MCALL PC[0x8001d5bc]");   // initialize completed-edit snapshot
         emit("MOV R10,0x62e0");
         emit("MOV R9,0x1");
@@ -9868,10 +9913,13 @@ function assembleProgram() {
         padTo(0x800038c6);
         finish("pitch_target_blend_hook", 0x800038c6);
 
-        // Tuning applier and tables.  Selector lives in the old remote-enable
-        // byte (state+2, persisted with settings): 0 = Sabat II (default),
-        // 1 = slot 1, 2 = slot 2.  On change: copy the 32-entry table to RAM
-        // 0x854 and set the LEDs (rem-en = ch 5 = slot 0, trn = ch 8 = slot 1).
+        // Tuning applier and tables.  Selector lives at RAM 0x6090 - see the
+        // edit-key blocks below for why it is not state+2 - and is carried in
+        // the persistence record's byte 0x1a, so the slot a player left
+        // selected is the slot the instrument powers up in.  0 = slot 0
+        // (the first-boot default), 1 = slot 1, 2 = slot 2.  On change: copy
+        // the 32-entry table to RAM 0x854 and set the LEDs (rem-en = ch 5 =
+        // slot 0, trn = ch 8 = slot 1).
         // Outside edit mode the LEDs are re-asserted every scan.  The old
         // transpose-mode byte (state+0x6a) is forced to zero permanently.
         begin(0x80019a40);
