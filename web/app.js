@@ -1051,6 +1051,7 @@
         el.classList.add('on');
         el.insertAdjacentText('beforeend', text + '\n');
         el.scrollTop = el.scrollHeight;
+        $('calLogRow').classList.add('on');
         $('calLogClear').disabled = false;
     }
 
@@ -1060,6 +1061,7 @@
         el.classList.add('on');
         el.insertAdjacentHTML('beforeend', logLine(r) + '\n');
         el.scrollTop = el.scrollHeight;
+        $('calLogRow').classList.add('on');
         $('calLogSave').disabled = false;
         $('calLogClear').disabled = false;
     }
@@ -1068,6 +1070,7 @@
         logRows = [];
         $('calLog').textContent = '';
         $('calLog').classList.remove('on');
+        $('calLogRow').classList.remove('on');
         $('calLogSave').disabled = true;
         $('calLogClear').disabled = true;
     });

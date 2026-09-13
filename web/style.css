@@ -2720,7 +2720,10 @@ section,
 .autolog.on { display: block; }
 .autolog b { color: var(--accent); font-weight: 600; }
 .autolog i { color: #ff8f8f; font-style: normal; }
-.autologrow { margin-top: .7rem; }
+/* Hidden until there is a log to act on: two dimmed buttons under an empty
+   box are furniture, not an offer. */
+.autologrow { display: none; margin-top: .7rem; }
+.autologrow.on { display: flex; }
 /* The log is a diagnostic, so its buttons are not the page's big accent pills:
    those are for the things somebody came here to do. */
 .autologrow button {
