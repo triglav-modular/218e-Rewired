@@ -943,6 +943,7 @@
             // of measuring corrected the remainder as though the first round
             // had never happened.
             var isCorrection = /Offset_Cents/i.test(r.result);
+            var clearedReadings = false;
             var rowsIn = {}, sources = {}, found = 0;
             // Split on any line ending: CRLF from Windows, and CR alone,
             // which Excel can still write.
@@ -987,7 +988,9 @@
                 baseline = rowsIn;
                 baselineSources = sources;
                 baselineName = f.name;
+                var had = measured.some(function (v) { return v !== 0; });
                 measured = measured.map(function () { return 0; });
+                clearedReadings = had;
             } else {
                 for (var k in rowsIn) {
                     if (k >= PLAYABLE_LOW && k <= PLAYABLE_HIGH) measured[k] = rowsIn[k];
@@ -998,7 +1001,10 @@
             buildTable(); drawPlot(); validateCal(); invalidate();
             msg($('calMsg'), 'ok', isCorrection
                 ? 'Loaded ' + f.name + ' as the table already on the instrument. ' +
-                  'Anything measured now accumulates onto it.'
+                  'Anything measured now accumulates onto it.' +
+                  (clearedReadings ? ' The readings that were entered have been ' +
+                   'cleared: they were taken against whatever was flashed at the ' +
+                   'time, which this file now says. Measure again.' : '')
                 : 'Loaded ' + found + ' readings from ' + f.name + '.');
         };
         r.readAsText(f);

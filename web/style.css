@@ -2745,5 +2745,6 @@ section,
 /* Which table the readings are being taken on top of.  Stated rather than
    implied: a wrong baseline folds into a plausible wrong table, with nothing
    to show for it until the instrument is measured again. */
-.calbase { margin: .9rem 0 .2rem; }
+.calbase { margin: .2rem 0 .6rem; }
+.calbaserow { margin-bottom: 1.4rem; }
 .calbase.set { color: var(--accent); }
