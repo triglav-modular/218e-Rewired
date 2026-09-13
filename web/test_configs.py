@@ -157,10 +157,15 @@ CONFIGS = [
                           {"pressure_fix": False, "pressure_portamento": False}),
     ("portamento_off",    [(r"^pressure_portamento = true", "pressure_portamento = false")],
                           {"pressure_portamento": False}),
+    # These edits name the option, not the value it currently holds.  Pinning
+    # the old default in the pattern made the matrix go stale the moment
+    # config/218e.toml was aligned with the builder page: the substitution
+    # matched nothing and CI failed with "matched 0 times" rather than with
+    # anything about the firmware.
     # The jack transposer: a cave in front of the housekeeping, a fixed patch
     # over the factory's glide-index add, and a keys-per-period table the two
     # builders have to derive the same way - here from a .kbm as well.
-    ("portamento_transpose", [(r'^portamento_in = "portamento"', 'portamento_in = "transpose"'),
+    ("portamento_transpose", [(r'^portamento_in = .*', 'portamento_in = "transpose"'),
                               (r"^alternate_tunings = false",
                                'alternate_tunings = [["tunings/diatonic7.scl", "tunings/diatonic7.kbm"], '
                                '"tunings/12TET.scl"]')],
@@ -170,9 +175,18 @@ CONFIGS = [
                                   + scala(["tunings/12TET.scl"])}),
     # A keyboard map wider than the transposer's 32-entry table builds with
     # the transposer off; wide_map_transposed below is the refusal.
+    # A map wider than the 32-entry table cannot be rotated, and both
+    # builders refuse the pair - so this variant has to name the permitted
+    # twin explicitly now that both inputs to the rotation are on by
+    # default.  It is also the only configuration left that exercises the
+    # rotation being OFF in the parity matrix.
     ("wide_map",          [(r"^alternate_tunings = false",
-                            f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]')],
-                          {"alternate_tunings": mapped([(WIDE, WIDE_MAP)])}),
+                            f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]'),
+                           (r'^portamento_in = .*', 'portamento_in = "portamento"'),
+                           (r"^quantize_presets = .*", "quantize_presets = false")],
+                          {"alternate_tunings": mapped([(WIDE, WIDE_MAP)]),
+                           "portamento_in": "portamento",
+                           "quantize_presets": False}),
     ("one_volt",          [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")],
                           {"volts_per_octave": 1.0}),
     ("pitch_correction",  [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
@@ -186,7 +200,7 @@ CONFIGS = [
                              (r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
                             {"pitch_offset": False, "pitch_correction": calibration_rows()}),
     # The preset quantiser: one cave and one pool word, gated together.
-    ("quantize_presets",  [(r"^quantize_presets = false", "quantize_presets = true")],
+    ("quantize_presets",  [(r"^quantize_presets = .*", "quantize_presets = true")],
                           {"quantize_presets": True}),
     ("tunings_one",       [(r"^alternate_tunings = false",
                             'alternate_tunings = ["tunings/12TET.scl"]')],
@@ -308,7 +322,7 @@ REFUSALS = [
     # transposer off, which the wide_map row above proves.
     ("wide_map_transposed", [(r"^alternate_tunings = false",
                               f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]'),
-                             (r'^portamento_in = "portamento"', 'portamento_in = "transpose"')],
+                             (r'^portamento_in = .*', 'portamento_in = "transpose"')],
                             {"alternate_tunings": mapped([(WIDE, WIDE_MAP)]),
                              "portamento_in": "transpose"},
                             "use a map of up to 32",
@@ -317,16 +331,24 @@ REFUSALS = [
     # other way, so nothing downstream would have caught it.
     ("fine_latch",        [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
-                            + ", ".join([f'["{FINE}", "{FINE_MAP}"]'] * 3) + ']')],
-                          {"alternate_tunings": mapped([(FINE, FINE_MAP)] * 3)},
+                            + ", ".join([f'["{FINE}", "{FINE_MAP}"]'] * 3) + ']'),
+                           (r'^portamento_in = .*', 'portamento_in = "portamento"'),
+                           (r"^quantize_presets = .*", "quantize_presets = false")],
+                          {"alternate_tunings": mapped([(FINE, FINE_MAP)] * 3),
+                           "portamento_in": "portamento",
+                           "quantize_presets": False},
                           "closest two different keys", "closest two different keys"),
     # The same collision, hidden from any gap measured between adjacent keys.
     # Separate from fine_latch on purpose: adding the page's missing guard does
     # nothing for a CLI that measures the wrong gap.
     ("reordered_latch",   [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
-                            + ", ".join([f'["{FINE}", "{REORDERED_MAP}"]'] * 3) + ']')],
-                          {"alternate_tunings": mapped([(FINE, REORDERED_MAP)] * 3)},
+                            + ", ".join([f'["{FINE}", "{REORDERED_MAP}"]'] * 3) + ']'),
+                           (r'^portamento_in = .*', 'portamento_in = "portamento"'),
+                           (r"^quantize_presets = .*", "quantize_presets = false")],
+                          {"alternate_tunings": mapped([(FINE, REORDERED_MAP)] * 3),
+                           "portamento_in": "portamento",
+                           "quantize_presets": False},
                           "closest two different keys", "closest two different keys"),
     # One key table entry per key, and no .kbm to map them.
     ("unmapped_thirteen", [(r"^alternate_tunings = false",
@@ -359,8 +381,12 @@ REFUSALS = [
     # Nine units apart, which the nominal comparison called safe.
     ("nominal_margin",    [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
-                            + ", ".join([f'["{FINE53}", "{FINE53_MAP}"]'] * 3) + ']')],
-                          {"alternate_tunings": mapped([(FINE53, FINE53_MAP)] * 3)},
+                            + ", ".join([f'["{FINE53}", "{FINE53_MAP}"]'] * 3) + ']'),
+                           (r'^portamento_in = .*', 'portamento_in = "portamento"'),
+                           (r"^quantize_presets = .*", "quantize_presets = false")],
+                          {"alternate_tunings": mapped([(FINE53, FINE53_MAP)] * 3),
+                           "portamento_in": "portamento",
+                           "quantize_presets": False},
                           "closest two different keys", "closest two different keys"),
     # Past the signed pitch limit once the octave controls are stepped up.
     ("signed_pitch_limit", [(r"^alternate_tunings = false",

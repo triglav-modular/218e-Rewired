@@ -3979,11 +3979,25 @@ function assembleProgram() {
         // 0x6092 carries the count the last rebuild saw, and is updated here
         // whichever state is in force, so a switch into hold starts from the
         // preset standing now rather than from one two rebuilds old.
-        var lppEntry = 0x8001eca8, lppLoop = 0x8001ecd0, lppOwn = 0x8001ecf4;
-        var lppHave = 0x8001ecfc, lppNext = 0x8001ed28, lppSave = 0x8001ed30;
-        var lppDone = 0x8001ed38, lppPool = 0x8001ed40;
+        var lppEntry = 0x8001eca8, lppLoop = 0x8001ecdc, lppOwn = 0x8001ed00;
+        var lppHave = 0x8001ed08, lppNext = 0x8001ed34, lppSave = 0x8001ed3c;
+        var lppDone = 0x8001ed44, lppPool = 0x8001ed4c;
         begin(lppEntry);
         emit("STM --SP,R0,R1,R2,R3,R7,R8,R9,R10,R11,R12,LR");
+        // Stand down while the pads 2 & 3 gesture is in progress.  Those
+        // pads SELECT PRESETS on the way in with the switch in its middle
+        // position, so the preset moves under the set as the gesture is
+        // made - and pinning against that bakes the gesture's own fingers
+        // into every stamp.  Measured: 4 degrees to 12 and back left 8
+        // degrees, 322 units, in the stamps, because the state flipped to
+        // transpose before the pads were restored and the pin was inert by
+        // then.  The octave shadows 0x6584 for exactly this reason; leaving
+        // 0x6092 alone here is the same trick, so the restore lands on the
+        // count the pin already has and nothing needs undoing.
+        emit("MOV R3,0x6582");
+        emit("LD.UH R3,R3[0x0]");
+        emit("CP.W R3,0x0");
+        emit(StringFormat("BR{ne} 0x%x", lppDone));
         emit("MOV R3,0x60f3");
         emit("LD.UB R3,R3[0x0]");                                 // the count now
         emit("MOV R2,0x6092");
@@ -4031,7 +4045,7 @@ function assembleProgram() {
         emit("LDM SP++,R0,R1,R2,R3,R7,R8,R9,R10,R11,R12,PC");
         padTo(lppPool);
         word(0x8001e420); // preset_entry
-        finish("latch_preset_pin", 0x8001ed48);
+        finish("latch_preset_pin", 0x8001ed54);
 
         // cv_stamps: the two passes around the rebuild, and the refresh.
         // Called from inside the rebuild with N in R8 and the slot in R10
