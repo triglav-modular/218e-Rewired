@@ -414,7 +414,8 @@ python3 tools/test_controls.py     # emitted knob roles and strip-gesture owners
 
 `test_controls.py` runs default, six-order/transpose, tuned-transpose, and
 lean (factory arp, no sequencer or divider) images with persistence on and
-off. It checks all six note orders, preset-4
+off, plus knob 2 on swing and on step patterns, which build once each
+because neither role touches persistence. It checks all six note orders, preset-4
 isolation through the actual ADC-event pitch target and DAC path from the
 first knob movement, release-triggered saves, released/unlatched press
 history, and pitch ordering with octave-stacked notes and equal pitches.
@@ -475,7 +476,7 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
 | `tools/avr32/sweep.py` | representative configurations, including all four persistence variants, built by both toolchains and compared byte for byte |
 | `web/test_configs.py` | the browser build matches `build.py` across its option/interaction matrix |
-| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, and clock continuation after saves |
+| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, clock continuation after saves, and the keyboard played over a running take |
 | `web/test_matrix.js` | **2,304 option combinations**, including persistence on/off, built through the guarded path |
 
 Every build, in either toolchain, has to pass four structural checks before it

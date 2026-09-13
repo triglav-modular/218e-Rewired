@@ -117,6 +117,16 @@ def main() -> None:
                     command.append("quick")
                 command += ["-postScript", "SequenceEditRegression.java", mode,
                             "volatile" if args.no_persist else "persist"]
+            # The keyboard over a running take. It needs a sequencer, a
+            # divider and the persisted record all in one image, which is
+            # only this mode; its bench() asserts all three. Until it was
+            # wired in here nothing executed it at all, while docs/PLAN-2.0.md
+            # told the next reader it pinned the behaviour - so breaking
+            # seq_noteon_mute, dropping the 208-bus half of the contact
+            # handler, or letting a sequenced note survive a keyboard press
+            # left every suite in the repo green.
+            if mode == "seq-clock" and not args.no_persist:
+                command += ["-postScript", "PolyMidiProbe.java"]
             planned.append((mode, command))
 
         def emulate(mode: str, command: list[str]) -> str:
@@ -129,6 +139,8 @@ def main() -> None:
                 expected.append("PERSISTENCE REGRESSION PASS:")
                 if "clock" in mode:
                     expected.append("CLOCK REGRESSION PASS:")
+                if mode == "seq-clock":
+                    expected.append("POLY MIDI PROBE PASS:")
             if "seq" in mode:
                 expected += ["SEQUENCE TRANSPORT PASS:", "SEQUENCE EDIT PASS:"]
             missing = [marker.rstrip(":") for marker in expected if marker not in output]
@@ -147,8 +159,10 @@ def main() -> None:
                 failure = future.result()
                 print(f"--- {mode}", flush=True)
                 for line in (work / f"{mode}-emulation.log").read_text().splitlines():
-                    if "Regression.java>" in line:
-                        print(line.split("Regression.java>", 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
+                    for script in ("Regression.java>", "PolyMidiProbe.java>"):
+                        if script in line:
+                            print(line.split(script, 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
+                            break
                 if failure:
                     failures.append(failure)
         if failures:

@@ -32,7 +32,10 @@ import options  # noqa: E402
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variant", choices=("default", "roles", "tuned", "lean", "jack", "all"), default="all")
+    parser.add_argument("--variant",
+                        choices=("default", "roles", "tuned", "lean", "jack",
+                                 "swing", "patterns", "all"),
+                        default="all")
     parser.add_argument("--persist", choices=("on", "off", "both"), default="both")
     parser.add_argument("--image", type=Path)
     parser.add_argument("--ghidra", type=Path)
@@ -58,7 +61,8 @@ def main() -> None:
         name: (REPO / "build" / name).read_bytes() if (REPO / "build" / name).exists() else None
         for name in METADATA
     }
-    variants = ("default", "roles", "tuned", "lean", "jack") if args.variant == "all" else (args.variant,)
+    variants = (("default", "roles", "tuned", "lean", "jack", "swing", "patterns")
+                if args.variant == "all" else (args.variant,))
     persists = (False, True) if args.persist == "both" else (args.persist == "on",)
     failures = []
     # Built one at a time - every build writes the same fixed paths under
@@ -68,7 +72,12 @@ def main() -> None:
     planned: list[tuple[str, list[str]]] = []
     try:
         for variant in variants:
-            for persist in persists:
+            # Knob 2's other two roles. They are shipped in every image
+            # built with them and were executed by nothing: the pattern
+            # gate's mask walk and its wrap, and swing's alternating pair,
+            # had no emulation at all. Neither has anything to do with
+            # persistence, so they build once rather than twice.
+            for persist in ((True,) if variant in ("swing", "patterns") else persists):
                 name = f"{variant}-{'persist' if persist else 'volatile'}"
                 image = args.image.resolve() if args.image else work / f"{name}.hex"
                 if not args.image:
@@ -96,6 +105,14 @@ def main() -> None:
                     # so its cave is exercised against the other roles.
                     role = ('knob1 = "order"\nknob2 = "spacing"\nknob4 = "vibrato"\n' if variant == "default"
                             else 'knob1 = "orders"\nknob2 = "quantized"\nknob4 = "trn"\n' if variant == "roles"
+                            else 'knob1 = "orders"\nknob2 = "swing"\nknob4 = "trn"\n' if variant == "swing"
+                            # Three patterns of different lengths, so the
+                            # wrap is a different number per entry and a
+                            # gate that wrapped at the mask's width instead
+                            # of the pattern's own would show.
+                            else 'knob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"\n'
+                                 'arp_patterns = ["x...x...x...x...", "x.x.x.x.", ["xx..", 4]]\n'
+                            if variant == "patterns"
                             else 'knob1 = "orders"\nknob4 = "trn"\n')
                     text = text.replace("[firmware]", role + "\n[firmware]", 1)
                     if variant == "jack":
@@ -154,7 +171,8 @@ def main() -> None:
                     "order" if variant == "default" else "orders", "persist" if persist else "volatile",
                     "9", "lean" if variant == "lean" else "full",
                     "quantized" if variant in ("default", "tuned", "jack") else "free",
-                    "quantized" if variant == "roles" else "spacing",
+                    {"roles": "quantized", "swing": "swing",
+                     "patterns": "patterns"}.get(variant, "spacing"),
                     "jack" if variant == "jack" else "knob"]))
 
         def emulate(name: str, command: list[str]) -> str:

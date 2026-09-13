@@ -576,13 +576,11 @@ def test_resolution(cfg: dict) -> None:
                   effective >= instant, f"{effective} vs {instant}")
             check(f"level {lvl}: within the {limit}-state ceiling of an 8-tap mean",
                   effective <= limit, f"{effective}")
-        # The error carried between scans cannot run away.
-        err, worst = 0, 0
-        for t in list(states) + list(reversed(states)):
-            _, err = divmod(4095 * blended((t << bits)//taps, 31) + err, scaled)
-            worst = max(worst, err)
-        check("the error accumulator stays inside one divisor",
-              worst < scaled, f"{worst} vs {scaled}")
+        # "The error carried between scans cannot run away" used to be
+        # asserted here as `remainder < divisor` over a Python divmod, which
+        # is a property of divmod and would hold whatever the firmware did.
+        # The firmware claim behind it - that the cell is handed the DIVU's
+        # remainder and not its quotient - is test_error_accumulator below.
     check("curve monotone with the sentinel", tab == sorted(tab))
 
 
@@ -802,6 +800,50 @@ def emitted_blocks(cfg: dict) -> dict[str, list[tuple[int, str]]] | None:
     return None
 
 
+def pool_guard(flash: dict[int, int], factory: dict[int, int]):
+    """The MCALLs of ours in `flash`, and a fault list over any memory.
+
+    Every `MCALL PC[x]` in the application image is decoded as (call, pool);
+    MCALL is f0 1f <signed word displacement from pc & ~3>.  Ours are the
+    calls we assembled, plus the calls - factory ones included - that read a
+    pool word we wrote.  The rest of the image is Buchla's and was right
+    before we touched it.
+    """
+    ours = {a for a, v in flash.items() if factory.get(a) != v}
+    calls = []
+    for pc in range(0x80002000, 0x80020000, 2):
+        if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
+            continue
+        d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
+        if d & 0x8000:
+            d -= 0x10000
+        calls.append((pc, (pc & ~3) + d * 4))
+    mine = [(pc, pool) for pc, pool in calls
+            if any(a in ours for a in range(pc, pc + 4))
+            or any(a in ours for a in range(pool, pool + 4))]
+
+    def faults(memory: dict[int, int]) -> list[str]:
+        word = lambda a: int.from_bytes(bytes(memory.get(a + i, 0) for i in range(4)), "big")
+        bad = []
+        for pc, pool in mine:
+            if pool not in memory:
+                bad.append(f"{pc:#x} calls through {pool:#x}, outside the image")
+                continue
+            value = word(pool)
+            # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
+            if not (0x80000000 <= value < 0x80020000 and value % 2 == 0):
+                bad.append(f"{pc:#x} -> {pool:#x} holds {value:#010x}")
+                continue
+            # The address must land on emitted code, not erased flash: a cave
+            # whose callee's block is off ships an MCALL into 0xff.  The audit
+            # found exactly that in a portamento-off build.
+            if memory.get(value, 0xFF) == 0xFF:
+                bad.append(f"{pc:#x} -> {pool:#x} -> {value:#x}, which is erased flash")
+        return bad
+
+    return mine, faults
+
+
 def test_call_pools(cfg: dict) -> None:
     """Every MCALL must name a word that holds a code address, not code.
 
@@ -833,46 +875,10 @@ def test_call_pools(cfg: dict) -> None:
         return
     flash, _ = B.parse_hex(out)
     factory, _ = B.parse_hex(REPO / cfg["firmware"]["factory_hex"])
-    ours = {a for a, v in flash.items() if factory.get(a) != v}
-
-    # Every `MCALL PC[x]` in the application image, as (call, pool).  MCALL is
-    # f0 1f <signed word displacement from pc & ~3>.
-    calls = []
-    for pc in range(0x80002000, 0x80020000, 2):
-        if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
-            continue
-        d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
-        if d & 0x8000:
-            d -= 0x10000
-        calls.append((pc, (pc & ~3) + d * 4))
-
-    # Ours are the calls we assembled, plus the calls - factory ones included -
-    # that read a pool word we wrote.  The rest of the image is Buchla's and
-    # was right before we touched it.
-    emitted = [(pc, pool) for pc, pool in calls
-               if any(a in ours for a in range(pc, pc + 4))]
-    mine = [(pc, pool) for pc, pool in calls
-            if any(a in ours for a in range(pc, pc + 4))
-            or any(a in ours for a in range(pool, pool + 4))]
-
-    def faults(memory: dict[int, int]) -> list[str]:
-        word = lambda a: int.from_bytes(bytes(memory.get(a + i, 0) for i in range(4)), "big")
-        bad = []
-        for pc, pool in mine:
-            if pool not in memory:
-                bad.append(f"{pc:#x} calls through {pool:#x}, outside the image")
-                continue
-            value = word(pool)
-            # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
-            if not (0x80000000 <= value < 0x80020000 and value % 2 == 0):
-                bad.append(f"{pc:#x} -> {pool:#x} holds {value:#010x}")
-                continue
-            # The address must land on emitted code, not erased flash: a cave
-            # whose callee's block is off ships an MCALL into 0xff.  The audit
-            # found exactly that in a portamento-off build.
-            if memory.get(value, 0xFF) == 0xFF:
-                bad.append(f"{pc:#x} -> {pool:#x} -> {value:#x}, which is erased flash")
-        return bad
+    mine, faults = pool_guard(flash, factory)
+    emitted = [(pc, pool) for pc, pool in mine
+               if any(a in {a for a, v in flash.items() if factory.get(a) != v}
+                      for a in range(pc, pc + 4))]
 
     check("the image holds MCALLs of ours to check", bool(mine), "none decoded")
     if not mine:
@@ -898,6 +904,108 @@ def test_call_pools(cfg: dict) -> None:
     for offset, byte in enumerate((0xEB, 0xCD, 0x40, 0x80)):
         planted[mine[0][1] + offset] = byte
     check("a pool holding instruction bytes is still caught", bool(faults(planted)))
+
+
+# Configurations that turn a shipped block off, as substitutions on
+# config/218e.toml.  The bug class is per-configuration and invisible in the
+# default image: a hook that survives while its callee's block does not
+# leaves an MCALL reading a pool word in erased flash, which is the
+# dead-panel-still-enumerating symptom docs/HANDOFF.md describes.  The
+# portamento row is the one the audit found by reading.
+FEATURE_OFF = {
+    "portamento_off": (("pressure_portamento", "false"),),
+    "pressure_off": (("pressure_fix", "false"), ("pressure_portamento", "false")),
+    "sequencer_off": (("sequencer", "false"),),
+    "seq_and_clock_off": (("sequencer", "false"), ("clock_divide", "false")),
+}
+
+
+def test_call_pools_feature_off(cfg: dict) -> None:
+    """The pool and reachability guards, over images with blocks turned off.
+
+    test_call_pools reads exactly one file - [firmware].output_hex - while
+    docs/BUILD.md states that a disabled feature is never reachable and
+    docs/HANDOFF.md says to trust the guard.  web/test_matrix.js passes all
+    1,536 combinations without touching this, because it compares two
+    toolchains that were told the same thing.
+
+    Each configuration is assembled here rather than read out of a log left
+    in build/ by an earlier run: those logs turn every BLOCK on and only the
+    features off, which is the half of the space that cannot strand a call,
+    and they are as old as whenever make_corpus.py last ran.
+    """
+    print("call pools, feature-off builds")
+    if not (REPO / cfg["firmware"]["factory_hex"]).exists():
+        print("  skip  factory image not present")
+        return
+    import tempfile
+    base = (REPO / "config" / "218e.toml").read_text()
+    factory, _ = B.parse_hex(REPO / cfg["firmware"]["factory_hex"])
+    saved = {name: (REPO / "build" / name).read_bytes()
+             if (REPO / "build" / name).exists() else None
+             for name in ("VERSION", "build.properties", "assemble.js.log",
+                          "patch_manifest.txt", "tables.txt")}
+    work = Path(tempfile.mkdtemp(prefix="call-pools-", dir=REPO / "build"))
+    try:
+        for name, options in FEATURE_OFF.items():
+            text = base
+            for key, value in options:
+                text, count = re.subn(rf"^{key} = (?:true|false)$",
+                                      f"{key} = {value}", text, flags=re.M)
+                if count != 1:
+                    check(f"{name}: the config carries {key}", False, "not found")
+                    return
+            image = work / f"{name}.hex"
+            text, count = re.subn(r'^output_hex\s*=\s*"[^"]*"',
+                                  f'output_hex = "{image}"', text, flags=re.M)
+            if count != 1:
+                check(f"{name}: the regression image can be redirected", False, "")
+                return
+            # Same refusal the emulation harnesses make: a regression build
+            # must not be able to rewrite the flashers.
+            text, count = re.subn(r'^updaters?\s*=\s*(?:"[^"]*"|\[[^\]]*\])\n',
+                                  "", text, flags=re.M)
+            if count != 1 or any(k in tomllib.loads(text)["firmware"]
+                                 for k in ("updater", "updaters")):
+                check(f"{name}: the build cannot reach the flashers", False, "")
+                return
+            config = work / f"{name}.toml"
+            config.write_text(text)
+            result = subprocess.run(
+                [sys.executable, str(REPO / "tools" / "build.py"), "--no-ghidra",
+                 "--config", str(config)],
+                cwd=REPO, capture_output=True, text=True)
+            if result.returncode:
+                check(f"{name}: builds", False,
+                      (result.stdout + result.stderr).strip().splitlines()[-1])
+                continue
+            flash, _ = B.parse_hex(image)
+            mine, faults = pool_guard(flash, factory)
+            check(f"{name}: holds MCALLs of ours to check", bool(mine), "none decoded")
+            if not mine:
+                continue
+            check(f"{name}: all {len(mine)} MCALLs name a live pool word",
+                  not faults(flash), "; ".join(faults(flash)))
+            # And the reachability half on its own, planted: a pool word
+            # pointing into erased flash is what a disabled block leaves.
+            erased = next((a for a in sorted(flash)
+                           if 0x80002000 <= a < 0x80020000
+                           and a % 2 == 0 and flash[a] == 0xFF), None)
+            if erased is None:
+                check(f"{name}: the image has erased flash to point into", False, "")
+                continue
+            planted = dict(flash)
+            for offset, byte in enumerate(erased.to_bytes(4, "big")):
+                planted[mine[0][1] + offset] = byte
+            check(f"{name}: a pool into erased flash is still caught",
+                  bool(faults(planted)), f"pointed {mine[0][1]:#x} at {erased:#x}")
+    finally:
+        for name, data in saved.items():
+            path = REPO / "build" / name
+            if data is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(data)
 
 
 def test_output_interpolation(cfg: dict) -> None:
@@ -1014,29 +1122,49 @@ def test_vibrato() -> None:
 
 
 def test_poly_midi_lifecycle() -> None:
-    """Defaults, edit persistence and the arp switch have separate roles."""
+    """The arp switch never reaches the poly-MIDI setting.
+
+    What stood here was a Python state machine that defined its own boot(),
+    asserted against its own dictionary, and compared a variable with itself
+    to conclude that the arpeggiator switch could not change poly MIDI.  The
+    cave could have been deleted outright and it still printed ok.
+
+    Its three other claims - an unmigrated record loses poly MIDI and is
+    written back, a migrated one is left alone, and the caller gets the
+    loader's return rather than the saver's - are firmware claims, and
+    PersistenceRegression.polySettingsMigration() now executes the emitted
+    wrapper to make them.  This one is a claim about what is NOT there, so it
+    is asked of the source: no reader of the arp switch may write the poly
+    setting.  The switch lives at state+0x341 (and +0x340 for the latching
+    position); the setting is state+0x84.
+    """
     print("polyphonic MIDI lifecycle")
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
 
-    nv = {"marker": False, "poly": True}     # record from older firmware
+    def writers(text: str) -> tuple[int, list[str]]:
+        """Blocks that read the switch, and those of them storing to +0x84."""
+        read, wrote = 0, []
+        for block in re.split(r"\n\s*begin\(", text)[1:]:
+            body = block.split("finish(")[0]
+            name = re.search(r'finish\("([^"]+)"', block)
+            if not re.search(r'\[0x34[01]\]', body):
+                continue
+            read += 1
+            if re.search(r'emit\("ST\.\w+ R\d+\[0x84\],', body):
+                wrote.append(name.group(1) if name else "?")
+        return read, wrote
 
-    def boot() -> bool:
-        if not nv["marker"]:
-            nv["poly"] = False
-            nv["marker"] = True
-        return nv["poly"]
-
-    live = boot()
-    check("the first new-firmware boot migrates only poly MIDI to off", live is False)
-    nv["poly"] = live = True                  # edit-mode key 29
-    live = boot()
-    check("an edit-mode choice survives a power cycle", live is True)
-    live_after_arp = live                     # arp switch is read-only here
-    check("the arpeggiator switch cannot change poly MIDI", live_after_arp is live)
-    nv["poly"] = live = False                 # edit-mode key 29 again
-    check("the saved off choice also survives", boot() is False)
+    read, wrote = writers(source)
+    # A scan that found nothing to look at would pass whatever the caves did.
+    check("the scan reaches the caves that read the switch", read >= 10, f"{read}")
+    check("and none of them writes the poly setting", not wrote, ", ".join(wrote))
+    # The negative control: a cave that does both is what this must catch.
+    planted = ('\n        begin(0x1L);\n        emit("LD.UB R8,R10[0x341]");\n'
+               '        emit("ST.B R10[0x84],R8");\n        finish("planted", 0x2L);\n')
+    check("a cave doing both is still caught", bool(writers(planted)[1]))
 
 
-def test_local_proximity() -> None:
+def test_local_proximity(cfg: dict) -> None:
     """A chord must sample the field beside each held key, not one active key."""
     print("local proximity correction")
     raw = [300] * 29
@@ -1068,8 +1196,49 @@ def test_local_proximity() -> None:
           low == 600 and high == 120, f"{low}, {high}")
     touched.update(range(29))
     check("a fully occupied region falls back to zero correction", estimate(14) == 0)
-    check("reference search is bounded to three probes per side",
+    # `max(probe_counts) <= 6` used to stand here.  probe_counts is filled by
+    # the loop above, which starts its own counter at three per side, so the
+    # line could not fail: widen the firmware's walk to eight and it still
+    # printed ok.  The bound belongs to the firmware, so read it off the walk
+    # the image actually carries.
+    check("the model's own walk is the three-per-side it is modelling",
           max(probe_counts) <= 6, str(probe_counts))
+    budgets = walk_budgets(cfg, "proximity_estimator")
+    if budgets is None:
+        print("  skip  no assembler listing matching the built image - "
+              "--golden builds one and re-checks")
+        return
+    check("the emitted walk probes three keys per side, on both sides",
+          budgets == [3, 3], str(budgets))
+
+
+PROBE_RE = re.compile(r"^MOV (R\d+),0x([0-9a-f]+)$")
+
+
+def walk_budgets(cfg: dict, block: str) -> list[int] | None:
+    """Each countdown in `block` that is decremented to an early exit.
+
+    A bounded outward walk is written as `MOV Rn,<budget>` and then, once per
+    step, `SUB Rn,0x1` followed by a `BR{eq}` out.  Returns the budgets in
+    listing order, or None when no listing matches the built image.
+    """
+    blocks = emitted_blocks(cfg)
+    if blocks is None or block not in blocks:
+        return None
+    body = [text for _, text in blocks[block]]
+    held: dict[str, int] = {}
+    budgets = []
+    for index, text in enumerate(body):
+        loaded = PROBE_RE.match(text)
+        if loaded:
+            held[loaded.group(1)] = int(loaded.group(2), 16)
+            continue
+        stepped = re.match(r"^SUB (R\d+),0x1$", text)
+        if (stepped and index + 1 < len(body)
+                and body[index + 1].startswith("BR{eq}")
+                and stepped.group(1) in held):
+            budgets.append(held[stepped.group(1)])
+    return budgets
 
 
 def test_held_flag_bounds() -> None:
@@ -1498,6 +1667,86 @@ def test_leaf_with_call(cfg: dict) -> None:
           not faults({"planted": [(0x8000fffe, "STM --SP,R7,LR")] + leaf}))
 
 
+def test_error_accumulator(cfg: dict) -> None:
+    """What the quantiser throws away must be carried, not the quotient.
+
+    The diffuser adds the last division's remainder back into the next one,
+    so the output's time average tracks the true value to far better than one
+    code.  DIVU leaves the quotient in Rd and the remainder in Rd+1; store Rd
+    and the cell grows without bound on the first scan.  Two things have to
+    hold in the emitted code: the cell is read and added in BEFORE the
+    divide, and the register stored back is the one above the quotient.
+
+    Read from the listing rather than the Java, because the register names
+    here come out of String.format in the neighbouring blocks and the same
+    three-line shape appears in caves that are not this one.
+    """
+    print("error accumulator")
+    if not cfg["pressure"].get("error_diffusion", False):
+        print("  skip  this configuration truncates instead of diffusing")
+        return
+    blocks = emitted_blocks(cfg)
+    if blocks is None:
+        print("  skip  no assembler listing matching the built image - "
+              "--golden builds one and re-checks")
+        return
+    CELL = 0x6094
+
+    def faults(listing: dict[str, list[tuple[int, str]]]) -> tuple[int, list[str]]:
+        seen, bad = 0, []
+        for name, body in listing.items():
+            base = carried = quotient = None
+            for address, text in body:
+                held = re.match(rf"^MOV (R\d+),{CELL:#x}$", text)
+                if held:
+                    base, carried, quotient = held.group(1), None, None
+                    continue
+                if base is None:
+                    continue
+                read = re.match(rf"^LD\.W (R\d+),{base}\[0x0\]$", text)
+                if read:
+                    carried = read.group(1)
+                    continue
+                if carried and re.match(rf"^ADD R\d+,{carried}$", text):
+                    carried = "added"
+                    continue
+                divide = re.match(r"^DIVU (R\d+),R\d+,R\d+$", text)
+                if divide:
+                    quotient = int(divide.group(1)[1:])
+                    continue
+                stored = re.match(rf"^ST\.W {base}\[0x0\],R(\d+)$", text)
+                if not stored:
+                    continue
+                seen += 1
+                if carried != "added":
+                    bad.append(f"{name}: {address:#x} writes the cell without "
+                               "adding what it held into the divide")
+                elif quotient is None:
+                    bad.append(f"{name}: {address:#x} writes the cell with no "
+                               "division before it")
+                elif int(stored.group(1)) != quotient + 1:
+                    bad.append(f"{name}: {address:#x} carries R{stored.group(1)}, "
+                               f"the quotient of DIVU R{quotient}, not its remainder")
+                base = carried = quotient = None
+        return seen, bad
+
+    seen, bad = faults(blocks)
+    check("the image carries an accumulator to check", seen == 1, f"{seen} store(s)")
+    check("the carried error is the division's remainder", not bad, "; ".join(bad))
+
+    # Both ways of getting it wrong, planted, so this cannot quietly stop
+    # looking at either.
+    good = [(0x80019700, "LD.W R11,R10[0x0]"), (0x80019702, "ADD R8,R11"),
+            (0x80019704, "MOV R9,0x39100"), (0x80019708, "DIVU R8,R8,R9")]
+    head = [(0x800196fc, f"MOV R10,{CELL:#x}")]
+    check("carrying the quotient is caught",
+          faults({"planted": head + good + [(0x8001970c, "ST.W R10[0x0],R8")]})[1] != [])
+    check("dropping the carry into the divide is caught",
+          faults({"planted": head + good[2:] + [(0x8001970c, "ST.W R10[0x0],R9")]})[1] != [])
+    check("the shape the firmware actually emits is not",
+          faults({"planted": head + good + [(0x8001970c, "ST.W R10[0x0],R9")]})[1] == [])
+
+
 def test_option_messages() -> None:
     """Wrong options answer with a sentence, and advertised ones are taken."""
     print("option messages")
@@ -1848,7 +2097,6 @@ def main() -> None:
     test_vibrato_pressure_scaling()
     test_vibrato()
     test_poly_midi_lifecycle()
-    test_local_proximity()
     test_held_flag_bounds()
     test_factory_entry_points(cfg)
     test_migration_and_empty_hand()
@@ -1872,6 +2120,10 @@ def main() -> None:
     # listing beside it - to read on a clean tree.
     test_call_pools(cfg)
     test_leaf_with_call(cfg)
+    test_error_accumulator(cfg)
+    test_local_proximity(cfg)
+    if args.golden:
+        test_call_pools_feature_off(cfg)
 
     print()
     if FAILURES:

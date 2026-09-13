@@ -438,7 +438,9 @@ path (`0x80005f94`), as it did before 2.1.
 The 2.1 audit's collision argument - a mono keyboard note-off ending the
 sequencer's note - no longer arises, because the sequencer's note is ended by
 the press itself.  `src/PolyMidiProbe.java` pins all of it, and fails on the
-2.1 image for every claim that is new.
+2.1 image for every claim that is new.  It runs in the `seq-clock` mode of
+`tools/test_persistence.py`, which is the only one that builds a sequencer,
+a divider and the persisted record into one image.
 
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps
