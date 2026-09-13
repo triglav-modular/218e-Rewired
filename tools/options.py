@@ -668,14 +668,19 @@ def expand(options: dict) -> dict:
     # continuous.  Intervals come from the live 32-entry key table, so a
     # keyboard map that leaves degrees off the keys leaves them out here as
     # well.  Off is the factory's continuous add, and the default.
-    cfg["presets"]["quantize"] = bool(want("quantize_presets", False))
+    # Default ON, matching the builder page's checkbox and
+    # config/218e.toml.  Three places carry a default for each option -
+    # the config, this fallback, and buildlib.js's - and they have to
+    # agree or the parity matrix compares a Python build that read the
+    # config against a browser build that fell back to something else.
+    cfg["presets"]["quantize"] = bool(want("quantize_presets", True))
 
     # 14. The portamento jack ----------------------------------------------
     # "portamento" is the factory's: the CV adds to the knob's glide time.
     # "transpose" shifts the keyboard by whole degrees of the selected
     # tuning instead, one period per cv_volts_per_period of CV, and the knob
     # keeps its own job either way - the jack is its own ADC channel.
-    jack = want("portamento_in", "portamento")
+    jack = want("portamento_in", "transpose")
     if jack not in ("portamento", "transpose"):
         raise SystemExit(
             f"portamento_in = {jack!r} is not one of 'portamento', 'transpose'")

@@ -83,12 +83,14 @@ var BUILDLIB = (function () {
         // Same rule as tools/options.py: the offset the add-to-pitch middle
         // position adds snaps to the selected tuning's intervals; the preset
         // voltage output is untouched.
-        cfg.presets.quantize = !!want('quantize_presets', false);
+        // Default ON: the config, this fallback and tools/options.py all
+        // carry a default and they have to agree.
+        cfg.presets.quantize = !!want('quantize_presets', true);
 
         // Same rule as tools/options.py: the portamento jack either adds to
         // the knob's glide time (factory) or transposes the keyboard by
         // degrees of the selected tuning; the knob is untouched either way.
-        var jack = want('portamento_in', 'portamento');
+        var jack = want('portamento_in', 'transpose');
         if (jack !== 'portamento' && jack !== 'transpose') {
             throw new Error('portamento_in = ' + JSON.stringify(jack)
                             + " is not one of 'portamento', 'transpose'");

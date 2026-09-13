@@ -1523,10 +1523,17 @@ def test_option_messages() -> None:
            lambda: _options.check({"quantize_presets": "yes"}), "quantize_presets must be true or false")
     check("quantize_presets = true asks for the quantiser",
           _options.expand({"quantize_presets": True})["presets"]["quantize"] is True)
-    check("leaving quantize_presets out keeps the free add",
-          _options.expand({})["presets"]["quantize"] is False)
+    # The default is ON, matching the builder page and config/218e.toml, so
+    # the free add is what has to be asked for now.  Three places carry this
+    # default - the config, options.py and buildlib.js - and the parity matrix
+    # compares a Python build against a browser one, so a disagreement between
+    # them shows up there rather than here.
+    check("quantize_presets = false asks for the free add",
+          _options.expand({"quantize_presets": False})["presets"]["quantize"] is False)
+    check("leaving quantize_presets out takes the quantiser",
+          _options.expand({})["presets"]["quantize"] is True)
     on, _, _ = B.resolve_flags(_options.expand({"quantize_presets": True}))
-    off, _, _ = B.resolve_flags(_options.expand({}))
+    off, _, _ = B.resolve_flags(_options.expand({"quantize_presets": False}))
     check("the quantiser's cave and pool word are gated together",
           on["preset_quantize"] and on["preset_quantize_pool"]
           and not off["preset_quantize"] and not off["preset_quantize_pool"])

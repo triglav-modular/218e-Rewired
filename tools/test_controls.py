@@ -103,7 +103,11 @@ def main() -> None:
                         # configuration where a shift by degrees is not a
                         # shift by a constant, so a borrowed latch slot's
                         # interval and its key's differ.
-                        text, count = re.subn(r'^portamento_in = "portamento"$',
+                        # Name the option, not the value it happens to hold:
+                        # pinning the old default here made the suite die with
+                        # "Cannot enable the jack transposer" the moment
+                        # config/218e.toml was aligned with the builder page.
+                        text, count = re.subn(r'^portamento_in = .*$',
                             'portamento_in = "transpose"', text, flags=re.M)
                         if count != 1:
                             raise SystemExit("Cannot enable the jack transposer in regression config")
