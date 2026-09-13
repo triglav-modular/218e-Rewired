@@ -2250,8 +2250,14 @@ function assembleProgram() {
         // table after - the applier has run by then.
         // With a filter built, the chain enters there and it tail jumps into
         // the transposer; without one it enters the transposer directly.
+        // "Built" has to be the emit guard's own question, cv_jack and all:
+        // cv_transpose is given by presets.quantize as well as by the jack,
+        // so quantized presets with the jack left on portamento pointed this
+        // word at 0x8001eb20 with nothing assembled there - unprogrammed
+        // flash, MCALLed every 5 ms scan (audit 2026-09-13).
         word(feature("cv_transpose")
-             ? (number("transpose_cv_filter_shift", 2, 0, 4) > 0
+             ? (feature("cv_jack")
+                && number("transpose_cv_filter_shift", 2, 0, 4) > 0
                 ? 0x8001eb20 : 0x8001e7c0)
              : 0x8001a480); // latch watch + poly-MIDI boot force + common-mode
         word(0x8001a750); // octave-switch shadow sync
@@ -5132,6 +5138,14 @@ function assembleProgram() {
         // the arm completed would look like a fresh press and fire at once.
         emit("MOV R11,0x0");
         padTo(0x8001b204);
+        // The pad index, spilled for the length of the body.  It is the
+        // argument both calls below want AND a value both destroy: seq_enter
+        // reaches a factory routine that leaves 0x7f or 0 in R11, which ended
+        // the walk after one pad or started it again (audit 2026-09-13).
+        // R0-R3 and R7 are all live across the loop, so there is no
+        // callee-saved register to move it into.  Every path out of the body
+        // reaches 0x8001b248, which is where it comes back.
+        emit("ST.W --SP,R11");
         emit("ADD R12,R2,R11 << 0x0");
         emit("LD.UB R12,R12[0x0]");     // this scan's level
         emit("ADD R8,R1,R11 << 0x0");
@@ -5145,15 +5159,15 @@ function assembleProgram() {
         // the finger comes off.  The chord still wants the press edge.
         emit("LD.UB R10,R1[0x2]");      // armed?
         emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001b21e");
+        emit("BR{ne} 0x8001b220");
         emit("MCALL PC[0x8001b244]");   // bare: seq_hold counts, then acts
         emit("RJMP 0x8001b248");
-        padTo(0x8001b21e);
+        padTo(0x8001b220);
         emit("CP.W R12,0x2");
         emit("BR{ne} 0x8001b248");
         emit("CP.W R9,0x2");
         emit("BR{eq} 0x8001b248");
-        padTo(0x8001b226);
+        padTo(0x8001b228);
         // A press, and as many as you like: using the hold does not spend
         // it.  Pad 4 stays held and stays armed until it is let go, so play
         // then stop then clear is three presses inside one hold rather than
@@ -5168,6 +5182,7 @@ function assembleProgram() {
         padTo(0x8001b244);
         word(0x8001dd20);              // seq_hold
         padTo(0x8001b248);
+        emit("LD.W R11,SP++");          // the pad, back from before the calls
         emit("SUB R11,-0x1");
         emit("CP.W R11,0x3");
         emit("BR{lt} 0x8001b204");
@@ -5428,7 +5443,27 @@ function assembleProgram() {
         // value CHANGES - the factory's own bend function already early-exits
         // on an unchanged one.  Recording passes zero on, so a strip touched
         // to enter a rest does not also bend the pitch.
-        begin(0x8001b570);
+        //
+        // The block starts one leaf earlier than its two entry points: the
+        // strip's half of what seq_record_degree and seq_record_pitch do for
+        // a note.  A rest or a tie makes the take non-empty, so it is the
+        // moment the take is born, and everything the first note would have
+        // adopted has to be adopted here instead - otherwise the note that
+        // follows a leading rest is stored against a reference nobody chose
+        // (audit 2026-09-13).  In: R10 = 0x61e0, R9 = the step index, below
+        // 0x40 by the caller's own check.  R8 and R12 spent; a leaf.
+        begin(0x8001b550);
+        emit("LD.UB R8,R10[-0xed]");    // 0x60f3, today's preset degrees
+        emit("MOV R12,0x6600");
+        emit("ST.B R12[R9 << 0x0],R8"); // this step's own, kept for a rest too
+        emit("CP.W R9,0x0");
+        emit("BR{ne} 0x8001b56e");      // only an empty take adopts
+        emit("ST.B R10[-0x14f],R8");    // 0x6091, and 0x6600[0] now agrees
+        emit("LD.SH R8,R10[-0x140]");   // 0x60a0, the transpose published this scan
+        emit("ST.H R10[0x114],R8");     // 0x62f4, the octave reference
+        padTo(0x8001b56e);
+        emit("MOV PC,LR");
+        padTo(0x8001b570);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x6154");
@@ -5465,7 +5500,7 @@ function assembleProgram() {
         // down; the release clears it without appending anything.
         emit("LD.UB R8,R10[0x4]");
         emit("CP.W R8,0x0");
-        emit("BR{ne} 0x8001b5f6");
+        emit("BR{ne} 0x8001b5fa");
         emit("MOV R8,0x1");
         emit("ST.B R10[0x4],R8");       // down, and down is what a release needs
         emit("LDM SP++,R7,PC");
@@ -5476,14 +5511,14 @@ function assembleProgram() {
         emit("MOV R9,0x0");
         emit("ST.B R10[0x4],R9");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b5f6");      // already up, or transport rejected it
+        emit("BR{ne} 0x8001b5fa");      // already up, or transport rejected it
         emit("MOV R8,0x6154");
         emit("LD.UB R8,R8[0x4]");
         emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001b5f6");      // only record listens to the strip
+        emit("BR{ne} 0x8001b5fa");      // only record listens to the strip
         emit("LD.UB R9,R10[0x0]");
         emit("CP.W R9,0x40");
-        emit("BR{ge} 0x8001b5f6");      // 64 steps and no more
+        emit("BR{ge} 0x8001b5fa");      // 64 steps and no more
         emit("LD.SH R12,R11[0x1fe]");   // where the finger left
         emit(StringFormat("MOV R8,0x%x",
              number("strip_halfway_units", 2048, 128, 3968)));
@@ -5498,14 +5533,18 @@ function assembleProgram() {
         emit("MOV R12,0x6160");
         emit("ADD R12,R12,R9 << 0x1");
         emit("ST.H R12[0x0],R8");
+        // Before the count goes up, while R9 still says whether this take
+        // was empty: the leaf at the head of this block.
+        emit("MCALL PC[0x8001b608]");
         emit("SUB R9,-0x1");
         emit("ST.B R10[0x0],R9");
-        padTo(0x8001b5f6);
+        padTo(0x8001b5fa);
         emit("LDM SP++,R7,PC");
         padTo(0x8001b600);
         word(0x80002e30); // bend(position)
         word(0x00003560); // global state base
-        finish("seq_strip", 0x8001b608);
+        word(0x8001b550); // the take's reference, adopted on the first step
+        finish("seq_strip", 0x8001b610);
 
         // The glide rate, stored.  Normally whatever the clamp worked out -
         // for a pressure-blend build that is zero, meaning notes snap.  But
@@ -6228,7 +6267,7 @@ function assembleProgram() {
         finish("clock_attack_guard", 0x8001cb20);
 
         // ---------------------------------------------------------------
-        // Persistence v2. Only musical data and the latch's transpose state
+        // Persistence v3. Only musical data and the latch's transpose state
         // are serialized, never mode,
         // touch history, clock state or knob pickup state. A verified body
         // is committed by programming its still-erased marker word LAST.
@@ -6236,14 +6275,16 @@ function assembleProgram() {
         // gestures commit immediately, without an idle/clock/arp gate. A
         // separate musical snapshot excludes other edits still in progress.
         //
-        // Header: marker[4], version[2]=2, length[2]=204, generation[4],
-        // CRC32[4]. Payload: presets[8], count[1], latch state[1],
-        // reserved[2], pitches[128], keys[64]. Unused steps, reserved bytes
+        // Header: marker[4], version[2]=3, length[2]=268, generation[4],
+        // CRC32[4]. Payload: presets[8], count[1], latch state[1], tuning
+        // slot[1], reserved[1], pitches[128], keys[64], per-step preset
+        // counts[64]. Unused steps, reserved bytes
         // and alignment padding are zero. CRC-32/ISO-HDLC covers header
         // bytes 4..11 then the payload.  The latch state took the first
-        // reserved byte: a record written before it existed reads as zero,
-        // which is the hold state every latch had until then.
-        // The 224-byte staging buffer and both writes are 8-byte aligned.
+        // reserved byte and the tuning slot the second: a record written
+        // before either existed reads as zero, which is the hold state every
+        // latch had until then, and slot 0.  v1 and v2 are both rejected.
+        // The 288-byte staging buffer and both writes are 8-byte aligned.
         // ---------------------------------------------------------------
 
         // Incremental reflected CRC32. R12 = unfinalized CRC, R11 = bytes,
@@ -6553,7 +6594,13 @@ function assembleProgram() {
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001d07c]");
         emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001d070");
+        // The EXIT, not the store above it.  No record means nothing to
+        // adopt, and that store reads its pointer from the MOV immediately
+        // before it: landing between the two read a byte through whatever
+        // persist_newest left in R8 - a flash page base - and planted it in
+        // 0x6091, the take's preset reference.  b1f9d58 moved the exit from
+        // 0x8001d070 to 0x8001d078 and left the branch behind.
+        emit("BR{eq} 0x8001d078");
         emit("MOV R0,R12");
         emit("MOV R8,0x62e0");
         emit("ST.B R8[0x1],R11");
@@ -7067,8 +7114,16 @@ function assembleProgram() {
         emit("MOV R10,0x6580");
         emit("ST.W R10[0x0],R8");
         emit("ST.H R10[0x4],R8");
-        emit("MOV R10,0x6092");         // the preset count the last rebuild saw
+        // The take's preset reference and the preset count the last rebuild
+        // saw.  seq_boot clears the reference for the same reason it clears
+        // 0x62f4 - SRAM survives a DFU, and a retained reference transposes
+        // the first take against a preset nobody chose - but persistence
+        // redirects the boot pool here and seq_boot never runs, so this is
+        // the only clear a shipped build gets.  Two byte stores rather than
+        // one halfword: 0x6091 is odd.
+        emit("MOV R10,0x6091");
         emit("ST.B R10[0x0],R8");
+        emit("ST.B R10[0x1],R8");
         // The per-step preset counts, musical data like the steps themselves.
         // Sixteen words, not thirty-two halfwords: a bare 0x1f in the
         // assembler is what test.py hunts for, because a key walk starting
