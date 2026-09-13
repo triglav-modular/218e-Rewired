@@ -49,11 +49,11 @@
     // it: one raw unit is 2.5 cents of output, so rounding it here would be a
     // reading attributed to the wrong entry.
     //
-    // The lean is never more than 2.5% of the gap to the neighbour and is
-    // usually under 1% - the key table steps 40.33 units where a table entry
-    // is 40.33 wide, and only every third one divides exactly.  Round to the
-    // entry it sits on: below a cent of the neighbour comes with it, which is
-    // well under the 2.5 cent step the table is quantised to anyway.
+    // The lean is never more than 3.4% of the gap to the neighbour, and under
+    // 2% for 53 of the 65 notes - the key table steps 40.33 units where a table
+    // entry is 40.33 wide, and only every third one divides exactly.  Round to
+    // the entry it sits on: 0.083 cents of the neighbour comes with it at
+    // worst, well under the 2.5 cent step the table is quantised to anyway.
     function entryFor(note, octaveTerm) {
         var key = note - FIRST_NOTE;
         if (key < 0 || key >= KEY_TABLE.length) return null;
@@ -194,8 +194,9 @@
     function midiOutputs() {
         if (!root.navigator || !root.navigator.requestMIDIAccess) {
             return Promise.reject(new Error(
-                'This browser has no Web MIDI. Chrome and Edge have it; Safari and ' +
-                'Firefox do not, so the sweep needs one of those two.'));
+                'This browser has no Web MIDI. Chrome and Edge have it, and ' +
+                'Firefox after installing the permission add-on it offers; ' +
+                'Safari has none at all.'));
         }
         return root.navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
             var out = [];
@@ -540,7 +541,6 @@
                                        undefined, 'anchor');
                     if (re.ok) marks.push({ t: Date.now(), hz: re.hz });
                 }
-                var want = first.hz * Math.pow(2, (step.index - anchor.index) / 12);
                 var got = await hear(step.note, i === 0 ? first.hz : expect,
                                     undefined, 'sweep');
                 var t = Date.now();

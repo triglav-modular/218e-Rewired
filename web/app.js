@@ -96,11 +96,16 @@
         // Readings belong to keys, not rows: a table entered before the
         // switch keeps each key's cents when the rows move under it.
         var moved = measured.map(function () { return 0; });
+        var movedMarks = {};
         for (var n = 0; n < TABLE_ENTRIES; n++) {
             var to = n - from + PLAYABLE_LOW;
-            if (to >= 0 && to < TABLE_ENTRIES) moved[to] = measured[n];
+            if (to >= 0 && to < TABLE_ENTRIES) {
+                moved[to] = measured[n];
+                if (interpolated[n]) movedMarks[to] = true;
+            }
         }
         measured = moved;
+        interpolated = movedMarks;
         // Changing the offset renumbers every semitone, so a loaded table no
         // longer describes this instrument's layout - its row 3 is not this
         // build's row 3.  Dropped rather than shifted: a table quietly moved
@@ -697,6 +702,11 @@
     // accumulates here: each entry stands alone.
     var measured = [];
     for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);
+    // Which of those the sweep carried across from a neighbour rather than
+    // heard.  They are real numbers in `measured` and build a real table, but
+    // nothing measured them, and the saved file is the only place that can
+    // still say so once the session is gone.
+    var interpolated = {};
 
     // What is already on the instrument, as Offset_Cents per semitone, and
     // which of those rows were extrapolated rather than measured.
@@ -782,6 +792,7 @@
                 if (measured[n] !== 0) input.className = 'set';
                 input.addEventListener('change', function () {
                     measured[n] = parseFloat(input.value) || 0;
+                    delete interpolated[n];
                     input.className = measured[n] !== 0 ? 'set' : '';
                     drawPlot(); validateCal();
                     if ($('useCal').checked) invalidate();
@@ -860,6 +871,7 @@
     });
     $('calZero').addEventListener('click', function () {
         measured = measured.map(function () { return 0; });
+        interpolated = {};
         buildTable(); drawPlot(); validateCal(); syncBaseline();
         msg($('calMsg'), '', haveBaseline()
             ? 'Readings cleared. ' + baselineName + ' is still loaded as the table on '
@@ -888,12 +900,17 @@
             '# flash, and load it back here before measuring again so the next round',
             '# accumulates onto it instead of replacing it.',
             '#',
+            '# Source "interpolated" means the sweep never heard that note and',
+            '# carried it across from its neighbours: it is a guess, worth checking',
+            '# by hand before it is measured on top of.',
+            '#',
             '# Semitone counts up from the 208\'s 0 V pitch; the lowest C on the',
             '# keyboard is semitone ' + PLAYABLE_LOW + '.',
             'Semitone;Note;Key;Offset_Cents;Source'
         ];
         for (var n = 0; n < TABLE_ENTRIES; n++) {
-            var src = measured[n] ? 'measured'
+            var src = interpolated[n] ? 'interpolated'
+                    : measured[n] ? 'measured'
                     : (baselineSources[n] || (n < PLAYABLE_LOW ? 'octave'
                        : n > PLAYABLE_HIGH ? 'extrapolated' : 'measured'));
             out.push([n, noteNames()[n % 12], keyLabel(n),
@@ -975,10 +992,14 @@
                 baselineName = f.name;
                 var had = measured.some(function (v) { return v !== 0; });
                 measured = measured.map(function () { return 0; });
+                interpolated = {};
                 clearedReadings = had;
             } else {
                 for (var k in rowsIn) {
-                    if (k >= PLAYABLE_LOW && k <= PLAYABLE_HIGH) measured[k] = rowsIn[k];
+                    if (k >= PLAYABLE_LOW && k <= PLAYABLE_HIGH) {
+                        measured[k] = rowsIn[k];
+                        delete interpolated[k];
+                    }
                 }
             }
             $('useCal').checked = true;
@@ -1272,7 +1293,9 @@
         if (!known.length) return 0;
         var filled = 0;
         for (n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            if (got[n] !== null && got[n] !== undefined) { measured[n] = got[n]; continue; }
+            if (got[n] !== null && got[n] !== undefined) {
+                measured[n] = got[n]; delete interpolated[n]; continue;
+            }
             var below = null, above = null;
             known.forEach(function (k) {
                 if (k < n) below = k;
@@ -1282,6 +1305,7 @@
             else if (above === null) measured[n] = got[below];
             else measured[n] = got[below] + (got[above] - got[below]) *
                                (n - below) / (above - below);
+            interpolated[n] = true;
             filled++;
         }
         return filled;
