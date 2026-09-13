@@ -1010,6 +1010,14 @@
     // MIDI and measures what it hears; everything downstream - the plot, the
     // monotonic check, the CSV, the image - is unchanged.
     var sweep = null, listed = { midi: false, audio: false };
+    // Whether the message on screen was put there by the audio path, so it can
+    // be taken down when that path succeeds without silencing a MIDI complaint
+    // that is still true.
+    var audioComplaint = false;
+    function audioMsg(kind, text) {
+        audioComplaint = !!text;
+        msg($('autoMsg'), kind, text);
+    }
 
     function autoNote(text, bar) {
         var el = $('calProgress');
@@ -1157,7 +1165,7 @@
         if (listed.audio) return Promise.resolve();
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             fillSelect($('calAudio'), [], 'No audio input in this browser');
-            msg($('autoMsg'), 'bad', 'This browser will not give a page an audio ' +
+            audioMsg('bad', 'This browser will not give a page an audio ' +
                 'input. Over plain http only localhost is allowed to ask; the ' +
                 'published page is https and can.');
             return Promise.resolve();
@@ -1172,20 +1180,25 @@
             // later is exactly what should happen.
             if (named.length) {
                 listed.audio = true;
+                // The complaint below is about not being allowed audio yet.
+                // Once the inputs have names that is no longer the case, and a
+                // red box left standing over a list that worked reads as a
+                // failure that has not happened.
+                if (audioComplaint) audioMsg('', '');
             } else if (devs.length) {
                 // Before an origin is granted, Chrome answers with one
                 // nameless entry standing for the default - so a desk with
                 // twelve inputs shows as a single "Input 1" and there is
                 // nothing to pick.  Say that, rather than leaving it looking
                 // like the interface is missing.
-                msg($('autoMsg'), 'bad', 'Chrome lists MIDI devices without ' +
-                    'asking, but audio inputs are a separate permission: until ' +
-                    'this page is allowed to use audio it offers one nameless ' +
-                    'default instead of the real inputs. So an interface can be ' +
-                    'in the MIDI list above and not in this one. Press Rescan ' +
-                    'inputs and allow it. If nothing is asked, Chrome itself may ' +
-                    'not have the microphone - macOS System Settings, Privacy ' +
-                    'and Security, Microphone.');
+                audioMsg('bad', 'Browsers list MIDI devices without asking, but ' +
+                    'audio inputs are a separate permission: until this page is ' +
+                    'allowed to use audio it offers one nameless default instead ' +
+                    'of the real inputs. So an interface can be in the MIDI list ' +
+                    'above and not in this one. Press Rescan inputs and allow it. ' +
+                    'If nothing is asked, the browser itself may not have the ' +
+                    'microphone - on macOS, System Settings, Privacy and ' +
+                    'Security, Microphone.');
             }
             return named.length;
         }
@@ -1212,11 +1225,11 @@
                 }, function (err) {
                     // Whatever went wrong, the devices themselves enumerated,
                     // so the list stays usable - unlabelled, but pickable.
-                    msg($('autoMsg'), 'bad', CALIBRATE.audioTrouble(err));
+                    audioMsg('bad', CALIBRATE.audioTrouble(err));
                 });
         }, function (err) {
             fillSelect($('calAudio'), [], 'Could not list audio inputs');
-            msg($('autoMsg'), 'bad', CALIBRATE.audioTrouble(err));
+            audioMsg('bad', CALIBRATE.audioTrouble(err));
         });
     }
 
