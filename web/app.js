@@ -946,12 +946,17 @@
     }
 
     function fillSelect(sel, items, empty) {
+        // The lists are rebuilt whenever a device appears or a permission
+        // changes, and a rebuild that forgets the choice would quietly move
+        // the measurement to a different input between picking and starting.
+        var had = sel.value;
         sel.innerHTML = '';
         if (!items.length) {
             sel.appendChild(new Option(empty, ''));
             return;
         }
         items.forEach(function (it) { sel.appendChild(new Option(it.label, it.value)); });
+        if (had && items.some(function (it) { return it.value === had; })) sel.value = had;
     }
 
     function listMidi() {
@@ -1007,8 +1012,12 @@
             // Only settled once the labels are real: an unlabelled list means
             // the browser has not granted this origin yet, and asking again
             // later is exactly what should happen.
-            if (named.length) listed.audio = true;
-            else if (devs.length) {
+            if (named.length) {
+                listed.audio = true;
+                msg($('autoMsg'), 'ok', named.length + ' audio input' +
+                    (named.length === 1 ? '' : 's') + ': ' +
+                    named.map(function (d) { return d.label; }).join(', '));
+            } else if (devs.length) {
                 // Before an origin is granted, Chrome answers with one
                 // nameless entry standing for the default - so a desk with
                 // twelve inputs shows as a single "Input 1" and there is
@@ -1029,8 +1038,22 @@
             if (show(devs)) return null;
             return navigator.mediaDevices.getUserMedia({ audio: true })
                 .then(function (st) {
-                    st.getTracks().forEach(function (t) { t.stop(); });
-                    return CALIBRATE.audioInputs().then(show);
+                    // Enumerate while the stream is still open, and only then
+                    // let go of it.  Labels are visible while a stream is live
+                    // or while a persistent grant stands - stopping first threw
+                    // away the very thing that reveals them, so a granted
+                    // permission still came back as one nameless default.  With
+                    // "Allow this time" the grant is gone the moment the track
+                    // stops, which is the case that made it look like the
+                    // permission had not been given at all.
+                    return CALIBRATE.audioInputs().then(function (devs) {
+                        var n = show(devs);
+                        st.getTracks().forEach(function (t) { t.stop(); });
+                        return n;
+                    }, function (err) {
+                        st.getTracks().forEach(function (t) { t.stop(); });
+                        throw err;
+                    });
                 }, function (err) {
                     // Whatever went wrong, the devices themselves enumerated,
                     // so the list stays usable - unlabelled, but pickable.
