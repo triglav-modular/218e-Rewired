@@ -69,17 +69,24 @@ def main() -> None:
     tunings = [{"name": Path(t).name, "text": (REPO / t).read_text()} for t in bundled]
     parts.append(f"  bundledTunings: {json.dumps(tunings)},")
 
-    # Factory control transfers, as a flat [src, dst, src, dst, ...] array —
-    # about 2,700 pairs, and much smaller than re-parsing the text file.
+    # Factory control transfers, as a flat [src, dst, pool, ...] array — about
+    # 3,600 triples, and much smaller than re-parsing the text file.
+    #
+    # The pool word is the third field of a call made through one, and 0 for a
+    # direct branch, which no real address is.  It has to travel: a patch that
+    # rewrites the pool word has redirected that call, so its factory target is
+    # no longer live from it, and web/build.js drops it exactly as
+    # tools/build.py does.  Matching only two-field lines dropped the 948 pool
+    # calls on the floor and left the page's guard checking 2,665 of 3,613.
     lines = (REPO / "tools" / "factory_control_flow.txt").read_text().splitlines()
     recorded = next(l.split()[1] for l in lines if l.startswith("factory_sha256 "))
     if recorded != cfg["firmware"]["factory_sha256"]:
         raise SystemExit("factory_control_flow.txt is for a different base image")
     flat = []
     for line in lines:
-        if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}$", line):
-            a, b = line.split()
-            flat += [int(a, 16), int(b, 16)]
+        if re.match(r"^[0-9a-f]{8} [0-9a-f]{8}( [0-9a-f]{8})?$", line):
+            fields = [int(f, 16) for f in line.split()]
+            flat += [fields[0], fields[1], fields[2] if len(fields) == 3 else 0]
     parts.append(f"  controlFlow: {json.dumps(flat)},")
     parts.append("};")
     parts.append("")
@@ -99,7 +106,7 @@ def main() -> None:
           f"({bundle.stat().st_size // 1024} KB)")
     kb = OUT.stat().st_size // 1024
     print(f"wrote {OUT.relative_to(REPO)} ({kb} KB)")
-    print(f"  {len(flat)//2} control transfers, {len(java)} bytes of assembler source")
+    print(f"  {len(flat)//3} control transfers, {len(java)} bytes of assembler source")
 
 
 if __name__ == "__main__":

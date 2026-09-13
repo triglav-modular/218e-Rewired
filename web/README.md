@@ -8,8 +8,11 @@ SHA-256, patched in memory and handed back as a download.
 python3 -m http.server 8123 --directory web
 ```
 
-Then open <http://localhost:8123>. Any static host works; nothing is fetched
-from outside the page.
+Then open <http://localhost:8123>. Any static host works. The only thing
+fetched from outside the page is its typeface — four faces from
+triglavmodular.hu, which the licence covers there and does not allow copying
+here. A clone served anywhere else is refused them and falls back to the
+system sans; the build is identical either way.
 
 One thing does leave, and only on a download: which options were chosen, which
 platform, and which version, POSTed to `beacon` beside the page. No identifier,
@@ -59,13 +62,14 @@ is checked against Ghidra instruction by instruction. On top of that:
 python3 web/test_configs.py
 ```
 
-builds ten configurations with `tools/build.py` and again with this pipeline,
-and compares **both** the generated `build.properties` and the final image
-SHA-256. All ten match, including `historical` — the most complex
-configuration, with measured calibration and three tunings. It is an anchor
-for that combination rather than a reproduction of any older image: the
-power-up marker hashes the assembler source, so no build made today can be
-byte-identical to one made before the source changed.
+builds thirty configurations with `tools/build.py` and again with this
+pipeline, and compares **both** the generated `build.properties` and the final
+image SHA-256; eleven more are option sets both toolchains have to refuse, and
+refuse for the same reason. A clean run reports every configuration matching,
+`historical` included — the most complex one, with measured calibration and
+three tunings. It is an anchor for that combination rather than a reproduction
+of any older image: the power-up marker hashes the assembler source, so no
+build made today can be byte-identical to one made before the source changed.
 
 A build takes about 200 ms.
 

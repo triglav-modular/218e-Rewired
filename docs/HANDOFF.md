@@ -230,7 +230,9 @@ completed fix more than once. Write the file after each edit.
 **New RAM must be declared** in `RAM_REGIONS`, and the first-use clear in the
 initialiser cave must reach it. SRAM survives a DFU, so anything left out
 starts as whatever the previous image left behind. The clear is a counted
-loop from `0x6100`; its count moved to `0x97` for the borrowed strip mode.
+loop from `0x6100`; its count is `0xff`, covering everything up to `0x62ff`
+— the preset block, the arp cells, the sequencer, the clock divider and its
+FIFO, the borrowed strip mode and the knob pickup stamps.
 
 **One harness at a time.**  Every regression driver and every hand-run
 build.py shares `build/` - the images, the logs, and the SHIPPED FLASHERS,
@@ -246,7 +248,12 @@ the DEFAULT config last, always.
 assembler source, so any edit — a comment included — moves every image.
 `config/218e.toml`'s `golden_sha256` and `sweep.py`'s `historical_config`
 both need updating, `tools/avr32/make_corpus.py` re-run (it needs Ghidra),
-and `web/generate.py` re-run. Do it once, after the last source edit.
+and `web/generate.py` re-run. The build rewrites both flashers with the new
+hash, and a rewritten `mac/Program218e_v3_Rewired_macOS.command` leaves
+`mac/Flasher.zip` stale — the signed app seals that script inside itself and
+records its hash in `SOURCES.sha256` — so `tools/make-app.sh --notarize` runs
+too and the zip is committed with the rest. Do it once, after the last source
+edit.
 
 ## Standing instructions from the owner
 

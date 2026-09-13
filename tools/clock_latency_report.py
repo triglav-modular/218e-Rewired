@@ -51,7 +51,18 @@ import argparse
 import csv
 from pathlib import Path
 
-CPU_HZ = 60_000_000        # the instrument's CPU frequency word at RAM 0x29cc
+# NOT the factory CPU-frequency word.  RAM 0x29cc holds 25000000, copied from
+# flash by the C startup before anything else runs, and this is deliberately
+# not that number: a 2600 ms clock release counted in COUNT cycles scaled by
+# that word expired in well under a second on the instrument, which is why the
+# release was moved onto the 1 ms task.  COUNT therefore advances a good deal
+# faster than the word claims.  60 MHz is the rate that makes this tool agree
+# with a scope: 0.77 + 0.60 = 1.37 ms edge-to-gate against a simultaneous
+# 1.61 ms scope mean on 2026-08-30.  At 25 MHz the same capture reads 3.29 ms,
+# which that measurement refutes.  Still an inference from two readings, not a
+# measured clock -- COUNT has never been counted against the millisecond
+# counter directly, and doing that would settle it.
+CPU_HZ = 60_000_000
 
 
 def ms(units: int) -> float:

@@ -42,7 +42,9 @@ replaces it with a linear response across a calibrated window.
 
 ## Portamento
 
-Pressure-controlled glide: press harder and the glide shortens.
+Pitch moves between held notes as their relative pressure moves, not over a
+time. The knob sets how much pressure a second held note needs to pull the
+pitch toward it; at zero it is off.
 
 ## Arpeggiator
 

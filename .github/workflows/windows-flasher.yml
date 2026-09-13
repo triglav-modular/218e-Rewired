@@ -42,14 +42,24 @@ jobs:
       - name: The bundled tools run at all
         shell: cmd
         run: |
+          rem "no device present" is the pass, not the exit code: 1.1.0 exits 3
+          rem where 1.0.0 exited 1, which is why the flasher reads the text and
+          rem treats a nonzero exit only as corroborating.  This step used to
+          rem print both and assert neither, so a dfu-programmer.exe that would
+          rem not start - exactly what it exists to catch - passed it.
           echo === dfu-programmer ===
-          windows\support\dfu-programmer.exe at32uc3b1256 get bootloader-version
-          echo exit=%ERRORLEVEL%  ^("no device present" is the pass; 1.1.0
-          echo exits 3 where 1.0.0 exited 1, which is why the flasher reads
-          echo the text and only treats a nonzero exit as corroborating^)
+          windows\support\dfu-programmer.exe at32uc3b1256 get bootloader-version > dfuprobe.txt 2>&1
+          echo exit=%ERRORLEVEL%
+          type dfuprobe.txt
+          rem The same string, and the same way of asking for it, as the
+          rem flasher's own probe.
+          findstr /I /C:"no device present" dfuprobe.txt >NUL || (echo FAILED: dfu-programmer did not report "no device present" & del dfuprobe.txt & exit /b 1)
+          del dfuprobe.txt
           echo === sendmidi ===
           windows\support\sendmidi.exe list
-          echo exit=%ERRORLEVEL%
+          if errorlevel 1 (echo FAILED: sendmidi list exited %ERRORLEVEL% & exit /b 1)
+          echo PASS: both bundled tools run
+          exit /b 0
 
       - name: The banana renders with its eyes
         shell: pwsh
@@ -89,13 +99,24 @@ jobs:
       - name: No image present - must refuse without touching anything
         shell: cmd
         run: |
+          rem One file that is a .hex and is not flashable, so the refusal has
+          rem something to explain.  Scan-Images.ps1 -Explain has always written
+          rem a verdict per file and the flasher sent it to NUL, so "3 in the
+          rem firmware folder" was followed two lines later by "No flashable
+          rem 218e V3 image is in that folder" and nothing in between.
+          mkdir firmware 2>NUL
+          del /Q firmware\*.hex 2>NUL
+          echo not a hex record at all> firmware\notes.hex
           (echo 1& echo YES)> answers0.txt
           CALL windows\218e_Rewired_Flasher.bat < answers0.txt > out.txt 2>&1
           type out.txt
           findstr /C:"Looked in:" out.txt >NUL || (echo FAILED: did not say where it looked & exit /b 1)
           findstr /C:"No flashable 218e V3 image" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
+          findstr /C:"is not a flashable 218e V3 image" out.txt >NUL || (echo FAILED: refused a file without saying why & exit /b 1)
+          findstr /C:"notes.hex" out.txt >NUL || (echo FAILED: did not name the file it refused & exit /b 1)
           findstr /C:"Erasing the application flash" out.txt >NUL && (echo FAILED: erased with no image & exit /b 1)
-          echo PASS: refused, and said where it looked
+          del /Q firmware\notes.hex 2>NUL
+          echo PASS: refused, said where it looked, and why each file is not usable
           exit /b 0
 
       - name: The hex validator accepts good images and rejects bad
@@ -174,13 +195,30 @@ jobs:
           rem else now, so an image in Downloads is no longer its business.
           mkdir firmware 2>NUL
           pwsh -File tools\Make-TestImage.ps1 -Path firmware\custom.hex
+          rem Written second, so it is the newer of the two and has to be
+          rem listed first.  Both checks used to be for the same single ECHO
+          rem line - "2 flashable images found.  Newest first:" - so the step
+          rem named ordering and could not fail on it.  Compare the two
+          rem filenames' line numbers instead.
           pwsh -File tools\Make-TestImage.ps1 -Path firmware\second.hex -Bytes 20480
           rem Flash, consent, then pick nothing: it must have listed both and stopped.
           (echo 1& echo YES& echo.& echo.)> ans2.txt
           CALL windows\218e_Rewired_Flasher.bat < ans2.txt > out4.txt 2>&1
           type out4.txt
           findstr /C:"flashable images found" out4.txt >NUL || (echo FAILED: did not list the images & exit /b 1)
+          rem Neither image is the one this flasher was stamped for, so nothing
+          rem is promoted over a newer file and the date order is claimed.
           findstr /C:"Newest first" out4.txt >NUL || (echo FAILED: no ordering shown & exit /b 1)
+          setlocal EnableDelayedExpansion
+          set "NEWER_AT="
+          set "OLDER_AT="
+          for /f "tokens=1 delims=:" %%L in ('findstr /N /C:"second.hex" out4.txt') do if not defined NEWER_AT set "NEWER_AT=%%L"
+          for /f "tokens=1 delims=:" %%L in ('findstr /N /C:"custom.hex" out4.txt') do if not defined OLDER_AT set "OLDER_AT=%%L"
+          echo second.hex at line [!NEWER_AT!], custom.hex at line [!OLDER_AT!]
+          if not defined NEWER_AT (echo FAILED: the newer image was not listed & endlocal & exit /b 1)
+          if not defined OLDER_AT (echo FAILED: the older image was not listed & endlocal & exit /b 1)
+          if !NEWER_AT! GEQ !OLDER_AT! (echo FAILED: the older image was listed first & endlocal & exit /b 1)
+          endlocal
           findstr /C:"Nothing chosen" out4.txt >NUL || (echo FAILED: did not stop on an empty choice & exit /b 1)
           findstr /C:"Erasing the application flash" out4.txt >NUL && (echo FAILED: erased without a choice & exit /b 1)
           del firmware\second.hex firmware\custom.hex 2>NUL

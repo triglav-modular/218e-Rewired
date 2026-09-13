@@ -9,7 +9,7 @@ import java.util.List;
 public class ClockRegression extends GhidraScript {
     static final long S = 0x3560, GPIO = 0xffff1000L;
     EmulatorHelper e;
-    int frequency, advances, periodicAdvances, checks, maxIrqSteps, dispatches, callbacks;
+    int frequency, advances, periodicAdvances, checks, maxIrqSteps, dispatches, callbacks, msTicks;
     boolean sequencer, periodic;
     // Entries to the factory DAC transfer clock_deadline performs at phase A.
     // Counting it is how a test tells a settle build from a held one without
@@ -39,6 +39,11 @@ public class ClockRegression extends GhidraScript {
         long v = 0;
         for (byte b : e.readMemory(toAddr(a), n)) v = (v << 8) | (b & 255);
         return v;
+    }
+    // The same assertion with the measurement that failed it, so a red line
+    // says what the firmware answered and not only what was wanted.
+    void check(String name, boolean ok, String detail) throws Exception {
+        check(ok ? name : name + " (" + detail + ")", ok);
     }
     void check(String name, boolean ok) throws Exception {
         checks++;
@@ -119,12 +124,25 @@ public class ClockRegression extends GhidraScript {
         }
         throw new Exception("instruction budget at " + Long.toHexString(pc()));
     }
+    // COUNT only. The millisecond counter at 0x61e6 belongs to the firmware:
+    // clock_ms_tick is its only writer, and the release compares it against
+    // the stamp the capture ISR took from it. A fixture that wrote the cell
+    // here supplied both sides of that comparison, so the three instructions
+    // that advance it could be deleted with every clock assertion still
+    // green. Milliseconds now pass only when the 1 ms task runs -- bank(),
+    // or idle() for a stretch of them.
     void time(long us) {
         nowUs=us;
         e.writeRegister("COUNT", ((us * frequency) / 1000000L) & 0xffffffffL);
-        // The 1 ms scheduled task increments 0x61e6 on hardware; the release
-        // is timed against it (not COUNT), so the model must advance it too.
-        w(0x61e6,2,(us/1000L)&0xffffL);
+    }
+    // Run the 1 ms scheduled task for every millisecond between here and
+    // `until`, which is what the instrument does while nothing else happens.
+    // Use it wherever a test's claim rests on elapsed milliseconds; a bare
+    // time() jump moves COUNT and leaves the firmware's counter where the
+    // firmware left it, because no tick ran.
+    void idle(long until) throws Exception {
+        for (long t=((nowUs/1000)+1)*1000; t<=until; t+=1000) bank(t);
+        time(until);
     }
     void fresh(int divisor, int hz) throws Exception {
         if (e != null) e.dispose();
@@ -136,6 +154,9 @@ public class ClockRegression extends GhidraScript {
         e.writeRegister("SR",0);
         for (String f : new String[]{"C","N","V","Z"}) e.writeRegister(f,0);
         frequency=hz; time(0);
+        // The only write this fixture makes to the millisecond counter: a
+        // cold machine reads zero. Everything after this is the firmware's.
+        w(0x61e6,2,0);
         w(0x29cc,4,hz); w(GPIO+0x60,4,0); w(GPIO+0xd0,4,0);
         call(0x80007bf4L,0x80007bf8L); // actual startup hook/pool
         check("CPU-frequency-derived timebase", r(0x6244,4)==hz/1000);
@@ -162,7 +183,7 @@ public class ClockRegression extends GhidraScript {
         }
         w(GPIO+0xc4,4,32); w(0xffff1c08L,4,1);
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202); // SPI TX ready/empty
-        advances=0; periodicAdvances=0; periodic=false; transfers=0;
+        advances=0; periodicAdvances=0; periodic=false; transfers=0; msTicks=0;
         transferPitches.clear();
         pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear(); fireTimes.clear();
     }
@@ -185,6 +206,10 @@ public class ClockRegression extends GhidraScript {
         e.writeRegister("R12",0x7010);
         call(r(0x80007da0L,4),0x100); // real 1 ms callback pointer
         check("1 ms callback chained once", callbacks==before+1);
+        // How many milliseconds this machine has actually been given, so a
+        // test can hold the firmware's own counter against it rather than
+        // against a number the fixture worked out from microseconds.
+        msTicks++;
     }
     // The 1 kHz DAC flush, entered the way the dispatcher enters it: through
     // jump-table entry 17, which this firmware repoints at the interpolator
@@ -597,20 +622,129 @@ public class ClockRegression extends GhidraScript {
         check("jitter retains /8 phase", advances-before==1);
         fresh(1,25000000);
         t=10000;
+        // The seconds between these edges are spent, not jumped: the release
+        // counts milliseconds off 0x61e6, and the only thing that advances
+        // that cell is the 1 ms task this runs 2001 times per beat. A jump
+        // would leave the counter still and every timeout below would pass
+        // on a firmware that never ticked at all.
         for (int i=0;i<9;i++) {
             irq(t,true); service(t); scan(t+5000);
             settleStep(t+5000,t+15000);
-            irq(t+1000000,false);
-            service(t+2000000);
+            idle(t+1000000); irq(t+1000000,false);
+            idle(t+2000000); service(t+2000000);
             check("0.5 Hz presence does not time out", r(0x6236,1)==1);
+            idle(t+2001000);
             t+=2001000;
         }
         check("0.5 Hz + jitter clock remains acquired", r(0x6233,1)==1 && advances==9 && outputTimes.size()==9);
-        service(t+700000);
+        check("and the firmware has counted every one of those milliseconds",
+              r(0x61e6,2)==(msTicks&0xffff), "0x61e6="+r(0x61e6,2)+" after "+msTicks+" ticks");
+        idle(t+700000); service(t+700000);
         check("absence releases divider and confidence", r(0x6236,1)==0 && r(0x6233,1)==0 && r(0x61ec,1)==0);
         w(S+0x38e,2,0); internal(t+701000);
         check("internal clock resumes after release", periodicAdvances>0);
         println("PASS /1 /2 /8, phase under jitter, 0.5 Hz and timeout");
+    }
+    // The firmware's own millisecond clock. Three instructions in
+    // clock_ms_tick are its only writer, the capture ISR stamps it at every
+    // accepted edge, and clock_service releases presence when the difference
+    // passes clock_release_ms. Until the fixture stopped writing the cell
+    // those three instructions could be deleted with the whole clock suite
+    // still green -- and on the instrument the arpeggiator would then never
+    // resume after the clock was unplugged.
+    void millisecondTimebase() throws Exception {
+        fresh(1,25000000);
+        check("a cold machine's millisecond counter reads zero", r(0x61e6,2)==0);
+        for (int i=1;i<=8;i++) {
+            bank(i*1000);
+            check("1 ms task "+i+" advanced the counter by one",
+                  r(0x61e6,2)==i, "0x61e6="+r(0x61e6,2));
+        }
+        // And nothing else may move it: the main loop, the DAC flush, the
+        // pitch scan and both GPIO edges all run without the 1 ms task.
+        long held=r(0x61e6,2);
+        service(9000); flush(9000); scan(10000); irq(11000,true); irq(12000,false);
+        check("only the 1 ms task advances it", r(0x61e6,2)==held,
+              "0x61e6="+r(0x61e6,2)+" was "+held);
+
+        // The release, at its boundary. clock_release_ms is asked of the
+        // image rather than assumed: the init stores it scaled by the
+        // cycles/ms word beside it.
+        fresh(1,25000000);
+        idle(5000);
+        irq(6000,true); service(6000); scan(11000);
+        settleStep(11000,21000);
+        check("the capture ISR stamped the edge with the firmware's count",
+              r(0x62f6,2)==5, "0x62f6="+r(0x62f6,2));
+        long release=r(0x6250,4)/r(0x6244,4);
+        check("the image carries a release to test against",
+              release>=100 && release<=32000, "clock_release_ms="+release);
+        while (r(0x61e6,2) < 5+release) bank(nowUs+1000);
+        service(nowUs);
+        check("presence holds on the last millisecond before the release",
+              r(0x6236,1)==1, release+" ms since the edge");
+        bank(nowUs+1000); service(nowUs);
+        check("and goes on the one past it", r(0x6236,1)==0,
+              (release+1)+" ms since the edge");
+        println("PASS the firmware owns 0x61e6 and the release is counted off it");
+    }
+
+    // The 4 ms refractory, from both sides. docs/CLOCK.md says accepted
+    // rising transitions are at least clock_min_ms apart, and until now no
+    // fixture ever presented two closer than 5 ms: the frequency sweep tops
+    // out at 200 Hz and every hand-built case spaces them wider. The
+    // rejecting branch was therefore never taken, and storing the window in
+    // milliseconds instead of COUNT cycles -- 160 ns at 25 MHz -- left the
+    // whole suite green while a ringing source had both of its edges
+    // accepted and the divider measured half the period.
+    //
+    // A rise only reaches the refractory once a low has qualified, so each
+    // pair here is rise, fall, rise with the low run wider than the chatter
+    // window beside it.
+    void refractoryRejectsACloseEdge() throws Exception {
+        long window=r(0x624c,4)/r(0x6244,4);   // clock_min_ms, asked of the image
+        check("the image carries a refractory to test against",
+              window>=1 && window<=4, "clock_min_ms="+window);
+        for (boolean close : new boolean[]{false,true}) {
+            long second=close ? window-1 : window+1;   // ms after the first rise
+            long rise=10000+second*1000;
+            fresh(1,25000000);
+            // Nine milliseconds on the counter before the first edge, so the
+            // ms stamp the ISR takes is a number and not the zero a fresh
+            // machine would give either way.
+            idle(9000);
+            irq(10000,true);
+            check("the first edge is accepted and acquires (close="+close+")",
+                  r(0x6236,1)==1 && r(0x6234,1)==1,
+                  "presence="+r(0x6236,1)+" head="+r(0x6234,1));
+            irq(10500,false);            // low, wider than the chatter window
+            idle(rise-1000);             // and the counter moves while it is low
+            long stamp=r(0x623c,4), msStamp=r(0x62f6,2), head=r(0x6234,1);
+            check("the counter moved under the low, so the stamps differ",
+                  r(0x61e6,2)!=msStamp, "0x61e6="+r(0x61e6,2)+" stamp="+msStamp);
+            irq(rise,true);
+            if (close) {
+                check("a rise inside the refractory moves neither timestamp",
+                      r(0x623c,4)==stamp && r(0x62f6,2)==msStamp,
+                      "count "+r(0x623c,4)+" vs "+stamp+", ms "+r(0x62f6,2)+" vs "+msStamp);
+                check("and queues nothing", r(0x6234,1)==head,
+                      "head "+r(0x6234,1)+" was "+head);
+            } else {
+                check("a rise past the refractory takes both timestamps",
+                      r(0x623c,4)!=stamp && r(0x62f6,2)==r(0x61e6,2),
+                      "count "+r(0x623c,4)+" vs "+stamp+", ms "+r(0x62f6,2)+" vs "+r(0x61e6,2));
+                check("and queues an entry", r(0x6234,1)==head+1,
+                      "head "+r(0x6234,1)+" was "+head);
+            }
+            // Drain whatever is queued: the first edge gates either way, and
+            // the second only if it was taken.
+            service(rise); finishStep(rise+20000);
+            service(nowUs); finishStep(nowUs+20000);
+            check("the gate count matches what the FIFO was allowed to hold",
+                  outputTimes.size()==(close?1:2),
+                  outputTimes.size()+" outputs for a "+second+" ms interval");
+        }
+        println("PASS the "+window+" ms refractory rejects the close edge and passes the next");
     }
     void overflowAndWrap() throws Exception {
         fresh(1,25000000);
@@ -1001,7 +1135,14 @@ public class ClockRegression extends GhidraScript {
                 }
             }
             println("    0x2eee at end="+r(0x2eee,2));
-            if (outputTimes.size()<beats) { println("  glide "+glide+": lost an output"); continue; }
+            // A lost trigger is a lost trigger whether or not the decline
+            // branch is reachable in this build: twenty edges went in and
+            // twenty gates have to come out. This was a println and a
+            // `continue`, so the one test that reaches the glide path could
+            // drop a beat and still print PASS.
+            check("glide 0x2eee="+glide+": every edge still gated",
+                  outputTimes.size()>=beats,
+                  outputTimes.size()+" of "+beats);
             long lo=Long.MAX_VALUE, hi=Long.MIN_VALUE, sum=0; int n=0;
             for (int i=warm;i<beats;i++) {
                 long d=outputTimes.get(i)-edges.get(i);
@@ -2305,9 +2446,9 @@ public class ClockRegression extends GhidraScript {
             // nothing at all and fail on the silence.
             if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); sequencedGateHoldsAFinalTie(); sequencedGateIsHalfTheDividedStep(); }
             if (jitterOnly) {
-                bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
+                millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {
-            bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})

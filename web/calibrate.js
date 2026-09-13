@@ -67,13 +67,39 @@
         return { note: note, index: q, lean: lean };
     }
 
+    // The two numberings, and the conversion between them.
+    //
+    // Everything in this file counts in firmware table entries: the bottom key
+    // excites entry 3, because REMAP_ADD is three semitones and no option moves
+    // it.  The page counts in calibration semitones, where the bottom key sits
+    // at `bottomKeySemitone` - 3 on a 208, 208r or 208p, 0 on a 208c - and
+    // BUILDLIB.pitchTable lays the curve out to match, putting semitone s at
+    // entry s + (3 - bottomKeySemitone).
+    //
+    // With the pitch offset on the two coincide, which is why a year of use
+    // never showed this.  With it off, every reading the sweep took was filed
+    // three rows above the key it came from: the bottom C's correction landed
+    // on the D# a minor third up, the top three rows were never measured, and
+    // the curve still validated, so the page reported a clean build.
+    var BOTTOM_KEY_ENTRY = 3;
+    function semitoneFor(entry, bottomKeySemitone) {
+        return entry - BOTTOM_KEY_ENTRY + bottomKeySemitone;
+    }
+    function entryForSemitone(semitone, bottomKeySemitone) {
+        return semitone - bottomKeySemitone + BOTTOM_KEY_ENTRY;
+    }
+
     // The sweep, as a list.  Built from the arithmetic rather than written
     // out, so a changed assumption cannot leave a stale table behind.
-    function plan(lowSemitone, highSemitone, octaveTerm) {
+    //
+    // The bounds are table entries, not the page's semitones - they were named
+    // `lowSemitone`/`highSemitone` while being compared against `e.index`, and
+    // that is the name the caller believed.
+    function plan(lowEntry, highEntry, octaveTerm) {
         var out = [], seen = {};
         for (var note = FIRST_NOTE; note < FIRST_NOTE + KEY_TABLE.length; note++) {
             var e = entryFor(note, octaveTerm);
-            if (!e || e.index < lowSemitone || e.index > highSemitone) continue;
+            if (!e || e.index < lowEntry || e.index > highEntry) continue;
             if (seen[e.index]) continue;
             seen[e.index] = true;
             out.push(e);
@@ -420,19 +446,58 @@
             // reshape a plain oscillator.  Chrome also forces mono when echo
             // cancellation is on, which would quietly undo the channel count.
             //
-            // The channel asked for has to be reachable, so if the chosen one
-            // is above what "ideal" negotiated, ask again for exactly enough.
+            // The channel asked for has to be reachable, and "ideal" is a
+            // wish: Chrome answers it with two from a twelve input desk, and a
+            // device that reports no channelCount capability leaves nothing to
+            // raise the request to.  So this opened two channels, clamped the
+            // chosen one to index 1, listened to the wrong input, and then
+            // failed with a message blaming MIDI - while the dropdown beside
+            // it still offered twelve.  The dropdown is filled by
+            // channelCount(), which found that number by asking for it
+            // outright; ask outright here too, largest candidate first, and
+            // keep the first request that actually reaches the channel.
             stream = await root.navigator.mediaDevices.getUserMedia(
                 constraints(o.deviceId, null));
             var seen = trackChannels(stream);
-            if ((o.audioChannel || 0) >= seen.got && seen.max > seen.got) {
-                stop(stream);
-                stream = await root.navigator.mediaDevices.getUserMedia(
-                    constraints(o.deviceId, seen.max));
-                seen = trackChannels(stream);
+            var need = (o.audioChannel || 0) + 1;
+            if (need > seen.got) {
+                // The count the page already opened, then what the device
+                // claims, then the same ladder channelCount climbs for the
+                // devices that claim nothing - and `need` itself last, so a
+                // shape the ladder does not name is still tried.
+                var rungs = [];
+                [o.audioChannels, seen.max].concat(LADDER).concat([need])
+                    .forEach(function (n) {
+                        if (n >= need && rungs.indexOf(n) < 0) rungs.push(n);
+                    });
+                for (var ri = 0; ri < rungs.length && need > seen.got; ri++) {
+                    var wider = null;
+                    try {
+                        wider = await root.navigator.mediaDevices.getUserMedia(
+                            constraints(o.deviceId, rungs[ri]));
+                    } catch (e) { continue; }   // refused: try the next rung
+                    var opened = trackChannels(wider);
+                    // Chrome can accept the constraint and still hand back
+                    // fewer, so what the track says wins over what was asked.
+                    if (opened.got > seen.got) {
+                        stop(stream); stream = wider; seen = opened;
+                    } else { stop(wider); }
+                }
             }
         } catch (err) {
             throw new Error(audioTrouble(err));
+        }
+        // The channel offered has to be the channel listened on.  Clamping it
+        // into range instead meant reading a different input and then failing
+        // with a message about MIDI, which sends the owner to the wrong cable.
+        // Refused here, before any note goes out, and named as an audio fault.
+        var count = Math.max(seen.got, 1);
+        var want = Math.max(0, o.audioChannel || 0);
+        if (want >= count) {
+            stop(stream);
+            throw new Error('Audio channel ' + (want + 1) + ' could not be opened; ' +
+                'this input gave ' + count + ' channel' + (count === 1 ? '' : 's') +
+                '. Pick a channel in range, or choose a different input.');
         }
         var ctx = new (root.AudioContext || root.webkitAudioContext)();
         var analyser = ctx.createAnalyser();
@@ -442,8 +507,6 @@
         // One channel of the interface, not a mix of it.  A splitter keeps
         // them apart - its channelInterpretation is 'discrete', so channel 7
         // arrives as channel 7 rather than being folded into a stereo pair.
-        var count = Math.max(seen.got, 1);
-        var want = Math.min(Math.max(0, o.audioChannel || 0), count - 1);
         if (o.onChannels) o.onChannels(count, want);
         if (count > 1) {
             var splitter = ctx.createChannelSplitter(count);
@@ -578,7 +641,8 @@
                     throw new Error('No MIDI channel moved the pitch. Check the ' +
                         'keyboard is on the chosen MIDI port and still plugged in, ' +
                         'and that the 208 is droning into the chosen audio input ' +
-                        'and channel.');
+                        'and channel. The sweep is listening on channel ' +
+                        (want + 1) + ' of that input.');
                 }
                 o.channel = found;
                 if (o.onChannel) o.onChannel(found);
@@ -590,7 +654,9 @@
                         'move the pitch, so nothing is listening there. Check the ' +
                         'keyboard is on the chosen MIDI port and still plugged in, ' +
                         'and that the 208 is droning into the chosen audio input ' +
-                        'and channel. Set the channel to Auto to search for it.');
+                        'and channel. The sweep is listening on channel ' +
+                        (want + 1) + ' of that input. Set the channel to Auto ' +
+                        'to search for it.');
                 }
             }
 
@@ -604,7 +670,6 @@
                     'into the chosen audio input and channel.');
             }
             marks.push({ t: Date.now(), hz: first.hz });
-            var expect = first.hz;
 
             for (var i = 0; i < steps.length; i++) {
                 if (self.stopped) throw new Error('Stopped.');
@@ -617,8 +682,21 @@
                         noteLabel(step.index) + ' was not heard clearly and was ' +
                         'skipped - readings after it lean on the check before it');
                 }
-                var got = await hear(step.note, i === 0 ? first.hz : expect,
-                                    undefined, 'sweep');
+                // What this note should come back as: the drift-corrected
+                // anchor, times the ideal interval from the anchor's entry to
+                // this one.  Derived rather than carried forward from the last
+                // reading, because carrying it forward froze it on every note
+                // that was not heard - the advance sat below the miss path's
+                // `continue` - and three silent notes left the band three
+                // semitones low, so the notes after them were measured at
+                // their true pitches and thrown away.  A note that did not
+                // take froze it the same way, one semitone at a time.  Since a
+                // reading is only accepted within 120 cents of this same
+                // ladder, the +/-300 cent band around it cannot discard a
+                // reading the run would have kept.
+                var wantHz = anchorAt(marks, Date.now()) *
+                             Math.pow(2, (step.index - anchor.index) / 12);
+                var got = await hear(step.note, wantHz, undefined, 'sweep');
                 var t = Date.now();
                 if (!heard(got)) {
                     warnings.push(noteLabel(step.index) + ': ' +
@@ -631,37 +709,47 @@
                 // Drift-corrected reference: where the anchor was at this moment.
                 var ref = anchorAt(marks, t);
                 var off = cents(got.hz, ref) - 100 * (step.index - anchor.index);
-                // A reading more than a semitone out is not a tracking error,
-                // it is the wrong note: an alternate tuning is selected, or a
-                // note was missed.  Recorded as blank and reported, rather
-                // than folded in as if it were a measurement.
-                if (Math.abs(off) > 120) {
-                    warnings.push(noteLabel(step.index) + ': ' + off.toFixed(0) +
-                                  ' cents out, ignored');
-                    results.push({ index: step.index, note: step.note, cents: null });
-                } else {
-                    results.push({ index: step.index, note: step.note, cents: off,
-                                   hz: got.hz });
-                }
                 // The firmware cannot play a higher note lower: the output is
                 // table[index] interpolated towards table[index+1], the table
                 // is strictly increasing, and index rises with the note.  So a
                 // reading that goes backwards is not a tracking error being
-                // measured - it is the note not having taken, and it is worth
-                // saying so with the numbers rather than folding it in.
-                if (previous && got.hz <= previous.hz) {
+                // measured - it is the note not having taken, and the pitch
+                // that came back belongs to the note before it.
+                var backwards = !!(previous && got.hz <= previous.hz);
+                if (backwards) {
                     warnings.push(noteLabel(step.index) + ' came out ' +
                         Math.abs(cents(got.hz, previous.hz)).toFixed(0) +
                         ' cents BELOW ' + noteLabel(previous.index) + ' (' +
                         previous.hz.toFixed(2) + ' Hz then ' + got.hz.toFixed(2) +
                         ' Hz) - the note did not take');
                 }
+                // A reading more than a semitone out is not a tracking error,
+                // it is the wrong note: an alternate tuning is selected, or a
+                // note was missed.  Recorded as blank and reported, rather
+                // than folded in as if it were a measurement.
+                //
+                // A note that did not take is blanked on the same grounds and
+                // not on its size.  It lands about 100 cents out - just inside
+                // the 120 the threshold allows - so warning about it and then
+                // keeping it wrote a +100 cent correction into the table, one
+                // or two DAC counts clear of its neighbour, past the collision
+                // guard and past validateCal, and shipped a semitone playing
+                // very nearly its neighbour's pitch.
+                if (Math.abs(off) > 120 || backwards) {
+                    if (!backwards) {
+                        warnings.push(noteLabel(step.index) + ': ' + off.toFixed(0) +
+                                      ' cents out, ignored');
+                    }
+                    results.push({ index: step.index, note: step.note, cents: null });
+                } else {
+                    results.push({ index: step.index, note: step.note, cents: off,
+                                   hz: got.hz });
+                }
                 if (got.drift !== null && Math.abs(got.drift) > 8) {
                     warnings.push(noteLabel(step.index) + ' moved ' +
                         got.drift.toFixed(1) + ' cents while being measured');
                 }
                 previous = { hz: got.hz, index: step.index };
-                expect = got.hz * Math.pow(2, 1 / 12);
                 if (o.onNote) o.onNote(step, results[results.length - 1], i, steps.length);
             }
         } finally {
@@ -699,6 +787,8 @@
 
     root.CALIBRATE = {
         KEY_TABLE: KEY_TABLE, FIRST_NOTE: FIRST_NOTE,
+        BOTTOM_KEY_ENTRY: BOTTOM_KEY_ENTRY,
+        semitoneFor: semitoneFor, entryForSemitone: entryForSemitone,
         entryFor: entryFor, plan: plan, noteLabel: noteLabel,
         measure: measure, cents: cents, yin: yin, refine: refine,
         audioTrouble: audioTrouble, channelCount: channelCount,

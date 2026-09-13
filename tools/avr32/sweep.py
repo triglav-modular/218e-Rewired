@@ -273,9 +273,17 @@ def audit_call_pools(image_path) -> list[str]:
 # recorded under: this config is the one with three real tunings and a
 # measured table behind it, so it is where a step measured at the take's
 # degree instead of its own shows up as cents rather than as nothing.
+# And again for the first firmware batch of the September 13 audit, every part
+# of which is in this config's shipped code: persist_load's no-record early-out
+# lands on the exit rather than one instruction short of it, where it had been
+# reading a byte through a flash page base and planting it in the take's preset
+# reference; boot clears that reference beside the count it already cleared; a
+# rest or a tie entered as the first step of an empty take adopts the reference
+# and stamps its own degree, as the first note would have; and the chord's pad
+# walk keeps its index across the two calls that destroy it.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "9a1c18ac133b917249ccffc5c5229dcc1dc565537a9b9c9af730bbeba986bce6",
+    "historical_config": "1edea453c4253087c05da0d835f95eb2d0f99affc5338cda1de70966db2ce877",
 }
 
 

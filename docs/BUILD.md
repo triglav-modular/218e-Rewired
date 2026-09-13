@@ -163,9 +163,12 @@ shipped with. The checksum the build writes into each script is a label, so the
 default build can be named in a list of candidates rather than shown as a bare
 hash; it is not a gate. What is a gate is `tools/validate_hex.py`, which mirrors
 `dfu-programmer`'s own parser — it stops at the end-of-file record, it lets type
-4 and type 5 both set the address offset, and it counts addresses rather than
-declared record lengths, because each of those is a way for a file to be
-approved and something else to be written.
+4 and type 5 both set the address offset, and it sums declared record lengths
+rather than counting addresses, because each of those is a way for a file to
+be approved and something else to be written. It used to track a written set
+of addresses instead, which accepted out-of-order records the other two
+validators refused — a divergence among the very tools whose agreement is the
+point.
 
 **The log is written for a bug report, not for a post-mortem.** Both flashers
 open by writing everything about the run into it — which flasher, which OS and
@@ -272,8 +275,8 @@ the options into the full internal settings the build has always used.
 | `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` leaves the edit keys and their LEDs entirely alone. |
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
 | `pitch_offset` | `true` | The pitch CV starts three semitones above the 208's 0 V pitch, which puts the bottom C in tune on a 208, 208r or 208p — they start from A. `false` is for the 208c, which starts from C: the bottom key sounds the 0 V pitch. |
-| `quantize_presets` | `false` | With the add-to-pitch switch in the middle, the active pad's preset voltage shifts the whole keyboard by whole degrees of the tuning currently selected — the same rotation `portamento_in = "transpose"` performs — so every key still plays a note of the scale and the per-key correction applies to it. On an unequal scale the intervals between keys move with the shift. The preset voltage output jack is unchanged. `false` adds the voltage as it is. |
-| `portamento_in` | `"portamento"` | What the **portamento in** banana jack does. `"transpose"` shifts the whole keyboard by whole degrees of the selected tuning, one period of it per 4 V of CV — so the jack's 0–10 V is about two and a half periods, which the pitch output can render from any starting key — quantised with hysteresis and upward only; everything already sounding moves with it, held keys, the latch, the arp and a playing take alike, and a held key's MIDI note keeps the shift it was pressed under. Keyboard maps of more than 32 positions cannot be shifted and are refused with the transposer on. `"portamento"` leaves the jack adding to the portamento time, as the factory does. |
+| `quantize_presets` | `true` | With the add-to-pitch switch in the middle, the active pad's preset voltage shifts the whole keyboard by whole degrees of the tuning currently selected — the same rotation `portamento_in = "transpose"` performs — so every key still plays a note of the scale and the per-key correction applies to it. On an unequal scale the intervals between keys move with the shift. The preset voltage output jack is unchanged. `false` adds the voltage as it is. |
+| `portamento_in` | `"transpose"` | What the **portamento in** banana jack does. `"transpose"` shifts the whole keyboard by whole degrees of the selected tuning, one period of it per 4 V of CV — so the jack's 0–10 V is about two and a half periods, which the pitch output can render from any starting key — quantised with hysteresis and upward only; everything already sounding moves with it, held keys, the latch, the arp and a playing take alike, and a held key's MIDI note keeps the shift it was pressed under. Keyboard maps of more than 32 positions cannot be shifted and are refused with the transposer on. `"portamento"` leaves the jack adding to the portamento time, as the factory does. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 | `knob1`, `knob2`, `knob3`, `knob4` | per knob | What each preset knob does outside edit mode. Left out, a knob takes the first role listed: `knob1` `order`/`orders`, `knob2` `spacing`/`quantized`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back to its preset voltage. Edit-mode knobs 1 and 4 are unaffected. |
@@ -411,7 +414,8 @@ python3 tools/test_controls.py     # emitted knob roles and strip-gesture owners
 
 `test_controls.py` runs default, six-order/transpose, tuned-transpose, and
 lean (factory arp, no sequencer or divider) images with persistence on and
-off. It checks all six note orders, preset-4
+off, plus knob 2 on swing and on step patterns, which build once each
+because neither role touches persistence. It checks all six note orders, preset-4
 isolation through the actual ADC-event pitch target and DAC path from the
 first knob movement, release-triggered saves, released/unlatched press
 history, and pitch ordering with octave-stacked notes and equal pitches.
@@ -468,19 +472,21 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 
 | | |
 |---|---|
-| `tools/test.py` | 126 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
+| `tools/test.py` | 231 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
 | `tools/avr32/sweep.py` | representative configurations, including all four persistence variants, built by both toolchains and compared byte for byte |
 | `web/test_configs.py` | the browser build matches `build.py` across its option/interaction matrix |
-| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, and clock continuation after saves |
-| `web/test_matrix.js` | **1,536 option combinations**, including persistence on/off, built through the guarded path |
+| `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, clock continuation after saves, and the keyboard played over a running take |
+| `web/test_matrix.js` | **2,304 option combinations**, including persistence on/off, built through the guarded path |
 
 Every build, in either toolchain, has to pass four structural checks before it
 produces an image: no two patches overlap, no patch lands on a factory entry
-point (2,665 control transfers are traced), every byte differing from the
-factory image lies inside a declared patch, and the rendered hex re-parses to
-the same bytes. `web/test_matrix.js` runs all 1,536 combinations through those
-checks:
+point, every byte differing from the factory image lies inside a declared
+patch, and the rendered hex re-parses to the same bytes. `tools/build.py`
+traces 3,613 control transfers for the entry-point check; the page's guard
+reads only the 2,665 of them written as a plain source/target pair, and not
+the 948 recorded with the pool word they are reached through.
+`web/test_matrix.js` runs all 2,304 combinations through those checks:
 
 ```bash
 jsc web/generated.js web/sha256.js web/buildlib.js web/assembler.js \

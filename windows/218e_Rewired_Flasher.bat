@@ -27,11 +27,11 @@ REM instrument leave DFU.  Buchla's own ProgramLEM218.bat does none of those and
 REM flashes whatever .hex it finds first, which is why this is a separate
 REM script.
 
-SET "EXPECTED_SHA256=00c9607061e50105fdcfcdcdbfc54e3e84d689ef534495f4710dab326455d982"
+SET "EXPECTED_SHA256=5bf3530956b3c6ba123f96c32b3975aa91cd47f50e4a98c1a14ad13681f92182"
 REM Buchla's own v36.9 image.  Recognised so that going back to stock is an
 REM offered choice rather than something to be identified by hand.
 SET "FACTORY_SHA256=565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-SET "FIRMWARE_VERSION=Rewired 2.4.0 (00c96070)"
+SET "FIRMWARE_VERSION=Rewired 2.4.0 (5bf35309)"
 REM What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
 REM for whichever image is chosen, so by the time anything reaches the log it
 REM no longer says which flasher wrote it.
@@ -189,19 +189,61 @@ IF NOT EXIST "%PSTOOLS%\Scan-Images.ps1" (
     GOTO :fail_early
 )
 SET "IMG_COUNT=0"
-FOR /F "tokens=1,2,* delims=|" %%A IN ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Scan-Images.ps1" -DirList "%FIRMWARE_DIR%" -Prefer "%EXPECTED_SHA256%" 2^>NUL') DO (
+SET "SCAN_OUT=%TEMP%\rewired_scan_%RANDOM%.txt"
+SET "SCAN_WHY=%TEMP%\rewired_scanwhy_%RANDOM%.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PSTOOLS%\Scan-Images.ps1" -DirList "%FIRMWARE_DIR%" -Prefer "%EXPECTED_SHA256%" -Explain > "%SCAN_OUT%" 2> "%SCAN_WHY%"
+FOR /F "usebackq tokens=1,2,* delims=|" %%A IN ("%SCAN_OUT%") DO (
     SET /A IMG_COUNT+=1
     CALL SET "IMG_WHEN_%%IMG_COUNT%%=%%A"
     CALL SET "IMG_SHA_%%IMG_COUNT%%=%%B"
     CALL SET "IMG_PATH_%%IMG_COUNT%%=%%C"
 )
+DEL "%SCAN_OUT%" >NUL 2>&1
+
+REM Why a .hex in that folder is not in the list.  -Explain has always written
+REM a verdict per file to stderr and the flasher sent it to NUL, so a folder of
+REM three unflashable images printed "3 in the firmware folder" from
+REM :searched_note and then, two lines later, "No flashable 218e V3 image is in
+REM that folder" - which reads as a contradiction and says nothing to fix.
+SET "REJECTED=0"
+IF EXIST "%SCAN_WHY%" (
+    FOR /F "usebackq tokens=1,* delims= " %%R IN ("%SCAN_WHY%") DO (
+        >>"%LOG_FILE%" ECHO Scan: %%R %%S
+        IF /I "%%R"=="reject" SET /A REJECTED+=1
+    )
+)
+IF NOT "!REJECTED!"=="0" (
+    ECHO.
+    IF "!REJECTED!"=="1" (
+        ECHO   1 file there is not a flashable 218e V3 image:
+    ) ELSE (
+        ECHO   !REJECTED! files there are not flashable 218e V3 images:
+    )
+    FOR /F "usebackq tokens=1,* delims= " %%R IN ("%SCAN_WHY%") DO (
+        IF /I "%%R"=="reject" ECHO     %%S
+    )
+)
+DEL "%SCAN_WHY%" >NUL 2>&1
 
 IF "%IMG_COUNT%"=="0" GOTO :no_image
 
 SET "PICK=1"
 IF %IMG_COUNT% GTR 1 (
+    REM "Newest first" is only true when -Prefer did not have to lift this
+    REM download's own image above a newer one.  Read the order off the list
+    REM rather than claiming it; the same check is in the macOS flasher.
+    SET "NEWEST_FIRST=1"
+    SET "PREV_WHEN="
+    FOR /L %%I IN (1,1,%IMG_COUNT%) DO (
+        IF DEFINED PREV_WHEN IF "!IMG_WHEN_%%I!" GTR "!PREV_WHEN!" SET "NEWEST_FIRST=0"
+        SET "PREV_WHEN=!IMG_WHEN_%%I!"
+    )
     ECHO.
-    ECHO   %IMG_COUNT% flashable images found.  Newest first:
+    IF "!NEWEST_FIRST!"=="1" (
+        ECHO   %IMG_COUNT% flashable images found.  Newest first:
+    ) ELSE (
+        ECHO   %IMG_COUNT% flashable images found:
+    )
     ECHO.
     REM "Rewired 1.0.0 (sha)" -> "1.0", the way the page shows it.
     FOR /F "tokens=2" %%V IN ("%FIRMWARE_VERSION%") DO SET "REWIRED_VER=%%V"
@@ -288,7 +330,7 @@ ECHO     !CHOSEN_SHA!
 REM The image is flashed where it is, as on macOS.  Filing a copy under the
 REM canonical name only made it turn up again on the next run as a second
 REM entry in the list, checksummed but with nothing to say where it came from.
-ECHO Using !FIRMWARE!>> "%LOG_FILE%"
+>>"%LOG_FILE%" ECHO Using !FIRMWARE!
 
 REM What was chosen and what is in it, written before the chip is touched so
 REM it is in the log whichever way the run ends.
@@ -953,12 +995,12 @@ EXIT /B 0
 SET /A STEP+=1
 ECHO.
 ECHO [!STEP!/%TOTAL_STEPS%] %*
-ECHO === step !STEP!/%TOTAL_STEPS%: %*>> "%LOG_FILE%"
+>>"%LOG_FILE%" ECHO === step !STEP!/%TOTAL_STEPS%: %*
 EXIT /B 0
 
 :ok
 ECHO   [ok] %*
-ECHO OK: %*>> "%LOG_FILE%"
+>>"%LOG_FILE%" ECHO OK: %*
 EXIT /B 0
 
 :read_fuse
@@ -975,7 +1017,7 @@ REM default "folder (2)" duplicate name puts parentheses in %DFU%.  A plain
 REM command line keeps its quotes whatever the path holds.
 "%DFU%" at32uc3b1256 getfuse %1 > "%TEMP%\rewired_fuse.txt" 2>&1
 FOR /F "usebackq tokens=* delims=" %%L IN ("%TEMP%\rewired_fuse.txt") DO (
-    ECHO %%L>> "%LOG_FILE%"
+    >>"%LOG_FILE%" ECHO %%L
     FOR /F "tokens=2 delims=()" %%V IN ("%%L") DO SET "FUSE_VALUE=%%V"
 )
 DEL "%TEMP%\rewired_fuse.txt" >NUL 2>&1

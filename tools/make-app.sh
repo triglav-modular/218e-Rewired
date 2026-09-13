@@ -93,9 +93,18 @@ find "$APP/Contents/Resources/support" -name .DS_Store -delete
 # Mach-O below, so the bundle's own bytes cannot be compared with the repo's
 # - but the source hashes can, and CI does: a rebuilt tool in mac/support
 # would otherwise ship stale inside this zip with every workflow green.
+#
+# This script and the icon are in it because three of the things the bundle
+# carries have no file of their own in the repository: the launcher below is a
+# heredoc, Info.plist is written further down, and AppIcon.icns is rendered
+# from the SVG.  Without them an edit to any of the three could be committed
+# with the sealed app still carrying the old one and nothing able to see it.
+# The cost is that any edit to this file - a comment included - marks the app
+# stale, which is the same bargain the assembler's init_marker already makes.
 (
   cd "$REPO"
-  { shasum -a 256 "mac/Program218e_v3_Rewired_macOS.command"
+  { shasum -a 256 "mac/Program218e_v3_Rewired_macOS.command" \
+                  "tools/make-app.sh" "mac/AppIcon.svg"
     find mac/support -type f ! -name .DS_Store -print0 | sort -z | \
       xargs -0 shasum -a 256
   } > "$APP/Contents/Resources/SOURCES.sha256"

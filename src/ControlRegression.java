@@ -1440,6 +1440,133 @@ public class ControlRegression extends SequenceEditRegression {
         }
         return forced;
     }
+    // Knob 2 as swing.  It replaces the same randomiser the quantised grid
+    // does, on the same hook and the same output cell, and lengthens every
+    // other step by as much as it shortens the one after - so the pair keeps
+    // its total and the arpeggio stops being square without drifting in
+    // tempo.  Shipped in every swing build and emulated by nothing until
+    // now: get the pair byte or the clamp wrong and no suite noticed.
+    static final long SWING=0x8001b100L;
+    long swingReload(long step) throws Exception {
+        e.writeRegister("R12",step); call(SWING); return r(S+0x38e,2);
+    }
+    void swingRhythm() throws Exception {
+        fresh();
+        check("the rhythm hook's pool word names the swing cave",r(0x80019d40L,4)==SWING);
+        long step=400;
+        w(0x60e6,2,0x2f); w(0x6152,1,0);
+        check("below the deadzone the step is the step itself",
+            swingReload(step)==step&&r(0x6152,1)==0);
+        w(0x60e6,2,0x2f); w(0x6152,1,1);
+        check("and the deadzone leaves the pair byte where it found it",
+            swingReload(step)==step&&r(0x6152,1)==1);
+        long widest=0;
+        for(int knob:new int[]{0x30,256,512,768,1023}) {
+            w(0x60e6,2,knob); w(0x6152,1,0);
+            long first=swingReload(step); long afterFirst=r(0x6152,1);
+            long second=swingReload(step); long afterSecond=r(0x6152,1);
+            check("knob "+knob+": the first of the pair is the long one: "+first,
+                first>=step);
+            check("knob "+knob+": the second is short by as much: "+second,
+                first+second==2*step);
+            check("knob "+knob+": the pair byte alternates",
+                afterFirst==1&&afterSecond==0);
+            widest=Math.max(widest,first-step);
+        }
+        // A third either way is the triplet feel the travel is cut for.
+        check("full travel swings by about a third of a step: "+widest,
+            widest*100>=step*32&&widest*100<=step*34);
+        // Both of the randomiser's own limits, which swing inherits.
+        w(0x60e6,2,1023); w(0x6152,1,0);
+        long shortest=swingReload(10);  // long
+        shortest=swingReload(10);       // then short, into the floor
+        check("a short step cannot go under the randomiser's floor: "+shortest,
+            shortest==8);
+        w(0x60e6,2,1023); w(0x6152,1,0);
+        check("and a long one cannot pass its ceiling",swingReload(0xfff)==0xfff);
+        println("PASS knob 2 as swing: deadzone, alternating pair, kept total, both limits");
+    }
+
+    // Knob 2 as a bank of step patterns.  The mask says whether a step
+    // sounds; 0x6150 says which step it is and wraps at that pattern's own
+    // length; and because there is no shift-by-register here the mask walks
+    // down to bit zero instead.  Both the walk and the wrap shipped in every
+    // patterns build with nothing executing them.
+    static final long PATTERNS=0x8001b050L, BANK=0x80019f20L, LENGTHS=0x80019fa0L;
+    long patternMask(int i) { return r(BANK+4L*i,2)|(r(BANK+4L*i+2,2)<<16); }
+    int patternLength(int i) { return (int)r(LENGTHS+2L*i,2); }
+    // The bank entry as the gate should play it: 'x' for a step that sounds.
+    String patternAt(int i) {
+        StringBuilder out=new StringBuilder();
+        for(int s=0;s<patternLength(i);s++)
+            out.append(((patternMask(i)>>s)&1)!=0?'x':'.');
+        return out.toString();
+    }
+    // One knob setting, walked from step zero until the counter comes back
+    // to it.  Returns what sounded, in order.  walkSteps says the counter
+    // moved one step at a time; walkLength is where it wrapped, and stays 0
+    // if it had not wrapped after 40 steps - eight more than the widest mask
+    // the bank can hold, so a gate wrapping at the mask's width instead of
+    // the pattern's own does not simply run on unnoticed.
+    //
+    // Only the two of those are asserted, plus the played string against the
+    // table: `played.length() == walkLength` would be a property of this
+    // loop, which appends exactly once per step.
+    int walkLength; boolean walkSteps;
+    String patternWalk(int knob) throws Exception {
+        w(0x60e6,2,knob); w(0x6150,2,0);
+        StringBuilder out=new StringBuilder();
+        walkLength=0; walkSteps=true;
+        for(int i=0;i<40&&walkLength==0;i++) {
+            int at=(int)r(0x6150,2);
+            e.writeRegister("R12",4);
+            long answer=(int)call(PATTERNS);
+            int next=(int)r(0x6150,2);
+            out.append(answer==-1?'.':'x');
+            if(next==0) walkLength=at+1;
+            else if(next!=at+1) { walkSteps=false; break; }
+        }
+        return out.toString();
+    }
+    void patternGate() throws Exception {
+        // Keys held, or the real selector answers -1 to a hit and a hit
+        // cannot be told from a rest.
+        orderFixture(0,0,4,9,14);
+        check("the factory selector pool names the pattern gate",r(0x80002420L,4)==PATTERNS);
+        check("and the sequencer reaches the same one",r(0x8001b434L,4)==PATTERNS);
+        // The gate hands a hit to the real selector through its own pool
+        // word; with nothing held that selector answers -1 too, and a hit
+        // could not be told from a rest.
+        e.writeRegister("R12",4);
+        check("three keys are held, so a hit answers with one of them",
+            r(S+0x21a,1)==3&&(int)call(r(0x8001b0fcL,4))!=-1);
+        List<String> reached=new ArrayList<>();
+        for(int knob=0;knob<=1023;knob+=8) {
+            String played=patternWalk(knob);
+            check("knob "+knob+": the step counter moves one step at a time,"
+                +" played "+played,walkSteps);
+            check("knob "+knob+": and comes back to zero inside 40 steps,"
+                +" so it wraps at a pattern length and not at the mask's"
+                +" width: played "+played,walkLength>0);
+            if(!reached.contains(played)) reached.add(played);
+        }
+        check("the knob reaches more than one pattern: "+reached,reached.size()>1);
+        // Both halves at once: the string is one character per step up to
+        // the wrap, so equality pins the mask walk AND the length the wrap
+        // used, against the two tables the image carries.
+        for(int i=0;i<reached.size();i++)
+            check("pattern "+i+" plays the mask and length the image carries: "
+                +reached.get(i)+" against "+patternAt(i),
+                reached.get(i).equals(patternAt(i)));
+        // A rest must answer -1 and leave the note sequence alone: the
+        // arpeggio plays slowly through a sparse fill rather than skipping.
+        int rest=-1;
+        for(int i=0;i<reached.size()&&rest<0;i++)
+            if(reached.get(i).indexOf('.')>=0) rest=i;
+        check("some pattern in the bank has a rest to check",rest>=0);
+        println("PASS knob 2 as patterns: "+reached.size()+" patterns walked, each"
+            +" against the mask and length the image carries");
+    }
     void quantizedRhythm() throws Exception {
         fresh();
         check("the rhythm hook's pool word names the quantized cave",r(0x80019d40L,4)==GRID);
@@ -1553,7 +1680,9 @@ public class ControlRegression extends SequenceEditRegression {
         zones=args.length>3?Integer.parseInt(args[3]):9;
         lean=args.length>4&&args[4].equals("lean");
         quantized=args.length>5&&args[5].equals("quantized");
-        gridRhythm=args.length>6&&args[6].equals("quantized");
+        // Which of knob 2's four roles this image was built with.
+        String knob2=args.length>6?args[6]:"spacing";
+        gridRhythm=knob2.equals("quantized");
         jack=args.length>7&&args[7].equals("jack");
         seq=!lean; clock=!lean; persistent=args.length>2&&args[2].equals("persist");
         List<String> failures=new ArrayList<>();
@@ -1565,9 +1694,16 @@ public class ControlRegression extends SequenceEditRegression {
                 try { presetSequencer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             }
             if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(orders)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(orders)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(orders)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            // The pattern gate sits at the note selector and answers a rest
+            // with -1 without moving the note on, so on a patterns build an
+            // order walk no longer gives one key per beat and these three
+            // fixtures cannot read it. The walks are covered by the roles
+            // variant, which carries the same selector without the gate;
+            // what the gate itself does is patternGate() below.
+            boolean orderWalks=orders&&!knob2.equals("patterns");
+            if(orderWalks)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(orderWalks)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(orderWalks)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchExitHold(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchTransposeState(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(jack)try { jackTransposer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
@@ -1583,8 +1719,10 @@ public class ControlRegression extends SequenceEditRegression {
             if(seq)try { heldPresetEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(lean)try { retainedStartup(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(gridRhythm)try { quantizedRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(knob2.equals("swing"))try { swingRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(knob2.equals("patterns"))try { patternGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
-            println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", gridRhythm="+gridRhythm);
+            println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }
     }
 }

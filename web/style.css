@@ -862,6 +862,12 @@ td input {
   font-size: 14px;
   margin: 14px 0;
   white-space: pre-wrap;
+  /* A SHA-256 is 64 characters with no break opportunity in it, and the text
+     column is 283px on a 375px phone.  Without this the checksum ran about
+     560px, the document gained that much horizontal scroll, and every section
+     on the page sat off-centre until the message cleared - at the moment a
+     rejected image most needs reading. */
+  overflow-wrap: anywhere;
 }
 .msg.ok {
   background: color-mix(in srgb,var(--ok) 12%,transparent);
@@ -1179,7 +1185,10 @@ td input {
   /* The same edge the steps carry - against the panel, --line is no edge. */
   border: 1px solid var(--muted);
   background: transparent;
-  color: var(--fg);
+  /* --ink, the same token body carries.  This read var(--fg), which this
+     sheet never defines: invalid at computed-value time, so colour fell back
+     to inheritance and looked right by accident. */
+  color: var(--ink);
   font: inherit;
   font-size: 13px;
   text-align: center;

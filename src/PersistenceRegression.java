@@ -13,7 +13,8 @@ public class PersistenceRegression extends GhidraScript {
         SAVE=0x8001d100L, CAPTURE=0x8001d280L, TICK=0x8001d400L,
         SHIM=0x8001d520L, ENTER=0x8001b660L, SCAN=0x8001a480L;
     EmulatorHelper e;
-    boolean seq, clock, locked, allBad, badCommit, clockExercise;
+    boolean seq, clock, locked, allBad, badCommit, clockExercise, migrationProbe;
+    int loaderCalls, saverCalls;
     int outputs;
     int checks, writes, erases, programs, stores, cutBytes;
     String cut="";
@@ -103,6 +104,15 @@ public class PersistenceRegression extends GhidraScript {
             for(int i=0;i<8;i++) buffer[(int)(dest&511)+i]&=pair[i];
             e.writeMemory(toAddr(dest),old); stores++; return;
         }
+        // The two factory leaves the poly-MIDI migration wrapper is built
+        // around. Stubbed so the test owns what the loader answers and can
+        // see whether the saver ran; the wrapper itself - which is ours -
+        // executes in full. Each returns a distinctive value, because one of
+        // the three claims is about which of them the caller gets back.
+        if(migrationProbe) {
+            if(p==0x8000a264L) { loaderCalls++; e.writeRegister("R12",0x1234); ret(); return; }
+            if(p==0x80009fb8L) { saverCalls++; e.writeRegister("R12",0x5678); ret(); return; }
+        }
         // Physical GPIO setup, LEDs, serial output and SPI only. Gestures,
         // mode transitions, strip borrowing and pickup execute normally.
         if(p==0x80007340L||p==0x80006808L||p==0x800068ccL||p==0x8000673cL
@@ -163,7 +173,7 @@ public class PersistenceRegression extends GhidraScript {
         sizeFn=r(0x80010e80L,4); clearFn=r(0x80010e84L,4); errorCell=r(0x80010e88L,4);
         eraseFn=r(0x80010e8cL,4); programFn=r(0x80010e90L,4);
         byte[] ff=new byte[4096]; Arrays.fill(ff,(byte)255); e.writeMemory(toAddr(BASE),ff);
-        locked=false; allBad=false; badCommit=false; clockExercise=false; cut=""; badPages.clear(); targets.clear();
+        locked=false; allBad=false; badCommit=false; clockExercise=false; migrationProbe=false; cut=""; badPages.clear(); targets.clear();
         writes=0; erases=0; programs=0; stores=0; cold();
         check("settings page untouched",r(0x968,4)==0x8003f000L);
     }
@@ -191,6 +201,40 @@ public class PersistenceRegression extends GhidraScript {
         check("warm reset restores stopped and clears transients",r(0x613a,2)==410
             &&r(0x6158,1)==0&&r(0x615f,1)==0&&r(0x622e,2)==0);
         println("PASS CRC vector, real factory wrapper, equality, ring wrap, cold/warm startup");
+    }
+    // The one-time poly-MIDI migration, run rather than modelled.  What
+    // stood here was a five-line Python state machine in tools/test.py that
+    // defined its own boot(), asserted against its own dictionary, and in one
+    // line compared a variable with itself - so the cave could be deleted
+    // outright and the check still printed ok.  The three claims it made are
+    // firmware claims, and this is where they are asked of the firmware:
+    // an unmigrated record loses poly MIDI and is written back, a migrated
+    // one is left alone, and either way the caller gets the LOADER's return,
+    // not the saver's.
+    void polySettingsMigration() throws Exception {
+        fresh();
+        long wrapper=r(0x80007da8L,4);
+        check("the factory settings-loader pool names the migration wrapper",
+            wrapper==0x8001aca4L);
+        migrationProbe=true;
+        for(boolean migrated:new boolean[]{true,false}) {
+            w(0x8003f002L,1,migrated?0xa5:0x00);   // the record's marker byte
+            w(S+0x84,1,1);                         // poly MIDI on, as an old record had it
+            loaderCalls=0; saverCalls=0;
+            long got=call(wrapper);
+            check("the loader ran once (migrated="+migrated+")",loaderCalls==1);
+            check("the caller gets the loader's value, not the saver's"
+                +" (migrated="+migrated+")",got==0x1234);
+            if(migrated) {
+                check("an already-migrated record keeps the poly setting",r(S+0x84,1)==1);
+                check("and is not written back",saverCalls==0);
+            } else {
+                check("an unmigrated record loses poly MIDI",r(S+0x84,1)==0);
+                check("and is saved once, so the choice survives the next boot",saverCalls==1);
+            }
+        }
+        migrationProbe=false;
+        println("PASS the poly-MIDI migration runs once, keeps the loader's return");
     }
     void relativeSteps() throws Exception {
         // Steps are relative to the take's reference, so a note recorded
@@ -573,7 +617,7 @@ public class PersistenceRegression extends GhidraScript {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
         try {
-            basic(); relativeSteps(); latchState(); tuningSlot(); stepDegrees(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
+            basic(); polySettingsMigration(); relativeSteps(); latchState(); tuningSlot(); stepDegrees(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
             println("PERSISTENCE REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash/analog testing.");
         } finally { if(e!=null)e.dispose(); }
     }

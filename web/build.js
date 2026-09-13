@@ -22,20 +22,31 @@ var WEBBUILD = (function () {
             cfg.pressure.curve.span, cfg.pressure.curve.onset_db,
             cfg.pressure.curve.onset_fade);
         tables.pitch_remap = BUILDLIB.pitchTable(cfg, cfg._calibration);
+        // Same rule as tools/build.py: without a .kbm there is one key table
+        // entry per key and nothing to map them with, so the scale has to have
+        // exactly the twelve the keyboard repeats.
+        //
+        // Every slot is checked before any of them is built, because baseUnits
+        // below probes all three for their period: a 24-note scale in slot 1
+        // or 2 was refused for disagreeing about the period, which is true of
+        // the numbers and says nothing about the file.  tools/build.py puts
+        // the rule inside slot_scale(), which its own probe goes through, so
+        // the two refuse the same input the same way whichever slot it is in.
+        cfg._tunings.forEach(function (slot) {
+            if (slot === 'factory') return;
+            var probe = BUILDLIB.slotScale(slot);
+            if (!probe.degrees && probe.cents.length - 1 !== 12) {
+                throw new Error(slot.name + ': ' + (probe.cents.length - 1) +
+                    ' degrees — the key table gives one entry per key, so ' +
+                    'without a .kbm to map them a 12-note scale is required');
+            }
+        });
         cfg._tunings.forEach(function (slot, index) {
             if (slot === 'factory') {
                 tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
                 tables.tuning_period_keys.push(12);
             } else {
                 var scale = BUILDLIB.slotScale(slot);
-                // Same rule as tools/build.py: without a .kbm there is one key
-                // table entry per key and nothing to map them with, so the
-                // scale has to have exactly the twelve the keyboard repeats.
-                if (!scale.degrees && scale.cents.length - 1 !== 12) {
-                    throw new Error(slot.name + ': ' + (scale.cents.length - 1) +
-                        ' degrees — the key table gives one entry per key, so ' +
-                        'without a .kbm to map them a 12-note scale is required');
-                }
                 var period = scale.cents[scale.formal];
                 var offset = BUILDLIB.anchorOffset(
                     scale.cents, cfg.tuning.reference_key, scale.degrees, period);
@@ -277,12 +288,32 @@ var WEBBUILD = (function () {
 
     // No patch may bury an address some other factory code still branches to,
     // because the jump would then land inside our instructions.
+    //
+    // GEN.controlFlow is flat triples: source, target, and the pool word a
+    // call goes through, or 0 for a direct branch.  A pool call whose word a
+    // patch rewrites has been redirected, so its factory target is no longer
+    // live from that source - the same filter tools/build.py applies.  The
+    // page used to be handed only the direct branches, 2,665 of 3,613, and
+    // checked the rest against nothing.
     function checkEntryPoints(patches) {
-        var problems = [];
-        for (var p = 0; p < patches.length; p++) {
+        var patched = {}, problems = [], p, i, b;
+        for (p = 0; p < patches.length; p++) {
+            for (i = 0; i < patches[p].data.length; i++) {
+                patched[patches[p].address + i] = true;
+            }
+        }
+        var live = [];
+        for (i = 0; i < GEN.controlFlow.length; i += 3) {
+            var pool = GEN.controlFlow[i + 2], redirected = false;
+            if (pool) {
+                for (b = 0; b < 4; b++) if (patched[pool + b]) redirected = true;
+            }
+            if (!redirected) live.push(GEN.controlFlow[i], GEN.controlFlow[i + 1]);
+        }
+        for (p = 0; p < patches.length; p++) {
             var start = patches[p].address, end = start + patches[p].data.length;
-            for (var i = 0; i < GEN.controlFlow.length; i += 2) {
-                var src = GEN.controlFlow[i], dst = GEN.controlFlow[i + 1];
+            for (i = 0; i < live.length; i += 2) {
+                var src = live[i], dst = live[i + 1];
                 if (dst > start && dst < end && !(src >= start && src < end)) {
                     problems.push((patches[p].note || 'patch') + ' buries 0x' +
                                   dst.toString(16) + ', branched to from 0x' + src.toString(16));
@@ -293,7 +324,7 @@ var WEBBUILD = (function () {
             throw new Error('patch overwrites a live factory branch target:\n  ' +
                             problems.slice(0, 5).join('\n  '));
         }
-        return GEN.controlFlow.length / 2;
+        return live.length / 2;
     }
 
     function applyPatches(memory, patches) {

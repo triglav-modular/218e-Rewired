@@ -11,6 +11,12 @@ set -o pipefail
 DFU_SESSION_ACTIVE=0
 FLASH_VALIDATED=0
 ERASE_STARTED=0
+# Whatever run_with_deadline or spin has running right now, so an interrupt
+# can stop it.  Bash gives an asynchronous command SIGINT and SIGQUIT set to
+# ignore whenever job control is off, which is every run of this script - so
+# Ctrl-C reaches the trap below and never dfu-programmer, and the script would
+# otherwise hand back a prompt with the chip still being erased or written.
+CHILD_PID=""
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Inside a signed .app everything here is sealed: writing the log or the
@@ -22,12 +28,15 @@ WORK_DIR="${REWIRED_WORKDIR:-$SCRIPT_DIR}"
 mkdir -p "$WORK_DIR" 2>/dev/null
 LOG_FILE="$WORK_DIR/218e_v3_Rewired_flash_log.txt"
 DEADLINE_OUT="$(mktemp -t rewired)"
-trap 'rm -f "$DEADLINE_OUT"; printf "\033[?25h"' EXIT
-EXPECTED_SHA256="00c9607061e50105fdcfcdcdbfc54e3e84d689ef534495f4710dab326455d982"
+# Why each .hex that is not offered was refused.  scan_images runs inside a
+# command substitution, so a variable set there does not survive; a file does.
+REJECTED_OUT="$(mktemp -t rewired)"
+trap 'rm -f "$DEADLINE_OUT" "$REJECTED_OUT"; printf "\033[?25h"' EXIT
+EXPECTED_SHA256="5bf3530956b3c6ba123f96c32b3975aa91cd47f50e4a98c1a14ad13681f92182"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 2.4.0 (00c96070)"
+FIRMWARE_VERSION="Rewired 2.4.0 (5bf35309)"
 # What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
 # by the manifest below and again by whichever image is chosen, so by the time
 # anything reaches the log it no longer says which flasher wrote it.
@@ -89,15 +98,28 @@ timestamp() {
     date '+%Y-%m-%d %H:%M:%S'
 }
 
+# Colour is promised to stay out of the log file, and a call site that
+# emphasises part of its own message would put escape codes there.  Strip them
+# as the line goes in, rather than trusting every call site to remember.
+plain() {
+    local s="$*" pre post
+    while [ "${s#*$'\033['}" != "$s" ]; do
+        pre="${s%%$'\033['*}"
+        post="${s#*$'\033['}"
+        s="$pre${post#*m}"
+    done
+    printf '%s' "$s"
+}
+
 log() {
-    echo "[$(timestamp)] $*" >> "$LOG_FILE"
+    echo "[$(timestamp)] $(plain "$*")" >> "$LOG_FILE"
     echo "${C_DIM}$*${C_RESET}"
 }
 
 # For the log and not the screen.  The screen says what is happening now; the
 # log has to answer questions asked days later by someone who was not there.
 note() {
-    echo "[$(timestamp)] $*" >> "$LOG_FILE"
+    echo "[$(timestamp)] $(plain "$*")" >> "$LOG_FILE"
 }
 
 # A step banner plus a progress bar, so it is obvious how far along this is and
@@ -111,17 +133,17 @@ step() {
     done
     echo
     echo "${C_BLUE}${bar}${C_RESET} ${C_DIM}${STEP}/${TOTAL_STEPS}${C_RESET}  ${C_BOLD}$*${C_RESET}"
-    echo "[$(timestamp)] === step $STEP/$TOTAL_STEPS: $* ===" >> "$LOG_FILE"
+    echo "[$(timestamp)] === step $STEP/$TOTAL_STEPS: $(plain "$*") ===" >> "$LOG_FILE"
 }
 
 ok() {
     echo "  ${C_GREEN}✓${C_RESET} $*"
-    echo "[$(timestamp)] OK: $*" >> "$LOG_FILE"
+    echo "[$(timestamp)] OK: $(plain "$*")" >> "$LOG_FILE"
 }
 
 warn() {
     echo "  ${C_YELLOW}!${C_RESET} $*"
-    echo "[$(timestamp)] WARN: $*" >> "$LOG_FILE"
+    echo "[$(timestamp)] WARN: $(plain "$*")" >> "$LOG_FILE"
 }
 
 # Structural validation for an image the checksum does not vouch for: every
@@ -193,17 +215,22 @@ END{if(failed)exit 1
 run_with_deadline() {
     local seconds="$1"; shift
     "$@" >"$DEADLINE_OUT" 2>&1 &
-    local pid=$! waited=0
+    local pid=$! waited=0 status
+    CHILD_PID=$pid
     while kill -0 "$pid" 2>/dev/null; do
         if [ "$waited" -ge "$seconds" ]; then
             kill -9 "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
+            CHILD_PID=""
             return 124
         fi
         sleep 1
         waited=$((waited + 1))
     done
     wait "$pid"
+    status=$?
+    CHILD_PID=""
+    return "$status"
 }
 
 # Run a long command, showing a spinner while it works.  dfu-programmer writes
@@ -212,7 +239,8 @@ run_with_deadline() {
 spin() {
     local label="$1"; shift
     "$@" >> "$LOG_FILE" 2>&1 &
-    local pid=$! frames='|/-\' i=0
+    local pid=$! frames='|/-\' i=0 status
+    CHILD_PID=$pid
     if [ -t 1 ]; then
         while kill -0 "$pid" 2>/dev/null; do
             i=$(((i + 1) % 4))
@@ -224,12 +252,15 @@ spin() {
         wait "$pid"
     fi
     wait "$pid"
+    status=$?
+    CHILD_PID=""
+    return "$status"
 }
 
 fail() {
     echo
     echo "  ${C_RED}✗ $*${C_RESET}"
-    echo "[$(timestamp)] ERROR: $*" >> "$LOG_FILE"
+    echo "[$(timestamp)] ERROR: $(plain "$*")" >> "$LOG_FILE"
     if [ "$DFU_SESSION_ACTIVE" -eq 1 ] && [ "$FLASH_VALIDATED" -eq 0 ]; then
         echo
         echo "  ${C_BOLD}RECOVERY-SAFE STOP${C_RESET}"
@@ -280,7 +311,28 @@ fail() {
     exit 1
 }
 
+# Kill whatever spin or run_with_deadline left running.  See CHILD_PID at the
+# top: an interrupt never reaches it on its own, so without this the script
+# exits and dfu-programmer carries on erasing or writing the chip, orphaned,
+# under a prompt that says the run stopped.
+stop_child() {
+    local waited=0
+    [ -n "$CHILD_PID" ] || return 0
+    if kill -0 "$CHILD_PID" 2>/dev/null; then
+        note "Interrupted: stopping the tool still running as PID $CHILD_PID."
+        kill -TERM "$CHILD_PID" 2>/dev/null
+        while kill -0 "$CHILD_PID" 2>/dev/null && [ "$waited" -lt 20 ]; do
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+        kill -KILL "$CHILD_PID" 2>/dev/null
+        wait "$CHILD_PID" 2>/dev/null
+    fi
+    CHILD_PID=""
+}
+
 interrupted() {
+    stop_child
     echo
     if [ "$DFU_SESSION_ACTIVE" -eq 1 ] && [ "$FLASH_VALIDATED" -eq 0 ]; then
         log "Interrupted before validated flashing completed. No START command will be sent."
@@ -846,7 +898,17 @@ $(search_dirs)
 DIRS
     } | sort -rn -k1,1 | cut -f2- | awk '!seen[$0]++' |
     while IFS= read -r candidate; do
-        case "$(validate_hex "$candidate")" in OK*) printf '%s\n' "$candidate" ;; esac
+        verdict="$(validate_hex "$candidate")"
+        case "$verdict" in
+            OK*) printf '%s\n' "$candidate" ;;
+            # A refusal used to be dropped here without a word, so a folder of
+            # three unflashable files printed "3 in the firmware folder" and
+            # then, two lines later, "No flashable 218e V3 image is in the
+            # firmware folder" - which reads as a contradiction and says
+            # nothing about what to fix.
+            *)   printf '%s: %s\n' "${candidate##*/}" "${verdict#BAD }" \
+                     >> "$REJECTED_OUT" ;;
+        esac
     done | prefer_expected | head -12
 }
 
@@ -913,17 +975,52 @@ if [ -n "${1:-}" ]; then
 fi
 
 if [ -z "$FIRMWARE" ]; then
+    : > "$REJECTED_OUT"
     images="$(scan_images)"
     count=0
     [ -n "$images" ] && count="$(printf '%s\n' "$images" | wc -l | tr -d ' ')"
+
+    # What was looked at and not offered.  See scan_images.
+    rejected=0
+    [ -s "$REJECTED_OUT" ] && rejected="$(wc -l < "$REJECTED_OUT" | tr -d ' ')"
+    if [ "$rejected" -gt 0 ]; then
+        echo
+        if [ "$rejected" -eq 1 ]; then
+            echo "  ${C_DIM}1 file there is not a flashable 218e V3 image:${C_RESET}"
+        else
+            echo "  ${C_DIM}$rejected files there are not flashable 218e V3 images:${C_RESET}"
+        fi
+        while IFS= read -r line; do
+            echo "    ${C_DIM}$line${C_RESET}"
+            note "Refused: $line"
+        done < "$REJECTED_OUT"
+    fi
 
     if [ "$count" -gt 1 ]; then
         # More than one flashable image is in reach.  Picking silently is how
         # the wrong firmware gets installed — a stale build in firmware/ would
         # always win on checksum alone — so list them and let the choice be
         # made explicitly.  Newest first, because that is usually the intent.
+        #
+        # Except when prefer_expected has put this download's own image on top
+        # over a newer one, which is the case it exists for - so read the order
+        # off the list rather than claiming it and being wrong half the time.
+        newest_first=1
+        prev_mtime=""
+        while IFS= read -r candidate; do
+            this_mtime="$(stat -f '%m' "$candidate" 2>/dev/null || echo 0)"
+            [ -n "$prev_mtime" ] && [ "$this_mtime" -gt "$prev_mtime" ] &&
+                newest_first=0
+            prev_mtime="$this_mtime"
+        done <<EOF
+$images
+EOF
         echo
-        echo "  ${C_BOLD}$count flashable images found.${C_RESET}  Newest first:"
+        if [ "$newest_first" -eq 1 ]; then
+            echo "  ${C_BOLD}$count flashable images found.${C_RESET}  Newest first:"
+        else
+            echo "  ${C_BOLD}$count flashable images found:${C_RESET}"
+        fi
         echo
         MENU_ITEMS=()
         MENU_DETAILS=()

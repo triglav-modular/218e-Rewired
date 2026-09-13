@@ -203,7 +203,13 @@ jobs:
           # Regression test for the argument path: accept_choice used to be
           # called above its own definition, so the named file was validated
           # and then quietly replaced by whatever the scan found.
+          # An anchor that no longer matches leaves its variable unset, which
+          # awk compares as 0 - so a renamed or moved accept_choice made the
+          # test "c < 0", false, and the step passed having checked nothing.
+          # Insist on finding both before comparing them.
           awk '/^accept_choice\(\) \{/{f=NR} /^if \[ -n "\$\{1:-\}" \]/{c=NR}
-               END{ if (c < f) { print "call at " c " precedes definition at " f; exit 1 }
+               END{ if (!f) { print "accept_choice() definition not found - the anchor moved"; exit 1 }
+                    if (!c) { print "the argument block not found - the anchor moved"; exit 1 }
+                    if (c < f) { print "call at " c " precedes definition at " f; exit 1 }
                     print "argument block at " c " sits below accept_choice at " f }' \
               mac/Program218e_v3_Rewired_macOS.command

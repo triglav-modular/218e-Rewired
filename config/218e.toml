@@ -203,9 +203,11 @@ factory_hex    = "firmware/218eV3_v369_DFU.hex"
 factory_sha256 = "565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 output_hex     = "build/218eV3_v369_Rewired_DFU.hex"
 
-# The updaters refuse to flash an image whose checksum they do not know.  The
-# build rewrites their EXPECTED_SHA256 and the instructions they print, so a
-# flasher can never describe or install a build it was not generated for.
+# The updaters flash any structurally valid 218e V3 image; the checksum is a
+# label, not a gate, and both say so in their own comments.  The build rewrites
+# their EXPECTED_SHA256 and the instructions they print so a flasher names the
+# build it shipped with; any other image still flashes, listed and logged under
+# its own short hash rather than under a version it was not generated for.
 updaters       = ["mac/Program218e_v3_Rewired_macOS.command",
                   "windows/218e_Rewired_Flasher.bat"]
 
@@ -218,7 +220,7 @@ version        = "2.4.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "00c9607061e50105fdcfcdcdbfc54e3e84d689ef534495f4710dab326455d982"
+golden_sha256  = "5bf3530956b3c6ba123f96c32b3975aa91cd47f50e4a98c1a14ad13681f92182"
 
 
 [tools]

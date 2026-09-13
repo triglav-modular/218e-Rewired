@@ -226,6 +226,16 @@ def parse_scala(path: Path, *, mapped: bool = False) -> list[float]:
     except ValueError:
         raise ValueError(
             f"{path.name}: degree count {head!r} is not a number") from None
+    # Nothing below this reads a scale with no degrees in it: the ascending
+    # check has no pair to compare and the tonic check indexes off the end.
+    # A .kbm handed in where the .scl belongs lands here rather than anywhere
+    # recognisable - its map size is consumed as the description and its first
+    # MIDI note, normally 0, becomes the count.
+    if count < 1:
+        raise ValueError(
+            f"{path.name}: declares {count} degrees, so there is no scale to "
+            "read; if this is a .kbm, the two halves of the slot are the wrong "
+            "way round")
     pitches = body[1 : 1 + count]
     if len(pitches) != count:
         raise ValueError(f"{path.name}: declares {count} degrees, found {len(pitches)}")
@@ -375,6 +385,38 @@ def parse_kbm(path: Path, cents: list[float]) -> tuple[list[int], int]:
         nearest = min(mapped, key=lambda i: (abs(i - position), i))
         filled.append(degrees[nearest])
     return filled, formal
+
+
+def slot_scale(
+        relative: str | list[str]
+) -> tuple[Path, list[float], list[int] | None, float]:
+    """The scale one [tuning].slots entry names: degrees, key map and period.
+
+    A slot is a Scala file, or that file paired with a .kbm keyboard mapping.
+    `options.check` also allows the pair to be written with the map left out,
+    so the halves are taken by position rather than unpacked: a one-element
+    ["scale.scl"] used to die on the unpack itself, with a ValueError about
+    tuple sizes in front of someone who wrote a legal config.
+
+    The twelve-degree rule lives here rather than beside the table it feeds,
+    because the period probe reads every slot before any table is built.  A
+    24-note scale with no .kbm was refused for disagreeing about the period,
+    which is true of the numbers and says nothing about the file.
+    """
+    scale_name, map_name = (
+        (relative, None) if isinstance(relative, str)
+        else (relative[0], relative[1] if len(relative) > 1 else None))
+    path = REPO / scale_name
+    cents = parse_scala(path, mapped=True)
+    if map_name is None:
+        if len(cents) - 1 != 12:
+            raise ValueError(
+                f"{path.name}: {len(cents) - 1} degrees — the key table "
+                "gives one entry per key, so without a .kbm to map them "
+                "a 12-note scale is required")
+        return path, cents, None, cents[12]
+    degrees, formal = parse_kbm(REPO / map_name, cents)
+    return path, cents, degrees, cents[formal]
 
 
 def key_pitch(cents: list[float], degrees: list[int], period: float, key: int) -> float:
@@ -786,8 +828,20 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         raise SystemExit(
             f"{calibration.name}: the fold needs Offset_Cents and Source "
             "columns to rewrite") from None
-    rows = [(int(line.split(cal_delim)[0]), line.split(cal_delim)) for line in text
-            if not (line.lstrip().startswith("#") or line.startswith("Semitone"))]
+    # A comment, the header or a blank line carries no reading and is copied
+    # through untouched.  The blank is the one worth stating: csv.DictReader
+    # skips it, so read_calibration above accepts a table with one in it and
+    # every other reader of the format does too - the rewrite used to split it
+    # anyway and die on int("") with a traceback, on a file the same command
+    # had just read.
+    def fields(line: str) -> list[str] | None:
+        if (line.lstrip().startswith("#") or line.startswith("Semitone")
+                or not line.strip()):
+            return None
+        return line.split(cal_delim)
+
+    rows = [(int(parts[0]), parts)
+            for parts in map(fields, text) if parts is not None]
     # The tail ends at the first row above the reading that was measured
     # (or set by the octave calibration) rather than extrapolated.
     tail_end = min((s for s, parts in rows
@@ -795,10 +849,10 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
                    default=None)
     out, applied, trailing = [], 0, 0
     for line in text:
-        if line.lstrip().startswith("#") or line.startswith("Semitone"):
+        parts = fields(line)
+        if parts is None:
             out.append(line)
             continue
-        parts = line.split(cal_delim)
         semitone = int(parts[0])
         if semitone in updates:
             error = updates[semitone]
@@ -1708,12 +1762,10 @@ def main() -> None:
         if relative == "factory":
             periods.add(tuning["units_per_octave"])
             continue
-        name, map_name = relative if isinstance(relative, (list, tuple)) else (relative, None)
-        probe = parse_scala(REPO / name, mapped=True)
-        if map_name is None:
-            span = probe[12] if len(probe) > 12 else 1200.0
-        else:
-            span = probe[parse_kbm(REPO / map_name, probe)[1]]
+        try:
+            span = slot_scale(relative)[3]
+        except ValueError as error:
+            raise SystemExit(str(error))
         periods.add(int(math.floor(span * tuning["units_per_octave"] / 1200 + 0.5)))
     if len(periods) > 1:
         raise SystemExit(
@@ -1742,24 +1794,10 @@ def main() -> None:
             print(f"  tuning slot {index}: factory temperament (from the base image, "
                   "copied bit-exact, so the anchor does not apply)")
             continue
-        scale_name, map_name = (
-            (relative, None) if isinstance(relative, str)
-            else (relative[0], relative[1] if len(relative) > 1 else None))
-        path = REPO / scale_name
-        degrees = period = None
+        map_name = None if isinstance(relative, str) else (
+            relative[1] if len(relative) > 1 else None)
         try:
-            if map_name is None:
-                cents = parse_scala(path, mapped=True)
-                if len(cents) - 1 != 12:
-                    raise ValueError(
-                        f"{path.name}: {len(cents) - 1} degrees — the key table "
-                        "gives one entry per key, so without a .kbm to map them "
-                        "a 12-note scale is required")
-                period = cents[12]
-            else:
-                cents = parse_scala(path, mapped=True)
-                degrees, formal = parse_kbm(REPO / map_name, cents)
-                period = cents[formal]
+            path, cents, degrees, period = slot_scale(relative)
             offset = anchor_offset(cents, reference_key, degrees, period or 1200.0)
         except ValueError as error:
             raise SystemExit(str(error))
