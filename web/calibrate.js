@@ -188,9 +188,27 @@
 
     function cents(hz, ref) { return 1200 * Math.log(hz / ref) / Math.LN2; }
 
+    // What counts as having heard a note.  Clarity alone passes noise that
+    // happens to be periodic, and an input left unpatched is mostly hum -
+    // which is periodic - so the level has to be there too.
+    //
+    // The anchor is held to this as well, and that is the point of having it
+    // named once.  Every reading is a ratio against the anchor, so an anchor
+    // taken from noise does not fail loudly the way a bad reading does: it
+    // moves the whole curve, by an amount that can sit under the rejection
+    // threshold and be folded in as real.  A sweep has already been started
+    // against a disconnected keyboard and anchored on room noise at clarity
+    // 0.00; every note after it was correctly rejected, and the run was still
+    // sixty-five notes long.
+    var MIN_CLARITY = 0.55, MIN_RMS = 0.002;
+    function heard(r) {
+        return !!(r && r.ok && r.clarity >= MIN_CLARITY && r.rms >= MIN_RMS);
+    }
+
     // --- talking to the instrument ---------------------------------------
     // Web MIDI without sysex: this asks for nothing the browser has to warn
     // about, and nothing the instrument treats as a command.
+    var midiAccess = null, midiWatchers = [];
     function midiOutputs() {
         if (!root.navigator || !root.navigator.requestMIDIAccess) {
             return Promise.reject(new Error(
@@ -199,11 +217,29 @@
                 'Safari has none at all.'));
         }
         return root.navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
+            // Ports come and go while the page is open and the list is built
+            // once, so without this a keyboard unplugged after the list was
+            // made stays in the dropdown looking perfectly selectable.
+            if (access !== midiAccess) {
+                midiAccess = access;
+                access.onstatechange = function (e) {
+                    midiWatchers.forEach(function (cb) {
+                        try { cb(e && e.port); } catch (err) {}
+                    });
+                };
+            }
             var out = [];
             access.outputs.forEach(function (p) { out.push(p); });
             return out;
         });
     }
+
+    // A port object stays live after it is handed out, so its `state` is the
+    // current answer even when the list it came from is stale.  That is what
+    // makes this worth checking at the moment a sweep starts.
+    function portGone(port) { return !!port && port.state === 'disconnected'; }
+
+    function onMidiChange(cb) { midiWatchers.push(cb); }
 
     function audioInputs() {
         return root.navigator.mediaDevices.enumerateDevices().then(function (all) {
@@ -501,34 +537,71 @@
         var previous = null;
         try {
             // Which channel the instrument is listening on.  There is no way
-            // to ask it, so this plays two notes two octaves apart on each
-            // channel in turn and watches for the pitch to move: on the wrong
-            // channel nothing is heard and the oscillator holds whatever it
-            // was already droning, so no movement is the answer "not this one".
+            // to ask it, so this plays two notes two octaves apart and watches
+            // for the pitch to move: on the wrong channel nothing is heard and
+            // the oscillator holds whatever it was already droning, so no
+            // movement is the answer "not this one".
+            //
+            // This runs whether or not a channel was chosen.  Choosing one used
+            // to skip it, which meant the only check that anything is listening
+            // at all was the one a chosen channel opted out of - and a keyboard
+            // unplugged after the port list was built sails straight past.
+            // Searching costs up to sixteen of these; confirming costs one.
+            async function probe(ch) {
+                var hiNote = anchor.note + 24;
+                var hiEntry = entryFor(hiNote, o.octaveTerm);
+                if (!hiEntry) return false;
+                var apart = 100 * (hiEntry.index - anchor.index);
+                // Both measurements search the whole range.  Handing the second
+                // one the answer as its expected pitch narrows YIN to a band
+                // +/-300 cents around exactly the interval being tested - the
+                // same width as the test - so anything periodic in that band
+                // passes by construction.  Broadband noise sailed through it
+                // while a real tone on the wrong channel was caught, which is
+                // the wrong way round.  And both have to be heard clearly, not
+                // merely found: the point of the probe is to establish that
+                // something is listening.
+                var lo = await hear(anchor.note, null, ch, 'probe');
+                var hi = await hear(hiNote, null, ch, 'probe');
+                return heard(lo) && heard(hi) &&
+                       Math.abs(cents(hi.hz, lo.hz) - apart) < 300;
+            }
+
             if (o.channel === null || o.channel === undefined) {
                 var found = null;
                 for (var ch = 0; ch < 16 && found === null; ch++) {
                     if (self.stopped) throw new Error('Stopped.');
-                    if (o.onProbe) o.onProbe(ch);
-                    var lo = await hear(anchor.note, null, ch, 'probe');
-                    var hi = await hear(anchor.note + 24, lo.ok ? lo.hz * 4 : null, ch, 'probe');
-                    if (lo.ok && hi.ok && Math.abs(cents(hi.hz, lo.hz) - 2400) < 300) {
-                        found = ch;
-                    }
+                    if (o.onProbe) o.onProbe(ch, false);
+                    if (await probe(ch)) found = ch;
                 }
                 if (found === null) {
                     throw new Error('No MIDI channel moved the pitch. Check the ' +
-                        'keyboard is on the chosen MIDI port and that the 208 is ' +
-                        'droning into the chosen audio input and channel.');
+                        'keyboard is on the chosen MIDI port and still plugged in, ' +
+                        'and that the 208 is droning into the chosen audio input ' +
+                        'and channel.');
                 }
                 o.channel = found;
                 if (o.onChannel) o.onChannel(found);
+            } else {
+                if (o.onProbe) o.onProbe(o.channel, true);
+                if (self.stopped) throw new Error('Stopped.');
+                if (!(await probe(o.channel))) {
+                    throw new Error('MIDI channel ' + (o.channel + 1) + ' did not ' +
+                        'move the pitch, so nothing is listening there. Check the ' +
+                        'keyboard is on the chosen MIDI port and still plugged in, ' +
+                        'and that the 208 is droning into the chosen audio input ' +
+                        'and channel. Set the channel to Auto to search for it.');
+                }
             }
 
             var first = await hear(anchor.note, null, undefined, 'anchor');
-            if (!first.ok) {
-                throw new Error('Nothing heard on the audio input (' + first.why +
-                                '). Check the 208 is droning and patched to the input.');
+            if (!heard(first)) {
+                throw new Error('The bottom C did not come back as a steady tone' +
+                    (first.ok ? ' (clarity ' + first.clarity.toFixed(2) + ', level ' +
+                                first.rms.toFixed(4) + ')' : ' (' + first.why + ')') +
+                    '. Every reading is measured against it, so the sweep stops ' +
+                    'here rather than anchoring on noise. Check the 208 is droning ' +
+                    'into the chosen audio input and channel.');
             }
             marks.push({ t: Date.now(), hz: first.hz });
             var expect = first.hz;
@@ -539,18 +612,18 @@
                 if (i > 0 && i % ANCHOR_EVERY === 0) {
                     var re = await hear(anchor.note, marks[marks.length - 1].hz,
                                        undefined, 'anchor');
-                    if (re.ok) marks.push({ t: Date.now(), hz: re.hz });
+                    if (heard(re)) marks.push({ t: Date.now(), hz: re.hz });
+                    else warnings.push('the drift check before ' +
+                        noteLabel(step.index) + ' was not heard clearly and was ' +
+                        'skipped - readings after it lean on the check before it');
                 }
                 var got = await hear(step.note, i === 0 ? first.hz : expect,
                                     undefined, 'sweep');
                 var t = Date.now();
-                // Clarity alone passes noise that happens to be periodic, and
-                // an input left unpatched is mostly hum - which is periodic.
-                // The level has to be there too.
-                if (!got.ok || got.clarity < 0.55 || got.rms < 0.002) {
+                if (!heard(got)) {
                     warnings.push(noteLabel(step.index) + ': ' +
-                        (got.ok && got.rms < 0.002 ? 'too quiet to read'
-                                                   : 'not heard clearly') + ', left blank');
+                        (got.ok && got.rms < MIN_RMS ? 'too quiet to read'
+                                                     : 'not heard clearly') + ', left blank');
                     results.push({ index: step.index, note: step.note, cents: null });
                     if (o.onNote) o.onNote(step, null, i, steps.length);
                     continue;
@@ -629,6 +702,7 @@
         entryFor: entryFor, plan: plan, noteLabel: noteLabel,
         measure: measure, cents: cents, yin: yin, refine: refine,
         audioTrouble: audioTrouble, channelCount: channelCount,
+        onMidiChange: onMidiChange, portGone: portGone,
         trackChannels: trackChannels,
         midiOutputs: midiOutputs, audioInputs: audioInputs,
         Sweep: Sweep

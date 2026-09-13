@@ -1274,6 +1274,22 @@
             .then(function () { $('calRescan').disabled = false; },
                   function () { $('calRescan').disabled = false; });
     });
+    // A port appearing or going away invalidates a list that is only built
+    // once.  The selection is put back if it survived, so unplugging something
+    // else does not quietly move the choice out from under the next run.
+    if (CALIBRATE.onMidiChange) {
+        CALIBRATE.onMidiChange(function () {
+            var was = $('calMidi').value;
+            listed.midi = false;
+            listMidi().then(function () {
+                var opts = $('calMidi').options, i;
+                for (i = 0; i < opts.length; i++) {
+                    if (opts[i].value === was) { $('calMidi').value = was; return; }
+                }
+            });
+        });
+    }
+
     $('calChan').addEventListener('focus', listChannels);
     if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
         navigator.mediaDevices.addEventListener('devicechange', function () {
@@ -1334,6 +1350,13 @@
                 msg($('calMsg'), 'bad', 'Choose the MIDI output the 218e is on.');
                 return;
             }
+            // Being in the list is not being plugged in.
+            if (CALIBRATE.portGone && CALIBRATE.portGone(chosen)) {
+                msg($('calMsg'), 'bad', (chosen.name || 'That MIDI output') +
+                    ' is not connected any more. Plug it back in, or press ' +
+                    'Rescan inputs to pick another.');
+                return;
+            }
             var got = {};
             setRunning(true);
             autoNote('Listening for the bottom C\u2026', 0);
@@ -1347,9 +1370,10 @@
                 audioChannel: parseInt($('calChan').value, 10) || 0,
                 low: PLAYABLE_LOW, high: PLAYABLE_HIGH, octaveTerm: false, velocity: 100,
                 onReading: pushLog,
-                onProbe: function (ch) {
-                    autoNote('Looking for the keyboard on MIDI channel ' + (ch + 1) +
-                             '\u2026', 0);
+                onProbe: function (ch, confirming) {
+                    autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
+                                         : 'Looking for the keyboard on MIDI channel ') +
+                             (ch + 1) + '\u2026', 0);
                 },
                 onChannel: function (ch) {
                     $('calMidiChan').value = String(ch);

@@ -182,6 +182,13 @@ jobs:
           else
             echo "web/test_calibrate.js is not on ${{ matrix.ref }} yet - skipped"
           fi
+          # The driver, against a simulated instrument: what it refuses to
+          # start against, and that a working one still sweeps.
+          if [ -f web/test_sweep.js ]; then
+            node web/test_sweep.js
+          else
+            echo "web/test_sweep.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
 
       - name: The beacon route only records what the page can send
         run: |
