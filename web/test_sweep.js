@@ -36,7 +36,21 @@ function makeWorld(opts) {
         connected: opts.connected !== false,
         error: opts.error || 0,             // cents of tracking error, uniform
         noiseOnly: !!opts.noiseOnly,        // hears the room, not the 208
-        hz: 130.81, sent: [], notesOn: 0
+        // Notes that make no sound at all - a dropout.  The oscillator is
+        // silent while they are held, and sounds again on the next note.
+        mute: opts.mute || {},
+        // Notes the instrument ignores - the note-on never takes, so the
+        // drone holds whatever it was already playing.  This is the shape
+        // that used to be warned about and then folded in at about -100
+        // cents, because -100 is inside the +/-120 the threshold allows.
+        deaf: opts.deaf || {},
+        // What the audio interface really has, against what an "ideal"
+        // request negotiates out of it.  A desk that hands over two for
+        // "ideal" and twelve for "exact: 12" is the Model 12 shape.
+        channels: opts.channels || 1,
+        idealGives: opts.idealGives || null,
+        hz: 130.81, quiet: false, sent: [], notesOn: 0,
+        opened: [], splitFrom: null
     };
     w.output = {
         id: 'sim', name: 'Sim MIDI OUT',
@@ -48,7 +62,10 @@ function makeWorld(opts) {
             if (status === 0x90) {
                 w.notesOn++;
                 if (ch === w.listening) {
-                    w.hz = 32.703 * Math.pow(2, (note - 24 + w.error / 100) / 12);
+                    if (!w.deaf[note]) {
+                        w.hz = 32.703 * Math.pow(2, (note - 24 + w.error / 100) / 12);
+                    }
+                    w.quiet = !!w.mute[note];
                 }
             } else if (status === 0x80) { w.notesOn--; }
         }
@@ -69,10 +86,31 @@ function load(w) {
         },
         mediaDevices: {
             enumerateDevices: function () { return Promise.resolve([]); },
-            getUserMedia: function () {
+            // Constraints are honoured rather than ignored, because the fault
+            // being pinned lives in the difference between them: getCapabilities
+            // says nothing about channels - which is the common case and the one
+            // that hid a twelve channel desk - "ideal" is answered with whatever
+            // the device feels like, and only "exact" gets the full count.
+            getUserMedia: function (c) {
+                var asked = c && c.audio && c.audio.channelCount;
+                var exact = asked && asked.exact;
+                var got;
+                if (exact) {
+                    if (exact > w.channels) {
+                        w.opened.push('exact ' + exact + ' refused');
+                        var err = new Error('exact channelCount cannot be met');
+                        err.name = 'OverconstrainedError';
+                        return Promise.reject(err);
+                    }
+                    got = exact;
+                    w.opened.push('exact ' + exact + ' -> ' + got);
+                } else {
+                    got = Math.min(w.idealGives || w.channels, w.channels);
+                    w.opened.push('ideal -> ' + got);
+                }
                 return Promise.resolve({
                     getAudioTracks: function () {
-                        return [{ getSettings: function () { return { channelCount: 1 }; },
+                        return [{ getSettings: function () { return { channelCount: got }; },
                                   getCapabilities: function () { return {}; },
                                   stop: function () {} }];
                     },
@@ -94,6 +132,11 @@ function load(w) {
                             ? 0.02 * Math.sin(2*Math.PI*1554*i/RATE +
                                               3*Math.sin(2*Math.PI*7*i/RATE))
                               + 0.02 * (rnd() - 0.5)
+                            : w.quiet
+                            // A dropout is not silence on the wire, it is a
+                            // level the sweep must refuse to read: this sits
+                            // an order of magnitude under MIN_RMS.
+                            ? 0.002 * (rnd() - 0.5)
                             : 0.25 * Math.sin(2*Math.PI*w.hz*i/RATE)
                               + 0.08 * Math.sin(4*Math.PI*w.hz*i/RATE);
                     }
@@ -101,7 +144,9 @@ function load(w) {
             };
         };
         this.createMediaStreamSource = function () { return { connect: function () {} }; };
-        this.createChannelSplitter = function () { return { connect: function () {} }; };
+        this.createChannelSplitter = function () {
+            return { connect: function (dest, from) { w.splitFrom = from; } };
+        };
         this.close = function () { return Promise.resolve(); };
     };
     // calibrate.js takes `window` when there is one; naming the parameter
@@ -113,8 +158,17 @@ function sweep(w, opts) {
     var C = load(w);
     var o = { output: w.output, channel: 0, deviceId: null, audioChannel: 0,
               low: 3, high: 67, octaveTerm: false, velocity: 100 };
-    for (var k in opts) o[k] = opts[k];
+    for (var k in opts) if (k !== 'mute' && k !== 'deaf') o[k] = opts[k];
     return new C.Sweep(o).run();
+}
+
+// Which MIDI note excites a given table entry - asked of the module rather
+// than worked out here, so a test that names entry 20 cannot drift off it.
+function noteForEntry(entry) {
+    var C = load(makeWorld({ listening: 0 }));
+    var hit = C.plan(entry, entry, false)[0];
+    if (!hit) throw new Error('no note reaches entry ' + entry);
+    return hit.note;
 }
 
 (async function () {
@@ -185,6 +239,100 @@ function sweep(w, opts) {
     var mean = heard.reduce(function (a, r) { return a + r.cents; }, 0) / heard.length;
     ok('a uniform error cancels against the anchor', Math.abs(mean) < 1.5,
        'mean ' + mean.toFixed(2) + ' cents');
+
+    // --- a dropout costs its own notes and no more -----------------------
+    // The band hear() searches used to be carried forward from the last
+    // reading, and the carry sat below the miss path's `continue` - so a note
+    // that was not heard froze it.  Three silent notes left it three semitones
+    // low, and the notes after them were measured at their true pitches and
+    // thrown away.  Reproduced at entries 20-22 in the audit: three misses
+    // cost eleven readings.
+    var gone = {};
+    [20, 21, 22].forEach(function (e) { gone[noteForEntry(e)] = true; });
+    w = makeWorld({ listening: 2, mute: gone });
+    out = await sweep(w, { channel: 2, high: 34 });
+    var missed = out.readings.filter(function (r) { return r.cents === null; });
+    ok('three silent notes cost three readings, not the rest of the sweep',
+       missed.length === 3,
+       missed.length + ' blank: ' + missed.map(function (r) { return r.index; }).join(','));
+    ok('and the three blanks are the notes that were actually silent',
+       missed.map(function (r) { return r.index; }).join(',') === '20,21,22',
+       missed.map(function (r) { return r.index; }).join(','));
+    var after = out.readings.filter(function (r) { return r.index > 22; });
+    ok('the notes after a dropout are still measured',
+       after.length > 0 && after.every(function (r) {
+           return r.cents !== null && Math.abs(r.cents) < 2;
+       }),
+       after.filter(function (r) { return r.cents === null; }).length + ' of ' +
+       after.length + ' lost');
+
+    // --- a note that did not take is blank, not a -100 cent reading ------
+    // The instrument ignores one note-on, so the drone holds the note before
+    // it.  That reads about a semitone flat - just inside the +/-120 the
+    // threshold allows - so it used to be warned about and then kept, and
+    // rows() negated it into a +100 cent correction one or two DAC counts
+    // clear of its neighbour: past the collision guard, past validateCal, and
+    // into an image with a semitone playing very nearly its neighbour's pitch.
+    var stuck = {}; stuck[noteForEntry(23)] = true;
+    w = makeWorld({ listening: 2, deaf: stuck });
+    out = await sweep(w, { channel: 2, high: 30 });
+    var didNotTake = out.readings.filter(function (r) { return r.index === 23; })[0];
+    ok('a note that did not take is recorded blank', didNotTake &&
+       didNotTake.cents === null,
+       didNotTake ? 'cents ' + didNotTake.cents : 'no reading at entry 23');
+    ok('and it is still reported in the warnings',
+       out.warnings.some(function (x) { return /did not take/.test(x); }),
+       out.warnings.join(' | '));
+    ok('and nothing else in the run is blanked with it',
+       out.readings.filter(function (r) { return r.cents === null; }).length === 1,
+       out.readings.filter(function (r) { return r.cents === null; })
+                   .map(function (r) { return r.index; }).join(','));
+
+    // --- the channel it listens on is the channel it was given -----------
+    // A desk that reports no channelCount capability, negotiates two for
+    // "ideal" and honours "exact: 12".  The dropdown beside the sweep is
+    // filled by channelCount(), which finds twelve by asking for it outright;
+    // the sweep opened with "ideal", got two, clamped channel 12 to index 1,
+    // listened to the wrong input, and then blamed MIDI for the silence.
+    var opened = null;
+    w = makeWorld({ listening: 2, channels: 12, idealGives: 2 });
+    out = await sweep(w, { channel: 2, high: 10, audioChannel: 11,
+                           audioChannels: 12,   // what the page's dropdown was filled from
+                           onChannels: function (count, want) {
+                               opened = { count: count, want: want };
+                           } });
+    ok('a twelve channel desk behind an "ideal" of two is opened in full',
+       opened && opened.count === 12,
+       opened ? 'opened ' + opened.count + ' [' + w.opened.join('; ') + ']'
+              : 'onChannels never fired');
+    ok('and the sweep listens on the channel it was asked for',
+       opened && opened.want === 11 && w.splitFrom === 11,
+       opened ? 'want ' + opened.want + ', splitter took ' + w.splitFrom : '-');
+
+    // The count the page discovered is tried before the ladder, so the common
+    // case costs one extra open rather than a walk down from 32.
+    ok('the count the page already opened is asked for first',
+       w.opened.length === 2 && w.opened[1] === 'exact 12 -> 12',
+       w.opened.join('; '));
+
+    // And without it - a caller that never ran channelCount - the same ladder
+    // channelCount climbs still finds the shape, at the cost of the refusals.
+    w = makeWorld({ listening: 2, channels: 12, idealGives: 2 });
+    opened = null;
+    out = await sweep(w, { channel: 2, high: 10, audioChannel: 11,
+                           onChannels: function (count, want) {
+                               opened = { count: count, want: want };
+                           } });
+    ok('and the ladder reaches it even when the count was never passed in',
+       opened && opened.count === 12 && opened.want === 11,
+       opened ? 'opened ' + opened.count + ' on ' + opened.want : '-');
+
+    // A device that really does have two channels must not be walked down the
+    // ladder for a channel it cannot reach - and must still sweep.
+    w = makeWorld({ listening: 2, channels: 2 });
+    out = await sweep(w, { channel: 2, high: 10, audioChannel: 1 });
+    ok('a device that already reaches the channel is opened once',
+       w.opened.length === 1 && w.opened[0] === 'ideal -> 2', w.opened.join('; '));
 
     console.log(failures ? ('FAILED ' + failures) : 'ALL SWEEP DRIVER TESTS PASSED');
     if (failures) process.exit(1);

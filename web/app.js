@@ -1383,7 +1383,22 @@
                                                        : Number($('calMidiChan').value),
                 deviceId: $('calAudio').value || null,
                 audioChannel: parseInt($('calChan').value, 10) || 0,
-                low: PLAYABLE_LOW, high: PLAYABLE_HIGH, octaveTerm: false, velocity: 100,
+                // What listChannels() actually got the device to open.  The
+                // sweep needs it because "ideal" can negotiate two channels on
+                // a desk that hands over twelve when asked for twelve outright,
+                // and that is the number this dropdown was filled from.
+                audioChannels: chanFor[$('calAudio').value || ''] || null,
+                // Entries, not semitones.  The sweep counts in firmware table
+                // entries - the bottom key is entry 3 whatever the pitch
+                // offset is - while these boxes count in calibration
+                // semitones, where the bottom key is PLAYABLE_LOW.  The two
+                // coincide with the offset on and are three apart without it,
+                // so handing the sweep PLAYABLE_LOW/PLAYABLE_HIGH raw played
+                // 62 of the 65 keys on a 208c and filed every reading three
+                // rows high.
+                low: CALIBRATE.entryForSemitone(PLAYABLE_LOW, PLAYABLE_LOW),
+                high: CALIBRATE.entryForSemitone(PLAYABLE_HIGH, PLAYABLE_LOW),
+                octaveTerm: false, velocity: 100,
                 onReading: pushLog,
                 onProbe: function (ch, confirming) {
                     autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
@@ -1394,7 +1409,8 @@
                     $('calMidiChan').value = String(ch);
                 },
                 onNote: function (step, reading, i, total) {
-                    got[step.index] = reading ? reading.cents : null;
+                    got[CALIBRATE.semitoneFor(step.index, PLAYABLE_LOW)] =
+                        reading ? reading.cents : null;
                     var name = CALIBRATE.noteLabel(step.index);
                     autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
                              (reading && reading.cents !== null ?
