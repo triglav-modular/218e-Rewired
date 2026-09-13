@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO / "tools"))
 import build as B                                        # noqa: E402
 
 BASELINE = REPO / "calibration" / "218e-pitch-calibration.csv"
-LOW, HIGH = 3, 67
+LOW, HIGH, ENTRIES = 3, 67, 79
 
 
 def readings():
@@ -51,6 +51,35 @@ def python_fold(base_path, meas):
                      "".join(f"{s};{c:.6f}\n" for s, c in sorted(meas.items())))
         B.fold_measurement({"pitch": {"bottom_key_semitone": LOW}}, cal, m)
         return B.read_calibration(cal)
+
+
+def js_rows(base, sources, measured, has_base):
+    script = """
+    var B = require('%s');
+    var a = JSON.parse(process.argv[1]);
+    process.stdout.write(JSON.stringify(
+        B.calibrationRows(a.base, a.sources, a.measured, %d, %d, %d, a.hasBase)));
+    """ % (REPO / "web" / "buildlib.js", LOW, HIGH, ENTRIES)
+    arg = json.dumps({"base": {str(k): v for k, v in base.items()},
+                      "sources": {str(k): v for k, v in sources.items()},
+                      "measured": measured, "hasBase": has_base})
+    return json.loads(subprocess.run(["node", "-e", script, "--", arg],
+                                     capture_output=True, text=True, check=True).stdout)
+
+
+def rows_before_the_fold(measured):
+    """What the page built before it could accumulate, lifted from that version.
+
+    A first calibration - no table loaded - has to keep producing exactly this,
+    because it is what everyone who is not doing a second round still does.
+    """
+    full = [-v for v in measured]
+    for n in range(LOW - 1, -1, -1):
+        full[n] = 0.0
+    slope = full[HIGH] - full[HIGH - 1]
+    for n in range(HIGH + 1, ENTRIES):
+        full[n] = full[n - 1] + slope
+    return full
 
 
 def js_fold(base, sources, meas):
@@ -129,6 +158,56 @@ def main():
         print(f"FAIL  on a flat table the fold is not minus the reading: off by {off:g}")
         return 1
     print(f"ok    on a flat table the fold is minus the reading (within {off:g})")
+
+    # calibrationRows() is what every build on the page goes through, so the
+    # first calibration - the common case, and the one nobody is watching -
+    # has to keep producing what it produced before any of this existed.
+    measured = [0.0] * ENTRIES
+    for s, c in meas.items():
+        measured[s] = c
+    flat = {n: 0.0 for n in range(ENTRIES)}
+    flat_src = {n: "measured" for n in range(ENTRIES)}
+    got = js_rows(flat, flat_src, measured, False)
+    want = rows_before_the_fold(measured)
+    worst = max(abs(a - b) for a, b in zip(want, got))
+    if worst > 1e-12:
+        bad = [i for i, (a, b) in enumerate(zip(want, got)) if abs(a - b) > 1e-12]
+        print(f"FAIL  a first calibration no longer builds what it used to: "
+              f"off by {worst:g} at semitone {bad[:6]}")
+        return 1
+    print(f"ok    a first calibration builds what it always did (within {worst:g})")
+
+    # With a table loaded the ends are its own rows, shifted - not invented.
+    # Getting this wrong would silently discard the correction above the top
+    # key, where a real table carries its largest values.
+    #
+    # The repository's own table happens to be zero below the bottom key, where
+    # the invented rule also writes zero - so on that file the two are
+    # indistinguishable and the check would pass without testing anything.  A
+    # marked baseline tells them apart.
+    marked = dict(base)
+    for n in range(0, LOW):
+        marked[n] = -7.5
+    got = js_rows(marked, sources, measured, True)
+    folded = js_fold(marked, sources, meas)
+    ends = [n for n in list(range(0, LOW)) + list(range(HIGH + 1, ENTRIES))
+            if abs(got[n] - folded[n]) > 1e-12]
+    if ends:
+        print(f"FAIL  a loaded table's ends were overwritten rather than carried: {ends[:6]}")
+        return 1
+    if any(abs(got[n] - (-7.5)) > 1e-12 for n in range(0, LOW)):
+        print(f"FAIL  a loaded table's rows below the bottom key were not carried: "
+              f"{[got[n] for n in range(0, LOW)]}")
+        return 1
+    print("ok    a loaded table's ends are carried, not invented over")
+
+    # And the same rows with no table loaded are zeroed, which is the other
+    # half of the same decision.
+    if any(abs(js_rows(marked, sources, measured, False)[n]) > 1e-12
+           for n in range(0, LOW)):
+        print("FAIL  with no table loaded the rows below the bottom key are not zero")
+        return 1
+    print("ok    with no table loaded those rows are invented instead")
 
     print("ALL FOLD TESTS PASSED")
     return 0

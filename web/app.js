@@ -831,28 +831,13 @@
         }
     }
 
-    // The offsets the build reads: the flashed table with this round's
-    // readings folded in.
+    // The offsets the build reads.  The arithmetic is in buildlib, where it can
+    // be tested against the CLI's; this only supplies the page's state.
     function rows() {
-        var readings = {}, n;
-        for (n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            if (measured[n]) readings[n] = measured[n];
-        }
-        var folded = BUILDLIB.foldOffsets(baseline, readings, baselineSources);
-        var out = [];
-        for (n = 0; n < TABLE_ENTRIES; n++) out.push(folded[n] || 0);
-        if (!haveBaseline()) {
-            // Nothing up there to accumulate onto, so the ends are invented
-            // the way they always were: below the bottom key the correction is
-            // zero, and above the top key it keeps climbing at the slope it
-            // ended on, which is what the shipped calibration does.  A loaded
-            // table carries its own rows at both ends and the fold shifts
-            // those instead of inventing over them.
-            for (n = PLAYABLE_LOW - 1; n >= 0; n--) out[n] = 0;
-            var slope = out[PLAYABLE_HIGH] - out[PLAYABLE_HIGH - 1];
-            for (n = PLAYABLE_HIGH + 1; n < TABLE_ENTRIES; n++) out[n] = out[n - 1] + slope;
-        }
-        return out.map(function (v, i) { return { semitone: i, cents: v }; });
+        return BUILDLIB.calibrationRows(baseline, baselineSources, measured,
+                                        PLAYABLE_LOW, PLAYABLE_HIGH, TABLE_ENTRIES,
+                                        haveBaseline())
+            .map(function (v, i) { return { semitone: i, cents: v }; });
     }
 
     function syncBaseline() {

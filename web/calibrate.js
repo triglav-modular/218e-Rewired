@@ -428,6 +428,18 @@
             if (held !== null) { send(o.output, 0x80, held, 0, heldOn); held = null; }
         }
 
+        // A note-off has to go out even if the page is closed mid-sweep.
+        //
+        // The instrument's note-off is what clears the key's held flag, and the
+        // sweep reaches key indices the 29-key keyboard cannot address - so a
+        // note left on cannot be released by playing, and survives until the
+        // next matching note-off or a power cycle.  That is not theoretical:
+        // it is the fault that looked like the keyboard being stuck an octave
+        // up.  pagehide is the one that fires reliably when a tab goes away.
+        function letGo() { release(); }
+        root.addEventListener('pagehide', letGo);
+        root.addEventListener('beforeunload', letGo);
+
         async function hear(note, expectHz, channel, what) {
             var ch = channel === undefined ? o.channel : channel;
             release();
@@ -580,6 +592,8 @@
                 if (o.onNote) o.onNote(step, results[results.length - 1], i, steps.length);
             }
         } finally {
+            root.removeEventListener('pagehide', letGo);
+            root.removeEventListener('beforeunload', letGo);
             release();
             try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
             try { await ctx.close(); } catch (e) {}

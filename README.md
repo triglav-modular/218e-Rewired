@@ -29,6 +29,11 @@ keyboard.
 
 ### **<https://triglav-modular.github.io/218e-Rewired/>**
 
+The page can also measure your 208 for you: it plays C0 to E5 into the keyboard
+over MIDI, listens on an audio input, and fills in the per-note calibration.
+Readings accumulate onto the table already on the instrument, so a second round
+corrects what is left rather than starting over.
+
 Then run the flasher for your platform from this repository:
 
 | Platform | Flasher |

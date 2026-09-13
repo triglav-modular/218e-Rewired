@@ -667,6 +667,34 @@ var BUILDLIB = (function () {
         return out;
     }
 
+    // The offsets a build reads: the table on the instrument with this round's
+    // readings folded in, and the ends filled in where there is no table to
+    // carry them.
+    //
+    // This lives here rather than in the page because every build goes through
+    // it, and the page's copy could not be tested without a browser.  The ends
+    // are the part worth stating: with a table loaded, rows below the bottom
+    // key and above the top one already have values and the fold shifts them.
+    // With nothing loaded there is nothing up there to accumulate onto, so
+    // they are invented as they always were - zero below, and above the top
+    // key the correction keeps climbing at the slope it ended on, which is
+    // what the shipped calibration does.
+    function calibrationRows(base, sources, measured, low, high, entries, hasBase) {
+        var readings = {}, n;
+        for (n = low; n <= high; n++) {
+            if (measured[n]) readings[n] = measured[n];
+        }
+        var folded = foldOffsets(base, readings, sources);
+        var out = [];
+        for (n = 0; n < entries; n++) out.push(folded[n] || 0);
+        if (!hasBase) {
+            for (n = low - 1; n >= 0; n--) out[n] = 0;
+            var slope = out[high] - out[high - 1];
+            for (n = high + 1; n < entries; n++) out[n] = out[n - 1] + slope;
+        }
+        return out;
+    }
+
     function pitchTable(cfg, rows) {
         var vpo = cfg.pitch.volts_per_octave;
         var scale = countsPerVolt(cfg) * (vpo / GEN.calibrationVoltsPerOctave);
@@ -1027,6 +1055,7 @@ var BUILDLIB = (function () {
         tuningTable: tuningTable, anchorOffset: anchorOffset, pressureCurve: pressureCurve,
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
         octaveWidth: octaveWidth, foldOffsets: foldOffsets,
+        calibrationRows: calibrationRows,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
         baseUnits: baseUnits, patternBank: patternBank,
