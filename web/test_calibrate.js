@@ -62,60 +62,79 @@ ok('no note leans more than 5% onto its neighbour', worstLean < 0.05,
 // wrong entry with the harness green.  0x80016574 is where the 218e v3 v369
 // image keeps it, 65 big-endian halfwords for keys 0..64.
 //
-// node only: it reads a file and borrows the page's own Intel HEX parser.
-// Never silently skipped - a run that could not do it says so.
+// node only, and the image half only where the image is.  firmware/*.hex is
+// gitignored - it is the owner's own factory image and never leaves their
+// machine - so CI has the build pipeline but no image to read.  What runs
+// there is the address, against the tracked constant the build resolves it
+// from; what runs on a machine that has the image is the table itself.  The
+// skip is named rather than silent, so a check that stopped running says so.
 var KEY_TABLE_AT = 0x80016574;
-var image = null;
+var lib = null, image = null;
 if (typeof require === 'function' && typeof __dirname === 'string') {
     var GEN = require('./generated.js');
     if (typeof global !== 'undefined' && global.GEN === undefined) global.GEN = GEN;
-    var B = require('./buildlib.js');
-    var path = require('path');
+    lib = { gen: GEN, build: require('./buildlib.js') };
+    var fs = require('fs'), path = require('path');
     var hexPath = path.join(__dirname, '..', 'firmware', '218eV3_v369_DFU.hex');
-    var mem = B.parseHexText(require('fs').readFileSync(hexPath, 'utf8'),
-                             '218eV3_v369_DFU.hex').memory;
-    image = { table: [], gen: GEN, build: B };
-    for (var k = 0; k < 65; k++) {
-        var at = KEY_TABLE_AT + k * 2;
-        if (!(at in mem) || !((at + 1) in mem)) { image.table.push(null); continue; }
-        image.table.push((mem[at] << 8) | mem[at + 1]);
+    if (fs.existsSync(hexPath)) {
+        var mem = lib.build.parseHexText(fs.readFileSync(hexPath, 'utf8'),
+                                         '218eV3_v369_DFU.hex').memory;
+        image = [];
+        for (var k = 0; k < 65; k++) {
+            var at = KEY_TABLE_AT + k * 2;
+            if (!(at in mem) || !((at + 1) in mem)) { image.push(null); continue; }
+            image.push((mem[at] << 8) | mem[at + 1]);
+        }
     }
 }
 
-if (!image) {
-    print_('SKIP  the factory key table - no file reader here, run this under node');
+if (!lib) {
+    print_('SKIP  the factory key table - no module loader here, run this under node');
 } else {
-    var short = image.table.filter(function (v) { return v === null; }).length;
-    ok('the factory image still holds 65 key pitches at 0x80016574', short === 0,
-       short + ' halfwords missing');
+    // The address calibrate.js reads from is the one the build resolves, and
+    // that one is tracked - so this much is checkable without the image.
+    ok('the key table is where the build says it is',
+       lib.gen.factoryKeyTable === KEY_TABLE_AT,
+       'build says 0x' + lib.gen.factoryKeyTable.toString(16) +
+       ', this reads 0x' + KEY_TABLE_AT.toString(16));
 
-    var wrong = [];
-    for (var i2 = 0; i2 < 65; i2++) {
-        if (image.table[i2] !== C.KEY_TABLE[i2]) {
-            wrong.push('key ' + i2 + ': image ' + image.table[i2] +
-                       ', calibrate.js ' + C.KEY_TABLE[i2]);
-        }
-    }
-    ok('calibrate.js carries the key table the firmware ships', !wrong.length,
-       wrong.slice(0, 3).join('; ') + (wrong.length > 3 ? ' (+' + (wrong.length - 3) + ')' : ''));
+    if (!image) {
+        print_('SKIP  the key table itself - firmware/218eV3_v369_DFU.hex is not here ' +
+               '(gitignored: it is the owner\'s image). Run this where the image is.');
+    } else {
+        var short = image.filter(function (v) { return v === null; }).length;
+        ok('the factory image still holds 65 key pitches at 0x80016574', short === 0,
+           short + ' halfwords missing');
 
-    // And the remap's arithmetic over the image's numbers, not over ours.
-    var mismatch = 0, sample = '';
-    for (var note = 24; note <= 88; note++) {
-        var raw = image.table[note - 24] - 484;
-        var u = raw + 120;
-        var q = Math.floor(u * 12 / 484);
-        var rem = u * 12 - q * 484;
-        if (rem / 484 > 0.5) q += 1;
-        var got = C.entryFor(note, false);
-        if (!got || got.index !== q) {
-            mismatch++;
-            if (!sample) sample = 'note ' + note + ': want ' + q +
-                                  ', got ' + (got ? got.index : 'null');
+        var wrong = [];
+        for (var i2 = 0; i2 < 65; i2++) {
+            if (image[i2] !== C.KEY_TABLE[i2]) {
+                wrong.push('key ' + i2 + ': image ' + image[i2] +
+                           ', calibrate.js ' + C.KEY_TABLE[i2]);
+            }
         }
+        ok('calibrate.js carries the key table the firmware ships', !wrong.length,
+           wrong.slice(0, 3).join('; ') +
+           (wrong.length > 3 ? ' (+' + (wrong.length - 3) + ')' : ''));
+
+        // And the remap's arithmetic over the image's numbers, not over ours.
+        var mismatch = 0, sample = '';
+        for (var note = 24; note <= 88; note++) {
+            var raw = image[note - 24] - 484;
+            var u = raw + 120;
+            var q = Math.floor(u * 12 / 484);
+            var rem = u * 12 - q * 484;
+            if (rem / 484 > 0.5) q += 1;
+            var got = C.entryFor(note, false);
+            if (!got || got.index !== q) {
+                mismatch++;
+                if (!sample) sample = 'note ' + note + ': want ' + q +
+                                      ', got ' + (got ? got.index : 'null');
+            }
+        }
+        ok('entryFor matches the remap over the image\'s own table', mismatch === 0,
+           mismatch + ' mismatched' + (sample ? ' - ' + sample : ''));
     }
-    ok('entryFor matches the remap over the image\'s own table', mismatch === 0,
-       mismatch + ' mismatched' + (sample ? ' - ' + sample : ''));
 }
 
 ok('note names match the page', C.noteLabel(3) === 'C0' && C.noteLabel(67) === 'E5',
@@ -138,18 +157,18 @@ ok('note names match the page', C.noteLabel(3) === 'C0' && C.noteLabel(67) === '
 // needs a document to load, so this exercises the conversion with the same
 // arguments rather than the page itself; a call site changed there is not
 // caught here.
-if (!image) {
-    print_('SKIP  the entry/semitone conversion - no file reader here, run this under node');
+if (!lib) {
+    print_('SKIP  the entry/semitone conversion - no module loader here, run this under node');
 } else {
     var entryReachedBy = function (semitone, pitchOffset) {
-        var cfg = image.build.expand({ volts_per_octave: 1.2, pitch_offset: pitchOffset });
+        var cfg = lib.build.expand({ volts_per_octave: 1.2, pitch_offset: pitchOffset });
         var flat = [], bent = [], n;
-        for (n = 0; n < image.gen.pitchTableEntries; n++) {
+        for (n = 0; n < lib.gen.pitchTableEntries; n++) {
             flat.push({ semitone: n, cents: 0 });
             bent.push({ semitone: n, cents: n === semitone ? 50 : 0 });
         }
-        var a = image.build.pitchTable(cfg, flat);
-        var b = image.build.pitchTable(cfg, bent);
+        var a = lib.build.pitchTable(cfg, flat);
+        var b = lib.build.pitchTable(cfg, bent);
         for (n = 0; n < a.length; n++) if (a[n] !== b[n]) return n;
         return null;
     };
@@ -157,9 +176,9 @@ if (!image) {
     [true, false].forEach(function (pitchOffset) {
         // What the page calls PLAYABLE_LOW, and what the build calls
         // bottom_key_semitone: the same number, from the same option.
-        var bottom = image.build.expand({ volts_per_octave: 1.2,
-                                          pitch_offset: pitchOffset })
-                          .pitch.bottom_key_semitone;
+        var bottom = lib.build.expand({ volts_per_octave: 1.2,
+                                        pitch_offset: pitchOffset })
+                        .pitch.bottom_key_semitone;
         var low = bottom, high = bottom + 64;
         var label = pitchOffset ? '208/208r/208p' : '208c';
 
