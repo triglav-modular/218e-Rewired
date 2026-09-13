@@ -252,8 +252,10 @@ pool. It no longer executes the bytes at 0x800021e8 as loads/stores.
 | Trigger rise, on the 1 kHz flush | 0x8001c100 |
 | Deadline, sized from the accepted edge | 0x8001bd40 |
 
-The old proposed page at 0x8001c000–0x8001c1ff is still unused. Persistence
-now stores records at 0x8003e000–0x8003efff; see [PERSISTENCE.md](PERSISTENCE.md).
+The page at 0x8001c000–0x8001c1ff, once proposed and left empty, is now spent:
+the remap and the fast trigger sit in it, as the table above records, and the
+trigger runs to 0x8001c1f0. Persistence stores records at
+0x8003e000–0x8003efff; see [PERSISTENCE.md](PERSISTENCE.md).
 When enabled, its startup wrapper restores musical data before calling the
 clock initializer above. Completed edit gestures can save during playback;
 unfinished edits do not write.
@@ -984,11 +986,12 @@ three run the jitter tests only. `settle-scans` builds
 the two settings that used to decide whether the trigger rode the flush at
 all; `latency` builds the `clock_latency` diagnostic so its own tests run
 against a real image instead of detecting an ordinary one and skipping. Neither settle is a build option — both are
-constants in tools/options.py — so the driver edits the constant around the
-build and restores it in a finally, dropping tools/__pycache__ with it: the
-edit changes one digit, so the file keeps its length, and a same-second
-restore would otherwise leave CPython holding stale bytecode and every later
-build in the run silently using the wrong constant.
+constants in tools/options.py — so the driver hands the build the value it
+wants in `REWIRED_INTERNAL_OVERRIDE`, a JSON object of setting: value that
+`options.expand` applies to the expanded settings for the length of the
+subprocess. It used to edit tools/options.py in place and restore it in a
+finally: a killed run left the wrong constant in the tree, and a second
+session sharing the checkout built with it meanwhile.
 It checks ISR hooks, register/stack preservation, gate ownership, chatter,
 spent lows, duty/phase sensitivity, delayed dispatch, ordered pitch output,
 division under jitter, timeout, FIFO overflow, COUNT wrap, warm restart and

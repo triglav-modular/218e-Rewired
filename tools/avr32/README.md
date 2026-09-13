@@ -74,12 +74,17 @@ Run `python3 tools/test.py --golden` to compare the default build with its
 SHA-256 pin in `config/218e.toml`. The fully specified historical configuration
 has a separate pin in `sweep.py`; both are checked against Ghidra.
 
-- **Encoder**: 7,819 / 7,819 corpus instructions, 47 mnemonics, zero mismatches.
+- **Encoder**: every corpus instruction encodes and matches, with zero
+  mismatches and nothing unimplemented — over ten thousand of them, across 48
+  mnemonics. The corpus is regenerated whenever the assembler changes, so take
+  the exact count from `jsc tools/avr32/encoder.js tools/avr32/test_corpus.js`
+  rather than from a figure written down here.
 - **Structure**: the transpiled program emits every EXTENT / BLOCK / SKIP /
   listing / PATCH record *identically* to a fresh Ghidra run.
-- **Image**: `tools/avr32/sweep.py` builds **26 configurations** both ways and
-  compares the images — 26/26 agree, and all 26 SHAs are distinct, so each
-  variant really does change the firmware rather than passing vacuously.
+- **Image**: `tools/avr32/sweep.py` builds **33 configurations** both ways and
+  compares the images. A clean run reports every one agreeing and every SHA
+  distinct, so each variant really does change the firmware rather than
+  passing vacuously.
 
 Corpus coverage is now complete: every mnemonic in
 `AssemblePressureFix.java` appears in `corpus.json` and encodes correctly.
@@ -230,7 +235,7 @@ It leaves the shipped image and the updater alone: every variant redirects
 
 ## Coverage caveat
 
-100% of the corpus is not 100% of the instruction set. Three limits:
+100% of the corpus is not 100% of the instruction set. Two limits:
 
 - **One build never covers the whole program.** `finish()` prints a block's
   listing only when that block is enabled, and a branch guarded by
@@ -249,23 +254,21 @@ It leaves the shipped image and the updater alone: every variant redirects
   returns null rather than guessing.
 - **`LDM`/`STM` base register.** Only SP has ever been the base, so bits 19..16
   = Rb is an inference — well-supported (that nibble reads exactly 13 in all
-  22 forms) but not proven.
+  59 forms) but not proven.
 - **Extended `SUB` range boundaries** — the positive/negative opcode split is
   proven only over the observed values (0..0x1e4, -0x1000..-0xf2). A value
   outside those would be caught by the corpus test, not by the encoder. The
   same caveat applies to the extended `BR{cc}` sign split.
-- **The corpus only covers what the current config builds.** `CASTS.H`, `MFSR`
-  and `ORH` appear in `AssemblePressureFix.java` but not in the corpus,
-  because the blocks holding them were skipped by `config/218e.toml` on the
-  build that produced the log. Before trusting the encoder against arbitrary
-  configs, regenerate the corpus from a build with every feature enabled.
 
-## Remaining shapes, by volume
+## Shapes worth naming
 
-**Register-mask (66)** — `LDM R++,...` and `STM --R,...` with 2 to 9
-registers. One encoding, not fourteen: the register list becomes a bitmask.
+No shape in the corpus is unimplemented — `test_corpus.js` reports zero skips
+— but two are easy to miscount.
 
-**`MOV Rd,imm21` (1)** — see Open questions.
+**Register-mask** — `LDM R++,...` and `STM --R,...` with 2 to 9 registers.
+One encoding, not fourteen: the register list becomes a bitmask.
+
+**`MOV Rd,imm21`** — encoded for non-negative values only; see Open questions.
 
 ## Design rule
 

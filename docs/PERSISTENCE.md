@@ -23,8 +23,11 @@ Saving is automatic at the end of an edit:
 - A preset saves when its pad is fully released after a new value was
   written. The intermediate touched-but-not-held state is not a release.
 - The latch's transpose state (pads 2 and 3 held together for a second,
-  with `latching_arp`) saves once both pads are up again after a toggle,
-  the same release rule as a preset.
+  with `latching_arp`) saves once neither pad is held any longer after a
+  toggle. This is a looser rule than a preset's, not the same one: a preset
+  waits for its pad to read fully up, while the latch asks only that pads 2
+  and 3 are no longer at the held level, so a finger resting on one at the
+  intermediate touched level does not hold the save back.
 - The selected tuning slot (edit keys 27 and 28, with `alternate_tunings`)
   saves on the scan that sees it change. There is no release to wait for:
   a key press steps the slot once and the next press steps it again, so
