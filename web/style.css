@@ -2721,6 +2721,8 @@ section,
 .autolog i { color: #ff8f8f; font-style: normal; }
 /* Hidden until there is a log to act on: two dimmed buttons under an empty
    box are furniture, not an offer. */
+/* Away from what it undoes, at the far end of its row. */
+.push-end { margin-left: auto; }
 .autologrow { display: none; margin-top: .7rem; }
 .autologrow.on { display: flex; }
 /* Secondary actions are not the page's big accent pills: those are for the
