@@ -1045,6 +1045,15 @@
                             (r.halfDrift >= 0 ? '+' : '') + f(r.halfDrift, 1) + 'c');
     }
 
+    // A plain line in the log, for things that are not a note reading.
+    function pushNote(text) {
+        var el = $('calLog');
+        el.classList.add('on');
+        el.insertAdjacentText('beforeend', text + '\n');
+        el.scrollTop = el.scrollHeight;
+        $('calLogClear').disabled = false;
+    }
+
     function pushLog(r) {
         logRows.push(r);
         var el = $('calLog');
@@ -1214,8 +1223,15 @@
     function listChannels() {
         var id = $('calAudio').value || '';
         if (chanFor[id]) return Promise.resolve();
-        return CALIBRATE.channelCount(id || null).then(function (n) {
+        return CALIBRATE.channelCount(id || null).then(function (res) {
+            var n = res.count;
             chanFor[id] = n;
+            // Into the log, where the diagnostics live, rather than into the
+            // panel: this matters on the day a desk offers fewer channels than
+            // it has, and never again.
+            pushNote('channels on ' + ($('calAudio').selectedOptions[0]
+                     ? $('calAudio').selectedOptions[0].text : 'default') +
+                     ': ' + n + '  [' + res.report.join('; ') + ']');
             var items = [];
             for (var i = 0; i < n; i++) items.push({ value: String(i), label: String(i + 1) });
             var keep = $('calChan').value;

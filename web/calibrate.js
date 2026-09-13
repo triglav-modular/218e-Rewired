@@ -273,9 +273,6 @@
     var SETTLE_MS = 200;
     var MAX_CHANNELS = 32;          // asked for; the device gives what it has
 
-    // How many channels a device offers.  There is no way to ask without
-    // opening it, so this opens it and lets go again; the page calls it when
-    // a device is picked, and the count fills the channel list.
     function constraints(deviceId, want) {
         return {
             audio: {
@@ -289,9 +286,7 @@
 
     // What a track actually carries.  Not the AudioNode: a
     // MediaStreamAudioSourceNode reports channelCount 2 in Chrome whatever is
-    // on the wire, which turned a twelve input desk into a choice of two.  The
-    // track's own settings are the negotiated count, and its capabilities say
-    // how far it would go if asked.
+    // on the wire, which turned a twelve input desk into a choice of two.
     function trackChannels(stream) {
         var t = stream.getAudioTracks()[0];
         if (!t) return { got: 1, max: 1 };
@@ -308,22 +303,50 @@
         try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
     }
 
-    // How many channels a device offers.  There is no way to ask without
-    // opening it, so this opens it and lets go again.  "ideal" is a wish and
-    // Chrome may hand back two from a device that has twelve, so if the
-    // capabilities say more than was negotiated it asks again for exactly
-    // that many, and keeps whichever attempt got furthest.
+    // How many channels a device offers.
+    //
+    // Asked by trying, not by reading a promise.  "ideal" is a wish Chrome can
+    // answer with two from a twelve input desk, and getCapabilities() for an
+    // audio input is often incomplete or has no channelCount at all - so
+    // trusting it meant never asking for twelve, and a Model 12 offered a
+    // choice of 1 and 2 with nothing to say why.
+    //
+    // So: take what "ideal" gives, then ask for each larger count outright and
+    // keep the largest that opens.  The ladder is short and every rung is a
+    // real device shape; an exact request Chrome cannot meet is refused
+    // immediately with OverconstrainedError, which costs nothing.
+    var LADDER = [32, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2];
+
     function channelCount(deviceId) {
-        var md = root.navigator.mediaDevices;
+        var md = root.navigator.mediaDevices, report = [];
         return md.getUserMedia(constraints(deviceId, null)).then(function (stream) {
             var seen = trackChannels(stream);
             stop(stream);
-            if (seen.max <= seen.got) return seen.got;
-            return md.getUserMedia(constraints(deviceId, seen.max)).then(function (s2) {
-                var again = trackChannels(s2);
-                stop(s2);
-                return Math.max(again.got, seen.got);
-            }, function () { return seen.got; });
+            report.push('ideal -> ' + seen.got +
+                        ' (capabilities max ' + seen.max + ')');
+            var rungs = LADDER.filter(function (n) { return n > seen.got; });
+            var best = seen.got;
+
+            function tryRung(i) {
+                if (i >= rungs.length) return Promise.resolve(best);
+                return md.getUserMedia(constraints(deviceId, rungs[i]))
+                    .then(function (s2) {
+                        var got = trackChannels(s2).got;
+                        stop(s2);
+                        report.push('exact ' + rungs[i] + ' -> ' + got);
+                        // Chrome can accept the constraint and still hand back
+                        // fewer, so what the track says wins over what was asked.
+                        if (got > best) { best = got; return best; }
+                        return tryRung(i + 1);
+                    }, function (err) {
+                        report.push('exact ' + rungs[i] + ' -> refused (' +
+                                    (err && err.name ? err.name : 'error') + ')');
+                        return tryRung(i + 1);
+                    });
+            }
+            return tryRung(0).then(function (n) {
+                return { count: n, report: report };
+            });
         });
     }
 
