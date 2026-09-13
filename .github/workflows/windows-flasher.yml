@@ -99,13 +99,24 @@ jobs:
       - name: No image present - must refuse without touching anything
         shell: cmd
         run: |
+          rem One file that is a .hex and is not flashable, so the refusal has
+          rem something to explain.  Scan-Images.ps1 -Explain has always written
+          rem a verdict per file and the flasher sent it to NUL, so "3 in the
+          rem firmware folder" was followed two lines later by "No flashable
+          rem 218e V3 image is in that folder" and nothing in between.
+          mkdir firmware 2>NUL
+          del /Q firmware\*.hex 2>NUL
+          echo not a hex record at all> firmware\notes.hex
           (echo 1& echo YES)> answers0.txt
           CALL windows\218e_Rewired_Flasher.bat < answers0.txt > out.txt 2>&1
           type out.txt
           findstr /C:"Looked in:" out.txt >NUL || (echo FAILED: did not say where it looked & exit /b 1)
           findstr /C:"No flashable 218e V3 image" out.txt >NUL || (echo FAILED: wrong message & exit /b 1)
+          findstr /C:"is not a flashable 218e V3 image" out.txt >NUL || (echo FAILED: refused a file without saying why & exit /b 1)
+          findstr /C:"notes.hex" out.txt >NUL || (echo FAILED: did not name the file it refused & exit /b 1)
           findstr /C:"Erasing the application flash" out.txt >NUL && (echo FAILED: erased with no image & exit /b 1)
-          echo PASS: refused, and said where it looked
+          del /Q firmware\notes.hex 2>NUL
+          echo PASS: refused, said where it looked, and why each file is not usable
           exit /b 0
 
       - name: The hex validator accepts good images and rejects bad
