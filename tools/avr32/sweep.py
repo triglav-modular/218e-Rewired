@@ -47,11 +47,11 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     ("tunings_three",         [(r"^alternate_tunings = false", 'alternate_tunings = ["tunings/Sabat II (C-rooted).scl",\n                     "tunings/5-Limit JI with Septimal 7th.scl",\n                     "tunings/12TET.scl"]')]),
     ("one_volt",              [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")]),
     ("no_offset",             [(r"^pitch_offset = true", "pitch_offset = false")]),
-    ("quantize_presets",      [(r"^quantize_presets = false", "quantize_presets = true")]),
+    ("quantize_presets_off",  [(r"^quantize_presets = true", "quantize_presets = false")]),
     ("pressure_off",          [(r"^pressure_fix = true", "pressure_fix = false"),
                                (r"^pressure_portamento = true", "pressure_portamento = false")]),
     ("portamento_off",        [(r"^pressure_portamento = true", "pressure_portamento = false")]),
-    ("portamento_transpose",  [(r'^portamento_in = "portamento"', 'portamento_in = "transpose"'),
+    ("portamento_transpose",  [(r'^portamento_in = "transpose"', 'portamento_in = "transpose"'),
                                (r"^alternate_tunings = false",
                                 'alternate_tunings = [["tunings/diatonic7.scl", "tunings/diatonic7.kbm"], '
                                 '"tunings/12TET.scl"]')]),
@@ -66,9 +66,16 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
                                 'pitch_correction = "calibration/218e-pitch-calibration.csv"')]),
     # The quantiser reads whatever key table is live, so a build that also
     # installs a scale is the case where its cave and the applier meet.
-    ("quantize_presets_tuned",[(r"^quantize_presets = false", "quantize_presets = true"),
+    ("quantize_presets_off_tuned",
+                              [(r"^quantize_presets = true", "quantize_presets = false"),
                                (r"^alternate_tunings = false",
                                 'alternate_tunings = ["tunings/12TET.scl"]')]),
+    # The jack doing its factory job.  Nothing else here builds it: the
+    # portamento_off row turns off PRESSURE portamento, a different option,
+    # and the transposer became the default under this matrix rather than
+    # beside it.  An unbuilt option is where the erased-flash MCALL that
+    # test_call_pools now refuses came from.
+    ("portamento_factory",    [(r'^portamento_in = "transpose"', 'portamento_in = "portamento"')]),
     # The author's own instrument: the shipped calibration, three tunings, and
     # the 1 V/oct ramp that 208 is trimmed to.  Those go together — that table
     # was measured at that scaling — so this is the one configuration where
@@ -258,9 +265,17 @@ def audit_call_pools(image_path) -> list[str]:
 # patched at power-up had its whole boot-time shift discarded and never got it
 # back.  0x60fc is seeded to zero as the unpublished sentinel now, which no
 # table entry can be.
+# And again when the selected tuning slot started persisting: it takes the
+# record's byte 0x1a, a capture bit of its own and a restore beside the
+# musical data, so the three tunings this config carries come back on the
+# slot they were left on rather than on slot 0.
+# And again for the v3 record, which carries the preset degree each step was
+# recorded under: this config is the one with three real tunings and a
+# measured table behind it, so it is where a step measured at the take's
+# degree instead of its own shows up as cents rather than as nothing.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "3930e696c55f0a51db83e4558151e3a8113a261abcf72dbce6552ca89e52587b",
+    "historical_config": "9a1c18ac133b917249ccffc5c5229dcc1dc565537a9b9c9af730bbeba986bce6",
 }
 
 

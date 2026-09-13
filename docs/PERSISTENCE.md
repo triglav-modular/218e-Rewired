@@ -2,8 +2,8 @@
 
 `persist = true` in `[options]`, which is required: the build refuses
 `persist = false`. This saves the four remapped preset voltages, the
-sequence and the latching arpeggiator's transpose state, not the factory's
-settings. The factory preset path is unchanged when knob remapping is
+sequence, the latching arpeggiator's transpose state and the selected
+tuning slot, not the factory's settings. The factory preset path is unchanged when knob remapping is
 disabled.
 
 ## Saving and restarting
@@ -25,6 +25,11 @@ Saving is automatic at the end of an edit:
 - The latch's transpose state (pads 2 and 3 held together for a second,
   with `latching_arp`) saves once both pads are up again after a toggle,
   the same release rule as a preset.
+- The selected tuning slot (edit keys 27 and 28, with `alternate_tunings`)
+  saves on the scan that sees it change. There is no release to wait for:
+  a key press steps the slot once and the next press steps it again, so
+  the value is already final when the scan reads it. Builds without
+  alternate tunings carry slot 0 in every record.
 - Only changed musical data causes a commit. An unchanged take, an empty
   clear, a pad tap without editing, or a value returned to its old setting
   does not write flash, including when storage is still empty.
@@ -59,45 +64,50 @@ history, preset pickup, clock state and pending triggers are not restored.
 Warm resets reload too; the factory strip-mode setting is left alone.
 Empty/corrupt storage uses initialized defaults.
 
-DFU updates erase this main-array storage. Experimental version-1 raw-RAM
-records are intentionally rejected, not migrated; re-enter those presets
-and sequences after updating.
+DFU updates erase this main-array storage. Version-1 raw-RAM records and
+version-2 records are intentionally rejected, not migrated; re-enter those
+presets and sequences after updating. A v2 record has no per-step preset
+degrees and no way to derive them, so accepting one would restore a take
+that plays at the wrong degree - and a DFU update erases storage anyway,
+so no instrument meets one in practice.
 
 ## Flash format and failure handling
 
 Eight 512-byte pages occupy `0x8003e000..0x8003efff`. Neither factory settings
 at `0x8003f000` nor the bootloader's User Page is written. Each page holds
-one version-2 record; multi-byte values are big-endian.
+one version-3 record; multi-byte values are big-endian.
 
 | Offset | Bytes | Meaning |
 |---|---:|---|
 | `0x00` | 4 | Commit marker `0x32313850`; erased until final commit |
-| `0x04` | 2 | Version `2` |
-| `0x06` | 2 | Payload length `204` |
+| `0x04` | 2 | Version `3` |
+| `0x06` | 2 | Payload length `268` |
 | `0x08` | 4 | Nonzero generation, wrapping `0xffffffff` to `1` |
 | `0x0c` | 4 | CRC-32/ISO-HDLC |
 | `0x10` | 8 | Four presets, `0..1023` |
 | `0x18` | 1 | Sequence length, `0..64` |
 | `0x19` | 1 | Latch transpose state: `0` the octave pads act before a note is entered, `1` after, on everything held |
-| `0x1a` | 2 | Reserved, zero |
+| `0x1a` | 1 | Selected tuning slot, `0..2` |
+| `0x1b` | 1 | Reserved, zero |
 | `0x1c` | 128 | 64 pitches, signed and relative to the take's reference, `-0x2000..0x2000`; rest `0x7ffe`, tie `0x7fff` |
 | `0x9c` | 64 | Key indexes `0..28`; rest/tie and inactive keys are zero |
-| `0xdc` | 4 | Zero alignment padding |
+| `0xdc` | 64 | Per-step preset degrees, `0..127`; zero past the take's length |
+| `0x11c` | 4 | Zero alignment padding |
 
 Unused pitches are zero. CRC covers bytes `0x04..0x0b` followed by
-`0x10..0xdb`; it excludes the marker and itself. Polynomial `0xedb88320`,
+`0x10..0x11b`; it excludes the marker and itself. Polynomial `0xedb88320`,
 initial value and final XOR `0xffffffff`. The loader checks marker, version,
 length, generation, CRC and active-value bounds before copying musical
 state. Serial-number comparison handles generation wrap.
 
 Every attempt uses the factory wrapper at `0x800108fc`:
 
-1. Stage 224 bytes at aligned RAM `0x6300`, with the marker erased.
+1. Stage 288 bytes at aligned RAM `0x6300`, with the marker erased.
 2. Write to a page-aligned destination with erase enabled.
-3. Compare all 224 flash bytes with staging. Never commit a mismatch.
+3. Compare all 288 flash bytes with staging. Never commit a mismatch.
 4. Set the staged marker; write the first eight bytes at the same
    page-aligned destination with erase **disabled**.
-5. Compare all 224 bytes again and validate the committed record.
+5. Compare all 288 bytes again and validate the committed record.
 
 The second call changes only the completely erased marker word. The
 version/length word and the tail preserved by the wrapper are unchanged.
@@ -118,18 +128,31 @@ Read-back detects failed writes even without a FLASHC command error. CRC
 detects corruption but cannot guarantee detection of every multi-bit fault.
 The final commit separates an unverified body from a boot-loadable record.
 
-The completed-edit snapshot is the 204-byte musical payload at
-`0x6400..0x64cb`, initialized from restored data (or defaults) on every boot.
+The completed-edit snapshot is the 268-byte musical payload at
+`0x6640..0x674b`, initialized from restored data (or defaults) on every boot.
 `0x62f8` tracks logical mode (preview counts as WRITE); `0x62fe` is the
 preview flag. Explicit CLEAR latches an event at `0x62ff`, consumed by the
 same scan. Length reaching zero is not used to infer CLEAR.
+The take's preset reference at `0x6091` has no field of its own: it is
+adopted from the same live count, at the same moment, as the first step's
+own degree, so the loader takes it back off `0x6600` rather than keeping a
+second copy that could drift out of step with the array.
 `0x62f9..0x62fc` latch which presets were edited until each pad is fully
 released. `persist_capture` at `0x8001d280` accepts a mask: bits 0–3 select
-preset pads, bit 4 selects the sequence and bit 5 the latch transpose
-state (RAM `0x62e2`, snapshot byte `0x6409`). It canonicalizes and
+preset pads, bit 4 selects the sequence, bit 5 the latch transpose
+state (RAM `0x62e2`, snapshot byte `0x6649`) and bit 6 the tuning slot
+(RAM `0x6090`, snapshot byte `0x664a`). Bit 4 also takes the per-step
+preset degrees (RAM `0x6600..0x663f`, snapshot `0x670c..0x674b`), which
+belong to the sequence they describe. It canonicalizes and
 compares only selected data before the save code stages the combined
-record. Records written before the state existed carry a zero there,
-which is the state every latch had until then.
+record. Records written before either of those two states existed carry a
+zero there, which is the state every latch and every tuning selector had
+until then.
+
+The tuning slot is restored into `0x6090` before the first scan, while the
+applier's guard at `0x60e4` is still zero — so the first scan copies that
+slot's table into RAM `0x854` and lights its LEDs. The selection comes
+back, not just the number in the cell.
 
 ## Verification and remaining bench checks
 
@@ -147,7 +170,9 @@ commands, the write-only flash page buffer and physical I/O are modeled.
 Coverage includes rotation, no-change saves, retry exhaustion, retained
 backups, body/marker power cuts, corruption/bounds, generation wrap,
 same-scan clear/record-exit gestures, independent/overlapping preset edits,
-saving during record/playback, and cold/warm startup without phantom steps.
+saving during record/playback, the tuning slot's own capture bit and its
+isolation from a sequence capture, the per-step preset degrees and the
+reference derived from them, and cold/warm startup without phantom steps.
 It drives real clock/output paths before and after a release save and a
 modeled scheduling pause, without fabricating unobserved input events.
 `src/PersistenceClockRegression.java` reruns the clock suite while a changed

@@ -3450,8 +3450,8 @@ public class AssemblePressureFix extends GhidraScript {
         // whichever state is in force, so a switch into hold starts from the
         // preset standing now rather than from one two rebuilds old.
         long lppEntry = 0x8001eca8L, lppLoop = 0x8001ecdcL, lppOwn = 0x8001ed00L;
-        long lppHave  = 0x8001ed08L, lppNext = 0x8001ed34L, lppSave = 0x8001ed3cL;
-        long lppDone  = 0x8001ed44L, lppPool = 0x8001ed4cL;
+        long lppHave  = 0x8001ed08L, lppNext = 0x8001ed38L, lppSave = 0x8001ed40L;
+        long lppDone  = 0x8001ed48L, lppPool = 0x8001ed4cL;
         begin(lppEntry);
         emit("STM --SP,R0,R1,R2,R3,R7,R8,R9,R10,R11,R12,LR");
         // Stand down while the pads 2 & 3 gesture is in progress.  Those
@@ -3493,13 +3493,27 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(lppOwn);
         emit("MOV R0,R1");                                        // its own slot
         padTo(lppHave);
-        emit("MOV R12,R0");
-        emit("MOV R9,0x60f3");
-        emit(String.format("MCALL PC[0x%x]", lppPool));           // preset_entry, at the count now
-        emit("MOV R11,R12");
-        emit("MOV R12,R0");
+        // Where this key sits NOW - the live table, which the rebuild has
+        // already written by the time the pin runs.  Measured rather than
+        // assumed: at the pin's entry 0x60fa carried N=2 with 0x60f3 at 1
+        // and 0x6092 still 0, so the rebuild has been and the jack's own
+        // degrees are N less the LIVE preset count, not the rebuilt one.
+        emit("MOV R11,0x854");
+        emit("LD.SH R11,R11[R0 << 0x1]");
+        // ...against where it sat before the preset moved, at that same jack
+        // shift.  The table moves by the interval at key + jack + preset,
+        // and this used to measure it at key + preset: with the jack on one
+        // degree of an unequal scale the two differ, and HOLD moved the note
+        // it promises to keep by 35 cents - key 9, preset 0 -> 1, the target
+        // walking 398 -> 412 because slot[10]-slot[9] is 34 where the entry
+        // actually travelled slot[11]-slot[10] = 48 (audit 2026-09-13).
+        emit("MOV R12,0x60fa");
+        emit("LD.UB R9,R12[-0x7]");                               // 0x60f3, the preset's degrees
+        emit("LD.UB R12,R12[0x1]");                               // N, the combined count
+        emit("SUB R12,R9");                                       // the jack's own degrees
+        emit("ADD R12,R0");                                       // this key, jack-shifted
         emit("MOV R9,0x6092");
-        emit(String.format("MCALL PC[0x%x]", lppPool));           // and at the one before
+        emit(String.format("MCALL PC[0x%x]", lppPool));           // as it stood before the preset moved
         emit("SUB R11,R12");                                      // how far this key moved
         emit("MOV R10,0x60a2");
         emit("LD.SH R12,R10[R1 << 0x1]");
@@ -3783,10 +3797,10 @@ public class AssemblePressureFix extends GhidraScript {
         long mtPress   = 0x8001e748L;
         long mtCommon  = 0x8001e74aL;
         long mtFreeze  = 0x8001e788L;
-        long mtLatched = 0x8001e790L;
-        long mtAdd     = 0x8001e798L;
-        long mtDone    = 0x8001e7a4L;
-        long mtPool    = 0x8001e7a8L;
+        long mtLatched = 0x8001e78cL;
+        long mtAdd     = 0x8001e78eL;
+        long mtDone    = 0x8001e79aL;
+        long mtPool    = 0x8001e7a0L;
         begin(mtLive);
         emit("MOV R11,0x1");                                      // live
         emit(String.format("RJMP 0x%x", mtCommon));
@@ -3808,6 +3822,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R10,0xa");
         emit(String.format("BR{ne} 0x%x", mtDone));               // the transposer has not run
         emit("ANDL R9,0xff");                                     // the live shift
+        // Before the mode fork, so all three agree: the LIVE and PRESS paths
+        // name the note with the step's own count in the shift, the press
+        // FREEZES that total at 0x60fe, and the lift reads the frozen one
+        // back - which is what keeps a note-off naming the note its note-on
+        // named, after 0x6503 has already moved to the next step.
+        emit(String.format("MCALL PC[0x%x]", mtPool + 8));
         emit("CP.W R0,0x1");
         emit(String.format("BR{eq} 0x%x", mtAdd));                // live: as it stands
         emit("CP.W R0,0x2");
@@ -3821,6 +3841,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("RJMP 0x%x", mtAdd));
         padTo(mtLatched);
         emit("LD.UB R9,R8[0x4]");
+        // A sounding SEQUENCER step carries the preset count it was
+        // recorded under; the shift so far says nothing about it.  The
+        // helper adds (e - d_ref), the same term the CV shift applies.
         padTo(mtAdd);
         emit("ADD R12,R9");
         emit("CP.W R12,0x7f");
@@ -3831,6 +3854,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(mtPool);
         word(0x800057a8L); // key -> MIDI note
         word(0x00003560L); // global state base
+        word(0x8001e488L); // the sequencer step's own preset degrees
         finish("midi_transpose", 0x8001e7c0L);
 
         // The sequencer follows the jack transposer the way it follows the
@@ -3914,8 +3938,8 @@ public class AssemblePressureFix extends GhidraScript {
         long scsEntry = 0x8001e3b4L;
         long scsSlot  = 0x8001e3e4L;
         long scsGo    = 0x8001e400L;
-        long scsDone  = 0x8001e410L;
-        long scsPool  = 0x8001e418L;
+        long scsDone  = 0x8001e418L;
+        long scsPool  = 0x8001e41cL;
         begin(scsEntry);
         emit("STM --SP,R7,LR");                                   // a frame: it calls preset_entry now
         emit("MOV R9,0x6503");                                    // the step sounding now
@@ -3926,30 +3950,44 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R10,R10[R9 << 0x0]");
         emit("CP.W R10,0x1d");
         emit(String.format("BR{ge} 0x%x", scsDone));
-        emit("MOV R11,0x854");
-        emit("LD.SH R11,R11[R10 << 0x1]");                        // table'[key]
+        emit("SUB R9,-0x6600");                                   // &degrees[step], this step's own
         padTo(scsSlot);
-        emit("MOV R12,R10");
         emit("ST.W --SP,R8");
-        // Against the take's REFERENCE, so what survives is the jack's live
-        // shift plus the preset's movement away from where the take was born
-        // - the same thing 0x62f4 does for the octave.  A one-shot preview is
-        // the exception: the bare pad that starts one selects a preset as
-        // well as a step, so it would move the very note it is auditioning,
-        // and the live count is used instead to cancel it - exactly why
-        // seq_preview_pin cancels the octave.
-        emit("MOV R9,0x6091");
-        emit("MOV R12,0x62fe");
-        emit("LD.UB R12,R12[0x0]");
-        emit("CP.W R12,0x0");
-        emit(String.format("BR{eq} 0x%x", scsGo));
-        emit("MOV R9,0x60f3");
-        padTo(scsGo);
+        // Both terms stand at the step's own degree.  Where it was recorded,
+        // slot[key + e], comes off first; where it belongs now is
+        // slot[key + N - X + e], N being the live combined count and X the
+        // count whose movement this step should NOT follow.
+        //
+        // X is the take's REFERENCE for playback, so what survives is the
+        // jack's live shift plus the preset's movement away from where the
+        // take was born - the same thing 0x62f4 does for the octave.  A
+        // one-shot preview is the exception: the bare pad that starts one
+        // selects a preset as well as a step, so it would move the very note
+        // it is auditioning, and the LIVE count cancels it - exactly why
+        // seq_preview_pin cancels the octave.  Measuring the interval at the
+        // take's degree instead of the step's put a step recorded under
+        // another pad 35 cents out on an unequal scale, and moved a preview
+        // with the pad that was supposed to cancel (audit 2026-09-13).
         emit("MOV R12,R10");
-        emit(String.format("MCALL PC[0x%x]", scsPool));           // the reference entry
-        emit("SUB R11,R12");
+        emit(String.format("MCALL PC[0x%x]", scsPool));           // slot[key + e]
+        emit("MOV R11,R12");
+        emit("MOV R12,0x6091");
+        emit("MOV R8,0x62fe");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", scsGo));
+        emit("MOV R12,0x60f3");
+        padTo(scsGo);
+        emit("LD.UB R12,R12[0x0]");                               // X
+        emit("MOV R8,0x60fa");
+        emit("LD.UB R8,R8[0x1]");                                 // N, the combined count
+        emit("SUB R8,R12");
+        emit("ADD R8,R10");                                       // key + N - X
+        emit("MOV R12,R8");
+        emit(String.format("MCALL PC[0x%x]", scsPool));           // slot[key + N - X + e]
+        emit("SUB R12,R11");
         emit("LD.W R8,SP++");
-        emit("ADD R8,R11");
+        emit("ADD R8,R12");
         padTo(scsDone);
         emit("LDM SP++,R7,PC");
         padTo(scsPool);
@@ -4010,6 +4048,39 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019af8L); // the three slot tables
         word(0x8001e2d0L); // the keys-per-period table
         finish("preset_entry", 0x8001e488L);
+
+        // R9 = the MIDI shift so far.  While a recorded step is the thing
+        // sounding, add the preset count THAT step was played under and take
+        // off the take's reference, so a take holding one step at the pad's
+        // zero and one an octave up stops sending the same note twice while
+        // the CV plays the octave (audit 2026-09-13).
+        //
+        // The gate is NOT 0x2eed, which the keyboard hand-over clears: it is
+        // still zero when the note is converted - measured, the step's own
+        // conversion reaching midi_transpose with 0x2eed at 0 and the right
+        // step index beside it.  PLAY plus "the keyboard does not own a
+        // sounding note" is the pair that is true at conversion time and
+        // false the moment a key takes the voice.  A leaf; R10 and R11 spent -
+        // R8 stays 0x60fa, which the freeze and the lift both need.
+        long msdDone = 0x8001e4b4L;
+        begin(0x8001e488L);
+        emit("MOV R11,0x6600");
+        emit("LD.UB R10,R11[-0x4a8]");     // 0x6158, the sequencer's mode
+        emit("CP.W R10,0x2");
+        emit(String.format("BR{ne} 0x%x", msdDone));
+        emit("LD.UB R10,R11[-0x323b]");    // 0x33c5, the keyboard owns a note
+        emit("CP.W R10,0x0");
+        emit(String.format("BR{ne} 0x%x", msdDone));
+        emit("LD.UB R10,R11[-0xfd]");     // 0x6503, the step sounding now
+        emit("CP.W R10,0x40");
+        emit(String.format("BR{ge} 0x%x", msdDone));
+        emit("LD.UB R10,R11[R10 << 0x0]");// the count it was recorded under
+        emit("ADD R9,R10");
+        emit("LD.UB R10,R11[-0x56f]");    // 0x6091, the take's reference
+        emit("SUB R9,R10");
+        padTo(msdDone);
+        emit("MOV PC,LR");
+        finish("midi_step_degree", 0x8001e4b8L);
 
         // Knob 1 as six note orders instead of one blend.  The knob's travel
         // is cut into zones - ascending, descending, mirror, press order,
@@ -5687,7 +5758,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MCALL PC[0x8001ccdc]");
         emit("MOV R11,R0");
         emit("SUB R11,-0x10");
-        emit("MOV R10,0xcc");
+        emit("MOV R10,0x10c");
         emit("MCALL PC[0x8001ccdc]");
         emit("MOV R8,-0x1");
         emit("EOR R12,R8");
@@ -5708,10 +5779,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R8,R9");
         emit("BR{ne} 0x8001cde0");
         emit("LD.UH R8,R0[0x4]");
-        emit("CP.W R8,0x2");
+        emit("CP.W R8,0x3");                                  // v2 is rejected, like v1
         emit("BR{ne} 0x8001cde0");
         emit("LD.UH R8,R0[0x6]");
-        emit("CP.W R8,0xcc");
+        emit("CP.W R8,0x10c");
         emit("BR{ne} 0x8001cde0");
         emit("LD.W R8,R0[0x8]");
         emit("CP.W R8,0x0");
@@ -5724,6 +5795,13 @@ public class AssemblePressureFix extends GhidraScript {
         // like the presets and steps: 0 hold, 1 transpose, nothing else.
         emit("LD.UB R8,R0[0x19]");
         emit("CP.W R8,0x1");
+        emit("BR{hi} 0x8001cde0");
+        // The tuning slot indexes the three emitted tables, so it is
+        // bounded here rather than left to the applier's own clamp: a
+        // record naming a fourth slot is a corrupt record, not a request
+        // for slot 0.
+        emit("LD.UB R8,R0[0x1a]");
+        emit("CP.W R8,0x2");
         emit("BR{hi} 0x8001cde0");
         emit("MOV R1,0x0");
         padTo(0x8001cd30L);
@@ -5740,7 +5818,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R1,0x0");
         padTo(0x8001cd60L);
         emit("CP.W R1,R10");
-        emit("BR{ge} 0x8001cdd8");
+        emit("BR{ge} 0x8001cdb4");
         emit("ADD R8,R0,R1 << 0x1");
         // A step is RELATIVE to the take's reference now, so a playable
         // value is signed and can run past the DAC in either direction;
@@ -5764,6 +5842,19 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001cdb0L);
         emit("SUB R1,-0x1");
         emit("RJMP 0x8001cd60");
+        // Every per-step preset count, bounded like the rest: the shift
+        // hands it to preset_entry, whose wrap loop walks a period at a
+        // time, so a byte off flash decides how long that loop runs.
+        padTo(0x8001cdb4L);
+        emit("MOV R1,0x0");
+        padTo(0x8001cdb8L);
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R8,R8[0xdc]");
+        emit("CP.W R8,0x7f");
+        emit("BR{hi} 0x8001cde0");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x40");
+        emit("BR{lt} 0x8001cdb8");
         padTo(0x8001cdd8L);
         emit("LD.W R12,R0[0x8]");
         emit("RJMP 0x8001cde4");
@@ -5821,7 +5912,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001cce0L);
         finish("persist_newest", 0x8001ce80L);
 
-        // Canonical record from COMPLETED edits at 0x6400, generation in R12.
+        // Canonical record from COMPLETED edits at 0x6640, generation in R12.
         // A preset release cannot accidentally commit an unfinished take,
         // and leaving record cannot commit a different pad still held down.
         begin(0x8001ce80L);
@@ -5830,7 +5921,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R0,R12");
         emit("MOV R8,0x6300");
         emit("MOV R9,0x0");
-        emit("MOV R10,0x38");
+        emit("MOV R10,0x48");           // 288 bytes now, not 224
         padTo(0x8001cea0L);
         emit("ST.W R8[0x0],R9");
         emit("SUB R8,-0x4");
@@ -5839,14 +5930,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x6300");
         emit("MOV R9,-0x1");
         emit("ST.W R8[0x0],R9");       // uncommitted
-        emit("MOV R9,0x2");
+        emit("MOV R9,0x3");             // v3: the per-step preset counts
         emit("ST.H R8[0x4],R9");
-        emit("MOV R9,0xcc");
+        emit("MOV R9,0x10c");
         emit("ST.H R8[0x6],R9");
         emit("ST.W R8[0x8],R0");
         emit("MOV R1,0x0");
         padTo(0x8001ced0L);
-        emit("MOV R8,0x6400");
+        emit("MOV R8,0x6640");
         emit("ADD R8,R8,R1 << 0x0");
         emit("LD.UB R9,R8[0x0]");
         emit("MOV R8,0x6310");
@@ -5855,7 +5946,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R1,-0x1");
         emit("CP.W R1,0x8");
         emit("BR{lt} 0x8001ced0");
-        emit("MOV R8,0x6408");
+        emit("MOV R8,0x6648");
         emit("LD.UB R2,R8[0x0]");
         emit("MOV R9,0x40");
         emit("CP.W R2,R9");
@@ -5867,8 +5958,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R1,0x0");
         padTo(0x8001cf10L);
         emit("CP.W R1,R2");
-        emit("BR{ge} 0x8001cf90");
-        emit("MOV R8,0x640c");
+        emit("BR{ge} 0x8001cf74");
+        emit("MOV R8,0x664c");
         emit("ADD R8,R8,R1 << 0x1");
         // SIGNED: a step is relative to its take's reference, so a note
         // recorded under a pad below that reference is negative.  Loaded
@@ -5882,7 +5973,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R8[0x0],R9");
         emit("CP.W R9,0x7ffe");
         emit("BR{ge} 0x8001cf70");      // rest/tie: the zero key stays zero
-        emit("MOV R8,0x648c");
+        emit("MOV R8,0x66cc");
         emit("ADD R8,R8,R1 << 0x0");
         emit("LD.UB R9,R8[0x0]");
         emit("MOV R8,0x639c");
@@ -5891,13 +5982,31 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001cf70L);
         emit("SUB R1,-0x1");
         emit("RJMP 0x8001cf10");
+        // The per-step preset counts, all 64: the capture zeroes past the
+        // take's length, so staging mirrors the snapshot whatever the length
+        // is and the canonical compare cannot see a stale tail.
+        padTo(0x8001cf74L);
+        emit("MOV R1,0x0");
+        padTo(0x8001cf78L);
+        emit("MOV R8,0x670c");
+        emit("LD.UB R9,R8[R1 << 0x0]");
+        emit("MOV R8,0x63dc");
+        emit("ST.B R8[R1 << 0x0],R9");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x40");
+        emit("BR{lt} 0x8001cf78");
         padTo(0x8001cf90L);
-        // The latch state, from the snapshot the same way as the rest:
-        // 0x6409 in the payload, 0x0019 in the record.
-        emit("MOV R8,0x6409");
+        // The latch state and the tuning slot, from the snapshot the same
+        // way as the rest: 0x6649 and 0x664a in the payload, 0x0019 and
+        // 0x001a in the record.  Two byte copies, not one halfword: both
+        // addresses are odd.
+        emit("MOV R8,0x6649");
         emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R10,R8[0x1]");
         emit("MOV R8,0x6319");
         emit("ST.B R8[0x0],R9");
+        emit("ST.B R8[0x1],R10");
+
         emit("MOV R12,0x6300");
         emit("MCALL PC[0x8001cfbc]");
         emit("MOV R8,0x6300");
@@ -5953,7 +6062,33 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R9,R0[0x19]");
         emit("MOV R8,0x62e2");
         emit("ST.B R8[0x0],R9");
-        padTo(0x8001d070L);
+        // The tuning slot, into the cell the applier selects with.  The
+        // first-use bootstrap put slot 0 there before this ran, so a
+        // missing or rejected record still powers up on slot 0.  The
+        // apply guard at 0x60e4 is zero either way, so the first scan
+        // copies whichever table this names into RAM 0x854 and lights the
+        // LEDs for it - the selection is restored, not just the number.
+        emit("LD.UB R9,R0[0x1a]");
+        emit("MOV R8,0x6090");
+        emit("ST.B R8[0x0],R9");
+        // The per-step preset counts, and the take's reference off the
+        // first: 0x6091 is adopted from the same live count, at the same
+        // moment, as the first step's own - so the array carries it and
+        // there is no second field to keep in step with it.
+        emit("MOV R1,0x0");
+        padTo(0x8001d054L);
+        emit("ADD R8,R0,R1 << 0x0");
+        emit("LD.UB R9,R8[0xdc]");
+        emit("MOV R8,0x6600");
+        emit("ST.B R8[R1 << 0x0],R9");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x40");
+        emit("BR{lt} 0x8001d054");
+        emit("MOV R8,0x6600");
+        emit("LD.UB R9,R8[0x0]");
+        emit("MOV R8,0x6091");
+        emit("ST.B R8[0x0],R9");
+        padTo(0x8001d078L);
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001d07cL);
         word(0x8001ce00L);
@@ -5964,7 +6099,7 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001d080L);
         emit("MOV R9,0x0");
         padTo(0x8001d084L);
-        emit("CP.W R9,0xcc");
+        emit("CP.W R9,0x10c");
         emit("BR{ge} 0x8001d0b0");
         emit("ADD R8,R12,R9 << 0x0");
         emit("LD.UB R10,R8[0x10]");
@@ -5988,7 +6123,7 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001d0c0L);
         emit("MOV R9,0x0");
         padTo(0x8001d0c4L);
-        emit("CP.W R9,0xe0");
+        emit("CP.W R9,0x120");
         emit("BR{ge} 0x8001d0f0");
         emit("ADD R8,R12,R9 << 0x0");
         emit("LD.UB R10,R8[0x0]");
@@ -6053,7 +6188,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.W R8[0x0],R9");        // reset marker after a failed commit too
         emit("MOV R12,R0");
         emit("MOV R11,0x6300");
-        emit("MOV R10,0xe0");
+        emit("MOV R10,0x120");
         emit("MOV R9,0x1");             // erase, then write UNCOMMITTED body
         emit("MCALL PC[0x8001d278]");
         emit("MOV R12,R0");
@@ -6107,11 +6242,11 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001cce0L);
         finish("persist_save", 0x8001d280L);
 
-        // Capture only completed musical edits into 0x6400..0x64cb.
+        // Capture only completed musical edits into 0x6640..0x674b.
         // R12 mask: bits 0..3 = released preset pads, bit 4 = sequence,
-        // bit 5 = the latch's transpose state.
+        // bit 5 = the latch's transpose state, bit 6 = the tuning slot.
         // Return R12 = changed. Unchanged gestures (including empty clear)
-        // never write even on a blank ring. Mask 0x3f initializes every
+        // never write even on a blank ring. Mask 0x7f initializes every
         // snapshot byte at boot; no snapshot survives a warm reset.
         begin(0x8001d280L);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
@@ -6119,7 +6254,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R2,R12");
         emit("MOV R0,0x0");
         emit("MOV R1,0x0");
-        emit("MOV R3,0x6400");
+        emit("MOV R3,0x6640");
         padTo(0x8001d294L);
         emit("CP.W R1,0x4");
         emit("BR{eq} 0x8001d2e0");
@@ -6147,7 +6282,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,R2");
         emit("ANDL R8,0x1");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001d3a0");
+        emit("BR{eq} 0x8001d3b0");
         emit("MOV R8,0x61e0");
         emit("LD.UB R4,R8[0x0]");
         emit("CP.W R4,0x40");
@@ -6161,13 +6296,15 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001d30cL);
         emit("ST.B R3[0x8],R4");
         emit("MOV R8,0x0");
-        // 0x640a..0x640b stay reserved zero; 0x6409 is the latch state's
-        // and is left alone here, or a sequence capture would wipe it.
-        emit("ST.H R3[0xa],R8");
+        // 0x664b alone is still reserved zero.  0x6649 and 0x664a hold the
+        // latch state and the tuning slot, and a sequence capture has to
+        // leave both alone; the halfword store that used to stand here
+        // reached 0x664a and would now wipe the slot.
+        emit("ST.B R3[0xb],R8");
         emit("MOV R1,0x0");
         padTo(0x8001d320L);
         emit("CP.W R1,0x40");
-        emit("BR{ge} 0x8001d3a0");
+        emit("BR{ge} 0x8001d3b0");
         emit("MOV R9,0x0");
         emit("MOV R11,0x0");
         emit("CP.W R1,R4");
@@ -6199,23 +6336,53 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R0,0x1");
         padTo(0x8001d38aL);
         emit("ST.B R10[0x8c],R11");
+        // The preset count this step was recorded under, compared like the
+        // rest and zeroed past the take's length so the tail is the take's,
+        // not the previous one's.  Unlike the key it is kept for a rest too:
+        // the sentinel says the step is silent, not that it has no degree.
+        emit("MOV R9,0x0");
+        emit("CP.W R1,R4");
+        emit("BR{ge} 0x8001d39c");
+        emit("MOV R8,0x6600");
+        emit("LD.UB R9,R8[R1 << 0x0]");
+        padTo(0x8001d39cL);
+        emit("LD.UB R8,R10[0xcc]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001d3a8");
+        emit("MOV R0,0x1");
+        padTo(0x8001d3a8L);
+        emit("ST.B R10[0xcc],R9");
         emit("SUB R1,-0x1");
         emit("RJMP 0x8001d320");
-        padTo(0x8001d3a0L);
+        padTo(0x8001d3b0L);
         // Bit 5: the latch's transpose state, a byte compared like the rest.
         emit("MOV R8,R2");
         emit("ANDL R8,0x2");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001d3d8");
+        emit("BR{eq} 0x8001d3d0");
         emit("MOV R8,0x62e2");
         emit("LD.UB R9,R8[0x0]");
         emit("LD.UB R8,R3[0x9]");
         emit("CP.W R8,R9");
-        emit("BR{eq} 0x8001d3c0");
+        emit("BR{eq} 0x8001d3cc");
         emit("MOV R0,0x1");
-        padTo(0x8001d3c0L);
+        padTo(0x8001d3ccL);
         emit("ST.B R3[0x9],R9");
-        padTo(0x8001d3d8L);
+        padTo(0x8001d3d0L);
+        // Bit 6: the selected tuning slot, a byte compared like the rest.
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x4");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001d3f0");
+        emit("MOV R8,0x6090");
+        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R8,R3[0xa]");
+        emit("CP.W R8,R9");
+        emit("BR{eq} 0x8001d3ec");
+        emit("MOV R0,0x1");
+        padTo(0x8001d3ecL);
+        emit("ST.B R3[0xa],R9");
+        padTo(0x8001d3f0L);
         emit("MOV R12,R0");
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
         finish("persist_capture", 0x8001d400L);
@@ -6303,16 +6470,25 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x20");            // bit 5: the latch state
         emit("OR R2,R8");
         padTo(0x8001d4d8L);
+        // The tuning slot is asked for on every scan, with no release to
+        // wait for.  It is not a value a held control keeps moving: the
+        // edit keys step it once per press, so the capture's own compare
+        // already bounds a press to a single flash write, and the moment
+        // the write lands is the press - which is in edit mode, where
+        // nothing is being played by hand.
+        emit("MOV R8,0x40");            // bit 6: the tuning slot
+        emit("OR R2,R8");
+        padTo(0x8001d4e0L);
         emit("CP.W R2,0x0");
-        emit("BR{eq} 0x8001d4f0");
+        emit("BR{eq} 0x8001d4f8");
         emit("MOV R12,R2");
         emit("MCALL PC[0x8001d518]");
         emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001d4f0");
+        emit("BR{eq} 0x8001d4f8");
         emit("MOV R8,0x1");
         emit("ST.B R0[0x0],R8");
         emit("MCALL PC[0x8001d51c]");
-        padTo(0x8001d4f0L);
+        padTo(0x8001d4f8L);
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
         padTo(0x8001d518L);
         word(0x8001d280L);
@@ -6338,7 +6514,7 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001d540L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        emit("MCALL PC[0x8001d5b0]");
+        emit("MCALL PC[0x8001d5f0]");
         emit("MOV R8,0x0");
         emit("MOV R10,0x613a");
         emit("MOV R9,0x7b");
@@ -6363,23 +6539,35 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R10[0x4],R8");
         emit("MOV R10,0x6092");         // the preset count the last rebuild saw
         emit("ST.B R10[0x0],R8");
+        // The per-step preset counts, musical data like the steps themselves.
+        // Sixteen words, not thirty-two halfwords: a bare 0x1f in the
+        // assembler is what test.py hunts for, because a key walk starting
+        // past key 28 is how phantom keys once reached the arp.  The array
+        // is 64 bytes either way.
+        emit("MOV R10,0x6600");
+        emit("MOV R9,0xf");
+        padTo(0x8001d59cL);
+        emit("ST.W R10[0x0],R8");
+        emit("SUB R10,-0x4");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001d59c");
         emit("MOV R10,0x62e0");
         emit("MOV R9,-0x1");
         emit("ST.B R10[0x1],R9");
-        emit("MCALL PC[0x8001d5b4]");
-        emit("MOV R12,0x3f");
-        emit("MCALL PC[0x8001d5bc]");   // initialize completed-edit snapshot
+        emit("MCALL PC[0x8001d5f4]");
+        emit("MOV R12,0x7f");
+        emit("MCALL PC[0x8001d5fc]");   // initialize completed-edit snapshot
         emit("MOV R10,0x62e0");
         emit("MOV R9,0x1");
         emit("ST.B R10[0x1d],R9");
-        emit("MCALL PC[0x8001d5b8]");
+        emit("MCALL PC[0x8001d5f8]");
         emit("LDM SP++,R7,PC");
-        padTo(0x8001d5b0L);
+        padTo(0x8001d5f0L);
         word(block("seq_restart_init") ? 0x8001df80L : 0x8001ab60L);
         word(0x8001cfc0L);
         word(block("clock_capture") ? 0x8001c300L : 0x80007340L);
         word(0x8001d280L);
-        finish("persist_boot", 0x8001d5c0L);
+        finish("persist_boot", 0x8001d600L);
 
         // The sequencer owns its run state, not the physical arp switch.
         // Use the same effective enable for tempo conditioning, factory
@@ -9005,8 +9193,46 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001ba28L);
         emit("LDM SP++,R7,PC");
         padTo(0x8001ba2cL);
-        word(0x8001dce0L);              // seq_record_pitch
+        word(0x8001e4b8L);              // seq_record_degree -> seq_record_pitch
         finish("seq_record", 0x8001ba30L);
+
+        // The preset count this step is being played under, taken on the way
+        // to the pitch leaf and left beside the key seq_record stores.  A
+        // take carries ONE reference (0x6091), so a step recorded under a
+        // different pad than the take was born under had its interval
+        // measured at the wrong degree on playback, and went out over MIDI
+        // as though it carried none at all (audit 2026-09-13).
+        //
+        // Bounded on its own account: a full take must not write past the
+        // array.  MCALL left the return address in LR and the tail jump
+        // keeps it, so the leaf still returns to seq_record; R12 carries the
+        // key through untouched.
+        //
+        // R9 and R10 are the caller's and are pushed: R9 is the step index
+        // seq_record stores the key at and then increments, and R10 is the
+        // count's address - seq_record_pitch_cv saves R9 across itself for
+        // exactly that reason.  Taking them as scratch emptied every take.
+        // Sited from the UNION of every configuration's extents, not one
+        // build's: clock_latency is not even declared in the default config,
+        // so it printed no extent and the address looked free.
+        begin(0x8001e4b8L);
+        emit("ST.W --SP,R9");
+        emit("ST.W --SP,R10");
+        emit("MOV R8,0x61e0");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x40");
+        emit("BR{ge} 0x8001e4d4");
+        emit("MOV R8,0x6600");
+        emit("LD.UB R10,R8[-0x50d]");   // 0x60f3, the live preset degrees
+        emit("ST.B R8[R9 << 0x0],R10");
+        padTo(0x8001e4d4L);
+        emit("LD.W R10,SP++");
+        emit("LD.W R9,SP++");
+        emit("LDDPC R8,0x8001e4dc");
+        emit("MOV PC,R8");
+        padTo(0x8001e4dcL);
+        word(0x8001dce0L);              // seq_record_pitch
+        finish("seq_record_degree", 0x8001e4e0L);
 
         // Play, at the arp's own note selection.  The arp asks which key to
         // sound; while playing we answer with a valid one so the step is not
@@ -10117,10 +10343,13 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x800038c6L);
         finish("pitch_target_blend_hook", 0x800038c6L);
 
-        // Tuning applier and tables.  Selector lives in the old remote-enable
-        // byte (state+2, persisted with settings): 0 = Sabat II (default),
-        // 1 = slot 1, 2 = slot 2.  On change: copy the 32-entry table to RAM
-        // 0x854 and set the LEDs (rem-en = ch 5 = slot 0, trn = ch 8 = slot 1).
+        // Tuning applier and tables.  Selector lives at RAM 0x6090 - see the
+        // edit-key blocks below for why it is not state+2 - and is carried in
+        // the persistence record's byte 0x1a, so the slot a player left
+        // selected is the slot the instrument powers up in.  0 = slot 0
+        // (the first-boot default), 1 = slot 1, 2 = slot 2.  On change: copy
+        // the 32-entry table to RAM 0x854 and set the LEDs (rem-en = ch 5 =
+        // slot 0, trn = ch 8 = slot 1).
         // Outside edit mode the LEDs are re-asserted every scan.  The old
         // transpose-mode byte (state+0x6a) is forced to zero permanently.
         begin(0x80019a40L);
