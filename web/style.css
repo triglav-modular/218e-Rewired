@@ -2662,6 +2662,10 @@ section,
 .autorow { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
 .autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 15rem; flex: 1 1 15rem; }
 .autofield.autochan { min-width: 6rem; flex: 0 0 6rem; }
+/* .row carries no margin of its own - it is a flex line, and everywhere
+   else in the page something above it supplies the space.  Here the two
+   lines are siblings, so the buttons sat against the selects. */
+.automeasure .autorow + .row { margin-top: 1rem; }
 .autofield select {
     font: inherit;
     color: var(--ink);
