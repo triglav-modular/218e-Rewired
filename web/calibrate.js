@@ -14,6 +14,12 @@
 //   key    = note - 24, clamped at zero
 //   raw    = key_table[key]             (the live table at RAM 0x854)
 //   raw   -= 484                        unless add-to-pitch is on OCTAVE
+//
+// The sweep assumes that subtraction, so add-to-pitch must be OFF - not its
+// middle position.  Both leave state+0x342 zero and so both subtract, but the
+// middle position is the one that adds the active pad's preset voltage to the
+// pitch, which would transpose the whole run by however that pad is set.  Off
+// adds neither term.
 //   index  = (raw + 120) * 12 / 484     integer divide, clamped at 0x4d
 //   output = table[index], interpolated towards table[index+1] by the remainder
 //

@@ -158,7 +158,18 @@ jobs:
           # one: that the sweep's notes match the firmware's own integer
           # arithmetic, and that the estimator reads synthetic tones to a small
           # fraction of the DAC step it has to decide.
-          node web/test_calibrate.js
+          #
+          # Every run builds both branches, and the steps come from whichever
+          # branch was pushed - so a test added on development is run against a
+          # checkout of main that does not have it yet.  Skipped where the file
+          # is absent, and never skipped where it is present; the branch it was
+          # skipped on is named, so a test that quietly stopped running
+          # anywhere says so.
+          if [ -f web/test_calibrate.js ]; then
+            node web/test_calibrate.js
+          else
+            echo "web/test_calibrate.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
 
       - name: The beacon route only records what the page can send
         run: |
