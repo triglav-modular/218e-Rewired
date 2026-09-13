@@ -84,10 +84,10 @@ public class PersistenceRegression extends GhidraScript {
             long len=reg("R10"), erase=reg("R9"); page=reg("R12");
             check("aligned reserved-page driver arguments",page>=BASE&&page<BASE+4096
                 &&page%512==0&&reg("R11")==0x6300
-                &&((len==224&&erase==1)||(len==8&&erase==0)));
+                &&((len==288&&erase==1)||(len==8&&erase==0)));
             if(len==8) {
                 check("body verified before commit",r(page,4)==0xffffffffL
-                    &&Arrays.equals(e.readMemory(toAddr(page+4),220),e.readMemory(toAddr(0x6304),220)));
+                    &&Arrays.equals(e.readMemory(toAddr(page+4),284),e.readMemory(toAddr(0x6304),284)));
                 if(cut.equals("before-commit")) throw new PowerCut();
             }
             writes++; targets.add(page);
@@ -215,7 +215,7 @@ public class PersistenceRegression extends GhidraScript {
         // only while pads 2 and 3 are both up, bounded like every other
         // active value, and restored beside the musical data.
         fresh(); seed();
-        check("the state starts clear in record and snapshot",r(call(NEWEST)+25,1)==0&&r(0x6409,1)==0);
+        check("the state starts clear in record and snapshot",r(call(NEWEST)+25,1)==0&&r(0x6649,1)==0);
         w(0x62e2,1,1);
         check("a musical capture ignores the state",capture(31)==0&&saveLive()==0&&writes==2);
         check("the state's own bit captures the change",capture(32)==1&&call(SAVE)==0&&writes==4);
@@ -224,7 +224,7 @@ public class PersistenceRegression extends GhidraScript {
             p==BASE+512&&r(p+25,1)==1&&r(p+26,1)==0&&r(p+27,1)==0);
         check("an unchanged state skips flash",capture(32)==0);
         w(0x6580,2,0x7fff); w(0x6582,2,0x1234); w(0x6584,2,0x5678);
-        cold(); check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6409,1)==1);
+        cold(); check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6649,1)==1);
         check("the reference, the hold count and the shadow start at zero",
             r(0x6580,2)==0&&r(0x6582,2)==0&&r(0x6584,2)==0);
         byte[] good=e.readMemory(toAddr(p),512);
@@ -248,7 +248,7 @@ public class PersistenceRegression extends GhidraScript {
         // into the cell the applier selects with.
         fresh(); seed();
         check("the slot starts at zero in record and snapshot",
-            r(call(NEWEST)+26,1)==0&&r(0x640a,1)==0);
+            r(call(NEWEST)+26,1)==0&&r(0x664a,1)==0);
         w(0x6090,1,2);
         check("a musical capture ignores the slot",capture(31)==0&&saveLive()==0&&writes==2);
         check("a latch capture ignores it too",capture(32)==0&&writes==2);
@@ -256,7 +256,7 @@ public class PersistenceRegression extends GhidraScript {
         // and used to clear both of them with a single halfword store.
         w(0x61e0,1,3);
         check("a sequence capture leaves the slot's snapshot byte alone",
-            capture(16)==1&&r(0x640a,1)==0);
+            capture(16)==1&&r(0x664a,1)==0);
         w(0x61e0,1,4); capture(16);
         check("the slot's own bit captures the change",capture(64)==1&&call(SAVE)==0&&writes==4);
         long p=call(NEWEST);
@@ -269,7 +269,7 @@ public class PersistenceRegression extends GhidraScript {
         e.writeMemory(toAddr(p),good);
         check("and the bounded one accepted again",call(NEWEST)==p);
         cold();
-        check("the slot survives a power cycle",r(0x6090,1)==2&&r(0x640a,1)==2);
+        check("the slot survives a power cycle",r(0x6090,1)==2&&r(0x664a,1)==2);
         // Restoring the number is only half of it: the applier skips the
         // table copy while its guard says the slot in the cell is already
         // the one in RAM 0x854.  The bootstrap clears the guard, so the
@@ -283,6 +283,36 @@ public class PersistenceRegression extends GhidraScript {
             writes==6&&r(call(NEWEST)+26,1)==1);
         call(TICK); check("and only once",writes==6);
         println("PASS tuning slot: own capture bit, saved on change, bounded, restored");
+    }
+    void stepDegrees() throws Exception {
+        // The preset count each step was recorded under rides in the v3
+        // record's 64-byte field, captured with the sequence it belongs to,
+        // bounded on load, and restored beside the steps - with the take's
+        // reference taken off the first, which is where it was adopted from.
+        fresh(); seed();
+        check("the counts start clear",r(call(NEWEST)+0xdc,1)==0&&r(0x670c,1)==0);
+        w(0x6600,1,3); w(0x6601,1,12);
+        check("a preset capture ignores them",capture(15)==0&&writes==2);
+        check("the sequence bit takes them",
+            capture(16)==1&&r(0x670c,1)==3&&r(0x670d,1)==12);
+        check("and they reach the record",call(SAVE)==0&&writes==4
+            &&r(call(NEWEST)+0xdc,1)==3&&r(call(NEWEST)+0xdd,1)==12);
+        check("an unchanged set skips flash",capture(16)==0);
+        // Past the take's own length the field is this take's, not the one
+        // before it: a shorter take must not inherit a longer one's tail.
+        w(0x6602,1,9); w(0x61e0,1,2); capture(16);
+        check("zeroed past the take's length",r(0x670e,1)==0);
+        w(0x61e0,1,4);
+        long p=call(NEWEST);
+        byte[] good=e.readMemory(toAddr(p),512);
+        w(p+0xdc,1,0x80); fixCrc(p);
+        check("a count out of range is rejected",call(NEWEST)==BASE);
+        e.writeMemory(toAddr(p),good);
+        check("and the bounded one accepted again",call(NEWEST)==p);
+        cold();
+        check("the counts survive a power cycle",r(0x6600,1)==3&&r(0x6601,1)==12);
+        check("and the take's reference comes back off the first",r(0x6091,1)==3);
+        println("PASS per-step preset counts: captured with the sequence, bounded, restored with their reference");
     }
     void retries() throws Exception {
         for(String fault:new String[]{"locked","body","commit"}) {
@@ -323,13 +353,13 @@ public class PersistenceRegression extends GhidraScript {
         println("PASS power cuts at erase, partial body, body, pre-commit, partial marker, committed record");
     }
     void fixCrc(long p) {
-        CRC32 crc=new CRC32(); crc.update(e.readMemory(toAddr(p+4),8)); crc.update(e.readMemory(toAddr(p+16),204));
+        CRC32 crc=new CRC32(); crc.update(e.readMemory(toAddr(p+4),8)); crc.update(e.readMemory(toAddr(p+16),268));
         w(p+12,4,crc.getValue());
     }
     void corruption() throws Exception {
         fresh(); seed(); w(0x613a,2,0); saveLive(); long p=BASE+512;
         byte[] good=e.readMemory(toAddr(p),512);
-        for(int off:new int[]{0,4,6,8,12,16,17,24,25,26,28,155,156,219}) {
+        for(int off:new int[]{0,4,6,8,12,16,17,24,25,26,28,155,156,219,220,283}) {
             e.writeMemory(toAddr(p),good); w(p+off,1,r(p+off,1)^1);
             check("CRC/metadata rejects corruption at "+off,call(NEWEST)==BASE);
         }
@@ -358,15 +388,15 @@ public class PersistenceRegression extends GhidraScript {
     }
     void gesturePolicy() throws Exception {
         fresh(); seed();
-        byte[] initial=e.readMemory(toAddr(0x6400),204);
+        byte[] initial=e.readMemory(toAddr(0x6640),268);
         for(int i=0;i<4;i++)w(0x613a+2*i,2,450+100*i);
         w(0x6160,2,999);
         for(int mask=0;mask<32;mask++) {
-            e.writeMemory(toAddr(0x6400),initial);
+            e.writeMemory(toAddr(0x6640),initial);
             check("capture reports only selected changes",capture(mask)==(mask==0?0:1));
-            for(int i=0;i<4;i++)check("independent preset mask",r(0x6400+2*i,2)
+            for(int i=0;i<4;i++)check("independent preset mask",r(0x6640+2*i,2)
                 ==400+100*i+((mask&(1<<i))!=0?50:0));
-            check("independent sequence mask",r(0x640c,2)==((mask&16)!=0?999:500));
+            check("independent sequence mask",r(0x664c,2)==((mask&16)!=0?999:500));
         }
         // Everything that used to inhibit writes is active. Only pad 1 is
         // released; pad 2 is still editing. No idle time is advanced.
@@ -543,7 +573,7 @@ public class PersistenceRegression extends GhidraScript {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
         try {
-            basic(); relativeSteps(); latchState(); tuningSlot(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
+            basic(); relativeSteps(); latchState(); tuningSlot(); stepDegrees(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
             println("PERSISTENCE REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash/analog testing.");
         } finally { if(e!=null)e.dispose(); }
     }

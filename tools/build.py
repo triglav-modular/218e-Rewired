@@ -1230,8 +1230,14 @@ RAM_REGIONS = [
     # The record staged for writing, 8-byte aligned and a multiple of 8 long,
     # so the flash driver takes its simple aligned path - the same reason the
     # factory stages its own record rather than writing from scattered state.
-    (0x6300, 0x63E0, "canonical v2 record, staged for body then marker commit"),
-    (0x6400, 0x64CC, "canonical musical payload from completed edit gestures"),
+    (0x6300, 0x6420, "canonical v3 record, staged for body then marker commit"),
+    (0x6640, 0x674C, "canonical musical payload from completed edit gestures"),
+    # Above the declared map, in RAM nothing else reaches: measured on
+    # 2026-09-13, the deepest stack across a sounding scan, preset and jack
+    # movement, a completed take with its flash save and a cold boot came to
+    # 140 bytes below 0x7800, and no byte between 0x6586 and 0x77a3 was
+    # written at all.
+    (0x6600, 0x6640, "per-step preset degrees: the count each step was recorded under"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot, persisted: 0..2"),
     (0x6094, 0x6098, "output error accumulator"),
@@ -1370,7 +1376,15 @@ def check_ram_coverage() -> None:
     undeclared inside the factory's dead filter array.
     """
     source = (REPO / "src" / "AssemblePressureFix.java").read_text()
-    emits = re.findall(r'emit\((?:String\.format\()?"([^"]+)"', source)
+    # Ordered, and begin() is a barrier: a register does not survive a cave
+    # boundary, and pretending it does invents cells.  Carrying one across
+    # 2,700 lines resolved `LD.SH R11,R10[0x216]` - the bend offset, off the
+    # global state base - to 0x644A, which nothing addresses; the snapshot's
+    # old region covered it, so the check passed on a number it made up.
+    emits = []
+    for token in re.finditer(
+            r'begin\(0x[0-9a-fA-F]+L?\)|emit\((?:String\.format\()?"([^"]+)"', source):
+        emits.append(token.group(1) if token.group(1) else None)
     movi = re.compile(r"^MOV (R\d+|LR),0x([0-9a-f]+)$")
     addx = re.compile(r"^ADD (R\d+),(R\d+),(R\d+) << 0x\d$")
     # Stores carry no signedness, so ST.H must be accepted alongside LD.SH.
@@ -1381,6 +1395,9 @@ def check_ram_coverage() -> None:
     known: dict[str, int] = {}
     used: dict[int, str] = {}
     for text in emits:
+        if text is None:
+            known.clear()
+            continue
         match = movi.match(text)
         if match:
             known[match.group(1)] = int(match.group(2), 16)
@@ -1405,6 +1422,14 @@ def check_ram_coverage() -> None:
                     used.setdefault(value, text)
             if kind == "LD" and dst:
                 known.pop(dst, None)
+            continue
+        # A call clobbers the scratch registers, so anything this scan thinks
+        # it knows about them is stale afterwards.  Without this the bend
+        # offset's `LD.SH R11,R10[0x216]` was attributed to an R10 set before
+        # a call 100 lines earlier and resolved to a cell nobody addresses.
+        if text.startswith(("MCALL", "RCALL")):
+            for scratch in ("R8", "R9", "R10", "R11", "R12", "LR"):
+                known.pop(scratch, None)
             continue
         match = re.match(r"^\w[\w.{}]*\s+(R\d+|LR)\b", text)
         if match and not text.startswith(("ST.", "CP.", "BR", "TST")):

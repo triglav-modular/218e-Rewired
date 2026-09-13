@@ -64,21 +64,24 @@ history, preset pickup, clock state and pending triggers are not restored.
 Warm resets reload too; the factory strip-mode setting is left alone.
 Empty/corrupt storage uses initialized defaults.
 
-DFU updates erase this main-array storage. Experimental version-1 raw-RAM
-records are intentionally rejected, not migrated; re-enter those presets
-and sequences after updating.
+DFU updates erase this main-array storage. Version-1 raw-RAM records and
+version-2 records are intentionally rejected, not migrated; re-enter those
+presets and sequences after updating. A v2 record has no per-step preset
+degrees and no way to derive them, so accepting one would restore a take
+that plays at the wrong degree - and a DFU update erases storage anyway,
+so no instrument meets one in practice.
 
 ## Flash format and failure handling
 
 Eight 512-byte pages occupy `0x8003e000..0x8003efff`. Neither factory settings
 at `0x8003f000` nor the bootloader's User Page is written. Each page holds
-one version-2 record; multi-byte values are big-endian.
+one version-3 record; multi-byte values are big-endian.
 
 | Offset | Bytes | Meaning |
 |---|---:|---|
 | `0x00` | 4 | Commit marker `0x32313850`; erased until final commit |
-| `0x04` | 2 | Version `2` |
-| `0x06` | 2 | Payload length `204` |
+| `0x04` | 2 | Version `3` |
+| `0x06` | 2 | Payload length `268` |
 | `0x08` | 4 | Nonzero generation, wrapping `0xffffffff` to `1` |
 | `0x0c` | 4 | CRC-32/ISO-HDLC |
 | `0x10` | 8 | Four presets, `0..1023` |
@@ -88,22 +91,23 @@ one version-2 record; multi-byte values are big-endian.
 | `0x1b` | 1 | Reserved, zero |
 | `0x1c` | 128 | 64 pitches, signed and relative to the take's reference, `-0x2000..0x2000`; rest `0x7ffe`, tie `0x7fff` |
 | `0x9c` | 64 | Key indexes `0..28`; rest/tie and inactive keys are zero |
-| `0xdc` | 4 | Zero alignment padding |
+| `0xdc` | 64 | Per-step preset degrees, `0..127`; zero past the take's length |
+| `0x11c` | 4 | Zero alignment padding |
 
 Unused pitches are zero. CRC covers bytes `0x04..0x0b` followed by
-`0x10..0xdb`; it excludes the marker and itself. Polynomial `0xedb88320`,
+`0x10..0x11b`; it excludes the marker and itself. Polynomial `0xedb88320`,
 initial value and final XOR `0xffffffff`. The loader checks marker, version,
 length, generation, CRC and active-value bounds before copying musical
 state. Serial-number comparison handles generation wrap.
 
 Every attempt uses the factory wrapper at `0x800108fc`:
 
-1. Stage 224 bytes at aligned RAM `0x6300`, with the marker erased.
+1. Stage 288 bytes at aligned RAM `0x6300`, with the marker erased.
 2. Write to a page-aligned destination with erase enabled.
-3. Compare all 224 flash bytes with staging. Never commit a mismatch.
+3. Compare all 288 flash bytes with staging. Never commit a mismatch.
 4. Set the staged marker; write the first eight bytes at the same
    page-aligned destination with erase **disabled**.
-5. Compare all 224 bytes again and validate the committed record.
+5. Compare all 288 bytes again and validate the committed record.
 
 The second call changes only the completely erased marker word. The
 version/length word and the tail preserved by the wrapper are unchanged.
@@ -124,16 +128,22 @@ Read-back detects failed writes even without a FLASHC command error. CRC
 detects corruption but cannot guarantee detection of every multi-bit fault.
 The final commit separates an unverified body from a boot-loadable record.
 
-The completed-edit snapshot is the 204-byte musical payload at
-`0x6400..0x64cb`, initialized from restored data (or defaults) on every boot.
+The completed-edit snapshot is the 268-byte musical payload at
+`0x6640..0x674b`, initialized from restored data (or defaults) on every boot.
 `0x62f8` tracks logical mode (preview counts as WRITE); `0x62fe` is the
 preview flag. Explicit CLEAR latches an event at `0x62ff`, consumed by the
 same scan. Length reaching zero is not used to infer CLEAR.
+The take's preset reference at `0x6091` has no field of its own: it is
+adopted from the same live count, at the same moment, as the first step's
+own degree, so the loader takes it back off `0x6600` rather than keeping a
+second copy that could drift out of step with the array.
 `0x62f9..0x62fc` latch which presets were edited until each pad is fully
 released. `persist_capture` at `0x8001d280` accepts a mask: bits 0–3 select
 preset pads, bit 4 selects the sequence, bit 5 the latch transpose
-state (RAM `0x62e2`, snapshot byte `0x6409`) and bit 6 the tuning slot
-(RAM `0x6090`, snapshot byte `0x640a`). It canonicalizes and
+state (RAM `0x62e2`, snapshot byte `0x6649`) and bit 6 the tuning slot
+(RAM `0x6090`, snapshot byte `0x664a`). Bit 4 also takes the per-step
+preset degrees (RAM `0x6600..0x663f`, snapshot `0x670c..0x674b`), which
+belong to the sequence they describe. It canonicalizes and
 compares only selected data before the save code stages the combined
 record. Records written before either of those two states existed carry a
 zero there, which is the state every latch and every tuning selector had
@@ -161,8 +171,8 @@ Coverage includes rotation, no-change saves, retry exhaustion, retained
 backups, body/marker power cuts, corruption/bounds, generation wrap,
 same-scan clear/record-exit gestures, independent/overlapping preset edits,
 saving during record/playback, the tuning slot's own capture bit and its
-isolation from a sequence capture, and cold/warm startup without phantom
-steps.
+isolation from a sequence capture, the per-step preset degrees and the
+reference derived from them, and cold/warm startup without phantom steps.
 It drives real clock/output paths before and after a release save and a
 modeled scheduling pause, without fabricating unobserved input events.
 `src/PersistenceClockRegression.java` reruns the clock suite while a changed

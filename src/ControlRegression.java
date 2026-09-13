@@ -521,7 +521,7 @@ public class ControlRegression extends SequenceEditRegression {
             w(0x46f1,1,0); w(0x46f2,1,0); controlScan();
             check("a third toggle saves again",r(0x62e2,1)==1&&r(call(NEWEST)+25,1)==1);
             cold();
-            check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6409,1)==1);
+            check("the state survives a power cycle",r(0x62e2,1)==1&&r(0x6649,1)==1);
         }
         // In WRITE a bare pad 2 or 3 held a third of a second previews or
         // backspaces; two pads held for the toggle must do neither, and

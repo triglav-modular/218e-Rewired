@@ -269,9 +269,13 @@ def audit_call_pools(image_path) -> list[str]:
 # record's byte 0x1a, a capture bit of its own and a restore beside the
 # musical data, so the three tunings this config carries come back on the
 # slot they were left on rather than on slot 0.
+# And again for the v3 record, which carries the preset degree each step was
+# recorded under: this config is the one with three real tunings and a
+# measured table behind it, so it is where a step measured at the take's
+# degree instead of its own shows up as cents rather than as nothing.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "f4d0a503de88bc14840399c737f61e4ec6c6e2183a3e54dc6ddf59eb98eeb40c",
+    "historical_config": "9a1c18ac133b917249ccffc5c5229dcc1dc565537a9b9c9af730bbeba986bce6",
 }
 
 
