@@ -2660,8 +2660,15 @@ section,
 }
 .automeasure .kbd-heading { margin-top: 0; }
 .autorow { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
-.autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 15rem; flex: 1 1 15rem; }
-.autofield.autochan { min-width: 6rem; flex: 0 0 6rem; }
+/* A device and the channel within it are one choice, so they wrap together
+   or not at all.  Four loose fields broke three-and-one, which put a
+   channel picker on a line of its own with nothing to say which device it
+   belonged to. */
+.autopair { display: flex; gap: 1rem; flex: 1 1 22rem; min-width: 0; }
+.autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 13rem; flex: 1 1 13rem; }
+/* Wide enough for the longest of these labels rather than for the value:
+   the values are one or two digits, the labels are not. */
+.autofield.autochan { min-width: 8.5rem; flex: 0 0 8.5rem; }
 /* .row carries no margin of its own - it is a flex line, and everywhere
    else in the page something above it supplies the space.  Here the two
    lines are siblings, so the buttons sat against the selects. */
@@ -2672,9 +2679,14 @@ section,
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 7px;
-    padding: .45rem .6rem;
+    /* Room on the right for the browser's own chevron, which is drawn inside
+       the box and was sitting on top of the value. */
+    padding: .45rem 2.1rem .45rem .7rem;
     max-width: 100%;
 }
+/* A field's label is one line.  "MIDI channel" wrapped to two inside a 6rem
+   column, which pushed its select down and broke the row apart. */
+.autofield > .d { white-space: nowrap; }
 .autoprogress { margin-top: .7rem; min-height: 1.2em; font-variant-numeric: tabular-nums; }
 .autoprogress .bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: .5rem; overflow: hidden; }
 .autoprogress .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }

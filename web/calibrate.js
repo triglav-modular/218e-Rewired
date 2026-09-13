@@ -276,20 +276,54 @@
     // How many channels a device offers.  There is no way to ask without
     // opening it, so this opens it and lets go again; the page calls it when
     // a device is picked, and the count fills the channel list.
-    function channelCount(deviceId) {
-        return root.navigator.mediaDevices.getUserMedia({
+    function constraints(deviceId, want) {
+        return {
             audio: {
                 deviceId: deviceId ? { exact: deviceId } : undefined,
                 echoCancellation: false, autoGainControl: false,
-                noiseSuppression: false, channelCount: { ideal: MAX_CHANNELS }
+                noiseSuppression: false,
+                channelCount: want ? { exact: want } : { ideal: MAX_CHANNELS }
             }
-        }).then(function (stream) {
-            var ctx = new (root.AudioContext || root.webkitAudioContext)();
-            var n = 1;
-            try { n = ctx.createMediaStreamSource(stream).channelCount || 1; } catch (e) {}
-            stream.getTracks().forEach(function (t) { t.stop(); });
-            try { ctx.close(); } catch (e) {}
-            return n;
+        };
+    }
+
+    // What a track actually carries.  Not the AudioNode: a
+    // MediaStreamAudioSourceNode reports channelCount 2 in Chrome whatever is
+    // on the wire, which turned a twelve input desk into a choice of two.  The
+    // track's own settings are the negotiated count, and its capabilities say
+    // how far it would go if asked.
+    function trackChannels(stream) {
+        var t = stream.getAudioTracks()[0];
+        if (!t) return { got: 1, max: 1 };
+        var got = 1, max = 1;
+        try { got = (t.getSettings && t.getSettings().channelCount) || 1; } catch (e) {}
+        try {
+            var caps = t.getCapabilities && t.getCapabilities();
+            max = (caps && caps.channelCount && caps.channelCount.max) || got;
+        } catch (e) { max = got; }
+        return { got: got, max: Math.max(got, max) };
+    }
+
+    function stop(stream) {
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    }
+
+    // How many channels a device offers.  There is no way to ask without
+    // opening it, so this opens it and lets go again.  "ideal" is a wish and
+    // Chrome may hand back two from a device that has twelve, so if the
+    // capabilities say more than was negotiated it asks again for exactly
+    // that many, and keeps whichever attempt got furthest.
+    function channelCount(deviceId) {
+        var md = root.navigator.mediaDevices;
+        return md.getUserMedia(constraints(deviceId, null)).then(function (stream) {
+            var seen = trackChannels(stream);
+            stop(stream);
+            if (seen.max <= seen.got) return seen.got;
+            return md.getUserMedia(constraints(deviceId, seen.max)).then(function (s2) {
+                var again = trackChannels(s2);
+                stop(s2);
+                return Math.max(again.got, seen.got);
+            }, function () { return seen.got; });
         });
     }
 
@@ -307,25 +341,23 @@
 
         var stream;
         try {
-            stream = await root.navigator.mediaDevices.getUserMedia({
-                audio: {
-                    deviceId: o.deviceId ? { exact: o.deviceId } : undefined,
-                    // Every one of these would rewrite the signal being
-                    // measured.  Gain control alone moves a steady tone's
-                    // level around, and noise suppression is a filter bank
-                    // that will happily reshape a plain oscillator.  Chrome
-                    // also forces mono when echo cancellation is on, which
-                    // would quietly undo the channel count below.
-                    echoCancellation: false, autoGainControl: false,
-                    noiseSuppression: false,
-                    // Ask for more channels than anything is likely to have
-                    // and take what the device gives.  Asking for one gets a
-                    // downmix of the whole desk - every channel at once, which
-                    // on a mixer is several instruments summed into one
-                    // unreadable tone.
-                    channelCount: { ideal: MAX_CHANNELS }
-                }
-            });
+            // Every processing option is off because each would rewrite the
+            // signal being measured: gain control moves a steady tone's level
+            // around, and noise suppression is a filter bank that will happily
+            // reshape a plain oscillator.  Chrome also forces mono when echo
+            // cancellation is on, which would quietly undo the channel count.
+            //
+            // The channel asked for has to be reachable, so if the chosen one
+            // is above what "ideal" negotiated, ask again for exactly enough.
+            stream = await root.navigator.mediaDevices.getUserMedia(
+                constraints(o.deviceId, null));
+            var seen = trackChannels(stream);
+            if ((o.audioChannel || 0) >= seen.got && seen.max > seen.got) {
+                stop(stream);
+                stream = await root.navigator.mediaDevices.getUserMedia(
+                    constraints(o.deviceId, seen.max));
+                seen = trackChannels(stream);
+            }
         } catch (err) {
             throw new Error(audioTrouble(err));
         }
@@ -337,8 +369,9 @@
         // One channel of the interface, not a mix of it.  A splitter keeps
         // them apart - its channelInterpretation is 'discrete', so channel 7
         // arrives as channel 7 rather than being folded into a stereo pair.
-        var count = source.channelCount || 1;
+        var count = Math.max(seen.got, 1);
         var want = Math.min(Math.max(0, o.audioChannel || 0), count - 1);
+        if (o.onChannels) o.onChannels(count, want);
         if (count > 1) {
             var splitter = ctx.createChannelSplitter(count);
             source.connect(splitter);
@@ -546,6 +579,7 @@
         entryFor: entryFor, plan: plan, noteLabel: noteLabel,
         measure: measure, cents: cents, yin: yin, refine: refine,
         audioTrouble: audioTrouble, channelCount: channelCount,
+        trackChannels: trackChannels,
         midiOutputs: midiOutputs, audioInputs: audioInputs,
         Sweep: Sweep
     };

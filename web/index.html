@@ -338,6 +338,7 @@
               <p class="d muted">It does not simply climb: it plays the bottom note again every eighth step, to measure and cancel the oscillator&rsquo;s drift, and before it starts it plays two notes on each MIDI channel in turn to find the one the keyboard answers. Both are meant to sound like jumps.</p>
               <p class="d muted"><strong>Put <em>add to pitch</em> back when you are done.</strong> While it is off the octave control does nothing, so the keyboard sits an octave above where the sweep played. It is not stuck; the switch is just out of the way.</p>
               <div class="row autorow">
+                <div class="autopair">
                 <label class="autofield"><span class="d">MIDI output</span>
                   <select id="calMidi"><option value="">Looking&hellip;</option></select></label>
                 <label class="autofield autochan"><span class="d">MIDI channel</span>
@@ -352,10 +353,13 @@
                     <option value="12">13</option><option value="13">14</option>
                     <option value="14">15</option><option value="15">16</option>
                   </select></label>
+                </div>
+                <div class="autopair">
                 <label class="autofield"><span class="d">Audio input</span>
                   <select id="calAudio"><option value="">Looking&hellip;</option></select></label>
                 <label class="autofield autochan"><span class="d">Channel</span>
                   <select id="calChan"><option value="0">1</option></select></label>
+                </div>
               </div>
               <div class="row">
                 <button id="calRun" class="primary" type="button">Start measuring</button>
