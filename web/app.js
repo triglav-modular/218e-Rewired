@@ -1014,10 +1014,14 @@
                 // twelve inputs shows as a single "Input 1" and there is
                 // nothing to pick.  Say that, rather than leaving it looking
                 // like the interface is missing.
-                msg($('autoMsg'), 'bad', 'Chrome will not name the audio inputs ' +
-                    'until this page is allowed to use audio, so only the default ' +
-                    'one is listed. Press Rescan inputs and allow it, then the ' +
-                    'mixer and its channels appear.');
+                msg($('autoMsg'), 'bad', 'Chrome lists MIDI devices without ' +
+                    'asking, but audio inputs are a separate permission: until ' +
+                    'this page is allowed to use audio it offers one nameless ' +
+                    'default instead of the real inputs. So an interface can be ' +
+                    'in the MIDI list above and not in this one. Press Rescan ' +
+                    'inputs and allow it. If nothing is asked, Chrome itself may ' +
+                    'not have the microphone - macOS System Settings, Privacy ' +
+                    'and Security, Microphone.');
             }
             return named.length;
         }

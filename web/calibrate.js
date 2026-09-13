@@ -216,8 +216,11 @@
     function audioTrouble(err) {
         var name = err && err.name ? err.name : '';
         if (name === 'NotAllowedError') {
-            return 'The browser refused the audio input. Allow the microphone for ' +
-                'this page - the padlock in the address bar - and try again.';
+            return 'The browser refused the audio input. Allow it for this page - ' +
+                'the padlock in the address bar - and check the browser itself has ' +
+                'the microphone: macOS System Settings, Privacy and Security, ' +
+                'Microphone. A blocked page is never asked again, so the dialog ' +
+                'not appearing is the usual sign of one of those two.';
         }
         if (name === 'NotReadableError' || name === 'AbortError') {
             return 'The audio input is allowed but could not be opened, which ' +
