@@ -1178,27 +1178,14 @@
             // Only settled once the labels are real: an unlabelled list means
             // the browser has not granted this origin yet, and asking again
             // later is exactly what should happen.
+            // An unnamed list is the ordinary state before the origin has been
+            // granted audio, and it lasts until the request below resolves -
+            // which is moments.  It used to explain itself in a red box, which
+            // meant the common path opened with an error nobody needed to act
+            // on.  The Rescan button is there for the case where it persists.
             if (named.length) {
                 listed.audio = true;
-                // The complaint below is about not being allowed audio yet.
-                // Once the inputs have names that is no longer the case, and a
-                // red box left standing over a list that worked reads as a
-                // failure that has not happened.
                 if (audioComplaint) audioMsg('', '');
-            } else if (devs.length) {
-                // Before an origin is granted, Chrome answers with one
-                // nameless entry standing for the default - so a desk with
-                // twelve inputs shows as a single "Input 1" and there is
-                // nothing to pick.  Say that, rather than leaving it looking
-                // like the interface is missing.
-                audioMsg('bad', 'Browsers list MIDI devices without asking, but ' +
-                    'audio inputs are a separate permission: until this page is ' +
-                    'allowed to use audio it offers one nameless default instead ' +
-                    'of the real inputs. So an interface can be in the MIDI list ' +
-                    'above and not in this one. Press Rescan inputs and allow it. ' +
-                    'If nothing is asked, the browser itself may not have the ' +
-                    'microphone - on macOS, System Settings, Privacy and ' +
-                    'Security, Microphone.');
             }
             return named.length;
         }
