@@ -113,7 +113,7 @@
           <span class="muted">or click to choose</span>
         </div>
         <input type="file" id="file" accept=".hex" hidden>
-        <div id="fileMsg"></div>
+        <div id="fileMsg" role="status"></div>
       </section>
 
       <section>
@@ -136,35 +136,35 @@
                 a pad and turning the knob above it.</span></div>
             <div class="knobmap">
               <div class="knobfig"><span class="knobface"><svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="21" fill="var(--bg)" stroke="var(--line)" stroke-width="1.6"/><defs><clipPath id="knobcap1"><circle cx="24" cy="24" r="12.8"/></clipPath></defs><circle cx="24" cy="24" r="12.8" fill="color-mix(in srgb, var(--ink) 16%, var(--bg))"/><path d="M24 6V17.4" fill="none" stroke="var(--ink)" stroke-width="2.2" clip-path="url(#knobcap1)"/></svg><b>1</b></span>
-                <div class="vpo knobpick" id="knob1">
+                <div class="vpo knobpick" id="knob1" role="group" aria-label="Preset knob 1">
                   <button data-v="order" aria-pressed="true">Note order<span class="why">randomness</span></button>
                   <button data-v="orders" aria-pressed="false">Note order<span class="why">up,<br>down,<br>up&#8211;down,<br>as played,<br>backwards,<br>random</span></button>
-                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
+                  <button data-v="factory" aria-pressed="false" aria-label="Knob 1: None, preset voltage">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
 
               <div class="knobfig"><span class="knobface"><svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="21" fill="var(--bg)" stroke="var(--line)" stroke-width="1.6"/><defs><clipPath id="knobcap2"><circle cx="24" cy="24" r="12.8"/></clipPath></defs><circle cx="24" cy="24" r="12.8" fill="color-mix(in srgb, var(--ink) 16%, var(--bg))"/><path d="M24 6V17.4" fill="none" stroke="var(--ink)" stroke-width="2.2" clip-path="url(#knobcap2)"/></svg><b>2</b></span>
-                <div class="vpo knobpick" id="knob2">
+                <div class="vpo knobpick" id="knob2" role="group" aria-label="Preset knob 2">
                   <button data-v="spacing" aria-pressed="true">Trigger randomness<span class="why">free spacing</span></button>
                   <button data-v="quantized" aria-pressed="false">Trigger randomness<span class="why">quantized to the grid</span></button>
                   <button data-v="swing" aria-pressed="false">Trigger swing<span class="why">up to a triplet</span></button>
                   <button data-v="patterns" aria-pressed="false">Trigger patterns<span class="why">from a bank</span></button>
-                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
+                  <button data-v="factory" aria-pressed="false" aria-label="Knob 2: None, preset voltage">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
 
               <div class="knobfig"><span class="knobface"><svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="21" fill="var(--bg)" stroke="var(--line)" stroke-width="1.6"/><defs><clipPath id="knobcap3"><circle cx="24" cy="24" r="12.8"/></clipPath></defs><circle cx="24" cy="24" r="12.8" fill="color-mix(in srgb, var(--ink) 16%, var(--bg))"/><path d="M24 6V17.4" fill="none" stroke="var(--ink)" stroke-width="2.2" clip-path="url(#knobcap3)"/></svg><b>3</b></span>
-                <div class="vpo knobpick" id="knob3">
+                <div class="vpo knobpick" id="knob3" role="group" aria-label="Preset knob 3">
                   <button data-v="octaves" aria-pressed="true">Octave randomness<span class="why">per note</span></button>
-                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
+                  <button data-v="factory" aria-pressed="false" aria-label="Knob 3: None, preset voltage">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
 
               <div class="knobfig"><span class="knobface"><svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="21" fill="var(--bg)" stroke="var(--line)" stroke-width="1.6"/><defs><clipPath id="knobcap4"><circle cx="24" cy="24" r="12.8"/></clipPath></defs><circle cx="24" cy="24" r="12.8" fill="color-mix(in srgb, var(--ink) 16%, var(--bg))"/><path d="M24 6V17.4" fill="none" stroke="var(--ink)" stroke-width="2.2" clip-path="url(#knobcap4)"/></svg><b>4</b></span>
-                <div class="vpo knobpick" id="knob4">
+                <div class="vpo knobpick" id="knob4" role="group" aria-label="Preset knob 4">
                   <button data-v="vibrato" aria-pressed="true">Vibrato<span class="why">depth and rate</span></button>
                   <button data-v="trn" aria-pressed="false">Octave switcher<span class="why">the factory trn</span></button>
-                  <button data-v="factory" aria-pressed="false">None<span class="why">preset voltage</span></button>
+                  <button data-v="factory" aria-pressed="false" aria-label="Knob 4: None, preset voltage">None<span class="why">preset voltage</span></button>
                 </div>
               </div>
             </div>
@@ -178,7 +178,7 @@
                 <button id="patCopy" type="button">Download as .txt</button>
                 <button id="patPaste" type="button">Upload a .txt</button>
               </div>
-              <div id="patMsg"></div>
+              <div id="patMsg" role="status"></div>
             </div>
           </div>
 
@@ -365,7 +365,7 @@
                 <button id="calStop" type="button" disabled>Stop</button>
                 <button id="calRescan" type="button" class="quiet push-end">Rescan inputs</button>
               </div>
-              <div id="autoMsg"></div>
+              <div id="autoMsg" role="status"></div>
               <div id="calProgress" class="d muted autoprogress"></div>
               <pre id="calLog" class="autolog" aria-live="off"></pre>
               <div class="row autologrow" id="calLogRow">
@@ -392,7 +392,7 @@
             </div>
             <input type="file" id="calFile" accept=".csv" hidden>
           </div>
-          <div id="calMsg"></div>
+          <div id="calMsg" role="status"></div>
 
 
         </div>
@@ -422,7 +422,7 @@
             <input type="file" id="kbm" accept=".kbm" hidden>
             <input type="file" id="patFile" accept=".txt,text/plain" hidden>
             <div id="slots"></div>
-            <div id="sclMsg"></div>
+            <div id="sclMsg" role="status"></div>
           </div>
         </div>
       </section>
@@ -434,7 +434,7 @@
           <button id="dlMac" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16.7 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .8 1.1 1.7 2.3 2.9 2.2 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.2 0 2-1.1 2.8-2.2.9-1.3 1.2-2.5 1.3-2.5-.1 0-2.5-1-2.5-3.6zM14.4 5.9c.6-.8 1-1.9.9-3-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-.9 2.9 1 .1 2-.5 2.7-1.3z"/></svg><span>Download for Mac</span></button>
           <button id="dlWin" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg><span>Download for Windows</span></button>
         </div>
-        <div id="buildMsg"></div>
+        <div id="buildMsg" role="status"></div>
       </section>
 
       <section>
