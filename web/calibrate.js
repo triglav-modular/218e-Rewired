@@ -290,13 +290,18 @@
     function trackChannels(stream) {
         var t = stream.getAudioTracks()[0];
         if (!t) return { got: 1, max: 1 };
-        var got = 1, max = 1;
+        var got = 1, reported = null;
         try { got = (t.getSettings && t.getSettings().channelCount) || 1; } catch (e) {}
         try {
             var caps = t.getCapabilities && t.getCapabilities();
-            max = (caps && caps.channelCount && caps.channelCount.max) || got;
-        } catch (e) { max = got; }
-        return { got: got, max: Math.max(got, max) };
+            if (caps && caps.channelCount && caps.channelCount.max) {
+                reported = caps.channelCount.max;
+            }
+        } catch (e) { reported = null; }
+        // `reported` stays null when the device says nothing, which is not the
+        // same as saying one: the difference decides whether to go looking.
+        return { got: got, reported: reported,
+                 max: Math.max(got, reported === null ? got : reported) };
     }
 
     function stop(stream) {
@@ -322,9 +327,17 @@
         return md.getUserMedia(constraints(deviceId, null)).then(function (stream) {
             var seen = trackChannels(stream);
             stop(stream);
+            var caps = seen.reported;
             report.push('ideal -> ' + seen.got +
-                        ' (capabilities max ' + seen.max + ')');
-            var rungs = LADDER.filter(function (n) { return n > seen.got; });
+                        (caps === null ? ' (device reports no channel capability)'
+                                       : ' (capabilities max ' + seen.max + ')'));
+            // When the device states a maximum, believe it and ask once.  The
+            // ladder exists for devices that state nothing - which is the case
+            // that hid a twelve channel desk behind a count of two - and
+            // running it regardless costs a dozen open-and-close cycles on the
+            // interface for an answer already given.
+            var rungs = (caps === null ? LADDER : [seen.max])
+                .filter(function (n) { return n > seen.got; });
             var best = seen.got;
 
             function tryRung(i) {
