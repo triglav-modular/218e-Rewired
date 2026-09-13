@@ -11,6 +11,7 @@
 - Holding pad 4 for the sequencer, or pads 2 and 3 for the latch, now restore the original octave.
 
 2.2 (2026-09-02)
+- With the arpeggiator off, the keyboard now plays over a running sequence on CV and MIDI, and takes priority: while a key is held the sequence keeps time without sounding. STOP still stops everything.
 - Fixed a portamento bug.
 - The pitch offset can now be disabled.
 

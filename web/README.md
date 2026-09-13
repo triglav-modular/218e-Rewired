@@ -8,8 +8,11 @@ SHA-256, patched in memory and handed back as a download.
 python3 -m http.server 8123 --directory web
 ```
 
-Then open <http://localhost:8123>. Any static host works; nothing is fetched
-from outside the page.
+Then open <http://localhost:8123>. Any static host works. The only thing
+fetched from outside the page is its typeface — four faces from
+triglavmodular.hu, which the licence covers there and does not allow copying
+here. A clone served anywhere else is refused them and falls back to the
+system sans; the build is identical either way.
 
 One thing does leave, and only on a download: which options were chosen, which
 platform, and which version, POSTed to `beacon` beside the page. No identifier,
