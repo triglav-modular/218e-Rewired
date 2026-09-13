@@ -815,6 +815,15 @@
         return rows().every(function (r) { return r.cents === 0; });
     }
 
+    // Whether the image being built actually carries a table.  Three places
+    // need the same answer - the build options, the file list in the download
+    // and the README that describes it - and they must not drift apart: a zip
+    // that ships a table the image does not apply is worse than one that ships
+    // no table at all, because the next round would measure on top of it.
+    function calibrationInBuild() {
+        return $('useCal').checked && !calibrationBlank();
+    }
+
     function validateCal() {
         if (!$('useCal').checked || calibrationBlank()) {
             msg($('calMsg'), '', '');
@@ -889,7 +898,7 @@
     // measuring has to accumulate onto.  Same columns as the repository's own
     // calibration file, so it loads back here as a baseline and tools/build.py
     // reads it directly.
-    $('calSave').addEventListener('click', function () {
+    function calibrationCsv() {
         var full = rows();
         var out = [
             '# 218e pitch calibration, saved from the Rewired firmware builder.',
@@ -916,7 +925,13 @@
             out.push([n, noteNames()[n % 12], keyLabel(n),
                       full[n].cents.toFixed(6), src].join(';'));
         }
-        download(out.join('\n') + '\n', '218e-pitch-calibration.csv', 'text/csv');
+        return out.join('\n') + '\n';
+    }
+
+    var CAL_CSV_NAME = '218e-pitch-calibration.csv';
+
+    $('calSave').addEventListener('click', function () {
+        download(calibrationCsv(), CAL_CSV_NAME, 'text/csv');
     });
 
     $('calBaseClear').addEventListener('click', function () {
@@ -1453,7 +1468,7 @@
         if (slots.length) {
             o.alternate_tunings = slots.map(function (e) { return e || 'factory'; });
         }
-        if ($('useCal').checked && !calibrationBlank()) o.pitch_correction = rows();
+        if (calibrationInBuild()) o.pitch_correction = rows();
         return o;
     }
 
@@ -1694,6 +1709,12 @@
                      '  SHA-256  ' + r.sha256, '',
                      '  ' + stock + '   the stock image you uploaded',
                      '  SHA-256  ' + GEN.factorySha256, ''])
+            .concat(calibrationInBuild() ? [
+                     '  ' + where.replace(/[^/]+$/, CAL_CSV_NAME) +
+                     '   the pitch table this image applies',
+                     '  Keep it with the image. Load it back into the builder',
+                     '  before measuring again, so the next set of readings adds',
+                     '  to this table instead of replacing it.', ''] : [])
             .concat(knows, knows.length ? [''] : [], ['HOW TO USE IT', ''])
             .concat(missing, howto)
             .concat(['', 'IF A FLASH IS INTERRUPTED', ''])
@@ -1830,10 +1851,20 @@
                 var floor = new Date(Date.now() - 4000);
                 var stockDate = state.factoryMtime || floor;
                 if (stockDate > floor) stockDate = floor;
+                // The table goes in the folder the image is in, because that
+                // is the only place it means anything: it describes what this
+                // image applies, and the next round of measuring has to load
+                // it back or it starts from an instrument it is not looking at.
+                // Saving it was a separate button nobody had a reason to press
+                // until a second calibration, by which time it was too late.
+                var cal = calibrationInBuild()
+                    ? [{ name: built.replace(/[^/]+$/, CAL_CSV_NAME),
+                         data: calibrationCsv() }]
+                    : [];
                 var files = [{ name: built, data: r.hex },
                              { name: stock, data: state.factoryText,
                                mtime: stockDate }]
-                    .concat(p.scripts(r), tools,
+                    .concat(cal, p.scripts(r), tools,
                             [{ name: 'README.txt', data: p.note(r, offline) },
                              { name: 'changelog.txt', data: GEN.changelog }]);
                 if (offline) {
