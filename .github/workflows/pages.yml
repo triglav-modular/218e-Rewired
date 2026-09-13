@@ -152,6 +152,18 @@ jobs:
       # page's own data regenerates from tracked sources, which is the step
       # above.
 
+      - name: The page's fold agrees with the CLI's
+        run: |
+          # Accumulating a reading onto a table that is already flashed is the
+          # one piece of calibration arithmetic the page did not have, and a
+          # fold that disagreed with tools/build.py would build a different
+          # image from the same measurements without saying so.
+          if [ -f web/test_fold.py ]; then
+            python3 web/test_fold.py
+          else
+            echo "web/test_fold.py is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
       - name: The calibration sweep's arithmetic and its pitch estimator
         run: |
           # No instrument here, so what is checked is what is knowable without

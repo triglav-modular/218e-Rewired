@@ -2711,3 +2711,9 @@ section,
 .autolog b { color: var(--accent); font-weight: 600; }
 .autolog i { color: #ff8f8f; font-style: normal; }
 .autologrow { margin-top: .7rem; }
+
+/* Which table the readings are being taken on top of.  Stated rather than
+   implied: a wrong baseline folds into a plausible wrong table, with nothing
+   to show for it until the instrument is measured again. */
+.calbase { margin: .9rem 0 .2rem; }
+.calbase.set { color: var(--accent); }

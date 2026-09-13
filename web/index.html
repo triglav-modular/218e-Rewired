@@ -384,11 +384,13 @@
               <p class="kbdhint"><strong>Enter what your tuner reads in cents.</strong><br>Positive for sharp, negative for flat. Scroll for the full range</p>
               <div class="kbdwrap"><div class="kbd" id="calKeys"></div></div>
             </div>
+            <p class="d muted calbase" id="calBase"></p>
             <div class="row">
 
-              <button id="calPick">Load CSV…</button>
-              <button id="calSave">Save CSV</button>
-              <button id="calZero">Reset to zero</button>
+              <button id="calPick">Load table or readings…</button>
+              <button id="calSave">Save table CSV</button>
+              <button id="calBaseClear" type="button" disabled>Forget loaded table</button>
+              <button id="calZero">Reset readings to zero</button>
             </div>
             <input type="file" id="calFile" accept=".csv" hidden>
           </div>

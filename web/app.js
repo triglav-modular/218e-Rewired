@@ -101,7 +101,18 @@
             if (to >= 0 && to < TABLE_ENTRIES) moved[to] = measured[n];
         }
         measured = moved;
-        loadedTail = null;
+        // Changing the offset renumbers every semitone, so a loaded table no
+        // longer describes this instrument's layout - its row 3 is not this
+        // build's row 3.  Dropped rather than shifted: a table quietly moved
+        // under the user is the kind of baseline that folds into a plausible
+        // wrong answer.
+        if (haveBaseline()) {
+            clearBaseline();
+            msg($('calMsg'), 'bad', 'The loaded table was dropped: changing the pitch ' +
+                'offset renumbers the semitones, so it no longer describes this ' +
+                'build. Load it again if it was measured at this setting.');
+        }
+        syncBaseline();
         buildTable(); drawPlot(); validateCal(); invalidate();
     }
 
@@ -685,14 +696,24 @@
     // correction is simply minus the reading.  Which is also why nothing
     // accumulates here: each entry stands alone.
     var measured = [];
-    // Rows a loaded CSV supplied OUTSIDE the playable keys, kept verbatim so
-    // the same file builds the same image here and in tools/build.py - the
-    // loader used to regenerate the tails, so a full 79-row calibration
-    // built one image on the page and another on the CLI, silently.  Cleared
-    // the moment any key is edited: the tail belonged to the measurements it
-    // arrived with.
-    var loadedTail = null;
     for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);
+
+    // What is already on the instrument, as Offset_Cents per semitone, and
+    // which of those rows were extrapolated rather than measured.
+    //
+    // Readings are taken against whatever the keyboard is applying, so a
+    // second round of measuring corrects the REMAINDER and has to accumulate
+    // onto the table that produced it.  With nothing loaded this is flat,
+    // where the octave width is exactly 1.000 and the fold reduces to minus
+    // the reading - so an ordinary first calibration builds exactly what it
+    // always did.
+    var baseline = {}, baselineSources = {}, baselineName = '';
+    function clearBaseline() {
+        baseline = {}; baselineSources = {}; baselineName = '';
+        for (var n = 0; n < TABLE_ENTRIES; n++) baseline[n] = 0;
+    }
+    clearBaseline();
+    function haveBaseline() { return !!baselineName; }
 
     function drawPlot() {
         var play = measured.slice(PLAYABLE_LOW, PLAYABLE_HIGH + 1);
@@ -762,7 +783,6 @@
                 input.addEventListener('change', function () {
                     measured[n] = parseFloat(input.value) || 0;
                     input.className = measured[n] !== 0 ? 'set' : '';
-                    loadedTail = null;
                     drawPlot(); validateCal();
                     if ($('useCal').checked) invalidate();
                 });
@@ -811,29 +831,40 @@
         }
     }
 
-    // Extend the playable range over the rest of the table: below the bottom
-    // key everything holds the lowest measured value, and above the top the
-    // correction keeps climbing at the slope it ended on, which is what the
-    // shipped calibration does.
+    // The offsets the build reads: the flashed table with this round's
+    // readings folded in.
     function rows() {
-        var full = measured.map(function (v) { return -v; });
-        // Below the lowest playable note the correction is zero, matching the
-        // shipped calibration.  Carrying the lowest correction down instead
-        // would push semitone 0 below zero volts for any instrument reading
-        // uniformly sharp, and those entries are unreachable anyway.
-        for (var n = PLAYABLE_LOW - 1; n >= 0; n--) full[n] = 0;
-        var slope = full[PLAYABLE_HIGH] - full[PLAYABLE_HIGH - 1];
-        for (n = PLAYABLE_HIGH + 1; n < TABLE_ENTRIES; n++) {
-            full[n] = full[n - 1] + slope;
+        var readings = {}, n;
+        for (n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
+            if (measured[n]) readings[n] = measured[n];
         }
-        // A loaded file's own out-of-range rows win over the derivation, so
-        // the CSV builds byte-identically to the CLI reading the same file.
-        if (loadedTail) {
-            for (n = 0; n < TABLE_ENTRIES; n++) {
-                if (n in loadedTail) full[n] = -loadedTail[n];
-            }
+        var folded = BUILDLIB.foldOffsets(baseline, readings, baselineSources);
+        var out = [];
+        for (n = 0; n < TABLE_ENTRIES; n++) out.push(folded[n] || 0);
+        if (!haveBaseline()) {
+            // Nothing up there to accumulate onto, so the ends are invented
+            // the way they always were: below the bottom key the correction is
+            // zero, and above the top key it keeps climbing at the slope it
+            // ended on, which is what the shipped calibration does.  A loaded
+            // table carries its own rows at both ends and the fold shifts
+            // those instead of inventing over them.
+            for (n = PLAYABLE_LOW - 1; n >= 0; n--) out[n] = 0;
+            var slope = out[PLAYABLE_HIGH] - out[PLAYABLE_HIGH - 1];
+            for (n = PLAYABLE_HIGH + 1; n < TABLE_ENTRIES; n++) out[n] = out[n - 1] + slope;
         }
-        return full.map(function (v, i) { return { semitone: i, cents: v }; });
+        return out.map(function (v, i) { return { semitone: i, cents: v }; });
+    }
+
+    function syncBaseline() {
+        var el = $('calBase');
+        if (!el) return;
+        el.textContent = haveBaseline()
+            ? 'Measuring on top of ' + baselineName +
+              ' \u2014 new readings accumulate onto it.'
+            : 'No table loaded: readings are taken as a first calibration of an ' +
+              'uncorrected instrument.';
+        el.classList.toggle('set', haveBaseline());
+        $('calBaseClear').disabled = !haveBaseline();
     }
 
     function syncCalBody() {
@@ -843,33 +874,54 @@
         syncCalBody(); validateCal(); invalidate();
     });
     $('calZero').addEventListener('click', function () {
-        loadedTail = null;
         measured = measured.map(function () { return 0; });
-        buildTable(); drawPlot(); validateCal();
-        msg($('calMsg'), '', '');
+        buildTable(); drawPlot(); validateCal(); syncBaseline();
+        msg($('calMsg'), '', haveBaseline()
+            ? 'Readings cleared. ' + baselineName + ' is still loaded as the table on '
+              + 'the instrument.' : '');
         // The table is part of the image: without this the image built
         // from the old readings stayed downloadable after they were cleared.
         invalidate();
     });
-    // Same columns the loader reads and the repository's own calibration file
-    // uses, so a table can go out, be edited or shared, and come back.
+    // The table, not the session.
+    //
+    // This used to save the readings - a record of an afternoon, which says
+    // nothing about an instrument once it has been flashed.  What is worth
+    // keeping beside the image is the TABLE it was built with, because that is
+    // what the keyboard is applying and therefore what the next round of
+    // measuring has to accumulate onto.  Same columns as the repository's own
+    // calibration file, so it loads back here as a baseline and tools/build.py
+    // reads it directly.
     $('calSave').addEventListener('click', function () {
+        var full = rows();
         var out = [
-            '# 218e pitch measurements, saved from the Rewired firmware builder.',
+            '# 218e pitch calibration, saved from the Rewired firmware builder.',
             '#',
-            '# Measured_Cents is how far each note played from correct pitch, as read',
-            '# on a tuner.  Positive means it played SHARP.  The builder works out the',
-            '# correction from these; do not negate them yourself.',
+            '# Offset_Cents is the correction the firmware applies: how far each',
+            '# semitone is pushed from an ideal ramp.  Positive raises the pitch.',
+            '# This is a TABLE, not a set of readings - keep it beside the image you',
+            '# flash, and load it back here before measuring again so the next round',
+            '# accumulates onto it instead of replacing it.',
             '#',
             '# Semitone counts up from the 208\'s 0 V pitch; the lowest C on the',
-            '# keyboard is semitone ' + PLAYABLE_LOW + '.  Only notes the keyboard can play are',
-            '# listed - the rest of the table is derived from these.',
-            'Semitone;Note;Key;Measured_Cents'
+            '# keyboard is semitone ' + PLAYABLE_LOW + '.',
+            'Semitone;Note;Key;Offset_Cents;Source'
         ];
-        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            out.push([n, noteName(n), keyLabel(n), measured[n].toFixed(6)].join(';'));
+        for (var n = 0; n < TABLE_ENTRIES; n++) {
+            var src = measured[n] ? 'measured'
+                    : (baselineSources[n] || (n < PLAYABLE_LOW ? 'octave'
+                       : n > PLAYABLE_HIGH ? 'extrapolated' : 'measured'));
+            out.push([n, noteNames()[n % 12], keyLabel(n),
+                      full[n].cents.toFixed(6), src].join(';'));
         }
-        download(out.join('\n') + '\n', '218e-pitch-measurements.csv', 'text/csv');
+        download(out.join('\n') + '\n', '218e-pitch-calibration.csv', 'text/csv');
+    });
+
+    $('calBaseClear').addEventListener('click', function () {
+        clearBaseline();
+        syncBaseline(); drawPlot(); validateCal(); invalidate();
+        msg($('calMsg'), '', 'Forgotten. Readings now build a first calibration of an ' +
+            'uncorrected instrument.');
     });
 
     $('calPick').addEventListener('click', function () { $('calFile').click(); });
@@ -879,48 +931,75 @@
         if (!f) return;
         var r = new FileReader();
         r.onload = function () {
-            var found = 0;
-            var tail = {}, tailCount = 0;
-            // A file of Offset_Cents holds corrections, the opposite sign to a
-            // measurement, so it is flipped on the way in.
+            // Two kinds of file, told apart by their column.  A calibration
+            // carries Offset_Cents and describes a TABLE - what an instrument
+            // is applying - so it becomes the baseline to measure on top of.
+            // A measurement carries Measured_Cents and describes a SESSION -
+            // how far each note played - so it fills the boxes.
+            //
+            // The loader used to turn a calibration into pseudo-readings by
+            // negating it.  That built the same image back, but threw the
+            // table away the moment anything new was entered: the next round
+            // of measuring corrected the remainder as though the first round
+            // had never happened.
             var isCorrection = /Offset_Cents/i.test(r.result);
+            var rowsIn = {}, sources = {}, found = 0;
             // Split on any line ending: CRLF from Windows, and CR alone,
-            // which Excel can still write.  CRLF already worked - a stray
-            // \r rides on the last field, which parseFloat ignores - but a
-            // CR-only file arrives as one long line and yields nothing.
+            // which Excel can still write.
             r.result.split(/\r\n|\r|\n/).forEach(function (line) {
                 if (!line.trim() || line.charAt(0) === '#' || /^Semitone/i.test(line)) return;
                 var semi = line.indexOf(';') >= 0;
-                var p = line.split(semi ? ';' : ',');
-                var cRaw = p[3] || '';
+                var q = line.split(semi ? ';' : ',');
+                var cRaw = q[3] || '';
                 // Excel in a comma-decimal locale re-saves a semicolon file
-                // with '12,5' where this wrote '12.5'; parseFloat stops at
-                // the comma and every fraction was silently dropped.
-                if (semi && /^\s*-?\d+,\d+\s*$/.test(cRaw)) {
-                    cRaw = cRaw.replace(',', '.');
-                }
-                var n = parseInt(p[0], 10), c = parseFloat(cRaw);
-                if (isCorrection) c = -c;
-                if (!isNaN(n) && !isNaN(c)) {
-                    if (n >= PLAYABLE_LOW && n <= PLAYABLE_HIGH) {
-                        measured[n] = c; found++;
-                    } else if (n >= 0 && n < TABLE_ENTRIES) {
-                        // The keys cannot edit these, but the file said what
-                        // they are, and the build honours the file.
-                        tail[n] = c; tailCount++;
-                    }
-                }
+                // with '12,5' where this wrote '12.5'; parseFloat stops at the
+                // comma and every fraction was silently dropped.
+                if (semi && /^\s*-?\d+,\d+\s*$/.test(cRaw)) cRaw = cRaw.replace(',', '.');
+                var n = parseInt(q[0], 10), c = parseFloat(cRaw);
+                if (isNaN(n) || isNaN(c) || n < 0 || n >= TABLE_ENTRIES) return;
+                rowsIn[n] = c;
+                sources[n] = (q[4] || '').trim();
+                found++;
             });
-            loadedTail = (found && tailCount) ? tail : null;
-            $('useCal').checked = found > 0;
-            syncCalBody();
+
+            if (!found) {
+                msg($('calMsg'), 'bad', 'No usable rows in ' + f.name + ': expected ' +
+                    'Semitone;Note;Key;Offset_Cents;Source, or the same with a ' +
+                    'Measured_Cents column.');
+                return;
+            }
+
+            if (isCorrection) {
+                // A table is a baseline only if it is a whole one.  A partial
+                // file would leave the rest of the instrument's correction at
+                // zero, which is not "unknown" - it is "no correction", and
+                // the fold would quietly undo what is flashed there.
+                var missing = [];
+                for (var n = 0; n < TABLE_ENTRIES; n++) if (!(n in rowsIn)) missing.push(n);
+                if (missing.length) {
+                    msg($('calMsg'), 'bad', f.name + ' has ' + found + ' of the ' +
+                        TABLE_ENTRIES + ' rows a table needs - missing semitone ' +
+                        missing[0] + (missing.length > 1
+                            ? ' and ' + (missing.length - 1) + ' others' : '') +
+                        '. A calibration is loaded whole or not at all.');
+                    return;
+                }
+                baseline = rowsIn;
+                baselineSources = sources;
+                baselineName = f.name;
+                measured = measured.map(function () { return 0; });
+            } else {
+                for (var k in rowsIn) {
+                    if (k >= PLAYABLE_LOW && k <= PLAYABLE_HIGH) measured[k] = rowsIn[k];
+                }
+            }
+            $('useCal').checked = true;
+            syncCalBody(); syncBaseline();
             buildTable(); drawPlot(); validateCal(); invalidate();
-            msg($('calMsg'), found ? 'ok' : 'bad',
-                found ? 'Loaded ' + found + ' playable rows' +
-                        (tailCount ? ' and ' + tailCount + ' beyond the keys'
-                                   : '') + ' from ' + f.name
-                      : 'No usable rows in ' + f.name +
-                        ': expected Semitone;Note;Key;Offset_Cents;Source');
+            msg($('calMsg'), 'ok', isCorrection
+                ? 'Loaded ' + f.name + ' as the table already on the instrument. ' +
+                  'Anything measured now accumulates onto it.'
+                : 'Loaded ' + found + ' readings from ' + f.name + '.');
         };
         r.readAsText(f);
     });
@@ -1256,7 +1335,6 @@
             });
             return sweep.run().then(function (out) {
                 var bridged = bridgeGaps(got);
-                loadedTail = null;
                 $('useCal').checked = true;
                 syncCalBody();
                 buildTable(); drawPlot(); validateCal(); invalidate();
@@ -1870,6 +1948,7 @@
     })();
 
     renderPatterns();
-    renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
+    renderSlots(); buildTable(); drawPlot(); syncPortamento();
+    syncCalBody(); syncBaseline(); refresh();
     bindDashes(document.body);
 })();

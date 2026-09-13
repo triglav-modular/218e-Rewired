@@ -610,6 +610,63 @@ var BUILDLIB = (function () {
         return cfg.pitch.dac_counts / (cfg.pitch.dac_vref * cfg.pitch.dac_gain);
     }
 
+    // Volts per octave the 208 actually needs around this semitone.
+    //
+    // A port of octave_width_volts() in tools/build.py, and it has to stay one:
+    // a cent of pitch costs more voltage where the oscillator's scaling is
+    // stretched, so folding a reading into an existing table scales it by the
+    // local width rather than by a nominal 1 V.  On a flat table the width is
+    // exactly 1.000 and the fold reduces to minus the reading, which is what
+    // the page did when a table could only start flat.
+    function octaveWidth(offsets, semitone) {
+        var top = Math.max.apply(null, Object.keys(offsets).map(Number));
+        var low = Math.min(semitone, Math.max(0, top - 12));
+        var high = Math.min(low + 12, top);
+        var span = high - low;
+        if (span === 0) return 1.0;
+        var volts = (high / 12.0 + offsets[high] / 1200.0) -
+                    (low / 12.0 + offsets[low] / 1200.0);
+        return volts * 12.0 / span;
+    }
+
+    // Fold fresh readings into the table that is already on the instrument.
+    //
+    // `base` is what is flashed, as Offset_Cents per semitone.  `readings` is
+    // how sharp each note played against it, positive for sharp, for whatever
+    // subset was measured.  `sources` says which of the base rows were
+    // extrapolated rather than measured, and matters only above the highest
+    // reading: those rows never held anything but that note's correction, so
+    // they follow it - but only up to the first row that was measured, which
+    // holds its own.
+    //
+    // Corrections accumulate, because the instrument being measured is already
+    // applying `base`.  This is fold_measurement() in tools/build.py, minus its
+    // CSV rewriting, and tools/test_calibrate_fold.js pins the two together.
+    function foldOffsets(base, readings, sources) {
+        var out = {}, s;
+        for (s in base) if (base.hasOwnProperty(s)) out[s] = base[s];
+        var measured = Object.keys(readings).map(Number).sort(function (a, b) { return a - b; });
+        if (!measured.length) return out;
+        measured.forEach(function (n) {
+            out[n] = base[n] + -readings[n] * octaveWidth(base, n);
+        });
+        var highest = measured[measured.length - 1];
+        var tailDelta = -readings[highest] * octaveWidth(base, highest);
+        var tailEnd = null;
+        Object.keys(base).map(Number).sort(function (a, b) { return a - b; })
+            .forEach(function (n) {
+                if (tailEnd === null && n > highest &&
+                    sources && sources[n] && sources[n] !== 'extrapolated') tailEnd = n;
+            });
+        Object.keys(base).map(Number).forEach(function (n) {
+            if (n <= highest || (n in readings)) return;
+            if (sources && sources[n] && sources[n] !== 'extrapolated') return;
+            if (tailEnd !== null && n >= tailEnd) return;
+            out[n] = base[n] + tailDelta;
+        });
+        return out;
+    }
+
     function pitchTable(cfg, rows) {
         var vpo = cfg.pitch.volts_per_octave;
         var scale = countsPerVolt(cfg) * (vpo / GEN.calibrationVoltsPerOctave);
@@ -969,6 +1026,7 @@ var BUILDLIB = (function () {
         factoryTuning: factoryTuning,
         tuningTable: tuningTable, anchorOffset: anchorOffset, pressureCurve: pressureCurve,
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
+        octaveWidth: octaveWidth, foldOffsets: foldOffsets,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
         baseUnits: baseUnits, patternBank: patternBank,
