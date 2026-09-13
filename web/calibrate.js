@@ -210,6 +210,28 @@
         });
     }
 
+    // err.name is the part that says what to do about it; err.message in
+    // Chrome is often just "Permission denied", which is not always true - a
+    // busy interface reports NotReadableError with permission fully granted.
+    function audioTrouble(err) {
+        var name = err && err.name ? err.name : '';
+        if (name === 'NotAllowedError') {
+            return 'The browser refused the audio input. Allow the microphone for ' +
+                'this page - the padlock in the address bar - and try again.';
+        }
+        if (name === 'NotReadableError' || name === 'AbortError') {
+            return 'The audio input is allowed but could not be opened, which ' +
+                'usually means another application has the interface. Quit or ' +
+                'release it there and try again. (' + name + ')';
+        }
+        if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+            return 'That audio input is not there any more. Pick another one. (' +
+                name + ')';
+        }
+        return 'The audio input could not be opened: ' +
+            (name ? name + ' - ' : '') + (err && err.message ? err.message : String(err));
+    }
+
     function sleep(ms) {
         return new Promise(function (done) { root.setTimeout(done, ms); });
     }
@@ -240,6 +262,27 @@
     // the anchor lives and an error there tilts every reading after it.
     var WINDOW = 32768;             // analyser samples: 683 ms at 48 kHz
     var SETTLE_MS = 90;
+    var MAX_CHANNELS = 32;          // asked for; the device gives what it has
+
+    // How many channels a device offers.  There is no way to ask without
+    // opening it, so this opens it and lets go again; the page calls it when
+    // a device is picked, and the count fills the channel list.
+    function channelCount(deviceId) {
+        return root.navigator.mediaDevices.getUserMedia({
+            audio: {
+                deviceId: deviceId ? { exact: deviceId } : undefined,
+                echoCancellation: false, autoGainControl: false,
+                noiseSuppression: false, channelCount: { ideal: MAX_CHANNELS }
+            }
+        }).then(function (stream) {
+            var ctx = new (root.AudioContext || root.webkitAudioContext)();
+            var n = 1;
+            try { n = ctx.createMediaStreamSource(stream).channelCount || 1; } catch (e) {}
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            try { ctx.close(); } catch (e) {}
+            return n;
+        });
+    }
 
     function Sweep(opts) {
         this.opts = opts;
@@ -253,18 +296,47 @@
         var steps = plan(o.low, o.high, o.octaveTerm);
         if (!steps.length) throw new Error('Nothing to sweep.');
 
-        var stream = await root.navigator.mediaDevices.getUserMedia({
-            audio: {
-                deviceId: o.deviceId ? { exact: o.deviceId } : undefined,
-                echoCancellation: false, autoGainControl: false,
-                noiseSuppression: false, channelCount: 1
-            }
-        });
+        var stream;
+        try {
+            stream = await root.navigator.mediaDevices.getUserMedia({
+                audio: {
+                    deviceId: o.deviceId ? { exact: o.deviceId } : undefined,
+                    // Every one of these would rewrite the signal being
+                    // measured.  Gain control alone moves a steady tone's
+                    // level around, and noise suppression is a filter bank
+                    // that will happily reshape a plain oscillator.  Chrome
+                    // also forces mono when echo cancellation is on, which
+                    // would quietly undo the channel count below.
+                    echoCancellation: false, autoGainControl: false,
+                    noiseSuppression: false,
+                    // Ask for more channels than anything is likely to have
+                    // and take what the device gives.  Asking for one gets a
+                    // downmix of the whole desk - every channel at once, which
+                    // on a mixer is several instruments summed into one
+                    // unreadable tone.
+                    channelCount: { ideal: MAX_CHANNELS }
+                }
+            });
+        } catch (err) {
+            throw new Error(audioTrouble(err));
+        }
         var ctx = new (root.AudioContext || root.webkitAudioContext)();
         var analyser = ctx.createAnalyser();
         analyser.fftSize = WINDOW;
         analyser.smoothingTimeConstant = 0;
-        ctx.createMediaStreamSource(stream).connect(analyser);
+        var source = ctx.createMediaStreamSource(stream);
+        // One channel of the interface, not a mix of it.  A splitter keeps
+        // them apart - its channelInterpretation is 'discrete', so channel 7
+        // arrives as channel 7 rather than being folded into a stereo pair.
+        var count = source.channelCount || 1;
+        var want = Math.min(Math.max(0, o.audioChannel || 0), count - 1);
+        if (count > 1) {
+            var splitter = ctx.createChannelSplitter(count);
+            source.connect(splitter);
+            splitter.connect(analyser, want, 0);
+        } else {
+            source.connect(analyser);
+        }
         var buf = new Float32Array(analyser.fftSize);
         var rate = ctx.sampleRate;
         // The buffer is a rolling window, so it has to fill with the new note
@@ -372,6 +444,7 @@
         KEY_TABLE: KEY_TABLE, FIRST_NOTE: FIRST_NOTE,
         entryFor: entryFor, plan: plan, noteLabel: noteLabel,
         measure: measure, cents: cents, yin: yin, refine: refine,
+        audioTrouble: audioTrouble, channelCount: channelCount,
         midiOutputs: midiOutputs, audioInputs: audioInputs,
         Sweep: Sweep
     };

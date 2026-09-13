@@ -968,35 +968,97 @@
             if (mine) $('calMidi').value = mine.value;
             window.__calPorts = ports;
         }, function (err) {
-            listed.midi = true;
+            // Not latched: a browser that has no Web MIDI will say so again,
+            // and one that was merely not ready gets another chance without
+            // the page having to be reloaded.
             fillSelect($('calMidi'), [], 'Web MIDI unavailable');
             msg($('calMsg'), 'bad', err.message);
         });
     }
 
-    // Device labels stay blank until the browser has granted the microphone
-    // once, so this asks for it and hands the stream straight back.  Without
-    // that the list is a row of indistinguishable "audioinput" entries.
+    // Enumerate first, and only ask for a stream if that comes back without
+    // labels.
+    //
+    // The obvious order - take a stream, then enumerate - is wrong in a way
+    // that looks exactly like a refused permission.  getUserMedia({audio:true})
+    // opens the DEFAULT input, and on macOS that fails with NotReadableError
+    // whenever another application is holding the interface.  Which is the
+    // normal state of affairs here: the sequencer driving the keyboard is
+    // using the same box.  Permission was granted, the device was busy, and
+    // the select said "No audio input permission".
+    //
+    // Once permission has been given to this origin, enumerateDevices() fills
+    // the labels in on its own and no stream is needed at all.  The stream is
+    // only the way to make the browser ask the first time.
     function listAudio() {
         if (listed.audio) return Promise.resolve();
-        return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
-            st.getTracks().forEach(function (t) { t.stop(); });
-            return CALIBRATE.audioInputs();
-        }).then(function (devs) {
-            listed.audio = true;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            fillSelect($('calAudio'), [], 'No audio input in this browser');
+            msg($('calMsg'), 'bad', 'This browser will not give a page an audio ' +
+                'input. Over plain http only localhost is allowed to ask; the ' +
+                'published page is https and can.');
+            return Promise.resolve();
+        }
+        function show(devs) {
+            var named = devs.filter(function (d) { return d.label; });
             fillSelect($('calAudio'), devs.map(function (d, i) {
                 return { value: d.deviceId, label: d.label || ('Input ' + (i + 1)) };
             }), 'No audio inputs found');
+            // Only settled once the labels are real: an unlabelled list means
+            // the browser has not granted this origin yet, and asking again
+            // later is exactly what should happen.
+            if (named.length) listed.audio = true;
+            return named.length;
+        }
+        return CALIBRATE.audioInputs().then(function (devs) {
+            if (show(devs)) return null;
+            return navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(function (st) {
+                    st.getTracks().forEach(function (t) { t.stop(); });
+                    return CALIBRATE.audioInputs().then(show);
+                }, function (err) {
+                    // Whatever went wrong, the devices themselves enumerated,
+                    // so the list stays usable - unlabelled, but pickable.
+                    msg($('calMsg'), 'bad', CALIBRATE.audioTrouble(err));
+                });
         }, function (err) {
-            listed.audio = true;
-            fillSelect($('calAudio'), [], 'No audio input permission');
-            msg($('calMsg'), 'bad', 'The browser would not give access to an audio ' +
-                'input: ' + err.message);
+            fillSelect($('calAudio'), [], 'Could not list audio inputs');
+            msg($('calMsg'), 'bad', CALIBRATE.audioTrouble(err));
+        });
+    }
+
+    // The channels a device has can only be learned by opening it, so this
+    // runs when one is picked rather than up front, and remembers the answer.
+    var chanFor = {};
+    function listChannels() {
+        var id = $('calAudio').value || '';
+        if (chanFor[id]) return Promise.resolve();
+        return CALIBRATE.channelCount(id || null).then(function (n) {
+            chanFor[id] = n;
+            var items = [];
+            for (var i = 0; i < n; i++) items.push({ value: String(i), label: String(i + 1) });
+            var keep = $('calChan').value;
+            fillSelect($('calChan'), items, '1');
+            if (keep && Number(keep) < n) $('calChan').value = keep;
+            $('calChan').disabled = n < 2;
+        }, function (err) {
+            // The count is unknown, not zero.  Leaving the list alone keeps
+            // whatever was already pickable rather than collapsing a twelve
+            // channel desk to one because the device was busy for a moment.
+            msg($('calMsg'), 'bad', CALIBRATE.audioTrouble(err));
         });
     }
 
     $('calMidi').addEventListener('focus', listMidi);
     $('calAudio').addEventListener('focus', listAudio);
+    $('calAudio').addEventListener('change', listChannels);
+    $('calChan').addEventListener('focus', listChannels);
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', function () {
+            listed.audio = false;
+            if (!$('calRun').disabled) listAudio();
+        });
+    }
 
     // A note that could not be heard is not a note that played in tune.  Rather
     // than leave a zero - which reads as "correct" and builds a table that says
@@ -1029,6 +1091,7 @@
         $('calStop').disabled = !on;
         $('calMidi').disabled = on;
         $('calAudio').disabled = on;
+        $('calChan').disabled = on || (chanFor[$('calAudio').value || ''] || 1) < 2;
     }
 
     $('calStop').addEventListener('click', function () {
@@ -1038,7 +1101,7 @@
 
     $('calRun').addEventListener('click', function () {
         msg($('calMsg'), '', '');
-        Promise.resolve().then(listMidi).then(listAudio).then(function () {
+        Promise.resolve().then(listMidi).then(listAudio).then(listChannels).then(function () {
             var ports = window.__calPorts || [];
             var chosen = ports.filter(function (p) { return p.id === $('calMidi').value; })[0];
             if (!chosen) {
@@ -1050,6 +1113,7 @@
             autoNote('Listening for the bottom C\u2026', 0);
             sweep = new CALIBRATE.Sweep({
                 output: chosen, channel: null, deviceId: $('calAudio').value || null,
+                audioChannel: parseInt($('calChan').value, 10) || 0,
                 low: PLAYABLE_LOW, high: PLAYABLE_HIGH, octaveTerm: false, velocity: 100,
                 onNote: function (step, reading, i, total) {
                     got[step.index] = reading ? reading.cents : null;

@@ -2661,6 +2661,7 @@ section,
 .automeasure .kbd-heading { margin-top: 0; }
 .autorow { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
 .autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 15rem; flex: 1 1 15rem; }
+.autofield.autochan { min-width: 6rem; flex: 0 0 6rem; }
 .autofield select {
     font: inherit;
     color: var(--ink);
