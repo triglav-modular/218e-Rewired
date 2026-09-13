@@ -266,7 +266,11 @@
     // quarter of a cent out - small, but the bottom of the range is where
     // the anchor lives and an error there tilts every reading after it.
     var WINDOW = 32768;             // analyser samples: 683 ms at 48 kHz
-    var SETTLE_MS = 90;
+    // After the note-off, before the next note-on.  Back-to-back they are two
+    // events in the same queue drain, and the gate drop and the new note land
+    // in one scan; apart, each is seen on its own.
+    var GAP_MS = 60;
+    var SETTLE_MS = 200;
     var MAX_CHANNELS = 32;          // asked for; the device gives what it has
 
     // How many channels a device offers.  There is no way to ask without
@@ -358,6 +362,7 @@
         async function hear(note, expectHz, channel) {
             var ch = channel === undefined ? o.channel : channel;
             release();
+            await sleep(GAP_MS);
             send(o.output, 0x90, note, o.velocity || 100, ch);
             held = note;
             heldOn = ch;
@@ -366,10 +371,24 @@
             release();
             var lo = expectHz ? expectHz * Math.pow(2, -3 / 12) : 18;
             var hi = expectHz ? expectHz * Math.pow(2, 3 / 12) : 6000;
-            return measure(buf, rate, lo, hi);
+            var whole = measure(buf, rate, lo, hi);
+            if (!whole.ok) return whole;
+            // Did it hold still while it was being measured?  The two halves
+            // of the same window are two readings of the same note, so a note
+            // still moving - a glide, a note that never arrived and left the
+            // previous one decaying, a pitch being pulled by something else -
+            // shows up as the halves disagreeing.  A settled note's halves
+            // agree to well under a cent.
+            var half = buf.length >> 1, i;
+            var a = new Float32Array(half), b = new Float32Array(half);
+            for (i = 0; i < half; i++) { a[i] = buf[i]; b[i] = buf[half + i]; }
+            var ra = measure(a, rate, lo, hi), rb = measure(b, rate, lo, hi);
+            whole.drift = (ra.ok && rb.ok) ? cents(rb.hz, ra.hz) : null;
+            return whole;
         }
 
         var anchor = steps[0], results = [], marks = [], warnings = [];
+        var previous = null;
         try {
             // Which channel the instrument is listening on.  There is no way
             // to ask it, so this plays two notes two octaves apart on each
@@ -440,6 +459,24 @@
                     results.push({ index: step.index, note: step.note, cents: off,
                                    hz: got.hz });
                 }
+                // The firmware cannot play a higher note lower: the output is
+                // table[index] interpolated towards table[index+1], the table
+                // is strictly increasing, and index rises with the note.  So a
+                // reading that goes backwards is not a tracking error being
+                // measured - it is the note not having taken, and it is worth
+                // saying so with the numbers rather than folding it in.
+                if (previous && got.hz <= previous.hz) {
+                    warnings.push(noteLabel(step.index) + ' came out ' +
+                        Math.abs(cents(got.hz, previous.hz)).toFixed(0) +
+                        ' cents BELOW ' + noteLabel(previous.index) + ' (' +
+                        previous.hz.toFixed(2) + ' Hz then ' + got.hz.toFixed(2) +
+                        ' Hz) - the note did not take');
+                }
+                if (got.drift !== null && Math.abs(got.drift) > 8) {
+                    warnings.push(noteLabel(step.index) + ' moved ' +
+                        got.drift.toFixed(1) + ' cents while being measured');
+                }
+                previous = { hz: got.hz, index: step.index };
                 expect = got.hz * Math.pow(2, 1 / 12);
                 if (o.onNote) o.onNote(step, results[results.length - 1], i, steps.length);
             }

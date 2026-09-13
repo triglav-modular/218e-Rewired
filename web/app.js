@@ -1204,11 +1204,17 @@
                         ' not heard and have been carried across from their neighbours - ' +
                         'check those by hand.';
                 }
-                msg($('calMsg'), heard.length ? 'ok' : 'bad', note);
                 if (out.warnings.length) {
-                    msg($('calMsg'), heard.length ? 'ok' : 'bad',
-                        note + '\n\n' + out.warnings.join('\n'));
+                    // Capped: a run that goes wrong everywhere would otherwise
+                    // bury its own summary under sixty-five lines.
+                    var show = out.warnings.slice(0, 12);
+                    note += '\n\n' + show.join('\n');
+                    if (out.warnings.length > show.length) {
+                        note += '\n...and ' + (out.warnings.length - show.length) +
+                                ' more.';
+                    }
                 }
+                msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad', note);
             });
         }).catch(function (err) {
             autoNote('');
