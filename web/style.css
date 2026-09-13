@@ -2658,7 +2658,6 @@ section,
     border-radius: 10px;
     background: color-mix(in srgb, var(--ink) 3%, transparent);
 }
-.automeasure .kbd-heading { margin-top: 0; }
 .autorow { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
 /* A device and the channel within it are one choice, so they wrap together
    or not at all.  Four loose fields broke three-and-one, which put a
@@ -2724,9 +2723,10 @@ section,
    box are furniture, not an offer. */
 .autologrow { display: none; margin-top: .7rem; }
 .autologrow.on { display: flex; }
-/* The log is a diagnostic, so its buttons are not the page's big accent pills:
-   those are for the things somebody came here to do. */
-.autologrow button {
+/* Secondary actions are not the page's big accent pills: those are for the
+   things somebody came here to do.  Clearing a log or resetting readings is
+   something you reach for on the way. */
+.autologrow button, button.quiet {
     font-size: 12px;
     font-weight: 600;
     letter-spacing: .04em;
@@ -2736,7 +2736,7 @@ section,
     border-color: var(--line);
     color: var(--muted);
 }
-.autologrow button:hover:not(:disabled) {
+.autologrow button:hover:not(:disabled), button.quiet:hover:not(:disabled) {
     background: transparent;
     border-color: var(--accent);
     color: var(--accent);
