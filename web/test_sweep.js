@@ -334,6 +334,48 @@ function noteForEntry(entry) {
     ok('a device that already reaches the channel is opened once',
        w.opened.length === 1 && w.opened[0] === 'ideal -> 2', w.opened.join('; '));
 
+    // --- a channel that cannot be reached is an audio fault, and says so ---
+    // Two channels on the wire and channel 12 chosen: the sweep used to clamp
+    // to index 1, listen to the wrong input, and then report that MIDI was
+    // silent.  It refuses before any note goes out now, and the refusal is
+    // about the audio.
+    w = makeWorld({ listening: 2, channels: 2 });
+    err = null;
+    try { await sweep(w, { channel: 2, high: 10, audioChannel: 11 }); } catch (e) { err = e; }
+    ok('a channel the input does not have stops the sweep', !!err,
+       err ? '' : 'it ran to the end');
+    ok('and the refusal names the audio channel, not MIDI',
+       !!err && /Audio channel 12 could not be opened/.test(err.message) &&
+       !/MIDI/.test(err.message),
+       err ? err.message : '-');
+    ok('and it says how many the input actually gave',
+       !!err && /this input gave 2 channels/.test(err.message),
+       err ? err.message : '-');
+    ok('and nothing was played into the instrument first', w.sent.length === 0,
+       w.sent.length + ' MIDI messages');
+
+    // And when the channel is reachable but nothing answers on MIDI, the
+    // message says where the sweep was listening, so the silence can be
+    // traced to the right cable.
+    w = makeWorld({ listening: 5, channels: 12, idealGives: 2 });
+    err = null;
+    try {
+        await sweep(w, { channel: 2, high: 10, audioChannel: 11, audioChannels: 12 });
+    } catch (e) { err = e; }
+    ok('a MIDI probe failure names the audio channel it listened on',
+       !!err && /listening on channel 12 of that input/.test(err.message),
+       err ? err.message : 'it ran to the end');
+
+    w = makeWorld({ listening: null, noiseOnly: true, channels: 12, idealGives: 2 });
+    err = null;
+    try {
+        await sweep(w, { channel: null, high: 12, audioChannel: 11, audioChannels: 12 });
+    } catch (e) { err = e; }
+    ok('and so does the Auto search when no channel answers',
+       !!err && /No MIDI channel moved the pitch/.test(err.message) &&
+       /listening on channel 12 of that input/.test(err.message),
+       err ? err.message : 'it ran to the end');
+
     console.log(failures ? ('FAILED ' + failures) : 'ALL SWEEP DRIVER TESTS PASSED');
     if (failures) process.exit(1);
 })().catch(function (e) { console.error('threw:', e && e.stack || e); process.exit(1); });

@@ -203,9 +203,11 @@ factory_hex    = "firmware/218eV3_v369_DFU.hex"
 factory_sha256 = "565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
 output_hex     = "build/218eV3_v369_Rewired_DFU.hex"
 
-# The updaters refuse to flash an image whose checksum they do not know.  The
-# build rewrites their EXPECTED_SHA256 and the instructions they print, so a
-# flasher can never describe or install a build it was not generated for.
+# The updaters flash any structurally valid 218e V3 image; the checksum is a
+# label, not a gate, and both say so in their own comments.  The build rewrites
+# their EXPECTED_SHA256 and the instructions they print so a flasher names the
+# build it shipped with; any other image still flashes, listed and logged under
+# its own short hash rather than under a version it was not generated for.
 updaters       = ["mac/Program218e_v3_Rewired_macOS.command",
                   "windows/218e_Rewired_Flasher.bat"]
 

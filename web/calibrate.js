@@ -487,6 +487,18 @@
         } catch (err) {
             throw new Error(audioTrouble(err));
         }
+        // The channel offered has to be the channel listened on.  Clamping it
+        // into range instead meant reading a different input and then failing
+        // with a message about MIDI, which sends the owner to the wrong cable.
+        // Refused here, before any note goes out, and named as an audio fault.
+        var count = Math.max(seen.got, 1);
+        var want = Math.max(0, o.audioChannel || 0);
+        if (want >= count) {
+            stop(stream);
+            throw new Error('Audio channel ' + (want + 1) + ' could not be opened; ' +
+                'this input gave ' + count + ' channel' + (count === 1 ? '' : 's') +
+                '. Pick a channel in range, or choose a different input.');
+        }
         var ctx = new (root.AudioContext || root.webkitAudioContext)();
         var analyser = ctx.createAnalyser();
         analyser.fftSize = WINDOW;
@@ -495,8 +507,6 @@
         // One channel of the interface, not a mix of it.  A splitter keeps
         // them apart - its channelInterpretation is 'discrete', so channel 7
         // arrives as channel 7 rather than being folded into a stereo pair.
-        var count = Math.max(seen.got, 1);
-        var want = Math.min(Math.max(0, o.audioChannel || 0), count - 1);
         if (o.onChannels) o.onChannels(count, want);
         if (count > 1) {
             var splitter = ctx.createChannelSplitter(count);
@@ -631,7 +641,8 @@
                     throw new Error('No MIDI channel moved the pitch. Check the ' +
                         'keyboard is on the chosen MIDI port and still plugged in, ' +
                         'and that the 208 is droning into the chosen audio input ' +
-                        'and channel.');
+                        'and channel. The sweep is listening on channel ' +
+                        (want + 1) + ' of that input.');
                 }
                 o.channel = found;
                 if (o.onChannel) o.onChannel(found);
@@ -643,7 +654,9 @@
                         'move the pitch, so nothing is listening there. Check the ' +
                         'keyboard is on the chosen MIDI port and still plugged in, ' +
                         'and that the 208 is droning into the chosen audio input ' +
-                        'and channel. Set the channel to Auto to search for it.');
+                        'and channel. The sweep is listening on channel ' +
+                        (want + 1) + ' of that input. Set the channel to Auto ' +
+                        'to search for it.');
                 }
             }
 
