@@ -2679,11 +2679,21 @@ section,
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 7px;
-    /* Room on the right for the browser's own chevron, which is drawn inside
-       the box and was sitting on top of the value. */
-    padding: .45rem 2.1rem .45rem .7rem;
+    /* The browser's own chevron is drawn hard against the inner edge and its
+       position is not ours to set, so it is turned off and one is drawn here
+       with room around it.  Two gradients rather than an SVG data URI because
+       they take currentColor, and this select is read in both themes. */
+    -webkit-appearance: none;
+    appearance: none;
+    padding: .45rem 2.2rem .45rem .7rem;
     max-width: 100%;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 16px center, right 10px center;
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
 }
+.autofield select::-ms-expand { display: none; }
 /* A field's label is one line.  "MIDI channel" wrapped to two inside a 6rem
    column, which pushed its select down and broke the row apart. */
 .autofield > .d { white-space: nowrap; }
@@ -2711,6 +2721,23 @@ section,
 .autolog b { color: var(--accent); font-weight: 600; }
 .autolog i { color: #ff8f8f; font-style: normal; }
 .autologrow { margin-top: .7rem; }
+/* The log is a diagnostic, so its buttons are not the page's big accent pills:
+   those are for the things somebody came here to do. */
+.autologrow button {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: none;
+    padding: 5px 12px;
+    border-radius: 7px;
+    border-color: var(--line);
+    color: var(--muted);
+}
+.autologrow button:hover:not(:disabled) {
+    background: transparent;
+    border-color: var(--accent);
+    color: var(--accent);
+}
 
 /* Which table the readings are being taken on top of.  Stated rather than
    implied: a wrong baseline folds into a plausible wrong table, with nothing

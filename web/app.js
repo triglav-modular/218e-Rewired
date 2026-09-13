@@ -1160,9 +1160,6 @@
             // later is exactly what should happen.
             if (named.length) {
                 listed.audio = true;
-                msg($('autoMsg'), 'ok', named.length + ' audio input' +
-                    (named.length === 1 ? '' : 's') + ': ' +
-                    named.map(function (d) { return d.label; }).join(', '));
             } else if (devs.length) {
                 // Before an origin is granted, Chrome answers with one
                 // nameless entry standing for the default - so a desk with
