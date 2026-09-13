@@ -351,10 +351,20 @@ simultaneous one has not yet been taken.
 
 ### What the reported figures are, and what they are not
 
-Both fields are running MEANS over the same accepted samples. The historical
-MAX was removed to make room for the boundary that localises the delay; it was
-the least robust statistic and had already been invalidated twice by one bad
-sample.
+Both fields are running MAXIMA. They were means for a while, and are not any
+more: a mean settles where the average goes and no mean localises an outlier,
+and the open question here is a tail. With an external clock present `0x6032`
+is the maximum edge-to-claim and `0x6034` the maximum edge-to-gate, each
+tracked independently rather than latched beside whichever beat set the other
+— a claim maximum far below the whole-path maximum puts the tail downstream of
+the claim, where a deadline computed at the claim cannot reach it. On the
+internal beat the same two cells carry the MINIMUM and MAXIMUM claim-to-gate,
+so their difference is the spread rather than a ceiling. `0x6038`, the old
+running-sum word, now holds the source byte that says which of those two a
+reader is looking at, and `0x603c` counts the samples both extrema were drawn
+from — saturating at `0xffff` rather than wrapping, because a wrapped count
+reads as a source reset to the capture tool and reseeds both extrema mid
+session.
 
 The shim times against `0x6240`, the stamp of the edge the dequeue is
 actually acting on, **not** `0x623c`, the ISR's newest accepted stamp.
@@ -362,28 +372,33 @@ actually acting on, **not** `0x623c`, the ISR's newest accepted stamp.
 it charges a beat's gate raise to an edge that did not cause it.
 
 A whole-path sample too large for the 14-bit field is DISCARDED from both
-sums and their shared count. Clamping is what the older MAX diagnostic used
-to publish as `16383`, exactly `0x3fff`: one beat behind a drained backlog
-claimed 8.74 ms for a path whose whole span is under four. The edge is marked
-timed before validation, so a discarded sample cannot retry against an
-unrelated later gate.
+extrema and their shared count, rather than clamped into them. Clamping is
+what an older MAX diagnostic did, and it published `16383`, exactly `0x3fff`,
+for the rest of the session: one beat behind a drained backlog claimed 8.74 ms
+for a path whose whole span is under four, and a maximum is the one statistic
+a single bad sample destroys outright. A sample only gets that large behind a
+drained backlog, which is a different population from the delay being
+measured. The edge is marked timed before validation, so a discarded sample
+cannot retry against an unrelated later gate.
 
 The edge-to-claim boundary must be no greater than its edge-to-gate sample.
-If it is not, neither sum nor the count moves. `latencySplitsAtClaim()` checks
-both exact boundaries in the emitted image, then negative-controls that guard
-by forcing the claim after the gate and proving the physical gate still rises
-while both means reject the sample. `latencyIgnoresABacklog()` separately
-proves a drained FIFO backlog moves neither mean.
+If it is not, neither extremum nor the count moves. `latencySplitsAtClaim()`
+checks both exact boundaries in the emitted image, then negative-controls that
+guard by forcing the claim after the gate and proving the physical gate still
+rises while the sample is rejected. `latencyIgnoresABacklog()` separately
+proves a drained FIFO backlog moves neither cell, and `latencyCountSaturates()`
+proves the count freezes instead of wrapping.
 
 `tools/test_clock.py --mode latency` builds the diagnostic so that test and
 `latencyCellsCleared()` run against a real image. Without it both detect an
 ordinary build and skip, which is not a test.
 
-The accumulators are cleared by the startup initialiser. On the instrument an
-older build came up holding old RAM and its published mean exceeded its MAX;
-the harness could not have caught it, because `fresh()` zeroes RAM 0x0-0x8000
-and those cells only ever started clean in emulation. `latencyCellsCleared()`
-now seeds every whole-path and split cell before invoking the real startup.
+The published cells are cleared by the startup initialiser. On the instrument
+an older build came up holding old RAM and its published mean exceeded its
+MAX; the harness could not have caught it, because `fresh()` zeroes RAM
+0x0-0x8000 and those cells only ever started clean in emulation.
+`latencyCellsCleared()` now seeds every whole-path and split cell before
+invoking the real startup.
 
 `scan_profiler` claims the same five cells -- `0x6032`, `0x6034`, `0x6038`,
 `0x603c`, `0x6040` -- with its own `0x3fff` clamp on `0x6032`, and its
