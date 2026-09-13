@@ -945,6 +945,73 @@
         }
     }
 
+    // The measurement log: every note sent, and the pitch that came back.
+    var logRows = [];
+
+    function logLine(r) {
+        function f(v, n) { return v === null || v === undefined ? '--' : v.toFixed(n); }
+        var head = (r.t / 1000).toFixed(1).padStart(6) + 's  ' +
+                   r.what.padEnd(6) + ' n' + String(r.note).padStart(3) + ' ' +
+                   r.name.padEnd(4) + ' e' + String(r.entry === null ? '--' : r.entry).padStart(2) +
+                   ' ch' + String(r.channel + 1).padStart(3) + '  ';
+        if (r.hz === null) {
+            return head + '<i>no pitch (' + r.why + ')  rms ' + f(r.rms, 4) + '</i>';
+        }
+        var want = r.expectHz ? '  want ' + f(r.expectHz, 2) : '';
+        var off = r.expectHz ? '  ' + (CALIBRATE.cents(r.hz, r.expectHz) >= 0 ? '+' : '') +
+                  CALIBRATE.cents(r.hz, r.expectHz).toFixed(1) + 'c' : '';
+        return head + '<b>' + f(r.hz, 3) + ' Hz</b>' + want + off +
+               '  cl ' + f(r.clarity, 2) +
+               '  half ' + (r.halfDrift === null ? '--' :
+                            (r.halfDrift >= 0 ? '+' : '') + f(r.halfDrift, 1) + 'c');
+    }
+
+    function pushLog(r) {
+        logRows.push(r);
+        var el = $('calLog');
+        el.classList.add('on');
+        el.insertAdjacentHTML('beforeend', logLine(r) + '\n');
+        el.scrollTop = el.scrollHeight;
+        $('calLogSave').disabled = false;
+        $('calLogClear').disabled = false;
+    }
+
+    $('calLogClear').addEventListener('click', function () {
+        logRows = [];
+        $('calLog').textContent = '';
+        $('calLog').classList.remove('on');
+        $('calLogSave').disabled = true;
+        $('calLogClear').disabled = true;
+    });
+
+    $('calLogSave').addEventListener('click', function () {
+        var cols = ['ms', 'what', 'midi_note', 'name', 'table_entry', 'midi_channel',
+                    'expected_hz', 'detected_hz', 'first_half_hz', 'second_half_hz',
+                    'half_drift_cents', 'clarity', 'rms', 'why'];
+        var out = [
+            '# 218e calibration sweep log.',
+            '# One row per note sent: what came back for it, as measured.',
+            '# what: probe = finding the MIDI channel, anchor = the bottom note',
+            '#       re-measured to cancel drift, sweep = a note of the table.',
+            '# A sweep row whose detected_hz is below the sweep row before it is',
+            '# a note that did not take - the firmware cannot play a higher note lower.',
+            cols.join(',')
+        ];
+        logRows.forEach(function (r) {
+            out.push([r.t, r.what, r.note, r.name, r.entry === null ? '' : r.entry,
+                      r.channel + 1,
+                      r.expectHz === null ? '' : r.expectHz.toFixed(4),
+                      r.hz === null ? '' : r.hz.toFixed(4),
+                      r.firstHalfHz === null ? '' : r.firstHalfHz.toFixed(4),
+                      r.secondHalfHz === null ? '' : r.secondHalfHz.toFixed(4),
+                      r.halfDrift === null ? '' : r.halfDrift.toFixed(3),
+                      r.clarity === null ? '' : r.clarity.toFixed(4),
+                      r.rms === null ? '' : r.rms.toFixed(6),
+                      r.why].join(','));
+        });
+        download(out.join('\n') + '\n', '218e-sweep-log.csv', 'text/csv');
+    });
+
     function fillSelect(sel, items, empty) {
         // The lists are rebuilt whenever a device appears or a permission
         // changes, and a rebuild that forgets the choice would quietly move
@@ -1169,6 +1236,7 @@
                 deviceId: $('calAudio').value || null,
                 audioChannel: parseInt($('calChan').value, 10) || 0,
                 low: PLAYABLE_LOW, high: PLAYABLE_HIGH, octaveTerm: false, velocity: 100,
+                onReading: pushLog,
                 onProbe: function (ch) {
                     autoNote('Looking for the keyboard on MIDI channel ' + (ch + 1) +
                              '\u2026', 0);

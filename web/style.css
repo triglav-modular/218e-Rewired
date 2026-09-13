@@ -2678,3 +2678,24 @@ section,
 .autoprogress { margin-top: .7rem; min-height: 1.2em; font-variant-numeric: tabular-nums; }
 .autoprogress .bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: .5rem; overflow: hidden; }
 .autoprogress .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }
+
+/* Every note sent and what came back for it.  Monospace and tabular figures
+   because it is read by scanning a column, not by reading sentences. */
+.autolog {
+    display: none;
+    margin: .8rem 0 0;
+    padding: .6rem .7rem;
+    max-height: 16rem;
+    overflow: auto;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    white-space: pre;
+}
+.autolog.on { display: block; }
+.autolog b { color: var(--accent); font-weight: 600; }
+.autolog i { color: #ff8f8f; font-style: normal; }
+.autologrow { margin-top: .7rem; }

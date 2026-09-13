@@ -359,7 +359,7 @@
             if (held !== null) { send(o.output, 0x80, held, 0, heldOn); held = null; }
         }
 
-        async function hear(note, expectHz, channel) {
+        async function hear(note, expectHz, channel, what) {
             var ch = channel === undefined ? o.channel : channel;
             release();
             await sleep(GAP_MS);
@@ -372,7 +372,7 @@
             var lo = expectHz ? expectHz * Math.pow(2, -3 / 12) : 18;
             var hi = expectHz ? expectHz * Math.pow(2, 3 / 12) : 6000;
             var whole = measure(buf, rate, lo, hi);
-            if (!whole.ok) return whole;
+            if (!whole.ok) { note_log(note, ch, what, expectHz, whole, null, null); return whole; }
             // Did it hold still while it was being measured?  The two halves
             // of the same window are two readings of the same note, so a note
             // still moving - a glide, a note that never arrived and left the
@@ -384,10 +384,38 @@
             for (i = 0; i < half; i++) { a[i] = buf[i]; b[i] = buf[half + i]; }
             var ra = measure(a, rate, lo, hi), rb = measure(b, rate, lo, hi);
             whole.drift = (ra.ok && rb.ok) ? cents(rb.hz, ra.hz) : null;
+            note_log(note, ch, what, expectHz, whole, ra, rb);
             return whole;
         }
 
+        // Every note that goes out, and what came back for it - the probe and
+        // the drift anchor included, since a reading that looks wrong in the
+        // sweep is often explained by the one before it that was not part of
+        // the sweep at all.
+        function note_log(note, ch, what, expectHz, r, firstHalf, secondHalf) {
+            var e = entryFor(note, o.octaveTerm);
+            var row = {
+                t: Date.now() - t0,
+                what: what || 'sweep',
+                note: note,
+                name: e ? noteLabel(e.index) : '?',
+                entry: e ? e.index : null,
+                channel: ch,
+                expectHz: expectHz || null,
+                hz: r && r.ok ? r.hz : null,
+                firstHalfHz: firstHalf && firstHalf.ok ? firstHalf.hz : null,
+                secondHalfHz: secondHalf && secondHalf.ok ? secondHalf.hz : null,
+                halfDrift: r ? r.drift : null,
+                clarity: r && r.ok ? r.clarity : null,
+                rms: r ? r.rms : null,
+                why: r && r.ok ? '' : (r ? r.why : 'not measured')
+            };
+            log.push(row);
+            if (o.onReading) o.onReading(row);
+        }
+
         var anchor = steps[0], results = [], marks = [], warnings = [];
+        var log = [], t0 = Date.now();
         var previous = null;
         try {
             // Which channel the instrument is listening on.  There is no way
@@ -400,8 +428,8 @@
                 for (var ch = 0; ch < 16 && found === null; ch++) {
                     if (self.stopped) throw new Error('Stopped.');
                     if (o.onProbe) o.onProbe(ch);
-                    var lo = await hear(anchor.note, null, ch);
-                    var hi = await hear(anchor.note + 24, lo.ok ? lo.hz * 4 : null, ch);
+                    var lo = await hear(anchor.note, null, ch, 'probe');
+                    var hi = await hear(anchor.note + 24, lo.ok ? lo.hz * 4 : null, ch, 'probe');
                     if (lo.ok && hi.ok && Math.abs(cents(hi.hz, lo.hz) - 2400) < 300) {
                         found = ch;
                     }
@@ -415,7 +443,7 @@
                 if (o.onChannel) o.onChannel(found);
             }
 
-            var first = await hear(anchor.note, null);
+            var first = await hear(anchor.note, null, undefined, 'anchor');
             if (!first.ok) {
                 throw new Error('Nothing heard on the audio input (' + first.why +
                                 '). Check the 208 is droning and patched to the input.');
@@ -427,11 +455,13 @@
                 if (self.stopped) throw new Error('Stopped.');
                 var step = steps[i];
                 if (i > 0 && i % ANCHOR_EVERY === 0) {
-                    var re = await hear(anchor.note, marks[marks.length - 1].hz);
+                    var re = await hear(anchor.note, marks[marks.length - 1].hz,
+                                       undefined, 'anchor');
                     if (re.ok) marks.push({ t: Date.now(), hz: re.hz });
                 }
                 var want = first.hz * Math.pow(2, (step.index - anchor.index) / 12);
-                var got = await hear(step.note, i === 0 ? first.hz : expect);
+                var got = await hear(step.note, i === 0 ? first.hz : expect,
+                                    undefined, 'sweep');
                 var t = Date.now();
                 // Clarity alone passes noise that happens to be periodic, and
                 // an input left unpatched is mostly hum - which is periodic.
@@ -486,7 +516,7 @@
             try { await ctx.close(); } catch (e) {}
         }
         return { readings: results, warnings: warnings, anchorHz: first.hz,
-                 channel: o.channel,
+                 channel: o.channel, log: log,
                  drift: marks.length > 1 ?
                      cents(marks[marks.length - 1].hz, marks[0].hz) : 0 };
     };
