@@ -2646,3 +2646,107 @@ section,
 .stripfig .halves > span + span {
   text-align: right;
 }
+
+/* The automatic measurement, above the offsets it fills in.  It shares the
+   calibration panel with the hand-entered boxes rather than taking a panel of
+   its own: they write the same numbers, and one of them is a shortcut to the
+   other. */
+.automeasure {
+    margin: 0 0 1.4rem;
+    padding: 1rem 1.1rem 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+.autorow { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+/* A device and the channel within it are one choice, so they wrap together
+   or not at all.  Four loose fields broke three-and-one, which put a
+   channel picker on a line of its own with nothing to say which device it
+   belonged to. */
+.autopair { display: flex; gap: 1rem; flex: 1 1 22rem; min-width: 0; }
+.autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 13rem; flex: 1 1 13rem; }
+/* Wide enough for the longest of these labels rather than for the value:
+   the values are one or two digits, the labels are not. */
+.autofield.autochan { min-width: 8.5rem; flex: 0 0 8.5rem; }
+/* .row carries no margin of its own - it is a flex line, and everywhere
+   else in the page something above it supplies the space.  Here the two
+   lines are siblings, so the buttons sat against the selects. */
+.automeasure .autorow + .row { margin-top: 1rem; }
+.autofield select {
+    font: inherit;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    /* The browser's own chevron is drawn hard against the inner edge and its
+       position is not ours to set, so it is turned off and one is drawn here
+       with room around it.  Two gradients rather than an SVG data URI because
+       they take currentColor, and this select is read in both themes. */
+    -webkit-appearance: none;
+    appearance: none;
+    padding: .45rem 2.2rem .45rem .7rem;
+    max-width: 100%;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 16px center, right 10px center;
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+}
+.autofield select::-ms-expand { display: none; }
+/* A field's label is one line.  "MIDI channel" wrapped to two inside a 6rem
+   column, which pushed its select down and broke the row apart. */
+.autofield > .d { white-space: nowrap; }
+.autoprogress { margin-top: .7rem; min-height: 1.2em; font-variant-numeric: tabular-nums; }
+.autoprogress .bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: .5rem; overflow: hidden; }
+.autoprogress .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }
+
+/* Every note sent and what came back for it.  Monospace and tabular figures
+   because it is read by scanning a column, not by reading sentences. */
+.autolog {
+    display: none;
+    margin: .8rem 0 0;
+    padding: .6rem .7rem;
+    max-height: 16rem;
+    overflow: auto;
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    white-space: pre;
+}
+.autolog.on { display: block; }
+.autolog b { color: var(--accent); font-weight: 600; }
+.autolog i { color: #ff8f8f; font-style: normal; }
+/* Hidden until there is a log to act on: two dimmed buttons under an empty
+   box are furniture, not an offer. */
+/* Away from what it undoes, at the far end of its row. */
+.push-end { margin-left: auto; }
+.autologrow { display: none; margin-top: .7rem; }
+.autologrow.on { display: flex; }
+/* Secondary actions are not the page's big accent pills: those are for the
+   things somebody came here to do.  Clearing a log or resetting readings is
+   something you reach for on the way. */
+.autologrow button, button.quiet {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: none;
+    padding: 5px 12px;
+    border-radius: 7px;
+    border-color: var(--line);
+    color: var(--muted);
+}
+.autologrow button:hover:not(:disabled), button.quiet:hover:not(:disabled) {
+    background: transparent;
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Which table the readings are being taken on top of.  Stated rather than
+   implied: a wrong baseline folds into a plausible wrong table, with nothing
+   to show for it until the instrument is measured again. */
+.calbase { margin: .2rem 0 .6rem; }
+.calbaserow { margin-bottom: 1.4rem; }
+.calbase.set { color: var(--accent); }

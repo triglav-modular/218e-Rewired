@@ -152,6 +152,44 @@ jobs:
       # page's own data regenerates from tracked sources, which is the step
       # above.
 
+      - name: The page's fold agrees with the CLI's
+        run: |
+          # Accumulating a reading onto a table that is already flashed is the
+          # one piece of calibration arithmetic the page did not have, and a
+          # fold that disagreed with tools/build.py would build a different
+          # image from the same measurements without saying so.
+          if [ -f web/test_fold.py ]; then
+            python3 web/test_fold.py
+          else
+            echo "web/test_fold.py is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
+      - name: The calibration sweep's arithmetic and its pitch estimator
+        run: |
+          # No instrument here, so what is checked is what is knowable without
+          # one: that the sweep's notes match the firmware's own integer
+          # arithmetic, and that the estimator reads synthetic tones to a small
+          # fraction of the DAC step it has to decide.
+          #
+          # Every run builds both branches, and the steps come from whichever
+          # branch was pushed - so a test added on development is run against a
+          # checkout of main that does not have it yet.  Skipped where the file
+          # is absent, and never skipped where it is present; the branch it was
+          # skipped on is named, so a test that quietly stopped running
+          # anywhere says so.
+          if [ -f web/test_calibrate.js ]; then
+            node web/test_calibrate.js
+          else
+            echo "web/test_calibrate.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
+          # The driver, against a simulated instrument: what it refuses to
+          # start against, and that a working one still sweeps.
+          if [ -f web/test_sweep.js ]; then
+            node web/test_sweep.js
+          else
+            echo "web/test_sweep.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
       - name: The beacon route only records what the page can send
         run: |
           # It is a public, unauthenticated endpoint - it has to be, the page

@@ -297,8 +297,16 @@ Both of those make it an example rather than a default. A tracking-error curve
 belongs to the oscillator it came from, and it belongs to the scaling it was
 taken at: at a different `volts_per_octave` the oscillator sits at a different
 operating point and its error is not the same curve. Set `volts_per_octave` to
-match your 208 first, then measure against that. To calibrate your own,
-measure each key against 12-TET with a tuner and fold the readings in:
+match your 208 first, then measure against that.
+
+The quickest way to calibrate your own is the builder page, which does the
+measuring itself: it plays C0 to E5 into the keyboard over MIDI, listens to the
+208 on an audio input, and folds the readings onto whatever table the
+instrument is already running. Load that table there first, and save the new
+one it produces &mdash; the file it writes is the same format this reads.
+
+By hand, measure each key against 12-TET with a tuner and fold the readings
+in:
 
 ```bash
 # your-readings.csv:  Key,Measured_Cents   (positive = the note played sharp)

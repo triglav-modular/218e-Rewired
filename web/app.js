@@ -96,12 +96,28 @@
         // Readings belong to keys, not rows: a table entered before the
         // switch keeps each key's cents when the rows move under it.
         var moved = measured.map(function () { return 0; });
+        var movedMarks = {};
         for (var n = 0; n < TABLE_ENTRIES; n++) {
             var to = n - from + PLAYABLE_LOW;
-            if (to >= 0 && to < TABLE_ENTRIES) moved[to] = measured[n];
+            if (to >= 0 && to < TABLE_ENTRIES) {
+                moved[to] = measured[n];
+                if (interpolated[n]) movedMarks[to] = true;
+            }
         }
         measured = moved;
-        loadedTail = null;
+        interpolated = movedMarks;
+        // Changing the offset renumbers every semitone, so a loaded table no
+        // longer describes this instrument's layout - its row 3 is not this
+        // build's row 3.  Dropped rather than shifted: a table quietly moved
+        // under the user is the kind of baseline that folds into a plausible
+        // wrong answer.
+        if (haveBaseline()) {
+            clearBaseline();
+            msg($('calMsg'), 'bad', 'The loaded table was dropped: changing the pitch ' +
+                'offset renumbers the semitones, so it no longer describes this ' +
+                'build. Load it again if it was measured at this setting.');
+        }
+        syncBaseline();
         buildTable(); drawPlot(); validateCal(); invalidate();
     }
 
@@ -685,14 +701,29 @@
     // correction is simply minus the reading.  Which is also why nothing
     // accumulates here: each entry stands alone.
     var measured = [];
-    // Rows a loaded CSV supplied OUTSIDE the playable keys, kept verbatim so
-    // the same file builds the same image here and in tools/build.py - the
-    // loader used to regenerate the tails, so a full 79-row calibration
-    // built one image on the page and another on the CLI, silently.  Cleared
-    // the moment any key is edited: the tail belonged to the measurements it
-    // arrived with.
-    var loadedTail = null;
     for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);
+    // Which of those the sweep carried across from a neighbour rather than
+    // heard.  They are real numbers in `measured` and build a real table, but
+    // nothing measured them, and the saved file is the only place that can
+    // still say so once the session is gone.
+    var interpolated = {};
+
+    // What is already on the instrument, as Offset_Cents per semitone, and
+    // which of those rows were extrapolated rather than measured.
+    //
+    // Readings are taken against whatever the keyboard is applying, so a
+    // second round of measuring corrects the REMAINDER and has to accumulate
+    // onto the table that produced it.  With nothing loaded this is flat,
+    // where the octave width is exactly 1.000 and the fold reduces to minus
+    // the reading - so an ordinary first calibration builds exactly what it
+    // always did.
+    var baseline = {}, baselineSources = {}, baselineName = '';
+    function clearBaseline() {
+        baseline = {}; baselineSources = {}; baselineName = '';
+        for (var n = 0; n < TABLE_ENTRIES; n++) baseline[n] = 0;
+    }
+    clearBaseline();
+    function haveBaseline() { return !!baselineName; }
 
     function drawPlot() {
         var play = measured.slice(PLAYABLE_LOW, PLAYABLE_HIGH + 1);
@@ -761,8 +792,8 @@
                 if (measured[n] !== 0) input.className = 'set';
                 input.addEventListener('change', function () {
                     measured[n] = parseFloat(input.value) || 0;
+                    delete interpolated[n];
                     input.className = measured[n] !== 0 ? 'set' : '';
-                    loadedTail = null;
                     drawPlot(); validateCal();
                     if ($('useCal').checked) invalidate();
                 });
@@ -811,29 +842,25 @@
         }
     }
 
-    // Extend the playable range over the rest of the table: below the bottom
-    // key everything holds the lowest measured value, and above the top the
-    // correction keeps climbing at the slope it ended on, which is what the
-    // shipped calibration does.
+    // The offsets the build reads.  The arithmetic is in buildlib, where it can
+    // be tested against the CLI's; this only supplies the page's state.
     function rows() {
-        var full = measured.map(function (v) { return -v; });
-        // Below the lowest playable note the correction is zero, matching the
-        // shipped calibration.  Carrying the lowest correction down instead
-        // would push semitone 0 below zero volts for any instrument reading
-        // uniformly sharp, and those entries are unreachable anyway.
-        for (var n = PLAYABLE_LOW - 1; n >= 0; n--) full[n] = 0;
-        var slope = full[PLAYABLE_HIGH] - full[PLAYABLE_HIGH - 1];
-        for (n = PLAYABLE_HIGH + 1; n < TABLE_ENTRIES; n++) {
-            full[n] = full[n - 1] + slope;
-        }
-        // A loaded file's own out-of-range rows win over the derivation, so
-        // the CSV builds byte-identically to the CLI reading the same file.
-        if (loadedTail) {
-            for (n = 0; n < TABLE_ENTRIES; n++) {
-                if (n in loadedTail) full[n] = -loadedTail[n];
-            }
-        }
-        return full.map(function (v, i) { return { semitone: i, cents: v }; });
+        return BUILDLIB.calibrationRows(baseline, baselineSources, measured,
+                                        PLAYABLE_LOW, PLAYABLE_HIGH, TABLE_ENTRIES,
+                                        haveBaseline())
+            .map(function (v, i) { return { semitone: i, cents: v }; });
+    }
+
+    function syncBaseline() {
+        var el = $('calBase');
+        if (!el) return;
+        el.textContent = haveBaseline()
+            ? 'Measuring on top of ' + baselineName +
+              ' \u2014 new readings accumulate onto it.'
+            : 'No table loaded: readings are taken as a first calibration of an ' +
+              'uncorrected instrument.';
+        el.classList.toggle('set', haveBaseline());
+        $('calBaseClear').disabled = !haveBaseline();
     }
 
     function syncCalBody() {
@@ -843,33 +870,60 @@
         syncCalBody(); validateCal(); invalidate();
     });
     $('calZero').addEventListener('click', function () {
-        loadedTail = null;
         measured = measured.map(function () { return 0; });
-        buildTable(); drawPlot(); validateCal();
-        msg($('calMsg'), '', '');
+        interpolated = {};
+        buildTable(); drawPlot(); validateCal(); syncBaseline();
+        msg($('calMsg'), '', haveBaseline()
+            ? 'Readings cleared. ' + baselineName + ' is still loaded as the table on '
+              + 'the instrument.' : '');
         // The table is part of the image: without this the image built
         // from the old readings stayed downloadable after they were cleared.
         invalidate();
     });
-    // Same columns the loader reads and the repository's own calibration file
-    // uses, so a table can go out, be edited or shared, and come back.
+    // The table, not the session.
+    //
+    // This used to save the readings - a record of an afternoon, which says
+    // nothing about an instrument once it has been flashed.  What is worth
+    // keeping beside the image is the TABLE it was built with, because that is
+    // what the keyboard is applying and therefore what the next round of
+    // measuring has to accumulate onto.  Same columns as the repository's own
+    // calibration file, so it loads back here as a baseline and tools/build.py
+    // reads it directly.
     $('calSave').addEventListener('click', function () {
+        var full = rows();
         var out = [
-            '# 218e pitch measurements, saved from the Rewired firmware builder.',
+            '# 218e pitch calibration, saved from the Rewired firmware builder.',
             '#',
-            '# Measured_Cents is how far each note played from correct pitch, as read',
-            '# on a tuner.  Positive means it played SHARP.  The builder works out the',
-            '# correction from these; do not negate them yourself.',
+            '# Offset_Cents is the correction the firmware applies: how far each',
+            '# semitone is pushed from an ideal ramp.  Positive raises the pitch.',
+            '# This is a TABLE, not a set of readings - keep it beside the image you',
+            '# flash, and load it back here before measuring again so the next round',
+            '# accumulates onto it instead of replacing it.',
+            '#',
+            '# Source "interpolated" means the sweep never heard that note and',
+            '# carried it across from its neighbours: it is a guess, worth checking',
+            '# by hand before it is measured on top of.',
             '#',
             '# Semitone counts up from the 208\'s 0 V pitch; the lowest C on the',
-            '# keyboard is semitone ' + PLAYABLE_LOW + '.  Only notes the keyboard can play are',
-            '# listed - the rest of the table is derived from these.',
-            'Semitone;Note;Key;Measured_Cents'
+            '# keyboard is semitone ' + PLAYABLE_LOW + '.',
+            'Semitone;Note;Key;Offset_Cents;Source'
         ];
-        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            out.push([n, noteName(n), keyLabel(n), measured[n].toFixed(6)].join(';'));
+        for (var n = 0; n < TABLE_ENTRIES; n++) {
+            var src = interpolated[n] ? 'interpolated'
+                    : measured[n] ? 'measured'
+                    : (baselineSources[n] || (n < PLAYABLE_LOW ? 'octave'
+                       : n > PLAYABLE_HIGH ? 'extrapolated' : 'measured'));
+            out.push([n, noteNames()[n % 12], keyLabel(n),
+                      full[n].cents.toFixed(6), src].join(';'));
         }
-        download(out.join('\n') + '\n', '218e-pitch-measurements.csv', 'text/csv');
+        download(out.join('\n') + '\n', '218e-pitch-calibration.csv', 'text/csv');
+    });
+
+    $('calBaseClear').addEventListener('click', function () {
+        clearBaseline();
+        syncBaseline(); drawPlot(); validateCal(); invalidate();
+        msg($('calMsg'), '', 'Forgotten. Readings now build a first calibration of an ' +
+            'uncorrected instrument.');
     });
 
     $('calPick').addEventListener('click', function () { $('calFile').click(); });
@@ -879,50 +933,494 @@
         if (!f) return;
         var r = new FileReader();
         r.onload = function () {
-            var found = 0;
-            var tail = {}, tailCount = 0;
-            // A file of Offset_Cents holds corrections, the opposite sign to a
-            // measurement, so it is flipped on the way in.
+            // Two kinds of file, told apart by their column.  A calibration
+            // carries Offset_Cents and describes a TABLE - what an instrument
+            // is applying - so it becomes the baseline to measure on top of.
+            // A measurement carries Measured_Cents and describes a SESSION -
+            // how far each note played - so it fills the boxes.
+            //
+            // The loader used to turn a calibration into pseudo-readings by
+            // negating it.  That built the same image back, but threw the
+            // table away the moment anything new was entered: the next round
+            // of measuring corrected the remainder as though the first round
+            // had never happened.
             var isCorrection = /Offset_Cents/i.test(r.result);
+            var clearedReadings = false;
+            var rowsIn = {}, sources = {}, found = 0;
             // Split on any line ending: CRLF from Windows, and CR alone,
-            // which Excel can still write.  CRLF already worked - a stray
-            // \r rides on the last field, which parseFloat ignores - but a
-            // CR-only file arrives as one long line and yields nothing.
+            // which Excel can still write.
             r.result.split(/\r\n|\r|\n/).forEach(function (line) {
                 if (!line.trim() || line.charAt(0) === '#' || /^Semitone/i.test(line)) return;
                 var semi = line.indexOf(';') >= 0;
-                var p = line.split(semi ? ';' : ',');
-                var cRaw = p[3] || '';
+                var q = line.split(semi ? ';' : ',');
+                var cRaw = q[3] || '';
                 // Excel in a comma-decimal locale re-saves a semicolon file
-                // with '12,5' where this wrote '12.5'; parseFloat stops at
-                // the comma and every fraction was silently dropped.
-                if (semi && /^\s*-?\d+,\d+\s*$/.test(cRaw)) {
-                    cRaw = cRaw.replace(',', '.');
+                // with '12,5' where this wrote '12.5'; parseFloat stops at the
+                // comma and every fraction was silently dropped.
+                if (semi && /^\s*-?\d+,\d+\s*$/.test(cRaw)) cRaw = cRaw.replace(',', '.');
+                var n = parseInt(q[0], 10), c = parseFloat(cRaw);
+                if (isNaN(n) || isNaN(c) || n < 0 || n >= TABLE_ENTRIES) return;
+                rowsIn[n] = c;
+                sources[n] = (q[4] || '').trim();
+                found++;
+            });
+
+            if (!found) {
+                msg($('calMsg'), 'bad', 'No usable rows in ' + f.name + ': expected ' +
+                    'Semitone;Note;Key;Offset_Cents;Source, or the same with a ' +
+                    'Measured_Cents column.');
+                return;
+            }
+
+            if (isCorrection) {
+                // A table is a baseline only if it is a whole one.  A partial
+                // file would leave the rest of the instrument's correction at
+                // zero, which is not "unknown" - it is "no correction", and
+                // the fold would quietly undo what is flashed there.
+                var missing = [];
+                for (var n = 0; n < TABLE_ENTRIES; n++) if (!(n in rowsIn)) missing.push(n);
+                if (missing.length) {
+                    msg($('calMsg'), 'bad', f.name + ' has ' + found + ' of the ' +
+                        TABLE_ENTRIES + ' rows a table needs - missing semitone ' +
+                        missing[0] + (missing.length > 1
+                            ? ' and ' + (missing.length - 1) + ' others' : '') +
+                        '. A calibration is loaded whole or not at all.');
+                    return;
                 }
-                var n = parseInt(p[0], 10), c = parseFloat(cRaw);
-                if (isCorrection) c = -c;
-                if (!isNaN(n) && !isNaN(c)) {
-                    if (n >= PLAYABLE_LOW && n <= PLAYABLE_HIGH) {
-                        measured[n] = c; found++;
-                    } else if (n >= 0 && n < TABLE_ENTRIES) {
-                        // The keys cannot edit these, but the file said what
-                        // they are, and the build honours the file.
-                        tail[n] = c; tailCount++;
+                baseline = rowsIn;
+                baselineSources = sources;
+                baselineName = f.name;
+                var had = measured.some(function (v) { return v !== 0; });
+                measured = measured.map(function () { return 0; });
+                interpolated = {};
+                clearedReadings = had;
+            } else {
+                for (var k in rowsIn) {
+                    if (k >= PLAYABLE_LOW && k <= PLAYABLE_HIGH) {
+                        measured[k] = rowsIn[k];
+                        delete interpolated[k];
                     }
                 }
-            });
-            loadedTail = (found && tailCount) ? tail : null;
-            $('useCal').checked = found > 0;
-            syncCalBody();
+            }
+            $('useCal').checked = true;
+            syncCalBody(); syncBaseline();
             buildTable(); drawPlot(); validateCal(); invalidate();
-            msg($('calMsg'), found ? 'ok' : 'bad',
-                found ? 'Loaded ' + found + ' playable rows' +
-                        (tailCount ? ' and ' + tailCount + ' beyond the keys'
-                                   : '') + ' from ' + f.name
-                      : 'No usable rows in ' + f.name +
-                        ': expected Semitone;Note;Key;Offset_Cents;Source');
+            msg($('calMsg'), 'ok', isCorrection
+                ? 'Loaded ' + f.name + ' as the table already on the instrument. ' +
+                  'Anything measured now accumulates onto it.' +
+                  (clearedReadings ? ' The readings that were entered have been ' +
+                   'cleared: they were taken against whatever was flashed at the ' +
+                   'time, which this file now says. Measure again.' : '')
+                : 'Loaded ' + found + ' readings from ' + f.name + '.');
         };
         r.readAsText(f);
+    });
+
+    // --- measuring it automatically ---------------------------------------
+    // The same numbers the boxes above hold, arrived at by playing the
+    // instrument instead of by hand.  calibrate.js drives the keyboard over
+    // MIDI and measures what it hears; everything downstream - the plot, the
+    // monotonic check, the CSV, the image - is unchanged.
+    var sweep = null, listed = { midi: false, audio: false };
+    // Whether the message on screen was put there by the audio path, so it can
+    // be taken down when that path succeeds without silencing a MIDI complaint
+    // that is still true.
+    var audioComplaint = false;
+    function audioMsg(kind, text) {
+        audioComplaint = !!text;
+        msg($('autoMsg'), kind, text);
+    }
+
+    function autoNote(text, bar) {
+        var el = $('calProgress');
+        el.textContent = text || '';
+        if (bar !== undefined && bar !== null) {
+            var b = document.createElement('span');
+            b.className = 'bar';
+            var i = document.createElement('i');
+            i.style.width = Math.round(bar * 100) + '%';
+            b.appendChild(i);
+            el.appendChild(b);
+        }
+    }
+
+    // The measurement log: every note sent, and the pitch that came back.
+    var logRows = [];
+
+    function logLine(r) {
+        function f(v, n) { return v === null || v === undefined ? '--' : v.toFixed(n); }
+        var head = (r.t / 1000).toFixed(1).padStart(6) + 's  ' +
+                   r.what.padEnd(6) + ' n' + String(r.note).padStart(3) + ' ' +
+                   r.name.padEnd(4) + ' e' + String(r.entry === null ? '--' : r.entry).padStart(2) +
+                   ' ch' + String(r.channel + 1).padStart(3) + '  ';
+        if (r.hz === null) {
+            return head + '<i>no pitch (' + r.why + ')  rms ' + f(r.rms, 4) + '</i>';
+        }
+        var want = r.expectHz ? '  want ' + f(r.expectHz, 2) : '';
+        var off = r.expectHz ? '  ' + (CALIBRATE.cents(r.hz, r.expectHz) >= 0 ? '+' : '') +
+                  CALIBRATE.cents(r.hz, r.expectHz).toFixed(1) + 'c' : '';
+        return head + '<b>' + f(r.hz, 3) + ' Hz</b>' + want + off +
+               '  cl ' + f(r.clarity, 2) +
+               '  half ' + (r.halfDrift === null ? '--' :
+                            (r.halfDrift >= 0 ? '+' : '') + f(r.halfDrift, 1) + 'c');
+    }
+
+    // A plain line in the log, for things that are not a note reading.
+    function pushNote(text) {
+        var el = $('calLog');
+        el.classList.add('on');
+        el.insertAdjacentText('beforeend', text + '\n');
+        el.scrollTop = el.scrollHeight;
+        $('calLogRow').classList.add('on');
+        $('calLogClear').disabled = false;
+    }
+
+    function pushLog(r) {
+        logRows.push(r);
+        var el = $('calLog');
+        el.classList.add('on');
+        el.insertAdjacentHTML('beforeend', logLine(r) + '\n');
+        el.scrollTop = el.scrollHeight;
+        $('calLogRow').classList.add('on');
+        $('calLogSave').disabled = false;
+        $('calLogClear').disabled = false;
+    }
+
+    $('calLogClear').addEventListener('click', function () {
+        logRows = [];
+        $('calLog').textContent = '';
+        $('calLog').classList.remove('on');
+        $('calLogRow').classList.remove('on');
+        $('calLogSave').disabled = true;
+        $('calLogClear').disabled = true;
+    });
+
+    $('calLogSave').addEventListener('click', function () {
+        var cols = ['ms', 'what', 'midi_note', 'name', 'table_entry', 'midi_channel',
+                    'expected_hz', 'detected_hz', 'first_half_hz', 'second_half_hz',
+                    'half_drift_cents', 'clarity', 'rms', 'why'];
+        var out = [
+            '# 218e calibration sweep log.',
+            '# One row per note sent: what came back for it, as measured.',
+            '# what: probe = finding the MIDI channel, anchor = the bottom note',
+            '#       re-measured to cancel drift, sweep = a note of the table.',
+            '# A sweep row whose detected_hz is below the sweep row before it is',
+            '# a note that did not take - the firmware cannot play a higher note lower.',
+            cols.join(',')
+        ];
+        logRows.forEach(function (r) {
+            out.push([r.t, r.what, r.note, r.name, r.entry === null ? '' : r.entry,
+                      r.channel + 1,
+                      r.expectHz === null ? '' : r.expectHz.toFixed(4),
+                      r.hz === null ? '' : r.hz.toFixed(4),
+                      r.firstHalfHz === null ? '' : r.firstHalfHz.toFixed(4),
+                      r.secondHalfHz === null ? '' : r.secondHalfHz.toFixed(4),
+                      r.halfDrift === null ? '' : r.halfDrift.toFixed(3),
+                      r.clarity === null ? '' : r.clarity.toFixed(4),
+                      r.rms === null ? '' : r.rms.toFixed(6),
+                      r.why].join(','));
+        });
+        download(out.join('\n') + '\n', '218e-sweep-log.csv', 'text/csv');
+    });
+
+    function fillSelect(sel, items, empty) {
+        // The lists are rebuilt whenever a device appears or a permission
+        // changes, and a rebuild that forgets the choice would quietly move
+        // the measurement to a different input between picking and starting.
+        var had = sel.value;
+        sel.innerHTML = '';
+        if (!items.length) {
+            sel.appendChild(new Option(empty, ''));
+            return;
+        }
+        items.forEach(function (it) { sel.appendChild(new Option(it.label, it.value)); });
+        if (had && items.some(function (it) { return it.value === had; })) sel.value = had;
+    }
+
+    function listMidi() {
+        if (listed.midi) return Promise.resolve();
+        return CALIBRATE.midiOutputs().then(function (ports) {
+            listed.midi = true;
+            // The instrument names its own port, so a kit with several things
+            // plugged in still opens on the right one.
+            var items = ports.map(function (p) {
+                return { value: p.id, label: p.name || p.id, port: p };
+            });
+            fillSelect($('calMidi'), items, 'No MIDI outputs found');
+            var mine = items.filter(function (i) { return /218e/i.test(i.label); })[0];
+            if (mine) $('calMidi').value = mine.value;
+            window.__calPorts = ports;
+        }, function (err) {
+            // Not latched: a browser that has no Web MIDI will say so again,
+            // and one that was merely not ready gets another chance without
+            // the page having to be reloaded.
+            fillSelect($('calMidi'), [], 'Web MIDI unavailable');
+            msg($('autoMsg'), 'bad', err.message);
+        });
+    }
+
+    // Enumerate first, and only ask for a stream if that comes back without
+    // labels.
+    //
+    // The obvious order - take a stream, then enumerate - is wrong in a way
+    // that looks exactly like a refused permission.  getUserMedia({audio:true})
+    // opens the DEFAULT input, and on macOS that fails with NotReadableError
+    // whenever another application is holding the interface.  Which is the
+    // normal state of affairs here: the sequencer driving the keyboard is
+    // using the same box.  Permission was granted, the device was busy, and
+    // the select said "No audio input permission".
+    //
+    // Once permission has been given to this origin, enumerateDevices() fills
+    // the labels in on its own and no stream is needed at all.  The stream is
+    // only the way to make the browser ask the first time.
+    function listAudio() {
+        if (listed.audio) return Promise.resolve();
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            fillSelect($('calAudio'), [], 'No audio input in this browser');
+            audioMsg('bad', 'This browser will not give a page an audio ' +
+                'input. Over plain http only localhost is allowed to ask; the ' +
+                'published page is https and can.');
+            return Promise.resolve();
+        }
+        function show(devs) {
+            var named = devs.filter(function (d) { return d.label; });
+            fillSelect($('calAudio'), devs.map(function (d, i) {
+                return { value: d.deviceId, label: d.label || ('Input ' + (i + 1)) };
+            }), 'No audio inputs found');
+            // Only settled once the labels are real: an unlabelled list means
+            // the browser has not granted this origin yet, and asking again
+            // later is exactly what should happen.
+            // An unnamed list is the ordinary state before the origin has been
+            // granted audio, and it lasts until the request below resolves -
+            // which is moments.  It used to explain itself in a red box, which
+            // meant the common path opened with an error nobody needed to act
+            // on.  The Rescan button is there for the case where it persists.
+            if (named.length) {
+                listed.audio = true;
+                if (audioComplaint) audioMsg('', '');
+            }
+            return named.length;
+        }
+        return CALIBRATE.audioInputs().then(function (devs) {
+            if (show(devs)) return null;
+            return navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(function (st) {
+                    // Enumerate while the stream is still open, and only then
+                    // let go of it.  Labels are visible while a stream is live
+                    // or while a persistent grant stands - stopping first threw
+                    // away the very thing that reveals them, so a granted
+                    // permission still came back as one nameless default.  With
+                    // "Allow this time" the grant is gone the moment the track
+                    // stops, which is the case that made it look like the
+                    // permission had not been given at all.
+                    return CALIBRATE.audioInputs().then(function (devs) {
+                        var n = show(devs);
+                        st.getTracks().forEach(function (t) { t.stop(); });
+                        return n;
+                    }, function (err) {
+                        st.getTracks().forEach(function (t) { t.stop(); });
+                        throw err;
+                    });
+                }, function (err) {
+                    // Whatever went wrong, the devices themselves enumerated,
+                    // so the list stays usable - unlabelled, but pickable.
+                    audioMsg('bad', CALIBRATE.audioTrouble(err));
+                });
+        }, function (err) {
+            fillSelect($('calAudio'), [], 'Could not list audio inputs');
+            audioMsg('bad', CALIBRATE.audioTrouble(err));
+        });
+    }
+
+    // The channels a device has can only be learned by opening it, so this
+    // runs when one is picked rather than up front, and remembers the answer.
+    var chanFor = {};   // reset by Rescan
+    function listChannels() {
+        var id = $('calAudio').value || '';
+        if (chanFor[id]) return Promise.resolve();
+        return CALIBRATE.channelCount(id || null).then(function (res) {
+            var n = res.count;
+            chanFor[id] = n;
+            // Into the log, where the diagnostics live, rather than into the
+            // panel: this matters on the day a desk offers fewer channels than
+            // it has, and never again.
+            pushNote('channels on ' + ($('calAudio').selectedOptions[0]
+                     ? $('calAudio').selectedOptions[0].text : 'default') +
+                     ': ' + n + '  [' + res.report.join('; ') + ']');
+            var items = [];
+            for (var i = 0; i < n; i++) items.push({ value: String(i), label: String(i + 1) });
+            var keep = $('calChan').value;
+            fillSelect($('calChan'), items, '1');
+            if (keep && Number(keep) < n) $('calChan').value = keep;
+            $('calChan').disabled = n < 2;
+        }, function (err) {
+            // The count is unknown, not zero.  Leaving the list alone keeps
+            // whatever was already pickable rather than collapsing a twelve
+            // channel desk to one because the device was busy for a moment.
+            msg($('autoMsg'), 'bad', CALIBRATE.audioTrouble(err));
+        });
+    }
+
+    $('calMidi').addEventListener('focus', listMidi);
+    $('calAudio').addEventListener('focus', listAudio);
+    $('calAudio').addEventListener('change', listChannels);
+    $('calRescan').addEventListener('click', function () {
+        listed.audio = false;
+        listed.midi = false;
+        chanFor = {};
+        msg($('autoMsg'), '', '');
+        $('calRescan').disabled = true;
+        Promise.resolve().then(listMidi).then(listAudio).then(listChannels)
+            .then(function () { $('calRescan').disabled = false; },
+                  function () { $('calRescan').disabled = false; });
+    });
+    // A port appearing or going away invalidates a list that is only built
+    // once.  The selection is put back if it survived, so unplugging something
+    // else does not quietly move the choice out from under the next run.
+    if (CALIBRATE.onMidiChange) {
+        CALIBRATE.onMidiChange(function () {
+            var was = $('calMidi').value;
+            listed.midi = false;
+            listMidi().then(function () {
+                var opts = $('calMidi').options, i;
+                for (i = 0; i < opts.length; i++) {
+                    if (opts[i].value === was) { $('calMidi').value = was; return; }
+                }
+            });
+        });
+    }
+
+    $('calChan').addEventListener('focus', listChannels);
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', function () {
+            listed.audio = false;
+            if (!$('calRun').disabled) listAudio();
+        });
+    }
+
+    // A note that could not be heard is not a note that played in tune.  Rather
+    // than leave a zero - which reads as "correct" and builds a table that says
+    // so - carry the reading across the gap from its measured neighbours.
+    function bridgeGaps(got) {
+        var known = [];
+        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
+            if (got[n] !== null && got[n] !== undefined) known.push(n);
+        }
+        if (!known.length) return 0;
+        var filled = 0;
+        for (n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
+            if (got[n] !== null && got[n] !== undefined) {
+                measured[n] = got[n]; delete interpolated[n]; continue;
+            }
+            var below = null, above = null;
+            known.forEach(function (k) {
+                if (k < n) below = k;
+                if (above === null && k > n) above = k;
+            });
+            if (below === null) measured[n] = got[above];
+            else if (above === null) measured[n] = got[below];
+            else measured[n] = got[below] + (got[above] - got[below]) *
+                               (n - below) / (above - below);
+            interpolated[n] = true;
+            filled++;
+        }
+        return filled;
+    }
+
+    function setRunning(on) {
+        $('calRun').disabled = on;
+        $('calStop').disabled = !on;
+        $('calMidi').disabled = on;
+        $('calMidiChan').disabled = on;
+        $('calAudio').disabled = on;
+        $('calChan').disabled = on || (chanFor[$('calAudio').value || ''] || 1) < 2;
+    }
+
+    $('calStop').addEventListener('click', function () {
+        if (sweep) sweep.stop();
+        autoNote('Stopping after this note\u2026');
+    });
+
+    $('calRun').addEventListener('click', function () {
+        msg($('calMsg'), '', '');
+        Promise.resolve().then(listMidi).then(listAudio).then(listChannels).then(function () {
+            var ports = window.__calPorts || [];
+            var chosen = ports.filter(function (p) { return p.id === $('calMidi').value; })[0];
+            if (!chosen) {
+                msg($('calMsg'), 'bad', 'Choose the MIDI output the 218e is on.');
+                return;
+            }
+            // Being in the list is not being plugged in.
+            if (CALIBRATE.portGone && CALIBRATE.portGone(chosen)) {
+                msg($('calMsg'), 'bad', (chosen.name || 'That MIDI output') +
+                    ' is not connected any more. Plug it back in, or press ' +
+                    'Rescan inputs to pick another.');
+                return;
+            }
+            var got = {};
+            setRunning(true);
+            autoNote('Listening for the bottom C\u2026', 0);
+            sweep = new CALIBRATE.Sweep({
+                output: chosen,
+                // Empty means Auto: the sweep finds the channel by playing on
+                // each in turn and watching for the pitch to move.
+                channel: $('calMidiChan').value === '' ? null
+                                                       : Number($('calMidiChan').value),
+                deviceId: $('calAudio').value || null,
+                audioChannel: parseInt($('calChan').value, 10) || 0,
+                low: PLAYABLE_LOW, high: PLAYABLE_HIGH, octaveTerm: false, velocity: 100,
+                onReading: pushLog,
+                onProbe: function (ch, confirming) {
+                    autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
+                                         : 'Looking for the keyboard on MIDI channel ') +
+                             (ch + 1) + '\u2026', 0);
+                },
+                onChannel: function (ch) {
+                    $('calMidiChan').value = String(ch);
+                },
+                onNote: function (step, reading, i, total) {
+                    got[step.index] = reading ? reading.cents : null;
+                    var name = CALIBRATE.noteLabel(step.index);
+                    autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
+                             (reading && reading.cents !== null ?
+                                 (reading.cents >= 0 ? '+' : '') +
+                                 reading.cents.toFixed(1) + ' cents' : 'not heard'),
+                             (i + 1) / total);
+                }
+            });
+            return sweep.run().then(function (out) {
+                var bridged = bridgeGaps(got);
+                $('useCal').checked = true;
+                syncCalBody();
+                buildTable(); drawPlot(); validateCal(); invalidate();
+                var heard = out.readings.filter(function (r) { return r.cents !== null; });
+                autoNote('');
+                var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
+                    ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
+                    out.anchorHz.toFixed(2) + ' Hz; the ' +
+                    'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
+                    'which has been taken out of every reading.';
+                if (bridged) {
+                    note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
+                        ' not heard and have been carried across from their neighbours - ' +
+                        'check those by hand.';
+                }
+                if (out.warnings.length) {
+                    // Capped: a run that goes wrong everywhere would otherwise
+                    // bury its own summary under sixty-five lines.
+                    var show = out.warnings.slice(0, 12);
+                    note += '\n\n' + show.join('\n');
+                    if (out.warnings.length > show.length) {
+                        note += '\n...and ' + (out.warnings.length - show.length) +
+                                ' more.';
+                    }
+                }
+                msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad', note);
+            });
+        }).catch(function (err) {
+            autoNote('');
+            msg($('calMsg'), 'bad', err.message || String(err));
+        }).then(function () { sweep = null; setRunning(false); });
     });
 
     // --- build ------------------------------------------------------------
@@ -1505,6 +2003,7 @@
     })();
 
     renderPatterns();
-    renderSlots(); buildTable(); drawPlot(); syncPortamento(); syncCalBody(); refresh();
+    renderSlots(); buildTable(); drawPlot(); syncPortamento();
+    syncCalBody(); syncBaseline(); refresh();
     bindDashes(document.body);
 })();

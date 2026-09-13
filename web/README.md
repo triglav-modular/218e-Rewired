@@ -24,7 +24,8 @@ else, or the page opened from a file, reports nowhere. See "Counting builds" in
 |---|---|
 | `index.html`, `app.js` | the interface |
 | `build.js` | the whole build: options + factory image → flashable image |
-| `buildlib.js` | ported from `tools/build.py` — tables, hex, flags, properties |
+| `calibrate.js` | the automatic measurement: drives the keyboard over MIDI, measures the 208 on an audio input, fills in the calibration offsets |
+| `buildlib.js` | ported from `tools/build.py` — tables, hex, flags, properties, and the fold that accumulates readings onto a flashed table |
 | `sha256.js` | synchronous SHA-256 (SubtleCrypto is async and absent from jsc) |
 | `generated.js` | **generated** — frozen defaults, feature map, control flow, assembler source |
 | `assembler.js` | **generated** — the AVR32 assembler, bundled from `tools/avr32/` |

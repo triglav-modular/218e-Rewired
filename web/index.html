@@ -310,7 +310,7 @@
           <label class="row opt opt-toggle lead">
               <input type="checkbox" id="useCal">
               <span><span class="t">Enable per-note oscillator calibration</span><br>
-                <span class="d">Corrects your 208’s tracking so the keyboard plays in tune across the whole range. This will make any other oscillator play more out of tune.</span>
+                <span class="d">Compensate for non-ideal oscillator tracking to make your 208 play perfectly in tune across its whole range. This will make any other oscillator play more out of tune.</span>
           </label>
 
 
@@ -319,17 +319,60 @@
 
 
           <div id="calBody" class="hidden">
-            <details class="howto-details"><summary>How to measure your 208. Read this first!</summary>
-              <div class="howto">
-                <p><strong class="step">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other. <strong>Measure against equal temperament.</strong></p>
-                <p><strong class="step">2. Warm up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
-                <p><strong class="step">3. Tune the lowest C.</strong> Octave switch at its lowest setting, hold the lowest C, and trim the 208 until a tuner reads it exactly in tune. Everything else is measured against this note.</p>
-                <p><strong class="step">4. Play every note, note how far off it is.</strong> Work up from that C, changing octave as you run out of keys. Enter the tuner reading in cents. For example, <span class="mono">+12</span> for 12 cents sharp, <span class="mono">−7</span> for 7 cents flat.</p>
-                <p><strong class="step">5. Build, flash, check.</strong></p>
-                <p></p>
-              </div>
-            </details>
+            <p class="d muted calbase" id="calBase"></p>
+            <div class="row calbaserow">
+              <button id="calPick">Load table or readings…</button>
+              <button id="calBaseClear" type="button" disabled>Forget loaded table</button>
+            </div>
 
+            <div class="automeasure" id="autoCal">
+              <p class="d muted">The page plays <strong>C0 to E5</strong> into the keyboard over MIDI, listens to your 208, and fills in every offset below. It needs Chrome, Edge or Firefox.</p>
+              <details class="howto-details"><summary>How to measure your 208. Read this first!</summary>
+                <div class="howto">
+                  <p><strong class="step">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other.</p>
+                  <p><strong class="step">2. Warm it up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
+                  <p><strong class="step">3. Load the table it already has,</strong> if it has one. Readings are taken against whatever is flashed, so they accumulate onto that table rather than replacing it.</p>
+                  <p><strong class="step">4. Patch the 208 into an audio input and set it droning:</strong> a steady tone, no envelope, nothing else modulating its pitch. Pick the channel it arrives on. Leave <strong>add to pitch</strong> off, the arpeggiator off, vibrato down, and no alternate tuning selected.</p>
+                  <p><strong class="step">5. Measure, build, flash.</strong> Then save the table: it is what the next round measures on top of &mdash; and put <strong>add to pitch</strong> back, or the keyboard sits an octave above where the sweep played.</p>
+                </div>
+              </details>
+              <div class="row autorow">
+                <div class="autopair">
+                <label class="autofield"><span class="d">MIDI output</span>
+                  <select id="calMidi"><option value="">Looking&hellip;</option></select></label>
+                <label class="autofield autochan"><span class="d">MIDI channel</span>
+                  <select id="calMidiChan">
+                    <option value="">Auto</option>
+                    <option value="0">1</option><option value="1">2</option>
+                    <option value="2">3</option><option value="3">4</option>
+                    <option value="4">5</option><option value="5">6</option>
+                    <option value="6">7</option><option value="7">8</option>
+                    <option value="8">9</option><option value="9">10</option>
+                    <option value="10">11</option><option value="11">12</option>
+                    <option value="12">13</option><option value="13">14</option>
+                    <option value="14">15</option><option value="15">16</option>
+                  </select></label>
+                </div>
+                <div class="autopair">
+                <label class="autofield"><span class="d">Audio input</span>
+                  <select id="calAudio"><option value="">Looking&hellip;</option></select></label>
+                <label class="autofield autochan"><span class="d">Channel</span>
+                  <select id="calChan"><option value="0">1</option></select></label>
+                </div>
+              </div>
+              <div class="row">
+                <button id="calRun" class="primary" type="button">Start measuring</button>
+                <button id="calStop" type="button" disabled>Stop</button>
+                <button id="calRescan" type="button" class="quiet push-end">Rescan inputs</button>
+              </div>
+              <div id="autoMsg"></div>
+              <div id="calProgress" class="d muted autoprogress"></div>
+              <pre id="calLog" class="autolog" aria-live="off"></pre>
+              <div class="row autologrow" id="calLogRow">
+                <button id="calLogSave" type="button" disabled>Download log CSV</button>
+                <button id="calLogClear" type="button" disabled>Clear log</button>
+              </div>
+            </div>
 
             <div class="plotwrap" aria-hidden="true">
               <svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none"></svg>
@@ -339,14 +382,13 @@
             <div class="row">
 
               <h4 class="kbd-heading">Offsets for the 65 playable notes</h4>
-              <p class="kbdhint"><strong>Enter what your tuner reads in cents.</strong><br>Positive for sharp, negative for flat. Scroll for the full range</p>
+              <p class="kbdhint"><strong>What each note played, in cents.</strong><br>Positive for sharp, negative for flat. The sweep fills these in. Scroll for the full range</p>
               <div class="kbdwrap"><div class="kbd" id="calKeys"></div></div>
             </div>
             <div class="row">
 
-              <button id="calPick">Load CSV…</button>
-              <button id="calSave">Save CSV</button>
-              <button id="calZero">Reset to zero</button>
+              <button id="calSave">Save table CSV</button>
+              <button id="calZero" class="quiet push-end">Reset readings to zero</button>
             </div>
             <input type="file" id="calFile" accept=".csv" hidden>
           </div>
@@ -464,6 +506,7 @@
     <script src="assembler.js"></script>
     <script src="zip.js"></script>
     <script src="build.js"></script>
+    <script src="calibrate.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
