@@ -224,6 +224,16 @@ var BUILDLIB = (function () {
             throw new Error(name + ': degree count ' + JSON.stringify(head) +
                             ' is not a number');
         }
+        // Same guard as tools/build.py, word for word: nothing below reads a
+        // scale with no degrees in it, and a .kbm chosen where the .scl belongs
+        // lands here rather than anywhere recognisable - its map size is
+        // consumed as the description and its first MIDI note, normally 0,
+        // becomes the count.
+        if (count < 1) {
+            throw new Error(name + ': declares ' + count + ' degrees, so there ' +
+                'is no scale to read; if this is a .kbm, the two halves of the ' +
+                'slot are the wrong way round');
+        }
         var pitches = body.slice(1, 1 + count);
         if (pitches.length !== count) {
             throw new Error(name + ': declares ' + count + ' degrees, found ' + pitches.length);
@@ -629,6 +639,21 @@ var BUILDLIB = (function () {
         return volts * 12.0 / span;
     }
 
+    // Whether row `n` of the base table holds a correction of its own, and so
+    // stops the tail rather than following it.  Anything the file says that is
+    // not the word "extrapolated" counts, an empty Source cell included: blank
+    // means unknown, and unknown is not extrapolated.  This used to test the
+    // cell for truthiness, which made a blank fall the other way and shifted
+    // rows tools/build.py leaves alone - nine of 79 entries apart on a
+    // hand-edited table, at the top of the curve where the correction is
+    // largest.  A row the caller says nothing about at all is still treated as
+    // extrapolated: that is the no-table-loaded path, where the whole tail
+    // follows the reading.
+    function holdsItsOwn(sources, n) {
+        return !!sources && Object.prototype.hasOwnProperty.call(sources, n)
+            && sources[n] !== 'extrapolated';
+    }
+
     // Fold fresh readings into the table that is already on the instrument.
     //
     // `base` is what is flashed, as Offset_Cents per semitone.  `readings` is
@@ -641,7 +666,7 @@ var BUILDLIB = (function () {
     //
     // Corrections accumulate, because the instrument being measured is already
     // applying `base`.  This is fold_measurement() in tools/build.py, minus its
-    // CSV rewriting, and tools/test_calibrate_fold.js pins the two together.
+    // CSV rewriting, and web/test_fold.py pins the two together.
     function foldOffsets(base, readings, sources) {
         var out = {}, s;
         for (s in base) if (base.hasOwnProperty(s)) out[s] = base[s];
@@ -656,11 +681,11 @@ var BUILDLIB = (function () {
         Object.keys(base).map(Number).sort(function (a, b) { return a - b; })
             .forEach(function (n) {
                 if (tailEnd === null && n > highest &&
-                    sources && sources[n] && sources[n] !== 'extrapolated') tailEnd = n;
+                    holdsItsOwn(sources, n)) tailEnd = n;
             });
         Object.keys(base).map(Number).forEach(function (n) {
             if (n <= highest || (n in readings)) return;
-            if (sources && sources[n] && sources[n] !== 'extrapolated') return;
+            if (holdsItsOwn(sources, n)) return;
             if (tailEnd !== null && n >= tailEnd) return;
             out[n] = base[n] + tailDelta;
         });

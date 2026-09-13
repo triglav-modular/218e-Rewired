@@ -82,6 +82,37 @@ def rows_before_the_fold(measured):
     return full
 
 
+def sources_of(text):
+    """The Source column, semitone -> whatever the cell says, blanks included."""
+    out = {}
+    for line in text.splitlines():
+        if line.startswith("#") or line.startswith("Semitone") or not line.strip():
+            continue
+        parts = line.split(";")
+        out[int(parts[0])] = parts[4].strip()
+    return out
+
+
+def with_blank_source(text, semitone):
+    """The baseline with one Source cell emptied, as a hand edit would leave it.
+
+    The page's own export always fills the column, so only a hand-edited or
+    third-party file reaches this - which is exactly why nothing caught the two
+    toolchains reading a blank differently.
+    """
+    out, seen = [], False
+    for line in text.splitlines():
+        parts = line.split(";")
+        if (not line.startswith("#") and not line.startswith("Semitone")
+                and line.strip() and int(parts[0]) == semitone):
+            parts[4] = ""
+            line, seen = ";".join(parts), True
+        out.append(line)
+    if not seen:
+        raise SystemExit(f"no semitone {semitone} row to blank")
+    return "\n".join(out) + "\n"
+
+
 def js_fold(base, sources, meas):
     script = """
     var B = require('%s');
@@ -98,12 +129,7 @@ def js_fold(base, sources, meas):
 
 def main():
     base = B.read_calibration(BASELINE)
-    sources = {}
-    for line in BASELINE.read_text().splitlines():
-        if line.startswith("#") or line.startswith("Semitone") or not line.strip():
-            continue
-        parts = line.split(";")
-        sources[int(parts[0])] = parts[4].strip()
+    sources = sources_of(BASELINE.read_text())
 
     meas = readings()
     want = python_fold(BASELINE, meas)
@@ -127,6 +153,45 @@ def main():
         print(f"      python {want[where]:.9f}   page {got[where]:.9f}")
         return 1
     print(f"ok    {len(want)} semitones agree, worst difference {worst:g} cents")
+
+    # The same comparison on a file whose Source column has a hole in it.  The
+    # two toolchains used to disagree about what a blank cell means - Python
+    # reads it as "not extrapolated", so the row holds its own correction and
+    # ends the tail; the page read it as falsy and shifted it.  Blank is
+    # unknown, and unknown is not extrapolated, so Python's reading is the one
+    # both now use.
+    #
+    # The blank goes in the extrapolated tail above the highest reading, which
+    # is the only place the rule applies at all.
+    BLANK_AT = 72
+    holed = with_blank_source(BASELINE.read_text(), BLANK_AT)
+    with tempfile.TemporaryDirectory() as tmp:
+        cal = Path(tmp) / "holed.csv"
+        cal.write_text(holed)
+        holed_base = B.read_calibration(cal)
+        holed_sources = sources_of(holed)
+        want = python_fold(cal, meas)
+    got = js_fold(holed_base, holed_sources, meas)
+    worst, where = 0.0, None
+    for s in sorted(want):
+        d = abs(want[s] - got[s])
+        if d > worst:
+            worst, where = d, s
+    if worst > 1e-6:
+        print(f"FAIL  with semitone {BLANK_AT}'s Source blank the two disagree by "
+              f"{worst:g} cents at semitone {where}")
+        print(f"      python {want[where]:.9f}   page {got[where]:.9f}")
+        return 1
+    # Agreement is only worth something if the blank changed an answer: two
+    # toolchains that both stopped applying the tail rule would agree here
+    # perfectly.  So this comes second, after the disagreement it would
+    # otherwise explain away, and asks whether the hole did anything at all.
+    plain = js_fold(base, sources, meas)
+    if all(abs(plain[n] - got[n]) < 1e-9 for n in got):
+        print(f"FAIL  blanking the Source of semitone {BLANK_AT} changed no row - "
+              "the tail rule is not being exercised")
+        return 1
+    print(f"ok    a blank Source ends the tail in both, worst difference {worst:g} cents")
 
     # The fold has to be an accumulation, not a replacement: folding nothing
     # must leave the table alone, and folding twice must not be folding once.

@@ -189,6 +189,12 @@ CONFIGS = [
                            "quantize_presets": False}),
     ("one_volt",          [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")],
                           {"volts_per_octave": 1.0}),
+    # A slot written as a one-element list, which options.check documents and
+    # allows.  It is the same slot as "tunings/12TET.scl" written plainly, and
+    # has to build the same image - it used to die on a bare unpack instead.
+    ("slot_without_map",  [(r"^alternate_tunings = false",
+                            'alternate_tunings = [["tunings/12TET.scl"]]')],
+                          {"alternate_tunings": scala(["tunings/12TET.scl"])}),
     ("pitch_correction",  [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
                           {"pitch_correction": calibration_rows()}),
     # The 208c layout: the pitch table alone moves, so both builders have to
@@ -356,6 +362,24 @@ REFUSALS = [
                             + ", ".join([f'"{THIRTEEN}"'] * 3) + ']')],
                           {"alternate_tunings": scala([THIRTEEN] * 3)},
                           "12-note scale is required", "12-note scale is required"),
+    # The same fault, one slot later.  Both builders probe every slot for its
+    # period before either builds a table, so an octave scale in front of this
+    # one made the probe answer first: "slots disagree about the period", true
+    # of the numbers and no help at all with the file.  The row above cannot
+    # reach it - three identical slots agree about the period, so the degree
+    # check is the only one left to fire.
+    ("unmapped_late_slot", [(r"^alternate_tunings = false",
+                             f'alternate_tunings = ["tunings/12TET.scl", "{THIRTEEN}"]')],
+                           {"alternate_tunings": scala(["tunings/12TET.scl", THIRTEEN])},
+                           "12-note scale is required", "12-note scale is required"),
+    # The halves of a slot the wrong way round: a .kbm where the .scl belongs.
+    # Its map size is read as the description and its first MIDI note as the
+    # degree count, so the scale comes out empty and every check below it
+    # either has no pair to compare or indexes off the end.
+    ("kbm_as_scale",      [(r"^alternate_tunings = false",
+                            f'alternate_tunings = ["{FINE_MAP}"]')],
+                          {"alternate_tunings": scala([FINE_MAP])},
+                          "there is no scale to read", "there is no scale to read"),
     # Spaced safely across the keyboard, and not once an octave is added.
     ("transposed_latch",  [(r"^alternate_tunings = false",
                             'alternate_tunings = ['
