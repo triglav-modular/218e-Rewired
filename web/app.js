@@ -972,7 +972,7 @@
             // and one that was merely not ready gets another chance without
             // the page having to be reloaded.
             fillSelect($('calMidi'), [], 'Web MIDI unavailable');
-            msg($('calMsg'), 'bad', err.message);
+            msg($('autoMsg'), 'bad', err.message);
         });
     }
 
@@ -994,7 +994,7 @@
         if (listed.audio) return Promise.resolve();
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             fillSelect($('calAudio'), [], 'No audio input in this browser');
-            msg($('calMsg'), 'bad', 'This browser will not give a page an audio ' +
+            msg($('autoMsg'), 'bad', 'This browser will not give a page an audio ' +
                 'input. Over plain http only localhost is allowed to ask; the ' +
                 'published page is https and can.');
             return Promise.resolve();
@@ -1008,6 +1008,17 @@
             // the browser has not granted this origin yet, and asking again
             // later is exactly what should happen.
             if (named.length) listed.audio = true;
+            else if (devs.length) {
+                // Before an origin is granted, Chrome answers with one
+                // nameless entry standing for the default - so a desk with
+                // twelve inputs shows as a single "Input 1" and there is
+                // nothing to pick.  Say that, rather than leaving it looking
+                // like the interface is missing.
+                msg($('autoMsg'), 'bad', 'Chrome will not name the audio inputs ' +
+                    'until this page is allowed to use audio, so only the default ' +
+                    'one is listed. Press Rescan inputs and allow it, then the ' +
+                    'mixer and its channels appear.');
+            }
             return named.length;
         }
         return CALIBRATE.audioInputs().then(function (devs) {
@@ -1019,17 +1030,17 @@
                 }, function (err) {
                     // Whatever went wrong, the devices themselves enumerated,
                     // so the list stays usable - unlabelled, but pickable.
-                    msg($('calMsg'), 'bad', CALIBRATE.audioTrouble(err));
+                    msg($('autoMsg'), 'bad', CALIBRATE.audioTrouble(err));
                 });
         }, function (err) {
             fillSelect($('calAudio'), [], 'Could not list audio inputs');
-            msg($('calMsg'), 'bad', CALIBRATE.audioTrouble(err));
+            msg($('autoMsg'), 'bad', CALIBRATE.audioTrouble(err));
         });
     }
 
     // The channels a device has can only be learned by opening it, so this
     // runs when one is picked rather than up front, and remembers the answer.
-    var chanFor = {};
+    var chanFor = {};   // reset by Rescan
     function listChannels() {
         var id = $('calAudio').value || '';
         if (chanFor[id]) return Promise.resolve();
@@ -1045,13 +1056,23 @@
             // The count is unknown, not zero.  Leaving the list alone keeps
             // whatever was already pickable rather than collapsing a twelve
             // channel desk to one because the device was busy for a moment.
-            msg($('calMsg'), 'bad', CALIBRATE.audioTrouble(err));
+            msg($('autoMsg'), 'bad', CALIBRATE.audioTrouble(err));
         });
     }
 
     $('calMidi').addEventListener('focus', listMidi);
     $('calAudio').addEventListener('focus', listAudio);
     $('calAudio').addEventListener('change', listChannels);
+    $('calRescan').addEventListener('click', function () {
+        listed.audio = false;
+        listed.midi = false;
+        chanFor = {};
+        msg($('autoMsg'), '', '');
+        $('calRescan').disabled = true;
+        Promise.resolve().then(listMidi).then(listAudio).then(listChannels)
+            .then(function () { $('calRescan').disabled = false; },
+                  function () { $('calRescan').disabled = false; });
+    });
     $('calChan').addEventListener('focus', listChannels);
     if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
         navigator.mediaDevices.addEventListener('devicechange', function () {
