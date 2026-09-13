@@ -331,6 +331,23 @@
             </details>
 
 
+            <div class="automeasure" id="autoCal">
+              <h4 class="kbd-heading">Measure it automatically</h4>
+              <p class="d muted">The page plays <strong>C0 to E5</strong> into the keyboard over MIDI, listens to your 208, and fills in every offset below. It needs Chrome or Edge &mdash; Safari and Firefox have no Web MIDI.</p>
+              <p class="d muted">Patch the 208&rsquo;s output to an audio input and set it droning: a steady tone, no envelope, nothing else modulating its pitch. Leave <strong>add to pitch</strong> in its middle position, the arpeggiator off, vibrato down, and no alternate tuning selected. Warm it up first.</p>
+              <div class="row autorow">
+                <label class="autofield"><span class="d">MIDI output</span>
+                  <select id="calMidi"><option value="">Looking&hellip;</option></select></label>
+                <label class="autofield"><span class="d">Audio input</span>
+                  <select id="calAudio"><option value="">Looking&hellip;</option></select></label>
+              </div>
+              <div class="row">
+                <button id="calRun" class="primary" type="button">Start measuring</button>
+                <button id="calStop" type="button" disabled>Stop</button>
+              </div>
+              <div id="calProgress" class="d muted autoprogress"></div>
+            </div>
+
             <div class="plotwrap" aria-hidden="true">
               <svg id="calPlot" viewBox="0 0 700 120" preserveAspectRatio="none"></svg>
               <span class="plotlabel" id="calHi"></span>
@@ -464,6 +481,7 @@
     <script src="assembler.js"></script>
     <script src="zip.js"></script>
     <script src="build.js"></script>
+    <script src="calibrate.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

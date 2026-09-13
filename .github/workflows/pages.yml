@@ -152,6 +152,14 @@ jobs:
       # page's own data regenerates from tracked sources, which is the step
       # above.
 
+      - name: The calibration sweep's arithmetic and its pitch estimator
+        run: |
+          # No instrument here, so what is checked is what is knowable without
+          # one: that the sweep's notes match the firmware's own integer
+          # arithmetic, and that the estimator reads synthetic tones to a small
+          # fraction of the DAC step it has to decide.
+          node web/test_calibrate.js
+
       - name: The beacon route only records what the page can send
         run: |
           # It is a public, unauthenticated endpoint - it has to be, the page

@@ -2646,3 +2646,30 @@ section,
 .stripfig .halves > span + span {
   text-align: right;
 }
+
+/* The automatic measurement, above the offsets it fills in.  It shares the
+   calibration panel with the hand-entered boxes rather than taking a panel of
+   its own: they write the same numbers, and one of them is a shortcut to the
+   other. */
+.automeasure {
+    margin: 0 0 1.4rem;
+    padding: 1rem 1.1rem 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+.automeasure .kbd-heading { margin-top: 0; }
+.autorow { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+.autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 15rem; flex: 1 1 15rem; }
+.autofield select {
+    font: inherit;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: .45rem .6rem;
+    max-width: 100%;
+}
+.autoprogress { margin-top: .7rem; min-height: 1.2em; font-variant-numeric: tabular-nums; }
+.autoprogress .bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: .5rem; overflow: hidden; }
+.autoprogress .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }

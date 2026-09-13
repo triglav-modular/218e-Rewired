@@ -925,6 +925,171 @@
         r.readAsText(f);
     });
 
+    // --- measuring it automatically ---------------------------------------
+    // The same numbers the boxes above hold, arrived at by playing the
+    // instrument instead of by hand.  calibrate.js drives the keyboard over
+    // MIDI and measures what it hears; everything downstream - the plot, the
+    // monotonic check, the CSV, the image - is unchanged.
+    var sweep = null, listed = { midi: false, audio: false };
+
+    function autoNote(text, bar) {
+        var el = $('calProgress');
+        el.textContent = text || '';
+        if (bar !== undefined && bar !== null) {
+            var b = document.createElement('span');
+            b.className = 'bar';
+            var i = document.createElement('i');
+            i.style.width = Math.round(bar * 100) + '%';
+            b.appendChild(i);
+            el.appendChild(b);
+        }
+    }
+
+    function fillSelect(sel, items, empty) {
+        sel.innerHTML = '';
+        if (!items.length) {
+            sel.appendChild(new Option(empty, ''));
+            return;
+        }
+        items.forEach(function (it) { sel.appendChild(new Option(it.label, it.value)); });
+    }
+
+    function listMidi() {
+        if (listed.midi) return Promise.resolve();
+        return CALIBRATE.midiOutputs().then(function (ports) {
+            listed.midi = true;
+            // The instrument names its own port, so a kit with several things
+            // plugged in still opens on the right one.
+            var items = ports.map(function (p) {
+                return { value: p.id, label: p.name || p.id, port: p };
+            });
+            fillSelect($('calMidi'), items, 'No MIDI outputs found');
+            var mine = items.filter(function (i) { return /218e/i.test(i.label); })[0];
+            if (mine) $('calMidi').value = mine.value;
+            window.__calPorts = ports;
+        }, function (err) {
+            listed.midi = true;
+            fillSelect($('calMidi'), [], 'Web MIDI unavailable');
+            msg($('calMsg'), 'bad', err.message);
+        });
+    }
+
+    // Device labels stay blank until the browser has granted the microphone
+    // once, so this asks for it and hands the stream straight back.  Without
+    // that the list is a row of indistinguishable "audioinput" entries.
+    function listAudio() {
+        if (listed.audio) return Promise.resolve();
+        return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
+            st.getTracks().forEach(function (t) { t.stop(); });
+            return CALIBRATE.audioInputs();
+        }).then(function (devs) {
+            listed.audio = true;
+            fillSelect($('calAudio'), devs.map(function (d, i) {
+                return { value: d.deviceId, label: d.label || ('Input ' + (i + 1)) };
+            }), 'No audio inputs found');
+        }, function (err) {
+            listed.audio = true;
+            fillSelect($('calAudio'), [], 'No audio input permission');
+            msg($('calMsg'), 'bad', 'The browser would not give access to an audio ' +
+                'input: ' + err.message);
+        });
+    }
+
+    $('calMidi').addEventListener('focus', listMidi);
+    $('calAudio').addEventListener('focus', listAudio);
+
+    // A note that could not be heard is not a note that played in tune.  Rather
+    // than leave a zero - which reads as "correct" and builds a table that says
+    // so - carry the reading across the gap from its measured neighbours.
+    function bridgeGaps(got) {
+        var known = [];
+        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
+            if (got[n] !== null && got[n] !== undefined) known.push(n);
+        }
+        if (!known.length) return 0;
+        var filled = 0;
+        for (n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
+            if (got[n] !== null && got[n] !== undefined) { measured[n] = got[n]; continue; }
+            var below = null, above = null;
+            known.forEach(function (k) {
+                if (k < n) below = k;
+                if (above === null && k > n) above = k;
+            });
+            if (below === null) measured[n] = got[above];
+            else if (above === null) measured[n] = got[below];
+            else measured[n] = got[below] + (got[above] - got[below]) *
+                               (n - below) / (above - below);
+            filled++;
+        }
+        return filled;
+    }
+
+    function setRunning(on) {
+        $('calRun').disabled = on;
+        $('calStop').disabled = !on;
+        $('calMidi').disabled = on;
+        $('calAudio').disabled = on;
+    }
+
+    $('calStop').addEventListener('click', function () {
+        if (sweep) sweep.stop();
+        autoNote('Stopping after this note\u2026');
+    });
+
+    $('calRun').addEventListener('click', function () {
+        msg($('calMsg'), '', '');
+        Promise.resolve().then(listMidi).then(listAudio).then(function () {
+            var ports = window.__calPorts || [];
+            var chosen = ports.filter(function (p) { return p.id === $('calMidi').value; })[0];
+            if (!chosen) {
+                msg($('calMsg'), 'bad', 'Choose the MIDI output the 218e is on.');
+                return;
+            }
+            var got = {};
+            setRunning(true);
+            autoNote('Listening for the bottom C\u2026', 0);
+            sweep = new CALIBRATE.Sweep({
+                output: chosen, channel: null, deviceId: $('calAudio').value || null,
+                low: PLAYABLE_LOW, high: PLAYABLE_HIGH, octaveTerm: false, velocity: 100,
+                onNote: function (step, reading, i, total) {
+                    got[step.index] = reading ? reading.cents : null;
+                    var name = CALIBRATE.noteLabel(step.index);
+                    autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
+                             (reading && reading.cents !== null ?
+                                 (reading.cents >= 0 ? '+' : '') +
+                                 reading.cents.toFixed(1) + ' cents' : 'not heard'),
+                             (i + 1) / total);
+                }
+            });
+            return sweep.run().then(function (out) {
+                var bridged = bridgeGaps(got);
+                loadedTail = null;
+                $('useCal').checked = true;
+                syncCalBody();
+                buildTable(); drawPlot(); validateCal(); invalidate();
+                var heard = out.readings.filter(function (r) { return r.cents !== null; });
+                autoNote('');
+                var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
+                    ' notes. Bottom C was ' + out.anchorHz.toFixed(2) + ' Hz; the ' +
+                    'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
+                    'which has been taken out of every reading.';
+                if (bridged) {
+                    note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
+                        ' not heard and have been carried across from their neighbours - ' +
+                        'check those by hand.';
+                }
+                msg($('calMsg'), heard.length ? 'ok' : 'bad', note);
+                if (out.warnings.length) {
+                    msg($('calMsg'), heard.length ? 'ok' : 'bad',
+                        note + '\n\n' + out.warnings.join('\n'));
+                }
+            });
+        }).catch(function (err) {
+            autoNote('');
+            msg($('calMsg'), 'bad', err.message || String(err));
+        }).then(function () { sweep = null; setRunning(false); });
+    });
+
     // --- build ------------------------------------------------------------
     function options() {
         var o = {
