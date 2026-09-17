@@ -698,17 +698,44 @@ var BUILDLIB = (function () {
         return Math.max(GAIN_FLOOR, sum / steps.length / 100);
     }
 
-    function foldOffsets(base, readings, sources) {
+    // The push one key needs, in ramp-cents.
+    //
+    // With the previous round on record - the offset this key was measured
+    // against then, and what it read - the key's own slope is in hand: pitch
+    // gained over CV added between that round and this one.  Dividing the
+    // reading by that is a Newton step on the key itself rather than on the
+    // semitone below it, and near an oscillator's ceiling that is the
+    // difference between one round and three: the step below E5 said 0.58
+    // when the slope at E5 was already 0.5 and falling (2026-09-17).  The
+    // record counts only when the last push was at least MIN_SECANT_STEP -
+    // two readings a few cents apart over a push of five say nothing about a
+    // slope - and only when the pitch moved the way the CV did.  Otherwise,
+    // and on a first round, the step to the neighbours stands in.  A port of
+    // key_delta() in tools/build.py, and it has to stay one.
+    var MIN_SECANT_STEP = 30;
+    function keyDelta(base, readings, n, history) {
+        var r = readings[n];
+        if (history && history.read && history.against &&
+            history.read.hasOwnProperty(n) && history.against.hasOwnProperty(n)) {
+            var pushed = base[n] - history.against[n];      // ramp-cents
+            var gained = r - history.read[n];                // cents of pitch
+            if (Math.abs(pushed) >= MIN_SECANT_STEP && gained / pushed > 0) {
+                return -r / Math.max(GAIN_FLOOR, gained / pushed);
+            }
+        }
+        return -r * octaveWidth(base, n) / measuredGain(readings, n);
+    }
+
+    function foldOffsets(base, readings, sources, history) {
         var out = {}, s;
         for (s in base) if (base.hasOwnProperty(s)) out[s] = base[s];
         var measured = Object.keys(readings).map(Number).sort(function (a, b) { return a - b; });
         if (!measured.length) return out;
         measured.forEach(function (n) {
-            out[n] = base[n] + -readings[n] * octaveWidth(base, n) / measuredGain(readings, n);
+            out[n] = base[n] + keyDelta(base, readings, n, history);
         });
         var highest = measured[measured.length - 1];
-        var tailDelta = -readings[highest] * octaveWidth(base, highest) /
-                        measuredGain(readings, highest);
+        var tailDelta = keyDelta(base, readings, highest, history);
         var tailEnd = null;
         Object.keys(base).map(Number).sort(function (a, b) { return a - b; })
             .forEach(function (n) {
@@ -736,12 +763,12 @@ var BUILDLIB = (function () {
     // they are invented as they always were - zero below, and above the top
     // key the correction keeps climbing at the slope it ended on, which is
     // what the shipped calibration does.
-    function calibrationRows(base, sources, measured, low, high, entries, hasBase) {
+    function calibrationRows(base, sources, measured, low, high, entries, hasBase, history) {
         var readings = {}, n;
         for (n = low; n <= high; n++) {
             if (measured[n]) readings[n] = measured[n];
         }
-        var folded = foldOffsets(base, readings, sources);
+        var folded = foldOffsets(base, readings, sources, history);
         var out = [];
         for (n = 0; n < entries; n++) out.push(folded[n] || 0);
         if (!hasBase) {
@@ -750,6 +777,71 @@ var BUILDLIB = (function () {
             for (n = high + 1; n < entries; n++) out[n] = out[n - 1] + slope;
         }
         return out;
+    }
+
+    // What a saved table records about the round that wrote it, per row: the
+    // reading each key was pushed from and the offset that reading was taken
+    // against - the pair keyDelta() needs next time.  A key heard this round
+    // records this round; a key left alone keeps what the loaded table said
+    // about it; a key moved without being heard - the tail above the top
+    // key, a bridged gap - records nothing, because a slope needs a reading.
+    function historyToSave(base, folded, measured, interpolated, loaded) {
+        var out = { read: {}, against: {} };
+        Object.keys(folded).forEach(function (k) {
+            var n = Number(k);
+            if (measured[n] && !interpolated[n]) {
+                out.read[n] = measured[n];
+                out.against[n] = base[n];
+            } else if (loaded && loaded.read && loaded.against &&
+                       loaded.read.hasOwnProperty(n) && loaded.against.hasOwnProperty(n) &&
+                       folded[n] === base[n]) {
+                out.read[n] = loaded.read[n];
+                out.against[n] = loaded.against[n];
+            }
+        });
+        return out;
+    }
+
+    // A calibration or measurement file, as the page loads one.  Rows are
+    // read by position - Semitone first, the cents fourth, Source fifth -
+    // which is what the page always did; the two record columns are read by
+    // name from the header, since a table written before they existed has
+    // no header for them and loads as it did.
+    function parseCalibration(text, entries) {
+        var rows = {}, sources = {}, history = { read: {}, against: {} };
+        var found = 0, readCol = -1, againstCol = -1;
+        // Split on any line ending: CRLF from Windows, and CR alone, which
+        // Excel can still write.
+        text.split(/\r\n|\r|\n/).forEach(function (line) {
+            if (!line.trim() || line.charAt(0) === '#') return;
+            var semi = line.indexOf(';') >= 0;
+            var q = line.split(semi ? ';' : ',');
+            if (/^Semitone/i.test(line)) {
+                q.forEach(function (name, i) {
+                    if (name.trim() === 'Read_Cents') readCol = i;
+                    if (name.trim() === 'Read_Against') againstCol = i;
+                });
+                return;
+            }
+            function num(raw) {
+                raw = raw || '';
+                // Excel in a comma-decimal locale re-saves a semicolon file
+                // with '12,5' where this wrote '12.5'; parseFloat stops at
+                // the comma and every fraction was silently dropped.
+                if (semi && /^\s*-?\d+,\d+\s*$/.test(raw)) raw = raw.replace(',', '.');
+                return parseFloat(raw);
+            }
+            var n = parseInt(q[0], 10), c = num(q[3]);
+            if (isNaN(n) || isNaN(c) || n < 0 || n >= entries) return;
+            rows[n] = c;
+            sources[n] = (q[4] || '').trim();
+            if (readCol >= 0 && againstCol >= 0) {
+                var rd = num(q[readCol]), ag = num(q[againstCol]);
+                if (!isNaN(rd) && !isNaN(ag)) { history.read[n] = rd; history.against[n] = ag; }
+            }
+            found++;
+        });
+        return { rows: rows, sources: sources, history: history, found: found };
     }
 
     function pitchTable(cfg, rows) {
@@ -1111,8 +1203,9 @@ var BUILDLIB = (function () {
         factoryTuning: factoryTuning,
         tuningTable: tuningTable, anchorOffset: anchorOffset, pressureCurve: pressureCurve,
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
-        octaveWidth: octaveWidth, measuredGain: measuredGain, foldOffsets: foldOffsets,
-        calibrationRows: calibrationRows,
+        octaveWidth: octaveWidth, measuredGain: measuredGain, keyDelta: keyDelta,
+        foldOffsets: foldOffsets, calibrationRows: calibrationRows,
+        historyToSave: historyToSave, parseCalibration: parseCalibration,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
         baseUnits: baseUnits, patternBank: patternBank,

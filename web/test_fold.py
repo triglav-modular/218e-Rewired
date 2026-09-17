@@ -137,18 +137,36 @@ def with_blank_source(text, semitone):
     return "\n".join(out) + "\n"
 
 
-def js_fold(base, sources, meas):
+def js(expr, **args):
+    """Evaluate one expression against buildlib.js with `a` as its input."""
     script = """
     var B = require('%s');
     var a = JSON.parse(process.argv[1]);
-    process.stdout.write(JSON.stringify(B.foldOffsets(a.base, a.meas, a.sources)));
-    """ % (REPO / "web" / "buildlib.js")
-    arg = json.dumps({"base": {str(k): v for k, v in base.items()},
-                      "sources": {str(k): v for k, v in sources.items()},
-                      "meas": {str(k): v for k, v in meas.items()}})
-    out = subprocess.run(["node", "-e", script, "--", arg],
+    process.stdout.write(JSON.stringify(%s));
+    """ % (REPO / "web" / "buildlib.js", expr)
+    out = subprocess.run(["node", "-e", script, "--", json.dumps(args)],
                          capture_output=True, text=True, check=True).stdout
-    return {int(k): v for k, v in json.loads(out).items()}
+    return json.loads(out)
+
+
+def keyed(d):
+    return {int(k): v for k, v in d.items()}
+
+
+def js_fold(base, sources, meas, history=None):
+    got = js("B.foldOffsets(a.base, a.meas, a.sources, a.history)",
+             base={str(k): v for k, v in base.items()},
+             sources={str(k): v for k, v in sources.items()},
+             meas={str(k): v for k, v in meas.items()},
+             history=history and {"read": {str(k): v for k, v in history[0].items()},
+                                  "against": {str(k): v for k, v in history[1].items()}})
+    return keyed(got)
+
+
+def js_history(text):
+    """What the page's parser reads back as the record: (read, against)."""
+    h = js("B.parseCalibration(a.text, 79).history", text=text)
+    return keyed(h["read"]), keyed(h["against"])
 
 
 def main():
@@ -352,6 +370,119 @@ def main():
         print("FAIL  with no table loaded the rows below the bottom key are not zero")
         return 1
     print("ok    with no table loaded those rows are invented instead")
+
+    # --- a second round uses the key's own slope -------------------------
+    # An oscillator that sits a steady 0.3 cents sharp up to semitone 55 and
+    # above it gives 0.6 cents of pitch per ramp-cent of CV, sagging 40 cents
+    # a key on the baseline.  Linear on purpose: on a linear response the
+    # secant through two rounds IS the slope, so the second round has to land
+    # exactly, and anything short of exact is a wrong slope, a wrong record,
+    # or the two toolchains disagreeing about either.  The 0.3 rather than 0
+    # is because a reading of exactly zero is "not measured" to the page, and
+    # a key it did not measure it does not record.
+    S = 0.6
+
+    def sag_of(n):
+        return 0.0 if n <= 55 else 40.0 * (n - 55)
+
+    def plays(table):
+        return {n: (-sag_of(n) + S * (table[n] - base[n]) if n > 55 else 0.3)
+                for n in range(LOW, HIGH + 1)}
+
+    r1 = plays(base)
+    with tempfile.TemporaryDirectory() as tmp:
+        cal = Path(tmp) / "rounds.csv"
+        cal.write_text(BASELINE.read_text())
+        m1 = Path(tmp) / "m1.csv"
+        m1.write_text("Semitone;Measured_Cents\n" +
+                      "".join(f"{s};{c:.6f}\n" for s, c in sorted(r1.items())))
+        B.fold_measurement({"pitch": {"bottom_key_semitone": LOW}}, cal, m1)
+        t1_py = B.read_calibration(cal)
+        h1_py = B.read_calibration_history(cal)
+        round1_text = cal.read_text()
+
+        t1 = js_fold(base, sources, r1)
+        meas_list = [0.0] * ENTRIES
+        for s_, c in r1.items():
+            meas_list[s_] = c
+        h1 = js("B.historyToSave(a.base, a.folded, a.measured, {}, null)",
+                base={str(k): v for k, v in base.items()},
+                folded={str(k): v for k, v in t1.items()}, measured=meas_list)
+        h1 = (keyed(h1["read"]), keyed(h1["against"]))
+        if max(abs(t1_py[n] - t1[n]) for n in t1) > 1e-6:
+            print("FAIL  round one: the two toolchains disagree")
+            return 1
+        # What the CLI wrote into the file, what the page would have written,
+        # and what the page reads back from the CLI's file: one record.
+        if h1_py != h1 or js_history(round1_text) != h1:
+            print("FAIL  the record of round one differs between writer, page and reader")
+            print(f"      cli {sorted(h1_py[0].items())[:3]}.. page {sorted(h1[0].items())[:3]}..")
+            return 1
+        if set(h1[0]) != set(range(LOW, HIGH + 1)):
+            print(f"FAIL  round one recorded the wrong keys: {sorted(h1[0])[:8]}")
+            return 1
+        print("ok    round one is recorded the same by the CLI, the page and the page's reader")
+
+        # Round two starts from the file, on both sides: that is what gets
+        # flashed, and what the page loads back, six decimals and all.
+        r2 = plays(t1_py)
+        if max(abs(v) for v in r2.values()) < 5:
+            print("FAIL  the model left round one nearly right - nothing for round two to prove")
+            return 1
+        m2 = Path(tmp) / "m2.csv"
+        m2.write_text("Semitone;Measured_Cents\n" +
+                      "".join(f"{s};{c:.6f}\n" for s, c in sorted(r2.items())))
+        B.fold_measurement({"pitch": {"bottom_key_semitone": LOW}}, cal, m2)
+        t2_py = B.read_calibration(cal)
+    t2 = js_fold(t1_py, sources, r2, h1_py)
+    worst = max(abs(t2_py[n] - t2[n]) for n in t2)
+    # Two files deep now, so two roundings to six decimals stack: a value
+    # that lands on a half-ulp after the first can round the other way after
+    # the second.  Two ulps of the file is still ten thousand times finer
+    # than the DAC step.
+    if worst > 2e-6:
+        where = max(t2, key=lambda n: abs(t2_py[n] - t2[n]))
+        print(f"FAIL  round two: the two toolchains disagree by {worst:g} at {where}")
+        return 1
+    r3 = plays(t2)
+    left = max(abs(r3[n]) for n in range(56, HIGH + 1))
+    if left > 1e-6:
+        where = max(range(56, HIGH + 1), key=lambda n: abs(r3[n]))
+        print(f"FAIL  round two left {left:g} cents at semitone {where} - "
+              f"the key's own slope was not used (round one left {abs(r2[where]):.1f})")
+        return 1
+    print(f"ok    a second round lands on the key's own slope (within {left:g} cents, "
+          f"from {max(abs(v) for v in r2.values()):.0f})")
+
+    # The record counts only when it can say something: a push under 30
+    # ramp-cents, or a pitch that moved against the CV, falls back to the
+    # step between neighbours - identically in both toolchains.
+    n = 67
+    fallback = -meas[n] * B.octave_width_volts(base, n) / B.measured_gain(meas, n)
+    cases = {
+        "a push of 10": ({n: -50.0}, {n: base[n] - 10.0}, fallback),
+        "pitch that fell as CV rose": ({n: meas[n] + 5.0}, {n: base[n] - 78.0}, fallback),
+        "a push of 78 that gained 40": ({n: meas[n] - 40.0}, {n: base[n] - 78.0},
+                                        -meas[n] / (40.0 / 78.0)),
+        "a key at the ceiling": ({n: meas[n] - 2.0}, {n: base[n] - 78.0},
+                                 -meas[n] / 0.25),
+    }
+    for name, (read, against, want_delta) in cases.items():
+        py = B.key_delta(base, meas, n, (read, against))
+        pg = js("B.keyDelta(a.base, a.meas, a.n, a.history)",
+                base={str(k): v for k, v in base.items()},
+                meas={str(k): v for k, v in meas.items()}, n=n,
+                history={"read": {str(n): read[n]}, "against": {str(n): against[n]}})
+        if abs(py - want_delta) > 1e-9 or abs(pg - want_delta) > 1e-9:
+            print(f"FAIL  {name}: cli {py:.4f}, page {pg:.4f}, expected {want_delta:.4f}")
+            return 1
+    print("ok    the record is used only when it can say something, alike in both")
+
+    # A table written before the record existed reads as one with none.
+    if js_history(BASELINE.read_text()) != ({}, {}):
+        print("FAIL  the page read a record out of a table that has none")
+        return 1
+    print("ok    a table without the record columns loads as before")
 
     print("ALL FOLD TESTS PASSED")
     return 0
