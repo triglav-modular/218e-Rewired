@@ -768,6 +768,36 @@ def octave_width_volts(offsets: dict[int, float], semitone: int) -> float:
     return volts * 12.0 / span
 
 
+# A key at the oscillator's ceiling steps by nothing, and a step of nothing
+# would make its correction infinite.  A quarter of a semitone quadruples it
+# at most, which is as far as one pass should go on the say-so of two readings.
+GAIN_FLOOR = 0.25
+
+
+def measured_gain(readings: dict[int, float], semitone: int) -> float:
+    """How much pitch the oscillator gave for the semitone the table asked for.
+
+    The step the readings show to each measured neighbour, over the 100 cents
+    the table meant by it: 1.0 tracks, 0.6 gives 60 cents for the semitone.
+    The correction is divided by it.  Without that the fold assumed 100 cents
+    of CV would answer with 100 cents of pitch, which is what stops being true
+    at the top of a 208's range - a replaced expo converter (2026-09-17) gave
+    146 cents for 240 of CV at the top key, so every pass recovered ~60% of
+    what was left and less as the ceiling came closer.  Dividing by the step
+    the sweep already measured is a Newton step on that secant; where tracking
+    is normal it is 1 to within the noise of two readings.  The page's
+    measuredGain() in web/buildlib.js is a port of this, and has to stay one.
+    """
+    steps = []
+    if semitone + 1 in readings:
+        steps.append(100.0 + readings[semitone + 1] - readings[semitone])
+    if semitone - 1 in readings:
+        steps.append(100.0 + readings[semitone] - readings[semitone - 1])
+    if not steps:
+        return 1.0
+    return max(GAIN_FLOOR, sum(steps) / len(steps) / 100.0)
+
+
 def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     """Fold fresh tuner readings into the calibration table.
 
@@ -811,7 +841,8 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     # measured row the reading never reached holds THAT row's correction,
     # and a partial sweep of the lower keys used to drag it anyway.
     highest = max(updates)
-    tail_delta = -updates[highest] * octave_width_volts(offsets, highest)
+    tail_delta = (-updates[highest] * octave_width_volts(offsets, highest)
+                  / measured_gain(updates, highest))
 
     text = read_lines(calibration)
     # The reader detects the delimiter and reads columns by header name; the
@@ -856,8 +887,10 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         semitone = int(parts[0])
         if semitone in updates:
             error = updates[semitone]
-            # a sharp note needs less voltage, scaled by the local octave width
-            delta = -error * octave_width_volts(offsets, semitone)
+            # a sharp note needs less voltage, scaled by the local octave
+            # width, and by how much pitch this oscillator gives for it
+            delta = (-error * octave_width_volts(offsets, semitone)
+                     / measured_gain(updates, semitone))
             parts[cents_col] = f"{offsets[semitone] + delta:.6f}"
             parts[source_col] = "measured"
             applied += 1

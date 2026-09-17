@@ -67,11 +67,35 @@ def js_rows(base, sources, measured, has_base):
                                      capture_output=True, text=True, check=True).stdout)
 
 
+def uniform():
+    """Readings that step exactly a semitone apart: the oscillator tracks.
+
+    The fold divides each correction by the pitch step the readings show
+    between neighbours, so only readings with no step error at all reduce it
+    to exactly minus the reading.  These are the readings the exactness checks
+    use; the smooth fixture above has steps a few cents off and is checked
+    against the rule instead.
+    """
+    return {s: 4.2 for s in range(LOW, HIGH + 1)}
+
+
+def gain_of(meas, n):
+    """The rule, restated: the mean step to each measured neighbour over 100,
+    floored at a quarter."""
+    steps = []
+    if n + 1 in meas:
+        steps.append(100.0 + meas[n + 1] - meas[n])
+    if n - 1 in meas:
+        steps.append(100.0 + meas[n] - meas[n - 1])
+    return max(0.25, sum(steps) / len(steps) / 100.0) if steps else 1.0
+
+
 def rows_before_the_fold(measured):
     """What the page built before it could accumulate, lifted from that version.
 
-    A first calibration - no table loaded - has to keep producing exactly this,
-    because it is what everyone who is not doing a second round still does.
+    A first calibration - no table loaded - has to keep producing exactly this
+    for readings the oscillator tracked, because it is what everyone who is
+    not doing a second round still does.
     """
     full = [-v for v in measured]
     for n in range(LOW - 1, -1, -1):
@@ -217,12 +241,64 @@ def main():
     # cent - a scaling that was actually wrong would miss by percent.
     flat = {n: 0.0 for n in range(79)}
     flat_src = {n: "measured" for n in range(79)}
-    got = js_fold(flat, flat_src, meas)
-    off = max(abs(got[s] - -meas[s]) for s in meas)
+    even = uniform()
+    got = js_fold(flat, flat_src, even)
+    off = max(abs(got[s] - -even[s]) for s in even)
     if off > 1e-12:
         print(f"FAIL  on a flat table the fold is not minus the reading: off by {off:g}")
         return 1
     print(f"ok    on a flat table the fold is minus the reading (within {off:g})")
+    # And with steps a few cents off, minus the reading over the measured step.
+    got = js_fold(flat, flat_src, meas)
+    off = max(abs(got[s] - -meas[s] / gain_of(meas, s)) for s in meas)
+    if off > 1e-12:
+        print(f"FAIL  on a flat table the fold is not the reading over its step: off by {off:g}")
+        return 1
+    print(f"ok    and over the measured step when the steps are off (within {off:g})")
+
+    # --- an oscillator that compresses at the top ------------------------
+    # The case the gain exists for: from semitone 56 up every semitone asked
+    # for comes back as 60 cents, so the readings fall 40 cents per key.  The
+    # old fold pushed each key by its error and got 60% of it back per pass;
+    # this one pushes by the error over the step, in both toolchains alike.
+    sag = {s: 0.0 if s <= 55 else -40.0 * (s - 55) for s in range(LOW, HIGH + 1)}
+    want = python_fold(BASELINE, sag)
+    got = js_fold(base, sources, sag)
+    worst = max(abs(want[s] - got[s]) for s in want)
+    if worst > 1e-6:
+        where = max(want, key=lambda s: abs(want[s] - got[s]))
+        print(f"FAIL  on a compressing oscillator the two disagree by {worst:g} at {where}")
+        return 1
+    for s in (60, 67):
+        expect = base[s] - sag[s] * B.octave_width_volts(base, s) / 0.6
+        if abs(got[s] - expect) > 1e-9:
+            print(f"FAIL  semitone {s}: correction {got[s] - base[s]:.3f}, "
+                  f"expected the error over a 0.6 step, {expect - base[s]:.3f}")
+            return 1
+    if abs((got[55] - base[55]) - 0.0) > 1e-9:
+        print(f"FAIL  a key that read exactly right was moved by {got[55] - base[55]:g}")
+        return 1
+    print("ok    a compressing top is pushed by the error over the measured step, "
+          "in both toolchains")
+
+    # A key at the ceiling steps by nothing.  The floor keeps that finite and
+    # no more than four times the error; without it this is a division by
+    # zero on the page and a ZeroDivisionError in the CLI.
+    capped = dict(sag)
+    for s in range(63, HIGH + 1):
+        capped[s] = capped[62] - 100.0 * (s - 62)      # pitch stops rising
+    want = python_fold(BASELINE, capped)
+    got = js_fold(base, sources, capped)
+    worst = max(abs(want[s] - got[s]) for s in want)
+    if worst > 1e-6:
+        print(f"FAIL  at the ceiling the two disagree by {worst:g}")
+        return 1
+    expect = base[HIGH] - capped[HIGH] * B.octave_width_volts(base, HIGH) / 0.25
+    if not all(abs(got[s]) < 1e6 for s in got) or abs(got[HIGH] - expect) > 1e-9:
+        print(f"FAIL  at the ceiling the correction is not floored at four times: "
+              f"{got[HIGH] - base[HIGH]:.3f} vs {expect - base[HIGH]:.3f}")
+        return 1
+    print("ok    a key at the ceiling is pushed by at most four times its error")
 
     # calibrationRows() is what every build on the page goes through, so the
     # first calibration - the common case, and the one nobody is watching -
@@ -230,10 +306,13 @@ def main():
     measured = [0.0] * ENTRIES
     for s, c in meas.items():
         measured[s] = c
+    even_measured = [0.0] * ENTRIES
+    for s, c in uniform().items():
+        even_measured[s] = c
     flat = {n: 0.0 for n in range(ENTRIES)}
     flat_src = {n: "measured" for n in range(ENTRIES)}
-    got = js_rows(flat, flat_src, measured, False)
-    want = rows_before_the_fold(measured)
+    got = js_rows(flat, flat_src, even_measured, False)
+    want = rows_before_the_fold(even_measured)
     worst = max(abs(a - b) for a, b in zip(want, got))
     if worst > 1e-12:
         bad = [i for i, (a, b) in enumerate(zip(want, got)) if abs(a - b) > 1e-12]

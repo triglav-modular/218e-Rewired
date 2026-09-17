@@ -667,16 +667,48 @@ var BUILDLIB = (function () {
     // Corrections accumulate, because the instrument being measured is already
     // applying `base`.  This is fold_measurement() in tools/build.py, minus its
     // CSV rewriting, and web/test_fold.py pins the two together.
+    // How much pitch the oscillator gave for the semitone the table asked
+    // for, around one key: the step the readings show to each measured
+    // neighbour, over the 100 cents the table meant by it.  1.0 is an
+    // oscillator that tracks; 0.6 is one giving 60 cents for the semitone.
+    //
+    // The correction is divided by it.  Without that the fold assumed the
+    // oscillator would answer 100 cents of CV with 100 cents of pitch, which
+    // is what stops being true at the top of a 208's range: a replaced expo
+    // converter (2026-09-17) gave 146 cents for 240 of CV at the top key, so
+    // each pass recovered ~60% of what was left and less as the ceiling came
+    // closer - four or five sweep-build-flash rounds for what one should do.
+    // Dividing by the measured step is a Newton step on the secant the sweep
+    // already measured; where tracking is normal it is 1 to within the noise
+    // of two readings and changes nothing.  A port of measured_gain() in
+    // tools/build.py, and it has to stay one.
+    //
+    // Floored: a key at the oscillator's ceiling steps by nothing, and a
+    // step of nothing would make the correction infinite.  A quarter of a
+    // semitone quadruples it at most, which is as far as one pass should go
+    // on the say-so of two readings.
+    var GAIN_FLOOR = 0.25;
+    function measuredGain(readings, n) {
+        var steps = [];
+        if (readings.hasOwnProperty(n + 1)) steps.push(100 + readings[n + 1] - readings[n]);
+        if (readings.hasOwnProperty(n - 1)) steps.push(100 + readings[n] - readings[n - 1]);
+        if (!steps.length) return 1.0;
+        var sum = 0;
+        steps.forEach(function (st) { sum += st; });
+        return Math.max(GAIN_FLOOR, sum / steps.length / 100);
+    }
+
     function foldOffsets(base, readings, sources) {
         var out = {}, s;
         for (s in base) if (base.hasOwnProperty(s)) out[s] = base[s];
         var measured = Object.keys(readings).map(Number).sort(function (a, b) { return a - b; });
         if (!measured.length) return out;
         measured.forEach(function (n) {
-            out[n] = base[n] + -readings[n] * octaveWidth(base, n);
+            out[n] = base[n] + -readings[n] * octaveWidth(base, n) / measuredGain(readings, n);
         });
         var highest = measured[measured.length - 1];
-        var tailDelta = -readings[highest] * octaveWidth(base, highest);
+        var tailDelta = -readings[highest] * octaveWidth(base, highest) /
+                        measuredGain(readings, highest);
         var tailEnd = null;
         Object.keys(base).map(Number).sort(function (a, b) { return a - b; })
             .forEach(function (n) {
@@ -1079,7 +1111,7 @@ var BUILDLIB = (function () {
         factoryTuning: factoryTuning,
         tuningTable: tuningTable, anchorOffset: anchorOffset, pressureCurve: pressureCurve,
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
-        octaveWidth: octaveWidth, foldOffsets: foldOffsets,
+        octaveWidth: octaveWidth, measuredGain: measuredGain, foldOffsets: foldOffsets,
         calibrationRows: calibrationRows,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
