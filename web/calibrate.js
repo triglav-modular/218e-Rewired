@@ -227,6 +227,12 @@
     // 0.00; every note after it was correctly rejected, and the run was still
     // sixty-five notes long.
     var MIN_CLARITY = 0.55, MIN_RMS = 0.002;
+    // How far either side of the expected pitch a note is looked for, and so
+    // how far out a reading can be and still be a reading.  Wide enough that
+    // a tracking error is found and narrow enough that the fifth above (702
+    // cents) and the octave are not: those are the partials a 208's waveform
+    // offers, and the estimator picks the one in the band.
+    var SEARCH_CENTS = 300;
     function heard(r) {
         return !!(r && r.ok && r.clarity >= MIN_CLARITY && r.rms >= MIN_RMS);
     }
@@ -550,8 +556,8 @@
             await sleep(SETTLE_MS + fill);
             analyser.getFloatTimeDomainData(buf);
             release();
-            var lo = expectHz ? expectHz * Math.pow(2, -3 / 12) : 18;
-            var hi = expectHz ? expectHz * Math.pow(2, 3 / 12) : 6000;
+            var lo = expectHz ? expectHz * Math.pow(2, -SEARCH_CENTS / 1200) : 18;
+            var hi = expectHz ? expectHz * Math.pow(2, SEARCH_CENTS / 1200) : 6000;
             var whole = measure(buf, rate, lo, hi);
             if (!whole.ok) { note_log(note, ch, what, expectHz, whole, null, null); return whole; }
             // Did it hold still while it was being measured?  The two halves
@@ -586,7 +592,11 @@
                 hz: r && r.ok ? r.hz : null,
                 firstHalfHz: firstHalf && firstHalf.ok ? firstHalf.hz : null,
                 secondHalfHz: secondHalf && secondHalf.ok ? secondHalf.hz : null,
-                halfDrift: r ? r.drift : null,
+                // measure() sets no drift on a note it could not read, and
+                // the CSV writer tests for null: undefined reached .toFixed
+                // and the download button did nothing, for any run with a
+                // note that was not heard.
+                halfDrift: (r && r.drift !== undefined) ? r.drift : null,
                 clarity: r && r.ok ? r.clarity : null,
                 rms: r ? r.rms : null,
                 why: r && r.ok ? '' : (r ? r.why : 'not measured')
@@ -599,6 +609,25 @@
         var log = [], t0 = Date.now();
         var previous = null;
         try {
+            // Is anything coming in at all?  The 208 is droning before the
+            // first note goes out - that is what the guide asks for - so an
+            // input with nothing on it is known before MIDI is touched.
+            // Without this the probe played thirty-two notes into a silent
+            // channel and then blamed the keyboard: a sweep listening on
+            // channel 1 of a desk with the 208 on channel 2 heard bleed at
+            // level 0.0013, under the 0.002 a note needs, and reported that
+            // no MIDI channel moved the pitch.
+            await sleep(fill);
+            analyser.getFloatTimeDomainData(buf);
+            var idle = measure(buf, rate, 18, 6000);
+            if (idle.rms < MIN_RMS) {
+                throw new Error('Nothing usable is coming in on audio channel ' +
+                    (want + 1) + ' of the chosen input: level ' + idle.rms.toFixed(4) +
+                    ', where a note needs ' + MIN_RMS.toFixed(4) + '. The 208 should ' +
+                    'be droning into that channel before the sweep starts. Check the ' +
+                    'cable and the channel\u2019s level.');
+            }
+
             // Which channel the instrument is listening on.  There is no way
             // to ask it, so this plays two notes two octaves apart and watches
             // for the pitch to move: on the wrong channel nothing is heard and
@@ -723,19 +752,26 @@
                         previous.hz.toFixed(2) + ' Hz then ' + got.hz.toFixed(2) +
                         ' Hz) - the note did not take');
                 }
-                // A reading more than a semitone out is not a tracking error,
-                // it is the wrong note: an alternate tuning is selected, or a
-                // note was missed.  Recorded as blank and reported, rather
-                // than folded in as if it were a measurement.
+                // A reading anywhere in the band that was searched is a
+                // reading.  This used to stop at 120 cents on the argument
+                // that more than a semitone out is the wrong note rather than
+                // a tracking error - but a wrong note is caught by the
+                // backwards check below, and a real 208 does read that far
+                // out: a replaced expo converter came back 129 and 138 cents
+                // flat at the top two keys (2026-09-17), clarity 1.00, on top
+                // of a table already carrying +180 there, and the guard threw
+                // away exactly the two readings the recalibration was for.
+                // Beyond the band nothing is found at all, so this is a
+                // safety net for a reference that moved between the search
+                // and the reading, not a judgement about the instrument.
                 //
-                // A note that did not take is blanked on the same grounds and
-                // not on its size.  It lands about 100 cents out - just inside
-                // the 120 the threshold allows - so warning about it and then
-                // keeping it wrote a +100 cent correction into the table, one
-                // or two DAC counts clear of its neighbour, past the collision
-                // guard and past validateCal, and shipped a semitone playing
-                // very nearly its neighbour's pitch.
-                if (Math.abs(off) > 120 || backwards) {
+                // A note that did not take is blanked on its shape and not on
+                // its size.  It lands about 100 cents out, so warning about it
+                // and then keeping it wrote a +100 cent correction into the
+                // table, one or two DAC counts clear of its neighbour, past
+                // the collision guard and past validateCal, and shipped a
+                // semitone playing very nearly its neighbour's pitch.
+                if (Math.abs(off) > SEARCH_CENTS || backwards) {
                     if (!backwards) {
                         warnings.push(noteLabel(step.index) + ': ' + off.toFixed(0) +
                                       ' cents out, ignored');

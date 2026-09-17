@@ -35,6 +35,7 @@ function makeWorld(opts) {
         listening: opts.listening,          // the MIDI channel it answers on
         connected: opts.connected !== false,
         error: opts.error || 0,             // cents of tracking error, uniform
+        errorAt: opts.errorAt || {},        // ...except at these notes
         noiseOnly: !!opts.noiseOnly,        // hears the room, not the 208
         // Notes that make no sound at all - a dropout.  The oscillator is
         // silent while they are held, and sounds again on the next note.
@@ -42,8 +43,11 @@ function makeWorld(opts) {
         // Notes the instrument ignores - the note-on never takes, so the
         // drone holds whatever it was already playing.  This is the shape
         // that used to be warned about and then folded in at about -100
-        // cents, because -100 is inside the +/-120 the threshold allows.
+        // cents, because -100 was inside the 120 the guard then allowed.
         deaf: opts.deaf || {},
+        // Nothing on the audio input at all - the 208 patched into a
+        // different channel of the desk than the one being listened to.
+        silent: !!opts.silent,
         // What the audio interface really has, against what an "ideal"
         // request negotiates out of it.  A desk that hands over two for
         // "ideal" and twelve for "exact: 12" is the Model 12 shape.
@@ -63,7 +67,8 @@ function makeWorld(opts) {
                 w.notesOn++;
                 if (ch === w.listening) {
                     if (!w.deaf[note]) {
-                        w.hz = 32.703 * Math.pow(2, (note - 24 + w.error / 100) / 12);
+                        var e = w.errorAt[note] !== undefined ? w.errorAt[note] : w.error;
+                        w.hz = 32.703 * Math.pow(2, (note - 24 + e / 100) / 12);
                     }
                     w.quiet = !!w.mute[note];
                 }
@@ -132,7 +137,7 @@ function load(w) {
                             ? 0.02 * Math.sin(2*Math.PI*1554*i/RATE +
                                               3*Math.sin(2*Math.PI*7*i/RATE))
                               + 0.02 * (rnd() - 0.5)
-                            : w.quiet
+                            : (w.quiet || w.silent)
                             // A dropout is not silence on the wire, it is a
                             // level the sweep must refuse to read: this sits
                             // an order of magnitude under MIN_RMS.
@@ -268,8 +273,8 @@ function noteForEntry(entry) {
 
     // --- a note that did not take is blank, not a -100 cent reading ------
     // The instrument ignores one note-on, so the drone holds the note before
-    // it.  That reads about a semitone flat - just inside the +/-120 the
-    // threshold allows - so it used to be warned about and then kept, and
+    // it.  That reads about a semitone flat - inside the 120 the guard then
+    // allowed - so it used to be warned about and then kept, and
     // rows() negated it into a +100 cent correction one or two DAC counts
     // clear of its neighbour: past the collision guard, past validateCal, and
     // into an image with a semitone playing very nearly its neighbour's pitch.
@@ -375,6 +380,61 @@ function noteForEntry(entry) {
        !!err && /No MIDI channel moved the pitch/.test(err.message) &&
        /listening on channel 12 of that input/.test(err.message),
        err ? err.message : 'it ran to the end');
+
+    // --- a real instrument reads past a semitone out -------------------
+    // A replaced expo converter came back 129 and 138 cents flat at the top
+    // two keys, clarity 1.00, and the 120 cent guard threw both away - the
+    // two readings the recalibration was for.  Anything found inside the
+    // band the estimator searched is a reading.
+    // The tail of that run, as logged: the sag grows through the top octave,
+    // so every note still rises and none of them is a note that did not take.
+    var sag = {};
+    [[59, -54], [60, -64], [61, -74], [62, -85], [63, -98], [64, -106],
+     [65, -117], [66, -129], [67, -138]].forEach(function (p) {
+        sag[noteForEntry(p[0])] = p[1];
+    });
+    w = makeWorld({ listening: 0, errorAt: sag });
+    out = await sweep(w, { channel: 0 });
+    var top = out.readings.filter(function (r) { return r.index >= 66; });
+    ok('the top two keys, 129 and 138 cents flat, are kept',
+       top.length === 2 && top.every(function (r) { return r.cents !== null; }),
+       out.warnings.join(' | ') || 'no warnings');
+    ok('and read at their size', top.length === 2 &&
+       Math.abs(top[0].cents + 129) < 3 && Math.abs(top[1].cents + 138) < 3,
+       top.map(function (r) { return r.cents === null ? 'blank' : r.cents.toFixed(1); }).join(','));
+
+    // --- an input with nothing on it is an audio fault -------------------
+    // The sweep listened on channel 1 of a desk with the 208 on channel 2,
+    // heard bleed at level 0.0013, played thirty-two notes into it and then
+    // reported that no MIDI channel moved the pitch.
+    w = makeWorld({ listening: 0, silent: true });
+    err = null;
+    try { await sweep(w, { channel: null, audioChannel: 0, high: 10 }); } catch (e) { err = e; }
+    ok('a silent audio input stops the sweep', !!err, err ? '' : 'it ran');
+    ok('and is named as the audio, not MIDI',
+       !!err && /Nothing usable is coming in on audio channel 1/.test(err.message),
+       err ? err.message : '');
+    ok('and says the level heard and the level needed',
+       !!err && /level 0\.000\d, where a note needs 0\.0020/.test(err.message));
+    ok('and no note was played first', w.sent.length === 0, w.sent.length + ' sent');
+
+    // --- the log carries a note the estimator could not read -------------
+    // A note that sounds outside the band searched - here 900 cents flat,
+    // which a run anchored three octaves up logged as "no pitch found" from
+    // 2.9 kHz upward - is measured as nothing.  The CSV writer tests each
+    // field for null; the drift of such a row was undefined, and the
+    // Download button died on .toFixed for any run with one in it.
+    var gap = {}; gap[noteForEntry(12)] = -900;
+    w = makeWorld({ listening: 0, errorAt: gap });
+    out = await sweep(w, { channel: 0, high: 14 });
+    var unread = out.log.filter(function (r) { return r.hz === null; });
+    ok('an unread note is in the log', unread.length > 0);
+    ok('with every field null rather than undefined',
+       unread.every(function (r) {
+           return ['hz', 'firstHalfHz', 'secondHalfHz', 'halfDrift', 'clarity']
+               .every(function (k) { return r[k] === null; });
+       }),
+       unread.length ? JSON.stringify(unread[0]) : '');
 
     console.log(failures ? ('FAILED ' + failures) : 'ALL SWEEP DRIVER TESTS PASSED');
     if (failures) process.exit(1);
