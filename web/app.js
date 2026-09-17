@@ -1726,7 +1726,7 @@
                      '  ' + stock + '   the stock image you uploaded',
                      '  SHA-256  ' + GEN.factorySha256, ''])
             .concat(calibrationInBuild() ? [
-                     '  ' + where.replace(/[^/]+$/, CAL_CSV_NAME) +
+                     '  ' + CAL_CSV_NAME +
                      '   the pitch table this image applies',
                      '  Keep it with the image. Load it back into the builder',
                      '  before measuring again, so the next set of readings adds',
@@ -1867,15 +1867,17 @@
                 var floor = new Date(Date.now() - 4000);
                 var stockDate = state.factoryMtime || floor;
                 if (stockDate > floor) stockDate = floor;
-                // The table goes in the folder the image is in, because that
-                // is the only place it means anything: it describes what this
+                // The table travels in the kit because it describes what this
                 // image applies, and the next round of measuring has to load
                 // it back or it starts from an instrument it is not looking at.
                 // Saving it was a separate button nobody had a reason to press
                 // until a second calibration, by which time it was too late.
+                // It sits at the root, beside the README and the flash log the
+                // flasher writes there, not in the firmware folder: the
+                // owner's call (2026-09-17), so the record of what was flashed
+                // and the table it was flashed with are found together.
                 var cal = calibrationInBuild()
-                    ? [{ name: built.replace(/[^/]+$/, CAL_CSV_NAME),
-                         data: calibrationCsv() }]
+                    ? [{ name: CAL_CSV_NAME, data: calibrationCsv() }]
                     : [];
                 var files = [{ name: built, data: r.hex },
                              { name: stock, data: state.factoryText,
