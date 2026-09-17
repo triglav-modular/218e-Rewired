@@ -717,9 +717,13 @@
     // where the octave width is exactly 1.000 and the fold reduces to minus
     // the reading - so an ordinary first calibration builds exactly what it
     // always did.
-    var baseline = {}, baselineSources = {}, baselineName = '';
+    // baselineHistory is what the loaded table recorded about the round
+    // that wrote it - per key, the reading it was pushed from and the offset
+    // that reading was taken against - which gives the next fold the key's
+    // own slope.  Null for a table written before it recorded anything.
+    var baseline = {}, baselineSources = {}, baselineName = '', baselineHistory = null;
     function clearBaseline() {
-        baseline = {}; baselineSources = {}; baselineName = '';
+        baseline = {}; baselineSources = {}; baselineName = ''; baselineHistory = null;
         for (var n = 0; n < TABLE_ENTRIES; n++) baseline[n] = 0;
     }
     clearBaseline();
@@ -856,7 +860,7 @@
     function rows() {
         return BUILDLIB.calibrationRows(baseline, baselineSources, measured,
                                         PLAYABLE_LOW, PLAYABLE_HIGH, TABLE_ENTRIES,
-                                        haveBaseline())
+                                        haveBaseline(), baselineHistory)
             .map(function (v, i) { return { semitone: i, cents: v }; });
     }
 
@@ -900,6 +904,13 @@
     // reads it directly.
     function calibrationCsv() {
         var full = rows();
+        var folded = {};
+        full.forEach(function (r) { folded[r.semitone] = r.cents; });
+        var record = BUILDLIB.historyToSave(baseline, folded, measured, interpolated,
+                                            baselineHistory);
+        function cell(map, n) {
+            return map.hasOwnProperty(n) ? map[n].toFixed(6) : '';
+        }
         var out = [
             '# 218e pitch calibration, saved from the Rewired firmware builder.',
             '#',
@@ -915,7 +926,11 @@
             '#',
             '# Semitone counts up from the 208\'s 0 V pitch; the lowest C on the',
             '# keyboard is semitone ' + PLAYABLE_LOW + '.',
-            'Semitone;Note;Key;Offset_Cents;Source'
+            '#',
+            '# Read_Cents and Read_Against are what each key read in the round that',
+            '# wrote this table, and the offset it was read against.  The next round',
+            '# reads them back.  Leave them as they are.',
+            'Semitone;Note;Key;Offset_Cents;Source;Read_Cents;Read_Against'
         ];
         for (var n = 0; n < TABLE_ENTRIES; n++) {
             var src = interpolated[n] ? 'interpolated'
@@ -923,7 +938,8 @@
                     : (baselineSources[n] || (n < PLAYABLE_LOW ? 'octave'
                        : n > PLAYABLE_HIGH ? 'extrapolated' : 'measured'));
             out.push([n, noteNames()[n % 12], keyLabel(n),
-                      full[n].cents.toFixed(6), src].join(';'));
+                      full[n].cents.toFixed(6), src,
+                      cell(record.read, n), cell(record.against, n)].join(';'));
         }
         return out.join('\n') + '\n';
     }
@@ -961,24 +977,11 @@
             // had never happened.
             var isCorrection = /Offset_Cents/i.test(r.result);
             var clearedReadings = false;
-            var rowsIn = {}, sources = {}, found = 0;
-            // Split on any line ending: CRLF from Windows, and CR alone,
-            // which Excel can still write.
-            r.result.split(/\r\n|\r|\n/).forEach(function (line) {
-                if (!line.trim() || line.charAt(0) === '#' || /^Semitone/i.test(line)) return;
-                var semi = line.indexOf(';') >= 0;
-                var q = line.split(semi ? ';' : ',');
-                var cRaw = q[3] || '';
-                // Excel in a comma-decimal locale re-saves a semicolon file
-                // with '12,5' where this wrote '12.5'; parseFloat stops at the
-                // comma and every fraction was silently dropped.
-                if (semi && /^\s*-?\d+,\d+\s*$/.test(cRaw)) cRaw = cRaw.replace(',', '.');
-                var n = parseInt(q[0], 10), c = parseFloat(cRaw);
-                if (isNaN(n) || isNaN(c) || n < 0 || n >= TABLE_ENTRIES) return;
-                rowsIn[n] = c;
-                sources[n] = (q[4] || '').trim();
-                found++;
-            });
+            // The parsing lives in buildlib so a test can reach it; the
+            // record columns it reads are what gives the fold a key's own
+            // slope on a second round.
+            var parsed = BUILDLIB.parseCalibration(r.result, TABLE_ENTRIES);
+            var rowsIn = parsed.rows, sources = parsed.sources, found = parsed.found;
 
             if (!found) {
                 msg($('calMsg'), 'bad', 'No usable rows in ' + f.name + ': expected ' +
@@ -1005,6 +1008,7 @@
                 baseline = rowsIn;
                 baselineSources = sources;
                 baselineName = f.name;
+                baselineHistory = parsed.history;
                 var had = measured.some(function (v) { return v !== 0; });
                 measured = measured.map(function () { return 0; });
                 interpolated = {};
@@ -1726,7 +1730,7 @@
                      '  ' + stock + '   the stock image you uploaded',
                      '  SHA-256  ' + GEN.factorySha256, ''])
             .concat(calibrationInBuild() ? [
-                     '  ' + where.replace(/[^/]+$/, CAL_CSV_NAME) +
+                     '  ' + CAL_CSV_NAME +
                      '   the pitch table this image applies',
                      '  Keep it with the image. Load it back into the builder',
                      '  before measuring again, so the next set of readings adds',
@@ -1867,15 +1871,17 @@
                 var floor = new Date(Date.now() - 4000);
                 var stockDate = state.factoryMtime || floor;
                 if (stockDate > floor) stockDate = floor;
-                // The table goes in the folder the image is in, because that
-                // is the only place it means anything: it describes what this
+                // The table travels in the kit because it describes what this
                 // image applies, and the next round of measuring has to load
                 // it back or it starts from an instrument it is not looking at.
                 // Saving it was a separate button nobody had a reason to press
                 // until a second calibration, by which time it was too late.
+                // It sits at the root, beside the README and the flash log the
+                // flasher writes there, not in the firmware folder: the
+                // owner's call (2026-09-17), so the record of what was flashed
+                // and the table it was flashed with are found together.
                 var cal = calibrationInBuild()
-                    ? [{ name: built.replace(/[^/]+$/, CAL_CSV_NAME),
-                         data: calibrationCsv() }]
+                    ? [{ name: CAL_CSV_NAME, data: calibrationCsv() }]
                     : [];
                 var files = [{ name: built, data: r.hex },
                              { name: stock, data: state.factoryText,

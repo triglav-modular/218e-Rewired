@@ -318,7 +318,20 @@ python3 tools/build.py --fold-measurement your-readings.csv
 
 Corrections are **cumulative** — you are measuring an instrument that already
 applies the current table — so record readings and fold them, rather than
-hand-editing offsets. Measure against an exact scale: set
+hand-editing offsets. Each correction is also divided by the pitch step the
+readings show between neighbouring keys: an oscillator that gives 60 cents of
+pitch for the semitone the table asked for is pushed by its whole error in one
+pass, not 60% of it. The step is floored at a quarter of a semitone, so a key
+sitting at the oscillator's ceiling cannot blow its correction up.
+
+From the second round on, the fold has better than the step between
+neighbours: the table it writes records, per key, the reading it was pushed
+from and the offset that reading was taken against (`Read_Cents` and
+`Read_Against`), so the next round knows how much pitch that key gained for
+the CV it was given and divides by that instead. A table written before those
+columns existed folds as above and gains them. The record is used only when
+the last push was at least 30 ramp-cents and the pitch moved the way the CV
+did; leave the two columns alone. Measure against an exact scale: set
 `alternate_tunings = ["tunings/12TET.scl"]` while you do it, since the factory
 temperament is up to 1.65 cents off exact 12-TET and measuring against it would
 fold that error in.

@@ -768,6 +768,89 @@ def octave_width_volts(offsets: dict[int, float], semitone: int) -> float:
     return volts * 12.0 / span
 
 
+# A key at the oscillator's ceiling steps by nothing, and a step of nothing
+# would make its correction infinite.  A quarter of a semitone quadruples it
+# at most, which is as far as one pass should go on the say-so of two readings.
+GAIN_FLOOR = 0.25
+
+
+def measured_gain(readings: dict[int, float], semitone: int) -> float:
+    """How much pitch the oscillator gave for the semitone the table asked for.
+
+    The step the readings show to each measured neighbour, over the 100 cents
+    the table meant by it: 1.0 tracks, 0.6 gives 60 cents for the semitone.
+    The correction is divided by it.  Without that the fold assumed 100 cents
+    of CV would answer with 100 cents of pitch, which is what stops being true
+    at the top of a 208's range - a replaced expo converter (2026-09-17) gave
+    146 cents for 240 of CV at the top key, so every pass recovered ~60% of
+    what was left and less as the ceiling came closer.  Dividing by the step
+    the sweep already measured is a Newton step on that secant; where tracking
+    is normal it is 1 to within the noise of two readings.  The page's
+    measuredGain() in web/buildlib.js is a port of this, and has to stay one.
+    """
+    steps = []
+    if semitone + 1 in readings:
+        steps.append(100.0 + readings[semitone + 1] - readings[semitone])
+    if semitone - 1 in readings:
+        steps.append(100.0 + readings[semitone] - readings[semitone - 1])
+    if not steps:
+        return 1.0
+    return max(GAIN_FLOOR, sum(steps) / len(steps) / 100.0)
+
+
+# What a saved table records about the round that wrote it, per row: the
+# reading each key was pushed from, and the offset that reading was taken
+# against.  Two readings a few cents apart over a push of five say nothing
+# about a slope, so the pair counts only when the push was at least this.
+READ_COL = "Read_Cents"
+AGAINST_COL = "Read_Against"
+MIN_SECANT_STEP = 30.0
+
+
+def read_calibration_history(path: Path) -> tuple[dict[int, float], dict[int, float]]:
+    """The record columns of a calibration table: semitone -> (read, against).
+
+    Blank cells, and tables written before the columns existed, record nothing.
+    """
+    lines = [ln for ln in read_lines(path) if not ln.lstrip().startswith("#")]
+    delimiter = ";" if lines[0].count(";") else ","
+    read: dict[int, float] = {}
+    against: dict[int, float] = {}
+    for row in csv.DictReader(lines, delimiter=delimiter):
+        r = (row.get(READ_COL) or "").strip()
+        a = (row.get(AGAINST_COL) or "").strip()
+        if r and a:
+            semitone = int(row["Semitone"])
+            read[semitone] = float(r)
+            against[semitone] = float(a)
+    return read, against
+
+
+def key_delta(offsets: dict[int, float], readings: dict[int, float], semitone: int,
+              history: tuple[dict[int, float], dict[int, float]]) -> float:
+    """The push one key needs, in ramp-cents.
+
+    With the previous round on record the key's own slope is in hand: pitch
+    gained over CV added between that round and this one.  Dividing the
+    reading by that is a Newton step on the key itself rather than on the
+    semitone below it, and near an oscillator's ceiling that is the difference
+    between one round and three: the step below E5 said 0.58 when the slope at
+    E5 was already 0.5 and falling (2026-09-17).  The record counts only when
+    the last push was at least MIN_SECANT_STEP and the pitch moved the way the
+    CV did; otherwise, and on a first round, the step to the neighbours stands
+    in.  The page's keyDelta() in web/buildlib.js is a port of this, and has
+    to stay one.
+    """
+    r = readings[semitone]
+    read, against = history
+    if semitone in read and semitone in against:
+        pushed = offsets[semitone] - against[semitone]     # ramp-cents
+        gained = r - read[semitone]                        # cents of pitch
+        if abs(pushed) >= MIN_SECANT_STEP and gained / pushed > 0:
+            return -r / max(GAIN_FLOOR, gained / pushed)
+    return -r * octave_width_volts(offsets, semitone) / measured_gain(readings, semitone)
+
+
 def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     """Fold fresh tuner readings into the calibration table.
 
@@ -811,7 +894,8 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     # measured row the reading never reached holds THAT row's correction,
     # and a partial sweep of the lower keys used to drag it anyway.
     highest = max(updates)
-    tail_delta = -updates[highest] * octave_width_volts(offsets, highest)
+    history = read_calibration_history(calibration)
+    tail_delta = key_delta(offsets, updates, highest, history)
 
     text = read_lines(calibration)
     # The reader detects the delimiter and reads columns by header name; the
@@ -828,6 +912,13 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         raise SystemExit(
             f"{calibration.name}: the fold needs Offset_Cents and Source "
             "columns to rewrite") from None
+    # A table written before the record columns existed gets them now, at
+    # the end, so it loads everywhere it did and records from this round on.
+    for name in (READ_COL, AGAINST_COL):
+        if name not in columns:
+            columns.append(name)
+    read_col = columns.index(READ_COL)
+    against_col = columns.index(AGAINST_COL)
     # A comment, the header or a blank line carries no reading and is copied
     # through untouched.  The blank is the one worth stating: csv.DictReader
     # skips it, so read_calibration above accepts a table with one in it and
@@ -838,7 +929,8 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
         if (line.lstrip().startswith("#") or line.startswith("Semitone")
                 or not line.strip()):
             return None
-        return line.split(cal_delim)
+        parts = line.split(cal_delim)
+        return parts + [""] * (len(columns) - len(parts))
 
     rows = [(int(parts[0]), parts)
             for parts in map(fields, text) if parts is not None]
@@ -851,19 +943,25 @@ def fold_measurement(cfg: dict, calibration: Path, measurement: Path) -> None:
     for line in text:
         parts = fields(line)
         if parts is None:
-            out.append(line)
+            out.append(cal_delim.join(columns) if line is header_line else line)
             continue
         semitone = int(parts[0])
         if semitone in updates:
             error = updates[semitone]
-            # a sharp note needs less voltage, scaled by the local octave width
-            delta = -error * octave_width_volts(offsets, semitone)
+            # a sharp note needs less voltage: by the key's own slope when a
+            # round is on record, else by the local octave width and the
+            # step this oscillator gives for a semitone
+            delta = key_delta(offsets, updates, semitone, history)
             parts[cents_col] = f"{offsets[semitone] + delta:.6f}"
             parts[source_col] = "measured"
+            parts[read_col] = f"{error:.6f}"
+            parts[against_col] = f"{offsets[semitone]:.6f}"
             applied += 1
         elif (semitone > highest and parts[source_col] == "extrapolated"
               and (tail_end is None or semitone < tail_end)):
             parts[cents_col] = f"{offsets[semitone] + tail_delta:.6f}"
+            # moved without a reading: nothing to record a slope from
+            parts[read_col] = parts[against_col] = ""
             trailing += 1
         out.append(cal_delim.join(parts))
     calibration.write_text("\n".join(out) + "\n")

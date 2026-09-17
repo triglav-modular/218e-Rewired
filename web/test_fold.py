@@ -67,11 +67,35 @@ def js_rows(base, sources, measured, has_base):
                                      capture_output=True, text=True, check=True).stdout)
 
 
+def uniform():
+    """Readings that step exactly a semitone apart: the oscillator tracks.
+
+    The fold divides each correction by the pitch step the readings show
+    between neighbours, so only readings with no step error at all reduce it
+    to exactly minus the reading.  These are the readings the exactness checks
+    use; the smooth fixture above has steps a few cents off and is checked
+    against the rule instead.
+    """
+    return {s: 4.2 for s in range(LOW, HIGH + 1)}
+
+
+def gain_of(meas, n):
+    """The rule, restated: the mean step to each measured neighbour over 100,
+    floored at a quarter."""
+    steps = []
+    if n + 1 in meas:
+        steps.append(100.0 + meas[n + 1] - meas[n])
+    if n - 1 in meas:
+        steps.append(100.0 + meas[n] - meas[n - 1])
+    return max(0.25, sum(steps) / len(steps) / 100.0) if steps else 1.0
+
+
 def rows_before_the_fold(measured):
     """What the page built before it could accumulate, lifted from that version.
 
-    A first calibration - no table loaded - has to keep producing exactly this,
-    because it is what everyone who is not doing a second round still does.
+    A first calibration - no table loaded - has to keep producing exactly this
+    for readings the oscillator tracked, because it is what everyone who is
+    not doing a second round still does.
     """
     full = [-v for v in measured]
     for n in range(LOW - 1, -1, -1):
@@ -113,18 +137,36 @@ def with_blank_source(text, semitone):
     return "\n".join(out) + "\n"
 
 
-def js_fold(base, sources, meas):
+def js(expr, **args):
+    """Evaluate one expression against buildlib.js with `a` as its input."""
     script = """
     var B = require('%s');
     var a = JSON.parse(process.argv[1]);
-    process.stdout.write(JSON.stringify(B.foldOffsets(a.base, a.meas, a.sources)));
-    """ % (REPO / "web" / "buildlib.js")
-    arg = json.dumps({"base": {str(k): v for k, v in base.items()},
-                      "sources": {str(k): v for k, v in sources.items()},
-                      "meas": {str(k): v for k, v in meas.items()}})
-    out = subprocess.run(["node", "-e", script, "--", arg],
+    process.stdout.write(JSON.stringify(%s));
+    """ % (REPO / "web" / "buildlib.js", expr)
+    out = subprocess.run(["node", "-e", script, "--", json.dumps(args)],
                          capture_output=True, text=True, check=True).stdout
-    return {int(k): v for k, v in json.loads(out).items()}
+    return json.loads(out)
+
+
+def keyed(d):
+    return {int(k): v for k, v in d.items()}
+
+
+def js_fold(base, sources, meas, history=None):
+    got = js("B.foldOffsets(a.base, a.meas, a.sources, a.history)",
+             base={str(k): v for k, v in base.items()},
+             sources={str(k): v for k, v in sources.items()},
+             meas={str(k): v for k, v in meas.items()},
+             history=history and {"read": {str(k): v for k, v in history[0].items()},
+                                  "against": {str(k): v for k, v in history[1].items()}})
+    return keyed(got)
+
+
+def js_history(text):
+    """What the page's parser reads back as the record: (read, against)."""
+    h = js("B.parseCalibration(a.text, 79).history", text=text)
+    return keyed(h["read"]), keyed(h["against"])
 
 
 def main():
@@ -217,12 +259,64 @@ def main():
     # cent - a scaling that was actually wrong would miss by percent.
     flat = {n: 0.0 for n in range(79)}
     flat_src = {n: "measured" for n in range(79)}
-    got = js_fold(flat, flat_src, meas)
-    off = max(abs(got[s] - -meas[s]) for s in meas)
+    even = uniform()
+    got = js_fold(flat, flat_src, even)
+    off = max(abs(got[s] - -even[s]) for s in even)
     if off > 1e-12:
         print(f"FAIL  on a flat table the fold is not minus the reading: off by {off:g}")
         return 1
     print(f"ok    on a flat table the fold is minus the reading (within {off:g})")
+    # And with steps a few cents off, minus the reading over the measured step.
+    got = js_fold(flat, flat_src, meas)
+    off = max(abs(got[s] - -meas[s] / gain_of(meas, s)) for s in meas)
+    if off > 1e-12:
+        print(f"FAIL  on a flat table the fold is not the reading over its step: off by {off:g}")
+        return 1
+    print(f"ok    and over the measured step when the steps are off (within {off:g})")
+
+    # --- an oscillator that compresses at the top ------------------------
+    # The case the gain exists for: from semitone 56 up every semitone asked
+    # for comes back as 60 cents, so the readings fall 40 cents per key.  The
+    # old fold pushed each key by its error and got 60% of it back per pass;
+    # this one pushes by the error over the step, in both toolchains alike.
+    sag = {s: 0.0 if s <= 55 else -40.0 * (s - 55) for s in range(LOW, HIGH + 1)}
+    want = python_fold(BASELINE, sag)
+    got = js_fold(base, sources, sag)
+    worst = max(abs(want[s] - got[s]) for s in want)
+    if worst > 1e-6:
+        where = max(want, key=lambda s: abs(want[s] - got[s]))
+        print(f"FAIL  on a compressing oscillator the two disagree by {worst:g} at {where}")
+        return 1
+    for s in (60, 67):
+        expect = base[s] - sag[s] * B.octave_width_volts(base, s) / 0.6
+        if abs(got[s] - expect) > 1e-9:
+            print(f"FAIL  semitone {s}: correction {got[s] - base[s]:.3f}, "
+                  f"expected the error over a 0.6 step, {expect - base[s]:.3f}")
+            return 1
+    if abs((got[55] - base[55]) - 0.0) > 1e-9:
+        print(f"FAIL  a key that read exactly right was moved by {got[55] - base[55]:g}")
+        return 1
+    print("ok    a compressing top is pushed by the error over the measured step, "
+          "in both toolchains")
+
+    # A key at the ceiling steps by nothing.  The floor keeps that finite and
+    # no more than four times the error; without it this is a division by
+    # zero on the page and a ZeroDivisionError in the CLI.
+    capped = dict(sag)
+    for s in range(63, HIGH + 1):
+        capped[s] = capped[62] - 100.0 * (s - 62)      # pitch stops rising
+    want = python_fold(BASELINE, capped)
+    got = js_fold(base, sources, capped)
+    worst = max(abs(want[s] - got[s]) for s in want)
+    if worst > 1e-6:
+        print(f"FAIL  at the ceiling the two disagree by {worst:g}")
+        return 1
+    expect = base[HIGH] - capped[HIGH] * B.octave_width_volts(base, HIGH) / 0.25
+    if not all(abs(got[s]) < 1e6 for s in got) or abs(got[HIGH] - expect) > 1e-9:
+        print(f"FAIL  at the ceiling the correction is not floored at four times: "
+              f"{got[HIGH] - base[HIGH]:.3f} vs {expect - base[HIGH]:.3f}")
+        return 1
+    print("ok    a key at the ceiling is pushed by at most four times its error")
 
     # calibrationRows() is what every build on the page goes through, so the
     # first calibration - the common case, and the one nobody is watching -
@@ -230,10 +324,13 @@ def main():
     measured = [0.0] * ENTRIES
     for s, c in meas.items():
         measured[s] = c
+    even_measured = [0.0] * ENTRIES
+    for s, c in uniform().items():
+        even_measured[s] = c
     flat = {n: 0.0 for n in range(ENTRIES)}
     flat_src = {n: "measured" for n in range(ENTRIES)}
-    got = js_rows(flat, flat_src, measured, False)
-    want = rows_before_the_fold(measured)
+    got = js_rows(flat, flat_src, even_measured, False)
+    want = rows_before_the_fold(even_measured)
     worst = max(abs(a - b) for a, b in zip(want, got))
     if worst > 1e-12:
         bad = [i for i, (a, b) in enumerate(zip(want, got)) if abs(a - b) > 1e-12]
@@ -273,6 +370,119 @@ def main():
         print("FAIL  with no table loaded the rows below the bottom key are not zero")
         return 1
     print("ok    with no table loaded those rows are invented instead")
+
+    # --- a second round uses the key's own slope -------------------------
+    # An oscillator that sits a steady 0.3 cents sharp up to semitone 55 and
+    # above it gives 0.6 cents of pitch per ramp-cent of CV, sagging 40 cents
+    # a key on the baseline.  Linear on purpose: on a linear response the
+    # secant through two rounds IS the slope, so the second round has to land
+    # exactly, and anything short of exact is a wrong slope, a wrong record,
+    # or the two toolchains disagreeing about either.  The 0.3 rather than 0
+    # is because a reading of exactly zero is "not measured" to the page, and
+    # a key it did not measure it does not record.
+    S = 0.6
+
+    def sag_of(n):
+        return 0.0 if n <= 55 else 40.0 * (n - 55)
+
+    def plays(table):
+        return {n: (-sag_of(n) + S * (table[n] - base[n]) if n > 55 else 0.3)
+                for n in range(LOW, HIGH + 1)}
+
+    r1 = plays(base)
+    with tempfile.TemporaryDirectory() as tmp:
+        cal = Path(tmp) / "rounds.csv"
+        cal.write_text(BASELINE.read_text())
+        m1 = Path(tmp) / "m1.csv"
+        m1.write_text("Semitone;Measured_Cents\n" +
+                      "".join(f"{s};{c:.6f}\n" for s, c in sorted(r1.items())))
+        B.fold_measurement({"pitch": {"bottom_key_semitone": LOW}}, cal, m1)
+        t1_py = B.read_calibration(cal)
+        h1_py = B.read_calibration_history(cal)
+        round1_text = cal.read_text()
+
+        t1 = js_fold(base, sources, r1)
+        meas_list = [0.0] * ENTRIES
+        for s_, c in r1.items():
+            meas_list[s_] = c
+        h1 = js("B.historyToSave(a.base, a.folded, a.measured, {}, null)",
+                base={str(k): v for k, v in base.items()},
+                folded={str(k): v for k, v in t1.items()}, measured=meas_list)
+        h1 = (keyed(h1["read"]), keyed(h1["against"]))
+        if max(abs(t1_py[n] - t1[n]) for n in t1) > 1e-6:
+            print("FAIL  round one: the two toolchains disagree")
+            return 1
+        # What the CLI wrote into the file, what the page would have written,
+        # and what the page reads back from the CLI's file: one record.
+        if h1_py != h1 or js_history(round1_text) != h1:
+            print("FAIL  the record of round one differs between writer, page and reader")
+            print(f"      cli {sorted(h1_py[0].items())[:3]}.. page {sorted(h1[0].items())[:3]}..")
+            return 1
+        if set(h1[0]) != set(range(LOW, HIGH + 1)):
+            print(f"FAIL  round one recorded the wrong keys: {sorted(h1[0])[:8]}")
+            return 1
+        print("ok    round one is recorded the same by the CLI, the page and the page's reader")
+
+        # Round two starts from the file, on both sides: that is what gets
+        # flashed, and what the page loads back, six decimals and all.
+        r2 = plays(t1_py)
+        if max(abs(v) for v in r2.values()) < 5:
+            print("FAIL  the model left round one nearly right - nothing for round two to prove")
+            return 1
+        m2 = Path(tmp) / "m2.csv"
+        m2.write_text("Semitone;Measured_Cents\n" +
+                      "".join(f"{s};{c:.6f}\n" for s, c in sorted(r2.items())))
+        B.fold_measurement({"pitch": {"bottom_key_semitone": LOW}}, cal, m2)
+        t2_py = B.read_calibration(cal)
+    t2 = js_fold(t1_py, sources, r2, h1_py)
+    worst = max(abs(t2_py[n] - t2[n]) for n in t2)
+    # Two files deep now, so two roundings to six decimals stack: a value
+    # that lands on a half-ulp after the first can round the other way after
+    # the second.  Two ulps of the file is still ten thousand times finer
+    # than the DAC step.
+    if worst > 2e-6:
+        where = max(t2, key=lambda n: abs(t2_py[n] - t2[n]))
+        print(f"FAIL  round two: the two toolchains disagree by {worst:g} at {where}")
+        return 1
+    r3 = plays(t2)
+    left = max(abs(r3[n]) for n in range(56, HIGH + 1))
+    if left > 1e-6:
+        where = max(range(56, HIGH + 1), key=lambda n: abs(r3[n]))
+        print(f"FAIL  round two left {left:g} cents at semitone {where} - "
+              f"the key's own slope was not used (round one left {abs(r2[where]):.1f})")
+        return 1
+    print(f"ok    a second round lands on the key's own slope (within {left:g} cents, "
+          f"from {max(abs(v) for v in r2.values()):.0f})")
+
+    # The record counts only when it can say something: a push under 30
+    # ramp-cents, or a pitch that moved against the CV, falls back to the
+    # step between neighbours - identically in both toolchains.
+    n = 67
+    fallback = -meas[n] * B.octave_width_volts(base, n) / B.measured_gain(meas, n)
+    cases = {
+        "a push of 10": ({n: -50.0}, {n: base[n] - 10.0}, fallback),
+        "pitch that fell as CV rose": ({n: meas[n] + 5.0}, {n: base[n] - 78.0}, fallback),
+        "a push of 78 that gained 40": ({n: meas[n] - 40.0}, {n: base[n] - 78.0},
+                                        -meas[n] / (40.0 / 78.0)),
+        "a key at the ceiling": ({n: meas[n] - 2.0}, {n: base[n] - 78.0},
+                                 -meas[n] / 0.25),
+    }
+    for name, (read, against, want_delta) in cases.items():
+        py = B.key_delta(base, meas, n, (read, against))
+        pg = js("B.keyDelta(a.base, a.meas, a.n, a.history)",
+                base={str(k): v for k, v in base.items()},
+                meas={str(k): v for k, v in meas.items()}, n=n,
+                history={"read": {str(n): read[n]}, "against": {str(n): against[n]}})
+        if abs(py - want_delta) > 1e-9 or abs(pg - want_delta) > 1e-9:
+            print(f"FAIL  {name}: cli {py:.4f}, page {pg:.4f}, expected {want_delta:.4f}")
+            return 1
+    print("ok    the record is used only when it can say something, alike in both")
+
+    # A table written before the record existed reads as one with none.
+    if js_history(BASELINE.read_text()) != ({}, {}):
+        print("FAIL  the page read a record out of a table that has none")
+        return 1
+    print("ok    a table without the record columns loads as before")
 
     print("ALL FOLD TESTS PASSED")
     return 0
