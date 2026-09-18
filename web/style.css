@@ -688,7 +688,7 @@ button.primary:disabled:hover {
 button.reset {
   float: right;
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: .1em;
   line-height: 1;
@@ -696,11 +696,11 @@ button.reset {
   background: none;
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 4px 9px;
+  padding: 7px 14px;
   margin-left: 14px;
   /* Centred on the heading's cap height rather than on its line box, which
      the uppercase tracking makes taller than the letters are. */
-  margin-top: 5px;
+  margin-top: 1px;
   cursor: pointer;
 }
 button.reset:hover,
