@@ -149,6 +149,7 @@
                 msg($('fileMsg'), 'ok', 'Factory image verified: SHA-256 matches. ' +
                     'It stays on this machine.');
             }
+            saveFactory();
             refresh();
         };
         reader.onerror = function () { fail('Could not read that file.'); };
@@ -158,6 +159,7 @@
             state.result = null;
             $('drop').className = 'drop err';
             msg($('fileMsg'), 'bad', t);
+            saveFactory();
             refresh();
         }
     }
@@ -799,6 +801,7 @@
                     delete interpolated[n];
                     input.className = measured[n] !== 0 ? 'set' : '';
                     drawPlot(); validateCal();
+                    saveSoon();
                     if ($('useCal').checked) invalidate();
                 });
                 key.appendChild(nm);
@@ -1517,6 +1520,7 @@
     function invalidate() {
         state.result = null;
         state.options = null;
+        saveSoon();
         refresh();
     }
 
@@ -2055,6 +2059,307 @@
         body.addEventListener('click', function (e) { e.stopPropagation(); });
     })();
 
+    // --- remembering the last build ---------------------------------------
+    //
+    // Everything here stays in this browser: localStorage is per-origin and
+    // nothing in this block goes near the network.  The beacon is unchanged
+    // and still carries no identifier.
+    //
+    // Two keys, not one.  The factory image is 261 KB of text and changes
+    // once, when a file is dropped; the settings are small and change on
+    // every click, so writing them together would rewrite half a megabyte
+    // each time a checkbox moved.
+    //
+    // The key is namespaced by the page's own directory because the staging
+    // build at /dev/ is the SAME ORIGIN as the released page, one path down.
+    // A single key would have a test on the staging page quietly overwrite
+    // what the released page remembered.
+    var STORE = '218e-rewired' + location.pathname.replace(/[^/]*$/, '');
+    var K_SETTINGS = STORE + 'settings', K_FACTORY = STORE + 'factory';
+
+    // Storage is absent on file: URLs in some browsers, throws in private
+    // windows, and refuses when the origin is full.  Every one of those is
+    // "this page does not remember", never a broken page - the same direction
+    // the beacon fails in.
+    function readStore(key) {
+        try { return window.localStorage.getItem(key); } catch (e) { return null; }
+    }
+    function writeStore(key, text) {
+        try {
+            if (text === null) window.localStorage.removeItem(key);
+            else window.localStorage.setItem(key, text);
+            return true;
+        } catch (e) { return false; }
+    }
+
+    // The pickers keep the button's own data-v rather than the parsed value:
+    // String(1.0) is "1" and the button is "1.0", so a round trip through a
+    // number would stop matching the markup it has to find again.
+    function pressed(groupId) {
+        var hit = '';
+        Array.prototype.forEach.call($(groupId).children, function (b) {
+            if (b.getAttribute('aria-pressed') === 'true') hit = b.dataset.v;
+        });
+        return hit;
+    }
+    function press(groupId, value) {
+        var host = $(groupId), hit = null;
+        Array.prototype.forEach.call(host.children, function (b) {
+            if (b.dataset.v === String(value)) hit = b;
+        });
+        // Only when it is not already the one pressed: these handlers do real
+        // work, and setPitchOffset in particular renumbers the table.
+        if (hit && hit.getAttribute('aria-pressed') !== 'true') hit.click();
+    }
+    function tick(id, on) {
+        var el = $(id);
+        if (!el || el.checked === !!on) return;
+        el.checked = !!on;
+        el.dispatchEvent(new Event('change'));
+    }
+
+    var CHECKS = ['latching_arp', 'sequencer', 'clock_divide', 'pressure_fix',
+                  'pressure_portamento', 'quantize_presets', 'portamento_transpose'];
+
+    // The scalar half - the part kept as deviations from the page's defaults.
+    function scalars() {
+        var o = {
+            pitch_offset: pressed('offset'),
+            volts_per_octave: pressed('vpo'),
+            knob1: knobRole.knob1, knob2: knobRole.knob2,
+            knob3: knobRole.knob3, knob4: knobRole.knob4,
+            use_tunings: $('useTunings').checked,
+            use_cal: $('useCal').checked
+        };
+        CHECKS.forEach(function (id) { o[id] = $(id).checked; });
+        return o;
+    }
+
+    // Captured before anything is restored, so it is the page's own defaults
+    // and not the visitor's last visit.
+    var DEFAULTS = scalars();
+
+    var remembering = true, saveTimer = null, restoring = false;
+
+    function saveNow() {
+        saveTimer = null;
+        if (!remembering || restoring) return;
+        var body;
+        try {
+            body = JSON.stringify({
+                v: 1,
+                version: GEN.version,
+                options: BUILDLIB.settingsDiff(scalars(), DEFAULTS),
+                patterns: state.patterns,
+                slots: state.slots,
+                // The calibration's own working state, not the CSV.  Loading
+                // a CSV means "this table is already on the instrument": it
+                // becomes the baseline and the readings are cleared.  Saving
+                // one and reading it back would therefore promote this
+                // session's unflashed readings to already-flashed, and the
+                // next round would fold onto a table that was never there.
+                calibration: {
+                    measured: measured,
+                    interpolated: interpolated,
+                    baseline: baseline,
+                    baselineSources: baselineSources,
+                    baselineName: baselineName,
+                    baselineHistory: baselineHistory
+                }
+            });
+        } catch (e) { return; }
+        writeStore(K_SETTINGS, body);
+    }
+    // Coalesced: a sweep writes a reading at a time, and every one of them
+    // reaches invalidate().
+    function saveSoon() {
+        if (!remembering || restoring) return;
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveNow, 400);
+    }
+    window.addEventListener('pagehide', function () {
+        if (saveTimer) { clearTimeout(saveTimer); saveNow(); }
+    });
+
+    function saveFactory() {
+        if (!remembering) return;
+        if (!state.factoryText) { writeStore(K_FACTORY, null); return; }
+        try {
+            writeStore(K_FACTORY, JSON.stringify({
+                text: state.factoryText,
+                // The image's own date, which goes back into the download so
+                // the stock file keeps saying when it was made.  Without it a
+                // restored build would stamp today.
+                mtime: state.factoryMtime ? state.factoryMtime.getTime() : null
+            }));
+        } catch (e) { /* out of room; the page just asks for the file again */ }
+    }
+
+    // --- putting it back --------------------------------------------------
+    function goodPatterns(v) {
+        if (!Array.isArray(v)) return null;
+        var out = [];
+        v.slice(0, 32).forEach(function (p) {
+            if (p && typeof p.text === 'string' && typeof p.length === 'number'
+                    && isFinite(p.length)) {
+                out.push({ text: p.text, length: p.length });
+            }
+        });
+        return out;
+    }
+    function goodSlots(v) {
+        if (!Array.isArray(v)) return null;
+        var out = [];
+        v.slice(0, SLOTS.length).forEach(function (e) {
+            if (!e || typeof e.name !== 'string' || typeof e.text !== 'string') {
+                out.push(null);
+                return;
+            }
+            var slot = { name: e.name, text: e.text };
+            if (typeof e.kbmName === 'string' && typeof e.kbmText === 'string') {
+                slot.kbmName = e.kbmName;
+                slot.kbmText = e.kbmText;
+            }
+            out.push(slot);
+        });
+        return out;
+    }
+    // A stored calibration is taken whole or not at all, for the same reason
+    // a loaded table is: a half-applied one leaves the rest at zero, which is
+    // "no correction" rather than "unknown", and the fold would quietly undo
+    // what is flashed there.
+    function goodCalibration(v) {
+        if (!v || typeof v !== 'object') return null;
+        if (!Array.isArray(v.measured) || v.measured.length !== TABLE_ENTRIES) return null;
+        var m = [], i;
+        for (i = 0; i < TABLE_ENTRIES; i++) {
+            if (typeof v.measured[i] !== 'number' || !isFinite(v.measured[i])) return null;
+            m.push(v.measured[i]);
+        }
+        var base = {}, src = {}, marks = {};
+        if (v.baseline && typeof v.baseline === 'object') {
+            for (i = 0; i < TABLE_ENTRIES; i++) {
+                var b = v.baseline[i];
+                if (typeof b !== 'number' || !isFinite(b)) return null;
+                base[i] = b;
+            }
+        } else {
+            for (i = 0; i < TABLE_ENTRIES; i++) base[i] = 0;
+        }
+        if (v.baselineSources && typeof v.baselineSources === 'object') {
+            Object.keys(v.baselineSources).forEach(function (k) {
+                if (typeof v.baselineSources[k] === 'string') src[k] = v.baselineSources[k];
+            });
+        }
+        if (v.interpolated && typeof v.interpolated === 'object') {
+            Object.keys(v.interpolated).forEach(function (k) {
+                if (v.interpolated[k]) marks[k] = true;
+            });
+        }
+        return {
+            measured: m, interpolated: marks, baseline: base, baselineSources: src,
+            baselineName: typeof v.baselineName === 'string' ? v.baselineName : '',
+            baselineHistory: v.baselineHistory && typeof v.baselineHistory === 'object'
+                ? v.baselineHistory : null
+        };
+    }
+
+    // Keyed by the same names BUILDLIB.SETTINGS_ORDER lists, and driven by
+    // that array rather than by the order written here - the dependencies
+    // between these are documented there, next to the order that enforces
+    // them.
+    var APPLY = {
+        pitch_offset: function (v) { press('offset', v); },
+        volts_per_octave: function (v) { press('vpo', v); },
+        patterns: function (v) {
+            var p = goodPatterns(v);
+            if (p) { state.patterns = p; renderPatterns(); }
+        },
+        knob1: function (v) { press('knob1', v); },
+        knob2: function (v) { press('knob2', v); },
+        knob3: function (v) { press('knob3', v); },
+        knob4: function (v) { press('knob4', v); },
+        use_tunings: function (v) { tick('useTunings', v); },
+        use_cal: function (v) { tick('useCal', v); },
+        slots: function (v) {
+            var s = goodSlots(v);
+            if (s) { state.slots = s; renderSlots(); }
+        },
+        calibration: function (v) {
+            var c = goodCalibration(v);
+            if (!c) return;
+            measured = c.measured;
+            interpolated = c.interpolated;
+            baseline = c.baseline;
+            baselineSources = c.baselineSources;
+            baselineName = c.baselineName;
+            baselineHistory = c.baselineHistory;
+            syncBaseline(); buildTable(); drawPlot(); validateCal();
+        },
+        factory: function (v) {
+            if (!v || typeof v.text !== 'string') return;
+            var sha;
+            try { sha = SHA256.hashString(v.text); } catch (e) { sha = null; }
+            // The pin is the whole safety argument for keeping the image at
+            // all: what comes back out of storage goes through the same check
+            // the dropped file did, so a corrupted or substituted copy is
+            // refused exactly as a wrong file is.
+            if (sha !== GEN.factorySha256) { writeStore(K_FACTORY, null); return; }
+            state.factoryText = v.text;
+            state.factoryMtime = typeof v.mtime === 'number' ? new Date(v.mtime) : null;
+            $('drop').className = 'drop ok';
+            msg($('fileMsg'), 'ok', 'Factory image remembered from last time: ' +
+                'SHA-256 matches. It stays on this machine.');
+        }
+    };
+    CHECKS.forEach(function (id) {
+        APPLY[id] = function (v) { tick(id, v); };
+    });
+
+    function restore() {
+        var saved = null, hex = null;
+        try { saved = JSON.parse(readStore(K_SETTINGS) || 'null'); } catch (e) { saved = null; }
+        try { hex = JSON.parse(readStore(K_FACTORY) || 'null'); } catch (e) { hex = null; }
+        // A blob from a format this page does not know is left alone rather
+        // than guessed at.  The image is not versioned: it is one field and a
+        // hash that has to match anyway.
+        if (saved && saved.v !== 1) saved = null;
+        if (!saved && !hex) return;
+        var all = BUILDLIB.settingsPick(saved && saved.options, DEFAULTS);
+        if (saved) {
+            all.patterns = saved.patterns;
+            all.slots = saved.slots;
+            all.calibration = saved.calibration;
+        }
+        all.factory = hex;
+        restoring = true;
+        try {
+            BUILDLIB.SETTINGS_ORDER.forEach(function (k) {
+                if (APPLY[k] && all[k] !== undefined) APPLY[k](all[k]);
+            });
+        } finally {
+            restoring = false;
+        }
+    }
+
+    // The visitor's own way out, and the only one that matters on a shared
+    // computer: it clears what is stored AND stops this session writing more,
+    // so ticking a box afterwards cannot quietly put it back.
+    // Guarded: the entry document is served no-cache while the assets are
+    // immutable, so a browser can hold a page from before this control for as
+    // long as its revalidation takes.  Throwing here would take the restore
+    // below down with it.
+    if ($('forget')) $('forget').addEventListener('click', function () {
+        remembering = false;
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+        writeStore(K_SETTINGS, null);
+        writeStore(K_FACTORY, null);
+        $('forget').disabled = true;
+        msg($('forgetMsg'), 'ok', 'Forgotten. Nothing more is saved on this ' +
+            'computer. What’s on screen stays until you close the page.');
+    });
+
+    restore();
     renderPatterns();
     renderSlots(); buildTable(); drawPlot(); syncPortamento();
     syncCalBody(); syncBaseline(); refresh();

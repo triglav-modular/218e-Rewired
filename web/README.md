@@ -21,6 +21,27 @@ it reports only where something is listening for it — a clone served anywhere
 else, or the page opened from a file, reports nowhere. See "Counting builds" in
 [../docs/BUILD.md](../docs/BUILD.md).
 
+Some things now stay. The options, the tunings, the pattern bank, the
+calibration and the verified factory image are kept in `localStorage`, so a
+second visit carries on where the first stopped. That is per-origin storage and
+none of it is sent anywhere; *Forget what's saved* on the page clears both keys
+and stops the session writing any more, which is the answer for a shared
+computer. Two keys because the image is 261 KB and changes once while the
+settings change on every click, and the key name carries the page's own
+directory because the staging build under `/dev/` is the same origin one path
+down — a single key would let a test there overwrite what the released page
+remembered.
+
+The options are stored as *deviations* from the page's defaults rather than as
+a snapshot. Those defaults are a recommendation, re-tuned per release and
+deliberately separate from `config/218e.toml`, so a snapshot would freeze a
+returning visitor on whichever version they first saw, and an option added
+default-on later would come back off. `BUILDLIB.SETTINGS_ORDER` fixes the order
+a restore applies things in, which is a dependency rather than a preference:
+the pitch offset renumbers every semitone and drops a loaded calibration by
+design, so it has to go back first. `web/test_settings.js` asserts on that
+array and reads `app.js` to catch an applier that was never added to it.
+
 ## How it fits together
 
 | File | Role |
