@@ -1521,6 +1521,7 @@
         state.result = null;
         state.options = null;
         saveSoon();
+        syncReset();
         refresh();
     }
 
@@ -2122,28 +2123,41 @@
                   'pressure_portamento', 'quantize_presets', 'portamento_transpose'];
 
     // The scalar half - the part kept as deviations from the page's defaults.
-    function scalars() {
+    //
+    // `markup` asks for the value the DOCUMENT declares rather than the one on
+    // screen, and the difference is not academic: a browser restores checkbox
+    // state across a reload by itself, before any script runs.  Read the live
+    // checkbox to capture the defaults and a box the visitor turned off last
+    // time is already off when they are captured, so the deviation measures
+    // zero, is never saved, and the choice is lost on the visit after next.
+    // defaultChecked is the `checked` attribute, which that restoration does
+    // not touch.  The pickers need no equivalent: aria-pressed is not form
+    // state, and nothing has clicked yet when the defaults are taken.
+    function scalars(markup) {
+        function on(id) {
+            var el = $(id);
+            return markup ? el.defaultChecked : el.checked;
+        }
         var o = {
             pitch_offset: pressed('offset'),
             volts_per_octave: pressed('vpo'),
             knob1: knobRole.knob1, knob2: knobRole.knob2,
             knob3: knobRole.knob3, knob4: knobRole.knob4,
-            use_tunings: $('useTunings').checked,
-            use_cal: $('useCal').checked
+            use_tunings: on('useTunings'),
+            use_cal: on('useCal')
         };
-        CHECKS.forEach(function (id) { o[id] = $(id).checked; });
+        CHECKS.forEach(function (id) { o[id] = on(id); });
         return o;
     }
 
-    // Captured before anything is restored, so it is the page's own defaults
-    // and not the visitor's last visit.
-    var DEFAULTS = scalars();
+    // What the document declares, captured before anything is restored.
+    var DEFAULTS = scalars(true);
 
-    var remembering = true, saveTimer = null, restoring = false;
+    var saveTimer = null, restoring = false;
 
     function saveNow() {
         saveTimer = null;
-        if (!remembering || restoring) return;
+        if (restoring) return;
         var body;
         try {
             body = JSON.stringify({
@@ -2173,7 +2187,7 @@
     // Coalesced: a sweep writes a reading at a time, and every one of them
     // reaches invalidate().
     function saveSoon() {
-        if (!remembering || restoring) return;
+        if (restoring) return;
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = setTimeout(saveNow, 400);
     }
@@ -2182,7 +2196,6 @@
     });
 
     function saveFactory() {
-        if (!remembering) return;
         if (!state.factoryText) { writeStore(K_FACTORY, null); return; }
         try {
             writeStore(K_FACTORY, JSON.stringify({
@@ -2316,6 +2329,20 @@
         APPLY[id] = function (v) { tick(id, v); };
     });
 
+    // The walk a restore and a Reset share, so both go through the one
+    // ordered list.  A key with no value here is simply not applied, which is
+    // what leaves the visitor's own data alone on a Reset.
+    function applyAll(values) {
+        restoring = true;
+        try {
+            BUILDLIB.SETTINGS_ORDER.forEach(function (k) {
+                if (APPLY[k] && values[k] !== undefined) APPLY[k](values[k]);
+            });
+        } finally {
+            restoring = false;
+        }
+    }
+
     function restore() {
         var saved = null, hex = null;
         try { saved = JSON.parse(readStore(K_SETTINGS) || 'null'); } catch (e) { saved = null; }
@@ -2324,7 +2351,6 @@
         // than guessed at.  The image is not versioned: it is one field and a
         // hash that has to match anyway.
         if (saved && saved.v !== 1) saved = null;
-        if (!saved && !hex) return;
         var all = BUILDLIB.settingsPick(saved && saved.options, DEFAULTS);
         if (saved) {
             all.patterns = saved.patterns;
@@ -2332,34 +2358,39 @@
             all.calibration = saved.calibration;
         }
         all.factory = hex;
-        restoring = true;
-        try {
-            BUILDLIB.SETTINGS_ORDER.forEach(function (k) {
-                if (APPLY[k] && all[k] !== undefined) APPLY[k](all[k]);
-            });
-        } finally {
-            restoring = false;
-        }
+        applyAll(all);
     }
 
-    // The visitor's own way out, and the only one that matters on a shared
-    // computer: it clears what is stored AND stops this session writing more,
-    // so ticking a box afterwards cannot quietly put it back.
+    // Remembering is meant to be invisible: nothing on the page announces it,
+    // and the one control that exists appears only once something has moved
+    // off its default, because until then it has nothing to undo.
+    function syncReset() {
+        var el = $('reset');
+        if (!el || !DEFAULTS) return;
+        el.classList.toggle('hidden',
+            !Object.keys(BUILDLIB.settingsDiff(scalars(), DEFAULTS)).length);
+    }
+
     // Guarded: the entry document is served no-cache while the assets are
     // immutable, so a browser can hold a page from before this control for as
     // long as its revalidation takes.  Throwing here would take the restore
     // below down with it.
-    if ($('forget')) $('forget').addEventListener('click', function () {
-        remembering = false;
-        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-        writeStore(K_SETTINGS, null);
-        writeStore(K_FACTORY, null);
-        $('forget').disabled = true;
-        msg($('forgetMsg'), 'ok', 'Forgotten. Nothing more is saved on this ' +
-            'computer. What’s on screen stays until you close the page.');
+    if ($('reset')) $('reset').addEventListener('click', function () {
+        // Back to the page's own defaults, through the same appliers a
+        // restore uses.  The compound keys are not in DEFAULTS and so are
+        // skipped: the Scala files, the pattern bank, the measured
+        // calibration and the factory image stay exactly where they are.
+        // This puts the CHOICES back, not the work - re-ticking a box brings
+        // what was loaded back with it, and a sweep is not thrown away by a
+        // button labelled Reset.  The deviations then being empty is what
+        // empties the save.
+        applyAll(DEFAULTS);
+        saveNow();
+        syncReset();
     });
 
     restore();
+    syncReset();
     renderPatterns();
     renderSlots(); buildTable(); drawPlot(); syncPortamento();
     syncCalBody(); syncBaseline(); refresh();

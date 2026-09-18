@@ -676,6 +676,39 @@ button.primary:disabled:hover {
   color: var(--muted);
   opacity: .75;
 }
+/* Undoing the options, beside the heading they belong to.  On screen only
+   once something has actually moved off its default, so a first visit has
+   nothing extra to read past: the page keeps what was chosen without saying
+   so, and this is the only place that says anything at all.
+
+   It has to sit after the general button rules and name the element as well
+   as the class, because `button:hover:not(:disabled)` is more specific than
+   `.reset:hover` and would fill this one accent on hover however early it
+   was declared.  Equal specificity, later in the file, so this wins. */
+button.reset {
+  float: right;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  margin-left: 14px;
+  /* Centred on the heading's cap height rather than on its line box, which
+     the uppercase tracking makes taller than the letters are. */
+  margin-top: 5px;
+  cursor: pointer;
+}
+button.reset:hover,
+button.reset:focus-visible {
+  background: none;
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .row {
   display: flex;
   gap: 12px;

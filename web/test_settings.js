@@ -103,6 +103,19 @@ if (!app) {
         });
         checks[1].replace(/'([a-z_]+)'/g, function (_, k) { keys.push(k); return _; });
 
+        // The defaults must come from what the DOCUMENT declares, not from
+        // what is on screen when the page loads.  A browser restores checkbox
+        // state across a reload before any script runs, so reading the live
+        // checkbox captures the visitor's last choice AS the default: the
+        // deviation then measures zero, is never saved, and the choice is
+        // lost on the visit after next.  It went wrong exactly that way once.
+        // Only visible on a second reload, and silent, so it is worth a guard
+        // that a later simplification has to argue with.
+        ok('the defaults are taken from the markup',
+           /var DEFAULTS = scalars\(true\);/.test(app));
+        ok('scalars reads defaultChecked for them',
+           /markup \? el\.defaultChecked : el\.checked/.test(app));
+
         var missing = keys.filter(function (k) { return order.indexOf(k) < 0; });
         var unapplied = order.filter(function (k) { return keys.indexOf(k) < 0; });
         ok('every applier is in the order list', !missing.length,

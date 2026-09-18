@@ -24,13 +24,20 @@ else, or the page opened from a file, reports nowhere. See "Counting builds" in
 Some things now stay. The options, the tunings, the pattern bank, the
 calibration and the verified factory image are kept in `localStorage`, so a
 second visit carries on where the first stopped. That is per-origin storage and
-none of it is sent anywhere; *Forget what's saved* on the page clears both keys
-and stops the session writing any more, which is the answer for a shared
-computer. Two keys because the image is 261 KB and changes once while the
-settings change on every click, and the key name carries the page's own
-directory because the staging build under `/dev/` is the same origin one path
-down — a single key would let a test there overwrite what the released page
-remembered.
+none of it is sent anywhere. Two keys because the image is 261 KB and changes
+once while the settings change on every click, and the key name carries the
+page's own directory because the staging build under `/dev/` is the same origin
+one path down — a single key would let a test there overwrite what the
+released page remembered.
+
+The feature is deliberately invisible: nothing on the page explains it, and the
+only control is a small **Reset** beside the step 2 heading, which is hidden
+until something has actually moved off its default. Reset puts the choices back
+and nothing else — it walks the same ordered appliers a restore does, and the
+Scala files, the pattern bank, the measured calibration and the dropped factory
+image are not among the defaults, so none of them is touched. Re-ticking a box
+brings what was loaded back with it. The deviations being empty afterwards is
+what empties the save.
 
 The options are stored as *deviations* from the page's defaults rather than as
 a snapshot. Those defaults are a recommendation, re-tuned per release and
