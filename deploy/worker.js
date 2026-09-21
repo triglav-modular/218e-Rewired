@@ -58,6 +58,12 @@ const KNOBS = {
 const PORTAMENTO_IN = ['portamento', 'transpose'];
 // The most patterns the page lets into a bank.
 const MAX_PATTERNS = 32;
+// Where the page's count of downloads-so-far-today stops going up.  A number
+// whose job is to separate one build from an afternoon of them does not need
+// to be exact at the top, and a low ceiling is also what keeps the value from
+// being unusual enough to single anybody out.  The page caps at the same
+// number; tools/test_worker.mjs holds the two together.
+const MAX_PER_DAY = 10;
 
 function flag(value) {
   return value === true ? 1 : 0;
@@ -133,6 +139,20 @@ async function record(request, env, context) {
     && body.arp_patterns >= 0 && body.arp_patterns <= MAX_PATTERNS
     ? body.arp_patterns : -1;
 
+  // Which download of the day this is, counted by the page in its own
+  // storage.  Deliberately not an identifier: it is 1..10, millions of
+  // downloads share every value, and there is no key to join two rows on - a
+  // 2 here cannot be matched to the 1 that preceded it.  What it buys is a
+  // denominator that one person trying twelve option sets in an afternoon
+  // does not distort: count the rows where it is 1.
+  //
+  // -1 is "could not count" as well as "older page": a browser with no usable
+  // storage cannot know, and saying so is better than reporting every one of
+  // its downloads as somebody's first.
+  const nth_today = Number.isInteger(body.nth_today)
+    && body.nth_today >= 1 && body.nth_today <= MAX_PER_DAY
+    ? body.nth_today : -1;
+
   const point = {
     platform, version, volts,
     arp: flag(body.latching_arp),
@@ -159,6 +179,8 @@ async function record(request, env, context) {
     // option down.
     quantize_presets: tri(body.quantize_presets),
     portamento_in: oneOf(PORTAMENTO_IN, body.portamento_in),
+    // Added with 2.5.
+    nth_today,
   };
 
   if (dataset) env.BUILDS.writeDataPoint({
@@ -172,7 +194,7 @@ async function record(request, env, context) {
     doubles: [point.arp, point.knobs, point.pressure, point.portamento,
               tunings, point.calibration,
               point.sequencer, point.clock_divide, point.pitch_offset, patterns,
-              point.quantize_presets],
+              point.quantize_presets, nth_today],
   });
 
   // And the same thing where it can be read back without a credential.  One

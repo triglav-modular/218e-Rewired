@@ -1802,7 +1802,14 @@
                 // set to do.  Both were on the page for a while before they
                 // were counted, so a build using either was invisible here.
                 quantize_presets: !!o.quantize_presets,
-                portamento_in: o.portamento_in
+                portamento_in: o.portamento_in,
+                // Which download of the day this is from this browser, so a
+                // count of people is not a count of afternoons: one person
+                // trying twelve option sets otherwise reads as twelve.  An
+                // ordinal 1..10, never an identifier - every value is shared
+                // by millions of downloads and there is no key to join two
+                // rows on.  -1 when the browser cannot count.
+                nth_today: countToday()
             });
             // text/plain keeps this a simple request, so it needs no
             // preflight and no CORS reply to be delivered.
@@ -2077,6 +2084,41 @@
     // what the released page remembered.
     var STORE = '218e-rewired' + location.pathname.replace(/[^/]*$/, '');
     var K_SETTINGS = STORE + 'settings', K_FACTORY = STORE + 'factory';
+    var K_TODAY = STORE + 'today';
+
+    // Where the ordinal the beacon sends stops going up.  The worker holds the
+    // same ceiling; tools/test_worker.mjs keeps the two in step.
+    var MAX_PER_DAY = 10;
+
+    // How many downloads this browser has made today, and nothing else: no
+    // identifier, no history, and only the ordinal ever leaves.  The date is
+    // the LOCAL calendar date rather than UTC, so an evening's work does not
+    // split in half at midnight in a timezone nobody here is in.
+    //
+    // Nothing kept here has to survive the night, which is what makes it
+    // sound: the seven-day eviction that would quietly corrupt a long-lived
+    // counter has nothing to take away that this depends on.
+    //
+    // -1 rather than 1 when storage cannot be written.  A browser that cannot
+    // count does not know this is a first download, and reporting every one of
+    // its downloads as somebody's first would inflate the very number this
+    // exists to make honest.
+    function countToday() {
+        var d = new Date();
+        var day = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+        var n = 0;
+        try {
+            var was = JSON.parse(readStore(K_TODAY) || 'null');
+            if (was && was.day === day && typeof was.n === 'number' && was.n > 0) {
+                n = was.n;
+            }
+        } catch (e) {
+            n = 0;
+        }
+        n += 1;
+        if (!writeStore(K_TODAY, JSON.stringify({ day: day, n: n }))) return -1;
+        return n > MAX_PER_DAY ? MAX_PER_DAY : n;
+    }
 
     // Storage is absent on file: URLs in some browsers, throws in private
     // windows, and refuses when the origin is full.  Every one of those is

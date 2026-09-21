@@ -54,7 +54,8 @@ const REAL = {
   pressure_portamento: false, alternate_tunings: 3, pitch_correction: true,
   sequencer: true, clock_divide: false, pitch_offset: false,
   knob1: 'orders', knob2: 'patterns', knob3: 'octaves', knob4: 'factory',
-  arp_patterns: 22, quantize_presets: true, portamento_in: 'transpose'
+  arp_patterns: 22, quantize_presets: true, portamento_in: 'transpose',
+  nth_today: 3
 };
 
 // What a page from before the 2.x options sends: the first nine values and
@@ -73,7 +74,7 @@ const OLD = {
   check('its answer carries no body', res.status === 204, `status ${res.status}`);
   check('the options land in order',
         p && p.blobs.join(',') === 'win,2.2.0,1.2,orders,patterns,octaves,factory,transpose'
-        && p.doubles.join(',') === '1,1,1,0,3,1,1,0,0,22,1',
+        && p.doubles.join(',') === '1,1,1,0,3,1,1,0,0,22,1,3',
         p && `${p.blobs} / ${p.doubles}`);
 
   // The same download, in the form the dashboard can read without a token.
@@ -93,7 +94,8 @@ const OLD = {
         && k.opts.metadata.knob4 === 'factory'
         && k.opts.metadata.patterns === 22
         && k.opts.metadata.quantize_presets === 1
-        && k.opts.metadata.portamento_in === 'transpose',
+        && k.opts.metadata.portamento_in === 'transpose'
+        && k.opts.metadata.nth_today === 3,
         k && JSON.stringify(k.opts.metadata));
   check('and it is small enough for KV metadata',
         k && JSON.stringify(k.opts.metadata).length <= 1024,
@@ -115,10 +117,10 @@ const OLD = {
         && p.doubles.slice(0, 6).join(',') === '1,1,1,0,3,1',
         `${p.blobs} / ${p.doubles}`);
   check('an unreported flag is -1, not off',
-        p.doubles.slice(6).join(',') === '-1,-1,-1,-1,-1'
+        p.doubles.slice(6).join(',') === '-1,-1,-1,-1,-1,-1'
         && m.sequencer === -1 && m.clock_divide === -1
         && m.pitch_offset === -1 && m.patterns === -1
-        && m.quantize_presets === -1,
+        && m.quantize_presets === -1 && m.nth_today === -1,
         `${p.doubles.slice(6)} / ${JSON.stringify(m)}`);
   check('an unreported knob role is empty, not factory',
         p.blobs.slice(3).join(',') === ',,,,' && m.knob1 === '' && m.knob4 === ''
@@ -439,6 +441,28 @@ const OLD = {
         `route ${route} vs PUBLIC ${prefix}`);
 }
 
+// The download-of-the-day ordinal.  It is the one field whose whole purpose
+// is to be COARSE: a value outside 1..MAX_PER_DAY is either an older page, a
+// browser that could not count, or somebody poking the endpoint, and none of
+// those is a first download of the day.  Recording any of them as 1 would
+// inflate exactly the number this exists to make honest.
+{
+  for (const [what, value] of [['zero', 0], ['negative', -5],
+                               ['above the cap', 11], ['fractional', 2.5],
+                               ['a string', '3'], ['a boolean', true],
+                               ['absent', undefined]]) {
+    const env = fakeEnv();
+    await post({ ...REAL, nth_today: value }, env);
+    const m = env.keys[0].opts.metadata;
+    check(`an ordinal that is ${what} is not counted as a first download`,
+          m.nth_today === -1, String(m.nth_today));
+  }
+  const env = fakeEnv();
+  await post({ ...REAL, nth_today: 1 }, env);
+  check('a real first download of the day is kept as 1',
+        env.keys[0].opts.metadata.nth_today === 1);
+}
+
 // And the other drift, the one that costs a column rather than a deploy: the
 // page grows an option, the worker's allowlist does not hear about it, and
 // every build using it is recorded as 'other'.  That is what happened to the
@@ -470,6 +494,17 @@ const OLD = {
   const body = app.match(/var body = JSON\.stringify\(\{([\s\S]*?)\n            \}\);/);
   const sent = body ? (body[1].match(/^\s{16}(\w+):/gm) || [])
     .map((m) => m.trim().replace(':', '')) : [];
+  // The cap is written down twice - the page stops counting at it, the worker
+  // refuses anything above it - and the two failing to agree is silent in both
+  // directions: a page counting past the worker's ceiling has its busiest
+  // afternoons recorded as "could not count", and a worker with the higher
+  // ceiling simply never sees the values it is making room for.
+  const pageCap = app.match(/var MAX_PER_DAY = (\d+);/);
+  const workerCap = source.match(/const MAX_PER_DAY = (\d+);/);
+  check('the page and the worker cap the daily ordinal at the same number',
+        pageCap && workerCap && pageCap[1] === workerCap[1],
+        `page ${pageCap && pageCap[1]} / worker ${workerCap && workerCap[1]}`);
+
   const ignored = sent.filter((f) => !source.includes(`body.${f}`));
   check('every field the beacon sends is one the worker records',
         sent.length > 0 && ignored.length === 0,
