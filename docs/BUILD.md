@@ -804,6 +804,36 @@ WHERE timestamp > now() - INTERVAL '30' DAY
   AND blob1 IN ('mac','win') AND blob2 != '9.9.9'
 ```
 
+**Downloads are not people, and `double12` is what separates them.** Somebody
+comparing option sets downloads five or ten builds in an afternoon, and every
+one of those is a row. The page counts its own downloads for the current local
+day and sends the ordinal, capped at ten: `1` is the first download of that day
+from that browser, `2` the second, `-1` a page older than the field or a
+browser with no usable storage. Nothing else about it leaves — the count stays
+in the browser, the row already has its own timestamp, and the value cannot
+link two rows, since millions of downloads share every one of them.
+
+So "how many people, rather than how many downloads" is the rows where it is 1:
+
+```sql
+SELECT count() AS downloads,
+       sum(if(double12 = 1, 1, 0)) AS people,
+       sum(if(double12 = -1, 1, 0)) AS uncounted
+FROM builds
+WHERE timestamp > now() - INTERVAL '30' DAY
+  AND blob1 IN ('mac','win') AND blob2 != '9.9.9'
+```
+
+`uncounted` matters while pages from before the field are still in use: those
+downloads have no first-of-day status at all, so they belong in neither column
+rather than being read as repeats. The same value rides in the KV metadata as
+`nth_today`, which is the path that needs no API token.
+
+What it counts is browsers-with-storage per day, not people. Two machines is
+two, a private window is one more, and anyone blocking beacons is in none of
+it. It is a much better denominator than the row count, and it is still a
+floor.
+
 Nothing on the route is authenticated — it cannot be, since the page is public
 — so anyone who finds it can add to a count. Every field is validated against
 what the page can actually send, so the worst case is noise in the numbers
