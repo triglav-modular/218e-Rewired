@@ -433,9 +433,12 @@ Taken, cheap to change:
 The owner's:
 
 - **Should the flashed hex also carry a record** so a build made on the page
-  flashes with its settings already in place? Default here: no - the page
-  pushes after the flash, one procedure instead of two. It is a few hex
-  records at `0x8003d000` if wanted later.
+  flashes with its settings already in place? Decided 2026-09-22: no. The
+  baked tables are what a fresh flash plays, so a record in the hex would
+  change nothing audible, only make a fresh flash report saved settings, at
+  the cost of a full repin. The page's step 5 is for changing settings
+  without flashing again, and its copy says so; it asks for MIDI only when
+  the port list is clicked.
 - **Non-octave tunings at runtime** need `octave_units` moved to RAM, five
   of whose sites are in the factory octave-switch block. Default here:
   build-time only in stage 1.

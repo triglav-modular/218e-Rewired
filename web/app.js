@@ -1343,18 +1343,11 @@
         'not written': 'The keyboard could not save: try again, and if it keeps failing, flash the firmware again.'
     };
     if ($('kbdSend')) {
-        // The MIDI permission is asked for when the step comes into view,
-        // not on load: someone building an image to download has no use for
-        // the prompt.
-        var kbdSection = $('kbdPort').closest('section');
-        if (window.IntersectionObserver && kbdSection) {
-            new IntersectionObserver(function (entries, observer) {
-                if (entries.some(function (e) { return e.isIntersecting; })) {
-                    observer.disconnect();
-                    listKeyboard();
-                }
-            }).observe(kbdSection);
-        }
+        // The MIDI permission is asked for when the port list is clicked,
+        // not when the step scrolls into view and not on load: flashing
+        // already carries the settings, so this step is optional and
+        // someone building an image to download has no use for the prompt.
+        // The list fills on the first focus, as the calibration's does.
         $('kbdPort').addEventListener('focus', function () { if (!kbd.listed) listKeyboard(); });
         $('kbdPort').addEventListener('change', refresh);
         $('kbdSend').addEventListener('click', function () {
@@ -1388,7 +1381,7 @@
         var build = state.result ? recordBytes(state.result.settings) : null;
         var verdict;
         if (id.slotLoaded === 0xff) {
-            verdict = 'This keyboard has no saved settings. It plays the ones built into its firmware.';
+            verdict = 'This keyboard plays the settings built into its firmware. Nothing has been changed over MIDI.';
         } else if (!build) {
             verdict = 'This keyboard holds saved settings. Build an image here to compare them.';
         } else if (id.imageMarker !== SETTINGSMIDI.markerOf(build)) {
