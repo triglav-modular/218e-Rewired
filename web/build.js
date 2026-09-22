@@ -231,7 +231,12 @@ var WEBBUILD = (function () {
          'clock_spike_units', 'clock_fast_trigger', 'clock_remap_bare',
          'clock_deadline', 'clock_pitch_target']
             .forEach(function (n) { blocks[n] = div; });
-        blocks.clock_init_pool = div || keep || seq;
+        // The settings mirror is in every image, as tools/build.py has it:
+        // the boot chain starts at settings_boot and its validator shares
+        // persist_crc, so both stay on with persistence off.
+        ['settings_copy', 'settings_valid', 'settings_newest',
+         'settings_boot', 'clock_init_pool', 'persist_crc']
+            .forEach(function (n) { blocks[n] = true; });
         blocks.profiler_pool = div || !!features.scan_profiler;
         blocks.knob4_octave_switch =
             cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
@@ -453,6 +458,11 @@ var WEBBUILD = (function () {
             })(),
             properties: BUILDLIB.writeProperties('config/218e.toml', flags.blocks,
                                                  flags.features, numbers, tables),
+            // The settings record this image's tables make, as hex, for the
+            // parity matrix against tools/build.py's build/settings.bin.
+            settings: BUILDLIB.settingsRecord(numbers, tables, flags.blocks.arp_pattern_tables,
+                                              numbers.init_marker, numbers.octave_units, 1)
+                .map(function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join(''),
             patches: records.patches.length,
             skipped: records.skipped,
             changed: applied.changed,

@@ -1,3 +1,6 @@
+3.0 (2026-09-22)
+- Settings can be now changed via webMIDI after flashing instead of being pre-baked.
+
 2.4 (2026-09-13)
 - The selected tuning is now remembered between power cycles.
 - Sequenced and latched notes now keep the pitch the preset voltage gave them, over MIDI, after a power cycle, and while the portamento in banana jack is transposing.

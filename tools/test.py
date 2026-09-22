@@ -2044,6 +2044,94 @@ def test_divu_destinations() -> None:
           f"odd destinations: {odd}")
 
 
+def test_settings_record() -> None:
+    """The settings record: layout, checksum, bounds, and its RAM shape.
+
+    The firmware copies the record's bytes from 0x20 straight into its
+    mirror at 0x6800 and reads each number as LD.UH off a fixed cell, so
+    the offsets here are the firmware's addresses, not a convention; a
+    field that moved would be read as a different setting.  The bounds are
+    refused at serialization time for the same reason the loader refuses
+    them off flash: a value past its range is a wrong immediate.
+    """
+    print("settings record")
+    import settings as S
+    numbers = {"chord_hold_scans": 200, "transpose_cv_period": 819,
+               "transpose_cv_hysteresis": 12}
+    tables = {
+        "pitch_remap": [485 + 40 * i for i in range(79)],
+        "tuning_slot0": [500 + 40 * k for k in range(32)],
+        "tuning_slot1": [510 + 40 * k for k in range(32)],
+        "tuning_slot2": [520 + 40 * k for k in range(32)],
+        "tuning_period_keys": [12, 12, 7],
+        "arp_pattern_bank": [0x1234, 0xabcd, 0x0001, 0x8000],
+        "arp_pattern_len": [16, 32],
+    }
+    rec = S.record(numbers, tables, True, 0xb007, 484, generation=7)
+    check("record is 0x2a8 bytes", len(rec) == S.LENGTH, str(len(rec)))
+    check("marker, version, length, generation in the header",
+          rec[:12] == bytes.fromhex("32313853 0001 0298 00000007".replace(" ", "")),
+          rec[:12].hex())
+    back = S.parse(rec)
+    check("parse reads the generation back", back["generation"] == 7)
+    check("the image marker and period ride at 0x10 and 0x12",
+          rec[0x10:0x14] == bytes.fromhex("b00701e4"), rec[0x10:0x14].hex())
+    got = back["numbers"]
+    check("numbers take the build's value where it has one, the fallback elsewhere",
+          got["chord_hold_scans"] == 200 and got["tie_glide_rate"] == 60
+          and got["transpose_cv_period"] == 819 and got["transpose_cv_hysteresis"] == 12,
+          str(got))
+    check("the ten numbers sit in cell order at 0x20",
+          rec[0x20:0x34] == bytes.fromhex("003c 0800 0004 00fa 0005 0333 0000 000c 00c8 00c8".replace(" ", "")),
+          rec[0x20:0x34].hex())
+    check("the unused number cells are zero", rec[0x34:0x60] == bytes(0x2c))
+    check("pitch, tuning and period keys land at their offsets",
+          back["pitch_remap"] == tables["pitch_remap"]
+          and back["tuning_slot2"] == tables["tuning_slot2"]
+          and back["tuning_period_keys"] == [12, 12, 7])
+    check("the pad after the 79 pitch entries is zero", rec[0xfe:0x100] == b"\0\0")
+    check("pattern masks keep the table's low-first halfword pairs",
+          rec[0x1c8:0x1d0] == bytes.fromhex("1234abcd00018000") and rec[0x1d0:0x248] == bytes(0x78),
+          rec[0x1c8:0x1d0].hex())
+    check("pattern lengths follow, zero past the bank",
+          rec[0x248:0x24c] == bytes.fromhex("00100020") and rec[0x24c:0x288] == bytes(0x3c))
+    check("the reserved tail is zero", rec[0x288:0x2a8] == bytes(0x20))
+    # zlib's CRC over the two covered ranges, as one stream.
+    import zlib
+    check("CRC covers header bytes 4..11 then the payload",
+          int.from_bytes(rec[12:16], "big") == zlib.crc32(rec[4:12] + rec[16:]))
+    # The bank is zero, not [0, 0]/[32], when knob 2 is not on patterns: the
+    # firmware mirrors the bank only when the tables were emitted.
+    plain = S.record(numbers, tables, False, 0xb007, 484)
+    check("no pattern tables means a zero bank and zero lengths",
+          plain[0x1c8:0x288] == bytes(0xc0))
+    check("the same payload otherwise", plain[0x10:0x1c8] == rec[0x10:0x1c8])
+
+    raises("a number past its range is refused",
+           lambda: S.record({"tie_glide_rate": 1025}, tables, True, 0, 484), "1..1024")
+    raises("a pitch entry past the DAC is refused",
+           lambda: S.record(numbers, dict(tables, pitch_remap=[0x1000] * 79), True, 0, 484),
+           "pitch_remap[0]")
+    raises("a short pitch table is refused",
+           lambda: S.record(numbers, dict(tables, pitch_remap=[1] * 78), True, 0, 484),
+           "79 entries")
+    raises("a period of zero keys is refused",
+           lambda: S.record(numbers, dict(tables, tuning_period_keys=[0, 12, 12]), True, 0, 484),
+           "1..127")
+    check("a 36-position map serializes: the rotation's 32 is the build's rule, not the record's",
+          S.parse(S.record(numbers, dict(tables, tuning_period_keys=[36, 12, 12]), True, 0, 484))
+          ["tuning_period_keys"] == [36, 12, 12])
+    raises("a pattern length past 32 is refused",
+           lambda: S.record(numbers, dict(tables, arp_pattern_len=[33, 32]), True, 0, 484),
+           "1..32")
+    raises("generation zero is refused",
+           lambda: S.record(numbers, tables, True, 0, 484, generation=0), "generation")
+    bad = bytearray(rec); bad[0x61] ^= 1
+    raises("parse refuses a flipped payload bit", lambda: S.parse(bytes(bad)), "CRC")
+    bad = bytearray(rec); bad[0] = 0xff
+    raises("parse refuses an uncommitted marker", lambda: S.parse(bytes(bad)), "marker")
+
+
 def test_rotation_hysteresis() -> None:
     """One degree of the rotation must cross the hysteresis band.
 
@@ -2089,6 +2177,7 @@ def main() -> None:
     test_latch_spacing()
     test_table_range()
     test_rotation_hysteresis()
+    test_settings_record()
     test_divu_destinations()
     test_tables(cfg)
     test_resolution(cfg)

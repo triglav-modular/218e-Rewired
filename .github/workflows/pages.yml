@@ -205,6 +205,16 @@ jobs:
             echo "web/test_settings.js is not on ${{ matrix.ref }} yet - skipped"
           fi
 
+      - name: The NRPN codec round-trips every setting
+        run: |
+          # Every parameter of a record through the four Control Changes and
+          # back, masks in thirds, in the order the instrument dumps them.
+          if [ -f web/test_nrpn.js ]; then
+            node web/test_nrpn.js
+          else
+            echo "web/test_nrpn.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
       - name: The beacon route only records what the page can send
         run: |
           # It is a public, unauthenticated endpoint - it has to be, the page

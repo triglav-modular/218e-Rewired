@@ -432,7 +432,7 @@ REFUSALS = [
 # overwrites them even though its hex is redirected to build/_web.hex.  Left
 # alone, the last variant's metadata sits there describing the default image -
 # build/VERSION naming a checksum no shipped file has.
-METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt")
+METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt", "settings.bin")
 
 
 def snapshot() -> dict[str, bytes | None]:
@@ -557,6 +557,9 @@ def run(base: str, rows: list) -> None:
             sha = re.search(r"SHA-256 ([0-9a-f]{64})", built.stdout).group(1)
 
             (TMP / "_opts.json").write_text(json.dumps(options))
+            # The settings record as hex text: jsc's readFile is for text,
+            # and the comparison is of the bytes either way.
+            (TMP / "_settings.hex").write_text((TMP / "settings.bin").read_bytes().hex())
             js = subprocess.run(
                 # The whole stack: the harness asks WEBBUILD.build() for the
                 # properties now instead of deriving the flags a second time,
@@ -565,7 +568,8 @@ def run(base: str, rows: list) -> None:
                  "tools/avr32/encoder.js", "tools/avr32/runtime.js",
                  "tools/avr32/program.js", "web/build.js",
                  "web/test_properties.js", "--", str(TMP / "_opts.json"),
-                 "firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties")],
+                 "firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties"),
+                 str(TMP / "_settings.hex")],
                 capture_output=True, text=True, cwd=REPO)
             out = (js.stdout + js.stderr).strip()
             props_ok = out.startswith("IDENTICAL")

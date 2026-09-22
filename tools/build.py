@@ -40,6 +40,7 @@ from pathlib import Path
 
 # tools/ on the path so `import options` works however build.py is invoked.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import settings as SETTINGS  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 BUILD = REPO / "build"
@@ -1384,6 +1385,17 @@ RAM_REGIONS = [
     # factory stages its own record rather than writing from scattered state.
     (0x6300, 0x6420, "canonical v3 record, staged for body then marker commit"),
     (0x6640, 0x674C, "canonical musical payload from completed edit gestures"),
+    # The settings mirror: the record's payload from 0x20, in RAM, which is
+    # what every table reader and the ten runtime numbers address.  Filled
+    # at boot from the image's own tables, then from the newer valid slot at
+    # 0x8003d000/0x8003d800.  See docs/PLAN-SETTINGS.md and tools/settings.py.
+    (0x6800, 0x6840, "settings mirror: 32 number cells"),
+    (0x6840, 0x68E0, "settings mirror: pitch curve, 79 halfwords and a pad"),
+    (0x68E0, 0x69A0, "settings mirror: three tuning tables"),
+    (0x69A0, 0x69A8, "settings mirror: keys per period"),
+    (0x69A8, 0x6A28, "settings mirror: pattern masks, two halfwords each"),
+    (0x6A28, 0x6A68, "settings mirror: pattern lengths"),
+    (0x6A70, 0x6A78, "settings loader state: commit state, slot loaded, generation"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to
@@ -2450,7 +2462,12 @@ def main() -> None:
                  "persist_same", "persist_verify", "persist_save", "persist_tick",
                  "persist_capture", "persist_boot", "persist_scan_shim", "persist"):
         blocks[name] = keep
-    blocks["clock_init_pool"] = div or keep or seq
+    # The settings mirror is in every image: the boot chain starts at
+    # settings_boot whatever else is built, and its record validator
+    # shares persist_crc, so both stay on with persistence off.
+    for name in ("settings_copy", "settings_valid", "settings_newest",
+                 "settings_boot", "clock_init_pool", "persist_crc"):
+        blocks[name] = True
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
     blocks["seq_chord"] = seq
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
@@ -2525,6 +2542,11 @@ def main() -> None:
 
     properties = BUILD / "build.properties"
     write_properties(properties, cfg, blocks, features, tables)
+    # The record this image's own tables make, stamped with its marker: what
+    # a fresh boot mirrors, and what the regressions plant to prove a load.
+    (BUILD / "settings.bin").write_bytes(SETTINGS.record(
+        cfg["_numbers"], tables, blocks["arp_pattern_tables"],
+        cfg["_numbers"]["init_marker"], cfg["_numbers"]["octave_units"]))
 
     # --- assemble ---------------------------------------------------------
     if args.no_ghidra:

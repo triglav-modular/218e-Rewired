@@ -604,15 +604,21 @@ public class ControlRegression extends SequenceEditRegression {
         // one period stopped costing volts_per_octave - and the first move
         // shipped a red suite, because cv(123) silently stopped meaning one
         // period.  A fixture derived from the image cannot go stale that way.
-        // The base is named because the OFFSETS are the fragile half: this
-        // pool moved 8 bytes when it took a word for preset_degrees, and the
-        // suite went red reading the housekeeping pointer as a period.  One
-        // edit here covers the next move.
-        int period=(int)r(CV_POOL+8,4), degree=(period+6)/12;
+        // Since 2026-09-22 the period and the hysteresis are settings: the
+        // cave's pool word names the mirror at 0x6800 and the values sit in
+        // cells 5 and 7 of it, filled at boot - so they are read out of a
+        // booted image, which is still the image under test and not a
+        // number written here.  The pool word itself is checked to be the
+        // mirror, because reading a stale offset as a period is exactly
+        // how this suite went red the last time the pool moved.
+        setup(0,false,0);
+        check("the transposer reads its period out of the settings mirror",
+            r(CV_POOL+8,4)==0x6800);
+        int period=(int)r(0x680a,2), degree=(period+6)/12;
         check("the transposer's period is the one this build carries: "+period,
             period>100&&period<2048);
         cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
-        int hyst=(int)r(CV_POOL+16,4);
+        int hyst=(int)r(0x680e,2);
         println("JACK SHAPE period "+period+" counts, one degree "+degree
             +", hysteresis "+hyst+", "
             +(cvFiltered?"one pole in front":"no pole: hysteresis only"));

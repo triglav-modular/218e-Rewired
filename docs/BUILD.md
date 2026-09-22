@@ -77,6 +77,7 @@ Everything the build produces lands in `build/` and is not tracked:
 | `build/build.properties` | the settings handed to the assembler |
 | `build/tables.txt` | every generated table, in decimal |
 | `build/patch_manifest.txt` | address, size and description of each patch |
+| `build/settings.bin` | the settings record this image's tables and numbers make, stamped with its marker - see [PLAN-SETTINGS.md](PLAN-SETTINGS.md) |
 | `build/assemble.log` | full Ghidra output, including the disassembly |
 
 ## What the build checks

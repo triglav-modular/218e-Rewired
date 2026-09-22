@@ -7,9 +7,15 @@ pattern bank, and the build numbers nobody has measured yet. Everything that
 is *code* - which features are in, which role each knob has - stays a build
 option; that is stage 2, and it is not laid out here.
 
-Nothing in this document is built. Every address below was read out of the
-disassembly in `build/disasm/dump1.txt` and the assembler on 2026-09-22; the
-facts that were inferred rather than read are marked as such.
+**Built so far (2026-09-22):** the record and both serializers
+(`tools/settings.py`, `BUILDLIB.settingsRecord`), the RAM mirror, the
+loader - `settings_copy`, `settings_valid`, `settings_newest` and
+`settings_boot` at `0x8001f000..0x8001f2d0` - every reader repointed at the
+mirror, the ten number sites reading their cells, and
+`src/SettingsRegression.java` under `tools/test_persistence.py`. Not yet
+built: the NRPN handler, commit, dump, and the page's step. Every address
+below was read out of the disassembly in `build/disasm/dump1.txt` and the
+assembler; the facts that were inferred rather than read are marked as such.
 
 ## What moves to runtime, and what does not
 
@@ -103,16 +109,25 @@ musical record.
 | `0x0fe` | 2 | Pad |
 | `0x100` | 192 | Tuning slots 0..2, 32 halfwords each |
 | `0x1c0` | 8 | `tuning_period_keys`, 3 halfwords and a pad |
-| `0x1c8` | 128 | 32 pattern masks, 32 bits each |
+| `0x1c8` | 128 | 32 pattern masks, each as two halfwords, low first, as the gate reads them |
 | `0x248` | 64 | 32 pattern lengths, halfwords |
 | `0x288` | 32 | Reserved, zero |
 | `0x2a8` | | end |
 
 Load validates marker, version, length, generation, CRC, image marker,
 period, then every field's bounds: pitch and tuning entries inside the
-12-bit DAC range and monotonic where the build validators demand it, lengths
-`1..32`, numbers inside their ranges. Any failure means the record is ignored
-and the image's own tables are used; a bad record is never repaired in place.
+12-bit DAC range, keys per period `1..32` where the key-table rotation is
+built and `1..127` otherwise, lengths `0..32` (zero is an
+unused pattern), numbers inside their ranges. Monotonicity is not checked:
+a non-monotonic curve plays wrong notes, which is the player's to hear, and
+nothing downstream can be harmed by it. Any failure means the record is
+ignored and the image's own tables are used; a bad record is never repaired
+in place.
+
+The bank is only in the image when knob 2 plays patterns, and only mirrored
+then; any other build boots a zero bank, and the serializers write zeros
+for it too, so a fresh boot and the build's own record agree byte for byte
+- which is the first thing the regression checks.
 
 Reserved bytes are zero and future fields are laid out so that zero is the
 old behaviour, which is what lets a record written before a field existed
@@ -131,11 +146,12 @@ baked tables, and edited live by the NRPN handler:
 | `0x69a0` | 8 | period keys |
 | `0x69a8` | 128 | pattern masks |
 | `0x6a28` | 64 | pattern lengths |
-| `0x6a68` | 8 | NRPN state: parameter MSB/LSB, data MSB, a "have MSB" flag, the dump cursor |
-| `0x6a70` | 8 | commit state: `0` clean, `1` requested, `2` written, `3` failed; the loaded slot index; its generation |
-| `0x6a80` | 0x2a8 | staging for a commit, marker erased, as persistence stages at `0x6300` |
+| `0x6a68` | 8 | reserved for the NRPN state: parameter MSB/LSB, data MSB, a "have MSB" flag, the dump cursor |
+| `0x6a70` | 8 | loader state: commit state byte (`0` clean, `1` requested, `2` written, `3` failed), the slot loaded (`0xff` none), a pad, the generation word at `+4` |
+| `0x6a80` | 0x2a8 | reserved for a commit's staging, marker erased, as persistence stages at `0x6300` |
 
-Everything ends below `0x6d30`; the stack keeps over 12 KB.
+Everything ends below `0x6d30`; the stack keeps over 12 KB. The mirror is
+declared in `RAM_REGIONS` in `tools/build.py`.
 
 Every reader reaches its table through a pool word today, so repointing is a
 word change, not a code change:
@@ -147,18 +163,23 @@ word change, not a code change:
 | `tuning_period_keys` `0x8001e2d0` | the same three caves |
 | pattern bank `0x80019f20` / `0x80019fa0` | `arp_pattern_gate` |
 
-The ten numbers become `LD.UH` from `0x6800 + 2n`. Each is a cave, so the two
-extra bytes per site are found by re-laying the cave out, not by squeezing.
-The `cv_transpose` pool words are read with `LDDPC` and used as values; those
-three sites become a `MOV Rn,0x6800; LD.UH Rn,Rn[2m]` pair.
-
-`MOV Rd,0x6800` is the same 4-byte instruction persistence already uses for
-`0x6300` and `0x6640`.
+The ten numbers are `LD.UH` from `0x6800 + 2n` now. Where a cave had the
+room, the site is `MOV Rn,0x6800; LD.UH Rn,Rn[2n]`; where it did not, a pool
+word holding `0x6800` was added and the site is `LDDPC Rn,pool; LD.UH` at
+the old width (`seq_glide`, whose extent grew by one word to `0x8001b660`;
+`seq_strip`; `preset_degrees`). `seq_chord` shifted two labels by a
+halfword into its own slack; `cv_transpose`'s three pool-word values became
+loads off one mirror pool word, its labels moving with them. Cells 8 and 9
+are past a compact load's 14-byte reach, so those two sites use the cell's
+own address as the base. The values a build gives them still come from the
+config: `settings_boot` is where the ten immediates live now, one each.
 
 ## Boot
 
-`settings_boot`, called first from the `persist_boot` chain (a new pool word
-ahead of `0x8001d5f0`'s first entry):
+`settings_boot` at `0x8001f1c0` is what the factory's startup pool word at
+`0x80007d8c` names now, in every image; its own last pool word carries on
+into what that word used to name - `persist_boot`, the clock's init, the
+sequencer's, or the factory's GPIO setup at `0x80007340`:
 
 1. Copy the baked tables and the build's numbers into the mirror. This is the
    fallback and it always runs, so a corrupt record can only lose edits,
@@ -170,7 +191,10 @@ ahead of `0x8001d5f0`'s first entry):
    the (possibly new) slot table into `0x854`.
 
 Order matters: `persist_boot` then restores `0x6090`, and the first scan's
-applier copy reads the mirror.
+applier copy reads the mirror. `settings_valid` checks the header, the CRC
+through `persist_crc`, the image marker and period, then the bounds off a
+table of low/high pairs in its own pool; `settings_newest` walks the two
+slots with the serial-number compare `persist_newest` uses.
 
 Warm resets reload like power-up. SRAM surviving a DFU is not a concern
 here because the mirror is rebuilt from flash on every boot and the record
@@ -252,22 +276,22 @@ the transport; nothing is built twice.
 
 ## Changes, file by file
 
-**`src/AssemblePressureFix.java`** - new blocks in a fresh cave page from
-`0x8001f000`: `settings_boot`, `settings_load` (find and validate a slot),
-`settings_nrpn` (the CC hook and the parameter state machine),
-`settings_commit` (called from `persist_scan_shim`), `settings_dump` (the
-paced sender, driven from the same shim). The reader pool words repointed and
-the ten number sites converted. The init marker changes, so this is one repin
-tail for the whole batch; keep it to one commit.
+**`src/AssemblePressureFix.java`** - built: `settings_copy`,
+`settings_valid`, `settings_newest`, `settings_boot` at `0x8001f000`, the
+reader pool words repointed and the ten number sites converted. Still to
+build, in the same cave page: `settings_nrpn` (the CC hook and the parameter
+state machine), `settings_commit` (called from `persist_scan_shim`),
+`settings_dump` (the paced sender, driven from the same shim). Each is a
+repin tail; batch them.
 
-**`tools/build.py` / `tools/options.py`** - the record serializer, shared
-with the page in spirit and checked against it by a parity test. The build
-still bakes the tables into the image exactly as now; the serializer only
-adds `build/settings.bin` and its CRC for the tests and for the page.
+**`tools/settings.py`** - built: the record serializer and parser, and
+`build/settings.bin` written by every build. `tools/test.py` checks the
+layout and bounds; `web/test_configs.py` compares it with the page's record
+for every configuration in its matrix.
 
-**`web/buildlib.js`** - the same serializer, and the NRPN codec: value to
-four CCs, four CCs to value, plus the section layout so the page can address
-a single entry.
+**`web/buildlib.js`** - built: `settingsRecord` and `crc32`. Still to build:
+the NRPN codec - value to four CCs, four CCs to value - and the section
+layout so the page can address a single entry.
 
 **`web/app.js`, `web/index.html`** - a step after the download: pick the
 MIDI port (the calibration's port list already exists), *Push*, *Read back*,
@@ -279,16 +303,18 @@ it is written; this document names the controls, not the wording.
 
 ## Tests, each stage ending with one
 
-1. **Record and codec, no Ghidra.** `tools/test_settings.py` and
-   `web/test_settings_record.js`: serialize the default config through both
-   toolchains and compare bytes; NRPN encode/decode round trips every
-   parameter; bounds refuse every out-of-range value.
-2. **Load and fallback.** `src/SettingsRegression.java` on the persistence
-   harness (it already models FLASHC and the page buffer): no record boots
-   the baked tables; a valid record boots the mirror from it; each of the
-   validation failures - marker, CRC, version, image marker, period, bounds -
-   falls back; the newer of two slots wins, including across generation
-   wrap.
+1. **Record and codec, no Ghidra.** Built: `test_settings_record` in
+   `tools/test.py` (layout, CRC, bounds, the zero bank) and the record
+   compare in `web/test_configs.py` (both serializers, every configuration).
+   To build: the NRPN encode/decode round trip over every parameter.
+2. **Load and fallback.** Built: `src/SettingsRegression.java`, run by
+   `tools/test_persistence.py` in every persistent mode against that image's
+   own `settings.bin`: no record boots the baked tables and the mirror equals
+   the build's record; a planted record loads and the applier, the pitch
+   remap, `clock_init` and `seq_glide` read it from the mirror; a warm reset
+   reloads; sixteen header, image, period and bound corruptions and a
+   flipped CRC bit each fall back; the newer of two slots wins, across the
+   generation wrap, and a corrupt newer slot yields to the older.
 3. **Receive.** Feed packets into the ring at `0x34b4` and run the
    dispatcher's drain: a table write lands in the mirror and re-arms the
    applier guard; a number write is bounded; a foreign CC still reaches the

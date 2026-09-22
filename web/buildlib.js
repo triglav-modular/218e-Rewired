@@ -1150,6 +1150,232 @@ var BUILDLIB = (function () {
         return numbers;
     }
 
+    // --- the settings record --------------------------------------------
+    // tools/settings.py is the reference; docs/PLAN-SETTINGS.md the layout.
+    // The payload from offset 0x20 is the firmware's RAM mirror at 0x6800,
+    // so the ten numbers here sit in the order of their RAM cells, with the
+    // fallback and bounds the assembler enforces at each site.
+    var SETTINGS_NUMBERS = [
+        ['tie_glide_rate', 60, 1, 1024],
+        ['strip_halfway_units', 2048, 128, 3968],
+        ['clock_min_ms', 4, 1, 4],
+        ['clock_rearm_us', 250, 1, 1000],
+        ['clock_lock_pulses', 5, 2, 32],
+        ['transpose_cv_period', 123, 1, 1023],
+        ['transpose_cv_zero', 0, 0, 1023],
+        ['transpose_cv_hysteresis', 2, 0, 64],
+        ['chord_hold_scans', 300, 20, 2000],
+        ['latch_state_hold_scans', 200, 20, 2000]
+    ];
+    var SETTINGS_LAYOUT = {
+        marker: 0x32313853, version: 1, header: 0x10, payload: 0x298, length: 0x2a8,
+        slots: [0x8003d000, 0x8003d800], mirror: 0x6800,
+        imageMarker: 0x10, octaveUnits: 0x12, numbers: 0x20, pitch: 0x60,
+        tuning: 0x100, periodKeys: 0x1c0, bank: 0x1c8, lengths: 0x248,
+        reserved: 0x288
+    };
+
+    var CRC_TABLE = null;
+    // CRC-32/ISO-HDLC, the one zlib and the firmware's persist_crc compute.
+    // `previous` continues a checksum the way zlib.crc32(data, value) does,
+    // so a record's two covered ranges make one stream.
+    function crc32(bytes, start, end, previous) {
+        if (!CRC_TABLE) {
+            CRC_TABLE = [];
+            for (var n = 0; n < 256; n++) {
+                var c = n;
+                for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+                CRC_TABLE.push(c >>> 0);
+            }
+        }
+        var crc = ((previous === undefined ? 0 : previous) ^ 0xFFFFFFFF) >>> 0;
+        for (var i = start; i < end; i++) {
+            crc = (CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8)) >>> 0;
+        }
+        return (crc ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    // A committed record, marker set: an array of 0x2a8 bytes.  Throws on
+    // anything the firmware's validator would refuse, so the page cannot
+    // hand the instrument a record it will ignore.
+    function settingsRecord(numbers, tables, patternTables, initMarker, octaveUnits, generation) {
+        var L = SETTINGS_LAYOUT;
+        var out = [];
+        for (var i = 0; i < L.length; i++) out.push(0);
+        function halfword(offset, value) {
+            out[offset] = (value >>> 8) & 0xFF; out[offset + 1] = value & 0xFF;
+        }
+        function word(offset, value) {
+            halfword(offset, (value / 65536) & 0xFFFF); halfword(offset + 2, value & 0xFFFF);
+        }
+        function halfwords(offset, values, name, low, high) {
+            values.forEach(function (v, i) {
+                if (typeof v !== 'number' || v !== Math.floor(v) || v < low || v > high) {
+                    throw new Error(name + '[' + i + '] must be ' + low + '..' + high + ', got ' + v);
+                }
+                halfword(offset + 2 * i, v);
+            });
+        }
+        generation = generation === undefined ? 1 : generation;
+        if (!(generation >= 1 && generation <= 0xFFFFFFFF)) {
+            throw new Error('generation must be 1..0xffffffff');
+        }
+        word(0, L.marker); halfword(4, L.version); halfword(6, L.payload); word(8, generation);
+        halfword(L.imageMarker, initMarker & 0xFFFF);
+        halfword(L.octaveUnits, octaveUnits & 0xFFFF);
+        var values = SETTINGS_NUMBERS.map(function (n) {
+            var value = numbers[n[0]] === undefined ? n[1] : numbers[n[0]];
+            if (!(value >= n[2] && value <= n[3])) {
+                throw new Error(n[0] + ' must be ' + n[2] + '..' + n[3] + ', got ' + value);
+            }
+            return value;
+        });
+        halfwords(L.numbers, values, 'numbers', 0, 0xFFFF);
+        if (tables.pitch_remap.length !== 79) {
+            throw new Error('pitch_remap must have 79 entries, got ' + tables.pitch_remap.length);
+        }
+        halfwords(L.pitch, tables.pitch_remap, 'pitch_remap', 0, 0xFFF);
+        for (var slot = 0; slot < 3; slot++) {
+            var table = tables['tuning_slot' + slot];
+            if (table.length !== 32) throw new Error('tuning_slot' + slot + ' must have 32 entries');
+            halfwords(L.tuning + 64 * slot, table, 'tuning_slot' + slot, 0, 0xFFF);
+        }
+        if (tables.tuning_period_keys.length !== 3) {
+            throw new Error('tuning_period_keys must have 3 entries');
+        }
+        // Up to a .kbm's 127 positions; the rotation's 32 is the build's rule.
+        halfwords(L.periodKeys, tables.tuning_period_keys, 'tuning_period_keys', 1, 127);
+        // Same rule as tools/settings.py: the bank is only in the image, and
+        // only mirrored at boot, when knob 2 plays patterns.
+        if (patternTables) {
+            var bank = tables.arp_pattern_bank, lengths = tables.arp_pattern_len;
+            if (bank.length !== 2 * lengths.length || lengths.length < 1 || lengths.length > 32) {
+                throw new Error('arp_pattern_bank must hold two halfwords per length, 1..32 patterns');
+            }
+            halfwords(L.bank, bank, 'arp_pattern_bank', 0, 0xFFFF);
+            halfwords(L.lengths, lengths, 'arp_pattern_len', 1, 32);
+        }
+        word(12, crc32(out, L.header, L.length, crc32(out, 4, 12)));
+        return out;
+    }
+
+    // --- settings over MIDI: the NRPN side ------------------------------
+    // The firmware's parameter map, as settings_target has it: where each
+    // 14-bit NRPN parameter number lives in the record.  A mask is three
+    // parameters - bits 0..13, 14..27 and 28..31 - because a 32-bit value
+    // has to ride on 14-bit ones.  The identity block at 0x3f78..0x3f7f is
+    // what the instrument sends back at the end of every dump.
+    var NRPN_CHANNEL = 15;          // channel 16, the telemetry's
+    var NRPN_SECTIONS = [
+        { base: 0x0000, count: 10, offset: 0x20, kind: 'half' },
+        { base: 0x0080, count: 79, offset: 0x60, kind: 'half' },
+        { base: 0x0100, count: 96, offset: 0x100, kind: 'half' },
+        { base: 0x0160, count: 3, offset: 0x1c0, kind: 'half' },
+        { base: 0x0180, count: 96, offset: 0x1c8, kind: 'mask' },
+        { base: 0x01e0, count: 32, offset: 0x248, kind: 'half' }
+    ];
+    var NRPN_COMMANDS = {
+        commit: 0x3f00, commitKey: 0x2a2a, reload: 0x3f01, defaults: 0x3f02,
+        dump: 0x3f03, identity: 0x3f7f
+    };
+    var NRPN_IDENTITY = {
+        octaveUnits: 0x3f78, slotLoaded: 0x3f79, commitState: 0x3f7a,
+        generationHigh: 0x3f7b, generationMid: 0x3f7c, generationLow: 0x3f7d,
+        imageMarker: 0x3f7e, layoutVersion: 0x3f7f
+    };
+
+    function nrpnSection(param) {
+        for (var i = 0; i < NRPN_SECTIONS.length; i++) {
+            var s = NRPN_SECTIONS[i];
+            if (param >= s.base && param < s.base + s.count) return s;
+        }
+        return null;
+    }
+    function halfAt(bytes, off) { return ((bytes[off] & 0xFF) << 8) | (bytes[off + 1] & 0xFF); }
+    function setHalfAt(bytes, off, v) { bytes[off] = (v >>> 8) & 0xFF; bytes[off + 1] = v & 0xFF; }
+    function maskAt(bytes, off) {
+        // Low halfword first, as the table and the gate have it.
+        return (halfAt(bytes, off + 2) * 65536) + halfAt(bytes, off);
+    }
+    function setMaskAt(bytes, off, m) {
+        setHalfAt(bytes, off, m & 0xFFFF); setHalfAt(bytes, off + 2, Math.floor(m / 65536) & 0xFFFF);
+    }
+    var THIRD = [0, 14, 28];
+
+    // A parameter's value out of a record (or a record-shaped array).
+    function nrpnValueOf(bytes, param) {
+        var s = nrpnSection(param);
+        if (!s) return null;
+        var i = param - s.base;
+        if (s.kind === 'half') return halfAt(bytes, s.offset + 2 * i);
+        var m = maskAt(bytes, s.offset + 4 * Math.floor(i / 3));
+        return Math.floor(m / Math.pow(2, THIRD[i % 3])) & 0x3FFF;
+    }
+    // A value into a record-shaped array, the way the firmware applies it:
+    // a third of a mask replaces its own bits and leaves the rest.  Returns
+    // false for a parameter that names nothing.  Bounds are not enforced
+    // here; settingsRecord refuses what the instrument would.
+    function nrpnApply(bytes, param, value) {
+        var s = nrpnSection(param);
+        if (!s) return false;
+        var i = param - s.base;
+        if (s.kind === 'half') { setHalfAt(bytes, s.offset + 2 * i, value & 0xFFFF); return true; }
+        var off = s.offset + 4 * Math.floor(i / 3), shift = THIRD[i % 3];
+        var width = i % 3 === 2 ? 4 : 14;
+        var keep = Math.pow(2, shift), field = Math.pow(2, width);
+        var m = maskAt(bytes, off);
+        var below = m % keep, above = Math.floor(m / (keep * field)) * (keep * field);
+        setMaskAt(bytes, off, above + ((value % field) * keep) + below);
+        return true;
+    }
+    // Every parameter of a record, in the order the instrument dumps them.
+    function nrpnParamsOf(bytes) {
+        var out = [];
+        NRPN_SECTIONS.forEach(function (s) {
+            for (var i = 0; i < s.count; i++) out.push([s.base + i, nrpnValueOf(bytes, s.base + i)]);
+        });
+        return out;
+    }
+    // The four Control Changes that carry one parameter, as [status, cc, value].
+    function nrpnMessages(param, value, channel) {
+        var st = 0xB0 | ((channel === undefined ? NRPN_CHANNEL : channel) & 15);
+        return [[st, 99, (param >>> 7) & 0x7F], [st, 98, param & 0x7F],
+                [st, 6, (value >>> 7) & 0x7F], [st, 38, value & 0x7F]];
+    }
+    // The receiving state machine, the firmware's mirrored: each of the four
+    // controllers sets its byte, and the data LSB completes a value.
+    function nrpnDecoder(channel) {
+        var ch = (channel === undefined ? NRPN_CHANNEL : channel) & 15;
+        var pMsb = 0, pLsb = 0, dMsb = 0;
+        return {
+            feed: function (status, cc, value) {
+                if ((status & 0xF0) !== 0xB0 || (status & 0x0F) !== ch) return null;
+                if (cc === 99) { pMsb = value & 0x7F; return null; }
+                if (cc === 98) { pLsb = value & 0x7F; return null; }
+                if (cc === 6) { dMsb = value & 0x7F; return null; }
+                if (cc === 38) return { param: (pMsb << 7) | pLsb, value: (dMsb << 7) | (value & 0x7F) };
+                return null;
+            }
+        };
+    }
+    // The identity block out of decoded pairs, or null until the layout
+    // version - sent last - has arrived.
+    function nrpnIdentity(pairs) {
+        var got = {};
+        pairs.forEach(function (p) { got[p[0]] = p[1]; });
+        if (got[NRPN_IDENTITY.layoutVersion] === undefined) return null;
+        return {
+            layoutVersion: got[NRPN_IDENTITY.layoutVersion],
+            imageMarker: got[NRPN_IDENTITY.imageMarker],
+            generation: got[NRPN_IDENTITY.generationLow]
+                + got[NRPN_IDENTITY.generationMid] * 16384
+                + got[NRPN_IDENTITY.generationHigh] * 268435456,
+            commitState: got[NRPN_IDENTITY.commitState],
+            slotLoaded: got[NRPN_IDENTITY.slotLoaded],
+            octaveUnits: got[NRPN_IDENTITY.octaveUnits]
+        };
+    }
+
     // --- properties -----------------------------------------------------
     function initMarker(blocks, features, numbers, tables) {
         // Same concatenation order as build.py: flags, numbers, tables, then
@@ -1292,6 +1518,12 @@ var BUILDLIB = (function () {
         minKeySpacing: minKeySpacing, checkLatchSpacing: checkLatchSpacing,
         checkTableRange: checkTableRange,
         initMarker: initMarker, writeProperties: writeProperties, get: get,
+        settingsRecord: settingsRecord, crc32: crc32,
+        SETTINGS_NUMBERS: SETTINGS_NUMBERS, SETTINGS_LAYOUT: SETTINGS_LAYOUT,
+        NRPN_CHANNEL: NRPN_CHANNEL, NRPN_SECTIONS: NRPN_SECTIONS,
+        NRPN_COMMANDS: NRPN_COMMANDS, NRPN_IDENTITY: NRPN_IDENTITY,
+        nrpnValueOf: nrpnValueOf, nrpnApply: nrpnApply, nrpnParamsOf: nrpnParamsOf,
+        nrpnMessages: nrpnMessages, nrpnDecoder: nrpnDecoder, nrpnIdentity: nrpnIdentity,
         settingsDiff: settingsDiff, settingsPick: settingsPick,
         SETTINGS_ORDER: SETTINGS_ORDER
     };

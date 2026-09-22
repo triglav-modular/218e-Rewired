@@ -744,7 +744,7 @@ function assembleProgram() {
         emit("ST.H R8[0x0],R9");
         emit("LDM SP++,R7,PC");
         padTo(0x800199f8);
-        word(0x80019bc0); // per-semitone tracking-corrected curve table
+        word(0x00006840); // per-semitone tracking-corrected curve table, in the settings mirror
         word(0x00003560); // global state base
         word(0x8001a2e8); // tuning applier + latch watch + vibrato chain
         finish("pitch_remap_calibration", 0x80019a04);
@@ -2929,13 +2929,15 @@ function assembleProgram() {
         // Handed back in the quantiser's own units - one period of CV per
         // period of the tuning - so cv_transpose adds it to the jack's
         // position with nothing but an ADD, which is all the room it has.
-        emit(StringFormat("MOV R9,0x%x", number("transpose_cv_period", 123, 1, 1023)));
+        emit("LDDPC R9,0x8001e2c8");     // the settings mirror
+        emit("LD.UH R9,R9[0xa]");       // transpose_cv_period, settings cell 5
         emit("MUL R12,R12,R9");
         padTo(pdDone);
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,R8,R9,R10,R11,PC");
         padTo(pdPool);
-        word(0x8001e2d0);                           // the keys-per-period table
-        word(0x80019af8);                           // the three slot tables, in flash
+        word(0x000069a0);                           // the keys-per-period table, in the settings mirror
+        word(0x000068e0);                           // the three slot tables, in the settings mirror
+        word(0x00006800);                           // the settings mirror itself
         finish("preset_degrees", pdEnd);
 
         // tuning_period_keys, moved out of cv_transpose so its pool can carry
@@ -3051,19 +3053,19 @@ function assembleProgram() {
         // entry, with the blend's base history alongside so the move is a
         // jump, as the octave pads' is, not a folded glide.
         var cvEntry = 0x8001e7c0;
-        var cvClamp = 0x8001e7da;
-        var cvSlot = 0x8001e7e8;
+        var cvClamp = 0x8001e7dc;
+        var cvSlot = 0x8001e7ea;
         // Eight bytes further along than they were: the preset's own shift
         // is folded into the jack's before the quantiser, so that one
         // hysteresis band and one cache word cover both inputs.
-        var cvRecalc = 0x8001e82e;
-        var cvHaveN = 0x8001e838;
-        var cvCapped = 0x8001e844;
-        var cvBuild = 0x8001e860;
-        var cvLoop = 0x8001e878;
-        var cvWrap = 0x8001e87e;
-        var cvNoWrap = 0x8001e88a;
-        var cvDone = 0x8001e8a8;
+        var cvRecalc = 0x8001e834;
+        var cvHaveN = 0x8001e83e;
+        var cvCapped = 0x8001e84a;
+        var cvBuild = 0x8001e866;
+        var cvLoop = 0x8001e87e;
+        var cvWrap = 0x8001e884;
+        var cvNoWrap = 0x8001e890;
+        var cvDone = 0x8001e8aa;
         var cvPool = 0x8001e8b0;
         // Relocated out of 0x8001e8e0 (2026-09-13): the ownership decision
         // below needed thirty bytes the old extent did not have, and both
@@ -3084,7 +3086,8 @@ function assembleProgram() {
         if (feature("cv_jack")) {
             emit(StringFormat("LDDPC R9,0x%x", cvPool + 4));     // global state base
             emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
-            emit(StringFormat("LDDPC R10,0x%x", cvPool + 12));   // its zero
+            emit(StringFormat("LDDPC R10,0x%x", cvPool + 8));    // the settings mirror
+            emit("LD.UH R10,R10[0xc]");                           // its zero, settings cell 6
             emit("SUB R8,R10");
             emit("CP.W R8,0x0");
             emit(StringFormat("BR{ge} 0x%x", cvClamp));
@@ -3102,7 +3105,8 @@ function assembleProgram() {
         emit(StringFormat("LDDPC R11,0x%x", cvPool + 20));       // the keys-per-period table
         emit("LD.UH R0,R11[R10 << 0x1]");
         emit("MUL R1,R8,R0");                                     // v * size
-        emit(StringFormat("LDDPC R2,0x%x", cvPool + 8));         // one period, in CV counts
+        emit(StringFormat("LDDPC R2,0x%x", cvPool + 8));         // the settings mirror
+        emit("LD.UH R2,R2[0xa]");                                 // one period, in CV counts: settings cell 5
         // The preset voltage's own shift, already scaled to these units, so
         // the hysteresis and the cache word below see one combined position
         // rather than two that could disagree about which N is current.
@@ -3121,7 +3125,8 @@ function assembleProgram() {
         emit("SUB R11,R1,R11 << 0x0");                            // distance from its centre
         emit("ABS R11");
         emit("LSR R12,R2,0x1");
-        emit(StringFormat("LDDPC R9,0x%x", cvPool + 16));        // hysteresis, raw counts
+        emit(StringFormat("LDDPC R9,0x%x", cvPool + 8));         // the settings mirror
+        emit("LD.UH R9,R9[0xe]");                                 // hysteresis, raw counts: settings cell 7
         emit("MUL R9,R9,R0");                                     // in v*size units
         emit("ADD R12,R9");
         emit("CP.W R11,R12");
@@ -3180,11 +3185,11 @@ function assembleProgram() {
         padTo(cvPool);
         word(0x8001a480); // per-scan housekeeping: latch watch + poly-MIDI boot force + common-mode
         word(0x00003560); // global state base
-        word(number("transpose_cv_period", 123, 1, 1023));
-        word(number("transpose_cv_zero", 0, 0, 1023));
-        word(number("transpose_cv_hysteresis", 2, 0, 64));
-        word(0x8001e2d0); // the keys-per-period table, relocated out of this cave
-        word(0x80019af8); // the three tuning tables
+        word(0x00006800); // the settings mirror: the period, its zero and the hysteresis are cells 5, 6 and 7
+        word(0x00000000); // retired: the zero, read from the mirror now
+        word(0x00000000); // retired: the hysteresis, read from the mirror now
+        word(0x000069a0); // the keys-per-period table, in the settings mirror
+        word(0x000068e0); // the three tuning tables, in the settings mirror
         word(number("octave_units", 484, 1, 2000));
         word(cvStampsPre);
         word(cvStampsPost);
@@ -3801,8 +3806,8 @@ function assembleProgram() {
         emit("ADD R12,R8");
         emit("LDM SP++,R8,R9,R10,R11,PC");
         padTo(pePool);
-        word(0x80019af8); // the three slot tables
-        word(0x8001e2d0); // the keys-per-period table
+        word(0x000068e0); // the three slot tables, in the settings mirror
+        word(0x000069a0); // the keys-per-period table, in the settings mirror
         finish("preset_entry", 0x8001e488);
 
         // R9 = the MIDI shift so far.  While a recorded step is the thing
@@ -4036,8 +4041,8 @@ function assembleProgram() {
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001b0f0);
         word(0x00003560); // global state base
-        word(0x80019f20); // pattern bank
-        word(0x80019fa0); // pattern lengths
+        word(0x000069a8); // pattern bank, in the settings mirror
+        word(0x00006a28); // pattern lengths, in the settings mirror
         word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0 : 0x8001a0a0);
         finish("arp_pattern_gate", 0x8001b100);
 
@@ -4294,16 +4299,16 @@ function assembleProgram() {
         // Held.  Count towards the arm, saturating rather than wrapping -
         // wrapping would disarm a long hold when the count passed zero.
         emit("LD.UH R8,R1[0x0]");
-        emit(StringFormat("MOV R9,0x%x",
-             number("chord_hold_scans", 300, 20, 2000)));
+        emit("MOV R9,0x6810");          // settings cell 8: a compact load reaches 14 bytes, not 16
+        emit("LD.UH R9,R9[0x0]");       // chord_hold_scans
         emit("CP.W R8,R9");
-        emit("BR{ge} 0x8001b1ae");
+        emit("BR{ge} 0x8001b1b0");
         emit("SUB R8,-0x1");
         emit("ST.H R1[0x0],R8");
-        padTo(0x8001b1ae);
+        padTo(0x8001b1b0);
         emit("LD.UB R10,R1[0x2]");      // armed?
         emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001b1cc");
+        emit("BR{ne} 0x8001b1ce");
         emit("CP.W R8,R9");
         emit("BR{lt} 0x8001b200");      // not long enough yet
         // A hold whose knob has moved is a preset edit, not a chord.  The
@@ -4321,7 +4326,7 @@ function assembleProgram() {
         emit("LD.UB R10,R1[0x9]");
         emit("ST.B R1[0x5],R10");
 
-        padTo(0x8001b1cc);
+        padTo(0x8001b1ce);
         // The selecting press must not also pick a preset, so the active pad
         // is frozen for as long as the arm lasts.  Freezing beats undoing
         // each press: it cannot race the factory's own pad handler.
@@ -4740,8 +4745,8 @@ function assembleProgram() {
         emit("CP.W R9,0x40");
         emit("BR{ge} 0x8001b5fa");      // 64 steps and no more
         emit("LD.SH R12,R11[0x1fe]");   // where the finger left
-        emit(StringFormat("MOV R8,0x%x",
-             number("strip_halfway_units", 2048, 128, 3968)));
+        emit("LDDPC R8,0x8001b60c");     // the settings mirror
+        emit("LD.UH R8,R8[0x2]");       // strip_halfway_units, settings cell 1
         emit("MOV R11,0x2");            // above halfway: a tie
         emit("CP.W R12,R8");
         emit("BR{ge} 0x8001b5e0");
@@ -4764,6 +4769,7 @@ function assembleProgram() {
         word(0x80002e30); // bend(position)
         word(0x00003560); // global state base
         word(0x8001b550); // the take's reference, adopted on the first step
+        word(0x00006800); // the settings mirror
         finish("seq_strip", 0x8001b610);
 
         // The glide rate, stored.  Normally whatever the clamp worked out -
@@ -4793,8 +4799,8 @@ function assembleProgram() {
         emit("BR{eq} 0x8001b63c");
         // A tie in hand, and the knob up: the slide is the tie's, 303
         // fashion, rather than the knob's own time.
-        emit(StringFormat("MOV R8,0x%x",
-             number("tie_glide_rate", 60, 1, 1024)));
+        emit("LDDPC R8,0x8001b658");     // the settings mirror
+        emit("LD.UH R8,R8[0x0]");       // tie_glide_rate, settings cell 0
         emit("RJMP 0x8001b648");
         padTo(0x8001b63c);
         // Playing, no tie in hand: the portamento knob means TIME here, the
@@ -4815,7 +4821,8 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x8001b654);
         word(0x80015150); // the factory glide-rate table
-        finish("seq_glide", 0x8001b658);
+        word(0x00006800); // the settings mirror
+        finish("seq_glide", 0x8001b660);
 
         // Scheduled diagnostic counter and long-low banking. Short low phases
         // and input intervals are measured with COUNT in the GPIO ISR.
@@ -5178,8 +5185,9 @@ function assembleProgram() {
         emit("CP.W R11,R9");
         emit("BR{gt} 0x8001c878");
         emit("LD.UB R11,R10[0x6]");
-        emit(StringFormat("CP.W R11,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
+        emit("MOV R9,0x6800");
+        emit("LD.UH R9,R9[0x8]");       // clock_lock_pulses, settings cell 4
+        emit("CP.W R11,R9");
         emit("BR{ge} 0x8001c87c");
         emit("SUB R11,-0x1");
         emit("RJMP 0x8001c87c");
@@ -7303,8 +7311,8 @@ function assembleProgram() {
             emit("BR{ne} 0x8001e6b0");
             emit("MOV R10,0x6582");
             emit("LD.UH R9,R10[0x0]");
-            emit(StringFormat("MOV R11,0x%x",
-                 number("latch_state_hold_scans", 200, 20, 2000)));
+            emit("MOV R11,0x6812");     // settings cell 9, as a base for the compact load
+            emit("LD.UH R11,R11[0x0]"); // latch_state_hold_scans
             emit("CP.W R9,R11");
             emit("BR{gt} 0x8001e6b0");  // fired already: wait for the release
             emit("SUB R9,-0x1");
@@ -7644,15 +7652,17 @@ function assembleProgram() {
         emit("MOV R9,0x3e8");
         emit("DIVU R8,R8,R9");
         emit("ST.W R10[0x0],R8");       // cycles/ms
-        emit(StringFormat("MOV R9,0x%x", number("clock_min_ms", 4, 1, 4)));
+        // One base for both cells: the every-block build has two bytes to
+        // spare here, not six.
+        emit("MOV R11,0x6800");         // the settings mirror
+        emit("LD.UH R9,R11[0x4]");      // clock_min_ms, settings cell 2
         emit("MUL R9,R8,R9");
         emit("ST.W R10[0x8],R9");
         emit(StringFormat("MOV R9,0x%x",
              number("clock_release_ms", 2600, 100, 32000)));
         emit("MUL R9,R8,R9");
         emit("ST.W R10[0xc],R9");
-        emit(StringFormat("MOV R9,0x%x",
-             number("clock_rearm_us", 250, 1, 1000)));
+        emit("LD.UH R9,R11[0x6]");      // clock_rearm_us, settings cell 3
         emit("MUL R8,R8,R9");
         emit("MOV R9,0x3e8");
         emit("DIVU R8,R8,R9");
@@ -10017,12 +10027,300 @@ function assembleProgram() {
                  "MOV R10,0x%x", number("trigger_spike_units", 5, 1, 5)));
         }
 
-        if (block("clock_capture") || block("persist") || block("seq_boot")) {
-            begin(0x80007d8c);
-            word(block("persist") ? 0x8001d540
-                 : block("clock_capture") ? 0x8001c300 : 0x8001dfa8);
-            finish("clock_init_pool", 0x80007d90);
+        // ---------------------------------------------------------------
+        // Settings: a RAM mirror the readers point at.  docs/PLAN-SETTINGS.md
+        // has the layout; tools/settings.py and web/buildlib.js write the
+        // record it loads.  Mirror at 0x6800: 32 numbers, the pitch curve,
+        // the three tuning tables, the keys-per-period table, the pattern
+        // bank and its lengths - the record's own bytes from offset 0x20 -
+        // then the loader's state at 0x6a70.  Every table reader above
+        // that used to name a flash table names a mirror address now, and
+        // the ten numbers that used to be immediates are LD.UH off a cell.
+        // ---------------------------------------------------------------
+
+        // Copy R10 halfwords from R11 to R12.  A leaf: nothing here calls.
+        begin(0x8001f000);
+        emit("LD.UH R8,R11[0x0]");
+        emit("ST.H R12[0x0],R8");
+        emit("SUB R11,-0x2");
+        emit("SUB R12,-0x2");
+        emit("SUB R10,0x1");
+        emit("BR{ne} 0x8001f000");
+        emit("MOV PC,LR");
+        finish("settings_copy", 0x8001f010);
+
+        // Validate a slot: R12 = its address, returns the generation, or
+        // zero.  Marker, version, length, generation, CRC, then the image
+        // marker and the period the record was made for, then every value's
+        // bounds - a halfword off flash is untrusted input, and a number
+        // past its range is a wrong immediate.  The bounds are the same ones
+        // number() enforces at each site, so a build that would refuse a
+        // value is a record that refuses it too.
+        begin(0x8001f010);
+        emit("STM --SP,R0,R1,R2,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("LD.W R8,R0[0x0]");
+        emit("LDDPC R9,0x8001f118");
+        emit("CP.W R8,R9");
+        emit("BR{ne} 0x8001f110");
+        emit("LD.UH R8,R0[0x4]");
+        emit("CP.W R8,0x1");
+        emit("BR{ne} 0x8001f110");
+        emit("LD.UH R8,R0[0x6]");
+        emit("CP.W R8,0x298");
+        emit("BR{ne} 0x8001f110");
+        emit("LD.W R8,R0[0x8]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001f110");
+        // CRC-32 over bytes 4..11 then 0x10..0x2a7, one stream, as the
+        // musical record's: persist_crc takes the running value in R12.
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x4");
+        emit("MOV R10,0x8");
+        emit("MOV R12,-0x1");
+        emit("MCALL PC[0x8001f11c]");
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x10");
+        emit("MOV R10,0x298");
+        emit("MCALL PC[0x8001f11c]");
+        emit("MOV R8,-0x1");
+        emit("EOR R12,R8");
+        emit("LD.W R8,R0[0xc]");
+        emit("CP.W R12,R8");
+        emit("BR{ne} 0x8001f110");
+        // A record is for one image: the marker every build derives from
+        // everything that shapes it, and the period its tables step.
+        emit("LD.UH R8,R0[0x10]");
+        emit(StringFormat("CP.W R8,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("BR{ne} 0x8001f110");
+        emit("LD.UH R8,R0[0x12]");
+        emit(StringFormat("CP.W R8,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("BR{ne} 0x8001f110");
+        // The ten numbers against their bounds table.
+        emit("MOV R1,0x0");
+        emit("LDDPC R2,0x8001f120");    // the bounds table's address, off the pool
+        padTo(0x8001f080);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x20]");
+        emit("ADD R9,R2,R1 << 0x2");
+        emit("LD.UH R10,R9[0x0]");
+        emit("CP.W R8,R10");
+        emit("BR{lt} 0x8001f110");
+        emit("LD.UH R10,R9[0x2]");
+        emit("CP.W R8,R10");
+        emit("BR{gt} 0x8001f110");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0xa");
+        emit("BR{lt} 0x8001f080");
+        // The pitch curve, its pad and the three tuning tables are one run
+        // of 176 halfwords, every one inside the 12-bit DAC.
+        emit("MOV R1,0x0");
+        padTo(0x8001f0b0);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x60]");
+        emit("CP.W R8,0xfff");
+        emit("BR{hi} 0x8001f110");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0xb0");
+        emit("BR{lt} 0x8001f0b0");
+        // Keys per period: one below is the unsigned wrap the HI branch
+        // catches.  Up to 32 where the key-table rotation is built, since
+        // its wrap loop walks a period of the 32-entry table; up to a
+        // .kbm's 127 positions otherwise, as the build allows.
+        emit("MOV R1,0x0");
+        padTo(0x8001f0d0);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x1c0]");
+        emit("SUB R8,0x1");
+        emit(StringFormat("CP.W R8,0x%x", block("preset_entry") ? 0x1f : 0x7e));
+        emit("BR{hi} 0x8001f110");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x3");
+        emit("BR{lt} 0x8001f0d0");
+        // Pattern lengths, 0..32: zero is an unused pattern.
+        emit("MOV R1,0x0");
+        padTo(0x8001f0f0);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x248]");
+        emit("CP.W R8,0x20");
+        emit("BR{hi} 0x8001f110");
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x20");
+        emit("BR{lt} 0x8001f0f0");
+        emit("LD.W R12,R0[0x8]");
+        emit("RJMP 0x8001f112");
+        padTo(0x8001f110);
+        emit("MOV R12,0x0");
+        padTo(0x8001f112);
+        emit("LDM SP++,R0,R1,R2,R7,PC");
+        padTo(0x8001f118);
+        word(0x32313853); // "218S", the commit marker
+        word(0x8001cc00); // persist_crc
+        word(0x8001f124); // the bounds table below
+        // Low and high for each number cell, in cell order.
+        halfword(1);    halfword(1024);   // tie_glide_rate
+        halfword(128);  halfword(3968);   // strip_halfway_units
+        halfword(1);    halfword(4);      // clock_min_ms
+        halfword(1);    halfword(1000);   // clock_rearm_us
+        halfword(2);    halfword(32);     // clock_lock_pulses
+        halfword(1);    halfword(1023);   // transpose_cv_period
+        halfword(0);    halfword(1023);   // transpose_cv_zero
+        halfword(0);    halfword(64);     // transpose_cv_hysteresis
+        halfword(20);   halfword(2000);   // chord_hold_scans
+        halfword(20);   halfword(2000);   // latch_state_hold_scans
+        finish("settings_valid", 0x8001f150);
+
+        // The newer valid slot of the two: R12 = its address (zero if
+        // neither), R11 = its index (-1), R10 = its generation.  Serial
+        // arithmetic on the generation, as persist_newest does it.
+        begin(0x8001f150);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,0x0");
+        emit("MOV R1,0x0");
+        emit("MOV R2,0x0");
+        emit("MOV R3,-0x1");
+        padTo(0x8001f160);
+        emit("CP.W R0,0x2");
+        emit("BR{ge} 0x8001f1a0");
+        emit("MOV R8,R0");
+        emit("LSL R8,0xb");
+        emit("LDDPC R9,0x8001f1b0");
+        emit("ADD R8,R9");
+        emit("MOV R12,R8");
+        emit("ST.W --SP,R8");
+        emit("MCALL PC[0x8001f1b4]");
+        emit("LD.W R8,SP++");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001f198");
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001f190");
+        emit("SUB R9,R12,R2 << 0x0");
+        emit("CP.W R9,0x0");
+        emit("BR{le} 0x8001f198");
+        padTo(0x8001f190);
+        emit("MOV R2,R12");
+        emit("MOV R1,R8");
+        emit("MOV R3,R0");
+        padTo(0x8001f198);
+        emit("SUB R0,-0x1");
+        emit("RJMP 0x8001f160");
+        padTo(0x8001f1a0);
+        emit("MOV R12,R1");
+        emit("MOV R11,R3");
+        emit("MOV R10,R2");
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001f1b0);
+        word(0x8003d000); // the first slot; the second is 0x800 above it
+        word(0x8001f010); // settings_valid
+        finish("settings_newest", 0x8001f1c0);
+
+        // Boot.  The factory's startup pool word names this, and this
+        // continues into whatever that word used to name, so it runs before
+        // persist_boot restores the tuning slot and before the first scan
+        // copies that slot's table out of the mirror.  The image's own
+        // tables and numbers always go in first: a record can only lose
+        // edits, never the instrument's own tuning.
+        begin(0x8001f1c0);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x0");
+        emit("MOV R10,0x6800");
+        emit("MOV R9,0x99");            // 0x9a words: the mirror, 0x6800..0x6a67
+        padTo(0x8001f1d0);
+        emit("ST.W R10[0x0],R8");
+        emit("SUB R10,-0x4");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001f1d0");
+        // The numbers, each in its cell.  These are the only immediates the
+        // ten have left; the sites that used to carry them load the cells.
+        emit("MOV R10,0x6800");
+        emit(StringFormat("MOV R9,0x%x", number("tie_glide_rate", 60, 1, 1024)));
+        emit("ST.H R10[0x0],R9");
+        emit(StringFormat("MOV R9,0x%x", number("strip_halfway_units", 2048, 128, 3968)));
+        emit("ST.H R10[0x2],R9");
+        emit(StringFormat("MOV R9,0x%x", number("clock_min_ms", 4, 1, 4)));
+        emit("ST.H R10[0x4],R9");
+        emit(StringFormat("MOV R9,0x%x", number("clock_rearm_us", 250, 1, 1000)));
+        emit("ST.H R10[0x6],R9");
+        emit(StringFormat("MOV R9,0x%x", number("clock_lock_pulses", 5, 2, 32)));
+        emit("ST.H R10[0x8],R9");
+        emit(StringFormat("MOV R9,0x%x", number("transpose_cv_period", 123, 1, 1023)));
+        emit("ST.H R10[0xa],R9");
+        emit(StringFormat("MOV R9,0x%x", number("transpose_cv_zero", 0, 0, 1023)));
+        emit("ST.H R10[0xc],R9");
+        emit(StringFormat("MOV R9,0x%x", number("transpose_cv_hysteresis", 2, 0, 64)));
+        emit("ST.H R10[0xe],R9");
+        emit(StringFormat("MOV R9,0x%x", number("chord_hold_scans", 300, 20, 2000)));
+        emit("ST.H R10[0x10],R9");
+        emit(StringFormat("MOV R9,0x%x", number("latch_state_hold_scans", 200, 20, 2000)));
+        emit("ST.H R10[0x12],R9");
+        // The tables, from where the image keeps them.
+        emit("MOV R12,0x6840");
+        emit("LDDPC R11,0x8001f2b0");   // the pitch curve
+        emit("MOV R10,0x4f");
+        emit("MCALL PC[0x8001f2c4]");
+        emit("MOV R12,0x68e0");
+        emit("LDDPC R11,0x8001f2b4");   // the three tuning tables
+        emit("MOV R10,0x60");
+        emit("MCALL PC[0x8001f2c4]");
+        emit("MOV R12,0x69a0");
+        emit("LDDPC R11,0x8001f2b8");   // keys per period
+        emit("MOV R10,0x3");
+        emit("MCALL PC[0x8001f2c4]");
+        // The bank only exists in the image when knob 2 plays patterns; any
+        // other build boots a zero bank, which the record carries too.
+        if (block("arp_pattern_tables")) {
+            var patterns = number("pattern_count", 1, 1, 32);
+            emit("MOV R12,0x69a8");
+            emit("LDDPC R11,0x8001f2bc");   // the masks, two halfwords each
+            emit(StringFormat("MOV R10,0x%x", 2 * patterns));
+            emit("MCALL PC[0x8001f2c4]");
+            emit("MOV R12,0x6a28");
+            emit("LDDPC R11,0x8001f2c0");   // the lengths
+            emit(StringFormat("MOV R10,0x%x", patterns));
+            emit("MCALL PC[0x8001f2c4]");
         }
+        padTo(0x8001f280);
+        // Then the newer valid record, if there is one, over the top.
+        emit("MCALL PC[0x8001f2c8]");
+        emit("MOV R0,0x6a70");
+        emit("ST.B R0[0x1],R11");       // the slot loaded, 0xff for none
+        emit("ST.W R0[0x4],R10");       // its generation
+        emit("MOV R8,0x0");
+        emit("ST.B R0[0x0],R8");        // commit state: clean
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001f2a8");
+        emit("MOV R11,R12");
+        emit("SUB R11,-0x20");
+        emit("MOV R12,0x6800");
+        emit("MOV R10,0x134");
+        emit("MCALL PC[0x8001f2c4]");
+        padTo(0x8001f2a8);
+        emit("MCALL PC[0x8001f2cc]");   // what the startup word used to name
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001f2b0);
+        word(0x80019bc0); // the pitch curve, as emitted
+        word(0x80019af8); // the three tuning tables, as emitted
+        word(0x8001e2d0); // keys per period, as emitted
+        word(0x80019f20); // the pattern bank, when emitted
+        word(0x80019fa0); // its lengths, when emitted
+        word(0x8001f000); // settings_copy
+        word(0x8001f150); // settings_newest
+        word(block("persist") ? 0x8001d540
+             : block("clock_capture") ? 0x8001c300
+             : block("seq_boot") ? 0x8001dfa8 : 0x80007340);
+        finish("settings_boot", 0x8001f2d0);
+
+        // The factory's startup pool word names settings_boot now, in every
+        // image: the mirror has to be filled before the first scan reads a
+        // table out of it, whatever else is built.  settings_boot's last
+        // pool word carries on into what this used to name - persist_boot,
+        // the clock's init, the sequencer's, or the factory's own GPIO setup.
+        begin(0x80007d8c);
+        word(0x8001f1c0);
+        finish("clock_init_pool", 0x80007d90);
 
         if (block("seq_clock_enabled")) {
             // Tempo conditioning must run with arp OFF too; otherwise RATE
@@ -10219,7 +10517,7 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x80019ae8);
         word(0x00003560); // global state base
-        word(0x80019af8); // the three tuning tables
+        word(0x000068e0); // the three tuning tables, in the settings mirror
         word(0x80006808); // LED bit set
         word(0x800068cc); // LED bit clear
         emitTable("tuning_slot0");
