@@ -1,7 +1,5 @@
 3.0 (2026-09-22)
 - Settings can now be changed over webMIDI after flashing, without flashing again.
-- The settings a keyboard holds can be read back into the page over webMIDI.
-- The keyboard reports its firmware version to the page.
 
 2.4 (2026-09-13)
 - The selected tuning is now remembered between power cycles.
