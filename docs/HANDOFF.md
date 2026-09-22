@@ -106,10 +106,13 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   for the save gesture/timing contract, record layout, failure states and
   `tools/test_persistence.py` regression coverage. Remaining work is bench
   validation of save/power-cycle behavior and physical flash failures.
-- **Settings over MIDI** — feasibility done (dispatcher event 32 at
-  `0x80004fc2` carries an incoming message with both data bytes). The cost is
-  that build numbers are compiled as immediates, so each one moved to
-  runtime needs a RAM cell and a load. Good candidates are the numbers below.
+- **Settings over MIDI** — stage 1 is laid out in
+  [PLAN-SETTINGS.md](PLAN-SETTINGS.md): the tables and the unmeasured
+  numbers below over NRPN on channel 16, a two-slot record below the
+  persistence ring, and the CC hook at `0x80008366`. (Dispatcher event 32 at
+  `0x80004fc2` is the factory remote-note handler, not the CC path.) Build
+  numbers are compiled as immediates, so each one moved to runtime needs a
+  RAM cell and a load.
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
   `clock_lock_pulses` (5), and the jack transposer's `cv_counts_per_volt`
