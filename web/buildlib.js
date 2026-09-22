@@ -892,6 +892,51 @@ var BUILDLIB = (function () {
     }
 
 
+    // The two settings a pitch table was built with, read off the table
+    // itself, because the record does not say.  The layout gives the
+    // offset: without it the table is laid out three entries later and the
+    // entries under the bottom key sit at 0 V; with it entry 1 is a
+    // semitone up the ramp, never zero, since two equal entries are refused
+    // above.  The mean step gives the scaling: 33 counts a semitone at
+    // 1 V/oct, 40 at 1.2, and a calibration moves an entry by a count or
+    // two, never by seven.
+    function pitchTableSettings(table) {
+        if (table.length !== GEN.pitchTableEntries) {
+            throw new Error('a pitch table has ' + GEN.pitchTableEntries + ' entries, got ' + table.length);
+        }
+        var offset = !(table[1] === 0 && table[2] === 0);
+        var shift = offset ? 0 : GEN.bottomKeyIndex;
+        var step = (table[table.length - 1] - table[shift]) / (table.length - 1 - shift);
+        var p = GEN.internalDefaults.pitch;
+        var perSemitone = p.dac_counts / (p.dac_vref * p.dac_gain) / GEN.calibrationVoltsPerOctave / 12;
+        var vpo = step / perSemitone;
+        return { pitch_offset: offset,
+                 volts_per_octave: Math.abs(vpo - 1.2) < Math.abs(vpo - 1.0) ? 1.2 : 1.0 };
+    }
+
+    // The inverse of pitchTable: the offsets, in cents against the ramp cfg
+    // describes, that build exactly this table again.  The entries under
+    // the shift are not offsets, and the rows above what the table encodes
+    // carry on at the last slope, as the tail of a saved table does; the
+    // firmware reads neither.
+    function pitchCents(cfg, table) {
+        if (table.length !== GEN.pitchTableEntries) {
+            throw new Error('a pitch table has ' + GEN.pitchTableEntries + ' entries, got ' + table.length);
+        }
+        var vpo = cfg.pitch.volts_per_octave;
+        var scale = countsPerVolt(cfg) * (vpo / GEN.calibrationVoltsPerOctave);
+        var shift = GEN.bottomKeyIndex - cfg.pitch.bottom_key_semitone;
+        var rows = [];
+        for (var s = 0; s + shift < table.length; s++) {
+            rows.push({ semitone: s, cents: 1200 * (table[s + shift] / scale - s / 12) });
+        }
+        while (rows.length < table.length) {
+            var n = rows.length;
+            rows.push({ semitone: n, cents: 2 * rows[n - 1].cents - rows[n - 2].cents });
+        }
+        return rows;
+    }
+
     // --- Intel HEX ------------------------------------------------------
     function parseHexText(text, name) {
         var memory = {}, upper = 0, startLinear = 0x80002000;
@@ -1378,6 +1423,36 @@ var BUILDLIB = (function () {
         };
     }
 
+    // A dump's pairs back into a record-shaped array: the payload the
+    // instrument holds, with the header left zero - what the header would
+    // say is in the identity block, decoded on its own.
+    function nrpnRecordOf(pairs) {
+        var out = [];
+        for (var i = 0; i < SETTINGS_LAYOUT.length; i++) out.push(0);
+        pairs.forEach(function (p) { nrpnApply(out, p[0], p[1]); });
+        return out;
+    }
+    // A record-shaped array by name: the numbers keyed as SETTINGS_NUMBERS
+    // has them, the tables as the build has them, and the pattern bank as
+    // 32 masks and 32 lengths, a zero length being an unused pattern.
+    function settingsFields(bytes) {
+        var L = SETTINGS_LAYOUT, i;
+        var out = { numbers: {}, pitch_remap: [], tuning_period_keys: [], masks: [], lengths: [] };
+        SETTINGS_NUMBERS.forEach(function (n, k) { out.numbers[n[0]] = halfAt(bytes, L.numbers + 2 * k); });
+        for (i = 0; i < 79; i++) out.pitch_remap.push(halfAt(bytes, L.pitch + 2 * i));
+        for (var slot = 0; slot < 3; slot++) {
+            var table = [];
+            for (i = 0; i < 32; i++) table.push(halfAt(bytes, L.tuning + 64 * slot + 2 * i));
+            out['tuning_slot' + slot] = table;
+        }
+        for (i = 0; i < 3; i++) out.tuning_period_keys.push(halfAt(bytes, L.periodKeys + 2 * i));
+        for (i = 0; i < 32; i++) {
+            out.masks.push(maskAt(bytes, L.bank + 4 * i));
+            out.lengths.push(halfAt(bytes, L.lengths + 2 * i));
+        }
+        return out;
+    }
+
     // --- properties -----------------------------------------------------
     function initMarker(blocks, features, numbers, tables) {
         // Same concatenation order as build.py: flags, numbers, tables, then
@@ -1526,6 +1601,8 @@ var BUILDLIB = (function () {
         NRPN_COMMANDS: NRPN_COMMANDS, NRPN_IDENTITY: NRPN_IDENTITY,
         nrpnValueOf: nrpnValueOf, nrpnApply: nrpnApply, nrpnParamsOf: nrpnParamsOf,
         nrpnMessages: nrpnMessages, nrpnDecoder: nrpnDecoder, nrpnIdentity: nrpnIdentity,
+        nrpnRecordOf: nrpnRecordOf, settingsFields: settingsFields,
+        pitchTableSettings: pitchTableSettings, pitchCents: pitchCents,
         settingsDiff: settingsDiff, settingsPick: settingsPick,
         SETTINGS_ORDER: SETTINGS_ORDER
     };

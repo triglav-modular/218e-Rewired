@@ -1,5 +1,5 @@
 // Settings over MIDI, the transport: push a record to the instrument,
-// read it back, commit it, and ask who is listening.  Everything here is
+// read it back, read what it holds, commit it, and ask who is listening.  Everything here is
 // the wire; the words the page shows for it are the page's.
 //
 // The instrument takes NRPN on channel 16 (BUILDLIB.nrpn*), applies each
@@ -116,6 +116,29 @@ var SETTINGSMIDI = (function () {
     // The image marker a record was made for, out of its bytes.
     function markerOf(record) { return ((record[0x10] & 0xFF) << 8) | (record[0x11] & 0xFF); }
 
+    // A refusal with a name on it, so the page can say which.
+    function fail(reason, extra) {
+        var err = new Error(reason);
+        err.reason = reason;
+        if (extra) Object.keys(extra).forEach(function (k) { err[k] = extra[k]; });
+        return Promise.reject(err);
+    }
+
+    // What the instrument holds, for the page: one dump, decoded into a
+    // record-shaped array and its fields by name, with the identity block
+    // beside them.  Rejects with `reason` 'no reply' or 'wrong layout' - a
+    // map this page does not know is not read into it.
+    function read(output, input, opts) {
+        opts = opts || {};
+        return dump(output, input, opts.timeout, opts.timers).catch(function () {
+            return fail('no reply');
+        }).then(function (d) {
+            if (d.identity.layoutVersion !== 1) return fail('wrong layout', { identity: d.identity });
+            var record = B.nrpnRecordOf(d.pairs);
+            return { identity: d.identity, pairs: d.pairs, record: record, fields: B.settingsFields(record) };
+        });
+    }
+
     // The whole procedure: identity, push, dump, compare, commit, identity.
     // Resolves with the final identity.  Rejects with an Error whose
     // `reason` is one of 'no reply', 'wrong layout', 'wrong image',
@@ -123,12 +146,6 @@ var SETTINGSMIDI = (function () {
     // the page can say which - they have different fixes.
     function install(output, input, record, opts) {
         opts = opts || {};
-        function fail(reason, extra) {
-            var err = new Error(reason);
-            err.reason = reason;
-            if (extra) Object.keys(extra).forEach(function (k) { err[k] = extra[k]; });
-            return Promise.reject(err);
-        }
         return identity(output, input, opts.timeout, opts.timers).catch(function () {
             return fail('no reply');
         }).then(function (id) {
@@ -160,7 +177,7 @@ var SETTINGSMIDI = (function () {
     }
 
     return {
-        push: push, dump: dump, identity: identity, commit: commit, reload: reload,
+        push: push, dump: dump, read: read, identity: identity, commit: commit, reload: reload,
         defaults: defaults, differences: differences, install: install,
         markerOf: markerOf, sendParam: sendParam
     };

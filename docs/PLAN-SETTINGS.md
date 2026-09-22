@@ -311,6 +311,28 @@ calibration in `localStorage`, and `buildlib.js` already generates every
 table from them, so "push" is a serializer over the existing generators plus
 the transport; nothing is built twice.
 
+### The page's read
+
+One dump, decoded by `BUILDLIB.nrpnRecordOf` into a record-shaped array
+and by `settingsFields` into names, with the identity block beside it
+(`SETTINGSMIDI.read`; a layout the page does not know is refused, not
+guessed at). The page says which of four things it found - no saved
+settings, saved settings with no build here to compare against, a
+different build, or this build with *n* differences - lists the numbers,
+the patterns, the pitch table's scaling and offset and the keys per period,
+and then loads what it can: the patterns into the pattern list, and the
+pitch table into the calibration as the table already on the instrument.
+The record does not carry the scaling or the offset the table was built
+with, so both are read off the table (`pitchTableSettings`: the entries
+under the bottom key are zero without the offset and never with it; the
+mean step is 33 counts a semitone at 1 V/oct and 40 at 1.2) and pressed on
+the page before the offsets are taken (`pitchCents`, the exact inverse of
+`pitchTable`: the same table builds again from them), because switching
+the offset drops a loaded table by design. The ten numbers have no
+controls on the page and a tuning table does not turn back into a scale,
+so those two are shown only. The load invalidates the build like any
+option change; the next image is made from what was read.
+
 ## Changes, file by file
 
 **`src/AssemblePressureFix.java`** - built, at `0x8001f000..0x8001f994`:
@@ -346,11 +368,10 @@ the parameters that differed), not written (with the state).
 `web/test_settingsmidi.js` runs it against a fake instrument that behaves as
 the firmware does under emulation.
 
-**`web/app.js`, `web/index.html`** - a step after the download: pick the
-MIDI port (the calibration's port list already exists), *Push*, *Read back*,
-and a comparison readout, over `SETTINGSMIDI`. The copy for it needs the
-owner's approval before it is written; this document names the controls,
-not the wording.
+**`web/app.js`, `web/index.html`** - built: step 5, *Send settings*
+(`SETTINGSMIDI.install`, a line per refusal) and *Read settings*
+(`SETTINGSMIDI.read`, then the verdict, the listing and the load above),
+over the calibration's port list with the inputs added to `calibrate.js`.
 
 **`docs/`** - this file becomes `SETTINGS.md` once built, the way
 `PERSISTENCE.md` did; `HANDOFF.md`'s "Settings over MIDI" item points here.
@@ -361,7 +382,9 @@ not the wording.
    `tools/test.py` (layout, CRC, bounds, the zero bank), the record compare
    in `web/test_configs.py` (both serializers, every configuration), and
    `web/test_nrpn.js` (every parameter through the wire and back, masks in
-   thirds, the identity block, the walk order).
+   thirds, the identity block, the walk order; and the way back, a dump's
+   pairs into a record by name, and `pitchCents` against `pitchTable` for
+   both scalings and both offsets, on a flat table and a bent one).
 2. **Load and fallback.** Built: `src/SettingsRegression.java`, run by
    `tools/test_persistence.py` in every persistent mode against that image's
    own `settings.bin`: no record boots the baked tables and the mirror equals

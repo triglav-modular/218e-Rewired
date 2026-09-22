@@ -3,8 +3,8 @@
 // in its mirror at once, a commit needs its key and takes effect on the
 // next scan, a dump answers with every parameter and then the identity
 // block, and an identity request answers with the block alone.  The wire
-// order, the bursts, the checks and each way `install` can refuse are
-// what this file holds.
+// order, the bursts, the checks, each way `install` can refuse, and what
+// `read` hands the page are what this file holds.
 //
 //   node web/test_settingsmidi.js
 'use strict';
@@ -137,6 +137,24 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     var nonzero = B.nrpnParamsOf(record).filter(function (p) { return p[1] !== 0; }).length;
     check('differences against an empty instrument name every non-zero parameter',
           diff.length === nonzero && diff.every(function (x) { return x[2] === 0; }), diff.length + ' of ' + nonzero);
+
+    // read: one dump, decoded for the page
+    inst = fakeInstrument({ marker: 0x1234 }); timers = fakeTimers();
+    for (var o = 0; o < 0x2a8; o++) inst.mirror[o] = record[o];
+    var rp = M.read(inst.output, inst.input, { timers: timers }); await timers.run(rp); var rd = await rp;
+    check('read gives the identity, the record and its fields', rd.identity.imageMarker === 0x1234
+          && same(rd.record, record) && rd.fields.numbers.chord_hold_scans === 200
+          && rd.fields.tuning_period_keys.join(',') === '12,12,7' && rd.fields.lengths[2] === 24
+          && rd.fields.masks[2] === 0xDEADBEEF && rd.fields.lengths[3] === 0, JSON.stringify(rd.fields.numbers));
+    check('a read costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f03);
+    var other = fakeInstrument({ layout: 2 }); timers = fakeTimers();
+    var rl = M.read(other.output, other.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
+    await timers.run(rl); var re = await rl;
+    check('a layout this page does not know is refused, with the block', re && re.reason === 'wrong layout' && re.identity.layoutVersion === 2);
+    var mute = fakeInstrument(); mute.output.send = function () {}; timers = fakeTimers();
+    var rq = M.read(mute.output, mute.input, { timers: timers, timeout: 50 }).then(function () { return null; }, function (x) { return x; });
+    await timers.run(rq); re = await rq;
+    check('a read of nothing is "no reply"', re && re.reason === 'no reply');
 
     // no reply
     var silent = { send: function () {} }, quietInput = { onmidimessage: null };

@@ -890,7 +890,8 @@
         interpolated = {};
         buildTable(); drawPlot(); validateCal(); syncBaseline();
         msg($('calMsg'), '', haveBaseline()
-            ? 'Readings cleared. ' + baselineName + ' is still loaded as the table on '
+            ? 'Readings cleared. ' + baselineName.charAt(0).toUpperCase() + baselineName.slice(1) +
+              ' is still loaded as the table on '
               + 'the instrument.' : '');
         // The table is part of the image: without this the image built
         // from the old readings stayed downloadable after they were cleared.
@@ -1296,7 +1297,7 @@
             .then(function () { $('calRescan').disabled = false; },
                   function () { $('calRescan').disabled = false; });
     });
-    // --- step 5: the settings, to the keyboard over MIDI -----------------
+    // --- step 5: the settings, to and from the keyboard over MIDI --------
     // The record a build serialized (WEBBUILD.build's `settings`, the same
     // bytes tools/build.py writes to build/settings.bin) goes to the
     // instrument through SETTINGSMIDI.install, which refuses with a named
@@ -1360,11 +1361,106 @@
             var ports = keyboardPorts();
             if (!ports || !state.result) return;
             $('kbdSend').disabled = true;
+            $('kbdRead').disabled = true;
             msg($('kbdMsg'), 'warn', 'Sending…');
             SETTINGSMIDI.install(ports.output, ports.input, recordBytes(state.result.settings), {})
                 .then(function () {
                     msg($('kbdMsg'), 'ok', 'Sent and saved.');
                 }, function (err) {
+                    msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
+                })
+                .then(refresh);
+        });
+    }
+
+    // Reading is the other direction.  What the keyboard holds is listed,
+    // compared with the build here when there is one, and then loaded into
+    // the page: the patterns into the pattern list, and the pitch table into
+    // the calibration as the table already on the instrument, with the
+    // scaling and the offset it was built with - both read off the table
+    // itself, since the record does not say.  The timing numbers have no
+    // controls on this page and a tuning table does not turn back into a
+    // scale, so those are shown and not loaded.  Loading invalidates the
+    // build the way any option change does: the next image is made from
+    // what was read.
+    function describeKeyboard(r) {
+        var f = r.fields, id = r.identity;
+        var build = state.result ? recordBytes(state.result.settings) : null;
+        var verdict;
+        if (id.slotLoaded === 0xff) {
+            verdict = 'This keyboard has no saved settings. It plays the ones built into its firmware.';
+        } else if (!build) {
+            verdict = 'This keyboard holds saved settings. Build an image here to compare them.';
+        } else if (id.imageMarker !== SETTINGSMIDI.markerOf(build)) {
+            verdict = 'This keyboard runs a different build. Its settings are listed below.';
+        } else {
+            var n = SETTINGSMIDI.differences(build, r.pairs).length;
+            verdict = n === 0 ? 'This keyboard holds the settings of the build you have here.'
+                : 'This keyboard runs this build, but ' +
+                  (n === 1 ? 'one of its settings differs' : n + ' of its settings differ') +
+                  ' from the build here.';
+        }
+        var numbers = BUILDLIB.SETTINGS_NUMBERS.map(function (x) {
+            return x[0] + ' ' + f.numbers[x[0]];
+        }).join(' · ');
+        var lengths = f.lengths.filter(function (len) { return len > 0; });
+        var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
+        return verdict + '\n\n' +
+            'Timing numbers: ' + numbers + '\n' +
+            'Patterns: ' + (lengths.length
+                ? lengths.length + ', of ' + lengths.join(' · ') + ' steps' : 'none') + '\n' +
+            'Pitch table: ' + (was.volts_per_octave === 1.2 ? '1.2' : '1') + ' V/oct, pitch offset ' +
+                (was.pitch_offset ? 'on' : 'off') + '.\n' +
+            'Tunings: three tables of 32 entries, ' + f.tuning_period_keys.join(' · ') +
+                ' keys per period.';
+    }
+    function loadFromKeyboard(r) {
+        var f = r.fields;
+        var rows = [];
+        f.lengths.forEach(function (len, i) {
+            if (len > 0) rows.push({ text: clixPattern(f.masks[i]).text, length: len });
+        });
+        if (rows.length) { state.patterns = rows; renderPatterns(); }
+        // The scaling and the offset first: switching the offset drops a
+        // loaded table by design, so the table goes in after it.
+        var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
+        press('vpo', was.volts_per_octave === 1.2 ? '1.2' : '1.0');
+        press('offset', was.pitch_offset ? '1' : '0');
+        var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
+                                    pitch_offset: was.pitch_offset });
+        var had = measured.some(function (v) { return v !== 0; });
+        baseline = {}; baselineSources = {};
+        BUILDLIB.pitchCents(cfg, f.pitch_remap).forEach(function (row) {
+            baseline[row.semitone] = row.cents;
+        });
+        baselineName = 'the keyboard\u2019s table';
+        baselineHistory = null;
+        measured = measured.map(function () { return 0; });
+        interpolated = {};
+        $('useCal').checked = true;
+        syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
+        return (rows.length ? 'The patterns and the pitch table are' : 'The pitch table is') +
+            ' now loaded here, the table as the calibration already on the keyboard. ' +
+            'Build again to make an image from ' + (rows.length ? 'them.' : 'it.') +
+            (had ? ' The readings that were entered have been cleared: they were taken ' +
+                   'against whatever was flashed at the time, which the keyboard now says. ' +
+                   'Measure again.' : '');
+    }
+    if ($('kbdRead')) {
+        $('kbdRead').addEventListener('click', function () {
+            var ports = keyboardPorts();
+            if (!ports) return;
+            $('kbdRead').disabled = true;
+            $('kbdSend').disabled = true;
+            msg($('kbdMsg'), 'warn', 'Reading…');
+            SETTINGSMIDI.read(ports.output, ports.input, {})
+                .then(function (r) {
+                    // The verdict compares against the build before the load
+                    // invalidates it.
+                    var text = describeKeyboard(r);
+                    msg($('kbdMsg'), 'ok', text + '\n\n' + loadFromKeyboard(r));
+                })
+                .catch(function (err) {
                     msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
                 })
                 .then(refresh);
@@ -1607,6 +1703,9 @@
         $('dlWin').disabled = !state.result;
         // Step 5 wants the image's own record, which only a build has.
         if ($('kbdSend')) $('kbdSend').disabled = !(state.result && $('kbdPort').value);
+        // Reading needs only the port: what the keyboard holds is worth
+        // seeing before anything is built.
+        if ($('kbdRead')) $('kbdRead').disabled = !$('kbdPort').value;
         // The accent marks whatever is next: Build until an image exists,
         // then Download.  Changing an option clears state.result, so it
         // hands the emphasis back on its own.
