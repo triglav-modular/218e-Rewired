@@ -498,6 +498,17 @@
 
       </section>
 
+      <section>
+        <h2>5 · Send the settings to the keyboard</h2>
+        <p class="d muted section-note">After flashing, the tunings, the calibration, the pattern bank and the timing numbers go to the keyboard over MIDI, and stay in it.</p>
+        <div class="row">
+          <label class="row">Keyboard
+            <select id="kbdPort"><option value="">Looking&hellip;</option></select></label>
+          <button class="primary" id="kbdSend" type="button" disabled>Send settings</button>
+        </div>
+        <div id="kbdMsg" role="status"></div>
+      </section>
+
       <h2 class="triglav-title">TRIGLAV MODULAR<br>2026</h2>
 
     </div>
@@ -509,6 +520,7 @@
     <script src="zip.js"></script>
     <script src="build.js"></script>
     <script src="calibrate.js"></script>
+    <script src="settings.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

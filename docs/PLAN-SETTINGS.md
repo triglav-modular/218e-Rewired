@@ -7,15 +7,17 @@ pattern bank, and the build numbers nobody has measured yet. Everything that
 is *code* - which features are in, which role each knob has - stays a build
 option; that is stage 2, and it is not laid out here.
 
-**Built so far (2026-09-22):** the record and both serializers
-(`tools/settings.py`, `BUILDLIB.settingsRecord`), the RAM mirror, the
-loader - `settings_copy`, `settings_valid`, `settings_newest` and
-`settings_boot` at `0x8001f000..0x8001f2d0` - every reader repointed at the
-mirror, the ten number sites reading their cells, and
-`src/SettingsRegression.java` under `tools/test_persistence.py`. Not yet
-built: the NRPN handler, commit, dump, and the page's step. Every address
-below was read out of the disassembly in `build/disasm/dump1.txt` and the
-assembler; the facts that were inferred rather than read are marked as such.
+**Built (2026-09-22):** the whole firmware side and the page's codec. The
+record and both serializers (`tools/settings.py`, `BUILDLIB.settingsRecord`);
+the RAM mirror and its loader; every reader repointed at the mirror and the
+ten number sites reading their cells; the NRPN receive at the factory's
+Control Change branch, the commit from the per-scan chain, the paced dump
+and the identity block; the caves at `0x8001f000..0x8001f994`; the codec in
+`buildlib.js`; and `src/SettingsRegression.java` under
+`tools/test_persistence.py`. Not yet built: the page's step, which waits on
+its wording. Every address below was read out of the disassembly in
+`build/disasm/dump1.txt` and the assembler; the facts that were inferred
+rather than read are marked as such.
 
 ## What moves to runtime, and what does not
 
@@ -212,30 +214,57 @@ costs one value, not the rest of the push. Values are 14 bits, which every
 field fits in: the pitch and tuning tables are 12-bit DAC units, the numbers
 are at most 4095, and a 32-bit pattern mask is split into three parameters.
 
-The hook is the branch at `0x80008366` that sends a Control Change to
-`0x8000838e`: repointed to a cave that reads the channel from the parser's
-own frame (`R7[-0xa]`), the controller and value from the ring the same way
-the factory does at `0x800083a2..0x800083ce`, handles the four NRPN
-controllers on channel 16 itself, and jumps to `0x8000838e` for everything
-else. The factory's three controllers keep working on the instrument's
-channel; if that channel is set to 16, data entry on it is ours. That is the
-one behaviour change and it is documented rather than avoided.
+The hook is at `0x8000838e`, where the factory's Control Change branch
+begins: its first two instructions, which load the instrument's own MIDI
+channel into R8 for the compare that follows, are replaced by an `MCALL`
+into `settings_nrpn` (the branch at `0x80008366` that gets there is a
+2-byte `BR`, too short to retarget). The cave reads the channel from the
+parser's own frame (`R7[-0xa]`), the controller and value from the ring the
+way the factory does at `0x800083a2..0x800083ce`, keeps the four NRPN
+controllers on channel 16 - 99 and 98 set the parameter bytes, 6 the data
+MSB, and 38 completes a value and applies it - and returns with R8 = `0xff`,
+a channel no message can carry, so the factory's own compare discards what
+was handled. For everything else it returns with the load the factory used
+to do, and the factory carries on: its three controllers keep working on the
+instrument's channel, and a channel-16 controller that is not NRPN reaches
+them too (the regression checks both). If the instrument's channel is set
+to 16, data entry on it is ours. That is the one behaviour change and it is
+documented rather than avoided. The receive runs in the dispatcher's
+main-loop pass, like the parser it sits in.
 
 ### Parameter map
 
 | Parameter | Meaning | Value |
 |---|---|---|
-| `0x0000..0x001f` | number *n* | bounded on receive; out of range is ignored, not clamped |
-| `0x0080..0x00ce` | `pitch_remap[0..78]` | DAC units |
-| `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | DAC units |
-| `0x0160..0x0162` | period keys | |
-| `0x0180 + 3p + 0..2` | pattern *p*'s mask, bits 0..13, 14..27, 28..31 | |
-| `0x01e0..0x01ff` | pattern lengths | `1..32` |
-| `0x3f00` | commit | data `0x2a2a`; anything else ignored |
+| `0x0000..0x0009` | number *n* | the bounds of `settings_valid`'s table; out of range is ignored, not clamped |
+| `0x0080..0x00ce` | `pitch_remap[0..78]` | `0..0xfff` |
+| `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | `0..0xfff`; a write clears the applier's guard |
+| `0x0160..0x0162` | keys per period | `1..32` with the rotation built, else `1..127` |
+| `0x0180 + 3p + 0..2` | pattern *p*'s mask, bits 0..13, 14..27, 28..31 | each third replaces only its own bits |
+| `0x01e0..0x01ff` | pattern lengths | `0..32`, zero unused |
+| `0x3f00` | commit on the next scan | data `0x2a2a`; anything else ignored |
 | `0x3f01` | reload the mirror from flash, dropping live edits | |
-| `0x3f02` | reset the mirror to the image's baked tables (flash untouched until a commit) | |
-| `0x3f03` | dump: send every parameter back | data selects a section, `0` for all |
-| `0x3f7f` | identity: reply with layout version, image marker, generation, CRC, commit state | |
+| `0x3f02` | put the image's own settings back in the mirror (flash untouched until a commit) | |
+| `0x3f03` | dump: every parameter, then the identity block | |
+| `0x3f7f` | the identity block alone | |
+
+The identity block, sent last in every dump so it is also the page's
+end-of-dump marker, and on its own for `0x3f7f`:
+
+| Parameter | Value |
+|---|---|
+| `0x3f77` | the image marker's top two bits: a marker is sixteen bits and a value fourteen |
+| `0x3f78` | `octave_units` the image was built for |
+| `0x3f79` | the slot loaded, `0xff` for none |
+| `0x3f7a` | commit state: `0` clean, `1` requested, `2` written, `3` failed |
+| `0x3f7b`, `0x3f7c`, `0x3f7d` | the loaded record's generation, bits 28..31, 14..27, 0..13 |
+| `0x3f7e` | the image marker's low fourteen bits |
+| `0x3f7f` | the layout version, `1` |
+
+Anything the map does not name - the gaps between sections, `0x0200` and
+up short of the commands - is ignored on receive and skipped by the dump.
+`settings_target` is the one place the map lives in the firmware; the
+receive, the dump and `settings_valid`'s bounds all ask it.
 
 Table writes go live in the mirror at once, so a calibration entry can be
 auditioned before it is committed. A tuning entry additionally zeroes the
@@ -244,19 +273,27 @@ is atomic and the pitch is recomputed every scan, so a table mid-push is
 merely a half-new table, never a torn value.
 
 Commit is a request, not a write: the handler sets the commit state to `1`
-and the write happens in the next scan from `persist_scan_shim`, the same
-context and the same driver procedure as a preset save - stage the record
-with its marker erased, erase-and-write the four pages of the *other* slot,
-read back and compare, then write the marker without erase, read back and
-validate. The state goes to `2` on success and `3` on any mismatch, and the
-identity reply carries it, so the page learns the outcome instead of
-assuming it. A failed commit leaves the previous slot intact; the next commit
-request tries again.
+and the write happens in the next scan, from `settings_scan` - the cave the
+housekeeping's pool word at `0x8001a520` names now, in front of what it used
+to name (the persistence shim, or the preset editor in a volatile build) -
+the same context and the same driver procedure as a preset save: stage the
+record at `0x6a80` with its marker erased and the generation after the
+loaded one, erase-and-write the two pages of the body into the slot the
+loaded record is *not* in, read every byte back, write the marker alone
+without erase, read back again, and take the slot only if `settings_valid`
+accepts it. The state goes to `2` on success and `3` on any mismatch, and
+the identity reply carries it, so the page learns the outcome instead of
+assuming it. A failed commit leaves the previous record where it was; the
+next request tries again.
 
-Replies use the same four CCs on channel 16 in the other direction, at two
-values (eight packets) per scan, so a full dump is about 0.8 s and never
-outruns the telemetry's proven rate. The page's decoder is the firmware's
-encoder mirrored.
+Replies use the same four CCs on channel 16 in the other direction, through
+the factory's own sender, at two parameters (eight packets) per scan, so a
+full dump - 316 parameters and the nine of the identity block - takes about 0.8 s and
+never outruns the telemetry's proven seventeen. The dump cursor walks the
+parameter numbers and skips the gaps between sections without spending the
+scan's budget on them; `0x4000` is idle. The page's decoder
+(`BUILDLIB.nrpnDecoder`) is the firmware's receive mirrored, and
+`BUILDLIB.nrpnParamsOf` lists a record's parameters in the dump's order.
 
 ### The page's push
 
@@ -276,27 +313,44 @@ the transport; nothing is built twice.
 
 ## Changes, file by file
 
-**`src/AssemblePressureFix.java`** - built: `settings_copy`,
-`settings_valid`, `settings_newest`, `settings_boot` at `0x8001f000`, the
-reader pool words repointed and the ten number sites converted. Still to
-build, in the same cave page: `settings_nrpn` (the CC hook and the parameter
-state machine), `settings_commit` (called from `persist_scan_shim`),
-`settings_dump` (the paced sender, driven from the same shim). Each is a
-repin tail; batch them.
+**`src/AssemblePressureFix.java`** - built, at `0x8001f000..0x8001f994`:
+`settings_copy`, `settings_valid`, `settings_newest`, `settings_boot`,
+`settings_defaults`, `settings_reload`, `settings_target` (the map),
+`settings_apply` (commands and cells), `settings_nrpn` (the hook's cave),
+`settings_send`, `settings_value`, `settings_scan`, `settings_commit`,
+`settings_verify`, the 8-byte `settings_cc_hook` at `0x8000838e` and the
+pool word it calls through; the reader pool words repointed and the ten
+number sites converted. Every label past `settings_target` is a `long`
+constant, so a cave that grows moves as one edit - declared before any
+pool word that names it, because the transpiled JavaScript hoists a later
+`var` as undefined and emits a pool word of zero where Java would refuse to
+compile; `tools/test.py`'s call-pool guard now plants that case.
 
 **`tools/settings.py`** - built: the record serializer and parser, and
 `build/settings.bin` written by every build. `tools/test.py` checks the
 layout and bounds; `web/test_configs.py` compares it with the page's record
 for every configuration in its matrix.
 
-**`web/buildlib.js`** - built: `settingsRecord` and `crc32`. Still to build:
-the NRPN codec - value to four CCs, four CCs to value - and the section
-layout so the page can address a single entry.
+**`web/buildlib.js`** - built: `settingsRecord` and `crc32`, and the codec:
+`nrpnMessages`, `nrpnDecoder`, `nrpnParamsOf`, `nrpnValueOf`, `nrpnApply`,
+`nrpnIdentity`, with `NRPN_SECTIONS`, `NRPN_COMMANDS` and `NRPN_IDENTITY`
+naming the map. `web/test_nrpn.js` round-trips every parameter.
+
+**`web/settings.js`** - built: the transport, `SETTINGSMIDI`: `push` in
+bursts of four parameters with a pause between (the ring is 32 packets and
+overflows silently), `dump` and `identity` collecting replies until the
+layout version arrives, `commit`, `reload`, `defaults`, `differences`, and
+`install` - identity, push, dump, compare, commit, identity - which refuses
+with a named reason: no reply, wrong layout, wrong image, mismatch (with
+the parameters that differed), not written (with the state).
+`web/test_settingsmidi.js` runs it against a fake instrument that behaves as
+the firmware does under emulation.
 
 **`web/app.js`, `web/index.html`** - a step after the download: pick the
 MIDI port (the calibration's port list already exists), *Push*, *Read back*,
-and a comparison readout. The copy for it needs the owner's approval before
-it is written; this document names the controls, not the wording.
+and a comparison readout, over `SETTINGSMIDI`. The copy for it needs the
+owner's approval before it is written; this document names the controls,
+not the wording.
 
 **`docs/`** - this file becomes `SETTINGS.md` once built, the way
 `PERSISTENCE.md` did; `HANDOFF.md`'s "Settings over MIDI" item points here.
@@ -304,9 +358,10 @@ it is written; this document names the controls, not the wording.
 ## Tests, each stage ending with one
 
 1. **Record and codec, no Ghidra.** Built: `test_settings_record` in
-   `tools/test.py` (layout, CRC, bounds, the zero bank) and the record
-   compare in `web/test_configs.py` (both serializers, every configuration).
-   To build: the NRPN encode/decode round trip over every parameter.
+   `tools/test.py` (layout, CRC, bounds, the zero bank), the record compare
+   in `web/test_configs.py` (both serializers, every configuration), and
+   `web/test_nrpn.js` (every parameter through the wire and back, masks in
+   thirds, the identity block, the walk order).
 2. **Load and fallback.** Built: `src/SettingsRegression.java`, run by
    `tools/test_persistence.py` in every persistent mode against that image's
    own `settings.bin`: no record boots the baked tables and the mirror equals
@@ -315,15 +370,22 @@ it is written; this document names the controls, not the wording.
    reloads; sixteen header, image, period and bound corruptions and a
    flipped CRC bit each fall back; the newer of two slots wins, across the
    generation wrap, and a corrupt newer slot yields to the older.
-3. **Receive.** Feed packets into the ring at `0x34b4` and run the
-   dispatcher's drain: a table write lands in the mirror and re-arms the
-   applier guard; a number write is bounded; a foreign CC still reaches the
-   factory's mod-wheel path; an NRPN on channel 3 is ignored.
-4. **Commit and dump.** Commit writes the other slot, verifies, sets state
-   `2`; a modelled write failure sets `3` and leaves the old slot loadable; a
-   power cut between body and marker leaves the old slot newest. Dump emits
-   every parameter through the modelled sender at the paced rate, and the
-   page decoder reads them back to the same record.
+3. **Receive.** Built, in the same regression: packets into the ring at
+   `0x34b4` and the factory parser over them. A number, a pitch entry, a
+   tuning entry (clearing the applier's guard), keys per period, the three
+   thirds of a mask and a length each land; each bound refuses; a gap
+   changes nothing; controller 5 still reaches the factory on the
+   instrument's channel and on channel 16, and not on another channel;
+   NRPN on another channel is not ours; nothing is sent.
+4. **Commit and dump.** Built: a commit needs its key, is requested on
+   receive and done on the scan, takes slot 0 then slot 1 with the
+   generation counting, leaves the previous record in the other slot, boots
+   after a power cycle; a write that does not take leaves state `3` with
+   the old record newest and the next request tries again; `0x3f01` and
+   `0x3f02` reload and reset. A dump ends by itself, sends at most eight
+   packets a scan, 316 parameters in the instrument's order with every
+   value the mirror's, then the identity block; an identity request sends
+   the eight alone, the generation in three parts.
 5. **Nothing else moved.** `test_clock.py`, `test_controls.py`,
    `test_persistence.py`, the golden build and the browser matrix, because
    the number sites and pool words touch clock, sequencer and pitch caves.

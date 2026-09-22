@@ -1296,6 +1296,81 @@
             .then(function () { $('calRescan').disabled = false; },
                   function () { $('calRescan').disabled = false; });
     });
+    // --- step 5: the settings, to the keyboard over MIDI -----------------
+    // The record a build serialized (WEBBUILD.build's `settings`, the same
+    // bytes tools/build.py writes to build/settings.bin) goes to the
+    // instrument through SETTINGSMIDI.install, which refuses with a named
+    // reason; each reason has its own line here.  The instrument is one
+    // device with an input and an output of the same name, so the select
+    // lists outputs and the input is found by that name.
+    var kbd = { outputs: [], inputs: [], listed: false };
+    function listKeyboard() {
+        if (!$('kbdPort')) return Promise.resolve();
+        return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
+            kbd.outputs = r[0]; kbd.inputs = r[1]; kbd.listed = true;
+            var items = kbd.outputs.map(function (p) {
+                return { value: p.id, label: p.name || p.id };
+            });
+            fillSelect($('kbdPort'), items, 'No MIDI outputs found');
+            if (!$('kbdPort').value) {
+                var mine = items.filter(function (i) { return /218e/i.test(i.label); })[0];
+                if (mine) $('kbdPort').value = mine.value;
+            }
+            refresh();
+        }, function (err) {
+            fillSelect($('kbdPort'), [], 'Web MIDI unavailable');
+            msg($('kbdMsg'), 'bad', err.message);
+            refresh();
+        });
+    }
+    function keyboardPorts() {
+        var out = kbd.outputs.filter(function (p) { return p.id === $('kbdPort').value; })[0];
+        if (!out) return null;
+        var inp = kbd.inputs.filter(function (p) { return p.name === out.name; })[0] || kbd.inputs[0];
+        return inp ? { output: out, input: inp } : null;
+    }
+    function recordBytes(hex) {
+        var out = [];
+        for (var i = 0; i < hex.length; i += 2) out.push(parseInt(hex.substr(i, 2), 16));
+        return out;
+    }
+    var KBD_REASONS = {
+        'no reply': 'No reply from the keyboard: check it is on and plugged in, and that this is the right port.',
+        'wrong layout': 'This keyboard runs a different build: flash the firmware from step 3 first.',
+        'wrong image': 'This keyboard runs a different build: flash the firmware from step 3 first.',
+        'mismatch': 'The keyboard did not read everything back the same: try again.',
+        'not written': 'The keyboard could not save: try again, and if it keeps failing, flash the firmware again.'
+    };
+    if ($('kbdSend')) {
+        // The MIDI permission is asked for when the step comes into view,
+        // not on load: someone building an image to download has no use for
+        // the prompt.
+        var kbdSection = $('kbdPort').closest('section');
+        if (window.IntersectionObserver && kbdSection) {
+            new IntersectionObserver(function (entries, observer) {
+                if (entries.some(function (e) { return e.isIntersecting; })) {
+                    observer.disconnect();
+                    listKeyboard();
+                }
+            }).observe(kbdSection);
+        }
+        $('kbdPort').addEventListener('focus', function () { if (!kbd.listed) listKeyboard(); });
+        $('kbdPort').addEventListener('change', refresh);
+        $('kbdSend').addEventListener('click', function () {
+            var ports = keyboardPorts();
+            if (!ports || !state.result) return;
+            $('kbdSend').disabled = true;
+            msg($('kbdMsg'), 'warn', 'Sending…');
+            SETTINGSMIDI.install(ports.output, ports.input, recordBytes(state.result.settings), {})
+                .then(function () {
+                    msg($('kbdMsg'), 'ok', 'Sent and saved.');
+                }, function (err) {
+                    msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
+                })
+                .then(refresh);
+        });
+    }
+
     // A port appearing or going away invalidates a list that is only built
     // once.  The selection is put back if it survived, so unplugging something
     // else does not quietly move the choice out from under the next run.
@@ -1309,6 +1384,7 @@
                     if (opts[i].value === was) { $('calMidi').value = was; return; }
                 }
             });
+            if (kbd.listed) listKeyboard();
         });
     }
 
@@ -1529,6 +1605,8 @@
         $('build').disabled = !state.factoryText;
         $('dlMac').disabled = !state.result;
         $('dlWin').disabled = !state.result;
+        // Step 5 wants the image's own record, which only a build has.
+        if ($('kbdSend')) $('kbdSend').disabled = !(state.result && $('kbdPort').value);
         // The accent marks whatever is next: Build until an image exists,
         // then Download.  Changing an option clears state.result, so it
         // hands the emphasis back on its own.

@@ -106,16 +106,18 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   for the save gesture/timing contract, record layout, failure states and
   `tools/test_persistence.py` regression coverage. Remaining work is bench
   validation of save/power-cycle behavior and physical flash failures.
-- **Settings over MIDI** — stage 1 is laid out in
-  [PLAN-SETTINGS.md](PLAN-SETTINGS.md), and its loader half is built
-  (2026-09-22): a RAM mirror at `0x6800` that every table reader and the
-  ten numbers below address, filled at boot by `settings_boot` from the
-  image's own tables and then from the newer valid record in the two slots
-  at `0x8003d000`/`0x8003d800`; `tools/settings.py` and
-  `BUILDLIB.settingsRecord` write that record and `build/settings.bin` is
-  the build's own. Still to build: the NRPN handler at the CC hook
-  `0x80008366`, commit, dump, and the page's step. (Dispatcher event 32 at
-  `0x80004fc2` is the factory remote-note handler, not the CC path.)
+- **Settings over MIDI** — stage 1's firmware is built (2026-09-22), laid
+  out in [PLAN-SETTINGS.md](PLAN-SETTINGS.md): a RAM mirror at `0x6800`
+  that every table reader and the ten numbers below address, filled at boot
+  from the image's own tables and then from the newer valid record in the
+  two slots at `0x8003d000`/`0x8003d800`; NRPN on channel 16 at the
+  factory's Control Change branch (`0x8000838e`) writes the mirror live,
+  `0x3f00`/`0x2a2a` commits it from the per-scan chain, `0x3f03` dumps it
+  back paced, `0x3f7f` answers with the identity block. `tools/settings.py`
+  and `BUILDLIB.settingsRecord` write the record, `BUILDLIB.nrpn*` is the
+  codec. Still to build: the page's step, waiting on its wording. Nothing
+  here has run on the instrument yet. (Dispatcher event 32 at `0x80004fc2`
+  is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
   `clock_lock_pulses` (5), and the jack transposer's `cv_counts_per_volt`

@@ -96,7 +96,7 @@ check('every parameter survives the wire', all.length === params.length
       && all.every(function (p, i) { return p[0] === params[i][0] && p[1] === params[i][1]; }));
 
 // The identity block, sent last, with the generation in three parts.
-var identity = [[0x3f78, 484], [0x3f79, 0xff], [0x3f7a, 2], [0x3f7b, 3], [0x3f7c, 5], [0x3f7d, 7], [0x3f7e, 0xB007]];
+var identity = [[0x3f77, 2], [0x3f78, 484], [0x3f79, 0xff], [0x3f7a, 2], [0x3f7b, 3], [0x3f7c, 5], [0x3f7d, 7], [0x3f7e, 0x3007]];
 check('no identity until the layout version arrives', B.nrpnIdentity(identity) === null);
 identity.push([0x3f7f, 1]);
 var id = B.nrpnIdentity(identity);

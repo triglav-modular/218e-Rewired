@@ -1395,7 +1395,9 @@ RAM_REGIONS = [
     (0x69A0, 0x69A8, "settings mirror: keys per period"),
     (0x69A8, 0x6A28, "settings mirror: pattern masks, two halfwords each"),
     (0x6A28, 0x6A68, "settings mirror: pattern lengths"),
+    (0x6A68, 0x6A70, "settings NRPN state: parameter MSB/LSB, data MSB, a pad, the dump cursor"),
     (0x6A70, 0x6A78, "settings loader state: commit state, slot loaded, generation"),
+    (0x6A80, 0x6D28, "settings record staged for a commit, marker erased"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to
@@ -2466,7 +2468,11 @@ def main() -> None:
     # settings_boot whatever else is built, and its record validator
     # shares persist_crc, so both stay on with persistence off.
     for name in ("settings_copy", "settings_valid", "settings_newest",
-                 "settings_boot", "clock_init_pool", "persist_crc"):
+                 "settings_boot", "settings_defaults", "settings_reload",
+                 "settings_target", "settings_apply", "settings_nrpn",
+                 "settings_send", "settings_value", "settings_scan",
+                 "settings_commit", "settings_verify", "settings_cc_hook",
+                 "settings_cc_pool", "clock_init_pool", "persist_crc"):
         blocks[name] = True
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
     blocks["seq_chord"] = seq

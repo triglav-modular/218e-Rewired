@@ -9895,7 +9895,7 @@ function assembleProgram() {
         // With persistence on, the preset editor is reached through a shim
         // that runs editor, sequencer controls and persistence in that order,
         // so a completed gesture is committed in the same control scan.
-        word(block("persist") ? 0x8001d520 : 0x8001ae1c);
+        word(0x8001f760);              // settings_scan, in front of the shim or the editor
         word(0x8001b180);              // the sequencer chord
         word(0x8001b980);              // the external clock, per scan
         padTo(0x8001a52c);
@@ -10092,7 +10092,9 @@ function assembleProgram() {
         // A record is for one image: the marker every build derives from
         // everything that shapes it, and the period its tables step.
         emit("LD.UH R8,R0[0x10]");
-        emit(StringFormat("CP.W R8,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit(StringFormat("MOV R9,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("CASTU.H R9");             // a marker past 0x7fff would sign-extend
+        emit("CP.W R8,R9");
         emit("BR{ne} 0x8001f110");
         emit("LD.UH R8,R0[0x12]");
         emit(StringFormat("CP.W R8,0x%x", number("octave_units", 484, 1, 2000)));
@@ -10223,18 +10225,44 @@ function assembleProgram() {
         // tables and numbers always go in first: a record can only lose
         // edits, never the instrument's own tuning.
         begin(0x8001f1c0);
-        emit("STM --SP,R0,R7,LR");
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001f1f0]");   // settings_defaults
+        emit("MCALL PC[0x8001f1f4]");   // settings_reload
+        // The NRPN state: no parameter or data byte in hand, the dump
+        // cursor idle.  0x4000 is idle because it is past every parameter
+        // and a MOV of it is the same positive value a LD.UH reads back.
+        emit("MOV R8,0x6a68");
+        emit("MOV R9,0x0");
+        emit("ST.W R8[0x0],R9");
+        emit("MOV R9,0x4000");
+        emit("ST.H R8[0x4],R9");
+        emit("ST.H R8[0x6],R9");
+        emit("MCALL PC[0x8001f1f8]");   // what the startup word used to name
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001f1f0);
+        word(0x8001f200); // settings_defaults
+        word(0x8001f300); // settings_reload
+        word(block("persist") ? 0x8001d540
+             : block("clock_capture") ? 0x8001c300
+             : block("seq_boot") ? 0x8001dfa8 : 0x80007340);
+        finish("settings_boot", 0x8001f200);
+
+        // The image's own settings into the mirror: zero it, then the ten
+        // numbers - the only immediates they have left; the sites that used
+        // to carry them load the cells - then the tables from where the
+        // image keeps them.  Also what NRPN 0x3f02 asks for.
+        begin(0x8001f200);
+        emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x0");
         emit("MOV R10,0x6800");
         emit("MOV R9,0x99");            // 0x9a words: the mirror, 0x6800..0x6a67
-        padTo(0x8001f1d0);
+        padTo(0x8001f210);
         emit("ST.W R10[0x0],R8");
         emit("SUB R10,-0x4");
         emit("SUB R9,0x1");
-        emit("BR{ge} 0x8001f1d0");
-        // The numbers, each in its cell.  These are the only immediates the
-        // ten have left; the sites that used to carry them load the cells.
+        emit("BR{ge} 0x8001f210");
         emit("MOV R10,0x6800");
         emit(StringFormat("MOV R9,0x%x", number("tie_glide_rate", 60, 1, 1024)));
         emit("ST.H R10[0x0],R9");
@@ -10256,62 +10284,721 @@ function assembleProgram() {
         emit("ST.H R10[0x10],R9");
         emit(StringFormat("MOV R9,0x%x", number("latch_state_hold_scans", 200, 20, 2000)));
         emit("ST.H R10[0x12],R9");
-        // The tables, from where the image keeps them.
         emit("MOV R12,0x6840");
-        emit("LDDPC R11,0x8001f2b0");   // the pitch curve
+        emit("LDDPC R11,0x8001f2e0");   // the pitch curve
         emit("MOV R10,0x4f");
-        emit("MCALL PC[0x8001f2c4]");
+        emit("MCALL PC[0x8001f2f4]");
         emit("MOV R12,0x68e0");
-        emit("LDDPC R11,0x8001f2b4");   // the three tuning tables
+        emit("LDDPC R11,0x8001f2e4");   // the three tuning tables
         emit("MOV R10,0x60");
-        emit("MCALL PC[0x8001f2c4]");
+        emit("MCALL PC[0x8001f2f4]");
         emit("MOV R12,0x69a0");
-        emit("LDDPC R11,0x8001f2b8");   // keys per period
+        emit("LDDPC R11,0x8001f2e8");   // keys per period
         emit("MOV R10,0x3");
-        emit("MCALL PC[0x8001f2c4]");
+        emit("MCALL PC[0x8001f2f4]");
         // The bank only exists in the image when knob 2 plays patterns; any
         // other build boots a zero bank, which the record carries too.
         if (block("arp_pattern_tables")) {
             var patterns = number("pattern_count", 1, 1, 32);
             emit("MOV R12,0x69a8");
-            emit("LDDPC R11,0x8001f2bc");   // the masks, two halfwords each
+            emit("LDDPC R11,0x8001f2ec");   // the masks, two halfwords each
             emit(StringFormat("MOV R10,0x%x", 2 * patterns));
-            emit("MCALL PC[0x8001f2c4]");
+            emit("MCALL PC[0x8001f2f4]");
             emit("MOV R12,0x6a28");
-            emit("LDDPC R11,0x8001f2c0");   // the lengths
+            emit("LDDPC R11,0x8001f2f0");   // the lengths
             emit(StringFormat("MOV R10,0x%x", patterns));
-            emit("MCALL PC[0x8001f2c4]");
+            emit("MCALL PC[0x8001f2f4]");
         }
-        padTo(0x8001f280);
-        // Then the newer valid record, if there is one, over the top.
-        emit("MCALL PC[0x8001f2c8]");
-        emit("MOV R0,0x6a70");
-        emit("ST.B R0[0x1],R11");       // the slot loaded, 0xff for none
-        emit("ST.W R0[0x4],R10");       // its generation
-        emit("MOV R8,0x0");
-        emit("ST.B R0[0x0],R8");        // commit state: clean
-        emit("CP.W R12,0x0");
-        emit("BR{eq} 0x8001f2a8");
-        emit("MOV R11,R12");
-        emit("SUB R11,-0x20");
-        emit("MOV R12,0x6800");
-        emit("MOV R10,0x134");
-        emit("MCALL PC[0x8001f2c4]");
-        padTo(0x8001f2a8);
-        emit("MCALL PC[0x8001f2cc]");   // what the startup word used to name
-        emit("LDM SP++,R0,R7,PC");
-        padTo(0x8001f2b0);
+        padTo(0x8001f2d8);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001f2e0);
         word(0x80019bc0); // the pitch curve, as emitted
         word(0x80019af8); // the three tuning tables, as emitted
         word(0x8001e2d0); // keys per period, as emitted
         word(0x80019f20); // the pattern bank, when emitted
         word(0x80019fa0); // its lengths, when emitted
         word(0x8001f000); // settings_copy
+        finish("settings_defaults", 0x8001f300);
+
+        // The newer valid record over the mirror, if there is one, and the
+        // loader's state either way: commit state clean, the slot loaded
+        // (0xff for none) and its generation.  Boot, and NRPN 0x3f01.
+        begin(0x8001f300);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001f338]");   // settings_newest
+        emit("MOV R0,0x6a70");
+        emit("ST.B R0[0x1],R11");
+        emit("ST.W R0[0x4],R10");
+        emit("MOV R8,0x0");
+        emit("ST.B R0[0x0],R8");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001f330");
+        emit("MOV R11,R12");
+        emit("SUB R11,-0x20");
+        emit("MOV R12,0x6800");
+        emit("MOV R10,0x134");
+        emit("MCALL PC[0x8001f33c]");   // settings_copy
+        padTo(0x8001f330);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001f338);
         word(0x8001f150); // settings_newest
-        word(block("persist") ? 0x8001d540
-             : block("clock_capture") ? 0x8001c300
-             : block("seq_boot") ? 0x8001dfa8 : 0x80007340);
-        finish("settings_boot", 0x8001f2d0);
+        word(0x8001f000); // settings_copy
+        finish("settings_reload", 0x8001f340);
+
+        // Where a parameter lives.  R12 = the 14-bit NRPN parameter number;
+        // returns R12 = its mirror address (zero for a number that names
+        // nothing), R11 = kind (0 a halfword, 1 a third of a pattern mask),
+        // R10 and R9 = the value's bounds, and for a mask R8 = which third.
+        // A leaf: the receive and the dump both ask it, so the map is in one
+        // place.  docs/PLAN-SETTINGS.md has the map.
+        begin(0x8001f340);
+        emit("CP.W R12,0xa");
+        emit("BR{ge} 0x8001f360");
+        // 0x0000..0x0009: the numbers, bounded by settings_valid's table.
+        emit("LDDPC R9,0x8001f418");
+        emit("ADD R9,R9,R12 << 0x2");
+        emit("LD.UH R10,R9[0x0]");
+        emit("LD.UH R9,R9[0x2]");
+        emit("MOV R11,0x0");
+        emit("MOV R8,0x6800");
+        emit("ADD R12,R8,R12 << 0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001f360);
+        // 0x0080..0x00ce: the pitch curve.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x80");
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001f414");
+        emit("CP.W R8,0x4f");
+        emit("BR{ge} 0x8001f384");
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0xfff");
+        emit("MOV R12,0x6840");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001f384);
+        // 0x0100..0x015f: the three tuning tables, one run.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x100");
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001f414");
+        emit("CP.W R8,0x60");
+        emit("BR{ge} 0x8001f3a8");
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0xfff");
+        emit("MOV R12,0x68e0");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001f3a8);
+        // 0x0160..0x0162: keys per period, the bound settings_valid has.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x160");
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001f414");
+        emit("CP.W R8,0x3");
+        emit("BR{ge} 0x8001f3c8");
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x1");
+        emit(StringFormat("MOV R9,0x%x", block("preset_entry") ? 0x20 : 0x7f));
+        emit("MOV R12,0x69a0");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001f3c8);
+        // 0x0180..0x01df: three parameters per pattern mask - bits 0..13,
+        // 14..27 and 28..31 - so 32 bits ride on 14-bit values.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x180");
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001f414");
+        emit("CP.W R8,0x60");
+        emit("BR{ge} 0x8001f3f4");
+        emit("MOV R10,0x3");
+        emit("DIVU R8,R8,R10");         // R8 = pattern, R9 = third
+        emit("MOV R12,0x69a8");
+        emit("ADD R12,R12,R8 << 0x2");
+        emit("MOV R8,R9");
+        emit("MOV R11,0x1");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0x3fff");
+        emit("MOV PC,LR");
+        padTo(0x8001f3f4);
+        // 0x01e0..0x01ff: pattern lengths; zero is an unused pattern.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x1e0");
+        emit("CP.W R8,0x0");
+        emit("BR{lt} 0x8001f414");
+        emit("CP.W R8,0x20");
+        emit("BR{ge} 0x8001f414");
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0x20");
+        emit("MOV R12,0x6a28");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(0x8001f414);
+        emit("MOV R12,0x0");
+        emit("MOV PC,LR");
+        padTo(0x8001f418);
+        word(0x8001f124); // settings_valid's bounds table
+        finish("settings_target", 0x8001f440);
+
+        // Apply one received value.  R12 = parameter, R11 = 14-bit value.
+        // Parameters from 0x3f00 are commands: 0x3f00 with 0x2a2a asks for
+        // a commit on the next scan, 0x3f01 reloads the mirror from flash,
+        // 0x3f02 puts the image's own settings back, 0x3f03 starts a dump,
+        // 0x3f7f asks for the identity block.  Anything else names a cell:
+        // out of range is ignored, not clamped - the page is expected to
+        // know the bounds, and a wrong value is better left unapplied than
+        // applied as some other value.  A tuning write clears the applier's
+        // guard so the next scan re-copies the slot on show.  Every label
+        // in these caves is a constant, so a cave that grows moves as one
+        // edit rather than a chain of them.
+        var apEntry = 0x8001f440, apC1 = 0x8001f470, apC2 = 0x8001f480;
+        var apC3 = 0x8001f490, apC4 = 0x8001f4a4, apData = 0x8001f4c0;
+        var apMask = 0x8001f510, apMid = 0x8001f528, apTop = 0x8001f54c;
+        var apDone = 0x8001f560, apPool = 0x8001f564, apEnd = 0x8001f570;
+        begin(apEntry);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R1,R11");
+        emit("CP.W R0,0x3f00");
+        emit(StringFormat("BR{lt} 0x%x", apData));
+        emit(StringFormat("BR{ne} 0x%x", apC1));
+        emit("CP.W R1,0x2a2a");
+        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit("MOV R8,0x6a70");
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x0],R9");        // commit requested
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC1);
+        emit("CP.W R0,0x3f01");
+        emit(StringFormat("BR{ne} 0x%x", apC2));
+        emit(StringFormat("MCALL PC[0x%x]", apPool + 4));   // settings_reload
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC2);
+        emit("CP.W R0,0x3f02");
+        emit(StringFormat("BR{ne} 0x%x", apC3));
+        emit(StringFormat("MCALL PC[0x%x]", apPool + 8));   // settings_defaults
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC3);
+        emit("CP.W R0,0x3f03");
+        emit(StringFormat("BR{ne} 0x%x", apC4));
+        emit("MOV R8,0x6a68");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x4],R9");        // the dump cursor, from the first parameter
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC4);
+        emit("CP.W R0,0x3f7f");
+        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit("MOV R8,0x6a68");
+        emit("MOV R9,0x3f77");
+        emit("ST.H R8[0x4],R9");        // the cursor at the identity block alone
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apData);
+        emit("MOV R12,R0");
+        emit(StringFormat("MCALL PC[0x%x]", apPool));       // settings_target
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", apDone));
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{ne} 0x%x", apMask));
+        emit("CP.W R1,R10");
+        emit(StringFormat("BR{lt} 0x%x", apDone));
+        emit("CP.W R1,R9");
+        emit(StringFormat("BR{gt} 0x%x", apDone));
+        emit("ST.H R12[0x0],R1");
+        emit("MOV R8,0x68e0");
+        emit("CP.W R12,R8");
+        emit(StringFormat("BR{lt} 0x%x", apDone));
+        emit("MOV R8,0x69a0");
+        emit("CP.W R12,R8");
+        emit(StringFormat("BR{ge} 0x%x", apDone));
+        emit("MOV R8,0x60e4");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x0],R9");        // the applier re-copies the slot on show
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apMask);
+        // A third of a mask: the low halfword holds bits 0..15, the high
+        // one 16..31, and the middle third straddles them.
+        emit("LD.UH R10,R12[0x0]");
+        emit("LD.UH R9,R12[0x2]");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{eq} 0x%x", apMid));
+        emit(StringFormat("BR{gt} 0x%x", apTop));
+        emit("ANDL R10,0xc000");
+        emit("OR R10,R1");
+        emit("ST.H R12[0x0],R10");
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apMid);
+        emit("ANDL R10,0x3fff");
+        emit("MOV R11,R1");
+        emit("ANDL R11,0x3");
+        emit("LSL R11,0xe");
+        emit("OR R10,R11");
+        emit("ST.H R12[0x0],R10");
+        emit("ANDL R9,0xf000");
+        emit("MOV R11,R1");
+        emit("LSR R11,0x2");
+        emit("OR R9,R11");
+        emit("ST.H R12[0x2],R9");
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apTop);
+        emit("ANDL R9,0xfff");
+        emit("MOV R11,R1");
+        emit("ANDL R11,0xf");
+        emit("LSL R11,0xc");
+        emit("OR R9,R11");
+        emit("ST.H R12[0x2],R9");
+        padTo(apDone);
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(apPool);
+        word(0x8001f340); // settings_target
+        word(0x8001f300); // settings_reload
+        word(0x8001f200); // settings_defaults
+        finish("settings_apply", apEnd);
+
+        // The hook.  The factory's Control Change branch at 0x8000838e used
+        // to open by loading the instrument's own MIDI channel into R8 for
+        // the compare that follows; it opens with a call here instead, and
+        // this returns with that same load done.  A channel-16 NRPN
+        // controller - 99, 98, 6, 38 - is taken here, and R8 comes back as
+        // a channel no message can carry, so the factory's own compare
+        // discards what has already been handled.  Everything else falls
+        // through untouched, on the instrument's channel or not.  The
+        // controller and value are read out of the receive ring the way
+        // the factory reads them two instructions later.
+        var nrEntry = 0x8001f570, nrLsb = 0x8001f598, nrMsb = 0x8001f5a4;
+        var nrDat = 0x8001f5b0, nrDone = 0x8001f5d0, nrPass = 0x8001f5d8;
+        var nrPool = 0x8001f5e4, nrEnd = 0x8001f5f0;
+        begin(nrEntry);
+        emit("STM --SP,R0,LR");
+        emit("LD.UB R9,R7[-0xa]");      // the message's channel
+        emit("CP.W R9,0xf");
+        emit(StringFormat("BR{ne} 0x%x", nrPass));
+        emit(StringFormat("LDDPC R10,0x%x", nrPool));       // the USB block: its ring at +4
+        emit("LD.W R8,R10[0x88]");
+        emit("ADD R8,R10");
+        emit("LD.UB R11,R8[0x5]");      // the controller
+        emit("LD.UB R12,R8[0x6]");      // its value
+        emit("MOV R0,0x6a68");
+        emit("CP.W R11,0x63");
+        emit(StringFormat("BR{ne} 0x%x", nrLsb));
+        emit("ST.B R0[0x0],R12");       // parameter MSB
+        emit(StringFormat("RJMP 0x%x", nrDone));
+        padTo(nrLsb);
+        emit("CP.W R11,0x62");
+        emit(StringFormat("BR{ne} 0x%x", nrMsb));
+        emit("ST.B R0[0x1],R12");       // parameter LSB
+        emit(StringFormat("RJMP 0x%x", nrDone));
+        padTo(nrMsb);
+        emit("CP.W R11,0x6");
+        emit(StringFormat("BR{ne} 0x%x", nrDat));
+        emit("ST.B R0[0x2],R12");       // data MSB
+        emit(StringFormat("RJMP 0x%x", nrDone));
+        padTo(nrDat);
+        emit("CP.W R11,0x26");
+        emit(StringFormat("BR{ne} 0x%x", nrPass));
+        // Data LSB completes a value: apply it to the parameter in hand.
+        emit("LD.UB R11,R0[0x2]");
+        emit("LSL R11,0x7");
+        emit("OR R11,R12");
+        emit("LD.UB R12,R0[0x0]");
+        emit("LSL R12,0x7");
+        emit("LD.UB R8,R0[0x1]");
+        emit("OR R12,R8");
+        emit(StringFormat("MCALL PC[0x%x]", nrPool + 8));   // settings_apply
+        padTo(nrDone);
+        emit("MOV R8,0xff");            // handled: no channel reads as this
+        emit("LDM SP++,R0,PC");
+        padTo(nrPass);
+        emit(StringFormat("LDDPC R8,0x%x", nrPool + 4));    // the factory's own first instruction
+        emit("LD.UB R8,R8[0x2e7]");
+        emit("LDM SP++,R0,PC");
+        padTo(nrPool);
+        word(0x000034b0); // the USB block
+        word(0x00003560); // global state base
+        word(apEntry);     // settings_apply
+        finish("settings_nrpn", nrEnd);
+
+        // One parameter out, as the four Control Changes the page sends
+        // in: 99 and 98 for the parameter, 6 and 38 for the value, all on
+        // channel 16, through the factory's own USB-MIDI sender.  R12 =
+        // parameter, R11 = value.
+        var sdEntry = 0x8001f5f0, sdPool = 0x8001f63c, sdEnd = 0x8001f640;
+        begin(sdEntry);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R1,R11");
+        emit("MOV R12,0x63");
+        emit("MOV R11,R0");
+        emit("LSR R11,0x7");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        emit("MOV R12,0x62");
+        emit("MOV R11,R0");
+        emit("ANDL R11,0x7f");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        emit("MOV R12,0x6");
+        emit("MOV R11,R1");
+        emit("LSR R11,0x7");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        emit("MOV R12,0x6");
+        emit("SUB R12,-0x20");          // controller 38, spelt so the key-walk audit does not read it as a walk
+        emit("MOV R11,R1");
+        emit("ANDL R11,0x7f");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(sdPool);
+        word(0x80008034); // the factory's USB-MIDI CC sender
+        finish("settings_send", sdEnd);
+
+        // A parameter's current value, for the dump.  R12 = parameter;
+        // returns R12 = the value and R11 = 1, or R11 = 0 for a number that
+        // names nothing.  0x3f77..0x3f7f is the identity block: the image
+        // marker's top two bits, the period, the slot loaded, the commit
+        // state, the generation in three parts, the marker's low fourteen
+        // bits, and the layout version - the last one sent, so it is also
+        // the page's end-of-dump marker.
+        var vaEntry = 0x8001f640, vaPeriod = 0x8001f668, vaSlot = 0x8001f688, vaState = 0x8001f698;
+        var vaGenHi = 0x8001f6a8, vaGenMid = 0x8001f6bc, vaGenLo = 0x8001f6d4;
+        var vaMarker = 0x8001f6e8, vaVersion = 0x8001f6fc, vaData = 0x8001f700;
+        var vaMask = 0x8001f71c, vaMid = 0x8001f734, vaTop = 0x8001f74c;
+        var vaNone = 0x8001f754, vaDone = 0x8001f758, vaPool = 0x8001f75c, vaEnd = 0x8001f760;
+        begin(vaEntry);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("CP.W R0,0x3f77");
+        emit(StringFormat("BR{lt} 0x%x", vaData));
+        emit("MOV R11,0x1");
+        emit("MOV R10,0x6a70");
+        emit("CP.W R0,0x3f77");
+        emit(StringFormat("BR{ne} 0x%x", vaPeriod));
+        // The marker is sixteen bits and a value fourteen: its top two ride
+        // here, its low fourteen at 0x3f7e.
+        emit(StringFormat("MOV R12,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("CASTU.H R12");
+        emit("LSR R12,0xe");
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaPeriod);
+        emit("CP.W R0,0x3f78");
+        emit(StringFormat("BR{ne} 0x%x", vaSlot));
+        emit(StringFormat("MOV R12,0x%x", number("octave_units", 484, 1, 2000)));
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaSlot);
+        emit("CP.W R0,0x3f79");
+        emit(StringFormat("BR{ne} 0x%x", vaState));
+        emit("LD.UB R12,R10[0x1]");     // the slot loaded
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaState);
+        emit("CP.W R0,0x3f7a");
+        emit(StringFormat("BR{ne} 0x%x", vaGenHi));
+        emit("LD.UB R12,R10[0x0]");     // the commit state
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaGenHi);
+        emit("CP.W R0,0x3f7b");
+        emit(StringFormat("BR{ne} 0x%x", vaGenMid));
+        emit("LD.W R12,R10[0x4]");
+        emit("LSR R12,0x1c");           // generation bits 28..31
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaGenMid);
+        emit("CP.W R0,0x3f7c");
+        emit(StringFormat("BR{ne} 0x%x", vaGenLo));
+        emit("LD.W R12,R10[0x4]");
+        emit("LSR R12,0xe");
+        emit("LSL R12,0x12");
+        emit("LSR R12,0x12");           // generation bits 14..27
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaGenLo);
+        emit("CP.W R0,0x3f7d");
+        emit(StringFormat("BR{ne} 0x%x", vaMarker));
+        emit("LD.W R12,R10[0x4]");
+        emit("LSL R12,0x12");
+        emit("LSR R12,0x12");           // generation bits 0..13
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaMarker);
+        emit("CP.W R0,0x3f7e");
+        emit(StringFormat("BR{ne} 0x%x", vaVersion));
+        emit(StringFormat("MOV R12,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("CASTU.H R12");            // a marker past 0x7fff would sign-extend
+        emit("ANDL R12,0x3fff");        // the low fourteen bits; 0x3f77 has the rest
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaVersion);
+        emit("MOV R12,0x1");            // 0x3f7f: the layout version
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaData);
+        emit(StringFormat("MCALL PC[0x%x]", vaPool));       // settings_target
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", vaNone));
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{ne} 0x%x", vaMask));
+        emit("LD.UH R12,R12[0x0]");
+        emit("MOV R11,0x1");
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaMask);
+        emit("LD.UH R10,R12[0x0]");     // the mask's low halfword
+        emit("LD.UH R9,R12[0x2]");      // and its high
+        emit("MOV R11,0x1");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{eq} 0x%x", vaMid));
+        emit(StringFormat("BR{gt} 0x%x", vaTop));
+        emit("MOV R12,R10");
+        emit("ANDL R12,0x3fff");        // bits 0..13
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaMid);
+        emit("LSR R10,0xe");
+        emit("LSL R9,0x2");
+        emit("OR R10,R9");
+        emit("MOV R12,R10");
+        emit("LSL R12,0x12");
+        emit("LSR R12,0x12");           // bits 14..27
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaTop);
+        emit("MOV R12,R9");
+        emit("LSR R12,0xc");            // bits 28..31
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaNone);
+        emit("MOV R11,0x0");
+        padTo(vaDone);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(vaPool);
+        word(0x8001f340); // settings_target
+        finish("settings_value", vaEnd);
+
+        // Per scan, in front of what the housekeeping's pool word used to
+        // name: a requested commit, then up to two parameters of a dump -
+        // eight packets, half the telemetry's proven rate.  The cursor
+        // walks the parameter numbers and skips the gaps between sections
+        // without spending the budget on them; past the last cell it takes
+        // the identity block, then idles at 0x4000.
+        // The commit's and the verifier's labels are declared here, ahead
+        // of the scan whose pool names them: the transpiled JavaScript
+        // hoists a later `var` as undefined and would emit a pool word of
+        // zero where Java refuses to compile.
+        var cmEntry = 0x8001f820, cmGen = 0x8001f850, cmTail = 0x8001f880;
+        var cmSlot = 0x8001f8e0, cmFail = 0x8001f950, cmDone = 0x8001f960;
+        var cmPool = 0x8001f964, cmEnd = 0x8001f980;
+        var vfEntry = 0x8001f980, vfLoop = 0x8001f984, vfBad = 0x8001f9a4, vfEnd = 0x8001f9b0;
+        var scEntry = 0x8001f760, scDump = 0x8001f780, scLoop = 0x8001f784;
+        var scG1 = 0x8001f7a0, scG2 = 0x8001f7ac, scG3 = 0x8001f7b8, scG4 = 0x8001f7c4;
+        var scStore = 0x8001f7d0, scOut = 0x8001f7f8, scPool = 0x8001f800, scEnd = 0x8001f810;
+        begin(scEntry);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("MCALL PC[0x%x]", scPool));       // the shim, or the editor
+        emit("MOV R8,0x6a70");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x1");
+        emit(StringFormat("BR{ne} 0x%x", scDump));
+        emit(StringFormat("MCALL PC[0x%x]", scPool + 4));   // settings_commit
+        padTo(scDump);
+        emit("MOV R0,0x2");             // parameters this scan
+        padTo(scLoop);
+        emit("MOV R8,0x6a68");
+        emit("LD.UH R9,R8[0x4]");       // the cursor
+        emit("CP.W R9,0x4000");
+        emit(StringFormat("BR{ge} 0x%x", scOut));
+        // Advance first, over the gaps: 0x0a -> 0x80, 0xcf -> 0x100,
+        // 0x163 -> 0x180, 0x200 -> 0x3f77, 0x3f80 -> idle.
+        emit("MOV R10,R9");
+        emit("SUB R10,-0x1");
+        emit("CP.W R10,0xa");
+        emit(StringFormat("BR{ne} 0x%x", scG1));
+        emit("MOV R10,0x80");
+        padTo(scG1);
+        emit("CP.W R10,0xcf");
+        emit(StringFormat("BR{ne} 0x%x", scG2));
+        emit("MOV R10,0x100");
+        padTo(scG2);
+        emit("CP.W R10,0x163");
+        emit(StringFormat("BR{ne} 0x%x", scG3));
+        emit("MOV R10,0x180");
+        padTo(scG3);
+        emit("CP.W R10,0x200");
+        emit(StringFormat("BR{ne} 0x%x", scG4));
+        emit("MOV R10,0x3f77");
+        padTo(scG4);
+        emit("CP.W R10,0x3f80");
+        emit(StringFormat("BR{ne} 0x%x", scStore));
+        emit("MOV R10,0x4000");
+        padTo(scStore);
+        emit("ST.H R8[0x4],R10");
+        emit("MOV R12,R9");
+        emit("ST.W --SP,R9");
+        emit(StringFormat("MCALL PC[0x%x]", scPool + 8));   // settings_value
+        emit("LD.W R9,SP++");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", scLoop));          // a gap: costs nothing
+        emit("MOV R11,R12");
+        emit("MOV R12,R9");
+        emit(StringFormat("MCALL PC[0x%x]", scPool + 12));  // settings_send
+        emit("SUB R0,0x1");
+        emit(StringFormat("BR{ne} 0x%x", scLoop));
+        padTo(scOut);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(scPool);
+        word(block("persist") ? 0x8001d520 : 0x8001ae1c); // what the pool word used to name
+        word(cmEntry);     // settings_commit
+        word(vaEntry);     // settings_value
+        word(sdEntry);     // settings_send
+        finish("settings_scan", scEnd);
+
+        // Commit the mirror to the slot the loaded record is NOT in, the way
+        // persistence commits a page: stage the record with its marker
+        // erased, erase-and-write both pages of the body, read every byte
+        // back, then write the marker alone with erase off and read back
+        // again, and only a record settings_valid accepts is the one loaded.
+        // State 2 on success, 3 on any mismatch; a failure leaves the
+        // previous record where it was, and the next request tries again.
+        begin(cmEntry);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,0x6a80");          // staging
+        emit("MOV R8,-0x1");
+        emit("ST.W R0[0x0],R8");        // marker erased
+        emit("MOV R8,0x1");
+        emit("ST.H R0[0x4],R8");
+        emit("MOV R8,0x298");
+        emit("ST.H R0[0x6],R8");
+        emit("MOV R9,0x6a70");
+        emit("LD.W R2,R9[0x4]");
+        emit("SUB R2,-0x1");            // the generation after the one loaded
+        emit("CP.W R2,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmGen));
+        emit("MOV R2,0x1");             // never zero
+        padTo(cmGen);
+        emit("ST.W R0[0x8],R2");
+        emit(StringFormat("MOV R8,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("ST.H R0[0x10],R8");
+        emit(StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("ST.H R0[0x12],R8");
+        emit("MOV R8,0x0");
+        emit("ST.W R0[0x14],R8");
+        emit("ST.W R0[0x18],R8");
+        emit("ST.W R0[0x1c],R8");
+        emit("MOV R9,0x6d08");          // the reserved tail, 0x288..0x2a7
+        emit("MOV R10,0x7");
+        padTo(cmTail);
+        emit("ST.W R9[0x0],R8");
+        emit("SUB R9,-0x4");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ge} 0x%x", cmTail));
+        emit("MOV R12,0x6aa0");
+        emit("MOV R11,0x6800");
+        emit("MOV R10,0x134");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool));       // settings_copy: the mirror into staging
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x4");
+        emit("MOV R10,0x8");
+        emit("MOV R12,-0x1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 4));   // persist_crc
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x10");
+        emit("MOV R10,0x298");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 4));
+        emit("MOV R8,-0x1");
+        emit("EOR R12,R8");
+        emit("ST.W R0[0xc],R12");
+        // The other slot: slot 1 when slot 0 is the one loaded, else slot 0.
+        emit("MOV R9,0x6a70");
+        emit("LD.UB R8,R9[0x1]");
+        emit(StringFormat("LDDPC R1,0x%x", cmPool + 8));    // slot 0
+        emit("MOV R3,0x0");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmSlot));
+        emit("SUB R1,-0x800");
+        emit("MOV R3,0x1");
+        padTo(cmSlot);
+        emit("MOV R12,R1");
+        emit("MOV R11,R0");
+        emit("MOV R10,0x200");
+        emit("MOV R9,0x1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 12));  // the factory flash writer: first page, erased
+        emit("MOV R12,R1");
+        emit("SUB R12,-0x200");
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x200");
+        emit("MOV R10,0xa8");
+        emit("MOV R9,0x1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 12));  // second page, erased
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 16));  // settings_verify: R1 against R0
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmFail));
+        emit(StringFormat("LDDPC R8,0x%x", cmPool + 20));
+        emit("ST.W R0[0x0],R8");        // the marker, into staging
+        emit("MOV R12,R1");
+        emit("MOV R11,R0");
+        emit("MOV R10,0x8");
+        emit("MOV R9,0x0");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 12));  // the marker alone, no erase
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 16));
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmFail));
+        emit("MOV R12,R1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 24));  // settings_valid
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", cmFail));
+        emit("MOV R8,0x6a70");
+        emit("MOV R9,0x2");
+        emit("ST.B R8[0x0],R9");        // written
+        emit("ST.B R8[0x1],R3");
+        emit("ST.W R8[0x4],R2");
+        emit(StringFormat("RJMP 0x%x", cmDone));
+        padTo(cmFail);
+        emit("MOV R8,0x6a70");
+        emit("MOV R9,0x3");
+        emit("ST.B R8[0x0],R9");        // failed; the old record stands
+        padTo(cmDone);
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(cmPool);
+        word(0x8001f000); // settings_copy
+        word(0x8001cc00); // persist_crc
+        word(0x8003d000); // slot 0
+        word(0x800108fc); // the factory flash writer
+        word(vfEntry);     // settings_verify
+        word(0x32313853); // the commit marker
+        word(0x8001f010); // settings_valid
+        finish("settings_commit", cmEnd);
+
+        // Every byte of the slot at R1 against the staging at R0; returns
+        // R12 = zero when they agree.  A leaf.
+        begin(vfEntry);
+        emit("MOV R8,0x0");
+        padTo(vfLoop);
+        emit("LD.UB R9,R1[R8 << 0x0]");
+        emit("LD.UB R10,R0[R8 << 0x0]");
+        emit("CP.W R9,R10");
+        emit(StringFormat("BR{ne} 0x%x", vfBad));
+        emit("SUB R8,-0x1");
+        emit("CP.W R8,0x2a8");
+        emit(StringFormat("BR{lt} 0x%x", vfLoop));
+        emit("MOV R12,0x0");
+        emit("MOV PC,LR");
+        padTo(vfBad);
+        emit("MOV R12,0x1");
+        emit("MOV PC,LR");
+        finish("settings_verify", vfEnd);
+
+        // The Control Change branch's first two instructions, replaced by
+        // the call into settings_nrpn, which does their work on the way
+        // back.  0x8000838e is the only entry into this range.
+        begin(0x8000838e);
+        emit("MCALL PC[0x8001f9b0]");
+        padTo(0x80008396);
+        finish("settings_cc_hook", 0x80008396);
+
+        // Its pool word, in our own flash: the MCALL reaches it from the
+        // factory's code, and there is no free word nearer.
+        begin(0x8001f9b0);
+        word(nrEntry);     // settings_nrpn
+        finish("settings_cc_pool", 0x8001f9b4);
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a

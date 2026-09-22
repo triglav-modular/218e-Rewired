@@ -266,6 +266,16 @@
         });
     }
 
+    // The inputs too, for the settings step: the instrument answers a dump
+    // on the input that shares its output's name.
+    function midiInputs() {
+        return midiOutputs().then(function () {
+            var out = [];
+            midiAccess.inputs.forEach(function (p) { out.push(p); });
+            return out;
+        });
+    }
+
     // A port object stays live after it is handed out, so its `state` is the
     // current answer even when the list it came from is stale.  That is what
     // makes this worth checking at the moment a sweep starts.
@@ -830,7 +840,7 @@
         audioTrouble: audioTrouble, channelCount: channelCount,
         onMidiChange: onMidiChange, portGone: portGone,
         trackChannels: trackChannels,
-        midiOutputs: midiOutputs, audioInputs: audioInputs,
+        midiOutputs: midiOutputs, midiInputs: midiInputs, audioInputs: audioInputs,
         Sweep: Sweep
     };
 })(typeof window !== 'undefined' ? window : this);

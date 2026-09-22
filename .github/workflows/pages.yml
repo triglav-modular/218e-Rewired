@@ -215,6 +215,16 @@ jobs:
             echo "web/test_nrpn.js is not on ${{ matrix.ref }} yet - skipped"
           fi
 
+      - name: The settings transport against a fake instrument
+        run: |
+          # Push, dump, compare, commit and identity over a fake that behaves
+          # as the firmware does under emulation, and each way install refuses.
+          if [ -f web/test_settingsmidi.js ]; then
+            node web/test_settingsmidi.js
+          else
+            echo "web/test_settingsmidi.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
       - name: The beacon route only records what the page can send
         run: |
           # It is a public, unauthenticated endpoint - it has to be, the page

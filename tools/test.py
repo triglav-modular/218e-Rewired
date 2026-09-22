@@ -728,6 +728,12 @@ def test_blend(cfg: dict) -> None:
         text = re.sub(
             r'emit\("MOV R8,0x20"\);[^\n]*\n\s*emit\("OR R2,R8"\);',
             "", text)
+        # settings_target's bound for a pattern length is 32, handed back in
+        # R9 beside the lengths' mirror base.  Exempt only that pair - never
+        # a loop using 32 keys.
+        text = re.sub(
+            r'emit\("MOV R9,0x20"\);\s*emit\("MOV R12,0x6a28"\);',
+            "", text)
         return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
@@ -904,6 +910,14 @@ def test_call_pools(cfg: dict) -> None:
     for offset, byte in enumerate((0xEB, 0xCD, 0x40, 0x80)):
         planted[mine[0][1] + offset] = byte
     check("a pool holding instruction bytes is still caught", bool(faults(planted)))
+    # And a pool word of zero: what the transpiled assembler emits for a
+    # label used before its `long` is declared - Java refuses to compile
+    # that, JavaScript hoists it as undefined - which sent settings_scan's
+    # commit call to address 0 (2026-09-22).
+    planted = dict(flash)
+    for offset in range(4):
+        planted[mine[0][1] + offset] = 0
+    check("a pool word of zero is still caught", bool(faults(planted)))
 
 
 # Configurations that turn a shipped block off, as substitutions on

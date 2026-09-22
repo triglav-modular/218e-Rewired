@@ -1278,8 +1278,10 @@ var BUILDLIB = (function () {
         commit: 0x3f00, commitKey: 0x2a2a, reload: 0x3f01, defaults: 0x3f02,
         dump: 0x3f03, identity: 0x3f7f
     };
+    // The image marker is sixteen bits and a value fourteen, so it rides
+    // as two: its top two bits at 0x3f77, its low fourteen at 0x3f7e.
     var NRPN_IDENTITY = {
-        octaveUnits: 0x3f78, slotLoaded: 0x3f79, commitState: 0x3f7a,
+        imageMarkerHigh: 0x3f77, octaveUnits: 0x3f78, slotLoaded: 0x3f79, commitState: 0x3f7a,
         generationHigh: 0x3f7b, generationMid: 0x3f7c, generationLow: 0x3f7d,
         imageMarker: 0x3f7e, layoutVersion: 0x3f7f
     };
@@ -1366,7 +1368,7 @@ var BUILDLIB = (function () {
         if (got[NRPN_IDENTITY.layoutVersion] === undefined) return null;
         return {
             layoutVersion: got[NRPN_IDENTITY.layoutVersion],
-            imageMarker: got[NRPN_IDENTITY.imageMarker],
+            imageMarker: got[NRPN_IDENTITY.imageMarker] + (got[NRPN_IDENTITY.imageMarkerHigh] || 0) * 16384,
             generation: got[NRPN_IDENTITY.generationLow]
                 + got[NRPN_IDENTITY.generationMid] * 16384
                 + got[NRPN_IDENTITY.generationHigh] * 268435456,

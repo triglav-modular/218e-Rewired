@@ -235,7 +235,11 @@ var WEBBUILD = (function () {
         // the boot chain starts at settings_boot and its validator shares
         // persist_crc, so both stay on with persistence off.
         ['settings_copy', 'settings_valid', 'settings_newest',
-         'settings_boot', 'clock_init_pool', 'persist_crc']
+         'settings_boot', 'settings_defaults', 'settings_reload',
+         'settings_target', 'settings_apply', 'settings_nrpn',
+         'settings_send', 'settings_value', 'settings_scan',
+         'settings_commit', 'settings_verify', 'settings_cc_hook',
+         'settings_cc_pool', 'clock_init_pool', 'persist_crc']
             .forEach(function (n) { blocks[n] = true; });
         blocks.profiler_pool = div || !!features.scan_profiler;
         blocks.knob4_octave_switch =
