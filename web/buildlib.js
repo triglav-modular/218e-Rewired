@@ -1117,6 +1117,9 @@ var BUILDLIB = (function () {
             resolution_bits: cfg.pressure.resolution_bits,
             multi_key_max: cfg.pressure.multi_key === 'max' ? 1 : 0,
             octave_units: octaveUnits(cfg),
+            // What the keyboard reports over MIDI as its firmware version;
+            // tools/build.py derives the same number from the config.
+            firmware_version_code: versionCode(GEN.version),
             // The jack transposer, as tools/build.py derives it: one period
             // per cv_volts_per_period of CV at 4095 counts over 20 V.
             transpose_cv_filter_shift: cfg.portamento_in.cv_filter_shift,
@@ -1324,8 +1327,11 @@ var BUILDLIB = (function () {
         dump: 0x3f03, identity: 0x3f7f
     };
     // The image marker is sixteen bits and a value fourteen, so it rides
-    // as two: its top two bits at 0x3f77, its low fourteen at 0x3f7e.
+    // as two: its top two bits at 0x3f77, its low fourteen at 0x3f7e.  The
+    // block's parameter numbers are frozen: a keyboard says what it runs
+    // to any page, whatever the layout version says about the map.
     var NRPN_IDENTITY = {
+        firmwareVersion: 0x3f76,
         imageMarkerHigh: 0x3f77, octaveUnits: 0x3f78, slotLoaded: 0x3f79, commitState: 0x3f7a,
         generationHigh: 0x3f7b, generationMid: 0x3f7c, generationLow: 0x3f7d,
         imageMarker: 0x3f7e, layoutVersion: 0x3f7f
@@ -1405,13 +1411,37 @@ var BUILDLIB = (function () {
             }
         };
     }
+    // A version string as the 14-bit number the identity block carries,
+    // major.minor.patch packed as 6, 4 and 4 bits, and back.
+    function versionCode(text) {
+        var m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(text));
+        if (!m) throw new Error('version must be major.minor.patch, got ' + JSON.stringify(text));
+        var major = +m[1], minor = +m[2], patch = +m[3];
+        if (major > 63 || minor > 15 || patch > 15) throw new Error('version ' + text + ' does not fit 6.4.4 bits');
+        return major * 256 + minor * 16 + patch;
+    }
+    function versionText(code) {
+        return (code >>> 8) + '.' + ((code >>> 4) & 15) + '.' + (code & 15);
+    }
+    // Negative when a is the older, positive when the newer, zero when equal.
+    function compareVersions(a, b) {
+        var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+        for (var i = 0; i < 3; i++) {
+            if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+        }
+        return 0;
+    }
+
     // The identity block out of decoded pairs, or null until the layout
-    // version - sent last - has arrived.
+    // version - sent last - has arrived.  firmwareVersion is the text, or
+    // null from a keyboard that does not send one.
     function nrpnIdentity(pairs) {
         var got = {};
         pairs.forEach(function (p) { got[p[0]] = p[1]; });
         if (got[NRPN_IDENTITY.layoutVersion] === undefined) return null;
         return {
+            firmwareVersion: got[NRPN_IDENTITY.firmwareVersion] === undefined
+                ? null : versionText(got[NRPN_IDENTITY.firmwareVersion]),
             layoutVersion: got[NRPN_IDENTITY.layoutVersion],
             imageMarker: got[NRPN_IDENTITY.imageMarker] + (got[NRPN_IDENTITY.imageMarkerHigh] || 0) * 16384,
             generation: got[NRPN_IDENTITY.generationLow]
@@ -1602,6 +1632,7 @@ var BUILDLIB = (function () {
         nrpnValueOf: nrpnValueOf, nrpnApply: nrpnApply, nrpnParamsOf: nrpnParamsOf,
         nrpnMessages: nrpnMessages, nrpnDecoder: nrpnDecoder, nrpnIdentity: nrpnIdentity,
         nrpnRecordOf: nrpnRecordOf, settingsFields: settingsFields,
+        versionCode: versionCode, versionText: versionText, compareVersions: compareVersions,
         pitchTableSettings: pitchTableSettings, pitchCents: pitchCents,
         settingsDiff: settingsDiff, settingsPick: settingsPick,
         SETTINGS_ORDER: SETTINGS_ORDER

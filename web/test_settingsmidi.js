@@ -69,7 +69,7 @@ function fakeInstrument(options) {
     var dec = B.nrpnDecoder();
     var inst = {
         mirror: mirror, marker: options.marker === undefined ? 0xB007 : options.marker,
-        layout: options.layout === undefined ? 1 : options.layout,
+        layout: options.layout === undefined ? 1 : options.layout, version: options.version,
         state: 0, slot: 0xff, generation: 0, received: [], sent: [], scans: 0,
         drop: options.drop || null,     // a parameter number to lose on the wire
         refuseCommit: !!options.refuseCommit
@@ -82,6 +82,7 @@ function fakeInstrument(options) {
         });
     }
     function identityBlock() {
+        reply(0x3f76, inst.version === undefined ? 0x300 : inst.version);
         reply(0x3f77, inst.marker >>> 14); reply(0x3f78, 484); reply(0x3f79, inst.slot); reply(0x3f7a, inst.state);
         reply(0x3f7b, Math.floor(inst.generation / 268435456) & 0xF);
         reply(0x3f7c, Math.floor(inst.generation / 16384) & 0x3FFF);
@@ -132,7 +133,8 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     check('identity answers with the block', id.layoutVersion === 1 && id.imageMarker === 0x1234 && id.slotLoaded === 0xff);
     check('an identity request costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f7f);
     var dp = M.dump(inst.output, inst.input, 5000, timers); await timers.run(dp); var d = await dp;
-    check('a dump answers with every parameter and the block', d.pairs.length === 325 && d.identity.imageMarker === 0x1234);
+    check('a dump answers with every parameter and the block', d.pairs.length === 326 && d.identity.imageMarker === 0x1234
+          && d.identity.firmwareVersion === '3.0.0');
     var diff = M.differences(record, d.pairs);
     var nonzero = B.nrpnParamsOf(record).filter(function (p) { return p[1] !== 0; }).length;
     check('differences against an empty instrument name every non-zero parameter',
@@ -147,10 +149,11 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
           && rd.fields.tuning_period_keys.join(',') === '12,12,7' && rd.fields.lengths[2] === 24
           && rd.fields.masks[2] === 0xDEADBEEF && rd.fields.lengths[3] === 0, JSON.stringify(rd.fields.numbers));
     check('a read costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f03);
-    var other = fakeInstrument({ layout: 2 }); timers = fakeTimers();
+    var other = fakeInstrument({ layout: 2, version: 0x320 }); timers = fakeTimers();
     var rl = M.read(other.output, other.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
     await timers.run(rl); var re = await rl;
-    check('a layout this page does not know is refused, with the block', re && re.reason === 'wrong layout' && re.identity.layoutVersion === 2);
+    check('a layout this page does not know is refused, with the block', re && re.reason === 'wrong layout' && re.identity.layoutVersion === 2
+          && re.identity.firmwareVersion === '3.2.0');
     var mute = fakeInstrument(); mute.output.send = function () {}; timers = fakeTimers();
     var rq = M.read(mute.output, mute.input, { timers: timers, timeout: 50 }).then(function () { return null; }, function (x) { return x; });
     await timers.run(rq); re = await rq;

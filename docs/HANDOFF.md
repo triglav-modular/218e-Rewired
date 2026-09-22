@@ -118,8 +118,10 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   codec. The page's step 5 sends a build's record (`SETTINGSMIDI.install`:
   identity, push, dump, compare, commit) and reads what the keyboard holds
   back into the page (`SETTINGSMIDI.read`: the patterns and the pitch
-  table, with the scaling and offset read off the table). Nothing here has
-  run on the instrument yet. (Dispatcher event 32 at `0x80004fc2`
+  table, with the scaling and offset read off the table). The identity
+  block leads with the firmware version (`0x3f76`, frozen numbers) and the
+  page's verdict tells an older, a newer and a same-version-other-options
+  keyboard apart. Nothing here has run on the instrument yet. (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),

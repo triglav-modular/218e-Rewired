@@ -13,7 +13,7 @@ import java.util.zip.CRC32;
 public class SettingsRegression extends PersistenceRegression {
     static final long SLOT0=0x8003d000L, SLOT1=0x8003d800L, MIRROR=0x6800, STATE=0x6a70;
     static final long SNEWEST=0x8001f150L, APPLIER=0x80019a40L, REMAP=0x80019980L, CHAIN=0x8001a2e8L;
-    static final long PARSER=0x8000831cL, SENDER=0x80008034L, WRITER=0x800108fcL, SETSCAN=0x8001f760L;
+    static final long PARSER=0x8000831cL, SENDER=0x80008034L, WRITER=0x800108fcL, SETSCAN=0x8001f780L;
     static final long USB=0x34b0, NRPN=0x6a68;
     static final int LEN=0x2a8, PAY=0x20, END=0x288;
     static final String[] NUMBERS={"tie_glide_rate","strip_halfway_units","clock_min_ms",
@@ -185,7 +185,7 @@ public class SettingsRegression extends PersistenceRegression {
         check("a dump ends by itself",r(NRPN+4,2)==0x4000);
         check("at most eight packets a scan",most<=8);
         List<int[]> got=decoded();
-        check("316 parameters and the nine of the identity block: "+got.size(),got.size()==325);
+        check("316 parameters and the ten of the identity block: "+got.size(),got.size()==326);
         boolean order=true, values=true;
         int[] walk=new int[316]; int n=0;
         for(int q=0;q<10;q++)walk[n++]=q; for(int q=0x80;q<0xcf;q++)walk[n++]=q; for(int q=0x100;q<0x163;q++)walk[n++]=q;
@@ -194,24 +194,26 @@ public class SettingsRegression extends PersistenceRegression {
         check("in the instrument's order",order);
         check("every value is the mirror's",values);
         long marker=num("init_marker",0)&0xffff;
-        check("the identity block follows: marker top bits, period, slot, state, generation, marker, version",
-            got.get(316)[0]==0x3f77&&got.get(316)[1]==(marker>>14)
-            &&got.get(317)[0]==0x3f78&&got.get(317)[1]==num("octave_units",484)
-            &&got.get(318)[0]==0x3f79&&got.get(318)[1]==0xff
-            &&got.get(319)[0]==0x3f7a&&got.get(319)[1]==0
-            &&got.get(320)[0]==0x3f7b&&got.get(321)[0]==0x3f7c&&got.get(322)[0]==0x3f7d
-            &&got.get(323)[0]==0x3f7e&&got.get(323)[1]==(marker&0x3fff)
-            &&got.get(324)[0]==0x3f7f&&got.get(324)[1]==1);
+        check("the identity block follows: firmware version, marker top bits, period, slot, state, generation, marker, layout version",
+            got.get(316)[0]==0x3f76&&got.get(316)[1]==num("firmware_version_code",0x300)
+            &&got.get(317)[0]==0x3f77&&got.get(317)[1]==(marker>>14)
+            &&got.get(318)[0]==0x3f78&&got.get(318)[1]==num("octave_units",484)
+            &&got.get(319)[0]==0x3f79&&got.get(319)[1]==0xff
+            &&got.get(320)[0]==0x3f7a&&got.get(320)[1]==0
+            &&got.get(321)[0]==0x3f7b&&got.get(322)[0]==0x3f7c&&got.get(323)[0]==0x3f7d
+            &&got.get(324)[0]==0x3f7e&&got.get(324)[1]==(marker&0x3fff)
+            &&got.get(325)[0]==0x3f7f&&got.get(325)[1]==1);
         // The generation in three parts, after a commit gave it one.
         sent.clear(); nrpn(0x3f00,0x2a2a); call(SETSCAN);
         w(STATE+4,4,0x12345678L);
         nrpn(0x3f7f,0); while(r(NRPN+4,2)!=0x4000) call(SETSCAN);
         got=decoded();
-        check("an identity request sends the nine alone",got.size()==9);
-        long gen=got.get(6)[1]|((long)got.get(5)[1]<<14)|((long)got.get(4)[1]<<28);
-        check("the generation rides in three parts",gen==0x12345678L&&got.get(3)[1]==2&&got.get(2)[1]==0);
+        check("an identity request sends the ten alone",got.size()==10);
+        long gen=got.get(7)[1]|((long)got.get(6)[1]<<14)|((long)got.get(5)[1]<<28);
+        check("the generation rides in three parts",gen==0x12345678L&&got.get(4)[1]==2&&got.get(3)[1]==0);
         // A marker past 0x3fff needs its top bits: check the split, not the luck of this build's marker.
-        check("the marker rides in two parts",(got.get(0)[1]<<14|got.get(7)[1])==marker);
+        check("the marker rides in two parts",(got.get(1)[1]<<14|got.get(8)[1])==marker);
+        check("the firmware version leads the block",got.get(0)[0]==0x3f76&&got.get(0)[1]==num("firmware_version_code",0x300));
         keepSlots=false;
         println("PASS dump: every parameter, paced, in order, then the identity block");
     }

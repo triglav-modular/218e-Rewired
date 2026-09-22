@@ -1764,6 +1764,15 @@ def replace_atomically(path: Path, text: str) -> None:
 
 
 
+def version_code(text):
+    """major.minor.patch as the 14-bit number the identity block carries."""
+    parts = str(text).split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        raise SystemExit(f"[firmware].version must be major.minor.patch, got {text!r}")
+    major, minor, patch = (int(p) for p in parts)
+    if major > 63 or minor > 15 or patch > 15:
+        raise SystemExit(f"[firmware].version {text!r} does not fit 6.4.4 bits")
+    return major * 256 + minor * 16 + patch
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/218e.toml")
@@ -1993,6 +2002,10 @@ def main() -> None:
     # --- settings ---------------------------------------------------------
     calib = cfg["pressure"]["calibration"]
     cfg["_numbers"] = {
+        # What the keyboard reports over MIDI as its firmware version:
+        # major.minor.patch packed as 6, 4 and 4 bits, the same number
+        # web/buildlib.js derives from GEN.version.
+        "firmware_version_code": version_code(cfg["firmware"].get("version", "0.0.0")),
         "pressure_floor_default": calib["floor"],
         "pressure_ceiling_default": calib["ceiling"],
         "scan_period_ms": cfg["timing"]["scan_period_ms"],

@@ -145,13 +145,21 @@ check('a table of the wrong length is refused', (function () {
 })());
 
 // The identity block, sent last, with the generation in three parts.
-var identity = [[0x3f77, 2], [0x3f78, 484], [0x3f79, 0xff], [0x3f7a, 2], [0x3f7b, 3], [0x3f7c, 5], [0x3f7d, 7], [0x3f7e, 0x3007]];
+var identity = [[0x3f76, 0x312], [0x3f77, 2], [0x3f78, 484], [0x3f79, 0xff], [0x3f7a, 2], [0x3f7b, 3], [0x3f7c, 5], [0x3f7d, 7], [0x3f7e, 0x3007]];
 check('no identity until the layout version arrives', B.nrpnIdentity(identity) === null);
 identity.push([0x3f7f, 1]);
 var id = B.nrpnIdentity(identity);
 check('the identity block decodes', id && id.layoutVersion === 1 && id.imageMarker === 0xB007
       && id.generation === 7 + 5 * 16384 + 3 * 268435456 && id.commitState === 2
-      && id.slotLoaded === 0xff && id.octaveUnits === 484, JSON.stringify(id));
+      && id.slotLoaded === 0xff && id.octaveUnits === 484 && id.firmwareVersion === '3.1.2', JSON.stringify(id));
+check('a keyboard that sends no version decodes with null for it',
+      B.nrpnIdentity(identity.slice(1)).firmwareVersion === null);
+check('the version code packs 6.4.4 and unpacks', B.versionCode('3.0.0') === 0x300 && B.versionText(0x300) === '3.0.0'
+      && B.versionCode('63.15.15') === 0x3fff && B.versionText(0x3fff) === '63.15.15' && B.versionCode(GEN.version) === B.computeNumbers(B.expand({})).firmware_version_code);
+check('a version that does not fit is refused', (function () { try { B.versionCode('64.0.0'); return false; } catch (e) { return true; } })()
+      && (function () { try { B.versionCode('3.0'); return false; } catch (e) { return true; } })());
+check('versions compare by part, not by string', B.compareVersions('3.0.0', '3.0.0') === 0 && B.compareVersions('3.0.1', '3.0.0') > 0
+      && B.compareVersions('3.0.0', '3.10.0') < 0 && B.compareVersions('10.0.0', '9.9.9') > 0);
 check('the commands are where the firmware has them',
       B.NRPN_COMMANDS.commit === 0x3f00 && B.NRPN_COMMANDS.commitKey === 0x2a2a
       && B.NRPN_COMMANDS.reload === 0x3f01 && B.NRPN_COMMANDS.defaults === 0x3f02

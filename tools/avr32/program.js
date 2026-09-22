@@ -9895,7 +9895,7 @@ function assembleProgram() {
         // With persistence on, the preset editor is reached through a shim
         // that runs editor, sequencer controls and persistence in that order,
         // so a completed gesture is committed in the same control scan.
-        word(0x8001f760);              // settings_scan, in front of the shim or the editor
+        word(0x8001f780);              // settings_scan, in front of the shim or the editor
         word(0x8001b180);              // the sequencer chord
         word(0x8001b980);              // the external clock, per scan
         padTo(0x8001a52c);
@@ -10495,7 +10495,7 @@ function assembleProgram() {
         emit("CP.W R0,0x3f7f");
         emit(StringFormat("BR{ne} 0x%x", apDone));
         emit("MOV R8,0x6a68");
-        emit("MOV R9,0x3f77");
+        emit("MOV R9,0x3f76");
         emit("ST.H R8[0x4],R9");        // the cursor at the identity block alone
         emit(StringFormat("RJMP 0x%x", apDone));
         padTo(apData);
@@ -10661,24 +10661,34 @@ function assembleProgram() {
 
         // A parameter's current value, for the dump.  R12 = parameter;
         // returns R12 = the value and R11 = 1, or R11 = 0 for a number that
-        // names nothing.  0x3f77..0x3f7f is the identity block: the image
-        // marker's top two bits, the period, the slot loaded, the commit
-        // state, the generation in three parts, the marker's low fourteen
-        // bits, and the layout version - the last one sent, so it is also
-        // the page's end-of-dump marker.
-        var vaEntry = 0x8001f640, vaPeriod = 0x8001f668, vaSlot = 0x8001f688, vaState = 0x8001f698;
-        var vaGenHi = 0x8001f6a8, vaGenMid = 0x8001f6bc, vaGenLo = 0x8001f6d4;
-        var vaMarker = 0x8001f6e8, vaVersion = 0x8001f6fc, vaData = 0x8001f700;
-        var vaMask = 0x8001f71c, vaMid = 0x8001f734, vaTop = 0x8001f74c;
-        var vaNone = 0x8001f754, vaDone = 0x8001f758, vaPool = 0x8001f75c, vaEnd = 0x8001f760;
+        // names nothing.  0x3f76..0x3f7f is the identity block: the firmware
+        // version, the image marker's top two bits, the period, the slot
+        // loaded, the commit state, the generation in three parts, the
+        // marker's low fourteen bits, and the layout version - the last one
+        // sent, so it is also the page's end-of-dump marker.
+        var vaEntry = 0x8001f640, vaHi = 0x8001f668, vaPeriod = 0x8001f688, vaSlot = 0x8001f6a8, vaState = 0x8001f6b8;
+        var vaGenHi = 0x8001f6c8, vaGenMid = 0x8001f6dc, vaGenLo = 0x8001f6f4;
+        var vaMarker = 0x8001f708, vaVersion = 0x8001f71c, vaData = 0x8001f720;
+        var vaMask = 0x8001f73c, vaMid = 0x8001f754, vaTop = 0x8001f76c;
+        var vaNone = 0x8001f774, vaDone = 0x8001f778, vaPool = 0x8001f77c, vaEnd = 0x8001f780;
         begin(vaEntry);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");
-        emit("CP.W R0,0x3f77");
+        emit("CP.W R0,0x3f76");
         emit(StringFormat("BR{lt} 0x%x", vaData));
         emit("MOV R11,0x1");
         emit("MOV R10,0x6a70");
+        emit("CP.W R0,0x3f76");
+        emit(StringFormat("BR{ne} 0x%x", vaHi));
+        // 0x3f76: the firmware version, major.minor.patch packed as 6, 4
+        // and 4 bits, the number both serializers derive from the config's
+        // version string.  The identity block's parameter numbers are
+        // frozen from here on, so a keyboard can always say what it runs to
+        // any page, whatever the layout version says about the map.
+        emit(StringFormat("MOV R12,0x%x", number("firmware_version_code", 0x300, 0, 0x3fff)));
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaHi);
         emit("CP.W R0,0x3f77");
         emit(StringFormat("BR{ne} 0x%x", vaPeriod));
         // The marker is sixteen bits and a value fourteen: its top two ride
@@ -10782,13 +10792,13 @@ function assembleProgram() {
         // of the scan whose pool names them: the transpiled JavaScript
         // hoists a later `var` as undefined and would emit a pool word of
         // zero where Java refuses to compile.
-        var cmEntry = 0x8001f820, cmGen = 0x8001f850, cmTail = 0x8001f880;
-        var cmSlot = 0x8001f8e0, cmFail = 0x8001f950, cmDone = 0x8001f960;
-        var cmPool = 0x8001f964, cmEnd = 0x8001f980;
-        var vfEntry = 0x8001f980, vfLoop = 0x8001f984, vfBad = 0x8001f9a4, vfEnd = 0x8001f9b0;
-        var scEntry = 0x8001f760, scDump = 0x8001f780, scLoop = 0x8001f784;
-        var scG1 = 0x8001f7a0, scG2 = 0x8001f7ac, scG3 = 0x8001f7b8, scG4 = 0x8001f7c4;
-        var scStore = 0x8001f7d0, scOut = 0x8001f7f8, scPool = 0x8001f800, scEnd = 0x8001f810;
+        var cmEntry = 0x8001f840, cmGen = 0x8001f870, cmTail = 0x8001f8a0;
+        var cmSlot = 0x8001f900, cmFail = 0x8001f970, cmDone = 0x8001f980;
+        var cmPool = 0x8001f984, cmEnd = 0x8001f9a0;
+        var vfEntry = 0x8001f9a0, vfLoop = 0x8001f9a4, vfBad = 0x8001f9c4, vfEnd = 0x8001f9d0;
+        var scEntry = 0x8001f780, scDump = 0x8001f7a0, scLoop = 0x8001f7a4;
+        var scG1 = 0x8001f7c0, scG2 = 0x8001f7cc, scG3 = 0x8001f7d8, scG4 = 0x8001f7e4;
+        var scStore = 0x8001f7f0, scOut = 0x8001f818, scPool = 0x8001f820, scEnd = 0x8001f830;
         begin(scEntry);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
@@ -10806,7 +10816,7 @@ function assembleProgram() {
         emit("CP.W R9,0x4000");
         emit(StringFormat("BR{ge} 0x%x", scOut));
         // Advance first, over the gaps: 0x0a -> 0x80, 0xcf -> 0x100,
-        // 0x163 -> 0x180, 0x200 -> 0x3f77, 0x3f80 -> idle.
+        // 0x163 -> 0x180, 0x200 -> 0x3f76, 0x3f80 -> idle.
         emit("MOV R10,R9");
         emit("SUB R10,-0x1");
         emit("CP.W R10,0xa");
@@ -10823,7 +10833,7 @@ function assembleProgram() {
         padTo(scG3);
         emit("CP.W R10,0x200");
         emit(StringFormat("BR{ne} 0x%x", scG4));
-        emit("MOV R10,0x3f77");
+        emit("MOV R10,0x3f76");
         padTo(scG4);
         emit("CP.W R10,0x3f80");
         emit(StringFormat("BR{ne} 0x%x", scStore));
@@ -10990,15 +11000,15 @@ function assembleProgram() {
         // the call into settings_nrpn, which does their work on the way
         // back.  0x8000838e is the only entry into this range.
         begin(0x8000838e);
-        emit("MCALL PC[0x8001f9b0]");
+        emit("MCALL PC[0x8001f9d0]");
         padTo(0x80008396);
         finish("settings_cc_hook", 0x80008396);
 
         // Its pool word, in our own flash: the MCALL reaches it from the
         // factory's code, and there is no free word nearer.
-        begin(0x8001f9b0);
+        begin(0x8001f9d0);
         word(nrEntry);     // settings_nrpn
-        finish("settings_cc_pool", 0x8001f9b4);
+        finish("settings_cc_pool", 0x8001f9d4);
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a

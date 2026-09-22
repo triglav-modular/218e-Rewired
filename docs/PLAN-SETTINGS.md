@@ -12,7 +12,7 @@ record and both serializers (`tools/settings.py`, `BUILDLIB.settingsRecord`);
 the RAM mirror and its loader; every reader repointed at the mirror and the
 ten number sites reading their cells; the NRPN receive at the factory's
 Control Change branch, the commit from the per-scan chain, the paced dump
-and the identity block; the caves at `0x8001f000..0x8001f994`; the codec in
+and the identity block; the caves at `0x8001f000..0x8001f9d4`; the codec in
 `buildlib.js`; and `src/SettingsRegression.java` under
 `tools/test_persistence.py`. Not yet built: the page's step, which waits on
 its wording. Every address below was read out of the disassembly in
@@ -253,6 +253,7 @@ end-of-dump marker, and on its own for `0x3f7f`:
 
 | Parameter | Value |
 |---|---|
+| `0x3f76` | the firmware version, major.minor.patch packed as 6, 4 and 4 bits: `0x300` is 3.0.0 |
 | `0x3f77` | the image marker's top two bits: a marker is sixteen bits and a value fourteen |
 | `0x3f78` | `octave_units` the image was built for |
 | `0x3f79` | the slot loaded, `0xff` for none |
@@ -260,6 +261,11 @@ end-of-dump marker, and on its own for `0x3f7f`:
 | `0x3f7b`, `0x3f7c`, `0x3f7d` | the loaded record's generation, bits 28..31, 14..27, 0..13 |
 | `0x3f7e` | the image marker's low fourteen bits |
 | `0x3f7f` | the layout version, `1` |
+
+The block's parameter numbers are frozen from 2026-09-22 on, and the layout
+version is bumped only when the settings map changes: a keyboard can then
+always say what it runs to any page, and a page that meets a layout it does
+not know still names the version and says to reload.
 
 Anything the map does not name - the gaps between sections, `0x0200` and
 up short of the commands - is ignored on receive and skipped by the dump.
@@ -288,7 +294,7 @@ next request tries again.
 
 Replies use the same four CCs on channel 16 in the other direction, through
 the factory's own sender, at two parameters (eight packets) per scan, so a
-full dump - 316 parameters and the nine of the identity block - takes about 0.8 s and
+full dump - 316 parameters and the ten of the identity block - takes about 0.8 s and
 never outruns the telemetry's proven seventeen. The dump cursor walks the
 parameter numbers and skips the gaps between sections without spending the
 scan's budget on them; `0x4000` is idle. The page's decoder
@@ -333,9 +339,19 @@ controls on the page and a tuning table does not turn back into a scale,
 so those two are shown only. The load invalidates the build like any
 option change; the next image is made from what was read.
 
+The firmware version the keyboard reports leads the listing, and decides
+the verdict when the keyboard runs another build than the one here: the
+same version with different options, or an older one, want a flash from
+step 3 (an older one's settings are still loaded); a newer one wants a
+reloaded page. A keyboard whose layout the page does not know is refused
+before anything is decoded, and the refusal still names its version. Send
+stays gated on the exact build in every case: a record is only right for
+the image it was made for. Nothing before 3.0 answers NRPN at all, so a
+pre-3.0 keyboard reads as no reply, and the no-reply line says so.
+
 ## Changes, file by file
 
-**`src/AssemblePressureFix.java`** - built, at `0x8001f000..0x8001f994`:
+**`src/AssemblePressureFix.java`** - built, at `0x8001f000..0x8001f9d4`:
 `settings_copy`, `settings_valid`, `settings_newest`, `settings_boot`,
 `settings_defaults`, `settings_reload`, `settings_target` (the map),
 `settings_apply` (commands and cells), `settings_nrpn` (the hook's cave),
@@ -408,7 +424,7 @@ over the calibration's port list with the inputs added to `calibrate.js`.
    `0x3f02` reload and reset. A dump ends by itself, sends at most eight
    packets a scan, 316 parameters in the instrument's order with every
    value the mirror's, then the identity block; an identity request sends
-   the eight alone, the generation in three parts.
+   the ten alone, the generation in three parts.
 5. **Nothing else moved.** `test_clock.py`, `test_controls.py`,
    `test_persistence.py`, the golden build and the browser matrix, because
    the number sites and pool words touch clock, sequencer and pitch caves.

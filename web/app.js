@@ -1336,7 +1336,7 @@
         return out;
     }
     var KBD_REASONS = {
-        'no reply': 'No reply from the keyboard: check it is on and plugged in, and that this is the right port.',
+        'no reply': 'No reply from the keyboard: check it is on and plugged in, that this is the right port, and that it runs Rewired 3.0 or later.',
         'wrong layout': 'This keyboard runs a different build: flash the firmware from step 3 first.',
         'wrong image': 'This keyboard runs a different build: flash the firmware from step 3 first.',
         'mismatch': 'The keyboard did not read everything back the same: try again.',
@@ -1376,22 +1376,36 @@
     // scale, so those are shown and not loaded.  Loading invalidates the
     // build the way any option change does: the next image is made from
     // what was read.
+    // The verdict is one line.  With a build here it says how the keyboard
+    // relates to it: the same build, this build with edits, or another
+    // build, told apart by the firmware version the keyboard reports -
+    // the same version with different options wants a flash, an older one
+    // a flash to update, a newer one a fresher page.  With no build here
+    // it says whether anything was ever changed over MIDI.
     function describeKeyboard(r) {
-        var f = r.fields, id = r.identity;
+        var f = r.fields, id = r.identity, ver = id.firmwareVersion, page = GEN.version;
         var build = state.result ? recordBytes(state.result.settings) : null;
         var verdict;
-        if (id.slotLoaded === 0xff) {
-            verdict = 'This keyboard plays the settings built into its firmware. Nothing has been changed over MIDI.';
-        } else if (!build) {
-            verdict = 'This keyboard holds saved settings. Build an image here to compare them.';
-        } else if (id.imageMarker !== SETTINGSMIDI.markerOf(build)) {
-            verdict = 'This keyboard runs a different build. Its settings are listed below.';
-        } else {
+        if (!build) {
+            verdict = id.slotLoaded === 0xff
+                ? 'This keyboard plays the settings built into its firmware. Nothing has been changed over MIDI.'
+                : 'This keyboard holds saved settings. Build an image here to compare them.';
+        } else if (id.imageMarker === SETTINGSMIDI.markerOf(build)) {
             var n = SETTINGSMIDI.differences(build, r.pairs).length;
             verdict = n === 0 ? 'This keyboard holds the settings of the build you have here.'
                 : 'This keyboard runs this build, but ' +
                   (n === 1 ? 'one of its settings differs' : n + ' of its settings differ') +
                   ' from the build here.';
+        } else if (ver === null) {
+            verdict = 'This keyboard runs a different build. Its settings are listed below.';
+        } else if (BUILDLIB.compareVersions(ver, page) === 0) {
+            verdict = 'This keyboard runs Rewired ' + ver + ' with different options. ' +
+                      'Flash the firmware from step 3 to change them.';
+        } else if (BUILDLIB.compareVersions(ver, page) < 0) {
+            verdict = 'This keyboard runs Rewired ' + ver + '; this page builds ' + page + '. ' +
+                      'Its settings are loaded here. Flash the firmware from step 3 to update it.';
+        } else {
+            verdict = 'This keyboard runs Rewired ' + ver + '; this page is ' + page + '. Reload the page.';
         }
         var numbers = BUILDLIB.SETTINGS_NUMBERS.map(function (x) {
             return x[0] + ' ' + f.numbers[x[0]];
@@ -1399,6 +1413,7 @@
         var lengths = f.lengths.filter(function (len) { return len > 0; });
         var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
         return verdict + '\n\n' +
+            (ver === null ? '' : 'Firmware: Rewired ' + ver + '\n') +
             'Timing numbers: ' + numbers + '\n' +
             'Patterns: ' + (lengths.length
                 ? lengths.length + ', of ' + lengths.join(' · ') + ' steps' : 'none') + '\n' +
@@ -1454,10 +1469,21 @@
                     msg($('kbdMsg'), 'ok', text + '\n\n' + loadFromKeyboard(r));
                 })
                 .catch(function (err) {
-                    msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
+                    msg($('kbdMsg'), 'bad', readRefusal(err));
                 })
                 .then(refresh);
         });
+    }
+    // A keyboard whose settings map this page does not know still says
+    // what it runs: the identity block's numbers are frozen, so the
+    // version comes through even when the layout is newer.
+    function readRefusal(err) {
+        var id = err && err.identity;
+        if (err && err.reason === 'wrong layout' && id && id.firmwareVersion !== null) {
+            return 'This keyboard runs Rewired ' + id.firmwareVersion + '; this page is ' + GEN.version +
+                   '. Reload the page to read its settings.';
+        }
+        return KBD_REASONS[err && err.reason] || String(err && err.message || err);
     }
 
     // A port appearing or going away invalidates a list that is only built

@@ -10144,7 +10144,7 @@ public class AssemblePressureFix extends GhidraScript {
         // With persistence on, the preset editor is reached through a shim
         // that runs editor, sequencer controls and persistence in that order,
         // so a completed gesture is committed in the same control scan.
-        word(0x8001f760L);              // settings_scan, in front of the shim or the editor
+        word(0x8001f780L);              // settings_scan, in front of the shim or the editor
         word(0x8001b180L);              // the sequencer chord
         word(0x8001b980L);              // the external clock, per scan
         padTo(0x8001a52cL);
@@ -10744,7 +10744,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R0,0x3f7f");
         emit(String.format("BR{ne} 0x%x", apDone));
         emit("MOV R8,0x6a68");
-        emit("MOV R9,0x3f77");
+        emit("MOV R9,0x3f76");
         emit("ST.H R8[0x4],R9");        // the cursor at the identity block alone
         emit(String.format("RJMP 0x%x", apDone));
         padTo(apData);
@@ -10910,24 +10910,34 @@ public class AssemblePressureFix extends GhidraScript {
 
         // A parameter's current value, for the dump.  R12 = parameter;
         // returns R12 = the value and R11 = 1, or R11 = 0 for a number that
-        // names nothing.  0x3f77..0x3f7f is the identity block: the image
-        // marker's top two bits, the period, the slot loaded, the commit
-        // state, the generation in three parts, the marker's low fourteen
-        // bits, and the layout version - the last one sent, so it is also
-        // the page's end-of-dump marker.
-        long vaEntry = 0x8001f640L, vaPeriod = 0x8001f668L, vaSlot = 0x8001f688L, vaState = 0x8001f698L;
-        long vaGenHi = 0x8001f6a8L, vaGenMid = 0x8001f6bcL, vaGenLo = 0x8001f6d4L;
-        long vaMarker = 0x8001f6e8L, vaVersion = 0x8001f6fcL, vaData = 0x8001f700L;
-        long vaMask = 0x8001f71cL, vaMid = 0x8001f734L, vaTop = 0x8001f74cL;
-        long vaNone = 0x8001f754L, vaDone = 0x8001f758L, vaPool = 0x8001f75cL, vaEnd = 0x8001f760L;
+        // names nothing.  0x3f76..0x3f7f is the identity block: the firmware
+        // version, the image marker's top two bits, the period, the slot
+        // loaded, the commit state, the generation in three parts, the
+        // marker's low fourteen bits, and the layout version - the last one
+        // sent, so it is also the page's end-of-dump marker.
+        long vaEntry = 0x8001f640L, vaHi = 0x8001f668L, vaPeriod = 0x8001f688L, vaSlot = 0x8001f6a8L, vaState = 0x8001f6b8L;
+        long vaGenHi = 0x8001f6c8L, vaGenMid = 0x8001f6dcL, vaGenLo = 0x8001f6f4L;
+        long vaMarker = 0x8001f708L, vaVersion = 0x8001f71cL, vaData = 0x8001f720L;
+        long vaMask = 0x8001f73cL, vaMid = 0x8001f754L, vaTop = 0x8001f76cL;
+        long vaNone = 0x8001f774L, vaDone = 0x8001f778L, vaPool = 0x8001f77cL, vaEnd = 0x8001f780L;
         begin(vaEntry);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");
-        emit("CP.W R0,0x3f77");
+        emit("CP.W R0,0x3f76");
         emit(String.format("BR{lt} 0x%x", vaData));
         emit("MOV R11,0x1");
         emit("MOV R10,0x6a70");
+        emit("CP.W R0,0x3f76");
+        emit(String.format("BR{ne} 0x%x", vaHi));
+        // 0x3f76: the firmware version, major.minor.patch packed as 6, 4
+        // and 4 bits, the number both serializers derive from the config's
+        // version string.  The identity block's parameter numbers are
+        // frozen from here on, so a keyboard can always say what it runs to
+        // any page, whatever the layout version says about the map.
+        emit(String.format("MOV R12,0x%x", number("firmware_version_code", 0x300, 0, 0x3fff)));
+        emit(String.format("RJMP 0x%x", vaDone));
+        padTo(vaHi);
         emit("CP.W R0,0x3f77");
         emit(String.format("BR{ne} 0x%x", vaPeriod));
         // The marker is sixteen bits and a value fourteen: its top two ride
@@ -11031,13 +11041,13 @@ public class AssemblePressureFix extends GhidraScript {
         // of the scan whose pool names them: the transpiled JavaScript
         // hoists a later `var` as undefined and would emit a pool word of
         // zero where Java refuses to compile.
-        long cmEntry = 0x8001f820L, cmGen = 0x8001f850L, cmTail = 0x8001f880L;
-        long cmSlot = 0x8001f8e0L, cmFail = 0x8001f950L, cmDone = 0x8001f960L;
-        long cmPool = 0x8001f964L, cmEnd = 0x8001f980L;
-        long vfEntry = 0x8001f980L, vfLoop = 0x8001f984L, vfBad = 0x8001f9a4L, vfEnd = 0x8001f9b0L;
-        long scEntry = 0x8001f760L, scDump = 0x8001f780L, scLoop = 0x8001f784L;
-        long scG1 = 0x8001f7a0L, scG2 = 0x8001f7acL, scG3 = 0x8001f7b8L, scG4 = 0x8001f7c4L;
-        long scStore = 0x8001f7d0L, scOut = 0x8001f7f8L, scPool = 0x8001f800L, scEnd = 0x8001f810L;
+        long cmEntry = 0x8001f840L, cmGen = 0x8001f870L, cmTail = 0x8001f8a0L;
+        long cmSlot = 0x8001f900L, cmFail = 0x8001f970L, cmDone = 0x8001f980L;
+        long cmPool = 0x8001f984L, cmEnd = 0x8001f9a0L;
+        long vfEntry = 0x8001f9a0L, vfLoop = 0x8001f9a4L, vfBad = 0x8001f9c4L, vfEnd = 0x8001f9d0L;
+        long scEntry = 0x8001f780L, scDump = 0x8001f7a0L, scLoop = 0x8001f7a4L;
+        long scG1 = 0x8001f7c0L, scG2 = 0x8001f7ccL, scG3 = 0x8001f7d8L, scG4 = 0x8001f7e4L;
+        long scStore = 0x8001f7f0L, scOut = 0x8001f818L, scPool = 0x8001f820L, scEnd = 0x8001f830L;
         begin(scEntry);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
@@ -11055,7 +11065,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R9,0x4000");
         emit(String.format("BR{ge} 0x%x", scOut));
         // Advance first, over the gaps: 0x0a -> 0x80, 0xcf -> 0x100,
-        // 0x163 -> 0x180, 0x200 -> 0x3f77, 0x3f80 -> idle.
+        // 0x163 -> 0x180, 0x200 -> 0x3f76, 0x3f80 -> idle.
         emit("MOV R10,R9");
         emit("SUB R10,-0x1");
         emit("CP.W R10,0xa");
@@ -11072,7 +11082,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(scG3);
         emit("CP.W R10,0x200");
         emit(String.format("BR{ne} 0x%x", scG4));
-        emit("MOV R10,0x3f77");
+        emit("MOV R10,0x3f76");
         padTo(scG4);
         emit("CP.W R10,0x3f80");
         emit(String.format("BR{ne} 0x%x", scStore));
@@ -11239,15 +11249,15 @@ public class AssemblePressureFix extends GhidraScript {
         // the call into settings_nrpn, which does their work on the way
         // back.  0x8000838e is the only entry into this range.
         begin(0x8000838eL);
-        emit("MCALL PC[0x8001f9b0]");
+        emit("MCALL PC[0x8001f9d0]");
         padTo(0x80008396L);
         finish("settings_cc_hook", 0x80008396L);
 
         // Its pool word, in our own flash: the MCALL reaches it from the
         // factory's code, and there is no free word nearer.
-        begin(0x8001f9b0L);
+        begin(0x8001f9d0L);
         word(nrEntry);     // settings_nrpn
-        finish("settings_cc_pool", 0x8001f9b4L);
+        finish("settings_cc_pool", 0x8001f9d4L);
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a
