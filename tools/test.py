@@ -1411,8 +1411,10 @@ def test_migration_and_empty_hand() -> None:
     check("knob 4 reaches the configured default level",
           0 <= curve.get("default_level", 31) <= curve.get("knob_max_level", 31),
           f"default {curve.get('default_level')}")
+    # Through knob4_dispatch since stage 2 phase F, whose first word is the curve.
     check("the knob-4 pool word reaches it",
-          'wordPatch("knob4_pool", 0x800043d0L, 0x80014380L' in source)
+          'wordPatch("knob4_pool", 0x800043d0L, k4Entry' in source
+          and 'word(0x80014380L); // knob4_curve' in source)
     check("the bootstrap does not force the curve level back to 0",
           'emit("ST.B R10[0x2db],R11");' not in source)
 

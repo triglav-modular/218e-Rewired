@@ -91,9 +91,14 @@ def main() -> None:
                     # to the rotation in one image, which nothing else does.
                     # lean and roles prove the free add is untouched.
                     quantize = variant in ("default", "tuned", "jack")
+                    # Lean also runs the pressure path off (stage 2 phase F):
+                    # the dispatchers back to the factory's curve and knobs,
+                    # the interpolator's pass-through and the blend's route
+                    # word all through the real scans.
                     for key, value in (("persist", persist), ("sequencer", variant != "lean"),
                                        ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean"),
-                                       ("quantize_presets", quantize)):
+                                       ("quantize_presets", quantize),
+                                       ("pressure_fix", variant != "lean"), ("pressure_portamento", variant != "lean")):
                         text, count = re.subn(rf"^{key} = (?:true|false)$",
                                              f"{key} = {str(value).lower()}", text, flags=re.M)
                         if count != 1:

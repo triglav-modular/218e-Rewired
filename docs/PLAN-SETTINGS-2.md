@@ -8,7 +8,7 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): phases A to E built; F next.** The owner's calls at
+**Status (2026-09-23): phases A to F built; G next.** The owner's calls at
 the end were answered the same day: the whole scope, layout 2, and options
 that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
@@ -563,8 +563,52 @@ rises along it:
   position - zero degrees with both bytes off, a shift with both on),
   controls 12/12 with lean running the jack and the presets off, clock
   6/6.
-- **F. Pressure.** Four pool dispatchers, three 6-byte hooks and their caves,
-  `glide_rate_clamp` relocated, the interpolator's pass-through.
+- **F. Pressure.** Built 2026-09-23. Every pressure cave is in every
+  image; ten small caves in the hole at `0x8001ee00..0x8001ef60` decide,
+  on the live bytes at `0x6d2f` (the fix) and `0x6d30` (the blend). The
+  fix: three of the four pool words dispatch (`pressure_fn_pool` to the
+  calibrated curve or the factory's int-to-float at `0x80013350`,
+  `knob1_pool` to the pressure ceiling or the factory's `0x80004188`,
+  `knob4_pool` to `knob4_curve` or the factory's `0x80004070`; the fourth,
+  `pressure_float_helper_pool`, was already the factory's own value and
+  stays), and the three 2-byte patches became hooks: the clamp skips each
+  stood over the `LDDPC` of a 6-byte pair nothing else lands on, so each
+  pair is an `MCALL` plus `NOP` to a cave that replays the pair (the
+  literal as a `MOV`, then the load) and returns with the fix off, or
+  jumps to the skip's target with it on; the gain branch turned out to be
+  `BR{ne}` over a 2-byte `MOV R12,0x5` and the 4-byte knob-4 call, not a
+  single 4-byte instruction, so its hook is 8 bytes, and its cave keeps the
+  branch's own condition (the `CP.W` before it still stands, `MCALL` leaves
+  the flags), asks the byte only where the factory would skip, and makes
+  the call through `knob4_dispatch` with the site's own LR, which is the
+  return the factory's call had. The interpolator's high clamp went out to
+  `interpolate_gate`, which also answers the byte and, with the fix off,
+  copies the target to the DAC slot itself so the scan's store reaches the
+  DAC on the same millisecond flush it always did. The blend: the pitch
+  hook's route word dispatches (`pitch_hook_dispatch`: the conditioner's
+  route or the remap), `glide_rate_clamp` calls `glide_rate_value` for its
+  rate (zero with the blend, the zero-snap over the factory table without;
+  R9, the index, comes through), and `option_boot` chains into
+  `option_boot_blend`, which zeroes the conditioner's offset at `0x60e2`
+  at a boot with the blend off, since the clock's fast pitch stage adds it
+  every beat and a session with the blend on would otherwise leave its last
+  offset under every staged pitch after the restart. The curve caves'
+  build-time sections (multi-key, common mode, diffusion) are reached only
+  through the dispatched words and are inert with the fix off; the
+  builders no longer zero those settings when `pressure_fix` is false, so
+  turning it on over MIDI gives the full path. The lean controls variant
+  now runs the pressure path off as well. Both cells are out of the image
+  marker (checked: 13801 with the fix off and with the blend off).
+  Verified: both toolchains at `b4b61c6f`, historical `652908e6` (sweep:
+  match + known image), parity 44/44, `test.py --golden`, the corpus
+  (11,775 instructions), `SettingsRegression` in all four modes
+  (1231..1234 assertions: the three dispatchers with R12 kept, the two
+  clamp caves replaying their pairs and skipping, the gain cave under
+  mode 4 and not, the interpolator's gate and one whole flush tick under
+  both bytes, the route word, the glide value in its three cases, the
+  eleven words and MCALLs, and the offset cleared or kept at boot),
+  controls 12/12 with lean running the fix and the blend off, clock
+  6/6.
 - **G. Clock.** The ISR cave's factory body, the acquisition gate, the
   pulse-pool dispatchers, the edge filter.
 - **H. Page, copy (owner's), docs, `SETTINGS.md`.**

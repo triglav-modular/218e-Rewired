@@ -134,8 +134,11 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   already asks the mode) and phase E (the jack and the presets: the
   rotation idles at zero degrees in every image, and four helpers decide
   where the degrees come from and give the factory its glide addend and
-  its straight preset add back) are built (2026-09-23). Phases F..H move
-  the other options one by one. (Dispatcher event 32 at `0x80004fc2`
+  its straight preset add back) and phase F (the pressure path: three
+  dispatchers on the factory's pool words, three hooks where the 2-byte
+  patches stood, the interpolator's pass-through, the blend's route word
+  and glide value) are built (2026-09-23). Phases G (the clock) and H (the
+  page and docs) remain. (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),

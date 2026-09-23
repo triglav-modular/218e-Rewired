@@ -110,6 +110,9 @@ FEATURE_MAP = {
     # reads the live byte.  The jack transposer and the quantised preset
     # voltage since phase E: the rotation caves are in every image and idle
     # at zero degrees, and the live bytes decide where degrees come from.
+    # The pressure path since phase F: every pressure cave is in every
+    # image, three dispatchers and three hooks give the factory its path
+    # back by the live byte, and the blend's route word likewise.
     "midi.poly_default":      (
         ["poly_powerup_default_off", "poly_factory_reset_default_off",
          "poly_arp_independence", "poly_settings_migration",
@@ -119,8 +122,6 @@ FEATURE_MAP = {
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "pressure.multi_key":     ([], ["multi_key_pressure"]),
     "pressure.error_diffusion": ([], ["error_diffusion"]),
-    "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
-    "portamento.zero_snap":   (["glide_rate_hook"], []),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -138,8 +139,6 @@ ENABLED_WHEN = {
     "pressure.common_mode": True,
     "pressure.multi_key": "max",
     "pressure.error_diffusion": True,
-    "portamento.pressure_blend": True,
-    "portamento.zero_snap": True,
     "diagnostics.scan_profiler": True,
     "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
@@ -1184,6 +1183,7 @@ MARKER_EXCLUDES = frozenset({
     "knob1", "knob2", "knob3", "knob4", "pattern_count",
     "arp_pattern_bank", "arp_pattern_len",
     "latching_arp", "sequencer", "quantize_presets", "portamento_in",
+    "pressure_fix", "pressure_portamento",
 })
 
 RAM_REGIONS = [
@@ -1457,6 +1457,9 @@ FACTORY_CELLS = [
     # ControlRegression drives both directly; 0x342/0x343 read 1/0 in every
     # other position the suite sets up.
     (0x384F, 0x3850, "state+0x2ef: the active preset pad"),
+    # The factory's pressure gain, which pitch_clamp_2 replays from the
+    # factory's own pair while the fix is off (stage 2 phase F).
+    (0x389C, 0x38A0, "state+0x33c: the factory pressure gain"),
     # The switch byte preset_degrees reads lives inside the region below at
     # 0x38A0, so it needs no entry of its own.
     # 32 halfwords - the tuning applier loop counts MOV R9,0x20 - so the
@@ -2139,21 +2142,19 @@ def main() -> None:
     features["cv_jack"] = True
     features["preset_rotate"] = True
 
-    if cfg.get("_pressure_factory"):
-        # knob4_pool goes back too: edit-mode knob 4 is the curve selector,
-        # which is pressure work - left routed, a pressure-off build's knob-4
-        # sweep wrote curve-marked values into the factory velocity-min byte,
-        # which the factory persists.
-        for name in ("pressure_fn_pool", "pressure_float_helper_pool",
-                     "knob1_pool", "knob4_pool", "pressure_gain_nop"):
-            blocks[name] = False
-        # The clamp skips jump over the factory's own 16-tap pressure filter.
-        # They used to be unconditional, so "pressure off" still ran without
-        # that filter and without ours - neither factory nor Rewired.  The
-        # cells that made the skip necessary have moved out of the array, so
-        # it can go with the rest of the pressure work.
-        blocks["pitch_clamp_skip_1"] = False
-        blocks["pitch_clamp_skip_2"] = False
+    # Phase F: the pressure path is decided at boot from its two option
+    # cells, so every pressure cave is in every image.  The fix's pool
+    # words (the curve, knob 1 and knob 4 - the edit-mode curve selector is
+    # pressure work) are dispatchers, its three 2-byte patches are hooks
+    # with caves that do the factory's work or ours, and the interpolator
+    # copies straight through with the fix off.  The blend's route word
+    # dispatches and the glide clamp's value follows the live byte, so the
+    # blend hook and the zero-snap hook stand in every image.
+    blocks["glide_rate_hook"] = True
+    blocks["pitch_target_blend_hook"] = True
+    blocks["blend_offset_apply"] = True
+    blocks["blend_target_conditioner"] = True
+    features["pressure_blend"] = True
 
     # No Scala file supplied means no tuning to switch between, so the edit
     # keys and their LEDs stay factory.  Both key blocks overwrite factory code
@@ -2549,6 +2550,8 @@ def main() -> None:
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}  (option cell; every cave built)")
     summary.append(f"  {'presets.quantize':28s} {bool(get(cfg, 'presets.quantize'))!r}  (option cell; every cave built)")
     summary.append(f"  {'portamento_in.transpose':28s} {bool(get(cfg, 'portamento_in.transpose'))!r}  (option cell; every cave built)")
+    summary.append(f"  {'pressure_fix':28s} {not cfg.get('_pressure_factory')!r}  (option cell; every cave built)")
+    summary.append(f"  {'portamento.pressure_blend':28s} {bool(get(cfg, 'portamento.pressure_blend'))!r}  (option cell; every cave built)")
     blocks["arp_swing"] = True
     # Quantized randomness takes the randomiser's hook the way swing does;
     # the pool word at 0x80019d40 names whichever of the three is built.

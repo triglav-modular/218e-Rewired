@@ -42,6 +42,11 @@ public class SettingsRegression extends PersistenceRegression {
     static final long JK=0x8001fea0L, PG=0x8001fed0L, GA=0x8001fef0L, GAPOOL=GA+0x18, CD=0x8001ff10L;
     static final long PQ=0x8001e140L, PD=0x8001e1c0L, CVENTRY=0x8001e7c0L, CVFILTER=0x8001eb20L, CVPOOL=0x8001e8b0L;
     static final long F2I=0x80013434L, GLIDESITE=0x8000313eL, CHAINWORD=0x8001a348L;
+    // Phase F: the pressure dispatchers, the three hook caves, the interpolator's gate, the route word, the glide value, the boot clear.
+    static final long PF=0x8001ee00L, K1=0x8001ee20L, K4=0x8001ee40L, C2=0x8001ee60L, C1=0x8001ee80L, GN=0x8001eea0L;
+    static final long IP=0x8001eec0L, PB=0x8001eef0L, GR=0x8001ef10L, OBC=0x8001ef40L;
+    static final long CURVE=0x80019580L, I2F=0x80013350L, KNOB1=0x800194c0L, FKNOB1=0x80004188L, KNOB4=0x80014380L, FKNOB4=0x80004070L;
+    static final long COND=0x8001ad78L, REMAPCAVE=0x80019980L, INTERP=0x8001a600L, INTERPOUT=0x8001a688L, GLIDETABLE=0x80015150L;
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -495,6 +500,73 @@ public class SettingsRegression extends PersistenceRegression {
             (r(0x60fa,2)&0xff)>=3&&r(0x60f3,1)>0);
         println("PASS jack and presets: the four gates follow the live bytes, and the transposer idles at zero degrees with both off");
     }
+    void pressure() throws Exception {
+        fresh();
+        // The three dispatchers on the factory's pool words, R12 the argument throughout.
+        long[][] d={{PF,CURVE,I2F},{K1,KNOB1,FKNOB1},{K4,KNOB4,FKNOB4}};
+        String[] n={"the curve","knob 1","knob 4"};
+        for(int i=0;i<3;i++) {
+            w(LIVE+7,1,1); e.writeRegister("R12",0x5a5a); long p=resolve(d[i][0]);
+            check("fix on: "+n[i]+"'s word reaches ours with R12 kept",p==d[i][1]&&reg("R12")==0x5a5a);
+            w(LIVE+7,1,0); e.writeRegister("R12",0x5a5a); p=resolve(d[i][0]);
+            check("fix off: "+n[i]+"'s word reaches the factory's with R12 kept",p==d[i][2]&&reg("R12")==0x5a5a);
+        }
+        // The two clamp caves: the pair replayed and a return with the fix off, the skip's target with it on.
+        w(LIVE+7,1,0); w(S+0x33c,4,0x1234); w(0x3216+0x1c,2,0x2345);
+        e.writeRegister("R9",9); e.writeRegister("R11",11); e.writeRegister("R12",12);
+        long p=resolve(C2);
+        check("fix off: the gain's pair replays - the gain in R8 - and returns, R9, R11, R12 kept",
+            p==0x100&&reg("R8")==0x1234&&reg("R9")==9&&reg("R11")==11&&reg("R12")==12);
+        p=resolve(C1);
+        check("fix off: the filter's pair replays - the history in R8 - and returns",p==0x100&&reg("R8")==0x2345);
+        w(LIVE+7,1,1);
+        check("fix on: the gain is skipped",resolve(C2)==0x800033d6L);
+        check("fix on: the filter is skipped",resolve(C1)==0x80003506L);
+        // The gain branch: mode 4 (Z set) calls whatever the byte; otherwise the byte decides.
+        w(LIVE+7,1,0); e.writeRegister("Z",1); p=resolve(GN);
+        check("gain, mode 4: the knob-4 call is made through the dispatch with R12 = 5",p==K4&&reg("R12")==5);
+        e.writeRegister("Z",0); e.writeRegister("R12",77); p=resolve(GN);
+        check("gain, fix off, not mode 4: the factory's skip",p==0x100&&reg("R12")==77);
+        w(LIVE+7,1,1); e.writeRegister("Z",0); p=resolve(GN);
+        check("gain, fix on, not mode 4: the call is made anyway",p==K4&&reg("R12")==5);
+        // The interpolator's gate: the clamp, then the byte; off copies the target to the slot.
+        w(LIVE+7,1,1); w(S+0x356,2,0); e.writeRegister("R11",5000); p=resolve(IP);
+        check("fix on: the gate clamps and leaves the slot to the interpolator",p==0x100&&reg("R11")==0xfff&&reg("R9")!=0&&r(S+0x356,2)==0);
+        w(LIVE+7,1,0); e.writeRegister("R11",1234); p=resolve(IP);
+        check("fix off: the gate copies the target to the slot and says so",p==0x100&&reg("R9")==0&&r(S+0x356,2)==1234);
+        // And the interpolator as a whole, one flush tick: straight through with the fix off, a fifth of the way with it on.
+        w(LIVE+7,1,0); w(0x6036,2,1000); w(S+0x356,2,0); call(INTERP,INTERPOUT);
+        check("fix off: one tick puts the whole target on the DAC slot, slot="+r(S+0x356,2),r(S+0x356,2)==1000);
+        w(LIVE+7,1,1); w(0x6036,2,1000); w(S+0x356,2,0); w(0x602c,2,0); w(0x6084,2,5); call(INTERP,INTERPOUT);
+        check("fix on: one tick moves the slot a fifth of the way, slot="+r(S+0x356,2),r(S+0x356,2)==200);
+        // The blend's route word and the glide value.
+        w(LIVE+8,1,1); e.writeRegister("R12",0x3e8); p=resolve(PB);
+        check("blend on: the pitch hook routes through the conditioner with the pitch kept",p==COND&&reg("R12")==0x3e8);
+        w(LIVE+8,1,0); e.writeRegister("R12",0x3e8); p=resolve(PB);
+        check("blend off: the pitch hook goes straight to the remap",p==REMAPCAVE&&reg("R12")==0x3e8);
+        w(LIVE+8,1,1); e.writeRegister("R9",3); p=resolve(GR);
+        check("blend on: the glide rate value is zero, the index kept",p==0x100&&reg("R8")==0&&reg("R9")==3);
+        w(LIVE+8,1,0); w(S+0x306,2,0x10); p=resolve(GR);
+        check("blend off, knob in its deadzone: the fastest entry",p==0x100&&reg("R8")==0&&reg("R9")==3);
+        w(S+0x306,2,0x200); p=resolve(GR);
+        check("blend off, knob up: the factory table at the index",p==0x100&&reg("R8")==(short)r(GLIDETABLE+6,2)&&reg("R9")==3);
+        long c1=(C1+0x1c-(0x800033f8L&~3L))>>2, c2=(C2+0x1c-(0x800033c0L&~3L))>>2, gn=(GN+0x1c-(0x800043a4L&~3L))>>2;
+        check("the words: the three pools, the route word, the glide word, the interpolator's, and the three hooks' MCALLs onto their own words",
+            r(0x80003574L,4)==PF&&r(0x800043c4L,4)==K1&&r(0x800043d0L,4)==K4&&r(0x8000336cL,4)==PB&&r(0x8001a260L,4)==GR&&r(0x8001a68cL,4)==IP
+            &&r(0x800033f8L,4)==(0xf01f0000L|(c1&0xffffL))&&r(C1+0x1c,4)==C1
+            &&r(0x800033c0L,4)==(0xf01f0000L|(c2&0xffffL))&&r(C2+0x1c,4)==C2
+            &&r(0x800043a4L,4)==(0xf01f0000L|(gn&0xffffL))&&r(GN+0x1c,4)==GN);
+        // The blend's offset does not outlive it across the restart that turns it off.
+        keepSlots=true;
+        byte[] off=edited(); setHalf(off,0x20+2*24,0); stamp(off); plant(SLOT0,off);
+        cold(); w(0x60e2,2,0x1234); boot();
+        check("blend off at boot: the conditioner's offset is cleared, live="+r(LIVE+8,1),r(LIVE+8,1)==0&&r(0x60e2,2)==0);
+        byte[] on=edited(); setHalf(on,0x20+2*24,1); setGen(on,4); stamp(on); plant(SLOT0,on);
+        cold(); w(0x60e2,2,0x1234); boot();
+        check("blend on at boot: it is the conditioner's own and stays",r(LIVE+8,1)==1&&r(0x60e2,2)==0x1234);
+        keepSlots=false;
+        println("PASS pressure: the fix's three words, three hooks and the interpolator follow its byte; the blend's route, glide value and boot clear follow its own");
+    }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
     static void stamp(byte[] rec) {
@@ -636,7 +708,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

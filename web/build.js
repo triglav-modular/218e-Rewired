@@ -138,17 +138,12 @@ var WEBBUILD = (function () {
         features.cv_transpose = true;
         features.cv_jack = true;
         features.preset_rotate = true;
-        if (cfg._pressure_factory) {
-            ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
-             // Same rule as tools/build.py: the edit-mode curve knob is
-             // pressure work, so it reverts with the rest.
-             'knob4_pool',
-             'pressure_gain_nop',
-             // The clamp skips jump the factory's own pressure filter; the
-             // cells that made them load-bearing have moved out of its array.
-             'pitch_clamp_skip_1', 'pitch_clamp_skip_2']
-                .forEach(function (n) { blocks[n] = false; });
-        }
+        // Phase F, same rule as tools/build.py: the pressure path is decided
+        // at boot from its two option cells, so every pressure cave is in
+        // every image, the blend hook and the zero-snap hook included.
+        ['glide_rate_hook', 'pitch_target_blend_hook', 'blend_offset_apply',
+         'blend_target_conditioner'].forEach(function (n) { blocks[n] = true; });
+        features.pressure_blend = true;
         // Same rule as tools/build.py: with no Scala file the edit keys and
         // their LEDs stay factory, which means the applier goes too — it
         // asserts those LEDs and zeroes the old transpose-mode byte.

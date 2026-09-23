@@ -97,11 +97,10 @@ var BUILDLIB = (function () {
         }
         cfg.portamento_in.transpose = jack === 'transpose';
 
+        // Same rule as tools/options.py: since stage 2 phase F the fix is an
+        // option cell and the whole path is in every image, so the switch
+        // only sets the cell; the path's own settings stay.
         if (!want('pressure_fix', true)) {
-            cfg.pressure.multi_key = 'factory';
-            cfg.pressure.common_mode = false;
-            cfg.pressure.error_diffusion = false;
-            cfg.pressure.output_smoothing = 0;
             cfg._pressure_factory = true;
         }
 
@@ -1598,7 +1597,8 @@ var BUILDLIB = (function () {
     // so a record made here is right for a keyboard that differs only in them.
     var MARKER_EXCLUDES = { knob1: 1, knob2: 1, knob3: 1, knob4: 1, pattern_count: 1,
                             arp_pattern_bank: 1, arp_pattern_len: 1, latching_arp: 1,
-                            sequencer: 1, quantize_presets: 1, portamento_in: 1 };
+                            sequencer: 1, quantize_presets: 1, portamento_in: 1,
+                            pressure_fix: 1, pressure_portamento: 1 };
     function withoutExcluded(obj) {
         var out = {};
         Object.keys(obj).forEach(function (k) { if (!MARKER_EXCLUDES[k]) out[k] = obj[k]; });

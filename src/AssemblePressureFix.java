@@ -307,6 +307,24 @@ public class AssemblePressureFix extends GhidraScript {
         long pgEntry = 0x8001fed0L, pgOff = pgEntry + 0x10, pgPool = pgEntry + 0x18, pgEnd = pgEntry + 0x20;
         long gaEntry = 0x8001fef0L, gaLoad = gaEntry + 0x10, gaPool = gaEntry + 0x18, gaEnd = gaEntry + 0x20;
         long cdEntry = 0x8001ff10L, cdPlain = cdEntry + 0x10, cdPool = cdEntry + 0x14, cdEnd = cdEntry + 0x20;
+        // Phase F: the pressure path, live bytes 0x6d2f (pressure_fix) and
+        // 0x6d30 (pressure_portamento), in the hole at 0x8001ee00.  Three
+        // dispatchers on the factory's pool words (the curve, knob 1, knob 4);
+        // three caves behind hooks where a 2-byte patch used to stand (the
+        // two clamp skips, the gain branch), each doing the factory's work or
+        // ours; the interpolator's clamp-and-pass-through; the pitch hook's
+        // route word; the glide clamp's rate value; and the blend's offset
+        // cleared at a boot with the blend off.
+        long pfEntry = 0x8001ee00L, pfOff = pfEntry + 0x10, pfPool = pfEntry + 0x14, pfEnd = pfEntry + 0x20;
+        long k1Entry = 0x8001ee20L, k1Off = k1Entry + 0x10, k1Pool = k1Entry + 0x14, k1End = k1Entry + 0x20;
+        long k4Entry = 0x8001ee40L, k4Off = k4Entry + 0x10, k4Pool = k4Entry + 0x14, k4End = k4Entry + 0x20;
+        long c2Entry = 0x8001ee60L, c2Skip = c2Entry + 0x14, c2Pool = c2Entry + 0x18, c2End = c2Entry + 0x20;
+        long c1Entry = 0x8001ee80L, c1Skip = c1Entry + 0x14, c1Pool = c1Entry + 0x18, c1End = c1Entry + 0x20;
+        long gnEntry = 0x8001eea0L, gnCall = gnEntry + 0xc, gnDone = gnEntry + 0x14, gnPool = gnEntry + 0x18, gnEnd = gnEntry + 0x20;
+        long ipEntry = 0x8001eec0L, ipByte = ipEntry + 0xc, ipDone = ipEntry + 0x1c, ipPool = ipEntry + 0x20, ipEnd = ipEntry + 0x30;
+        long pbEntry = 0x8001eef0L, pbOff = pbEntry + 0x10, pbPool = pbEntry + 0x14, pbEnd = pbEntry + 0x20;
+        long grEntry = 0x8001ef10L, grClassic = grEntry + 0x10, grTable = grEntry + 0x20, grPool = grEntry + 0x2c, grEnd = grEntry + 0x30;
+        long obcEntry = 0x8001ef40L, obcDone = obcEntry + 0x14, obcEnd = obcEntry + 0x20;
 
         // The key selector: the dispatcher, for the factory's pool word and
         // the sequencer's alike, so the two can never disagree.
@@ -1620,40 +1638,21 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001a234L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        if (feature("pressure_blend")) {
-            // No time-based glide: the pressure-based blend is the only
-            // portamento.  Notes snap; the knob means pressure-needed-to-bend.
-            emit("MOV R8,0x0");
-        } else {
-            // Blend-off builds keep classic portamento with the zero-snap.
-            emit("MOV R8,0x3866");
-            emit("LD.SH R8,R8[0x0]");
-            emit("CP.W R8,0x30");
-            emit("BR{ge} 0x8001a24c");
-            emit("MOV R8,0x0");
-            emit("RJMP 0x8001a254");
-            padTo(0x8001a24cL);
-            emit("LDDPC R8,0x8001a260");
-            emit("LD.SH R8,R8[R9 << 0x1]");
-            emit("CASTS.H R8");
-        }
+        // The rate value comes from glide_rate_value (phase F): zero while
+        // the pressure blend is the portamento - notes snap, the knob means
+        // pressure-needed-to-bend - and the zero-snap over the factory table
+        // while it is not, by the live byte.  R9, the index, comes through.
+        emit("MCALL PC[0x8001a260]");   // glide_rate_value -> R8
         padTo(0x8001a254L);
-        if (block("seq_gate")) {
-            // The store goes out of line so a tie can override the rate on
-            // its way past.  There is no room for the test here - the block
-            // ends where pulse_defer_set begins.
-            emit("MCALL PC[0x8001a25c]");
-        } else {
-            emit("MOV R9,0x2eee");
-            emit("ST.H R9[0x0],R8");
-        }
+        // The store goes out of line so a tie can override the rate on its
+        // way past.  There is no room for the test here - the block ends
+        // where pulse_defer_set begins.
+        emit("MCALL PC[0x8001a25c]");
         emit("LDM SP++,R7,PC");
-        if (block("seq_gate")) {
-            padTo(0x8001a25cL);
-            word(0x8001b610L); // store_glide_rate, with the tie's override
-        }
+        padTo(0x8001a25cL);
+        word(0x8001b610L); // store_glide_rate, with the tie's override
         padTo(0x8001a260L);
-        word(0x80015150L); // the factory glide-rate table
+        word(grEntry);     // glide_rate_value: zero with the blend, else the zero-snap and the table
         finish("glide_rate_clamp", 0x8001a264L);
 
         // Pulse defer: the four factory pool words that pointed at the
@@ -1921,10 +1920,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ge} 0x8001a612");
         emit("MOV R11,0x0");
         padTo(0x8001a612L);
-        emit("MOV R9,0xfff");
-        emit("CP.W R11,R9");
-        emit("BR{ls} 0x8001a61e");
-        emit("MOV R11,R9");             // clamped to the 12-bit DAC range
+        // The high clamp went out to interpolate_gate (phase F), which also
+        // answers R9 = the live byte: zero means the fix is off and the gate
+        // has just copied the target to the DAC slot itself, so this hands
+        // straight on to the flush - the scan's store reaches the DAC on
+        // the same millisecond flush it always did.
+        emit("MCALL PC[0x8001a68c]");   // interpolate_gate: R11 clamped, R9 the live byte
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001a684");
         padTo(0x8001a61eL);
         emit("LDDPC R12,0x8001a690");
         emit("LD.SH R8,R12[0x356]");    // where the output is now
@@ -1980,6 +1983,8 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001a688L);
         emit("LDDPC R12,0x8001a694");
         emit("MOV PC,R12");             // on into the factory flush handler
+        padTo(0x8001a68cL);
+        word(ipEntry);     // interpolate_gate
         padTo(0x8001a690L);
         word(0x00003560L); // global state base
         word(0x80004f66L); // factory event-17 case
@@ -11763,7 +11768,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R10,0x1");
         emit(String.format("BR{ne} 0x%x", obOwn));
         padTo(obDone);
-        emit("MOV PC,LR");
+        emit(String.format("LDDPC R8,0x%x", obDone + 4));
+        emit("MOV PC,R8");              // on to option_boot_blend, which returns for both
+        padTo(obDone + 4);
+        word(obcEntry);
         finish("option_boot", obEnd);
         }; // end latchCaves
         latchCaves.go();
@@ -11892,6 +11900,206 @@ public class AssemblePressureFix extends GhidraScript {
         }
         }; // end jackCaves
         jackCaves.go();
+
+        // Phase F: the pressure path (docs/PLAN-SETTINGS-2.md).
+        Emitter pressureCaves = () -> {
+        // Three dispatchers on the factory's own pool words, by the fix's
+        // live byte.  Each spends R8, which every target overwrites before
+        // reading it; the argument is R12 throughout.
+        // pressure_fn_dispatch: the calibrated curve, or the factory's int-to-float.
+        begin(pfEntry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", pfOff));
+        emit(String.format("LDDPC R8,0x%x", pfPool));
+        emit("MOV PC,R8");
+        padTo(pfOff);
+        emit(String.format("LDDPC R8,0x%x", pfPool + 4));
+        emit("MOV PC,R8");
+        padTo(pfPool);
+        word(0x80019580L); // the calibrated pressure curve
+        word(0x80013350L); // the factory's int-to-float
+        finish("pressure_fn_dispatch", pfEnd);
+        // knob1_dispatch: the pressure ceiling, or the factory's knob 1.
+        begin(k1Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", k1Off));
+        emit(String.format("LDDPC R8,0x%x", k1Pool));
+        emit("MOV PC,R8");
+        padTo(k1Off);
+        emit(String.format("LDDPC R8,0x%x", k1Pool + 4));
+        emit("MOV PC,R8");
+        padTo(k1Pool);
+        word(0x800194c0L); // knob1_pressure_ceiling
+        word(0x80004188L); // the factory knob-1 handler
+        finish("knob1_dispatch", k1End);
+        // knob4_dispatch: knob4_curve, or the factory's knob 4.
+        begin(k4Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", k4Off));
+        emit(String.format("LDDPC R8,0x%x", k4Pool));
+        emit("MOV PC,R8");
+        padTo(k4Off);
+        emit(String.format("LDDPC R8,0x%x", k4Pool + 4));
+        emit("MOV PC,R8");
+        padTo(k4Pool);
+        word(0x80014380L); // knob4_curve
+        word(0x80004070L); // the factory knob-4 handler
+        finish("knob4_dispatch", k4End);
+
+        // pitch_clamp_2 and pitch_clamp_1: the pairs the skips stood over.
+        // Off: the pair replayed - the literal the LDDPC loaded, then the
+        // load - and back to the instruction after the pair.  On: the skip's
+        // own target, LR and all.  Each spends R8, the load's destination.
+        // The second word of each pool is the cave's own entry, for the
+        // site's MCALL.
+        begin(c2Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", c2Skip));
+        emit("MOV R8,0x3560");          // LDDPC R8,0x80003570: the state base
+        emit("LD.W R8,R8[0x33c]");      // the factory gain
+        emit("MOV PC,LR");
+        padTo(c2Skip);
+        emit(String.format("LDDPC R8,0x%x", c2Pool));
+        emit("MOV PC,R8");
+        padTo(c2Pool);
+        word(0x800033d6L);              // over the gain multiply
+        word(c2Entry);
+        finish("pitch_clamp_2", c2End);
+        begin(c1Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", c1Skip));
+        emit("MOV R8,0x3216");          // LDDPC R8,0x80003580: the factory pressure history
+        emit("LD.SH R8,R8[0x1c]");      // the 16-tap filter's first shift
+        emit("MOV PC,LR");
+        padTo(c1Skip);
+        emit(String.format("LDDPC R8,0x%x", c1Pool));
+        emit("MOV PC,R8");
+        padTo(c1Pool);
+        word(0x80003506L);              // over the filter
+        word(c1Entry);
+        finish("pitch_clamp_1", c1End);
+
+        // pressure_gain: the knob-4 call the factory makes only in internal
+        // mode 4 and the fix makes on every sweep.  The site's CP.W R8,0x4
+        // still stands, so the branch comes first; only when the factory
+        // would skip is the live byte asked.  The call goes through
+        // knob4_dispatch with the site's own LR, which is the return the
+        // factory's MCALL had.  Spends R8, reloaded at the return.
+        begin(gnEntry);
+        emit(String.format("BR{eq} 0x%x", gnCall));
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", gnDone));
+        padTo(gnCall);
+        emit("MOV R12,0x5");
+        emit(String.format("LDDPC R8,0x%x", gnPool));
+        emit("MOV PC,R8");
+        padTo(gnDone);
+        emit("MOV PC,LR");
+        padTo(gnPool);
+        word(k4Entry);
+        word(gnEntry);
+        finish("pressure_gain", gnEnd);
+
+        // interpolate_gate: the interpolator's high clamp on R11, then the
+        // live byte in R9.  With the fix off the target is copied to the DAC
+        // slot here and the interpolator hands on; the snapshot and counter
+        // are left alone, as a build without smoothing left them.  Spends
+        // R9 and R12, which the interpolator reloads.
+        begin(ipEntry);
+        emit("MOV R9,0xfff");
+        emit("CP.W R11,R9");
+        emit(String.format("BR{ls} 0x%x", ipByte));
+        emit("MOV R11,R9");             // clamped to the 12-bit DAC range
+        padTo(ipByte);
+        emit("MOV R9,0x6d2f");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(String.format("BR{ne} 0x%x", ipDone));
+        emit(String.format("LDDPC R12,0x%x", ipPool));
+        emit("ST.H R12[0x356],R11");    // the pressure DAC slot, straight through
+        padTo(ipDone);
+        emit("MOV PC,LR");
+        padTo(ipPool);
+        word(0x00003560L); // global state base
+        finish("interpolate_gate", ipEnd);
+
+        // pitch_hook_dispatch: the remap's entry word.  Through the target
+        // conditioner, the blend-offset shim and on to the remap while the
+        // blend is the portamento; straight to the remap otherwise.  R12 is
+        // the pitch and comes through; R8 is spent, which both overwrite.
+        begin(pbEntry);
+        emit("MOV R8,0x6d30");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", pbOff));
+        emit(String.format("LDDPC R8,0x%x", pbPool));
+        emit("MOV PC,R8");
+        padTo(pbOff);
+        emit(String.format("LDDPC R8,0x%x", pbPool + 4));
+        emit("MOV PC,R8");
+        padTo(pbPool);
+        word(0x8001ad78L); // target conditioner -> blend-offset shim -> remap
+        word(0x80019980L); // the remap
+        finish("pitch_hook_dispatch", pbEnd);
+
+        // glide_rate_value: R8 = the glide rate VALUE for glide_rate_clamp.
+        // Zero while the blend is the portamento; otherwise the zero-snap -
+        // the fastest entry whenever the knob sits in its deadzone - and the
+        // factory table at R9, the rate index, which comes through.
+        begin(grEntry);
+        emit("MOV R8,0x6d30");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", grClassic));
+        emit("MOV R8,0x0");             // the blend: notes snap
+        emit("MOV PC,LR");
+        padTo(grClassic);
+        emit("MOV R8,0x3866");          // the portamento knob
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x30");
+        emit(String.format("BR{ge} 0x%x", grTable));
+        emit("MOV R8,0x0");             // the deadzone: the fastest entry
+        emit("MOV PC,LR");
+        padTo(grTable);
+        emit(String.format("LDDPC R8,0x%x", grPool));
+        emit("LD.SH R8,R8[R9 << 0x1]");
+        emit("CASTS.H R8");
+        emit("MOV PC,LR");
+        padTo(grPool);
+        word(0x80015150L); // the factory glide-rate table
+        finish("glide_rate_value", grEnd);
+
+        // option_boot_blend: option_boot's tail.  The offset the blend's
+        // conditioner last applied (0x60e2) is read by the clock's fast
+        // pitch stage every beat, and only the conditioner writes it - so
+        // with the blend off it is zeroed here, or a session with the blend
+        // on would leave its last offset under every staged pitch after
+        // the restart.  With the blend on it is the conditioner's own.
+        begin(obcEntry);
+        emit("MOV R8,0x6d30");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", obcDone));
+        emit("MOV R8,0x60e2");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x0],R9");
+        padTo(obcDone);
+        emit("MOV PC,LR");
+        finish("option_boot_blend", obcEnd);
+        }; // end pressureCaves
+        pressureCaves.go();
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a
@@ -12218,11 +12426,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Repurposed pool word: was the last-sent mirror address (0x3212),
         // now the remap entry point read by the MCALL above.
         begin(0x8000336cL);
-        if (feature("pressure_blend")) {
-            word(0x8001ad78L); // target conditioner -> blend-offset shim -> remap
-        } else {
-            word(0x80019980L);
-        }
+        word(pbEntry);     // pitch_hook_dispatch: the target conditioner's route, or the remap, by the blend's live byte
         finish("pitch_hook_pool", 0x80003370L);
 
         // Scan period, in milliseconds.  The main loop registers a periodic
@@ -12270,13 +12474,37 @@ public class AssemblePressureFix extends GhidraScript {
         fixedPatch("octsw_redirect_8", 0x80003a14L, 4, "ST.B R9[0x2ae7],R8");
         fixedPatch("octsw_redirect_9", 0x80003a1cL, 4, "ST.W R8[0x2ae8],R9");
 
-        singlePatch("pressure_gain_nop", 0x800043a4L, "NOP");
+        // The factory's gain branch: BR{ne} over `MOV R12,0x5; MCALL
+        // knob4_pool` unless internal mode 4.  The fix NOPped the branch so
+        // knob 4 is read on every sweep; now the eight bytes are a call to
+        // pressure_gain (phase F), which keeps the branch's own condition -
+        // the CP.W before it still stands, MCALL leaves the flags - and asks
+        // the live byte only when the factory would have skipped.  Its
+        // return address is the factory call's own, so the knob-4 dispatch
+        // returns straight there.
+        begin(0x800043a4L);
+        emit(String.format("MCALL PC[0x%x]", gnPool + 4));   // pressure_gain
+        emit("NOP");
+        emit("NOP");
+        finish("pressure_gain_nop", 0x800043acL);
         fixedPatch("transpose_force_1", 0x80005466L, 4, "MOV R8,0x1");
         fixedPatch("transpose_force_2", 0x800062f8L, 4, "MOV R8,0x1");
-        fixedPatch("pitch_clamp_skip_1", 0x800033f8L, 2, "RJMP 0x80003506");
-        fixedPatch("pitch_clamp_skip_2", 0x800033c0L, 2, "RJMP 0x800033d6");
-        wordPatch("pressure_fn_pool", 0x80003574L, 0x80019580L,
-            "int-to-float pointer -> calibrated pressure curve");
+        // The two clamp skips: each RJMP stood over the LDDPC that begins a
+        // 4-byte load nothing else lands on, so each pair is a 6-byte call
+        // to a cave (phase F) that replays the pair - the literal as a MOV,
+        // then the load - and returns while the fix is off, or jumps to the
+        // skip's target while it is on.  The routine saves LR: it calls
+        // through 0x80003574 a few bytes earlier.
+        begin(0x800033f8L);
+        emit(String.format("MCALL PC[0x%x]", c1Pool + 4));   // pitch_clamp_1: over the 16-tap filter, or into it
+        emit("NOP");
+        finish("pitch_clamp_skip_1", 0x800033feL);
+        begin(0x800033c0L);
+        emit(String.format("MCALL PC[0x%x]", c2Pool + 4));   // pitch_clamp_2: over the gain, or the gain's load
+        emit("NOP");
+        finish("pitch_clamp_skip_2", 0x800033c6L);
+        wordPatch("pressure_fn_pool", 0x80003574L, pfEntry,
+            "int-to-float pointer -> pressure_fn_dispatch: the calibrated curve, or the factory's conversion");
         fixedPatch("transpose_force_3", 0x80005392L, 2, "MOV R8,0x1");
         wordPatch("pressure_float_helper_pool", 0x8000357cL, 0x80013434L,
             "restore original post-gain float-to-int helper");
@@ -12342,12 +12570,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("MCALL PC[0x%x]", gaPool));   // glide_cv_shim -> R8
         finish("glide_cv_addend", 0x80003142L);
 
-        wordPatch("knob1_pool", 0x800043c4L, 0x800194c0L,
-            "knob-1 pointer -> pressure-ceiling wrapper");
+        wordPatch("knob1_pool", 0x800043c4L, k1Entry,
+            "knob-1 pointer -> knob1_dispatch: the pressure-ceiling wrapper, or the factory handler");
         wordPatch("knob3_pool", 0x800043ccL, 0x80014300L,
             "knob-3 pointer -> pressure-floor wrapper");
-        wordPatch("knob4_pool", 0x800043d0L, 0x80014380L,
-            "knob-4 pointer -> knob4_curve");
+        wordPatch("knob4_pool", 0x800043d0L, k4Entry,
+            "knob-4 pointer -> knob4_dispatch: knob4_curve, or the factory handler");
         // Remote-enable guards read constant zero.  Only emitted with a
         // tuning installed: the selector moved out of state+0x2 to RAM
         // 0x6090, so nothing shares the flag and a build without tunings
