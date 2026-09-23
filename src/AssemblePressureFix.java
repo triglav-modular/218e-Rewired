@@ -262,12 +262,24 @@ public class AssemblePressureFix extends GhidraScript {
         }
         assembler = Assemblers.getAssembler(currentProgram);
 
-        // Whichever key selector this build installed.  The sequencer calls
-        // the same one when it is not playing, so the two can never disagree
-        // about which selector is actually in the image.
-        long arpSelector = number("knob2_patterns", 0, 0, 1) == 1 ? 0x8001b050L
-                         : number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0L
-                         : 0x8001a0a0L;
+        // Stage 2 phase B (docs/PLAN-SETTINGS-2.md): the knob roles are
+        // decided at boot from the live option bytes at 0x6d28 - knob 1 at
+        // 0x6d29, knob 2 at 0x6d2a, knob 3 at 0x6d2b, knob 4 at 0x6d2c.
+        // Dispatchers stand on the pool words that used to be built one way
+        // or another, and two latch helpers stand where a cave had no room
+        // for a test: knob 1's blend reaches the sequencer's shuffle through
+        // a latch of its own, and knob 3's randomiser sees a zero latch when
+        // knob 3 is factory, which is its own deadzone.  Each dispatcher
+        // spends only R8, dead at every one of its call sites because the
+        // caves it dispatches to clobber it first; the helpers spend R11
+        // and R9 where the housekeeping already had.
+        long kbSel = 0x8001fb80L, kbK1 = kbSel + 0x20, kbRhythm = kbSel + 0x60, kbVib = kbSel + 0xa0;
+        long kbEarly = kbSel + 0xc0, kbLate = kbSel + 0xe0, kbLatch1 = kbSel + 0x100, kbLatch3 = kbSel + 0x130;
+        long kbPool = kbSel + 0x160, kbEnd = kbSel + 0x1a0;
+
+        // The key selector: the dispatcher, for the factory's pool word and
+        // the sequencer's alike, so the two can never disagree.
+        long arpSelector = kbSel;
 
         // The settings caves (docs/PLAN-SETTINGS.md, docs/PLAN-SETTINGS-2.md)
         // as constants, so a cave that grows moves as one edit, declared
@@ -1251,9 +1263,7 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x80019d38L);
         word(0x80019d44L); // gate/housekeeping entry (hook at 0x21a0)
         word(block("seq_pitch") ? 0x8001ba30L : 0x80019da8L);
-        word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100L
-           : number("knob2_quantized", 0, 0, 1) == 1 ? 0x8001ea00L
-           : 0x80019df8L);
+        word(kbRhythm);    // the randomiser, quantized, swing, or the plain reload, by knob 2's live byte
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
         // return (LDM with PC would execute return-and-test-R12, destroying
@@ -1280,8 +1290,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ne} 0x80019d6a");
         emit("LD.SH R8,R10[0x30a]");
         emit("LSR R8,0x3");
-        emit("MOV R11,0x60f2");
-        emit("ST.B R11[0x0],R8");
+        emit(String.format("MCALL PC[0x%x]", kbPool + 48));   // knob1_blend_latch: 0x60f2, and 0x6d38 while blending
         padTo(0x80019d6aL);
         emit("MOV R11,0x1");
         emit("MCALL PC[0x8001ddd4]");
@@ -1296,8 +1305,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x80019d94");
         emit("LD.SH R8,R10[0x30e]");
-        emit("MOV R11,0x60ea");
-        emit("ST.H R11[0x0],R8");
+        emit(String.format("MCALL PC[0x%x]", kbPool + 52));   // knob3_latch: 0x60ea, or zero when knob 3 is factory
         padTo(0x80019d94L);
         if (block("clock_attack_guard")) {
             emit("MCALL PC[0x8001cb1c]");
@@ -1751,9 +1759,7 @@ public class AssemblePressureFix extends GhidraScript {
         // Otherwise the first movement changes vibrato, then the editor
         // freezes that already-changed value for the rest of the hold.
         emit("MCALL PC[0x8001a348]");          // per-scan housekeeping
-        if (feature("knob4_vibrato")) {
-            emit("MCALL PC[0x8001a344]");      // vibrato engine
-        }
+        emit("MCALL PC[0x8001a344]");          // the vibrato engine, when knob 4's live byte says vibrato
         if (feature("pressure_ab_switch")) {
             emit("MCALL PC[0x8001a34c]");      // octave-switch shadow sync
         }
@@ -1762,7 +1768,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         word(0x80005a50L); // original note-off
         word(0x80019a40L); // tuning applier
-        word(0x8001a350L); // vibrato engine
+        word(kbVib);       // knob4_vibrato_dispatch: the engine, or a return
         // With the jack transposing, the housekeeping is reached through
         // the transposer's cave, which calls it first and shifts the key
         // table after - the applier has run by then.
@@ -3043,12 +3049,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R2,-0x2");
         emit("CP.W R0,0x4");
         emit("BR{lt} 0x8001ae30");
-        if (number("knob4_octaves", 0, 0, 1) == 1) {
-            emit("MCALL PC[0x8001aeb8]");
-        }
+        emit("MCALL PC[0x8001aeb8]");   // knob 4 as an octave switch, when its live byte says trn
         emit("LDM SP++,R0,R1,R2,R7,PC");
         padTo(0x8001aeb8L);
-        word(0x8001b010L); // knob 4 as an octave switch
+        word(kbLate);      // knob4_late_dispatch: the octave switch, or a return
         padTo(0x8001aebcL);
         word(0x00003560L); // global state base
         finish("preset_editor", 0x8001aec0L);
@@ -4254,11 +4258,9 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001d960L);
         finish("knob4_octave_switch", 0x8001b050L);
 
-        if (block("knob4_octave_switch")) {
-            begin(0x800051f0L);
-            word(0x8001d920L);
-            finish("knob4_early_pool", 0x800051f4L);
-        }
+        begin(0x800051f0L);
+        word(kbEarly);     // knob4_early_dispatch: knob4_early, or the factory's ADC event handler
+        finish("knob4_early_pool", 0x800051f4L);
 
         // Knob 2 as a bank of step patterns.  A pattern says whether a step
         // sounds, which is not a question about how long the step is, so this
@@ -4341,7 +4343,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x00003560L); // global state base
         word(0x000069a8L); // pattern bank, in the settings mirror
         word(0x00006a28L); // pattern lengths, in the settings mirror
-        word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0L : 0x8001a0a0L);
+        word(kbK1);        // knob1_dispatch: the blend, the zones, or the factory selector
         finish("arp_pattern_gate", 0x8001b100L);
 
         // Knob 2 as swing.  The randomiser it replaces answers the same
@@ -9481,9 +9483,9 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x8001baa0L);
         emit("STM --SP,R0,R1,R2,R7,R10,R11,LR");
         emit("MOV R7,SP");
-        if (number("knob1_orders", 0, 0, 1) == 0) {
-            emit("MOV R8,0x60f2");
-            emit("LD.UB R8,R8[0x0]");   // knob 1, 0..127
+        {
+            emit("MOV R8,0x6d38");
+            emit("LD.UB R8,R8[0x0]");   // knob 1's blend latch, 0..127, zero unless knob 1 blends
             emit("CP.W R8,0x0");
             emit("BR{eq} 0x8001bad4");  // at zero the draw is not even taken
             // Everything still needed after the draw goes into R0..R2, which
@@ -11414,6 +11416,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R9,-0x1");
         emit("SUB R10,0x1");
         emit(String.format("BR{ne} 0x%x", lvLoop));
+        emit("MOV R8,0x6d38");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // knob 1's blend latch, until the first scan writes it
         emit("MOV PC,LR");
         finish("settings_live", lvEnd);
 
@@ -11440,6 +11445,147 @@ public class AssemblePressureFix extends GhidraScript {
         finish("settings_restart", rsEnd);
         }; // end settingsCaves
         settingsCaves.go();
+
+        Emitter knobCaves = () -> {
+        // The arp's key selector, for the factory's pool word and the
+        // sequencer's: knob 2 on patterns puts the pattern gate in front,
+        // and the gate reaches the selector itself through knob1_dispatch.
+        begin(kbSel);
+        emit("MOV R8,0x6d2a");            // knob 2's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x3");
+        emit(String.format("BR{ne} 0x%x", kbK1));
+        emit(String.format("LDDPC R8,0x%x", kbPool));       // the pattern gate
+        emit("MOV PC,R8");
+        finish("knob_selector_dispatch", kbK1);
+        // Knob 1: the blend, the six zones, or the factory's own selector.
+        begin(kbK1);
+        emit("MOV R8,0x6d29");            // knob 1's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{eq} 0x%x", kbK1 + 0x14));
+        emit(String.format("BR{gt} 0x%x", kbK1 + 0x18));
+        emit(String.format("LDDPC R8,0x%x", kbPool + 4));   // the blend
+        emit("MOV PC,R8");
+        padTo(kbK1 + 0x14);
+        emit(String.format("LDDPC R8,0x%x", kbPool + 8));   // the six zones
+        emit("MOV PC,R8");
+        padTo(kbK1 + 0x18);
+        emit(String.format("LDDPC R8,0x%x", kbPool + 12));  // the factory selector
+        emit("MOV PC,R8");
+        finish("knob1_dispatch", kbRhythm);
+        // Knob 2: the rhythm hook's reload.  R12 = the tempo.  Patterns and
+        // factory get the factory's own reload, leaving what the randomiser's
+        // deadzone leaves: the tempo stored, R8 the state base, R9 the tempo.
+        begin(kbRhythm);
+        emit("MOV R8,0x6d2a");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{eq} 0x%x", kbRhythm + 0x24));   // quantized
+        emit(String.format("BR{lt} 0x%x", kbRhythm + 0x1c));   // spacing: the randomiser
+        emit("CP.W R8,0x2");
+        emit(String.format("BR{eq} 0x%x", kbRhythm + 0x2c));   // swing
+        emit(String.format("LDDPC R8,0x%x", kbPool + 16));  // global state base
+        emit("ST.H R8[0x38e],R12");
+        emit("MOV R9,R12");
+        emit("MOV PC,LR");
+        padTo(kbRhythm + 0x1c);
+        emit(String.format("LDDPC R8,0x%x", kbPool + 20));  // the randomiser
+        emit("MOV PC,R8");
+        padTo(kbRhythm + 0x24);
+        emit(String.format("LDDPC R8,0x%x", kbPool + 24));  // quantized
+        emit("MOV PC,R8");
+        padTo(kbRhythm + 0x2c);
+        emit(String.format("LDDPC R8,0x%x", kbPool + 28));  // swing
+        emit("MOV PC,R8");
+        finish("knob2_rhythm_dispatch", kbVib);
+        // Knob 4 as vibrato: the engine, from the per-scan chain.
+        begin(kbVib);
+        emit("MOV R8,0x6d2c");            // knob 4's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", kbVib + 0x10));
+        emit(String.format("LDDPC R8,0x%x", kbPool + 32));  // the vibrato engine
+        emit("MOV PC,R8");
+        padTo(kbVib + 0x10);
+        emit("MOV PC,LR");
+        finish("knob4_vibrato_dispatch", kbEarly);
+        // Knob 4 as the octave switch, the early pass on the ADC event's
+        // pool word: knob4_early, or the factory handler it wraps.
+        begin(kbEarly);
+        emit("MOV R8,0x6d2c");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{ne} 0x%x", kbEarly + 0x10));
+        emit(String.format("LDDPC R8,0x%x", kbPool + 36));  // knob4_early
+        emit("MOV PC,R8");
+        padTo(kbEarly + 0x10);
+        emit(String.format("LDDPC R8,0x%x", kbPool + 40));  // the factory ADC event handler
+        emit("MOV PC,R8");
+        finish("knob4_early_dispatch", kbLate);
+        // And the late pass, from the preset editor after the applier.
+        begin(kbLate);
+        emit("MOV R8,0x6d2c");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{ne} 0x%x", kbLate + 0x10));
+        emit(String.format("LDDPC R8,0x%x", kbPool + 44));  // knob 4 as an octave switch
+        emit("MOV PC,R8");
+        padTo(kbLate + 0x10);
+        emit("MOV PC,LR");
+        finish("knob4_late_dispatch", kbLatch1);
+        // Knob 1's latch, from the housekeeping: R8 = the knob, 0..127.
+        // 0x60f2 always, for the blend selector and the zones; the blend
+        // latch at 0x6d38 only while knob 1 blends, so the sequencer's
+        // shuffle keeps a recorded order under the zones or a factory knob.
+        begin(kbLatch1);
+        emit("MOV R11,0x60f2");
+        emit("ST.B R11[0x0],R8");
+        emit("MOV R11,0x6d29");
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{ne} 0x%x", kbLatch1 + 0x18));
+        emit("MOV R11,0x6d38");
+        emit("ST.B R11[0x0],R8");
+        emit("MOV PC,LR");
+        padTo(kbLatch1 + 0x18);
+        emit("MOV R11,0x6d38");
+        emit("MOV R9,0x0");
+        emit("ST.B R11[0x0],R9");
+        emit("MOV PC,LR");
+        finish("knob1_blend_latch", kbLatch3);
+        // Knob 3's latch: R8 = the knob.  Zero when knob 3 is factory, which
+        // is the octave randomiser's own deadzone, so it returns the note as
+        // it came.
+        begin(kbLatch3);
+        emit("MOV R11,0x6d2b");           // knob 3's live byte
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{eq} 0x%x", kbLatch3 + 0xc));
+        emit("MOV R8,0x0");
+        padTo(kbLatch3 + 0xc);
+        emit("MOV R11,0x60ea");
+        emit("ST.H R11[0x0],R8");
+        emit("MOV PC,LR");
+        finish("knob3_latch", kbPool);
+        begin(kbPool);
+        word(0x8001b050L); // the pattern gate
+        word(0x8001a0a0L); // knob 1's blend selector
+        word(0x8001aec0L); // knob 1's six zones
+        word(0x800029a8L); // the factory selector
+        word(0x00003560L); // global state base
+        word(0x80019df8L); // knob 2's randomiser
+        word(0x8001ea00L); // quantized
+        word(0x8001b100L); // swing
+        word(0x8001a350L); // the vibrato engine
+        word(0x8001d920L); // knob4_early
+        word(0x80004a00L); // the factory ADC event handler
+        word(0x8001b010L); // knob 4 as an octave switch, the late pass
+        word(kbLatch1);    // knob1_blend_latch
+        word(kbLatch3);    // knob3_latch
+        finish("knob_dispatch_pool", kbEnd);
+        }; // end knobCaves
+        knobCaves.go();
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a

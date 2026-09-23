@@ -1132,13 +1132,8 @@ var BUILDLIB = (function () {
                                            * cfg.portamento_in.cv_volts_per_period),
             transpose_cv_zero: cfg.portamento_in.cv_zero,
             transpose_cv_hysteresis: cfg.portamento_in.cv_hysteresis,
-            knob1_orders: cfg.arp_order.knob1_orders,
-            knob4_octaves: cfg.knob4.octaves,
             knob4_zones: 3 + Math.max(1, Math.floor(
                 (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg))),
-            knob2_patterns: cfg.knob2.mode === 'patterns' ? 1 : 0,
-            knob2_swing: cfg.knob2.mode === 'swing' ? 1 : 0,
-            knob2_quantized: cfg.knob2.mode === 'quantized' ? 1 : 0,
             strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
             tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
             strip_ack_scans: (cfg.sequencer && cfg.sequencer.strip_ack_scans) || 20,
@@ -1597,11 +1592,21 @@ var BUILDLIB = (function () {
     }
 
     // --- properties -----------------------------------------------------
+    // What the marker leaves out, as tools/build.py's MARKER_EXCLUDES: the
+    // option cells decided at runtime and the pattern bank only they read,
+    // so a record made here is right for a keyboard that differs only in them.
+    var MARKER_EXCLUDES = { knob1: 1, knob2: 1, knob3: 1, knob4: 1, pattern_count: 1,
+                            arp_pattern_bank: 1, arp_pattern_len: 1 };
+    function withoutExcluded(obj) {
+        var out = {};
+        Object.keys(obj).forEach(function (k) { if (!MARKER_EXCLUDES[k]) out[k] = obj[k]; });
+        return out;
+    }
     function initMarker(blocks, features, numbers, tables) {
         // Same concatenation order as build.py: flags, numbers, tables, then
         // the raw bytes of the assembler source.
         var text = reprSortedItems(blocks) + reprSortedItems(features) +
-                   reprSortedItems(numbers) + reprSortedItems(tables);
+                   reprSortedItems(withoutExcluded(numbers)) + reprSortedItems(withoutExcluded(tables));
         var bytes = SHA256.utf8(text);
         var bin = atobShim(GEN.javaSourceBase64);
         for (var i = 0; i < bin.length; i++) bytes.push(bin.charCodeAt(i) & 0xFF);

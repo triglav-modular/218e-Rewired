@@ -8,7 +8,7 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): planned; phase A in progress.** The owner's calls at
+**Status (2026-09-23): phases A and B built; C next.** The owner's calls at
 the end were answered the same day: the whole scope, layout 2, and options
 that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
@@ -403,8 +403,47 @@ rises along it:
   20 s limit. `run()` had to be split: the settings caves live in an
   `Emitter` lambda (Java's 64 KB method limit), which the transpiler
   nests as a function.
-- **B. Knob roles.** Nine dispatchers in new caves; one entry test in
-  `arp_random_knobs`' octave path; the knob-4 pair.
+- **B. Knob roles.** Built 2026-09-23. Six dispatchers and two latch
+  helpers at `0x8001fb80..0x8001fd20`, each spending only R8 (dead at every
+  call site: the caves dispatched to clobber it first): the key selector's
+  word (`0x80002420`, and the sequencer's copy) goes to
+  `knob_selector_dispatch`, which puts the pattern gate in front when knob
+  2 is on patterns and otherwise, like the gate's own inner word, to
+  `knob1_dispatch` (blend, zones, or the factory selector `0x800029a8`);
+  the rhythm hook's word `0x80019d40` goes to `knob2_rhythm_dispatch`
+  (randomiser, quantized, swing, or for patterns and factory the factory's
+  own reload, leaving R8 the state base and R9 the tempo as the
+  randomiser's deadzone does); the per-scan chain's vibrato word, the ADC
+  event's pool word `0x800051f0` and the preset editor's late word go to
+  the three knob-4 dispatchers (vibrato engine or return; `knob4_early` or
+  the factory handler `0x80004a00`; the octave switch or return). Knob 3
+  needed no dispatcher and could not have one without a scratch register
+  (its randomiser keeps R9..R12 live): its latch write in the housekeeping
+  became a call to `knob3_latch`, which stores zero when knob 3 is
+  factory, the randomiser's own deadzone. Knob 1's latch write likewise
+  became `knob1_blend_latch`, which writes `0x60f2` as before and a blend
+  latch at `0x6d38` only while knob 1 blends; the sequencer's shuffle reads
+  the blend latch, so a recorded order is kept under the zones or a factory
+  knob (it used to follow knob 1 whenever any knob was live). Every knob
+  cave is in every image; `knob1_orders`, `knob2_*` and `knob4_octaves`
+  are gone from the numbers; the four knob cells, `pattern_count` and the
+  pattern bank are out of the image marker (`MARKER_EXCLUDES`, both
+  builders), so two builds that differ only in knob roles share a marker -
+  checked: 52604 for the default and for orders/swing/factory/trn - and the
+  page's send reaches a keyboard flashed with either. Two behaviours differ
+  from a build with the option off: the three transpose forcing patches
+  stay in every image (the build no longer knows whether the knobs are all
+  factory), so four factory knobs and no tuning over MIDI keep the factory
+  transpose mode forced off; and knob 1 factory with knob 2 on patterns now
+  plays the patterns, where the build used to leave the factory selector
+  in place with the gate unreachable. Verified: both toolchains at
+  `8438b900`, historical `e945d1b0` (sweep: match + known image), parity
+  44/44, `test.py --golden`, the corpus (11,500 instructions),
+  `SettingsRegression` in all four modes (704..707 assertions: every cell
+  value of every knob resolved to its cave, the plain reload's registers,
+  both latch helpers under every role, the seven words naming the
+  dispatchers), controls 12/12 with the roles now decided by the
+  dispatchers, clock 6/6.
 - **C. Latch.** Three engagement tests, one shim, one branch in
   `poly_arp_independence`'s own 32 bytes (it has 11 NOPs).
 - **D. Sequencer.** One test at the arm.

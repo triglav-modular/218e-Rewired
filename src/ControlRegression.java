@@ -1458,7 +1458,8 @@ public class ControlRegression extends SequenceEditRegression {
     }
     void swingRhythm() throws Exception {
         fresh();
-        check("the rhythm hook's pool word names the swing cave",r(0x80019d40L,4)==SWING);
+        check("the rhythm hook's pool word names the dispatcher, and knob 2's live byte says swing",
+            r(0x80019d40L,4)==KBRHY&&r(0x6d2a,1)==2);
         long step=400;
         w(0x60e6,2,0x2f); w(0x6152,1,0);
         check("below the deadzone the step is the step itself",
@@ -1499,6 +1500,9 @@ public class ControlRegression extends SequenceEditRegression {
     // down to bit zero instead.  Both the walk and the wrap shipped in every
     // patterns build with nothing executing them.
     static final long PATTERNS=0x8001b050L, BANK=0x80019f20L, LENGTHS=0x80019fa0L;
+    // The knob dispatchers (stage 2 phase B): the words name these, and the
+    // live option bytes decide where they go.
+    static final long KBSEL=0x8001fb80L, KBRHY=0x8001fbe0L;
     long patternMask(int i) { return r(BANK+4L*i,2)|(r(BANK+4L*i+2,2)<<16); }
     int patternLength(int i) { return (int)r(LENGTHS+2L*i,2); }
     // The bank entry as the gate should play it: 'x' for a step that sounds.
@@ -1538,8 +1542,9 @@ public class ControlRegression extends SequenceEditRegression {
         // Keys held, or the real selector answers -1 to a hit and a hit
         // cannot be told from a rest.
         orderFixture(0,0,4,9,14);
-        check("the factory selector pool names the pattern gate",r(0x80002420L,4)==PATTERNS);
-        check("and the sequencer reaches the same one",r(0x8001b434L,4)==PATTERNS);
+        check("the factory selector pool names the dispatcher, and knob 2's live byte says patterns",
+            r(0x80002420L,4)==KBSEL&&r(0x6d2a,1)==3);
+        check("and the sequencer reaches the same one",r(0x8001b434L,4)==KBSEL);
         // The gate hands a hit to the real selector through its own pool
         // word; with nothing held that selector answers -1 too, and a hit
         // could not be told from a rest.
@@ -1575,7 +1580,8 @@ public class ControlRegression extends SequenceEditRegression {
     }
     void quantizedRhythm() throws Exception {
         fresh();
-        check("the rhythm hook's pool word names the quantized cave",r(0x80019d40L,4)==GRID);
+        check("the rhythm hook's pool word names the dispatcher, and knob 2's live byte says quantized",
+            r(0x80019d40L,4)==KBRHY&&r(0x6d2a,1)==1);
         long beat=400;
         w(0x60e6,2,0); w(0x6152,1,0);
         check("below the deadzone the reload is the beat itself",gridReload(beat)==beat&&r(0x6152,1)==0);

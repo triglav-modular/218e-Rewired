@@ -100,13 +100,9 @@ TABLE_ROTATION = [
 ]
 
 FEATURE_MAP = {
-    "knobs.knob1":            (["arp_selector_pool"], []),
-    "knobs.knob2":            (["arp_rhythm_hook"], []),
-    "knobs.knob3":            (["arp_octave_hook"], []),
-    "knobs.knob4":            (
-        ["vibrato_engine", "vibrato_sine", "pressure_vibrato_scale", "pressure_vibrato_pool"],
-        ["knob4_vibrato"],
-    ),
+    # The four knob roles are option cells since stage 2 phase B: every
+    # knob cave is in every image and the live option bytes choose at boot
+    # (docs/PLAN-SETTINGS-2.md), so they no longer appear here.
     "arp.switch":             (
         ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
          "release_count_guard", "latch_owner",
@@ -146,10 +142,6 @@ FEATURE_MAP = {
 # The value that means "new behaviour" for each setting; anything else (i.e.
 # "factory" / false) leaves the original firmware in charge.
 ENABLED_WHEN = {
-    "knobs.knob1": "arp_order",
-    "knobs.knob2": "arp_rhythm",
-    "knobs.knob3": "arp_octaves",
-    "knobs.knob4": "vibrato",
     "arp.switch": "latch",
     "midi.poly_default": "off",
     "pressure.common_mode": True,
@@ -1196,6 +1188,14 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 # means the build fails on an overlap instead of the instrument misbehaving:
 # a cave writing into another's state is invisible in the patch bytes, since
 # the addresses only exist as immediates.
+# What the image marker leaves out (see the fingerprint in main): the option
+# cells that are runtime since stage 2 phase B, and the pattern bank they
+# alone read.  Mirrored by MARKER_EXCLUDES in web/buildlib.js.
+MARKER_EXCLUDES = frozenset({
+    "knob1", "knob2", "knob3", "knob4", "pattern_count",
+    "arp_pattern_bank", "arp_pattern_len",
+})
+
 RAM_REGIONS = [
     # These used to sit inside the factory's own 16-tap pressure history at
     # 0x3216..0x3235, which was only free because pitch_clamp_skip_1 jumped
@@ -1404,6 +1404,11 @@ RAM_REGIONS = [
     # switches under live state.  The page sends a restart (0x3f04) to
     # apply them, which is a power cycle by way of the watchdog.
     (0x6D28, 0x6D38, "live option bytes: cells 16..31 as booted"),
+    # Knob 1's value while knob 1 blends, zero while it picks orders or is
+    # factory: what the sequencer's shuffle reads, so a recorded order is
+    # kept unless the blend is the knob's job.  Written beside the knob-1
+    # latch every scan; zeroed at boot with the live bytes.
+    (0x6D38, 0x6D39, "knob 1 blend latch"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to
@@ -2127,8 +2132,16 @@ def main() -> None:
     # behaviours.  With all three left factory nothing consumes the latches,
     # and a hook that only feeds our own RAM would still replace factory
     # code the config promised to keep - so it stays out entirely.
-    blocks["arp_gate_hook"] = any(
-        get(cfg, f"knobs.knob{i}") != "factory" for i in (1, 2, 3))
+    # Stage 2 phase B: the knob roles are decided at boot from the option
+    # cells, so every knob cave is in every image and the hooks that reach
+    # them always stand.  The gate hook latches knobs 1-3 into our own RAM
+    # whatever the roles, which nothing else reads.
+    blocks["arp_gate_hook"] = True
+    for name in ("arp_selector_pool", "arp_rhythm_hook", "arp_octave_hook",
+                 "vibrato_engine", "vibrato_sine", "pressure_vibrato_scale",
+                 "pressure_vibrato_pool", "knob4_early_pool"):
+        blocks[name] = True
+    features["knob4_vibrato"] = True
 
     if cfg.get("_pressure_factory"):
         # knob4_pool goes back too: edit-mode knob 4 is the curve selector,
@@ -2170,10 +2183,11 @@ def main() -> None:
     # remap takes the knobs transpose is driven with, so either option retires
     # it.  With both off there is nothing in its way, so key 27 and the trn
     # LED work as they shipped and these three forcing patches stay out.
-    factory_knobs = all(v == "factory" for v in cfg["knobs"].values())
-    if factory_tunings and factory_knobs:
-        for name in ("transpose_force_1", "transpose_force_2", "transpose_force_3"):
-            blocks[name] = False
+    # With the knob roles decided at runtime the build cannot know whether
+    # the knobs are all factory, so the forcing patches stay in every image:
+    # a keyboard set to four factory knobs and no tuning over MIDI keeps the
+    # factory transpose mode forced off, where a build made that way used to
+    # leave it.  A later phase can put the three sites on knob 4's live byte.
 
     # Arp latch reads the live octave offset through the blend hook, so the
     # blend *caves* have to exist whenever latch is on — but the pressure
@@ -2350,8 +2364,7 @@ def main() -> None:
     orders = cfg.get("arp_order", {}).get("knob1_orders", 0)
     if isinstance(orders, bool) or not isinstance(orders, int) or orders not in (0, 1):
         raise SystemExit("[arp_order].knob1_orders must be 0 or 1")
-    cfg["_numbers"]["knob1_orders"] = orders
-    blocks["arp_order_zones"] = orders == 1
+    blocks["arp_order_zones"] = True
     summary.append(f"  {'arp.knob1_orders':28s} "
                    f"{orders}  ({'six zones' if orders else 'press-to-random blend'})")
     # Knob 4: vibrato as in 1.x, or an octave switch.  Both cannot run - they
@@ -2360,7 +2373,6 @@ def main() -> None:
     k4 = cfg.get("knob4", {}).get("octaves", 0)
     if isinstance(k4, bool) or not isinstance(k4, int) or k4 not in (0, 1):
         raise SystemExit("[knob4].octaves must be 0 or 1")
-    cfg["_numbers"]["knob4_octaves"] = k4
     # How many positions knob 4 gets.  The factory has nine: three that mean
     # no transpose, then six steps up.  Six OCTAVES is the reach, so a scale
     # whose period is wider gets proportionally fewer steps rather than a
@@ -2373,14 +2385,9 @@ def main() -> None:
         summary.append(f"  {'knob4.zones':28s} "
                        f"{cfg['_numbers']['knob4_zones']}  "
                        f"(3 silent, then {cfg['_numbers']['knob4_zones'] - 3} up)")
-    blocks["knob4_octave_switch"] = k4 == 1 and get(cfg, "knobs.knob4") == "vibrato"
-    if blocks["knob4_octave_switch"]:
-        features["knob4_vibrato"] = False
-        for name in ("vibrato_engine", "vibrato_sine",
-                     "pressure_vibrato_scale", "pressure_vibrato_pool"):
-            blocks[name] = False
+    blocks["knob4_octave_switch"] = True
     summary.append(f"  {'knob4.octaves':28s} "
-                   f"{k4}  ({'octave switch' if blocks['knob4_octave_switch'] else 'vibrato'})")
+                   f"{k4}  ({'octave switch' if k4 == 1 else 'vibrato'}, the baked default)")
     # Knob 2: randomness as in 1.x, or a bank of step patterns the knob
     # selects from.  A pattern says whether a step sounds at all, which is a
     # different question from how long the step is, so it is gated at the note
@@ -2416,8 +2423,8 @@ def main() -> None:
         tables["arp_pattern_bank"] = [0, 0]
         tables["arp_pattern_len"] = [32]
         cfg["_numbers"]["pattern_count"] = 1
-    blocks["arp_pattern_gate"] = k2 == "patterns"
-    blocks["arp_pattern_tables"] = k2 == "patterns"
+    blocks["arp_pattern_gate"] = True
+    blocks["arp_pattern_tables"] = True
     if k2 == "patterns":
         # The rhythm randomiser reads the SAME knob latch, so leaving it in
         # would mean a denser pattern also bought more jitter in the step
@@ -2425,10 +2432,7 @@ def main() -> None:
         # A pattern is about which steps sound, and the steps have to be
         # evenly spaced for that to mean anything, so the randomiser goes and
         # the factory's own reload stands.
-        blocks["arp_rhythm_hook"] = False
-    cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
-    cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
-    cfg["_numbers"]["knob2_quantized"] = 1 if k2 == "quantized" else 0
+        pass
     cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 200))
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
@@ -2526,10 +2530,10 @@ def main() -> None:
         blocks["blend_offset_apply"] = True
         blocks["blend_target_conditioner"] = True
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
-    blocks["arp_swing"] = k2 == "swing"
+    blocks["arp_swing"] = True
     # Quantized randomness takes the randomiser's hook the way swing does;
     # the pool word at 0x80019d40 names whichever of the three is built.
-    blocks["arp_quantized"] = k2 == "quantized"
+    blocks["arp_quantized"] = True
     # The option cells, 16..27 of the settings mirror (docs/PLAN-SETTINGS-2.md):
     # the config's own choices, baked into the image as its defaults the way
     # a table is, and written into the record beside the numbers.  Stage 2
@@ -2578,11 +2582,16 @@ def main() -> None:
     # a different marker and forces a fresh init on the next power-up — SRAM
     # survives a DFU update, and a fixed marker would let an older build's
     # value suppress newly added initialisation.
+    # The option cells that are decided at runtime, and the data that only
+    # they read, do not shape the code: two builds that differ only in them
+    # produce one marker, so a record made on the page for either is right
+    # for both - which is what lets the knobs change over MIDI without a
+    # flash.  buildlib.js's initMarker leaves out the same keys.
     fingerprint = hashlib.sha256(
         repr(sorted(blocks.items())).encode()
         + repr(sorted(features.items())).encode()
-        + repr(sorted(cfg["_numbers"].items())).encode()
-        + repr(sorted(tables.items())).encode()
+        + repr(sorted(i for i in cfg["_numbers"].items() if i[0] not in MARKER_EXCLUDES)).encode()
+        + repr(sorted(i for i in tables.items() if i[0] not in MARKER_EXCLUDES)).encode()
         + (REPO / "src" / "AssemblePressureFix.java").read_bytes()
     ).digest()
     cfg["_numbers"]["init_marker"] = 0x1000 + (int.from_bytes(fingerprint[:2], "big") % 0xDFFE)

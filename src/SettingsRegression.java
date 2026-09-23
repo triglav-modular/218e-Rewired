@@ -27,6 +27,12 @@ public class SettingsRegression extends PersistenceRegression {
         "clock_divide","pressure_fix","pressure_portamento","quantize_presets","portamento_in"};
     static final int[] OPTION_MAX={1,2,4,1,2,1,1,1,1,1,1};
     static final int PARAMS=354;   // 32 cells, 16 live bytes, 79, 96, 3, 96, 32
+    // Phase B: the knob dispatchers and latch helpers, and the caves they choose.
+    static final long KB=0x8001fb80L, KBSEL=KB, KBK1=KB+0x20, KBRHY=KB+0x60, KBVIB=KB+0xa0;
+    static final long KBEARLY=KB+0xc0, KBLATE=KB+0xe0, KBL1=KB+0x100, KBL3=KB+0x130, BLEND=0x6d38;
+    static final long BLENDSEL=0x8001a0a0L, ZONES=0x8001aec0L, FACTORYSEL=0x800029a8L, GATE=0x8001b050L;
+    static final long RAND=0x80019df8L, GRID=0x8001ea00L, SWING=0x8001b100L, VIB=0x8001a350L;
+    static final long EARLY=0x8001d920L, ADC=0x80004a00L, LATE=0x8001b010L;
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -265,6 +271,57 @@ public class SettingsRegression extends PersistenceRegression {
         keepSlots=false;
         println("PASS dump: every parameter, paced, in order, then the identity block");
     }
+    // Where a dispatcher lands: run it from a caller at 0x100 until the PC
+    // leaves it, and answer the PC - a cave's address, or 0x100 for a return.
+    long resolve(long entry) throws Exception {
+        e.writeRegister("SP",0x7800); e.writeRegister("LR",0x100); jump(entry);
+        for(int i=0;i<40;i++) { long p=pc(); if(p<entry||p>=entry+0x40) return p; step(); }
+        throw new Exception("dispatcher did not leave "+Long.toHexString(entry));
+    }
+    void knobs() throws Exception {
+        fresh();
+        long[] k1={BLENDSEL,ZONES,FACTORYSEL};
+        for(int c=0;c<3;c++) {
+            w(LIVE+1,1,c); w(LIVE+2,1,0);
+            check("knob 1 cell "+c+" selects "+Long.toHexString(k1[c])+", from the factory's word and the gate's",
+                resolve(KBSEL)==k1[c]&&resolve(KBK1)==k1[c]);
+        }
+        w(LIVE+2,1,3);
+        check("knob 2 on patterns puts the gate in front of the selector",resolve(KBSEL)==GATE);
+        w(LIVE+1,1,1);
+        check("and the gate's own word still reaches knob 1's choice",resolve(KBK1)==ZONES);
+        long[] k2={RAND,GRID,SWING};
+        for(int c=0;c<3;c++) { w(LIVE+2,1,c); check("knob 2 cell "+c+" reloads through "+Long.toHexString(k2[c]),resolve(KBRHY)==k2[c]); }
+        for(int c=3;c<5;c++) {
+            w(LIVE+2,1,c); w(S+0x38e,2,0); e.writeRegister("R12",321); e.writeRegister("R8",0); e.writeRegister("R9",0);
+            long p=resolve(KBRHY);
+            check("knob 2 cell "+c+" is the factory's own reload: the tempo stored, R8 the state base, R9 the tempo",
+                p==0x100&&r(S+0x38e,2)==321&&reg("R8")==S&&reg("R9")==321);
+        }
+        w(LIVE+4,1,0);
+        check("knob 4 on vibrato: the engine runs, the octave switch does not, early or late",
+            resolve(KBVIB)==VIB&&resolve(KBEARLY)==ADC&&resolve(KBLATE)==0x100);
+        w(LIVE+4,1,1);
+        check("knob 4 on trn: the octave switch runs early and late, the engine does not",
+            resolve(KBVIB)==0x100&&resolve(KBEARLY)==EARLY&&resolve(KBLATE)==LATE);
+        w(LIVE+4,1,2);
+        check("knob 4 factory: neither",resolve(KBVIB)==0x100&&resolve(KBEARLY)==ADC&&resolve(KBLATE)==0x100);
+        w(LIVE+1,1,0); e.writeRegister("R8",77); resolve(KBL1);
+        check("knob 1 blending: the latch and the blend latch both take the knob",r(0x60f2,1)==77&&r(BLEND,1)==77);
+        w(LIVE+1,1,1); e.writeRegister("R8",66); resolve(KBL1);
+        check("knob 1 on zones: the latch takes the knob, the blend latch zero",r(0x60f2,1)==66&&r(BLEND,1)==0);
+        w(LIVE+1,1,2); e.writeRegister("R8",55); resolve(KBL1);
+        check("knob 1 factory: the same",r(0x60f2,1)==55&&r(BLEND,1)==0);
+        w(LIVE+3,1,0); e.writeRegister("R8",555); resolve(KBL3);
+        check("knob 3 octaves: the latch takes the knob",r(0x60ea,2)==555);
+        w(LIVE+3,1,1); e.writeRegister("R8",555); resolve(KBL3);
+        check("knob 3 factory: the latch reads zero, which is the randomiser's deadzone",r(0x60ea,2)==0);
+        check("the pool words name the dispatchers: the selector's, the rhythm's, the vibrato call, knob 4 early and late, the gate's inner",
+            r(0x80002420L,4)==KBSEL&&r(0x80019d40L,4)==KBRHY&&r(0x8001a344L,4)==KBVIB
+            &&r(0x800051f0L,4)==KBEARLY&&r(0x8001aeb8L,4)==KBLATE&&r(0x8001b0fcL,4)==KBK1
+            &&(!seq||r(0x8001b434L,4)==KBSEL));
+        println("PASS knob roles: every cell value reaches its cave, and the latches follow the roles");
+    }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
     static void stamp(byte[] rec) {
@@ -307,6 +364,7 @@ public class SettingsRegression extends PersistenceRegression {
         boolean live=true;
         for(int i=0;i<16;i++) if(r(LIVE+i,1)!=(r(MIRROR+2*(16+i),2)&0xff)) live=false;
         check("the live option bytes are cells 16..31 as booted",live);
+        check("the blend latch starts at zero",r(BLEND,1)==0);
         check("the reserved cells are zero",r(MIRROR+2*10,4)==0&&r(MIRROR+2*27,2)==0&&r(MIRROR+2*30,4)==0);
         check("nothing loaded: state clean, no slot, generation zero",
             r(STATE,1)==0&&r(STATE+1,1)==0xff&&r(STATE+4,4)==0);
@@ -405,7 +463,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

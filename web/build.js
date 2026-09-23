@@ -118,11 +118,15 @@ var WEBBUILD = (function () {
     function flagsFor(cfg) {
         var flags = BUILDLIB.resolveFlags(cfg);
         var blocks = flags.blocks, features = flags.features;
-        // Same rule as tools/build.py: the arp gate hook latches knobs 1-3
-        // for the replacement behaviours, so with all three factory it goes.
-        blocks.arp_gate_hook = ['knob1', 'knob2', 'knob3'].some(function (k) {
-            return cfg.knobs[k] !== 'factory';
-        });
+        // Same rule as tools/build.py: the knob roles are option cells
+        // decided at boot (stage 2 phase B), so every knob cave is in every
+        // image and the hooks that reach them always stand.
+        blocks.arp_gate_hook = true;
+        ['arp_selector_pool', 'arp_rhythm_hook', 'arp_octave_hook',
+         'vibrato_engine', 'vibrato_sine', 'pressure_vibrato_scale',
+         'pressure_vibrato_pool', 'knob4_early_pool']
+            .forEach(function (n) { blocks[n] = true; });
+        features.knob4_vibrato = true;
         if (cfg._pressure_factory) {
             ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
              // Same rule as tools/build.py: the edit-mode curve knob is
@@ -147,16 +151,9 @@ var WEBBUILD = (function () {
             ['remote_guard_1', 'remote_guard_2', 'remote_guard_3']
                 .forEach(function (n) { blocks[n] = false; });
         }
-        // Same rule as tools/build.py: transpose mode survives only when
-        // neither the tuning applier nor the knob remap has taken what it
-        // needs, so with both off these three forcing patches stay out.
-        var factoryKnobs = Object.keys(cfg.knobs).every(function (k) {
-            return cfg.knobs[k] === 'factory';
-        });
-        if (!anyTuning && factoryKnobs) {
-            ['transpose_force_1', 'transpose_force_2', 'transpose_force_3']
-                .forEach(function (n) { blocks[n] = false; });
-        }
+        // Same rule as tools/build.py: with the knob roles decided at
+        // runtime the build cannot know whether the knobs are all factory,
+        // so the three transpose forcing patches stay in every image.
 
         if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {
             blocks.pitch_target_blend_hook = true;
@@ -180,14 +177,9 @@ var WEBBUILD = (function () {
          'octave_scale_mul', 'octave_scale_bias'].forEach(function (n) {
             blocks[n] = octave !== cfg.tuning.units_per_octave;
         });
-        blocks.arp_order_zones = cfg.arp_order.knob1_orders === 1;
-        blocks.arp_pattern_gate = cfg.knob2.mode === 'patterns';
-        blocks.arp_pattern_tables = blocks.arp_pattern_gate;
-        // Same rule as tools/build.py: the rhythm randomiser reads the same
-        // knob, and even spacing is what makes a pattern legible.
-        if (blocks.arp_pattern_gate) blocks.arp_rhythm_hook = false;
-        blocks.arp_swing = cfg.knob2.mode === 'swing';
-        blocks.arp_quantized = cfg.knob2.mode === 'quantized';
+        // Every knob-2 and knob-1 cave, in every image (stage 2 phase B).
+        ['arp_order_zones', 'arp_pattern_gate', 'arp_pattern_tables', 'arp_swing', 'arp_quantized']
+            .forEach(function (n) { blocks[n] = true; });
         var seq = !!(cfg.sequencer && cfg.sequencer.on);
         ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
          'seq_clock_enabled', 'seq_transport', 'seq_clock_rate_hook',
@@ -242,13 +234,7 @@ var WEBBUILD = (function () {
          'settings_cc_pool', 'clock_init_pool', 'persist_crc']
             .forEach(function (n) { blocks[n] = true; });
         blocks.profiler_pool = div || !!features.scan_profiler;
-        blocks.knob4_octave_switch =
-            cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
-        if (blocks.knob4_octave_switch) {
-            features.knob4_vibrato = false;
-            ['vibrato_engine', 'vibrato_sine', 'pressure_vibrato_scale',
-             'pressure_vibrato_pool'].forEach(function (n) { blocks[n] = false; });
-        }
+        blocks.knob4_octave_switch = true;
         var smoothing = cfg.pressure.output_smoothing;
         // The event-17 wrapper is shared between pressure smoothing and the
         // clock's trigger rise, so it exists for either; dac_interpolate is
