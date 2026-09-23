@@ -668,6 +668,42 @@ rises along it:
   leaving them out of the marker, and building the edit-mode tuning keys
   in every image, is what "every setting over MIDI" still needs - an open
   call, listed in HANDOFF.md.
+- **I. Residue (criterion 3).** Done 2026-09-23. `ControlRegression.residue`,
+  in the default variant's persistent build: one session with every option
+  on - two keys latched with pressure, the octave pads, a preset in the
+  middle position, the jack two periods up, all four knobs moved, a take
+  recorded to six steps and played, three edges into the divider - then
+  the restart into an all-off record (knobs factory, everything else 0,
+  the image's own tables and marker) modelled as the chip returns from the
+  watchdog: the factory's RAM zeroed and its data copied again, custom
+  SRAM above `0x6000` kept, the startup hook, the first-use bootstrap (a
+  no-op, the marker asserted); against a cold boot with the same record
+  and the same persistence ring. `0x6000..0x7000` compared. First run: 76
+  bytes in 25 runs. Three were read with their option off - the vibrato
+  engine's output offset `0x6028`, which `pitch_remap_calibration` adds to
+  every pitch whatever knob 4's role; the jack transposer's state word
+  `0x60fa`, whose `0xa` tag `midi_transpose`, `seq_cv_shift` and the pin
+  honour with the jack on portamento; and the blend's re-base history
+  `0x60f4`, which `blend_rebase` reads from `transpose_capture` with the
+  blend off, folding (old - new) into the offset the boot just zeroed on
+  the first octave pad. `option_boot_state` (`0x8001ff30`, between
+  `option_boot` and `option_boot_blend`) clears them by their bytes;
+  `SettingsRegression.state` asserts both directions. The other 22 runs
+  are the allowlist in the test, each with its reader: the press-order
+  list (the walk re-checks the held flags), the knob latches (rewritten by
+  the first pass), the clock's claimed-beat cells (behind a claim
+  `clock_init` zeroes), the pressure cache and slot weights (rebuilt per
+  pass, bypassed with the fix off), persistence's staged record, the
+  sequencer's per-step cells (behind the mode `persist_boot` zeroes).
+  Found and not fixed: the **volatile build** (no persistence) has no
+  `persist_boot` and `seq_boot` clears only `0x6091` and `0x6502`, so the
+  sequencer's mode (`0x6158`, 2 = PLAY), cursor and presets survive any
+  warm restart there - a take resumes playing after the restart, and with
+  the sequencer turned off the mode stays 2 for `pulse_guard`,
+  `pressure_blend` and `midi_step_degree` to read. Pre-existing for a DFU
+  of the same image; the settings restart makes it reachable from the
+  page. The owner's call whether `seq_boot` should zero the runtime cells
+  (`0x6154..0x6160`, `0x61e1..0x61e5`) in every build.
 
 F and G are the ones that can be left build-time if the ISR body or the
 pressure stretches turn out to cost more than they are worth; nothing in A-E

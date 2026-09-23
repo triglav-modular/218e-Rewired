@@ -45,6 +45,8 @@ public class SettingsRegression extends PersistenceRegression {
     // Phase F: the pressure dispatchers, the three hook caves, the interpolator's gate, the route word, the glide value, the boot clear.
     static final long PF=0x8001ee00L, K1=0x8001ee20L, K4=0x8001ee40L, C2=0x8001ee60L, C1=0x8001ee80L, GN=0x8001eea0L;
     static final long IP=0x8001eec0L, PB=0x8001eef0L, GR=0x8001ef10L, OBC=0x8001ef40L;
+    // option_boot, and option_boot_state between it and the blend tail: the state an option owns, cleared with it off.
+    static final long OB=0x8001fdf0L, OBS=0x8001ff30L;
     static final long CURVE=0x80019580L, I2F=0x80013350L, KNOB1=0x800194c0L, FKNOB1=0x80004188L, KNOB4=0x80014380L, FKNOB4=0x80004070L;
     static final long COND=0x8001ad78L, REMAPCAVE=0x80019980L, INTERP=0x8001a600L, INTERPOUT=0x8001a688L, GLIDETABLE=0x80015150L;
     // Phase G: the ISR dispatch, the event-10 dispatch, the pulse dispatch, and what they choose.
@@ -577,6 +579,34 @@ public class SettingsRegression extends PersistenceRegression {
         keepSlots=false;
         println("PASS pressure: the fix's three words, three hooks and the interpolator follow its byte; the blend's route, glide value and boot clear follow its own");
     }
+    // option_boot_state (criterion 3, 2026-09-23): the vibrato engine's
+    // state with knob 4 off vibrato, the jack transposer's state word with
+    // the jack on portamento, and the blend's re-base history with the
+    // blend off, cleared at boot and left alone otherwise - the three cells
+    // the residue test found read with their option off.
+    void state() throws Exception {
+        fresh(); keepSlots=true;
+        check("option_boot chains through option_boot_state to the blend tail",
+            r(OB+0x58,4)==OBS&&r(OBS+0x40,4)==OBC);
+        byte[] off=edited(); setHalf(off,0x20+2*20,2); setHalf(off,0x20+2*26,0); setHalf(off,0x20+2*24,0); stamp(off); plant(SLOT0,off);
+        cold(); w(0x6024,2,0x1111); w(0x6026,2,0x2222); w(0x6028,2,0x3333); w(0x60fa,2,0xa035); w(0x60f4,2,0x0c82); boot();
+        check("knob 4 factory, jack on portamento, blend off at boot: the vibrato's phase, depth and offset, the transposer's word and the re-base history are cleared"
+            +" live="+r(LIVE+4,1)+","+r(LIVE+10,1)+","+r(LIVE+8,1)+" vib="+Long.toHexString(r(0x6024,2))+","+Long.toHexString(r(0x6026,2))+","+Long.toHexString(r(0x6028,2))
+            +" jack="+Long.toHexString(r(0x60fa,2))+" base="+Long.toHexString(r(0x60f4,2)),
+            r(LIVE+4,1)==2&&r(LIVE+10,1)==0&&r(LIVE+8,1)==0
+            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0xffff);
+        byte[] trn=edited(); setHalf(trn,0x20+2*20,1); setHalf(trn,0x20+2*26,0); setHalf(trn,0x20+2*24,0); setGen(trn,4); stamp(trn); plant(SLOT0,trn);
+        cold(); w(0x6028,2,0x3333); boot();
+        check("knob 4 as trn clears the vibrato too",r(LIVE+4,1)==1&&r(0x6028,2)==0);
+        byte[] on=edited(); setHalf(on,0x20+2*20,0); setHalf(on,0x20+2*26,1); setHalf(on,0x20+2*23,1); setHalf(on,0x20+2*24,1); setGen(on,6); stamp(on); plant(SLOT0,on);
+        cold(); w(0x6024,2,0x1111); w(0x6026,2,0x2222); w(0x6028,2,0x3333); w(0x60fa,2,0xa035); w(0x60f4,2,0x0c82); boot();
+        check("knob 4 vibrato, jack transposing, blend on at boot: all three are their own and stay"
+            +" live="+r(LIVE+4,1)+","+r(LIVE+10,1)+","+r(LIVE+8,1),
+            r(LIVE+4,1)==0&&r(LIVE+10,1)==1&&r(LIVE+8,1)==1
+            &&r(0x6024,2)==0x1111&&r(0x6026,2)==0x2222&&r(0x6028,2)==0x3333&&r(0x60fa,2)==0xa035&&r(0x60f4,2)==0x0c82);
+        keepSlots=false;
+        println("PASS option state: the vibrato's cells, the transposer's word and the re-base history follow their bytes at boot");
+    }
     void clock() throws Exception {
         fresh();
         w(LIVE+6,1,1);
@@ -783,7 +813,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure(); clock(); tunings();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

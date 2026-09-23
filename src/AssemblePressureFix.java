@@ -398,6 +398,11 @@ public class AssemblePressureFix extends GhidraScript {
         // option, and the first-use initialiser does not run again for it.
         long obEntry = 0x8001fdf0L, obLoop = obEntry + 0xa, obLive = obEntry + 0x2c, obStamps = obEntry + 0x36;
         long obOwn = obEntry + 0x4a, obDone = obEntry + 0x54, obEnd = obEntry + 0x60;
+        // option_boot_state: the state an option owns that must not outlive
+        // it, cleared at boot with the option off (criterion 3, 2026-09-23).
+        // Above cv_chain_dispatch, where nothing else is placed.
+        long obsEntry = 0x8001ff30L, obsJack = obsEntry + 0x18, obsBlend = obsEntry + 0x28, obsDone = obsEntry + 0x3c;
+        long obsPool = obsEntry + 0x40, obsEnd = obsEntry + 0x44;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -11808,10 +11813,59 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("BR{ne} 0x%x", obOwn));
         padTo(obDone);
         emit(String.format("LDDPC R8,0x%x", obDone + 4));
-        emit("MOV PC,R8");              // on to option_boot_blend, which returns for both
+        emit("MOV PC,R8");              // on to option_boot_state, then option_boot_blend, which returns for all
         padTo(obDone + 4);
-        word(obcEntry);
+        word(obsEntry);
         finish("option_boot", obEnd);
+
+        // option_boot_state: what the residue test found still read with
+        // its option off after the restart (ControlRegression.residue,
+        // 2026-09-23).  The vibrato engine's output offset at 0x6028 is
+        // added by the pitch remap every scan whichever role knob 4 has,
+        // and only the engine writes it, so with knob 4 not on vibrato the
+        // last offset would sit under every pitch; its phase and depth go
+        // with it so the engine restarts clean when the role comes back.
+        // The jack transposer's state word at 0x60fa carries a validity
+        // tag that midi_transpose, seq_cv_shift and the pin honour whether
+        // or not the jack transposes, so with the jack on portamento it is
+        // unseeded again, as a first boot leaves it.  The blend's re-base
+        // history at 0x60f4 is read by blend_rebase from transpose_capture
+        // with the blend off too, and a base from a session with the blend
+        // on would fold (old - new) into the offset the boot just zeroed on
+        // the first octave pad; -1 is "nothing has sounded under the blend",
+        // the first-use seed.  R9 is zero from option_boot.  Chains on to
+        // option_boot_blend.  A leaf, R8..R10 spent.
+        begin(obsEntry);
+        emit("MOV R9,0x0");
+        emit("MOV R8,0x6d2c");          // knob 4: 0 vibrato, 1 trn, 2 factory
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", obsJack));
+        emit("MOV R8,0x6024");
+        emit("ST.H R8[0x0],R9");        // LFO phase
+        emit("ST.H R8[0x2],R9");        // smoothed depth
+        emit("ST.H R8[0x4],R9");        // the output offset the remap adds
+        padTo(obsJack);
+        emit("MOV R8,0x6d32");          // portamento_in: 1 transpose, 0 portamento
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{eq} 0x%x", obsBlend));
+        emit("MOV R8,0x60fa");
+        emit("ST.H R8[0x0],R9");        // the transposer's state word: unseeded
+        padTo(obsBlend);
+        emit("MOV R8,0x6d30");          // pressure_portamento, the blend
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", obsDone));
+        emit("MOV R10,-0x1");
+        emit("MOV R8,0x60f4");
+        emit("ST.H R8[0x0],R10");       // the re-base history: nothing has sounded under the blend
+        padTo(obsDone);
+        emit(String.format("LDDPC R8,0x%x", obsPool));
+        emit("MOV PC,R8");
+        padTo(obsPool);
+        word(obcEntry);
+        finish("option_boot_state", obsEnd);
         }; // end latchCaves
         latchCaves.go();
 

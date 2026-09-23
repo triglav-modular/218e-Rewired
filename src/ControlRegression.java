@@ -1687,6 +1687,128 @@ public class ControlRegression extends SequenceEditRegression {
             r(0x60f2,1)==75&&r(0x60e6,2)==600&&r(0x60ea,2)==600);
         println("PASS retained-SRAM startup: pickup stamps cleared, no knob freeze");
     }
+    // Criterion 3 (2026-09-23): a setting change must not carry state over.
+    // One session with every option on, dirtying what each of them owns -
+    // latched notes, a take recorded and played, the divider fed edges,
+    // pressure in the cache, the jack up, a preset in the middle position,
+    // the knobs moved - then the restart that turns every option off, with
+    // custom RAM kept as SRAM keeps it, against a cold boot with the same
+    // record.  Whatever differs is state an option left behind for the
+    // others to read; each run in the allowlist below is one that is read
+    // only by the option that wrote it, and says why.
+    static final long RES_LO=0x6000, RES_HI=0x7000;
+    // The allowlist: each run is state read only by the option that wrote
+    // it, or rewritten before anything reads it.  What is NOT here is what
+    // option_boot and option_boot_state clear: the latch's stamps, term and
+    // maps, the blend's offset and re-base history, the vibrato's cells and
+    // the jack transposer's state word.
+    static final long[][] RESIDUE_OK={
+        {0x6000,0x6021}, // arp press-order list: the walk re-checks the held flags before it returns a key, the append moves a key it finds before adding it, and knob 1 factory never reads it
+        {0x604e,0x6050}, // jack transposer: the slot's own pitch of the key being recorded, parked between the recorder's two halves and written before it is read
+        {0x608e,0x608f}, // latch-position mirror: housekeeping rewrites it from the switch every scan; the blend is its only reader
+        {0x609c,0x609e}, // held pitch for a claimed beat: read under a claim, and clock_init zeroes the claim
+        {0x60dc,0x60e0}, // claimed beat's gate target: the same
+        {0x60e6,0x60e8}, // arp knob 2 latch: rewritten by the first housekeeping pass; the role caves a factory knob bypasses are its readers
+        {0x60ea,0x60ec}, // arp knob 3 latch: the same
+        {0x60ef,0x60f0}, // previous switch position: the latch-exit watch fires once on the first scan, clearing held flags that are already clear
+        {0x60f0,0x60f4}, // knob 4 and knob 1 latches, as knob 2's; 0x60f3 the preset's degree count, republished by the first scan's transposer chain before any press
+        {0x60fc,0x6100}, // jack bookkeeping: table entry 0 as last written and the key the refresh belongs to, which the first scan's rebuild rewrites
+        {0x6100,0x613a}, // corrected-pressure cache: rebuilt for every key each pass with the fix on, bypassed with it off
+        {0x6300,0x6420}, // persistence's staged record: written by every capture before the commit reads it
+        {0x6503,0x6504}, // the sequencer step sounding now: every reader asks the mode first, and persist_boot zeroes the mode
+        {0x6540,0x657a}, // slot-indexed pressure weights: zeroed and rebuilt per scan by the blend
+        {0x657e,0x657f}, // last scan's step count: the strip's own, read in WRITE
+        {0x6600,0x6640}, // per-step preset degrees: playback's, behind the mode, and restored from the ring
+    };
+    static boolean residueAllowed(long a) { for(long[] r:RESIDUE_OK) if(a>=r[0]&&a<r[1]) return true; return false; }
+    byte[] allOffRecord() {
+        // The image's own record with every option off: the mirror after a
+        // boot without a record is the payload, the marker is what the
+        // first-use initialiser left at 0x602a, and the period is 484
+        // (every controls variant repeats at the octave).  The knobs' "off"
+        // is the factory role, not zero.
+        byte[] rec=new byte[0x2a8];
+        byte[] payload=e.readMemory(toAddr(0x6800),0x288-0x20);
+        System.arraycopy(payload,0,rec,0x20,payload.length);
+        int[] off={0,2,4,1,2,0,0,0,0,0,0,0};
+        for(int c=16;c<28;c++) { rec[0x20+2*c]=0; rec[0x21+2*c]=(byte)off[c-16]; }
+        rec[0]=0x32; rec[1]=0x31; rec[2]=0x38; rec[3]=0x53;     // "218S"
+        rec[5]=2; rec[6]=0x02; rec[7]=(byte)0x98; rec[11]=1;   // layout 2, payload 0x298, generation 1
+        int marker=(int)r(0x602a,2); rec[0x10]=(byte)(marker>>8); rec[0x11]=(byte)marker;
+        rec[0x12]=(byte)(PERIOD>>8); rec[0x13]=(byte)PERIOD;
+        java.util.zip.CRC32 c=new java.util.zip.CRC32(); c.update(rec,4,8); c.update(rec,0x10,0x2a8-0x10);
+        long v=c.getValue(); for(int i=0;i<4;i++) rec[12+i]=(byte)(v>>>(24-8*i));
+        return rec;
+    }
+    void plantSettings(byte[] rec) {
+        byte[] ff=new byte[0x800]; Arrays.fill(ff,(byte)255);
+        e.writeMemory(toAddr(0x8003d000L),ff); e.writeMemory(toAddr(0x8003d800L),ff);
+        e.writeMemory(toAddr(0x8003d000L),rec);
+    }
+    // The watchdog restart as the chip comes back from it: the C runtime
+    // zeroes the factory's RAM and copies its initialised data again, the
+    // peripherals are as a reset leaves them, and custom SRAM above 0x6000
+    // holds what the session left.  Then the startup hook, and the shared
+    // first-use bootstrap as the first handler would call it - a no-op
+    // when the marker survived, which is asserted first.
+    void warmRestart() throws Exception {
+        byte[] kept=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
+        long marker=r(0x602a,2);
+        e.writeMemory(toAddr(0),new byte[0x8000]);
+        e.writeMemory(toAddr(8),e.readMemory(toAddr(0x80015d28L),0x2ecc)); w(0x2ed4,4,0xffffffffL);
+        for(int i=0;i<=12;i++) e.writeRegister("R"+i,0);
+        e.writeRegister("SR",0); for(String f:new String[]{"N","Z","V","C"}) e.writeRegister(f,0);
+        w(0x29cc,4,25000000); w(S+0x20c,4,1); time(0);
+        w(0xffff1060L,4,0); w(0xffff10d0L,4,0);
+        w(0xffff2404L,4,0); w(0xffff2410L,4,0x202);
+        e.writeMemory(toAddr(RES_LO),kept);
+        boot();
+        check("the first-use marker survives the restart",r(0x602a,2)==marker);
+        call(0x8001ab60L);
+    }
+    void residue() throws Exception {
+        setup(4,true,1);                       // every option on, a take of four steps, the arp in latch
+        byte[] record=allOffRecord();
+        // The session.
+        touchOn(9); touchOn(4); w(0x6100+18,2,600); w(0x6100+8,2,300); sound(); sound();
+        touchOff(4); sound();                  // a latched key, a held key with pressure
+        octavePad(2); sound(); octavePad(1); sound();
+        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,900); sound();   // the preset in the middle position
+        w(S+0x2f0,2,2*(int)r(0x680a,2)); sound(); sound();                          // the jack two periods up
+        w(S+0x30a,2,700); w(S+0x30c,2,650); w(S+0x30e,2,600); w(S+0x310,2,500); sound(); sound();  // the knobs moved
+        append(5); append(7); command(0); command(1); sound(); sound();             // two more steps, the take closed and played
+        for(int i=0;i<3;i++) { externalBeat(); sound(); }                          // edges into the divider
+        check("the session left a take playing: mode="+r(0x6158,1)+" steps="+r(0x61e0,1),r(0x6158,1)==2&&r(0x61e0,1)>=6);
+        // The restart that turns everything off, custom RAM kept.
+        plantSettings(record);
+        warmRestart();
+        check("the restart booted the all-off record",r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4);
+        byte[] warmRam=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
+        // The cold boot with the same record: a new machine, the record in
+        // its slot and the same musical persistence ring in flash before the
+        // first boot, so a take restored from the ring is on both sides.
+        byte[] ring=e.readMemory(toAddr(BASE),0x1000);
+        fresh(); plantSettings(record); e.writeMemory(toAddr(BASE),ring); cold();
+        check("the cold boot booted the all-off record",r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4);
+        byte[] coldRam=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
+        // Runs of differing bytes, each with what the two boots hold; the
+        // ones outside the allowlist are the residue.
+        StringBuilder diff=new StringBuilder(); int n=0, runs=0, allowed=0, residue=0;
+        for(int i=0;i<warmRam.length;i++) {
+            if(warmRam[i]==coldRam[i]) continue;
+            int j=i; while(j<warmRam.length&&warmRam[j]!=coldRam[j]) j++;
+            n+=j-i; runs++;
+            boolean ok=true; for(int k=i;k<j;k++) if(!residueAllowed(RES_LO+k)) { ok=false; residue++; } else allowed++;
+            if(runs<=60) {
+                diff.append(String.format("\n  %s %04x..%04x (%d):",ok?"ok     ":"RESIDUE",RES_LO+i,RES_LO+j-1,j-i));
+                for(int k=i;k<Math.min(j,i+8);k++) diff.append(String.format(" %02x/%02x",warmRam[k]&255,coldRam[k]&255));
+                if(j-i>8) diff.append(" ...");
+            }
+            i=j-1;
+        }
+        println("RESIDUE "+n+" byte(s) in "+runs+" run(s) differ after a warm all-off restart (warm/cold), "+allowed+" allowlisted, "+residue+" residue:"+diff);
+        check("a warm restart with every option off leaves the same custom RAM as a cold boot with it, bar the allowlist: "+residue+" byte(s) of residue",residue==0);
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         transpose=args.length>0&&args[0].equals("trn");
@@ -1735,6 +1857,11 @@ public class ControlRegression extends SequenceEditRegression {
             if(gridRhythm)try { quantizedRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(knob2.equals("swing"))try { swingRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(knob2.equals("patterns"))try { patternGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            // The default variant alone: one image with every option on, and
+            // the persistent build, whose persist_boot resets the sequencer's
+            // runtime; the volatile build keeps a take and its mode in SRAM
+            // by design and is reported, not asserted (docs/PLAN-SETTINGS-2.md).
+            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing")&&persistent)try { residue(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }

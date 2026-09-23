@@ -154,13 +154,18 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   byte `0x6d33`) decides the two edit keys, the applier and the
   remote-enable guards, so a keyboard built without a tuning takes tables
   over MIDI; only a scale with a non-octave period still takes a flash;
-  (3) no side effects - partly: an option applies only at the restart and
-  `option_boot` clears the latch's and the blend's state; the systematic
-  residue test (a session with every option on, a warm all-off restart,
-  RAM compared against a cold boot with the same record) is drafted in
-  this session's scratchpad for `ControlRegression` and not yet run. Also
-  open: bench validation of both stages, the wide-map refusal (phase E)
-  and the added page copy (phases A and H). (Dispatcher event 32 at `0x80004fc2`
+  (3) no side effects - the residue test (`ControlRegression.residue`: a
+  session with every option on, a warm all-off restart, custom RAM
+  compared against a cold boot with the same record and ring) ran
+  2026-09-23 and found three cells read with their option off - the
+  vibrato offset the remap adds, the jack transposer's tagged state word,
+  the blend's re-base history - now cleared by `option_boot_state`; the
+  22 other runs are allowlisted in the test with their readers
+  (PLAN-SETTINGS-2.md, record I). Open from it: the volatile build keeps
+  the sequencer's mode and cursor across any warm restart (no
+  `persist_boot` there), the owner's call. Also open: bench validation of
+  both stages, the wide-map refusal (phase E) and the added page copy
+  (phases A and H). (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
