@@ -8,7 +8,7 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): phases A to F built; G next.** The owner's calls at
+**Status (2026-09-23): phases A to G built; H next.** The owner's calls at
 the end were answered the same day: the whole scope, layout 2, and options
 that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
@@ -609,8 +609,51 @@ rises along it:
   eleven words and MCALLs, and the offset cleared or kept at boot),
   controls 12/12 with lean running the fix and the blend off, clock
   6/6.
-- **G. Clock.** The ISR cave's factory body, the acquisition gate, the
-  pulse-pool dispatchers, the edge filter.
+- **G. Clock.** Built 2026-09-23. Every clock cave is in every image;
+  three dispatchers at `0x8001ef60..0x8001efe0` decide, on the live byte
+  at `0x6d2e`. The divider engages only through edges its ISR cave
+  captures - the capture ISR is the sole writer of the FIFO and of the
+  presence byte, and `clock_service`, the gate, the tempo hook, the
+  attack guard and the beat path all stand down without them - so the
+  acquisition gate the plan sketched was not needed: the ISR hook is the
+  gate. It was reshaped rather than replayed: the hook covers only the six
+  bytes it needs (the flag getter's call and the `MOV` after it), the rest
+  of the factory body stays in flash, and `clock_irq_dispatch` either runs
+  the capture cave and returns to the hook's `RJMP` over the body, or
+  replays the two displaced instructions and continues at `0x800072f4`,
+  where the factory reads the level, steps the arp, posts event 10 and
+  clears the flag as it always did. The factory's own pool word at
+  `0x80007334`, which that body calls through and which the old
+  `clock_irq_pool` had repurposed, is left as the factory wrote it; the
+  hook's word is the dispatch's own. Mode 0 (both edges) stays: the
+  factory body reads the pin and only clears the flag on a low, so the
+  falling edge it now also receives costs one short interrupt and nothing
+  else, which is what the plan asked to verify. Event 10's handler, which
+  the divider skipped, is an 8-byte hook to `clock_event_dispatch`: over
+  the step with the divider live, `MOV R12,0xffff` and the factory's arp
+  step with the divider off, with the site's own LR. The four pulse pools
+  name `pulse_dispatch`: the clock's settle-and-flush path, or
+  `pulse_defer_set`, so the beat keeps the scan grid a build without the
+  divider had. `seq_clock_input_hook` stands in every image, since the
+  factory ISR posts the event whenever the byte is off - the assembler
+  used to emit it only without `clock_capture`, and the seq mode's
+  transport suite caught the gap at once: with the gate missing the
+  factory's own switch test at `0x80004e58` skipped the event and no
+  external beat advanced the take.
+  `trigger_spike_units` stays at its configured 5 either way, the one
+  difference from a build without the divider that the plan accepted.
+  The cell is out of the image marker (checked: 6331 with the divider off).
+  Verified: both toolchains at `29ea5257`, historical `9d713fdb` (sweep:
+  match + known image), parity 44/44, `test.py --golden`, the corpus
+  (11,812 instructions), `SettingsRegression` in all four modes
+  (1247..1250 assertions: the three dispatchers under both states, the
+  ISR's off path replaying the flag getter into the factory body, the
+  whole ISR from its entry with a low then a high - captured with the byte
+  on, not with it off - and the words: the factory's at `0x80007334`, the
+  two hooks' `MCALL`s onto their own words, the four pulse pools),
+  controls 12/12, clock 6/6 with the divider live through the
+  dispatchers (the GPIO interrupt's longest path is 85 steps where it was
+  79: the dispatch's six instructions).
 - **H. Page, copy (owner's), docs, `SETTINGS.md`.**
 
 F and G are the ones that can be left build-time if the ISR body or the

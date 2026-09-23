@@ -47,6 +47,9 @@ public class SettingsRegression extends PersistenceRegression {
     static final long IP=0x8001eec0L, PB=0x8001eef0L, GR=0x8001ef10L, OBC=0x8001ef40L;
     static final long CURVE=0x80019580L, I2F=0x80013350L, KNOB1=0x800194c0L, FKNOB1=0x80004188L, KNOB4=0x80014380L, FKNOB4=0x80004070L;
     static final long COND=0x8001ad78L, REMAPCAVE=0x80019980L, INTERP=0x8001a600L, INTERPOUT=0x8001a688L, GLIDETABLE=0x80015150L;
+    // Phase G: the ISR dispatch, the event-10 dispatch, the pulse dispatch, and what they choose.
+    static final long CI=0x8001ef60L, CE=0x8001ef90L, PU=0x8001efc0L, CAPTURE=0x8001c200L, FBODY=0x800072f4L;
+    static final long SKIP10=0x800051b0L, ARPSTEP=0x8000210cL, CLOCKPULSE=0x8001c700L, DEFER=0x8001a26cL, ISR=0x800072e4L, ISREND=0x80007328L;
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -567,6 +570,36 @@ public class SettingsRegression extends PersistenceRegression {
         keepSlots=false;
         println("PASS pressure: the fix's three words, three hooks and the interpolator follow its byte; the blend's route, glide value and boot clear follow its own");
     }
+    void clock() throws Exception {
+        fresh();
+        w(LIVE+6,1,1);
+        check("divider on: the ISR hook reaches the capture cave, event 10 is skipped, the pulse pools reach the clock's pulse",
+            resolve(CI)==CAPTURE&&resolve(CE)==SKIP10&&resolve(PU)==CLOCKPULSE);
+        w(LIVE+6,1,0);
+        long p=resolve(CE);
+        check("divider off: event 10 makes the factory's arp step with R12 = 0xffff",p==ARPSTEP&&reg("R12")==0xffff);
+        check("divider off: the pulse pools reach pulse_defer_set",resolve(PU)==DEFER);
+        // The ISR's off path: the flag getter replayed - IFR bit 5 set reads as 1 in R8 - then the factory body.
+        w(0xffff10d0L,4,0x20); e.writeRegister("R12",5); p=call(CI,FBODY);
+        check("divider off: the hook replays the flag getter and continues in the factory body, flag="+reg("R8"),reg("R8")==1);
+        // The whole ISR from its entry, a low then a high a millisecond apart: the divider captures the edge with the byte on and
+        // not with it off, where the factory body runs instead.
+        for(int on=1;on>=0;on--) {
+            w(LIVE+6,1,on); w(0x6232,1,0); w(0x6234,1,0); w(0x6235,1,0); w(0x6236,1,0);
+            time(10); w(0xffff10d0L,4,0x20); w(0xffff1060L,4,0); call(ISR,ISREND);
+            time(11); w(0xffff10d0L,4,0x20); w(0xffff1060L,4,0x20); call(ISR,ISREND);
+            check((on==1?"divider on":"divider off")+": a rising edge after a low "+(on==1?"is captured":"is not captured")
+                +", produced="+r(0x6234,1)+" present="+r(0x6236,1),
+                r(0x6234,1)==on&&r(0x6236,1)==on);
+        }
+        long ci=(CI+0x24-(0x800072eeL&~3L))>>2, ce=(CE+0x1c-(0x80004e72L&~3L))>>2, sg=(0x8001d63cL-(0x80004e58L&~3L))>>2;
+        check("the words: the factory's own at 0x80007334, the two hooks' MCALLs onto their dispatch words, the sequencer's gate in front of the event, and the four pulse pools",
+            r(0x80007334L,4)==0x80002440L&&r(0x800072eeL,4)==(0xf01f0000L|(ci&0xffffL))&&r(CI+0x24,4)==CI
+            &&r(0x80004e58L,4)==(0xf01f0000L|(sg&0xffffL))
+            &&r(0x80004e72L,4)==(0xf01f0000L|(ce&0xffffL))&&r(CE+0x1c,4)==CE
+            &&r(0x8000243cL,4)==PU&&r(0x80005ed8L,4)==PU&&r(0x800063fcL,4)==PU&&r(0x800065a4L,4)==PU);
+        println("PASS clock: the ISR, event 10 and the pulse pools follow the divider's byte; with it off the factory body runs and nothing is captured");
+    }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
     static void stamp(byte[] rec) {
@@ -708,7 +741,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure(); clock();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

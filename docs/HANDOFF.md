@@ -137,8 +137,11 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   its straight preset add back) and phase F (the pressure path: three
   dispatchers on the factory's pool words, three hooks where the 2-byte
   patches stood, the interpolator's pass-through, the blend's route word
-  and glide value) are built (2026-09-23). Phases G (the clock) and H (the
-  page and docs) remain. (Dispatcher event 32 at `0x80004fc2`
+  and glide value) and phase G (the clock divider: the ISR hook reshaped
+  to six bytes so the factory body stays for the off path, event 10's
+  handler and the four pulse pools dispatched) are built (2026-09-23).
+  Phase H (the page's copy, the docs, `SETTINGS.md`) remains, and the
+  page copy in it is the owner's. (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),

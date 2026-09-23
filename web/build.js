@@ -206,8 +206,9 @@ var WEBBUILD = (function () {
          'persist_same', 'persist_verify', 'persist_save', 'persist_tick',
          'persist_capture', 'persist_boot', 'persist_scan_shim', 'persist']
             .forEach(function (n) { blocks[n] = keep; });
-        var div = !!(cfg.clock && cfg.clock.divide);
-        blocks.seq_clock_input_hook = !div;
+        // Since phase G the factory ISR posts the clock event whenever the
+        // divider's byte is off, so the sequencer's gate on it always stands.
+        blocks.seq_clock_input_hook = true;
         // Same rule as tools/build.py: transpose_capture lives inside the
         // blend hook and is what keeps 0x60a0 current, which the sequencer
         // reads as the take's reference.  The hook exists whenever the
@@ -216,16 +217,19 @@ var WEBBUILD = (function () {
         blocks.pitch_target_blend_hook = true;
         blocks.blend_offset_apply = true;
         blocks.blend_target_conditioner = true;
+        // Stage 2 phase G, same rule as tools/build.py: the divider is
+        // decided at boot from its option cell, so every clock cave is in
+        // every image.
         ['clock_scan', 'clock_pulse', 'clock_hook',
          'clock_tempo', 'clock_tempo_hook',
          'clock_ms_tick', 'clock_ms_pool',
          'clock_gate', 'clock_gate_hook', 'clock_settle',
-         'clock_capture', 'clock_irq_hook', 'clock_irq_pool',
+         'clock_capture', 'clock_irq_hook',
          'clock_edge_mode', 'clock_init', 'clock_init_pool',
          'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard',
          'clock_spike_units', 'clock_fast_trigger', 'clock_remap_bare',
          'clock_deadline', 'clock_pitch_target']
-            .forEach(function (n) { blocks[n] = div; });
+            .forEach(function (n) { blocks[n] = true; });
         // The settings mirror is in every image, as tools/build.py has it:
         // the boot chain starts at settings_boot and its validator shares
         // persist_crc, so both stay on with persistence off.
@@ -236,14 +240,14 @@ var WEBBUILD = (function () {
          'settings_commit', 'settings_verify', 'settings_cc_hook',
          'settings_cc_pool', 'clock_init_pool', 'persist_crc']
             .forEach(function (n) { blocks[n] = true; });
-        blocks.profiler_pool = div || !!features.scan_profiler;
+        blocks.profiler_pool = true;
         blocks.knob4_octave_switch = true;
         var smoothing = cfg.pressure.output_smoothing;
         // The event-17 wrapper is shared between pressure smoothing and the
         // clock's trigger rise, so it exists for either; dac_interpolate is
         // the pressure half alone.  Mirrors tools/build.py.
         ['dac_interpolator', 'dac_flush_pool']
-            .forEach(function (n) { blocks[n] = !!smoothing || div; });
+            .forEach(function (n) { blocks[n] = !!smoothing || true; });   // the divider is in every image since phase G
         ['dac_interpolate', 'pressure_target_redirect']
             .forEach(function (n) { blocks[n] = !!smoothing; });
         return { blocks: blocks, features: features };

@@ -65,6 +65,17 @@ function assembleProgram() {
         var pbEntry = 0x8001eef0, pbOff = pbEntry + 0x10, pbPool = pbEntry + 0x14, pbEnd = pbEntry + 0x20;
         var grEntry = 0x8001ef10, grClassic = grEntry + 0x10, grTable = grEntry + 0x20, grPool = grEntry + 0x2c, grEnd = grEntry + 0x30;
         var obcEntry = 0x8001ef40, obcDone = obcEntry + 0x14, obcEnd = obcEntry + 0x20;
+        // Phase G: the clock divider, live byte 0x6d2e.  The divider engages
+        // only through edges its ISR cave captures, so with the byte off the
+        // GPIO interrupt runs the factory's own body instead (clock_irq_dispatch
+        // replays the two displaced instructions and continues in the factory
+        // code, which is left in flash), the event the factory body posts
+        // reaches the factory's arp step again (clock_event_dispatch), and the
+        // four pulse pools go back to pulse_defer_set (pulse_dispatch), so the
+        // beat keeps the scan grid a build without the divider had.
+        var ciEntry = 0x8001ef60, ciOff = ciEntry + 0x10, ciPool = ciEntry + 0x1c, ciEnd = ciEntry + 0x30;
+        var ceEntry = 0x8001ef90, ceOff = ceEntry + 0x10, cePool = ceEntry + 0x18, ceEnd = ceEntry + 0x30;
+        var puEntry = 0x8001efc0, puOff = puEntry + 0x10, puPool = puEntry + 0x14, puEnd = puEntry + 0x20;
 
         // The key selector: the dispatcher, for the factory's pool word and
         // the sequencer's alike, so the two can never disagree.
@@ -10039,18 +10050,20 @@ function assembleProgram() {
         emit("ST.B R10[0x238],R8");
         finish("release_count_guard", 0x80005f14);
 
-        // Repointed pulse-caller pools (arp advance + three key-scan sites).
+        // Repointed pulse-caller pools (arp advance + three key-scan sites):
+        // pulse_dispatch, which names the clock's settle-and-flush path or
+        // pulse_defer_set by the divider's live byte (stage 2 phase G).
         begin(0x8000243c);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_arp", 0x80002440);
         begin(0x80005ed8);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_key1", 0x80005edc);
         begin(0x800063fc);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_key2", 0x80006400);
         begin(0x800065a4);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_key3", 0x800065a8);
 
         // Hook: the factory rate-table lookup and store routed through the
@@ -10091,24 +10104,36 @@ function assembleProgram() {
             finish("clock_gate_hook", 0x800021ee);
         }
 
-        // Clock builds never post event 10. A stale/synthetic event must not
-        // bypass the capture FIFO and advance a note without a physical edge.
-        if (block("clock_pulse")) {
-            begin(0x80004e72);
-            emit("RJMP 0x800051b0");
-            finish("clock_hook", 0x80004e7a);
-        }
+        // Event 10, the factory's physical-clock event: `MOV R12,0xffff;
+        // MCALL arp step`, eight bytes.  With the divider live the ISR never
+        // posts it, and a stale or synthetic one must not bypass the capture
+        // FIFO and advance a note without a physical edge, so the event is
+        // skipped; with the divider off the factory ISR posts it again and
+        // the step is made.  clock_event_dispatch decides (phase G), by the
+        // live byte, with the site's own LR.
+        begin(0x80004e72);
+        emit(StringFormat("MCALL PC[0x%x]", cePool + 4));   // clock_event_dispatch
+        emit("NOP");
+        emit("NOP");
+        finish("clock_hook", 0x80004e7a);
 
-        if (block("clock_capture")) {
-            // Keep the factory ISR prologue/epilogue and RETE. Replace ALL
-            // raw gate-low/post-event work, including the late IFR clear.
-            begin(0x800072ee);
-            emit("MCALL PC[0x80007334]");
-            emit("RJMP 0x80007322");
-            finish("clock_irq_hook", 0x80007322);
-            begin(0x80007334);
-            word(0x8001c200);
-            finish("clock_irq_pool", 0x80007338);
+        // Keep the factory ISR prologue/epilogue and RETE.  The hook covers
+        // the first six bytes of the body - the flag getter's call and the
+        // MOV that follows - and the rest of the factory body stays in
+        // flash: with the divider live clock_irq_dispatch runs the capture
+        // cave and comes back to the RJMP, which skips the factory body;
+        // with it off the dispatch replays those two instructions and
+        // continues at 0x800072f4, and the factory body reads the level,
+        // steps the arp, posts event 10 and clears the flag as it always
+        // did - a falling edge, which mode 0 now also delivers, reads low
+        // and only clears the flag.  The factory's own word at 0x80007334
+        // is left as the factory wrote it, since that body calls through
+        // it; the hook's word is the dispatch's own.
+        begin(0x800072ee);
+        emit(StringFormat("MCALL PC[0x%x]", ciPool + 8));   // clock_irq_dispatch
+        emit("RJMP 0x80007322");
+        finish("clock_irq_hook", 0x800072f4);
+        {
             singlePatch("clock_edge_mode", 0x8000737e, "MOV R11,0x0");
             // The trigger spike's own length.  The factory schedules the
             // drop with 3 at 0x80007888 and the owner measured that spike at
@@ -11830,6 +11855,75 @@ function assembleProgram() {
         finish("option_boot_blend", obcEnd);
         }        pressureCaves();
 
+        // Phase G: the clock divider (docs/PLAN-SETTINGS-2.md).
+        function clockCaves() {        // clock_irq_dispatch: inside the factory ISR's frame, from the hook
+        // at 0x800072ee.  Live: the capture cave, which returns to the hook's
+        // RJMP over the factory body.  Off: the two instructions the hook
+        // displaced - `MCALL` the flag getter with R12 = 5, `MOV R8,R12` -
+        // and on into the factory body at 0x800072f4, which the ISR's own
+        // frame returns from.  Spends R8 and R9; the capture cave spends
+        // both, and the factory body's next act is a compare of R8.
+        begin(ciEntry);
+        emit("MOV R8,0x6d2e");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ciOff));
+        emit(StringFormat("LDDPC R8,0x%x", ciPool));
+        emit("MOV PC,R8");
+        padTo(ciOff);
+        emit("MOV R12,0x5");
+        emit("MCALL PC[0x8000732c]");   // the factory's flag getter, through the factory's own word
+        emit("MOV R8,R12");
+        emit(StringFormat("LDDPC R9,0x%x", ciPool + 4));
+        emit("MOV PC,R9");
+        padTo(ciPool);
+        word(0x8001c200); // the capture cave
+        word(0x800072f4); // the factory body, after the displaced pair
+        word(ciEntry);
+        finish("clock_irq_dispatch", ciEnd);
+
+        // clock_event_dispatch: event 10's handler, from the hook at
+        // 0x80004e72.  Live: over the step to 0x800051b0, as the hook
+        // jumped.  Off: `MOV R12,0xffff` and the factory's arp step, with
+        // the site's own LR, which returns to the branch after the hook.
+        // Spends R8.
+        begin(ceEntry);
+        emit("MOV R8,0x6d2e");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ceOff));
+        emit(StringFormat("LDDPC R8,0x%x", cePool));
+        emit("MOV PC,R8");
+        padTo(ceOff);
+        emit("MOV R12,0xffff");
+        emit(StringFormat("LDDPC R8,0x%x", cePool + 8));
+        emit("MOV PC,R8");
+        padTo(cePool);
+        word(0x800051b0); // past the step
+        word(ceEntry);
+        word(0x8000210c); // the factory's arp step
+        finish("clock_event_dispatch", ceEnd);
+
+        // pulse_dispatch: the four pulse pools.  Live: the clock's
+        // settle-and-flush path, which owns gate-low for a selected note.
+        // Off: pulse_defer_set, the scan-grid pulse a build without the
+        // divider had.  Spends R8, which both overwrite first.
+        begin(puEntry);
+        emit("MOV R8,0x6d2e");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", puOff));
+        emit(StringFormat("LDDPC R8,0x%x", puPool));
+        emit("MOV PC,R8");
+        padTo(puOff);
+        emit(StringFormat("LDDPC R8,0x%x", puPool + 4));
+        emit("MOV PC,R8");
+        padTo(puPool);
+        word(0x8001c700); // the clock's pulse: settle, then the flush
+        word(0x8001a26c); // pulse_defer_set
+        finish("pulse_dispatch", puEnd);
+        }        clockCaves();
+
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a
         // table out of it, whatever else is built.  settings_boot's last
@@ -11868,16 +11962,17 @@ function assembleProgram() {
             emit("BR{eq} 0x80004fae");
             emit("RJMP 0x80004f9e");
             finish("seq_clock_tick_hook", 0x80004f9e);
-            // Clock-divider builds consume GPIO only through their FIFO.
-            // Without it, retain the factory's physical-clock event path.
-            if (!block("clock_capture")) {
-                begin(0x80004e58);
-                emit("MCALL PC[0x8001d63c]");
-                emit("CP.W R8,0x0");
-                emit("BR{eq} 0x8000518a");
-                emit("RJMP 0x80004e72");
-                finish("seq_clock_input_hook", 0x80004e72);
-            }
+            // The factory's physical-clock event path.  With the divider
+            // live the ISR consumes edges through its FIFO and never posts
+            // this event; with it off (stage 2 phase G) the factory ISR
+            // posts it again, so the sequencer's gate stands in every image
+            // and the event goes on to clock_event_dispatch at 0x80004e72.
+            begin(0x80004e58);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8000518a");
+            emit("RJMP 0x80004e72");
+            finish("seq_clock_input_hook", 0x80004e72);
             begin(0x80004efc);
             emit("MCALL PC[0x8001d63c]");
             emit("CP.W R8,0x0");

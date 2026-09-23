@@ -1183,7 +1183,7 @@ MARKER_EXCLUDES = frozenset({
     "knob1", "knob2", "knob3", "knob4", "pattern_count",
     "arp_pattern_bank", "arp_pattern_len",
     "latching_arp", "sequencer", "quantize_presets", "portamento_in",
-    "pressure_fix", "pressure_portamento",
+    "pressure_fix", "pressure_portamento", "clock_divide",
 })
 
 RAM_REGIONS = [
@@ -2480,18 +2480,24 @@ def main() -> None:
         cfg.get("sequencer", {}).get("trigger_spike_units", 5))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
+    # Stage 2 phase G: the divider is decided at boot from its option cell,
+    # so every clock cave is in every image.  It engages only through edges
+    # its ISR cave captures; with the byte off the ISR hook runs the
+    # factory's own body, event 10 reaches the factory's arp step again and
+    # the pulse pools go back to pulse_defer_set.  trigger_spike_units
+    # stays at its configured value either way.
     for name in ("clock_scan", "clock_pulse", "clock_hook",
                  "clock_tempo", "clock_tempo_hook",
                  "clock_ms_tick", "clock_ms_pool",
                  "clock_gate", "clock_gate_hook", "clock_settle",
-                 "clock_capture", "clock_irq_hook", "clock_irq_pool",
+                 "clock_capture", "clock_irq_hook",
                  "clock_edge_mode", "clock_init", "clock_init_pool",
                  "clock_service", "clock_output", "clock_low_age", "clock_attack_guard",
                  "clock_spike_units", "clock_fast_trigger", "clock_remap_bare",
                  "clock_deadline", "clock_pitch_target"):
-        blocks[name] = div
-    blocks["profiler_pool"] = div or features.get("scan_profiler", False)
-    summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
+        blocks[name] = True
+    blocks["profiler_pool"] = True
+    summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}  (option cell; every cave built)")
     keep = bool(cfg.get("persist", {}).get("on"))
     for name in ("persist_crc", "persist_record_crc", "persist_pack",
                  "persist_valid", "persist_newest", "persist_load",
@@ -2532,7 +2538,10 @@ def main() -> None:
                  "seq_record_pitch", "seq_preview_pin", "seq_hold", "seq_flash",
                  "seq_restart_init", "seq_boot"):
         blocks[name] = True
-    blocks["seq_clock_input_hook"] = not div
+    # The factory's physical-clock event path for the sequencer: reached only
+    # when the factory ISR posts the event, which since phase G is whenever
+    # the divider's byte is off, so the hook stands in every image.
+    blocks["seq_clock_input_hook"] = True
     # transpose_capture lives inside the blend hook, and it is what keeps
     # 0x60a0 - the live transpose - current.  The sequencer reads that cell as
     # the take's reference and as the term every recorded step is stored
@@ -2587,7 +2596,7 @@ def main() -> None:
     # and gating the whole wrapper on smoothing left that build's trigger back
     # on the 5 ms scan with the fast-trigger cave unreachable.
     for name in ("dac_interpolator", "dac_flush_pool"):
-        blocks[name] = bool(smoothing) or div
+        blocks[name] = bool(smoothing) or True   # the divider is in every image since phase G
     for name in ("dac_interpolate", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "
