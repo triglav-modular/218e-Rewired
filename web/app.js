@@ -1353,6 +1353,21 @@
             return out && inp ? { output: out, input: inp } : null;
         }, function () { return null; });
     }
+    // The firmware the keyboard said it runs, kept in its own place beside
+    // the buttons rather than only inside a read's report.  Filled from
+    // every identity the page already gets - a read, a send, a refusal that
+    // carries one - and never by asking on its own: nothing goes out to a
+    // port until a button is pressed.  Cleared when the port changes or the
+    // keyboard stops answering, since the next reply may be another device.
+    function showFirmware(id) {
+        var ver = id && id.firmwareVersion;
+        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + ver : '';
+        $('kbdVer').classList.toggle('hidden', !ver);
+    }
+    function firmwareFrom(err) {
+        if (err && err.identity) showFirmware(err.identity);
+        else if (err && err.reason === 'no reply') showFirmware(null);
+    }
     function optionWords(names) {
         var labels = { latching_arp: 'the latching arpeggiator', knob1: 'knob 1', knob2: 'knob 2', knob3: 'knob 3',
                        knob4: 'knob 4', sequencer: 'the sequencer', clock_divide: 'the clock divider',
@@ -1368,7 +1383,7 @@
         // someone building an image to download has no use for the prompt.
         // The list fills on the first focus, as the calibration's does.
         $('kbdPort').addEventListener('focus', function () { if (!kbd.listed) listKeyboard(); });
-        $('kbdPort').addEventListener('change', refresh);
+        $('kbdPort').addEventListener('change', function () { showFirmware(null); refresh(); });
         $('kbdSend').addEventListener('click', function () {
             var ports = keyboardPorts();
             if (!ports || !state.result) return;
@@ -1378,6 +1393,7 @@
             var record = recordBytes(state.result.settings), name = ports.output.name;
             SETTINGSMIDI.install(ports.output, ports.input, record, {})
                 .then(function (id) {
+                    showFirmware(id);
                     if (!id.restarted) { msg($('kbdMsg'), 'ok', 'Sent and saved.'); return; }
                     // An option changed: the keyboard is restarting to run
                     // it, and its ports go away and come back meanwhile.
@@ -1393,6 +1409,7 @@
                         })
                         .then(function () { kbd.listed = false; return listKeyboard(); });
                 }, function (err) {
+                    firmwareFrom(err);
                     msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
                 })
                 .then(refresh);
@@ -1526,10 +1543,12 @@
                 .then(function (r) {
                     // The verdict compares against the build before the load
                     // invalidates it.
+                    showFirmware(r.identity);
                     var text = describeKeyboard(r);
                     msg($('kbdMsg'), 'ok', text + '\n\n' + loadFromKeyboard(r));
                 })
                 .catch(function (err) {
+                    firmwareFrom(err);
                     msg($('kbdMsg'), 'bad', readRefusal(err));
                 })
                 .then(refresh);

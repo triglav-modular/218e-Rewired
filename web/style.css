@@ -2757,6 +2757,11 @@ section,
    box are furniture, not an offer. */
 /* Away from what it undoes, at the far end of its row. */
 .push-end { margin-left: auto; }
+/* The keyboard's firmware, on a line of its own under step 5's buttons:
+   at the end of their row it sat there on a wide window and dropped to a
+   right-aligned line of its own on a narrower one, so where to look for it
+   depended on the window. */
+.kbdver { margin: 10px 0 0; }
 .autologrow { display: none; margin-top: .7rem; }
 .autologrow.on { display: flex; }
 /* Secondary actions are not the page's big accent pills: those are for the
