@@ -1387,17 +1387,16 @@ td input {
 /* The Windows notes fold into the Windows line of the step that runs the
    flasher: a Mac reader never opens them.  That line is the summary, so it
    drops the summary's label treatment and reads like the macOS line above
-   it.  The chevron trails the line rather than leading it, which keeps
-   "Windows" aligned under "macOS".  It hangs off the file name rather than
-   being an inline box of its own, which on a phone wrapped onto a line by
-   itself under the name; and it takes no space, because a reserved margin
-   left too little for the name, which then broke.  When the name fills the
-   line the mark sits in the step's 22px right padding, 6 + 15 of it. */
+   it.  The chevron leads it, as on every other dropdown, but hangs in the
+   step's left gutter instead of pushing the line right, so "Windows" stays
+   aligned under "macOS".  The gutter is clear there: the step number sits
+   on the first line only.  10px from the text is the summary's own gap. */
 .windrop {
   margin: 0;
 }
 .windrop > summary {
   display: block;
+  position: relative;
   font-size: inherit;
   font-weight: inherit;
   text-transform: none;
@@ -1405,28 +1404,13 @@ td input {
   color: var(--ink);
 }
 .windrop > summary::before {
-  content: none;
-}
-.windrop > summary .mono {
-  position: relative;
-}
-.windrop > summary .mono::after {
-  content: "";
   position: absolute;
-  left: calc(100% + 6px);
-  top: calc(50% - 7.5px);
-  width: 15px;
-  height: 15px;
+  left: -25px;
+  top: calc((1lh - 15px) / 2);
   background: var(--accent);
-  -webkit-mask: var(--chevron) center / contain no-repeat;
-  mask: var(--chevron) center / contain no-repeat;
-  transition: transform .18s ease, background-color .15s;
 }
-.windrop > summary:hover .mono::after {
+.windrop > summary:hover::before {
   background: var(--ink);
-}
-.windrop[open] > summary .mono::after {
-  transform: rotate(90deg);
 }
 .windrop > div {
   margin: 4px 0 6px;
