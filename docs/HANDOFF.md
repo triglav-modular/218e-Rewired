@@ -121,7 +121,10 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   table, with the scaling and offset read off the table). The identity
   block leads with the firmware version (`0x3f76`, frozen numbers) and the
   page's verdict tells an older, a newer and a same-version-other-options
-  keyboard apart. Nothing here has run on the instrument yet. (Dispatcher event 32 at `0x80004fc2`
+  keyboard apart. Nothing here has run on the instrument yet. Stage 2 -
+  the blocks and knob roles as option cells in the same record, applied
+  at boot - is planned in [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md)
+  (2026-09-23) and not started; its scope is the owner's call. (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),

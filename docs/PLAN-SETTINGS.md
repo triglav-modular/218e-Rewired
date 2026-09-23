@@ -5,7 +5,8 @@ over Web MIDI, with no DFU round trip: the pitch calibration, the volts per
 octave and pitch offset that live inside it, the three tuning slots, the
 pattern bank, and the build numbers nobody has measured yet. Everything that
 is *code* - which features are in, which role each knob has - stays a build
-option; that is stage 2, and it is not laid out here.
+option; that is stage 2, laid out in [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md)
+(planned 2026-09-23, not built).
 
 **Built (2026-09-22):** the whole firmware side and the page's codec. The
 record and both serializers (`tools/settings.py`, `BUILDLIB.settingsRecord`);
@@ -29,7 +30,7 @@ rather than read are marked as such.
 | the unmeasured numbers below | immediates in caves | RAM cells, over MIDI |
 | non-octave tunings | change `octave_units`, which is compiled into eleven sites, five of them in the factory octave-switch block at `0x8000336c` | **stay build-time** - a runtime tuning must repeat at the period the image was built with |
 | `pressure_curve` (1828 bytes at `0x80018d80`), `black_key_excess` | generated from frozen `INTERNAL_DEFAULTS`, identical in every build | stay baked |
-| every `block.*` and `feature.*`, the knob roles | code present or absent | stage 2 |
+| every `block.*` and `feature.*`, the knob roles | code present or absent | stage 2: [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md) |
 
 The numbers, all of them in caves and all of them 2- or 4-byte `MOV` or `CP`
 immediates today, with the range the assembler already enforces:
