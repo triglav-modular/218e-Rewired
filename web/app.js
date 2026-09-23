@@ -1357,7 +1357,8 @@
         var labels = { latching_arp: 'the latching arpeggiator', knob1: 'knob 1', knob2: 'knob 2', knob3: 'knob 3',
                        knob4: 'knob 4', sequencer: 'the sequencer', clock_divide: 'the clock divider',
                        pressure_fix: 'the pressure fix', pressure_portamento: 'the pressure portamento',
-                       quantize_presets: 'preset quantization', portamento_in: 'the portamento jack' };
+                       quantize_presets: 'preset quantization', portamento_in: 'the portamento jack',
+                       alternate_tunings: 'the tuning slots' };
         return names.map(function (n) { return labels[n] || n; }).join(', ');
     }
     if ($('kbdSend')) {
@@ -1411,9 +1412,11 @@
     // The verdict is one line.  With a build here it says how the keyboard
     // relates to it: the same build, this build with edits, or another
     // build, told apart by the firmware version the keyboard reports -
-    // the same version from another build wants a flash (since stage 2
-    // the options are not in the image marker, so "another build" means
-    // other tunings, another pitch table or scaling, or another page), an
+    // the same version from another build wants a flash ("another build"
+    // means other code: the options, the tables and the timing numbers are
+    // not in the image marker, so it is a tuning whose period is not the
+    // octave, whose octave arithmetic is patched in place, or a different
+    // page), an
     // older one a flash to update, a newer one a fresher page.  With no
     // build here it says whether anything was ever changed over MIDI.
     function describeKeyboard(r) {
@@ -1433,8 +1436,8 @@
         } else if (ver === null) {
             verdict = 'This keyboard runs a different build. Its settings are listed below.';
         } else if (BUILDLIB.compareVersions(ver, page) === 0) {
-            verdict = 'This keyboard runs Rewired ' + ver + ' built with other tunings, pitch table or scaling. ' +
-                      'Flash the firmware from step 3 to bring it to this build; its options can be sent from here after that.';
+            verdict = 'This keyboard runs Rewired ' + ver + ' from another build: a scale with another period, or a different page. ' +
+                      'Flash the firmware from step 3 to bring it to this build.';
         } else if (BUILDLIB.compareVersions(ver, page) < 0) {
             verdict = 'This keyboard runs Rewired ' + ver + '; this page builds ' + page + '. ' +
                       'Its settings are loaded here. Flash the firmware from step 3 to update it.';

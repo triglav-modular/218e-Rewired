@@ -89,6 +89,7 @@ OPTION_LIST = (
     ("pressure_portamento", (False, True), True),
     ("quantize_presets", (False, True), True),
     ("portamento_in", ("portamento", "transpose"), "transpose"),
+    ("alternate_tunings", (False, True), False),
 )
 OPTION_CELL = 16
 OPTION_INDEX = {name: OPTION_CELL + i for i, (name, _choices, _default) in enumerate(OPTION_LIST)}

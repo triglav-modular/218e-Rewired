@@ -141,16 +141,26 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   to six bytes so the factory body stays for the off path, event 10's
   handler and the four pulse pools dispatched) and phase H (the docs,
   the page's copy) are built (2026-09-23). The reference is
-  [SETTINGS.md](SETTINGS.md). Open, for the owner's three approval
-  criteria (2026-09-23): an emulator A/B of the new image against the
-  shipped 2.4 image through the factory entry points both share; every
-  setting over MIDI, which still needs the pitch table, the tuning tables
-  and the timing numbers left out of the image marker and the edit-mode
-  tuning keys built in every image (today a changed table is refused as
-  another image and travels with a flash); and a residue test that boots
-  each option off after a session with it on and compares our RAM
-  against a cold boot. Also open: bench validation of both stages, the
-  wide-map refusal (phase E) and the added page copy (phases A and H). (Dispatcher event 32 at `0x80004fc2`
+  [SETTINGS.md](SETTINGS.md). The owner's three approval criteria
+  (2026-09-23): (1) everything as in 2.4 - open: the evidence still owed
+  is an emulator A/B of the new image against the shipped 2.4 image
+  (`build/Rewired_marton_2.4.0_DFU.hex`, untracked) through the factory
+  entry points both share, scripted gestures in, DAC slots and MIDI sends
+  out, diffed with the same options; (2) every setting over MIDI - done
+  the same evening: the image marker leaves out the pitch table, the
+  tuning tables, the keys per period and the ten timing numbers (checked:
+  builds with a tuning, a pitch correction, no pitch offset and 1 V/oct
+  share the default's marker), and cell 27 (`alternate_tunings`, live
+  byte `0x6d33`) decides the two edit keys, the applier and the
+  remote-enable guards, so a keyboard built without a tuning takes tables
+  over MIDI; only a scale with a non-octave period still takes a flash;
+  (3) no side effects - partly: an option applies only at the restart and
+  `option_boot` clears the latch's and the blend's state; the systematic
+  residue test (a session with every option on, a warm all-off restart,
+  RAM compared against a cold boot with the same record) is drafted in
+  this session's scratchpad for `ControlRegression` and not yet run. Also
+  open: bench validation of both stages, the wide-map refusal (phase E)
+  and the added page copy (phases A and H). (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),

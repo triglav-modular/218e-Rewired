@@ -1183,7 +1183,15 @@ MARKER_EXCLUDES = frozenset({
     "knob1", "knob2", "knob3", "knob4", "pattern_count",
     "arp_pattern_bank", "arp_pattern_len",
     "latching_arp", "sequencer", "quantize_presets", "portamento_in",
-    "pressure_fix", "pressure_portamento", "clock_divide",
+    "pressure_fix", "pressure_portamento", "clock_divide", "alternate_tunings",
+    # And the record's own data, since 2026-09-23 (the owner's criterion:
+    # every setting over MIDI): the record bounds-checks all of it, and
+    # octave_units, which the octave arithmetic is patched for, is checked
+    # on its own at load.
+    "pitch_remap", "tuning_slot0", "tuning_slot1", "tuning_slot2", "tuning_period_keys",
+    "tie_glide_rate", "strip_halfway_units", "clock_min_ms", "clock_rearm_us",
+    "clock_lock_pulses", "transpose_cv_period", "transpose_cv_zero",
+    "transpose_cv_hysteresis", "chord_hold_scans", "latch_state_hold_scans",
 })
 
 RAM_REGIONS = [
@@ -1460,6 +1468,11 @@ FACTORY_CELLS = [
     # The factory's pressure gain, which pitch_clamp_2 replays from the
     # factory's own pair while the fix is off (stage 2 phase F).
     (0x389C, 0x38A0, "state+0x33c: the factory pressure gain"),
+    # The two cells the edit keys' caves address by the state base since
+    # cell 27 (2026-09-23): the remote-enable flag the factory's key 28
+    # toggles and the guards read, and the dirty flag both keys set.
+    (0x3562, 0x3563, "state+0x2: the factory remote-enable flag"),
+    (0x359A, 0x359B, "state+0x3a: the factory settings dirty flag"),
     # The switch byte preset_degrees reads lives inside the region below at
     # 0x38A0, so it needs no entry of its own.
     # 32 halfwords - the tuning applier loop counts MOV R9,0x20 - so the
@@ -2161,19 +2174,12 @@ def main() -> None:
     # in place — key 27 was the transpose-mode toggle, key 28 the remote-enable
     # toggle — and the applier asserts the LEDs and zeroes the old
     # transpose-mode byte, so all three have to go, not just the keys.
+    # Since 2026-09-23 that is option cell 27 (alternate_tunings), decided at
+    # boot: the two keys, the applier and the remote-enable guards are in
+    # every image and follow the live byte, so a keyboard built without a
+    # tuning takes tables over MIDI and its keys become the slot selectors.
     factory_tunings = all(slot == "factory" for slot in cfg["tuning"]["slots"])
-    if factory_tunings:
-        features["alternate_tunings"] = False
-        blocks["edit_key27_tuning_slot1"] = False
-        blocks["edit_key28_tuning_slot0"] = False
-        # Remote enable goes back with them.  The guards were added when the
-        # tuning selector lived in state+0x2, the factory's remote-enable
-        # flag; it moved to RAM 0x6090 and nothing shares that byte any more,
-        # so with no tuning installed there is nothing to protect against.
-        for name in ("remote_guard_1", "remote_guard_2", "remote_guard_3"):
-            blocks[name] = False
-    else:
-        features["alternate_tunings"] = True
+    features["alternate_tunings"] = True
 
     # Transpose mode survives only when nothing has taken what it needs.  The
     # tuning applier zeroes the transpose-mode byte outright, and the knob
@@ -2586,6 +2592,7 @@ def main() -> None:
         "pressure_portamento": bool(get(cfg, "portamento.pressure_blend")),
         "quantize_presets": bool(get(cfg, "presets.quantize")),
         "portamento_in": "transpose" if get(cfg, "portamento_in.transpose") else "portamento",
+        "alternate_tunings": not factory_tunings,
     }))
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))

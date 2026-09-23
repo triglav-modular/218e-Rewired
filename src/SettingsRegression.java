@@ -24,8 +24,8 @@ public class SettingsRegression extends PersistenceRegression {
     static final int[] DEFAULTS={60,2048,4,250,5,123,0,2,300,200};
     // The option cells, 16..26, and the top of each one's range.
     static final String[] OPTIONS={"latching_arp","knob1","knob2","knob3","knob4","sequencer",
-        "clock_divide","pressure_fix","pressure_portamento","quantize_presets","portamento_in"};
-    static final int[] OPTION_MAX={1,2,4,1,2,1,1,1,1,1,1};
+        "clock_divide","pressure_fix","pressure_portamento","quantize_presets","portamento_in","alternate_tunings"};
+    static final int[] OPTION_MAX={1,2,4,1,2,1,1,1,1,1,1,1};
     static final int PARAMS=354;   // 32 cells, 16 live bytes, 79, 96, 3, 96, 32
     // Phase B: the knob dispatchers and latch helpers, and the caves they choose.
     static final long KB=0x8001fb80L, KBSEL=KB, KBK1=KB+0x20, KBRHY=KB+0x60, KBVIB=KB+0xa0;
@@ -50,6 +50,9 @@ public class SettingsRegression extends PersistenceRegression {
     // Phase G: the ISR dispatch, the event-10 dispatch, the pulse dispatch, and what they choose.
     static final long CI=0x8001ef60L, CE=0x8001ef90L, PU=0x8001efc0L, CAPTURE=0x8001c200L, FBODY=0x800072f4L;
     static final long SKIP10=0x800051b0L, ARPSTEP=0x8000210cL, CLOCKPULSE=0x8001c700L, DEFER=0x8001a26cL, ISR=0x800072e4L, ISREND=0x80007328L;
+    // Cell 27: the two tuning keys' caves, the remote-enable guard, the applier's dispatch, and what they choose.
+    static final long TK27=0x8001e8e0L, TK28=0x8001e930L, RG=0x8001e980L, TA=0x8001e9a0L, APPLIERCAVE=0x80019a40L;
+    static final long K27FACTORY=0x80003d88L, K28FACTORY=0x80003dc0L;
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -174,8 +177,12 @@ public class SettingsRegression extends PersistenceRegression {
         check("an option past its range is ignored",r(MIRROR+2*17,2)==(was17==2?1:2));
         nrpn(18,4); check("knob 2 reaches factory, its top value",r(MIRROR+2*18,2)==4);
         nrpn(18,5); check("and not past it",r(MIRROR+2*18,2)==4);
-        nrpn(10,1); nrpn(27,1);
-        check("a reserved cell refuses everything but zero",r(MIRROR+2*10,2)==0&&r(MIRROR+2*27,2)==0);
+        nrpn(10,1); nrpn(28,1);
+        check("a reserved cell refuses everything but zero",r(MIRROR+2*10,2)==0&&r(MIRROR+2*28,2)==0);
+        int was27=(int)r(MIRROR+2*27,2); nrpn(27,was27==1?0:1);
+        check("the tunings' switch, cell 27, takes the other value",r(MIRROR+2*27,2)==(was27==1?0:1));
+        nrpn(27,2); check("and not past it",r(MIRROR+2*27,2)==(was27==1?0:1));
+        nrpn(27,was27);
         byte[] beforeLive=e.readMemory(toAddr(LIVE),16); nrpn(0x21,1); nrpn(0x2f,7);
         check("the live bytes are read-only over MIDI",Arrays.equals(beforeLive,e.readMemory(toAddr(LIVE),16)));
         // The pair: portamento needs the fix, on receive as on load.
@@ -600,6 +607,41 @@ public class SettingsRegression extends PersistenceRegression {
             &&r(0x8000243cL,4)==PU&&r(0x80005ed8L,4)==PU&&r(0x800063fcL,4)==PU&&r(0x800065a4L,4)==PU);
         println("PASS clock: the ISR, event 10 and the pulse pools follow the divider's byte; with it off the factory body runs and nothing is captured");
     }
+    void tunings() throws Exception {
+        fresh();
+        w(LIVE+11,1,1);
+        check("tunings on: the chain's applier word reaches the applier",resolve(TA)==APPLIERCAVE);
+        w(0x6090,1,1); w(S+0x6a,1,1); w(S+0x3a,1,0); long p=resolve(TK27);
+        check("tunings on: key 27 takes slot 1 to slot 2, zeroes transpose mode, sets the dirty flag and returns",
+            p==0x100&&r(0x6090,1)==2&&r(S+0x6a,1)==0&&r(S+0x3a,1)==1);
+        p=resolve(TK27);
+        check("and back to slot 1",p==0x100&&r(0x6090,1)==1);
+        w(0x6090,1,0); w(S+0x3a,1,0); p=resolve(TK28);
+        check("tunings on: key 28 takes slot 0 to slot 2 and sets the dirty flag",p==0x100&&r(0x6090,1)==2&&r(S+0x3a,1)==1);
+        p=resolve(TK28);
+        check("and back to slot 0",p==0x100&&r(0x6090,1)==0);
+        w(S+0x2,1,1); e.writeRegister("R8",S); p=resolve(RG);
+        check("tunings on: the remote-enable guard reads zero, Z set",p==0x100&&reg("R8")==0&&reg("Z")==1);
+        w(LIVE+11,1,0);
+        check("tunings off: the applier word returns",resolve(TA)==0x100);
+        w(0x6090,1,1); w(S+0x6a,1,1); p=resolve(TK27);
+        check("tunings off: key 27 replays the factory's load and goes on into the factory key, slot untouched",
+            p==K27FACTORY&&reg("R8")==1&&r(0x6090,1)==1);
+        w(S+0x2,1,0); p=resolve(TK28);
+        check("tunings off: key 28 replays the factory's load and toggle and goes on into the factory key",
+            p==K28FACTORY&&reg("R8")==1&&r(0x6090,1)==1);
+        w(S+0x2,1,1); e.writeRegister("R8",S); p=resolve(RG);
+        check("tunings off: the guard reads the flag itself, Z clear",p==0x100&&reg("R8")==1&&reg("Z")==0);
+        w(S+0x2,1,0); e.writeRegister("R8",S); p=resolve(RG);
+        check("and Z set when the flag is zero",p==0x100&&reg("R8")==0&&reg("Z")==1);
+        long k27=(TK27+0x44-(0x80003d82L&~3L))>>2, k28=(TK28+0x44-(0x80003db8L&~3L))>>2;
+        long g1=(RG+0x18-(0x80006528L&~3L))>>2, g2=(RG+0x18-(0x800066aeL&~3L))>>2, g3=(RG+0x18-(0x800085daL&~3L))>>2;
+        check("the words: the applier's, both keys' MCALLs onto their own words, and the three guards' MCALLs onto the guard's",
+            r(0x8001a340L,4)==TA&&r(TK27+0x44,4)==TK27&&r(TK28+0x44,4)==TK28&&r(RG+0x18,4)==RG
+            &&r(0x80003d82L,4)==(0xf01f0000L|(k27&0xffffL))&&r(0x80003db8L,4)==(0xf01f0000L|(k28&0xffffL))
+            &&r(0x80006528L,4)==(0xf01f0000L|(g1&0xffffL))&&r(0x800066aeL,4)==(0xf01f0000L|(g2&0xffffL))&&r(0x800085daL,4)==(0xf01f0000L|(g3&0xffffL)));
+        println("PASS tunings: the two edit keys, the remote-enable guard and the applier follow cell 27's byte");
+    }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
     static void stamp(byte[] rec) {
@@ -699,7 +741,7 @@ public class SettingsRegression extends PersistenceRegression {
         long[][] bad={{0,1,0xff},{4,2,1},{4,2,3},{6,2,0x299},{8,4,0},{0x10,2,0x1234},{0x12,2,485},
             {0x20,2,0},{0x20,2,1025},{0x24,2,5},{0x2e,2,65},{0x60,2,0x1000},{0xfe,2,0x1000},
             {0x100,2,0x1000},{0x1c0,2,0},{0x1c4,2,keys},{0x248,2,33},
-            {0x34,2,1},{0x56,2,1},{0x42,2,3},{0x44,2,5},{0x48,2,3}};
+            {0x34,2,1},{0x56,2,2},{0x58,2,1},{0x42,2,3},{0x44,2,5},{0x48,2,3}};   // cell 27 is the tunings' switch now: 2 is out of range, 28 is reserved
         for(long[] b:bad) {
             byte[] rec=good.clone();
             for(int i=0;i<b[1];i++) rec[(int)b[0]+i]=(byte)(b[2]>>>(8*(b[1]-1-i)));
@@ -741,7 +783,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure(); clock();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure(); clock(); tunings();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

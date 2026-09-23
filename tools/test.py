@@ -1364,13 +1364,18 @@ def test_migration_and_empty_hand() -> None:
     # handler and two commands write it.  The tuning slot must not share it,
     # or picking a tuning enables remote control and a remote-enable message
     # retunes the instrument.
-    for start, name in (("0x80003d82L", "edit_key27_tuning_slot1"),
-                        ("0x80003db8L", "edit_key28_tuning_slot0"),
-                        ("0x80019a40L", "tuning_applier_tables")):
+    # Since cell 27 the slot work lives in tuning_key27 and tuning_key28;
+    # each cave's OFF path replays the factory's own key, and key 28's factory
+    # job is the remote-enable toggle, so that path reads state+0x2 by design.
+    # The slot work - everything before the off label - must not.
+    for start, name, off in (("tk27Entry", "tuning_key27", "padTo(tk27Off)"),
+                             ("tk28Entry", "tuning_key28", "padTo(tk28Off)"),
+                             ("0x80019a40L", "tuning_applier_tables", None)):
         body = cave(start, name)
+        slot_work = body[:body.index(off)] if off else body
         check(f"{name} keeps the tuning slot off state+0x2",
-              'emit("MOV R9,0x6090");' in body
-              and not re.search(r'emit\("(LD|ST)\.\w+ R\d+,?R?\d*\[0x2\]', body))
+              'emit("MOV R9,0x6090");' in slot_work
+              and not re.search(r'emit\("(LD|ST)\.\w+ R\d+,?R?\d*\[0x2\]', slot_work))
 
     # Knob 4 sets the pressure curve level, and it does so from wherever the
     # knob physically is - mode 0 is "no pads held".  Removing this once made
@@ -2137,7 +2142,8 @@ def test_settings_record() -> None:
     check("and parse names them again", S.parse(rec2)["options"] == {
         "latching_arp": False, "knob1": "orders", "knob2": "patterns", "knob3": "factory",
         "knob4": "trn", "sequencer": False, "clock_divide": False, "pressure_fix": True,
-        "pressure_portamento": False, "quantize_presets": False, "portamento_in": "portamento"},
+        "pressure_portamento": False, "quantize_presets": False, "portamento_in": "portamento",
+        "alternate_tunings": False},
         str(S.parse(rec2)["options"]))
     raises("an option outside its choices is refused",
            lambda: S.option_cells({"knob2": "random"}), "knob2")

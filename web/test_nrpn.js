@@ -61,14 +61,15 @@ check('an option left out is the page\'s default: latch on, knob 1 order, the fi
       B.nrpnValueOf(record, 16) === 1 && B.nrpnValueOf(record, 17) === 0 && B.nrpnValueOf(record, 23) === 1
       && B.nrpnValueOf(record, 24) === 1 && B.nrpnValueOf(record, 25) === 1);
 check('the reserved cells are zero', B.nrpnValueOf(record, 10) === 0 && B.nrpnValueOf(record, 15) === 0
-      && B.nrpnValueOf(record, 27) === 0 && B.nrpnValueOf(record, 31) === 0);
+      && B.nrpnValueOf(record, 28) === 0 && B.nrpnValueOf(record, 31) === 0);
 check('the cells are where the firmware has them', B.SETTINGS_OPTION_CELL === 16 && B.SETTINGS_CELLS.length === 32
       && B.SETTINGS_CELLS[16][0] === 'latching_arp' && B.SETTINGS_CELLS[26][0] === 'portamento_in'
-      && B.SETTINGS_CELLS[18][3] === 4 && B.SETTINGS_CELLS[27][0] === null && B.NRPN_LIVE.base === 0x20 && B.NRPN_LIVE.count === 16);
+      && B.SETTINGS_CELLS[18][3] === 4 && B.SETTINGS_CELLS[27][0] === 'alternate_tunings' && B.SETTINGS_CELLS[28][0] === null
+      && B.NRPN_LIVE.base === 0x20 && B.NRPN_LIVE.count === 16);
 check('optionCells and optionsOf are inverses', JSON.stringify(B.optionsOf(B.optionCells({ knob2: 'patterns', latching_arp: false, portamento_in: 'portamento' })))
       === JSON.stringify({ latching_arp: false, knob1: 'order', knob2: 'patterns', knob3: 'octaves', knob4: 'vibrato',
                            sequencer: true, clock_divide: true, pressure_fix: true, pressure_portamento: true,
-                           quantize_presets: true, portamento_in: 'portamento' }));
+                           quantize_presets: true, portamento_in: 'portamento', alternate_tunings: false }));
 check('an option outside its choices is refused', (function () {
     try { B.optionCells({ knob2: 'random' }); return false; } catch (e) { return /knob2 must be one of/.test(e.message); }
 })());
@@ -142,7 +143,7 @@ check('a dump\'s pairs rebuild the record\'s payload byte for byte', samePayload
 var f = B.settingsFields(back);
 check('the options come back by name', f.cells.knob2 === 2 && f.options.knob2 === 'swing' && f.options.knob4 === 'trn'
       && f.options.sequencer === false && f.options.portamento_in === 'portamento' && f.options.latching_arp === true
-      && Object.keys(f.options).length === 11, JSON.stringify(f.options));
+      && Object.keys(f.options).length === 12, JSON.stringify(f.options));
 // The live bytes ride in a dump between the cells and the pitch curve.
 var liveDump = all.slice();
 for (var lv = 0; lv < 16; lv++) liveDump.splice(32 + lv, 0, [0x20 + lv, lv === 2 ? 3 : (lv === 4 ? 1 : B.nrpnValueOf(record, 16 + lv))]);
@@ -152,7 +153,8 @@ check('a dump without them gives null', B.nrpnLiveOf(all) === null);
 check('pending names the options whose cell and live byte differ', B.pendingOptions(record, B.nrpnLiveOf(liveDump)).join(',') === 'knob2'
       && B.pendingOptions(record, B.nrpnLiveOf(all)).length === 0
       && B.pendingOptions(record, [1, 0, 2, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]).length === 0
-      && B.pendingOptions(record, [1, 0, 2, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0]).join(',') === 'cell 27');
+      && B.pendingOptions(record, [1, 0, 2, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0]).join(',') === 'alternate_tunings'
+      && B.pendingOptions(record, [1, 0, 2, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0]).join(',') === 'cell 28');
 check('the fields come back by name', f.numbers.chord_hold_scans === 200
       && f.numbers.transpose_cv_period === 819 && f.numbers.tie_glide_rate === 60
       && f.pitch_remap.length === 79 && f.pitch_remap[78] === 485 + 40 * 78

@@ -18,16 +18,21 @@ here has run on an instrument yet; see the end.
 
 The page sends a record only to the image it was made for: the record
 carries the image marker, and the keyboard refuses any other. The marker
-hashes the code that is in the image, its build-time tables and the
-assembler source. Since stage 2 it leaves out the option cells and the
-pattern bank, so two builds that differ only in those produce one marker.
+hashes the code that is in the image, its build-time tables (the pressure
+curve, the black-key excess) and the assembler source. It leaves out the
+option cells, the pattern bank, the pitch table, the tuning tables, the
+keys per period and the ten timing numbers - everything the record itself
+bounds-checks at load - so two builds that differ only in those produce
+one marker and one record fits both. Checked: builds with a tuning
+installed, with a pitch correction, without the pitch offset and at 1 V
+per octave all share the default build's marker.
 
 | Changed on the page | Reaches the keyboard by |
 |---|---|
-| Any option in step 2 (the eleven below) | Send settings; the keyboard restarts itself to run it |
-| The arpeggiator's pattern bank | Send settings |
-| Tunings, the pitch table (calibration), volts per octave, pitch offset | A new build and a flash: they change the image marker |
-| The ten timing numbers | Carried in the record and editable by any NRPN sender, but the page has no controls for them; a rebuild changes the marker |
+| Any option in step 2 (the eleven below), and whether tunings are in use | Send settings; the keyboard restarts itself to run it |
+| The arpeggiator's pattern bank, the three tuning tables, the pitch table (calibration, volts per octave, pitch offset) | Send settings; tables go live in the mirror at once |
+| The ten timing numbers | Carried in the record and editable by any NRPN sender; the page has no controls for them |
+| A scale that repeats at something other than the octave | A new build and a flash: the octave controls' step is patched in place, and the record's `octave_units` must match the image's |
 
 `Read settings` works against any 3.0 keyboard: it lists what the keyboard
 holds, loads the patterns and the options into the page, and loads the
@@ -53,7 +58,7 @@ exactly as it bakes a table; `settings_defaults` writes all 32 cells.
 | 24 | `0x6830` | `0x6d30` | `pressure_portamento` | 0, 1; refused when cell 23 is 0 |
 | 25 | `0x6832` | `0x6d31` | `quantize_presets` | 0, 1 |
 | 26 | `0x6834` | `0x6d32` | `portamento_in` | 0 portamento, 1 transpose |
-| 27 | `0x6836` | `0x6d33` | reserved | 0 |
+| 27 | `0x6836` | `0x6d33` | `alternate_tunings` | 0 off, 1 on: whether any slot holds a scale; the page sets it |
 
 **An option applies at boot.** `settings_boot` loads the record, then
 `option_boot` copies the low byte of cells 16..31 to the live option
@@ -85,6 +90,7 @@ sees the state it sees today when the gesture is not made:
 | `pressure_portamento` | The pitch hook goes straight to the remap around the blend's conditioner; the glide clamp keeps the classic portamento with its zero-snap; `option_boot` zeroes the conditioner's last offset |
 | `quantize_presets` | The preset adder's float-to-int is the factory's own again, so the voltage adds as it is, and the rotation is asked for zero degrees from the preset |
 | `portamento_in` = portamento | The transposer reads no jack (zero degrees from it) and the factory's glide-rate addend reads the jack again |
+| `alternate_tunings` | The per-scan applier word returns at once, so the slot LEDs and the transpose-mode byte stay the factory's; edit keys 27 and 28 replay the factory's transpose-mode and remote-enable toggles instead of selecting slots; the three remote-enable reads read the flag instead of zero |
 
 Two things differ from a build that never had the option: the factory's
 long hold on the arp switch no longer toggles polyphonic MIDI in any image
@@ -109,7 +115,7 @@ Big-endian.
 | `0x010` | 2 | Image marker: the low 16 bits of `init_marker` |
 | `0x012` | 2 | `octave_units` the record was generated for |
 | `0x014` | 12 | Reserved, zero |
-| `0x020` | 64 | 32 numbers: the ten timing numbers, cells 16..27 the options, the rest zero |
+| `0x020` | 64 | 32 numbers: the ten timing numbers, cells 16..27 the options (27 the tunings' switch), the rest zero |
 | `0x060` | 158 | `pitch_remap`, 79 halfwords |
 | `0x0fe` | 2 | Pad |
 | `0x100` | 192 | Tuning slots 0..2, 32 halfwords each |

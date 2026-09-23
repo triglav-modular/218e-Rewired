@@ -1206,7 +1206,8 @@ var BUILDLIB = (function () {
             pressure_fix: !cfg._pressure_factory,
             pressure_portamento: !!cfg.portamento.pressure_blend,
             quantize_presets: !!cfg.presets.quantize,
-            portamento_in: cfg.portamento_in.transpose ? 'transpose' : 'portamento'
+            portamento_in: cfg.portamento_in.transpose ? 'transpose' : 'portamento',
+            alternate_tunings: (cfg._tunings || []).some(function (t) { return t !== 'factory'; })
         });
         Object.keys(cells).forEach(function (k) { numbers[k] = cells[k]; });
         return numbers;
@@ -1246,7 +1247,8 @@ var BUILDLIB = (function () {
         ['pressure_fix', [false, true], true],
         ['pressure_portamento', [false, true], true],
         ['quantize_presets', [false, true], true],
-        ['portamento_in', ['portamento', 'transpose'], 'transpose']
+        ['portamento_in', ['portamento', 'transpose'], 'transpose'],
+        ['alternate_tunings', [false, true], false]
     ];
     var SETTINGS_OPTION_CELL = 16;
     // Every cell: [name or null for a reserved one, default, low, high] -
@@ -1598,7 +1600,18 @@ var BUILDLIB = (function () {
     var MARKER_EXCLUDES = { knob1: 1, knob2: 1, knob3: 1, knob4: 1, pattern_count: 1,
                             arp_pattern_bank: 1, arp_pattern_len: 1, latching_arp: 1,
                             sequencer: 1, quantize_presets: 1, portamento_in: 1,
-                            pressure_fix: 1, pressure_portamento: 1, clock_divide: 1 };
+                            pressure_fix: 1, pressure_portamento: 1, clock_divide: 1,
+                            alternate_tunings: 1,
+                            // And the record's own data, as tools/build.py: the
+                            // keyboard bounds-checks it and checks octave_units
+                            // on its own, so a record with other tables is right
+                            // for the same code.
+                            pitch_remap: 1, tuning_slot0: 1, tuning_slot1: 1, tuning_slot2: 1,
+                            tuning_period_keys: 1, tie_glide_rate: 1, strip_halfway_units: 1,
+                            clock_min_ms: 1, clock_rearm_us: 1, clock_lock_pulses: 1,
+                            transpose_cv_period: 1, transpose_cv_zero: 1,
+                            transpose_cv_hysteresis: 1, chord_hold_scans: 1,
+                            latch_state_hold_scans: 1 };
     function withoutExcluded(obj) {
         var out = {};
         Object.keys(obj).forEach(function (k) { if (!MARKER_EXCLUDES[k]) out[k] = obj[k]; });

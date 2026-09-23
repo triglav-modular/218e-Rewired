@@ -147,16 +147,9 @@ var WEBBUILD = (function () {
         // Same rule as tools/build.py: with no Scala file the edit keys and
         // their LEDs stay factory, which means the applier goes too — it
         // asserts those LEDs and zeroes the old transpose-mode byte.
-        var anyTuning = cfg._tunings.some(function (t) { return t !== 'factory'; });
-        features.alternate_tunings = anyTuning;
-        if (!anyTuning) {
-            blocks.edit_key27_tuning_slot1 = false;
-            blocks.edit_key28_tuning_slot0 = false;
-            // Remote enable goes back with them: its guards were added when
-            // the tuning selector shared state+0x2, which it no longer does.
-            ['remote_guard_1', 'remote_guard_2', 'remote_guard_3']
-                .forEach(function (n) { blocks[n] = false; });
-        }
+        // Since 2026-09-23 that is option cell 27, decided at boot: the keys,
+        // the applier and the remote-enable guards are in every image.
+        features.alternate_tunings = true;
         // Same rule as tools/build.py: with the knob roles decided at
         // runtime the build cannot know whether the knobs are all factory,
         // so the three transpose forcing patches stay in every image.

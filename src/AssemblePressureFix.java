@@ -336,6 +336,20 @@ public class AssemblePressureFix extends GhidraScript {
         long ciEntry = 0x8001ef60L, ciOff = ciEntry + 0x10, ciPool = ciEntry + 0x1c, ciEnd = ciEntry + 0x30;
         long ceEntry = 0x8001ef90L, ceOff = ceEntry + 0x10, cePool = ceEntry + 0x18, ceEnd = ceEntry + 0x30;
         long puEntry = 0x8001efc0L, puOff = puEntry + 0x10, puPool = puEntry + 0x14, puEnd = puEntry + 0x20;
+        // Cell 27, alternate_tunings, live byte 0x6d33 (2026-09-23, after
+        // phase H): the tuning slots' controls follow the record too, so a
+        // keyboard built without a tuning takes tables over MIDI and its
+        // edit keys become the slot selectors at the restart.  The two edit
+        // keys' in-place patches became six- and eight-byte hooks whose
+        // caves do the slot work or replay the factory's own key (the
+        // transpose-mode toggle, the remote-enable toggle); the three
+        // remote-enable guards call one cave that reads zero or the flag;
+        // and the per-scan chain's applier word dispatches.  In the hole
+        // cv_stamps left at 0x8001e8e0.
+        long tk27Entry = 0x8001e8e0L, tk27Two = tk27Entry + 0x18, tk27Off = tk27Entry + 0x30, tk27Pool = tk27Entry + 0x40, tk27End = tk27Entry + 0x50;
+        long tk28Entry = 0x8001e930L, tk28Two = tk28Entry + 0x18, tk28Off = tk28Entry + 0x30, tk28Pool = tk28Entry + 0x40, tk28End = tk28Entry + 0x50;
+        long rgEntry = 0x8001e980L, rgOff = rgEntry + 0x10, rgPool = rgEntry + 0x18, rgEnd = rgEntry + 0x20;
+        long taEntry = 0x8001e9a0L, taOff = taEntry + 0x10, taPool = taEntry + 0x14, taEnd = taEntry + 0x20;
 
         // The key selector: the dispatcher, for the factory's pool word and
         // the sequencer's alike, so the two can never disagree.
@@ -1794,14 +1808,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001ac80]");
-        // Only reached when a tuning has actually been supplied.  With every
-        // slot on the factory temperament the applier would copy that table
-        // over itself each scan, but it also asserts the rem-en and trn LEDs
-        // and permanently zeroes the old transpose-mode byte — so leaving it
-        // out is what hands those back to the factory.
-        if (feature("alternate_tunings")) {
-            emit("MCALL PC[0x8001a340]");      // tuning applier
-        }
+        // The applier, when a tuning is in use: with every slot on the
+        // factory temperament it would copy that table over itself each
+        // scan, but it also asserts the rem-en and trn LEDs and permanently
+        // zeroes the old transpose-mode byte - so with cell 27 off the word
+        // above returns at once, which is what hands those back to the
+        // factory.
+        emit("MCALL PC[0x8001a340]");          // tuning_apply_dispatch
         // Preset pickup must own this scan's knob before vibrato reads it.
         // Otherwise the first movement changes vibrato, then the editor
         // freezes that already-changed value for the rest of the hold.
@@ -1814,7 +1827,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001a338L);
         word(0x00003560L); // global state base
         word(0x80005a50L); // original note-off
-        word(0x80019a40L); // tuning applier
+        word(taEntry);     // tuning_apply_dispatch: the applier, or a return, by cell 27's live byte
         word(kbVib);       // knob4_vibrato_dispatch: the engine, or a return
         // With the jack transposing, the housekeeping is reached through
         // the transposer's cave, which calls it first and shifts the key
@@ -11441,7 +11454,7 @@ public class AssemblePressureFix extends GhidraScript {
         halfword(0);    halfword(1);      // 24 pressure_portamento (needs 23)
         halfword(0);    halfword(1);      // 25 quantize_presets
         halfword(0);    halfword(1);      // 26 portamento_in: portamento, transpose
-        halfword(0);    halfword(0);      // 27 reserved
+        halfword(0);    halfword(1);      // 27 alternate_tunings: off, on
         halfword(0);    halfword(0);      // 28
         halfword(0);    halfword(0);      // 29
         halfword(0);    halfword(0);      // 30
@@ -11476,7 +11489,8 @@ public class AssemblePressureFix extends GhidraScript {
         halfword(number("pressure_portamento", 1, 0, 1));
         halfword(number("quantize_presets", 1, 0, 1));
         halfword(number("portamento_in", 1, 0, 1));
-        halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
+        halfword(number("alternate_tunings", 0, 0, 1));
+        halfword(0); halfword(0); halfword(0); halfword(0);
         finish("settings_numbers", nmEnd);
 
         // Restart, for NRPN 0x3f04 with the key: the watchdog, enabled with
@@ -12197,6 +12211,113 @@ public class AssemblePressureFix extends GhidraScript {
         }; // end clockCaves
         clockCaves.go();
 
+        // Cell 27: the alternate tunings, decided at boot.
+        Emitter tuningCaves = () -> {
+        // tuning_key27: edit key 27.  On: slot 1 <-> slot 2, the old
+        // transpose-mode byte zeroed, the dirty flag set, back to the hook's
+        // RJMP to 0x80003e10.  Off: the factory's own key - the two displaced
+        // instructions replayed (its pool word is the state base) and on
+        // into the factory at 0x80003d88, which toggles transpose mode.
+        // Spends R8-R10, as the factory key does.
+        begin(tk27Entry);
+        emit("MOV R8,0x6d33");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", tk27Off));
+        emit("MOV R9,0x6090");
+        emit("LD.UB R8,R9[0x0]");
+        emit("MOV R10,0x1");
+        emit("CP.W R8,0x1");
+        emit(String.format("BR{ne} 0x%x", tk27Two));
+        emit("MOV R10,0x2");
+        padTo(tk27Two);
+        emit("ST.B R9[0x0],R10");
+        emit("MOV R8,0x3560");          // global state base
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x6a],R9");       // transpose mode off, for good
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x3a],R9");       // the dirty flag
+        emit("MOV PC,LR");
+        padTo(tk27Off);
+        emit("MOV R8,0x3560");          // LDDPC R8,0x80003e24
+        emit("LD.UB R8,R8[0x6a]");      // the transpose-mode byte
+        emit(String.format("LDDPC R9,0x%x", tk27Pool));
+        emit("MOV PC,R9");
+        padTo(tk27Pool);
+        word(0x80003d88L);              // the factory key, after the displaced pair
+        word(tk27Entry);
+        finish("tuning_key27", tk27End);
+
+        // tuning_key28: edit key 28.  On: slot 0 <-> slot 2 and the dirty
+        // flag.  Off: the factory's remote-enable toggle - three displaced
+        // instructions replayed, then on into the factory at 0x80003dc0.
+        begin(tk28Entry);
+        emit("MOV R8,0x6d33");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", tk28Off));
+        emit("MOV R9,0x6090");
+        emit("LD.UB R8,R9[0x0]");
+        emit("MOV R10,0x0");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", tk28Two));
+        emit("MOV R10,0x2");
+        padTo(tk28Two);
+        emit("ST.B R9[0x0],R10");
+        emit("MOV R8,0x3560");
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x3a],R9");       // the dirty flag
+        emit("MOV PC,LR");
+        padTo(tk28Off);
+        emit("MOV R8,0x3560");          // LDDPC R8,0x80003e24
+        emit("LD.UB R8,R8[0x2]");       // the remote-enable flag
+        emit("SUB R8,-0x1");            // toggled: the factory's EORL R8,0x1, which the JS
+        emit("ANDL R8,0x1");            // encoder has no form for, on a flag that is 0 or 1
+        emit(String.format("LDDPC R9,0x%x", tk28Pool));
+        emit("MOV PC,R9");
+        padTo(tk28Pool);
+        word(0x80003dc0L);              // the factory key, after the displaced three
+        word(tk28Entry);
+        finish("tuning_key28", tk28End);
+
+        // remote_guard: the three remote-enable reads.  R8 in: the state
+        // base.  Out: R8 and the flags of `CP.W R8,0x0` - zero with a tuning
+        // in use, the flag itself without.  Spends R9, reloaded at all three
+        // sites.
+        begin(rgEntry);
+        emit("MOV R9,0x6d33");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(String.format("BR{eq} 0x%x", rgOff));
+        emit("MOV R8,0x0");
+        emit("CP.W R8,0x0");
+        emit("MOV PC,LR");
+        padTo(rgOff);
+        emit("LD.UB R8,R8[0x2]");       // the factory's own read
+        emit("CP.W R8,0x0");
+        emit("MOV PC,LR");
+        padTo(rgPool);
+        word(rgEntry);
+        finish("remote_guard", rgEnd);
+
+        // tuning_apply_dispatch: the per-scan chain's applier word.  The
+        // applier with a tuning in use; a return without, so the LEDs and
+        // the transpose-mode byte stay the factory's.  Spends R8.
+        begin(taEntry);
+        emit("MOV R8,0x6d33");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", taOff));
+        emit(String.format("LDDPC R8,0x%x", taPool));
+        emit("MOV PC,R8");
+        padTo(taOff);
+        emit("MOV PC,LR");
+        padTo(taPool);
+        word(0x80019a40L); // the tuning applier
+        finish("tuning_apply_dispatch", taEnd);
+        }; // end tuningCaves
+        tuningCaves.go();
+
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a
         // table out of it, whatever else is built.  settings_boot's last
@@ -12417,40 +12538,23 @@ public class AssemblePressureFix extends GhidraScript {
         // it directly.  Sharing the byte meant selecting a tuning other than
         // slot 0 silently switched remote control on, and a remote-enable
         // message silently retuned the instrument.
+        // Since cell 27 the slot work lives in tuning_key27 and the hook
+        // covers only the factory key's first six bytes (its LDDPC and the
+        // load of the transpose-mode byte); the rest of the factory key
+        // stays in flash for the cave's off path.
         begin(0x80003d82L);
-        emit("MOV R9,0x6090");
-        emit("LD.UB R8,R9[0x0]");
-        emit("MOV R10,0x1");
-        emit("CP.W R8,0x1");
-        emit("BR{ne} 0x80003d92");
-        emit("MOV R10,0x2");
-        padTo(0x80003d92L);
-        emit("ST.B R9[0x0],R10");
-        emit("LDDPC R8,0x80003e24");
-        emit("MOV R9,0x0");
-        emit("ST.B R8[0x6a],R9");
-        emit("MOV R9,0x1");
-        emit("ST.B R8[0x3a],R9");
+        emit(String.format("MCALL PC[0x%x]", tk27Pool + 4));   // tuning_key27
         emit("RJMP 0x80003e10");
-        padTo(0x80003db8L);
-        finish("edit_key27_tuning_slot1", 0x80003db8L);
+        finish("edit_key27_tuning_slot1", 0x80003d88L);
 
-        // Edit key 28 (was remote-enable toggle): slot 0 <-> slot 2.
+        // Edit key 28 (was remote-enable toggle): slot 0 <-> slot 2.  The
+        // factory's first three instructions here are eight bytes, so the
+        // hook is too.
         begin(0x80003db8L);
-        emit("MOV R9,0x6090");
-        emit("LD.UB R8,R9[0x0]");
-        emit("MOV R10,0x0");
-        emit("CP.W R8,0x0");
-        emit("BR{ne} 0x80003dc8");
-        emit("MOV R10,0x2");
-        padTo(0x80003dc8L);
-        emit("ST.B R9[0x0],R10");
-        emit("LDDPC R8,0x80003e24");
-        emit("MOV R9,0x1");
-        emit("ST.B R8[0x3a],R9");
+        emit(String.format("MCALL PC[0x%x]", tk28Pool + 4));   // tuning_key28
         emit("RJMP 0x80003e10");
-        padTo(0x80003de8L);
-        finish("edit_key28_tuning_slot0", 0x80003de8L);
+        emit("NOP");
+        finish("edit_key28_tuning_slot0", 0x80003dc0L);
 
         // Hook: replace the factory pitch-DAC store and last-sent mirror with
         // a call into the remap.  The 0..0xfff clamp still runs just before.
@@ -12673,21 +12777,20 @@ public class AssemblePressureFix extends GhidraScript {
             "knob-3 pointer -> pressure-floor wrapper");
         wordPatch("knob4_pool", 0x800043d0L, k4Entry,
             "knob-4 pointer -> knob4_dispatch: knob4_curve, or the factory handler");
-        // Remote-enable guards read constant zero.  Only emitted with a
-        // tuning installed: the selector moved out of state+0x2 to RAM
-        // 0x6090, so nothing shares the flag and a build without tunings
-        // leaves the factory feature alone.
+        // Remote-enable guards: with a tuning in use they read constant
+        // zero (key 28 is a slot selector then, so remote could not be
+        // turned off again by hand); with cell 27 off they read the flag as
+        // the factory does.  Each site was `LD.UB R8,R8[0x2]; CP.W R8,0x0`,
+        // four bytes, R8 the state base; the call leaves the compare's
+        // flags for the branch after it.
         begin(0x80006528L);
-        emit("MOV R8,0x0");
-        emit("CP.W R8,0x0");
+        emit(String.format("MCALL PC[0x%x]", rgPool));   // remote_guard
         finish("remote_guard_1", 0x8000652cL);
         begin(0x800066aeL);
-        emit("MOV R8,0x0");
-        emit("CP.W R8,0x0");
+        emit(String.format("MCALL PC[0x%x]", rgPool));
         finish("remote_guard_2", 0x800066b2L);
         begin(0x800085daL);
-        emit("MOV R8,0x0");
-        emit("CP.W R8,0x0");
+        emit(String.format("MCALL PC[0x%x]", rgPool));
         finish("remote_guard_3", 0x800085deL);
         wordPatch("note_on_pool", 0x80005e8cL,
             block("seq_pitch") ? 0x8001b330L : 0x80018d00L,
