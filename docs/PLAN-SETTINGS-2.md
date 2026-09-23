@@ -729,6 +729,26 @@ rises along it:
   entry's answer at 767 and 484; `ControlRegression.periodCell` drives
   the panel pads and the stored octave through the real routine at both
   periods.
+- **K. The 2.4 A/B (criterion 1).** Run 2026-09-23. `src/AbTrace.java` and
+  `tools/ab_trace.py`: one scripted session through the factory entry
+  points every Rewired image shares - boot, the touch handlers, the ADC
+  event, the pitch passes, event 17's two halves with the 1 ms task and
+  the flush, the GPIO ISR and the main-loop service - recording after
+  each of 63 steps the eight halfwords at state+0x350 (transpose, target,
+  gate and pitch slots, strip, presets), the live note, and what left the
+  box (the USB-MIDI sender, both output ports, the pulse routine, the DAC
+  transfer). The 2.4 image is the owner's `Rewired_marton_2.4.0_DFU.hex`;
+  the 3.0 side is the historical variant with the 2.4 image's own pitch
+  table, tuning slots and keys per period planted into its mirror after
+  boot, because the two images' baked tables differ (2.4's pitch table
+  steps 33 units a key, today's builds 40 whatever the scaling asks, and
+  the tuning slots differ by a unit or two) and a table is not code.
+  Result: 62 of 63 steps identical, events included. The one difference:
+  after the first pass with the switches set and no key held, 3.0 holds
+  the transpose at state+0x350 as -2 where 2.4 holds 0; from the first
+  key on the two are identical. The owner classifies. Not covered: the
+  pads and the chord (their scan is ours in both images), the sequencer,
+  the strip's own scan, anything analog.
 
 F and G are the ones that can be left build-time if the ISR body or the
 pressure stretches turn out to cost more than they are worth; nothing in A-E

@@ -163,7 +163,10 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   vibrato offset the remap adds, the jack transposer's tagged state word,
   the blend's re-base history - now cleared by `option_boot_state`; the
   22 other runs are allowlisted in the test with their readers
-  (PLAN-SETTINGS-2.md, record I). Open from it: the volatile build keeps
+  (PLAN-SETTINGS-2.md, record I); (1) works as in 2.4 - the A/B trace
+  (`tools/ab_trace.py`, record K) finds 62 of 63 steps identical with
+  2.4's tables planted, the one difference a transpose of -2 before the
+  first key, for the owner to classify. Open from it: the volatile build keeps
   the sequencer's mode and cursor across any warm restart (no
   `persist_boot` there), the owner's call. Also open: bench validation of
   both stages, the wide-map refusal (phase E) and the added page copy
