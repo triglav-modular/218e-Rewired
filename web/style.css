@@ -1384,31 +1384,69 @@ td input {
 .danger p:last-child {
   margin-bottom: 0;
 }
-/* The Windows-only notes fold into the step that runs the flasher: a Mac
-   reader never needs them, and a Windows reader opens the one that applies
-   when it happens.  The first sits closer to the step text than the default
-   details margin; the second keeps a smaller gap from the first. */
+/* The Windows notes fold into the Windows line of the step that runs the
+   flasher: a Mac reader never opens them.  That line is the summary, so it
+   drops the summary's label treatment and reads like the macOS line above
+   it.  The chevron trails the line rather than leading it, which keeps
+   "Windows" aligned under "macOS".  It hangs off the file name rather than
+   being an inline box of its own, which on a phone wrapped onto a line by
+   itself under the name; and it takes no space, because a reserved margin
+   left too little for the name, which then broke.  When the name fills the
+   line the mark sits in the step's 22px right padding, 6 + 15 of it. */
 .windrop {
-  margin-top: 10px;
+  margin: 0;
 }
-.windrop + .windrop {
-  margin-top: 6px;
+.windrop > summary {
+  display: block;
+  font-size: inherit;
+  font-weight: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+}
+.windrop > summary::before {
+  content: none;
+}
+.windrop > summary .mono {
+  position: relative;
+}
+.windrop > summary .mono::after {
+  content: "";
+  position: absolute;
+  left: calc(100% + 6px);
+  top: calc(50% - 7.5px);
+  width: 15px;
+  height: 15px;
+  background: var(--accent);
+  -webkit-mask: var(--chevron) center / contain no-repeat;
+  mask: var(--chevron) center / contain no-repeat;
+  transition: transform .18s ease, background-color .15s;
+}
+.windrop > summary:hover .mono::after {
+  background: var(--ink);
+}
+.windrop[open] > summary .mono::after {
+  transform: rotate(90deg);
 }
 .windrop > div {
-  margin: 6px 0 4px;
+  margin: 4px 0 6px;
   color: var(--muted);
 }
-.windrop p {
-  margin: 0 0 6px;
+.windrop h4 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink);
 }
-.windrop p:last-child {
-  margin-bottom: 0;
+.windrop p {
+  margin: 0;
 }
 .windrop ol {
-  margin: 0;
+  margin: 4px 0 0;
   padding-left: 22px;
 }
-.windrop strong {
+.windrop > div strong {
   color: var(--ink);
 }
 svg {
@@ -1451,24 +1489,6 @@ svg {
   height: 22px;
   position: relative;
   top: -1px;
-}
-/* Same mark in the Windows-only dropdowns, sized to their type.  It sits
-   inline in the label rather than as a flex item beside the chevron, so on a
-   phone, where these labels wrap to three lines, it stays on the first line
-   with the words it belongs to.  The chevron goes to the first line too:
-   centred on a three-line block it pointed at the middle of a sentence. */
-.windrop summary {
-  align-items: flex-start;
-}
-.windrop summary::before {
-  margin-top: calc((1lh - 15px) / 2);
-}
-.windrop summary .os {
-  display: inline-block;
-  width: 13px;
-  height: 13px;
-  margin: 0 6px 0 0;
-  vertical-align: -1px;
 }
 a {
   color: var(--accent);

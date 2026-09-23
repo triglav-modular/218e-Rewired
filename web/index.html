@@ -450,24 +450,21 @@
           <li>Run the flasher and follow the instructions:
             <div>
               <div><strong>macOS</strong>: double-click <span class="mono">218e Rewired Flasher.app</span></div>
-              <div><strong>Windows</strong>: double-click <span class="mono">218e_Rewired_Flasher.bat</span></div>
+              <details class="windrop"><summary><strong>Windows</strong>: double-click <span class="mono">218e_Rewired_Flasher.bat</span></summary>
+                <div>
+                  <h4>Windows might warn you about unsigned software</h4>
+                  <p>If you get a Windows Defender prompt about the <span class="mono">.bat</span>: <strong>Click More info → Run anyway</strong>.</p>
+                  <h4>Windows only: the first flash pauses for a driver</h4>
+                  <p>After the keyboard goes into DFU mode for the first time,<br>the flasher should open <strong>Zadig</strong>. Do the following steps in it:</p>
+                  <ol>
+                    <li><strong>Options → List All Devices</strong></li>
+                    <li>Select <strong>AT32UC3B DFU</strong></li>
+                    <li>Set the right-hand box to <strong>WinUSB</strong>, press the <strong>Install Driver</strong> or <strong>Replace Driver</strong> button</li>
+                    <li>Close Zadig.</li>
+                  </ol>
+                </div>
+              </details>
             </div>
-            <details class="windrop"><summary><span><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows might warn you about unsigned software</span></summary>
-              <div>
-                <p>If you get a Windows Defender prompt about the <span class="mono">.bat</span>: <strong>Click More info → Run anyway</strong>.</p>
-              </div>
-            </details>
-            <details class="windrop"><summary><span><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows only: the first flash pauses for a driver</span></summary>
-              <div>
-                <p>After the keyboard goes into DFU mode for the first time,<br>the flasher should open <strong>Zadig</strong>. Do the following steps in it:</p>
-                <ol>
-                  <li><strong>Options → List All Devices</strong></li>
-                  <li>Select <strong>AT32UC3B DFU</strong></li>
-                  <li>Set the right-hand box to <strong>WinUSB</strong>, press the <strong>Install Driver</strong> or <strong>Replace Driver</strong> button</li>
-                  <li>Close Zadig.</li>
-                </ol>
-              </div>
-            </details>
           </li>
         </ol>
 
