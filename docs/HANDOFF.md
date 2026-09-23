@@ -128,9 +128,11 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   planned in [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md). Phase A (the
   cells, layout 2, the live bytes, the restart, the page codec), phase B
   (the four knob roles decided at boot by dispatchers on their pool words,
-  out of the image marker) and phase C (the latching arp, three dispatchers,
-  a pad test and the factory chord given back by a shim) are built
-  (2026-09-23). Phases D..H move the other options one by one. (Dispatcher event 32 at `0x80004fc2`
+  out of the image marker), phase C (the latching arp, three dispatchers,
+  a pad test and the factory chord given back by a shim) and phase D (the
+  sequencer, one gate at the pad-4 chord's arm; every other sequencer cave
+  already asks the mode) are built (2026-09-23). Phases E..H move the
+  other options one by one. (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),

@@ -105,7 +105,9 @@ FEATURE_MAP = {
     # (docs/PLAN-SETTINGS-2.md), so they no longer appear here.
     # The latching arp is an option cell since stage 2 phase C: its caves
     # are in every image and dispatchers on the note-on, the note-off and
-    # the hold read the live byte at boot.
+    # the hold read the live byte at boot.  The sequencer since phase D:
+    # every sequencer cave is in every image and the pad-4 chord's arm
+    # reads the live byte.
     "midi.poly_default":      (
         ["poly_powerup_default_off", "poly_factory_reset_default_off",
          "poly_arp_independence", "poly_settings_migration",
@@ -1187,7 +1189,7 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 MARKER_EXCLUDES = frozenset({
     "knob1", "knob2", "knob3", "knob4", "pattern_count",
     "arp_pattern_bank", "arp_pattern_len",
-    "latching_arp",
+    "latching_arp", "sequencer",
 })
 
 RAM_REGIONS = [
@@ -2498,7 +2500,14 @@ def main() -> None:
                  "settings_cc_pool", "clock_init_pool", "persist_crc"):
         blocks[name] = True
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
-    blocks["seq_chord"] = seq
+    # Stage 2 phase D: the sequencer is decided at boot from its option
+    # cell, so every sequencer cave is in every image.  Each one already
+    # asks the mode at 0x6158 before doing anything of its own, and the
+    # mode only leaves 0 through the pad-4 chord, whose arm seq_arm_gate
+    # refuses while the live byte is off - so an image with the cell 0
+    # behaves as this build always did with the chord unused.
+    blocks["seq_chord"] = True
+    blocks["seq_arm_gate"] = True
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
                  "seq_clock_enabled", "seq_transport", "seq_clock_rate_hook",
                  "seq_clock_change_hook", "seq_clock_setup_hook", "seq_clock_tick_hook",
@@ -2513,8 +2522,8 @@ def main() -> None:
                  "seq_preview_next", "seq_preview_start", "seq_preview_transport",
                  "seq_record_pitch", "seq_preview_pin", "seq_hold", "seq_flash",
                  "seq_restart_init", "seq_boot"):
-        blocks[name] = seq
-    blocks["seq_clock_input_hook"] = seq and not div
+        blocks[name] = True
+    blocks["seq_clock_input_hook"] = not div
     # transpose_capture lives inside the blend hook, and it is what keeps
     # 0x60a0 - the live transpose - current.  The sequencer reads that cell as
     # the take's reference and as the term every recorded step is stored
@@ -2524,12 +2533,12 @@ def main() -> None:
     # stays independently switchable.  Without it, sequencer = true with
     # latching_arp = false and pressure_portamento = false silently dropped
     # every per-note octave change from a take - measured two octaves apart
-    # sounding, both steps stored identical (audit 2026-09-13).
-    if seq:
-        blocks["pitch_target_blend_hook"] = True
-        blocks["blend_offset_apply"] = True
-        blocks["blend_target_conditioner"] = True
-    summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
+    # sounding, both steps stored identical (audit 2026-09-13).  Since
+    # phase D the sequencer is in every image, so the hook is too.
+    blocks["pitch_target_blend_hook"] = True
+    blocks["blend_offset_apply"] = True
+    blocks["blend_target_conditioner"] = True
+    summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}  (option cell; every cave built)")
     blocks["arp_swing"] = True
     # Quantized randomness takes the randomiser's hook the way swing does;
     # the pool word at 0x80019d40 names whichever of the three is built.

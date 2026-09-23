@@ -283,7 +283,7 @@ def audit_call_pools(image_path) -> list[str]:
 # walk keeps its index across the two calls that destroy it.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "45cb758f5dc1e9e1c976fb29c9ba8cb3385a37aac4f99109de29e2ed76fc6849",
+    "historical_config": "4c63c7917df0b4318a98828ae4c12c05b57c6db6fb95c4d9546fe900870decfa",
 }
 
 

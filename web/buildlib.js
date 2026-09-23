@@ -1597,7 +1597,8 @@ var BUILDLIB = (function () {
     // option cells decided at runtime and the pattern bank only they read,
     // so a record made here is right for a keyboard that differs only in them.
     var MARKER_EXCLUDES = { knob1: 1, knob2: 1, knob3: 1, knob4: 1, pattern_count: 1,
-                            arp_pattern_bank: 1, arp_pattern_len: 1, latching_arp: 1 };
+                            arp_pattern_bank: 1, arp_pattern_len: 1, latching_arp: 1,
+                            sequencer: 1 };
     function withoutExcluded(obj) {
         var out = {};
         Object.keys(obj).forEach(function (k) { if (!MARKER_EXCLUDES[k]) out[k] = obj[k]; });

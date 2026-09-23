@@ -285,6 +285,12 @@ public class AssemblePressureFix extends GhidraScript {
         // non-latch switch position already gives it.
         long ltOn = 0x8001fd20L, ltOff = ltOn + 0x30, ltHold = ltOn + 0x50, ltPad = ltOn + 0x70;
         long ltShim = ltOn + 0x90, ltPool = ltOn + 0xb0, ltEnd = ltOn + 0xd0;
+        // Phase D: the sequencer, live byte 0x6d2d.  Every sequencer cave
+        // already asks the mode at 0x6158, which stays 0 until the pad-4
+        // chord arms and a pad is pressed, so the one gate is the arm: a
+        // helper the chord calls where it used to read the preset editor's
+        // hold flag itself, answering R10 zero to arm and nonzero to refuse.
+        long sqArm = 0x8001fe50L, sqDone = sqArm + 0x14, sqEnd = sqArm + 0x20;
 
         // The key selector: the dispatcher, for the factory's pool word and
         // the sequencer's alike, so the two can never disagree.
@@ -4627,9 +4633,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R8,R9");
         emit("BR{lt} 0x8001b200");      // not long enough yet
         // A hold whose knob has moved is a preset edit, not a chord.  The
-        // editor flags that pad as following at 0x614a + pad.
-        emit("MOV R10,0x614d");
-        emit("LD.UB R10,R10[0x0]");
+        // editor flags that pad as following at 0x614a + pad.  And a hold
+        // with the sequencer off is nothing at all: seq_arm_gate reads that
+        // flag and then the live option byte, and answers zero only when
+        // both allow (stage 2 phase D).  The chord's own pool is full, so
+        // the helper's word rides in the slack before write_channel.
+        emit("MCALL PC[0x8001b29c]");   // seq_arm_gate -> R10 zero to arm
         emit("CP.W R10,0x0");
         emit("BR{ne} 0x8001b200");
         emit("MOV R10,0x1");
@@ -4760,6 +4769,8 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(0x8001b28aL);
         emit("MCALL PC[0x8001b310]");   // led_flush: free when nothing changed
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001b29cL);
+        word(sqArm);                    // seq_arm_gate: the hold flag, then the live option byte
 
         padTo(0x8001b2a0L);
         // write_channel(R11 = channel, R9 = lit or not).
@@ -11742,6 +11753,35 @@ public class AssemblePressureFix extends GhidraScript {
         finish("option_boot", obEnd);
         }; // end latchCaves
         latchCaves.go();
+
+        // Phase D: the sequencer's one gate (docs/PLAN-SETTINGS-2.md).
+        Emitter seqCaves = () -> {
+        // seq_arm_gate: whether the pad-4 hold may arm.  Called from
+        // seq_chord where it used to read the preset editor's hold flag
+        // itself; answers R10 = 0 to arm and nonzero to refuse - the flag
+        // first (a hold whose knob has moved is a preset edit, not a
+        // chord), then the live option byte at 0x6d2d.  With the sequencer
+        // off the hold never arms, so the mode at 0x6158 stays 0, which is
+        // the state every other sequencer cave already answers the factory
+        // way in: the clock hooks ask seq_clock_enabled, the note-on and
+        // note-off wrappers, the selector, the gate, the strip, the lamps,
+        // the recorder and the edit holds all test the mode first, and
+        // persist_boot zeroes it at every boot, so a take restored from the
+        // record is kept but cannot be played.  Spends R10 only, which the
+        // caller loads fresh after the test.  A leaf.
+        begin(sqArm);
+        emit("MOV R10,0x614d");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit(String.format("BR{ne} 0x%x", sqDone));    // the editor follows pad 4: refuse
+        emit("MOV R10,0x6d2d");
+        emit("LD.UB R10,R10[0x0]");
+        emit("SUB R10,0x1");            // 1: zero, arm; 0: nonzero, refuse
+        padTo(sqDone);
+        emit("MOV PC,LR");
+        finish("seq_arm_gate", sqEnd);
+        }; // end seqCaves
+        seqCaves.go();
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a

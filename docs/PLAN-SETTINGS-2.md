@@ -8,7 +8,7 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): phases A, B and C built; D next.** The owner's calls at
+**Status (2026-09-23): phases A, B, C and D built; E next.** The owner's calls at
 the end were answered the same day: the whole scope, layout 2, and options
 that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
@@ -492,7 +492,37 @@ rises along it:
   latch's RAM cleared at a latch-off boot and kept at a latch-on one),
   controls 12/12 with both lean variants running the latch off through
   the dispatchers, clock 6/6.
-- **D. Sequencer.** One test at the arm.
+- **D. Sequencer.** Built 2026-09-23. One gate, as planned: every
+  sequencer cave already asks the mode at `0x6158` before doing anything
+  of its own - the nine clock hooks through `seq_clock_enabled`, the
+  note-on and note-off wrappers, the selector, the gate length and its
+  clear, the strip and its lamps, the recorder, the edit holds, the
+  keyboard-over-a-take caves - and persist_boot zeroes the chord's RAM
+  and the mode at every boot, so the mode leaves 0 only through the pad-4
+  chord's arm. `seq_chord` had no room for a test (2 bytes of slack at the
+  arm), so the 10-byte preset-edit check there became an 8-byte call:
+  `seq_arm_gate` at `0x8001fe50` reads the editor's hold flag for pad 4
+  and then the live byte at `0x6d2d`, answers R10 zero to arm and nonzero
+  to refuse, and spends R10 alone (the chord loads it fresh after the
+  test). The chord's own pool was full, so the helper's word rides in the
+  slack at `0x8001b29c`. Every `seq_*` block is now in every image, with
+  `seq_clock_input_hook` still following the divider until phase G; the
+  blend hook the sequencer needs for its reference is unconditional too.
+  With the byte off a take restored from the persistence record is kept
+  in RAM and cannot be played, which is the plan's call. The sequencer
+  cell is out of the image marker (checked: 57970 with the cell 1 and 0;
+  the two images differ only in the cell). Verified: both toolchains at
+  `beecb0c1`, historical `4c63c791` (sweep: match + known image), parity
+  44/44, `test.py --golden` (the feature-off images now carry 270 MCALLs,
+  all onto live words), the corpus (11,627 instructions),
+  `SettingsRegression` in all four modes (1174..1177 assertions: the gate
+  under both states and under the editor's hold, its registers, the
+  chord's word and MCALL, and the chord itself run scan by scan - pad 4
+  held past the hold never arms with the byte off, pad 1 and pad 2 over a
+  take in RAM leave the mode at 0, the release clears the hold, and the
+  same hold arms and pad 1 opens record with the byte on), controls
+  12/12 with the lean variants running every sequencer cave with the
+  byte off, clock 6/6.
 - **E. Jack and presets.** One shim, two zero-degree gates, up to three
   branches in `cv_transpose`/`preset_degrees` (both have 4 bytes of slack;
   a third branch relocates one of them).

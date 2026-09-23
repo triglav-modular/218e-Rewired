@@ -181,8 +181,10 @@ var WEBBUILD = (function () {
         // Every knob-2 and knob-1 cave, in every image (stage 2 phase B).
         ['arp_order_zones', 'arp_pattern_gate', 'arp_pattern_tables', 'arp_swing', 'arp_quantized']
             .forEach(function (n) { blocks[n] = true; });
-        var seq = !!(cfg.sequencer && cfg.sequencer.on);
-        ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
+        // Stage 2 phase D, same rule as tools/build.py: the sequencer is
+        // decided at boot from its option cell, so every sequencer cave is
+        // in every image; the pad-4 chord's arm reads the live byte.
+        ['seq_chord', 'seq_arm_gate', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
          'seq_clock_enabled', 'seq_transport', 'seq_clock_rate_hook',
          'seq_clock_change_hook', 'seq_clock_setup_hook', 'seq_clock_tick_hook',
          'seq_clock_input_hook', 'seq_clock_midi_hook',
@@ -196,7 +198,7 @@ var WEBBUILD = (function () {
          'seq_preview_next', 'seq_preview_start', 'seq_preview_transport',
          'seq_record_pitch', 'seq_preview_pin', 'seq_hold', 'seq_flash',
          'seq_restart_init', 'seq_boot']
-            .forEach(function (n) { blocks[n] = seq; });
+            .forEach(function (n) { blocks[n] = true; });
         var keep = !!(cfg.persist && cfg.persist.on);
         ['persist_crc', 'persist_record_crc', 'persist_pack',
          'persist_valid', 'persist_newest', 'persist_load',
@@ -204,16 +206,15 @@ var WEBBUILD = (function () {
          'persist_capture', 'persist_boot', 'persist_scan_shim', 'persist']
             .forEach(function (n) { blocks[n] = keep; });
         var div = !!(cfg.clock && cfg.clock.divide);
-        blocks.seq_clock_input_hook = seq && !div;
+        blocks.seq_clock_input_hook = !div;
         // Same rule as tools/build.py: transpose_capture lives inside the
         // blend hook and is what keeps 0x60a0 current, which the sequencer
         // reads as the take's reference.  The hook exists whenever the
-        // sequencer does; the pressure following inside it stays independent.
-        if (seq) {
-            blocks.pitch_target_blend_hook = true;
-            blocks.blend_offset_apply = true;
-            blocks.blend_target_conditioner = true;
-        }
+        // sequencer does, which since phase D is every image; the pressure
+        // following inside it stays independent.
+        blocks.pitch_target_blend_hook = true;
+        blocks.blend_offset_apply = true;
+        blocks.blend_target_conditioner = true;
         ['clock_scan', 'clock_pulse', 'clock_hook',
          'clock_tempo', 'clock_tempo_hook',
          'clock_ms_tick', 'clock_ms_pool',

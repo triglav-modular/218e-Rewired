@@ -36,6 +36,8 @@ public class SettingsRegression extends PersistenceRegression {
     // Phase C: the latch dispatchers, the pad test, the chord shim, and what they choose.
     static final long LT=0x8001fd20L, LTON=LT, LTOFF=LT+0x30, LTHOLD=LT+0x50, LTPAD=LT+0x70, LTSHIM=LT+0x90, LTPOOL=LT+0xb0;
     static final long LOWNER=0x8001dde0L, LNOTEOFF=0x8001a280L, FNOTEOFF=0x80005a50L, LHOLD=0x8001e520L, FTIMER=0x800045e8L;
+    // Phase D: the sequencer's arm gate, the chord that calls it, its word in the chord's slack and the MCALL that reads it.
+    static final long SQARM=0x8001fe50L, CHORD=0x8001b180L, CHORDWORD=0x8001b29cL, CHORDCALL=0x8001b1baL;
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -391,6 +393,50 @@ public class SettingsRegression extends PersistenceRegression {
         keepSlots=false;
         println("PASS latch: the four gates follow the live byte, the shim gives the factory chord back, and the latch's RAM does not outlive it");
     }
+    void sequencer() throws Exception {
+        fresh();
+        // The gate answers R10: zero to arm, nonzero to refuse - the preset
+        // editor's hold flag for pad 4 first, then the live byte - and
+        // spends R10 alone.
+        w(LIVE+5,1,1); w(0x614d,1,0);
+        e.writeRegister("R8",11); e.writeRegister("R9",22); e.writeRegister("R11",33); e.writeRegister("R12",44);
+        long p=resolve(SQARM);
+        check("sequencer on: the arm gate answers zero and leaves R8, R9, R11 and R12",
+            p==0x100&&reg("R10")==0&&reg("R8")==11&&reg("R9")==22&&reg("R11")==33&&reg("R12")==44);
+        w(LIVE+5,1,0); p=resolve(SQARM);
+        check("sequencer off: the arm gate refuses",p==0x100&&reg("R10")!=0);
+        w(LIVE+5,1,1); w(0x614d,1,1); p=resolve(SQARM);
+        check("a pad the editor follows refuses whatever the byte says",p==0x100&&reg("R10")!=0);
+        w(0x614d,1,0);
+        long disp=(CHORDWORD-(CHORDCALL&~3L))>>2;
+        check("the chord reaches the gate through the word in its own slack",
+            r(CHORDWORD,4)==SQARM&&r(CHORDCALL,4)==(0xf01f0000L|(disp&0xffffL)));
+        // The chord itself, scan by scan: pad 4 held past the hold, then a
+        // pad pressed inside it.  With the byte off the hold counts and
+        // never arms, and neither pad 1 nor pad 2 over a take in RAM moves
+        // the mode - which is how a take restored from the record is kept
+        // and cannot be played.  With it on the hold arms and pad 1 opens
+        // record.
+        int hold=(int)r(0x6810,2);
+        w(0x61e0,1,2); w(0x6160,2,500); w(0x6162,2,540); w(0x61ee,1,3); w(0x61ef,1,7);
+        w(LIVE+5,1,0); w(0x46f3,1,2);
+        for(int i=0;i<hold+10;i++) call(CHORD);
+        check("sequencer off: pad 4 held past the hold never arms, armed="+r(0x6156,1)+" count="+r(0x6154,2)+" of "+hold,
+            r(0x6156,1)==0&&r(0x6154,2)==hold);
+        w(0x46f1,1,2); call(CHORD); w(0x46f1,1,0); call(CHORD);
+        check("sequencer off: pad 2 inside the hold plays nothing of the take in RAM, mode="+r(0x6158,1),r(0x6158,1)==0&&r(0x61e0,1)==2);
+        w(0x46f0,1,2); call(CHORD); w(0x46f0,1,0); call(CHORD);
+        check("sequencer off: pad 1 inside the hold records nothing, mode="+r(0x6158,1),r(0x6158,1)==0);
+        w(0x46f3,1,0); call(CHORD);
+        check("and the release clears the hold",r(0x6154,2)==0&&r(0x6156,1)==0);
+        w(LIVE+5,1,1); w(0x46f3,1,2);
+        for(int i=0;i<hold+10;i++) call(CHORD);
+        check("sequencer on: the same hold arms, armed="+r(0x6156,1),r(0x6156,1)==1&&r(0x6154,2)==hold);
+        w(0x46f0,1,2); call(CHORD); w(0x46f0,1,0); call(CHORD);
+        check("sequencer on: pad 1 inside the hold opens record, mode="+r(0x6158,1),r(0x6158,1)==1);
+        w(0x46f3,1,0); call(CHORD);
+        println("PASS sequencer: the arm follows the live byte, and with it off the chord never leaves mode 0");
+    }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
     static void stamp(byte[] rec) {
@@ -532,7 +578,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }
