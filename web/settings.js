@@ -11,6 +11,12 @@
 // pause between them, and a push is never trusted until a dump has read it
 // back equal: that is the check that catches a dropped packet.
 //
+// A record's option cells (docs/PLAN-SETTINGS-2.md) take effect at the
+// next power-up, from the live option bytes the boot copies them to.  So
+// `install` ends by asking for a restart when a committed cell differs
+// from a live byte, and `awaitLive` waits through the USB re-enumeration
+// for the keyboard to come back running them.
+//
 // docs/PLAN-SETTINGS.md is the protocol; src/SettingsRegression.java is
 // the instrument's side of it under emulation.
 var SETTINGSMIDI = (function () {
@@ -98,6 +104,7 @@ var SETTINGSMIDI = (function () {
     }
 
     function commit(output) { sendParam(output, B.NRPN_COMMANDS.commit, B.NRPN_COMMANDS.commitKey); }
+    function restart(output) { sendParam(output, B.NRPN_COMMANDS.restart, B.NRPN_COMMANDS.restartKey); }
     function reload(output) { sendParam(output, B.NRPN_COMMANDS.reload, 0); }
     function defaults(output) { sendParam(output, B.NRPN_COMMANDS.defaults, 0); }
 
@@ -124,32 +131,68 @@ var SETTINGSMIDI = (function () {
         return Promise.reject(err);
     }
 
+    var LAYOUT = 2;
+
     // What the instrument holds, for the page: one dump, decoded into a
     // record-shaped array and its fields by name, with the identity block
-    // beside them.  Rejects with `reason` 'no reply' or 'wrong layout' - a
-    // map this page does not know is not read into it.
+    // beside them, the live option bytes, and `pending` - the options whose
+    // cell the keyboard holds but does not run yet, which a restart would
+    // apply.  Rejects with `reason` 'no reply' or 'wrong layout' - a map
+    // this page does not know is not read into it.
     function read(output, input, opts) {
         opts = opts || {};
         return dump(output, input, opts.timeout, opts.timers).catch(function () {
             return fail('no reply');
         }).then(function (d) {
-            if (d.identity.layoutVersion !== 1) return fail('wrong layout', { identity: d.identity });
-            var record = B.nrpnRecordOf(d.pairs);
-            return { identity: d.identity, pairs: d.pairs, record: record, fields: B.settingsFields(record) };
+            if (d.identity.layoutVersion !== LAYOUT) return fail('wrong layout', { identity: d.identity });
+            var record = B.nrpnRecordOf(d.pairs), live = B.nrpnLiveOf(d.pairs);
+            return { identity: d.identity, pairs: d.pairs, record: record, fields: B.settingsFields(record),
+                     live: live, pending: B.pendingOptions(record, live) };
         });
     }
 
-    // The whole procedure: identity, push, dump, compare, commit, identity.
-    // Resolves with the final identity.  Rejects with an Error whose
-    // `reason` is one of 'no reply', 'wrong layout', 'wrong image',
-    // 'mismatch' (with `differences`), or 'not written' (with `state`), so
-    // the page can say which - they have different fixes.
+    // After a restart the keyboard's ports go away with the USB
+    // re-enumeration and come back.  `getPorts()` answers with fresh
+    // {output, input} or null, and is asked every `opts.every` ms (default
+    // 500) for up to `opts.limit` ms (default 20000) until a read answers
+    // with live bytes equal to the record's option cells.  Resolves with
+    // that read.  Rejects with `reason` 'no reply' when nothing answered in
+    // time, or 'not applied' (with `read`) when the keyboard came back and
+    // still runs other options than the record's - a record it refused.
+    function awaitLive(getPorts, record, opts) {
+        opts = opts || {};
+        var every = opts.every || 500, limit = opts.limit || 20000, spent = 0, last = null;
+        function attempt() {
+            return Promise.resolve().then(getPorts).then(function (ports) {
+                if (!ports) return null;
+                return read(ports.output, ports.input, { timeout: opts.timeout || 1500, timers: opts.timers })
+                    .then(function (r) { return r; }, function () { return null; });
+            }).then(function (r) {
+                if (r && r.live && !B.pendingOptions(record, r.live).length) return r;
+                if (r) last = r;
+                spent += every;
+                if (spent >= limit) return fail(last ? 'not applied' : 'no reply', last ? { read: last } : {});
+                return sleep(every, opts.timers).then(attempt);
+            });
+        }
+        return attempt();
+    }
+
+    // The whole procedure: identity, push, dump, compare, commit, identity,
+    // and then a restart when a committed option cell differs from the
+    // keyboard's live byte.  Resolves with the final identity, carrying
+    // `restarted` and `pending` (the options the restart applies; the
+    // caller waits with awaitLive).  Rejects with an Error whose `reason`
+    // is one of 'no reply', 'wrong layout', 'wrong image', 'mismatch'
+    // (with `differences`), or 'not written' (with `state`), so the page
+    // can say which - they have different fixes.
     function install(output, input, record, opts) {
         opts = opts || {};
+        var live = null;
         return identity(output, input, opts.timeout, opts.timers).catch(function () {
             return fail('no reply');
         }).then(function (id) {
-            if (id.layoutVersion !== 1) return fail('wrong layout', { identity: id });
+            if (id.layoutVersion !== LAYOUT) return fail('wrong layout', { identity: id });
             if (id.imageMarker !== markerOf(record)) return fail('wrong image', { identity: id });
             if (opts.onStage) opts.onStage('push');
             return push(output, record, opts);
@@ -161,6 +204,7 @@ var SETTINGSMIDI = (function () {
         }).then(function (d) {
             var diff = differences(record, d.pairs);
             if (diff.length) return fail('mismatch', { differences: diff });
+            live = B.nrpnLiveOf(d.pairs);
             if (opts.onStage) opts.onStage('commit');
             commit(output);
             // The commit lands on the instrument's next scan; the identity
@@ -172,14 +216,20 @@ var SETTINGSMIDI = (function () {
             });
         }).then(function (id) {
             if (id.commitState !== 2) return fail('not written', { identity: id, state: id.commitState });
+            id.pending = B.pendingOptions(record, live);
+            id.restarted = id.pending.length > 0;
+            if (id.restarted) {
+                if (opts.onStage) opts.onStage('restart');
+                restart(output);
+            }
             return id;
         });
     }
 
     return {
         push: push, dump: dump, read: read, identity: identity, commit: commit, reload: reload,
-        defaults: defaults, differences: differences, install: install,
-        markerOf: markerOf, sendParam: sendParam
+        defaults: defaults, differences: differences, install: install, restart: restart,
+        awaitLive: awaitLive, markerOf: markerOf, sendParam: sendParam, LAYOUT: LAYOUT
     };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = SETTINGSMIDI;

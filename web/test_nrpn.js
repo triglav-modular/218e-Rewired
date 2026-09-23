@@ -24,7 +24,8 @@ function check(name, ok, detail) {
     if (!ok) failures++;
 }
 
-var numbers = { chord_hold_scans: 200, transpose_cv_period: 819, transpose_cv_hysteresis: 12 };
+var numbers = { chord_hold_scans: 200, transpose_cv_period: 819, transpose_cv_hysteresis: 12,
+                knob2: 2, knob4: 1, sequencer: 0, portamento_in: 0 };
 var tables = {
     pitch_remap: [], tuning_slot0: [], tuning_slot1: [], tuning_slot2: [],
     tuning_period_keys: [12, 7, 36],
@@ -45,13 +46,40 @@ masks.forEach(function (m, i) {
 var record = B.settingsRecord(numbers, tables, true, 0xB007, 484, 5);
 
 var params = B.nrpnParamsOf(record);
-check('316 parameters in a record', params.length === 316, String(params.length));
-check('the walk is the instrument\'s: numbers, pitch, tuning, keys, masks, lengths',
-      params[0][0] === 0 && params[9][0] === 9 && params[10][0] === 0x80 && params[88][0] === 0xce
-      && params[89][0] === 0x100 && params[184][0] === 0x15f && params[185][0] === 0x160
-      && params[188][0] === 0x180 && params[283][0] === 0x1df && params[284][0] === 0x1e0
-      && params[315][0] === 0x1ff);
+check('338 parameters in a record', params.length === 338, String(params.length));
+check('the walk is the instrument\'s: cells, pitch, tuning, keys, masks, lengths',
+      params[0][0] === 0 && params[31][0] === 31 && params[32][0] === 0x80 && params[110][0] === 0xce
+      && params[111][0] === 0x100 && params[206][0] === 0x15f && params[207][0] === 0x160
+      && params[210][0] === 0x180 && params[305][0] === 0x1df && params[306][0] === 0x1e0
+      && params[337][0] === 0x1ff);
+check('the live bytes are not pushed', params.every(function (p) { return p[0] < 0x20 || p[0] >= 0x80; }));
 check('a number reads its cell', B.nrpnValueOf(record, 8) === 200 && B.nrpnValueOf(record, 5) === 819);
+check('an option cell reads its index: knob2 swing, knob4 trn, sequencer off, jack portamento',
+      B.nrpnValueOf(record, 18) === 2 && B.nrpnValueOf(record, 20) === 1 && B.nrpnValueOf(record, 21) === 0
+      && B.nrpnValueOf(record, 26) === 0);
+check('an option left out is the page\'s default: latch on, knob 1 order, the fix and its portamento on',
+      B.nrpnValueOf(record, 16) === 1 && B.nrpnValueOf(record, 17) === 0 && B.nrpnValueOf(record, 23) === 1
+      && B.nrpnValueOf(record, 24) === 1 && B.nrpnValueOf(record, 25) === 1);
+check('the reserved cells are zero', B.nrpnValueOf(record, 10) === 0 && B.nrpnValueOf(record, 15) === 0
+      && B.nrpnValueOf(record, 27) === 0 && B.nrpnValueOf(record, 31) === 0);
+check('the cells are where the firmware has them', B.SETTINGS_OPTION_CELL === 16 && B.SETTINGS_CELLS.length === 32
+      && B.SETTINGS_CELLS[16][0] === 'latching_arp' && B.SETTINGS_CELLS[26][0] === 'portamento_in'
+      && B.SETTINGS_CELLS[18][3] === 4 && B.SETTINGS_CELLS[27][0] === null && B.NRPN_LIVE.base === 0x20 && B.NRPN_LIVE.count === 16);
+check('optionCells and optionsOf are inverses', JSON.stringify(B.optionsOf(B.optionCells({ knob2: 'patterns', latching_arp: false, portamento_in: 'portamento' })))
+      === JSON.stringify({ latching_arp: false, knob1: 'order', knob2: 'patterns', knob3: 'octaves', knob4: 'vibrato',
+                           sequencer: true, clock_divide: true, pressure_fix: true, pressure_portamento: true,
+                           quantize_presets: true, portamento_in: 'portamento' }));
+check('an option outside its choices is refused', (function () {
+    try { B.optionCells({ knob2: 'random' }); return false; } catch (e) { return /knob2 must be one of/.test(e.message); }
+})());
+check('a cell past its range is refused by the record', (function () {
+    try { B.settingsRecord({ knob2: 5 }, tables, true, 0xB007, 484, 5); return false; } catch (e) { return /knob2 must be 0\.\.4/.test(e.message); }
+})());
+check('pressure_portamento without pressure_fix is refused by the record', (function () {
+    try { B.settingsRecord({ pressure_fix: 0, pressure_portamento: 1 }, tables, true, 0xB007, 484, 5); return false; }
+    catch (e) { return /needs pressure_fix/.test(e.message); }
+})());
+check('and both off is fine', B.nrpnValueOf(B.settingsRecord({ pressure_fix: 0, pressure_portamento: 0 }, tables, true, 0xB007, 484, 5), 24) === 0);
 check('a pitch entry reads its cell', B.nrpnValueOf(record, 0x83) === 485 + 120);
 check('a tuning entry reads its cell', B.nrpnValueOf(record, 0x100 + 64 + 5) === 520 + 200);
 check('keys per period read theirs', B.nrpnValueOf(record, 0x162) === 36);
@@ -61,8 +89,8 @@ check('the thirds of 0x12345678', B.nrpnValueOf(record, 0x180) === (0x12345678 &
       && B.nrpnValueOf(record, 0x182) === (0x12345678 >>> 28));
 check('bit 31 rides in the top third', B.nrpnValueOf(record, 0x180 + 3) === 1
       && B.nrpnValueOf(record, 0x181 + 3) === 0 && B.nrpnValueOf(record, 0x182 + 3) === 8);
-check('a gap names nothing', B.nrpnValueOf(record, 0x0a) === null && B.nrpnValueOf(record, 0xcf) === null
-      && B.nrpnValueOf(record, 0x163) === null && B.nrpnValueOf(record, 0x200) === null);
+check('a gap names nothing', B.nrpnValueOf(record, 0x20) === null && B.nrpnValueOf(record, 0x30) === null
+      && B.nrpnValueOf(record, 0xcf) === null && B.nrpnValueOf(record, 0x163) === null && B.nrpnValueOf(record, 0x200) === null);
 
 // Every parameter into a blank record: the payload comes back exactly.
 var blank = [];
@@ -72,7 +100,8 @@ check('every parameter applies', applied);
 var same = true;
 for (var o = 0x20; o < 0x288; o++) if (blank[o] !== record[o]) { same = false; break; }
 check('applying every parameter rebuilds the payload byte for byte', same);
-check('a gap applies nowhere', !B.nrpnApply(blank, 0x3f00, 1) && !B.nrpnApply(blank, 0x0a, 1));
+check('a gap applies nowhere, the live bytes included', !B.nrpnApply(blank, 0x3f00, 1) && !B.nrpnApply(blank, 0x30, 1)
+      && !B.nrpnApply(blank, 0x21, 1));
 
 // A third replaces only its own bits, whatever order they arrive in.
 var scratch = record.slice();
@@ -111,6 +140,19 @@ var samePayload = true;
 for (var o = 0x20; o < 0x288; o++) if (back[o] !== record[o]) samePayload = false;
 check('a dump\'s pairs rebuild the record\'s payload byte for byte', samePayload);
 var f = B.settingsFields(back);
+check('the options come back by name', f.cells.knob2 === 2 && f.options.knob2 === 'swing' && f.options.knob4 === 'trn'
+      && f.options.sequencer === false && f.options.portamento_in === 'portamento' && f.options.latching_arp === true
+      && Object.keys(f.options).length === 11, JSON.stringify(f.options));
+// The live bytes ride in a dump between the cells and the pitch curve.
+var liveDump = all.slice();
+for (var lv = 0; lv < 16; lv++) liveDump.splice(32 + lv, 0, [0x20 + lv, lv === 2 ? 3 : (lv === 4 ? 1 : B.nrpnValueOf(record, 16 + lv))]);
+check('the live bytes come out of a dump', JSON.stringify(B.nrpnLiveOf(liveDump)) === JSON.stringify([1, 0, 3, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]));
+check('and are not in the record built from it', JSON.stringify(B.nrpnRecordOf(liveDump).slice(0x20, 0x288)) === JSON.stringify(record.slice(0x20, 0x288)));
+check('a dump without them gives null', B.nrpnLiveOf(all) === null);
+check('pending names the options whose cell and live byte differ', B.pendingOptions(record, B.nrpnLiveOf(liveDump)).join(',') === 'knob2'
+      && B.pendingOptions(record, B.nrpnLiveOf(all)).length === 0
+      && B.pendingOptions(record, [1, 0, 2, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]).length === 0
+      && B.pendingOptions(record, [1, 0, 2, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0]).join(',') === 'cell 27');
 check('the fields come back by name', f.numbers.chord_hold_scans === 200
       && f.numbers.transpose_cv_period === 819 && f.numbers.tie_glide_rate === 60
       && f.pitch_remap.length === 79 && f.pitch_remap[78] === 485 + 40 * 78
@@ -147,9 +189,9 @@ check('a table of the wrong length is refused', (function () {
 // The identity block, sent last, with the generation in three parts.
 var identity = [[0x3f76, 0x312], [0x3f77, 2], [0x3f78, 484], [0x3f79, 0xff], [0x3f7a, 2], [0x3f7b, 3], [0x3f7c, 5], [0x3f7d, 7], [0x3f7e, 0x3007]];
 check('no identity until the layout version arrives', B.nrpnIdentity(identity) === null);
-identity.push([0x3f7f, 1]);
+identity.push([0x3f7f, 2]);
 var id = B.nrpnIdentity(identity);
-check('the identity block decodes', id && id.layoutVersion === 1 && id.imageMarker === 0xB007
+check('the identity block decodes', id && id.layoutVersion === 2 && id.imageMarker === 0xB007
       && id.generation === 7 + 5 * 16384 + 3 * 268435456 && id.commitState === 2
       && id.slotLoaded === 0xff && id.octaveUnits === 484 && id.firmwareVersion === '3.1.2', JSON.stringify(id));
 check('a keyboard that sends no version decodes with null for it',
@@ -163,7 +205,20 @@ check('versions compare by part, not by string', B.compareVersions('3.0.0', '3.0
 check('the commands are where the firmware has them',
       B.NRPN_COMMANDS.commit === 0x3f00 && B.NRPN_COMMANDS.commitKey === 0x2a2a
       && B.NRPN_COMMANDS.reload === 0x3f01 && B.NRPN_COMMANDS.defaults === 0x3f02
-      && B.NRPN_COMMANDS.dump === 0x3f03 && B.NRPN_COMMANDS.identity === 0x3f7f);
+      && B.NRPN_COMMANDS.dump === 0x3f03 && B.NRPN_COMMANDS.restart === 0x3f04
+      && B.NRPN_COMMANDS.restartKey === 0x2a2a && B.NRPN_COMMANDS.identity === 0x3f7f);
+check('the layout is 2 and the build numbers carry the option cells',
+      B.SETTINGS_LAYOUT.version === 2 && (function () {
+          var n = B.computeNumbers(B.expand({ knob2: 'swing', knob4: 'trn', sequencer: false, portamento_in: 'portamento', latching_arp: false }));
+          return n.knob2 === 2 && n.knob4 === 1 && n.sequencer === 0 && n.portamento_in === 0 && n.latching_arp === 0
+              && n.knob1 === 0 && n.knob3 === 0 && n.clock_divide === 1 && n.pressure_fix === 1 && n.pressure_portamento === 1
+              && n.quantize_presets === 1;
+      })() && (function () {
+          var n = B.computeNumbers(B.expand({ knob1: 'orders', knob2: 'factory', knob3: 'factory', knob4: 'factory',
+                                              pressure_fix: false, pressure_portamento: false, quantize_presets: false }));
+          return n.knob1 === 1 && n.knob2 === 4 && n.knob3 === 1 && n.knob4 === 2 && n.pressure_fix === 0
+              && n.pressure_portamento === 0 && n.quantize_presets === 0;
+      })());
 
 if (failures) { console.log(failures + ' failure(s)'); process.exit(1); }
 console.log('ALL NRPN CODEC TESTS PASSED');

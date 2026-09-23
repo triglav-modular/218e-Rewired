@@ -13,13 +13,21 @@ import java.util.zip.CRC32;
 public class SettingsRegression extends PersistenceRegression {
     static final long SLOT0=0x8003d000L, SLOT1=0x8003d800L, MIRROR=0x6800, STATE=0x6a70;
     static final long SNEWEST=0x8001f150L, APPLIER=0x80019a40L, REMAP=0x80019980L, CHAIN=0x8001a2e8L;
-    static final long PARSER=0x8000831cL, SENDER=0x80008034L, WRITER=0x800108fcL, SETSCAN=0x8001f780L;
-    static final long USB=0x34b0, NRPN=0x6a68;
-    static final int LEN=0x2a8, PAY=0x20, END=0x288;
+    static final long PARSER=0x8000831cL, SENDER=0x80008034L, WRITER=0x800108fcL, SETSCAN=0x8001f820L;
+    static final long USB=0x34b0, NRPN=0x6a68, LIVE=0x6d28, WDT=0xffff0d30L;
+    // settings_restart: its second store is at +6 and its spin at +0xa.
+    static final long RESTART=0x8001fb60L, RESTART_2ND=RESTART+6, RESTART_SPIN=RESTART+0xa;
+    static final int LEN=0x2a8, PAY=0x20, END=0x288, LAYOUT=2;
     static final String[] NUMBERS={"tie_glide_rate","strip_halfway_units","clock_min_ms",
         "clock_rearm_us","clock_lock_pulses","transpose_cv_period","transpose_cv_zero",
         "transpose_cv_hysteresis","chord_hold_scans","latch_state_hold_scans"};
     static final int[] DEFAULTS={60,2048,4,250,5,123,0,2,300,200};
+    // The option cells, 16..26, and the top of each one's range.
+    static final String[] OPTIONS={"latching_arp","knob1","knob2","knob3","knob4","sequencer",
+        "clock_divide","pressure_fix","pressure_portamento","quantize_presets","portamento_in"};
+    static final int[] OPTION_MAX={1,2,4,1,2,1,1,1,1,1,1};
+    static final int PARAMS=354;   // 32 cells, 16 live bytes, 79, 96, 3, 96, 32
+    long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
     boolean keepSlots, stubChain, failWrite;
@@ -46,6 +54,11 @@ public class SettingsRegression extends PersistenceRegression {
     @Override void step() throws Exception {
         long p=pc();
         if(stubChain&&p==CHAIN) { ret(); return; }
+        // The restart's two watchdog writes are read back where they land;
+        // the spin that follows would never return, so it is returned from
+        // by hand.  The reset itself is the bench's to see.
+        if(p==RESTART_2ND) wdtFirst=r(WDT,4);
+        if(p==RESTART_SPIN) { wdtSecond=r(WDT,4); restarts++; ret(); return; }
         if(p==SENDER) { sent.add(new int[]{(int)reg("R12"),(int)reg("R11"),(int)reg("R10")}); ret(); return; }
         if(p==WRITER&&reg("R12")>=SLOT0&&reg("R12")<SLOT1+0x800) {
             long dest=reg("R12"), src=reg("R11"), len=reg("R10"), erase=reg("R9");
@@ -87,7 +100,8 @@ public class SettingsRegression extends PersistenceRegression {
     // The value the mirror holds for a parameter, worked out here from
     // the map in docs/PLAN-SETTINGS.md rather than by asking the firmware.
     long expect(int param) throws Exception {
-        if(param<10) return r(MIRROR+2*param,2);
+        if(param<0x20) return r(MIRROR+2*param,2);
+        if(param<0x30) return r(LIVE+param-0x20,1);
         if(param>=0x80&&param<0xcf) return r(0x6840+2*(param-0x80),2);
         if(param>=0x100&&param<0x160) return r(0x68e0+2*(param-0x100),2);
         if(param>=0x160&&param<0x163) return r(0x69a0+2*(param-0x160),2);
@@ -125,8 +139,33 @@ public class SettingsRegression extends PersistenceRegression {
         check("a length lands",r(0x6a28,2)==16);
         nrpn(0x1e0,33);
         check("a length past 32 is ignored",r(0x6a28,2)==16);
-        byte[] before=mirror(); nrpn(0x200,5); nrpn(0x0a,5); nrpn(0x3000,5);
+        byte[] before=mirror(); nrpn(0x200,5); nrpn(0x3000,5); nrpn(0x30,1);
         check("a parameter that names nothing changes nothing",Arrays.equals(before,mirror()));
+        // The option cells: a write lands in the mirror and not in the live
+        // bytes, which stay as booted until the next power-up.
+        long live17=r(LIVE+1,1), was17=r(MIRROR+2*17,2);
+        nrpn(17,was17==2?1:2);
+        check("an option cell takes a value inside its range",r(MIRROR+2*17,2)==(was17==2?1:2));
+        check("and the live byte stays as booted",r(LIVE+1,1)==live17);
+        nrpn(17,3);
+        check("an option past its range is ignored",r(MIRROR+2*17,2)==(was17==2?1:2));
+        nrpn(18,4); check("knob 2 reaches factory, its top value",r(MIRROR+2*18,2)==4);
+        nrpn(18,5); check("and not past it",r(MIRROR+2*18,2)==4);
+        nrpn(10,1); nrpn(27,1);
+        check("a reserved cell refuses everything but zero",r(MIRROR+2*10,2)==0&&r(MIRROR+2*27,2)==0);
+        byte[] beforeLive=e.readMemory(toAddr(LIVE),16); nrpn(0x21,1); nrpn(0x2f,7);
+        check("the live bytes are read-only over MIDI",Arrays.equals(beforeLive,e.readMemory(toAddr(LIVE),16)));
+        // The pair: portamento needs the fix, on receive as on load.
+        nrpn(23,1); nrpn(24,1);
+        check("portamento on with the fix on lands",r(MIRROR+2*24,2)==1);
+        nrpn(23,0);
+        check("the fix going off takes portamento with it",r(MIRROR+2*23,2)==0&&r(MIRROR+2*24,2)==0);
+        nrpn(24,1);
+        check("portamento on with the fix off is ignored",r(MIRROR+2*24,2)==0);
+        nrpn(24,0); nrpn(23,1);
+        check("the fix back on leaves portamento where it was",r(MIRROR+2*23,2)==1&&r(MIRROR+2*24,2)==0);
+        nrpn(24,1);
+        check("and portamento then lands",r(MIRROR+2*24,2)==1);
         // The factory's own Control Change path, in front of which this
         // sits: controller 5 is the portamento time, stored shifted with a
         // flag, on the instrument's channel and on no other.
@@ -156,6 +195,7 @@ public class SettingsRegression extends PersistenceRegression {
             r(STATE,1)==2&&r(STATE+1,1)==0&&r(STATE+4,4)==1&&slotWrites==3);
         long p=call(SNEWEST);
         check("the record is the newest and carries the edit",p==SLOT0&&r(SLOT0+0x20,2)==61&&r(SLOT0+8,4)==1);
+        check("the committed record says layout 2",r(SLOT0+4,2)==LAYOUT);
         call(SETSCAN);
         check("a scan without a request writes nothing",slotWrites==3);
         nrpn(0,62); nrpn(0x3f00,0x2a2a); call(SETSCAN);
@@ -173,8 +213,15 @@ public class SettingsRegression extends PersistenceRegression {
         check("0x3f01 reloads the mirror from flash",r(0x6800,2)==63&&r(STATE,1)==0);
         nrpn(0x3f02,0);
         check("0x3f02 puts the image's own settings back",Arrays.equals(mirror(),payloadOf(record)));
+        // The restart: the watchdog's two-key write, and only with the key.
+        restarts=0; wdtFirst=-1; wdtSecond=-1;
+        nrpn(0x3f04,0x1111); nrpn(0x3f04,0);
+        check("a restart needs its key",restarts==0);
+        nrpn(0x3f04,0x2a2a);
+        check("0x3f04 with the key reaches the watchdog: 0x55 then 0xaa, PSEL 7, enabled",
+            restarts==1&&wdtFirst==0x55000701L&&wdtSecond==0xaa000701L);
         keepSlots=false;
-        println("PASS commit: alternating slots, generations, a failed write, reload and defaults");
+        println("PASS commit: alternating slots, generations, a failed write, reload, defaults and the restart");
     }
     void dumps() throws Exception {
         fresh(); keepSlots=true; sent.clear();
@@ -185,24 +232,25 @@ public class SettingsRegression extends PersistenceRegression {
         check("a dump ends by itself",r(NRPN+4,2)==0x4000);
         check("at most eight packets a scan",most<=8);
         List<int[]> got=decoded();
-        check("316 parameters and the ten of the identity block: "+got.size(),got.size()==326);
+        check(PARAMS+" parameters and the ten of the identity block: "+got.size(),got.size()==PARAMS+10);
         boolean order=true, values=true;
-        int[] walk=new int[316]; int n=0;
-        for(int q=0;q<10;q++)walk[n++]=q; for(int q=0x80;q<0xcf;q++)walk[n++]=q; for(int q=0x100;q<0x163;q++)walk[n++]=q;
+        int[] walk=new int[PARAMS]; int n=0;
+        for(int q=0;q<0x30;q++)walk[n++]=q; for(int q=0x80;q<0xcf;q++)walk[n++]=q; for(int q=0x100;q<0x163;q++)walk[n++]=q;
         for(int q=0x180;q<0x200;q++)walk[n++]=q;
-        for(int i=0;i<316;i++) { if(got.get(i)[0]!=walk[i])order=false; if(got.get(i)[1]!=expect(walk[i]))values=false; }
-        check("in the instrument's order",order);
-        check("every value is the mirror's",values);
+        for(int i=0;i<PARAMS;i++) { if(got.get(i)[0]!=walk[i])order=false; if(got.get(i)[1]!=expect(walk[i]))values=false; }
+        check("in the instrument's order: cells, live bytes, pitch, tuning, keys, masks, lengths",order);
+        check("every value is the mirror's, the live bytes theirs",values);
         long marker=num("init_marker",0)&0xffff;
-        check("the identity block follows: firmware version, marker top bits, period, slot, state, generation, marker, layout version",
-            got.get(316)[0]==0x3f76&&got.get(316)[1]==num("firmware_version_code",0x300)
-            &&got.get(317)[0]==0x3f77&&got.get(317)[1]==(marker>>14)
-            &&got.get(318)[0]==0x3f78&&got.get(318)[1]==num("octave_units",484)
-            &&got.get(319)[0]==0x3f79&&got.get(319)[1]==0xff
-            &&got.get(320)[0]==0x3f7a&&got.get(320)[1]==0
-            &&got.get(321)[0]==0x3f7b&&got.get(322)[0]==0x3f7c&&got.get(323)[0]==0x3f7d
-            &&got.get(324)[0]==0x3f7e&&got.get(324)[1]==(marker&0x3fff)
-            &&got.get(325)[0]==0x3f7f&&got.get(325)[1]==1);
+        int b=PARAMS;
+        check("the identity block follows: firmware version, marker top bits, period, slot, state, generation, marker, layout version 2",
+            got.get(b)[0]==0x3f76&&got.get(b)[1]==num("firmware_version_code",0x300)
+            &&got.get(b+1)[0]==0x3f77&&got.get(b+1)[1]==(marker>>14)
+            &&got.get(b+2)[0]==0x3f78&&got.get(b+2)[1]==num("octave_units",484)
+            &&got.get(b+3)[0]==0x3f79&&got.get(b+3)[1]==0xff
+            &&got.get(b+4)[0]==0x3f7a&&got.get(b+4)[1]==0
+            &&got.get(b+5)[0]==0x3f7b&&got.get(b+6)[0]==0x3f7c&&got.get(b+7)[0]==0x3f7d
+            &&got.get(b+8)[0]==0x3f7e&&got.get(b+8)[1]==(marker&0x3fff)
+            &&got.get(b+9)[0]==0x3f7f&&got.get(b+9)[1]==LAYOUT);
         // The generation in three parts, after a commit gave it one.
         sent.clear(); nrpn(0x3f00,0x2a2a); call(SETSCAN);
         w(STATE+4,4,0x12345678L);
@@ -243,6 +291,7 @@ public class SettingsRegression extends PersistenceRegression {
         setHalf(rec,0x180+2*5,1234);                   // tuning slot 2, key 5
         setHalf(rec,0x1c4,7);                          // keys per period, slot 2
         setHalf(rec,0x1c8,0x1234); setHalf(rec,0x248,16); // a mask and a length
+        setHalf(rec,0x20+2*17,half(rec,0x20+2*17)==2?1:2); // knob1, another valid role
         setGen(rec,3); stamp(rec); return rec;
     }
     void defaults() throws Exception {
@@ -251,6 +300,14 @@ public class SettingsRegression extends PersistenceRegression {
             Arrays.equals(mirror(),payloadOf(record)));
         for(int i=0;i<NUMBERS.length;i++)
             check("cell "+i+" holds "+NUMBERS[i],r(MIRROR+2*i,2)==num(NUMBERS[i],DEFAULTS[i]));
+        for(int i=0;i<OPTIONS.length;i++) {
+            long v=r(MIRROR+2*(16+i),2);
+            check("cell "+(16+i)+" holds the build's "+OPTIONS[i],v==num(OPTIONS[i],0)&&v<=OPTION_MAX[i]);
+        }
+        boolean live=true;
+        for(int i=0;i<16;i++) if(r(LIVE+i,1)!=(r(MIRROR+2*(16+i),2)&0xff)) live=false;
+        check("the live option bytes are cells 16..31 as booted",live);
+        check("the reserved cells are zero",r(MIRROR+2*10,4)==0&&r(MIRROR+2*27,2)==0&&r(MIRROR+2*30,4)==0);
         check("nothing loaded: state clean, no slot, generation zero",
             r(STATE,1)==0&&r(STATE+1,1)==0xff&&r(STATE+4,4)==0);
         check("the pitch curve is the emitted one",
@@ -267,6 +324,8 @@ public class SettingsRegression extends PersistenceRegression {
         check("a valid record in slot 0 overrides the mirror",Arrays.equals(mirror(),payloadOf(rec)));
         check("state names slot 0 and generation 3",
             r(STATE,1)==0&&r(STATE+1,1)==0&&r(STATE+4,4)==3);
+        check("the live bytes follow the loaded record's option cells",
+            r(LIVE+1,1)==half(rec,0x20+2*17)&&r(LIVE,1)==half(rec,0x20+2*16));
         // The readers: the applier copies a slot's table out of the mirror
         // into RAM 0x854 when its guard is clear.
         w(0x6090,1,2); w(0x60e4,2,0); call(APPLIER);
@@ -301,9 +360,10 @@ public class SettingsRegression extends PersistenceRegression {
         // the CRC restamped so only that check can be the reason.
         // Keys per period: 33 is past the rotation's table, 128 past a .kbm.
         long keys=props.getProperty("block.preset_entry","0").trim().equals("1")?33:128;
-        long[][] bad={{0,1,0xff},{4,2,2},{6,2,0x299},{8,4,0},{0x10,2,0x1234},{0x12,2,485},
+        long[][] bad={{0,1,0xff},{4,2,1},{4,2,3},{6,2,0x299},{8,4,0},{0x10,2,0x1234},{0x12,2,485},
             {0x20,2,0},{0x20,2,1025},{0x24,2,5},{0x2e,2,65},{0x60,2,0x1000},{0xfe,2,0x1000},
-            {0x100,2,0x1000},{0x1c0,2,0},{0x1c4,2,keys},{0x248,2,33}};
+            {0x100,2,0x1000},{0x1c0,2,0},{0x1c4,2,keys},{0x248,2,33},
+            {0x34,2,1},{0x56,2,1},{0x42,2,3},{0x44,2,5},{0x48,2,3}};
         for(long[] b:bad) {
             byte[] rec=good.clone();
             for(int i=0;i<b[1];i++) rec[(int)b[0]+i]=(byte)(b[2]>>>(8*(b[1]-1-i)));
@@ -313,6 +373,10 @@ public class SettingsRegression extends PersistenceRegression {
         }
         byte[] rec=good.clone(); rec[0x61]^=1; plant(SLOT0,rec); cold();
         check("rejected: a flipped payload bit",r(STATE+1,1)==0xff);
+        rec=good.clone(); setHalf(rec,0x4e,0); setHalf(rec,0x50,1); stamp(rec); plant(SLOT0,rec); cold();
+        check("rejected: pressure_portamento without pressure_fix",r(STATE+1,1)==0xff);
+        rec=good.clone(); setHalf(rec,0x4e,0); setHalf(rec,0x50,0); stamp(rec); plant(SLOT0,rec); cold();
+        check("and both off loads",r(STATE+1,1)==0&&r(LIVE+7,1)==0&&r(LIVE+8,1)==0);
         plant(SLOT0,good); cold();
         check("and the good record loads again",r(STATE+1,1)==0);
         keepSlots=false;
@@ -342,7 +406,7 @@ public class SettingsRegression extends PersistenceRegression {
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
             defaults(); loads(); rejections(); slots(); receive(); commits(); dumps();
-            println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing.");
+            println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }
 }

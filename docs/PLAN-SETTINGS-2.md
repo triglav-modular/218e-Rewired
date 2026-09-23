@@ -8,7 +8,9 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): planned, not built.** Every address and byte count
+**Status (2026-09-23): planned; phase A in progress.** The owner's calls at
+the end were answered the same day: the whole scope, layout 2, and options
+that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
 the union of block extents across the five logged configurations, the
 factory control-flow table and the factory hex; nothing was measured on the
@@ -211,8 +213,9 @@ fresh flash behaves as its config says and stage 2, like stage 1, changes
 nothing about what a fresh flash does. `settings_valid`'s bounds table
 grows from 10 to 32 pairs and moves out of `settings_valid`'s extent into
 its own cave; `settings_target`'s number branch bounds at 0x20 instead of
-0xa. The map gains one section: **`0x0030..0x003b`, the live option bytes,
-read-only** - the dump sends them, a write to them is ignored.
+0xa. The map gains one section: **`0x0020..0x002f`, the live option bytes,
+read-only** - the dump sends them right after the 32 cells, so the cursor's
+first gap moves from 0x0a to 0x30, and a write to them is ignored.
 
 **Layout version 2.** The map changed, so the identity block's `0x3f7f`
 answers 2, the record header carries 2, and both `settings_valid` and the
@@ -224,26 +227,38 @@ compatible extension would need. If a layout-1 record were ever found
 baked, which is stage 1's own rule for any record it refuses.
 
 **When an option applies: at boot.** `settings_boot`, after the record load,
-copies the low byte of cells 16..31 to **`0x6d28..0x6d38`, the live option
-bytes** (a new `RAM_REGIONS` entry after the commit staging, which ends at
-`0x6d28`). Every dispatcher, shim and gate reads a live byte, never the
+calls `settings_live`, which copies the low byte of cells 16..31 to
+**`0x6d28..0x6d38`, the live option bytes** (a `RAM_REGIONS` entry after the
+commit staging, which ends at `0x6d28`). Every dispatcher, shim and gate reads a live byte, never the
 mirror, so an NRPN write changes nothing until the next power-up, however
 much state the option owns. That is the whole reason for the snapshot: a
 latch holding notes, a take mid-play, a locked divider, a knob role changed
 under a moving knob - none of those has to be unwound live, and none of the
 suites has to prove a transition. The page tells the two apart because both
 are in the dump: the mirror's cells 16..27 and the live bytes at
-`0x0030..0x003b`. Where they differ it says which options take effect at
+`0x0020..0x002f`. Where they differ it says which options take effect at
 the next power-up, and the send's copy says a power cycle is part of the
 gesture.
 
 `0x3f01` (reload the mirror from flash) and `0x3f02` (the image's own
 settings back) fill the option cells like any other; neither touches the
-live bytes. A reset command (`0x3f04` with `0x2a2a`, through the watchdog)
-would turn the power cycle into a button on the page; it is not in this
-plan because nothing here has traced the UC3B's reset path and the settings
-regression cannot prove a real reset, and it can be added without a layout
-bump if wanted.
+live bytes.
+
+**And the restart that makes it immediate.** The owner's call (2026-09-23):
+settings take effect at once, and a restart is an acceptable way to get
+there. So the map gains `0x3f04` with data `0x2a2a`: **restart**, through the
+watchdog - the cave enables the WDT with a short timeout and spins, which is
+a power cycle by other means (SRAM survives it, and the boot already treats a
+warm reset like power-up). The page's send becomes: identity, push, dump,
+compare, commit, identity, and then, when the committed option cells differ
+from the live bytes, restart; it then waits for the port to come back (the
+USB re-enumerates) and asks for the identity block once more, whose live
+bytes must now equal the cells. A send that changes only tables does not
+restart. What the settings regression can prove is that the command writes
+the watchdog's control register in the documented two-key sequence and
+nothing else; the reset itself, and that the bootloader hands a
+watchdog-reset chip back to the application, are the bench's to confirm
+*(verify on the instrument, first thing)*.
 
 ## The boot chain, and what always runs
 
@@ -320,12 +335,14 @@ not per fix (memory: batch-firmware-fixes-into-one-tail):
 
 1. **Cells and layout (phase A).** `test_settings_record`, `test_nrpn.js`,
    `test_settingsmidi.js`: 32 numbers, the option bounds, the live section
-   read-only, layout 2 refused as 1 and accepted as 2. `SettingsRegression`:
+   read-only, layout 2 refused as 1 and accepted as 2, the restart after a
+   commit that changed a cell and not otherwise. `SettingsRegression`:
    the cells load, the live bytes are the booted cells and stay put across a
    write and a reload, `0x3f02` restores the config's values, a cell out of
    range falls the record back, `pressure_portamento` without `pressure_fix`
-   is refused on both paths. No behaviour moves yet: the image differs from
-   the golden only in the settings caves.
+   is refused on both paths, `0x3f04` with the key writes the watchdog's
+   two keys. No behaviour moves yet: the image differs from the golden only
+   in the settings caves.
 2. **Knob roles (phase B).** `ControlRegression` `roles`, `swing`, `patterns`
    and `default` against one image with the cells planted; `knobs_off` from
    the parity matrix as a record. The dispatchers' factory targets checked
@@ -359,8 +376,33 @@ Each phase is one image, one repin, one commit, in this order because each
 leaves the previous ones' proof standing and because the relocation risk
 rises along it:
 
-- **A. Cells, live bytes, layout 2, the map, the page codec.** Settings caves
-  only, all movable by constant; no old cave touched.
+- **A. Cells, live bytes, layout 2, the map, the restart, the page codec.**
+  Settings caves only, all movable by constant; no old cave touched.
+  Built 2026-09-23: `settings_valid` holds 32 cells to a bounds table of
+  its own (`settings_bounds`, `0x8001fa80`), `settings_defaults` copies the
+  32 cells out of `settings_numbers` (`0x8001fb00`), `settings_live`
+  (`0x8001fb40`) copies the option bytes at boot, `settings_restart`
+  (`0x8001fb60`) is the watchdog write, and everything from
+  `settings_target` on moved up by the growth (`settings_scan` is at
+  `0x8001f820` now). The page's step 5 sends the restart after a commit
+  that changed an option and waits through the re-enumeration; a read
+  lists the options, says which are not yet running, and loads them into
+  the controls. In this phase a record's cells always equal its image's
+  baked ones, because the image marker still varies with every option, so
+  the page never actually restarts a keyboard until phase B moves the
+  first option out of the marker. Verified: both toolchains at
+  `fab1de5c`, historical `2cc3c881` (sweep: match + known image), the
+  parity matrix 44/44, `test.py --golden` 289 checks, the corpus
+  regenerated (11,337 instructions), `SettingsRegression` in all four
+  persistence modes (680..683 assertions, the restart's two watchdog
+  writes read back), controls 12/12, clock 6/6, the node codec and
+  transport tests, and the built page against a fake keyboard in the
+  preview: send, restart, port away and back, the confirmation; a read
+  listing the options with one not yet running and loading them into
+  the controls; and a keyboard that never comes back reported after the
+  20 s limit. `run()` had to be split: the settings caves live in an
+  `Emitter` lambda (Java's 64 KB method limit), which the transpiler
+  nests as a function.
 - **B. Knob roles.** Nine dispatchers in new caves; one entry test in
   `arp_random_knobs`' octave path; the knob-4 pair.
 - **C. Latch.** Three engagement tests, one shim, one branch in
@@ -397,19 +439,15 @@ Taken, cheap to change:
 
 The owner's:
 
-- **The scope.** Default: everything in the table marked "Stage 2", in the
-  order above, with F (pressure) and G (clock) built last and dropped back
-  to build-time if their sites resist. The alternative is B-D only - the
-  knobs, the latch and the sequencer - which is most of the page's options
-  for about a quarter of the work and no old-cave relocation at all.
-- **The end of "left factory".** For the options that move, a build with an
-  option off no longer leaves the factory bytes at its sites, and the page's
-  "left factory" count shrinks to the build-time options. If keeping that
-  guarantee for some option matters, that option stays build-time.
-- **The layout bump** to 2 with 1 refused, as above; the alternative keeps
-  1 loading with the options read as "as built" when zero.
-- **A reset command**, so the power cycle is a button. Not in the plan;
-  cheap to add later if the reset path is traced.
+- **The scope.** Decided 2026-09-23: everything in the table marked
+  "Stage 2", in the order above, F and G last.
+- **The end of "left factory".** Accepted 2026-09-23: for the options that
+  move, a build with an option off no longer leaves the factory bytes at its
+  sites, and the page's "left factory" count shrinks to the build-time
+  options.
+- **The layout bump** to 2 with 1 refused. Accepted 2026-09-23.
+- **A reset command.** Decided 2026-09-23: yes, `0x3f04`, and the page
+  sends it after a commit that changed an option.
 - **The page's shape and copy** for a step 2 whose controls no longer all
   invalidate the build, the pending report, and the send's power-cycle line.
 - **The version.** 3.0.0 stays until told otherwise; the identity block's

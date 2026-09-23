@@ -1398,6 +1398,12 @@ RAM_REGIONS = [
     (0x6A68, 0x6A70, "settings NRPN state: parameter MSB/LSB, data MSB, a pad, the dump cursor"),
     (0x6A70, 0x6A78, "settings loader state: commit state, slot loaded, generation"),
     (0x6A80, 0x6D28, "settings record staged for a commit, marker erased"),
+    # The low byte of option cells 16..31, copied by settings_boot after the
+    # record load and read by every option's dispatcher, shim and gate: an
+    # NRPN write changes the mirror and not these, so a code path never
+    # switches under live state.  The page sends a restart (0x3f04) to
+    # apply them, which is a power cycle by way of the watchdog.
+    (0x6D28, 0x6D38, "live option bytes: cells 16..31 as booted"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to
@@ -2524,6 +2530,28 @@ def main() -> None:
     # Quantized randomness takes the randomiser's hook the way swing does;
     # the pool word at 0x80019d40 names whichever of the three is built.
     blocks["arp_quantized"] = k2 == "quantized"
+    # The option cells, 16..27 of the settings mirror (docs/PLAN-SETTINGS-2.md):
+    # the config's own choices, baked into the image as its defaults the way
+    # a table is, and written into the record beside the numbers.  Stage 2
+    # phase A: the cells exist, load, dump and commit; nothing reads them
+    # yet, so every option is still decided by the blocks above.  The
+    # encodings are SETTINGS.OPTION_LIST's, the page's values in the page's
+    # order, and buildlib.js's computeNumbers derives the same twelve.
+    knobs = cfg["knobs"]
+    cfg["_numbers"].update(SETTINGS.option_cells({
+        "latching_arp": get(cfg, "arp.switch") == "latch",
+        "knob1": "factory" if knobs["knob1"] == "factory" else ("orders" if orders == 1 else "order"),
+        "knob2": "factory" if knobs["knob2"] == "factory"
+                 else {"randomness": "spacing"}.get(k2, k2),
+        "knob3": "factory" if knobs["knob3"] == "factory" else "octaves",
+        "knob4": "factory" if knobs["knob4"] == "factory" else ("trn" if k4 == 1 else "vibrato"),
+        "sequencer": seq,
+        "clock_divide": div,
+        "pressure_fix": not cfg.get("_pressure_factory"),
+        "pressure_portamento": bool(get(cfg, "portamento.pressure_blend")),
+        "quantize_presets": bool(get(cfg, "presets.quantize")),
+        "portamento_in": "transpose" if get(cfg, "portamento_in.transpose") else "portamento",
+    }))
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
     # The event-17 wrapper is shared: pressure smoothing runs its

@@ -122,9 +122,13 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   block leads with the firmware version (`0x3f76`, frozen numbers) and the
   page's verdict tells an older, a newer and a same-version-other-options
   keyboard apart. Nothing here has run on the instrument yet. Stage 2 -
-  the blocks and knob roles as option cells in the same record, applied
-  at boot - is planned in [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md)
-  (2026-09-23) and not started; its scope is the owner's call. (Dispatcher event 32 at `0x80004fc2`
+  the blocks and knob roles as option cells 16..27 of the same record,
+  applied at boot from live bytes at `0x6d28`, with a restart command
+  (`0x3f04`, the watchdog) so the page can apply them at once - is
+  planned in [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md). Phase A (the
+  cells, layout 2, the live bytes, the restart, the page codec) is built
+  (2026-09-23); nothing reads the cells yet, so every option is still the
+  build's. Phases B..H move the options one by one. (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),

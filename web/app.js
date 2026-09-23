@@ -1340,8 +1340,26 @@
         'wrong layout': 'This keyboard runs a different build: flash the firmware from step 3 first.',
         'wrong image': 'This keyboard runs a different build: flash the firmware from step 3 first.',
         'mismatch': 'The keyboard did not read everything back the same: try again.',
-        'not written': 'The keyboard could not save: try again, and if it keeps failing, flash the firmware again.'
+        'not written': 'The keyboard could not save: try again, and if it keeps failing, flash the firmware again.',
+        'not applied': 'The keyboard restarted but still runs its old options: read its settings, and if they are not what you sent, flash the firmware again.',
+        'gone': 'The keyboard did not come back after restarting: power-cycle it, then read its settings to check.'
     };
+    // After a restart the ports are gone for a moment and come back, under
+    // the same names: the fresh pair by name, or null while they are away.
+    function freshPorts(name) {
+        return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
+            var out = r[0].filter(function (p) { return p.name === name; })[0];
+            var inp = r[1].filter(function (p) { return p.name === name; })[0] || (out && r[1][0]);
+            return out && inp ? { output: out, input: inp } : null;
+        }, function () { return null; });
+    }
+    function optionWords(names) {
+        var labels = { latching_arp: 'the latching arpeggiator', knob1: 'knob 1', knob2: 'knob 2', knob3: 'knob 3',
+                       knob4: 'knob 4', sequencer: 'the sequencer', clock_divide: 'the clock divider',
+                       pressure_fix: 'the pressure fix', pressure_portamento: 'the pressure portamento',
+                       quantize_presets: 'preset quantization', portamento_in: 'the portamento jack' };
+        return names.map(function (n) { return labels[n] || n; }).join(', ');
+    }
     if ($('kbdSend')) {
         // The MIDI permission is asked for when the port list is clicked,
         // not when the step scrolls into view and not on load: flashing
@@ -1356,9 +1374,23 @@
             $('kbdSend').disabled = true;
             $('kbdRead').disabled = true;
             msg($('kbdMsg'), 'warn', 'Sending…');
-            SETTINGSMIDI.install(ports.output, ports.input, recordBytes(state.result.settings), {})
-                .then(function () {
-                    msg($('kbdMsg'), 'ok', 'Sent and saved.');
+            var record = recordBytes(state.result.settings), name = ports.output.name;
+            SETTINGSMIDI.install(ports.output, ports.input, record, {})
+                .then(function (id) {
+                    if (!id.restarted) { msg($('kbdMsg'), 'ok', 'Sent and saved.'); return; }
+                    // An option changed: the keyboard is restarting to run
+                    // it, and its ports go away and come back meanwhile.
+                    msg($('kbdMsg'), 'warn', 'Sent and saved. The keyboard is restarting to apply ' +
+                        optionWords(id.pending) + '…');
+                    return SETTINGSMIDI.awaitLive(function () { return freshPorts(name); }, record, {})
+                        .then(function () {
+                            msg($('kbdMsg'), 'ok', 'Sent and saved. The keyboard has restarted and now runs ' +
+                                optionWords(id.pending) + ' as set here.');
+                        }, function (err) {
+                            msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason === 'no reply' ? 'gone' : err && err.reason]
+                                || String(err && err.message || err));
+                        })
+                        .then(function () { kbd.listed = false; return listKeyboard(); });
                 }, function (err) {
                     msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
                 })
@@ -1410,10 +1442,18 @@
         var numbers = BUILDLIB.SETTINGS_NUMBERS.map(function (x) {
             return x[0] + ' ' + f.numbers[x[0]];
         }).join(' · ');
+        var options = BUILDLIB.SETTINGS_OPTIONS.map(function (o) {
+            var v = f.options[o[0]];
+            return o[0] + ' ' + (v === true ? 'on' : v === false ? 'off' : v === undefined ? '?' : v);
+        }).join(' · ');
         var lengths = f.lengths.filter(function (len) { return len > 0; });
         var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
         return verdict + '\n\n' +
             (ver === null ? '' : 'Firmware: Rewired ' + ver + '\n') +
+            'Options: ' + options + '\n' +
+            (r.pending && r.pending.length
+                ? 'Not yet running: ' + optionWords(r.pending) + ' - the keyboard holds the new setting and applies it at its next restart.\n'
+                : '') +
             'Timing numbers: ' + numbers + '\n' +
             'Patterns: ' + (lengths.length
                 ? lengths.length + ', of ' + lengths.join(' · ') + ' steps' : 'none') + '\n' +
@@ -1429,6 +1469,22 @@
             if (len > 0) rows.push({ text: clixPattern(f.masks[i]).text, length: len });
         });
         if (rows.length) { state.patterns = rows; renderPatterns(); }
+        // The options into their controls, through the same appliers a
+        // restore uses and in its order - the patterns above first, because
+        // knob 2 on patterns seeds an empty bank; the pressure fix before
+        // its portamento, which needs it.  The jack's control is a
+        // checkbox named for one of its two settings.
+        var opts = {};
+        BUILDLIB.SETTINGS_OPTIONS.forEach(function (o) {
+            if (f.options[o[0]] !== undefined) opts[o[0]] = f.options[o[0]];
+        });
+        if (opts.portamento_in !== undefined) {
+            opts.portamento_transpose = opts.portamento_in === 'transpose';
+            delete opts.portamento_in;
+        }
+        BUILDLIB.SETTINGS_ORDER.forEach(function (k) {
+            if (APPLY[k] && opts[k] !== undefined) APPLY[k](opts[k]);
+        });
         // The scaling and the offset first: switching the offset drops a
         // loaded table by design, so the table goes in after it.
         var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
@@ -1447,7 +1503,7 @@
         interpolated = {};
         $('useCal').checked = true;
         syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
-        return (rows.length ? 'The patterns and the pitch table are' : 'The pitch table is') +
+        return (rows.length ? 'The options, the patterns and the pitch table are' : 'The options and the pitch table are') +
             ' now loaded here, the table as the calibration already on the keyboard. ' +
             'Build again to make an image from ' + (rows.length ? 'them.' : 'it.') +
             (had ? ' The readings that were entered have been cleared: they were taken ' +

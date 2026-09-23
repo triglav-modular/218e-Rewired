@@ -31,7 +31,13 @@ for (var k = 0; k < 32; k++) {
     tables.arp_pattern_bank.push(m & 0xFFFF, Math.floor(m / 65536) & 0xFFFF);
     tables.arp_pattern_len.push(8 * (n + 1));
 });
-var record = B.settingsRecord({ chord_hold_scans: 200 }, tables, true, 0xB007, 484, 1);
+// Knob 2 on swing and the sequencer off: two option cells away from a
+// keyboard that booted with everything at zero, so a send restarts it.
+var record = B.settingsRecord({ chord_hold_scans: 200, knob2: 2, sequencer: 0 }, tables, true, 0xB007, 484, 1);
+// And one whose option cells are all zero, which changes nothing live.
+var zeroOptions = { latching_arp: 0, knob1: 0, knob2: 0, knob3: 0, knob4: 0, sequencer: 0, clock_divide: 0,
+                    pressure_fix: 0, pressure_portamento: 0, quantize_presets: 0, portamento_in: 0 };
+var quietRecord = B.settingsRecord(Object.assign({ chord_hold_scans: 200 }, zeroOptions), tables, true, 0xB007, 484, 1);
 
 // Timers the test drives itself, so nothing here waits on a real clock.
 function fakeTimers() {
@@ -61,16 +67,18 @@ function fakeTimers() {
 }
 
 // The instrument.  `mirror` is a record-shaped array; `generation`, `slot`
-// and `state` are what the identity block reports.
+// and `state` are what the identity block reports; `live` is the sixteen
+// option bytes as booted, which only a restart refreshes from the mirror.
 function fakeInstrument(options) {
     options = options || {};
-    var mirror = [];
+    var mirror = [], live = [];
     for (var b = 0; b < 0x2a8; b++) mirror.push(0);
+    for (var v = 0; v < 16; v++) live.push(0);
     var dec = B.nrpnDecoder();
     var inst = {
-        mirror: mirror, marker: options.marker === undefined ? 0xB007 : options.marker,
-        layout: options.layout === undefined ? 1 : options.layout, version: options.version,
-        state: 0, slot: 0xff, generation: 0, received: [], sent: [], scans: 0,
+        mirror: mirror, live: live, marker: options.marker === undefined ? 0xB007 : options.marker,
+        layout: options.layout === undefined ? 2 : options.layout, version: options.version,
+        state: 0, slot: 0xff, generation: 0, received: [], sent: [], scans: 0, restarts: 0,
         drop: options.drop || null,     // a parameter number to lose on the wire
         refuseCommit: !!options.refuseCommit
     };
@@ -95,8 +103,23 @@ function fakeInstrument(options) {
             if (!got) return;
             inst.received.push([got.param, got.value]);
             if (got.param === 0x3f00) { if (got.value === 0x2a2a) inst.state = 1; return; }
-            if (got.param === 0x3f03) { B.nrpnParamsOf(inst.mirror).forEach(function (p) { reply(p[0], p[1]); }); identityBlock(); return; }
+            if (got.param === 0x3f03) {
+                var params = B.nrpnParamsOf(inst.mirror);
+                params.slice(0, 32).forEach(function (p) { reply(p[0], p[1]); });
+                inst.live.forEach(function (b, i) { reply(0x20 + i, b); });
+                params.slice(32).forEach(function (p) { reply(p[0], p[1]); });
+                identityBlock(); return;
+            }
             if (got.param === 0x3f7f) { identityBlock(); return; }
+            // A restart with its key: the boot copies the cells to the live
+            // bytes, and the ports would go away and come back meanwhile.
+            if (got.param === 0x3f04) {
+                if (got.value !== 0x2a2a) return;
+                inst.restarts++;
+                for (var i = 0; i < 16; i++) inst.live[i] = B.nrpnValueOf(inst.mirror, 16 + i) & 0xFF;
+                return;
+            }
+            if (got.param >= 0x20 && got.param < 0x30) return;   // read-only
             if (got.param === inst.drop) return;
             B.nrpnApply(inst.mirror, got.param, got.value);
         }
@@ -122,19 +145,20 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     var pushed = M.push(inst.output, record, { timers: timers, onProgress: function (n, t) { progress.push(n); } });
     await timers.run(pushed); await pushed;
     check('a push lands every parameter in the mirror', same(inst.mirror, record));
-    check('316 parameters, in the dump order', inst.received.length === 316
-          && inst.received[0][0] === 0 && inst.received[315][0] === 0x1ff);
-    check('progress is reported per burst', progress.length === 79 && progress[0] === 4 && progress[78] === 316,
+    check('338 parameters, in the dump order, the live bytes not among them', inst.received.length === 338
+          && inst.received[0][0] === 0 && inst.received[31][0] === 31 && inst.received[32][0] === 0x80 && inst.received[337][0] === 0x1ff);
+    check('progress is reported per burst', progress.length === 85 && progress[0] === 4 && progress[84] === 338,
           progress.length + ' bursts');
+    check('a push changes no live byte', inst.live.every(function (b) { return b === 0; }));
 
     // identity and dump
     inst = fakeInstrument({ marker: 0x1234 }); timers = fakeTimers();
     var idp = M.identity(inst.output, inst.input, 2000, timers); await timers.run(idp); var id = await idp;
-    check('identity answers with the block', id.layoutVersion === 1 && id.imageMarker === 0x1234 && id.slotLoaded === 0xff);
+    check('identity answers with the block', id.layoutVersion === 2 && id.imageMarker === 0x1234 && id.slotLoaded === 0xff);
     check('an identity request costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f7f);
     var dp = M.dump(inst.output, inst.input, 5000, timers); await timers.run(dp); var d = await dp;
-    check('a dump answers with every parameter and the block', d.pairs.length === 326 && d.identity.imageMarker === 0x1234
-          && d.identity.firmwareVersion === '3.0.0');
+    check('a dump answers with every parameter, the live bytes and the block', d.pairs.length === 364 && d.identity.imageMarker === 0x1234
+          && d.identity.firmwareVersion === '3.0.0' && d.pairs[32][0] === 0x20 && d.pairs[47][0] === 0x2f && d.pairs[48][0] === 0x80);
     var diff = M.differences(record, d.pairs);
     var nonzero = B.nrpnParamsOf(record).filter(function (p) { return p[1] !== 0; }).length;
     check('differences against an empty instrument name every non-zero parameter',
@@ -148,12 +172,20 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
           && same(rd.record, record) && rd.fields.numbers.chord_hold_scans === 200
           && rd.fields.tuning_period_keys.join(',') === '12,12,7' && rd.fields.lengths[2] === 24
           && rd.fields.masks[2] === 0xDEADBEEF && rd.fields.lengths[3] === 0, JSON.stringify(rd.fields.numbers));
+    check('and the options, the live bytes and what a restart would apply', rd.fields.options.knob2 === 'swing'
+          && rd.fields.options.sequencer === false && rd.live.length === 16 && rd.live.every(function (b) { return b === 0; })
+          && rd.pending.join(',') === 'latching_arp,knob2,clock_divide,pressure_fix,pressure_portamento,quantize_presets,portamento_in',
+          rd.pending.join(','));
     check('a read costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f03);
-    var other = fakeInstrument({ layout: 2, version: 0x320 }); timers = fakeTimers();
+    var other = fakeInstrument({ layout: 3, version: 0x320 }); timers = fakeTimers();
     var rl = M.read(other.output, other.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
     await timers.run(rl); var re = await rl;
-    check('a layout this page does not know is refused, with the block', re && re.reason === 'wrong layout' && re.identity.layoutVersion === 2
+    check('a layout this page does not know is refused, with the block', re && re.reason === 'wrong layout' && re.identity.layoutVersion === 3
           && re.identity.firmwareVersion === '3.2.0');
+    var older = fakeInstrument({ layout: 1 }); timers = fakeTimers();
+    rl = M.read(older.output, older.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
+    await timers.run(rl); re = await rl;
+    check('layout 1 is refused too', re && re.reason === 'wrong layout' && re.identity.layoutVersion === 1);
     var mute = fakeInstrument(); mute.output.send = function () {}; timers = fakeTimers();
     var rq = M.read(mute.output, mute.input, { timers: timers, timeout: 50 }).then(function () { return null; }, function (x) { return x; });
     await timers.run(rq); re = await rq;
@@ -176,9 +208,48 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     await timers.run(installP); var result = await installP;
     check('install pushes, verifies, commits and reads state 2 back', result.commitState === 2 && result.slotLoaded === 0
           && result.generation === 1, JSON.stringify(result));
-    check('in that order', stages.join(',') === 'push,verify,commit');
+    check('then restarts, naming the options the restart applies', result.restarted === true
+          && result.pending.join(',') === 'latching_arp,knob2,clock_divide,pressure_fix,pressure_portamento,quantize_presets,portamento_in'
+          && inst.restarts === 1, JSON.stringify(result.pending));
+    check('in that order', stages.join(',') === 'push,verify,commit,restart');
     check('the commit went out with its key', inst.received.some(function (p) { return p[0] === 0x3f00 && p[1] === 0x2a2a; }));
     check('and only after the dump read everything back equal', inst.state === 2 && same(inst.mirror, record));
+    check('the restart went out with its key, after the commit', (function () {
+        var c = -1, r = -1;
+        inst.received.forEach(function (p, i) { if (p[0] === 0x3f00) c = i; if (p[0] === 0x3f04) r = i; });
+        return r > c && inst.received[r][1] === 0x2a2a;
+    })());
+    check('the keyboard came back running the record\'s options', inst.live.slice(0, 11).join(',') === '1,0,2,0,0,0,1,1,1,1,1');
+
+    // awaitLive: the ports are gone for a while, then a read shows the
+    // live bytes equal to the cells.
+    timers = fakeTimers();
+    var asks = 0;
+    var awaited = M.awaitLive(function () { asks++; return asks < 4 ? null : { output: inst.output, input: inst.input }; },
+                              record, { timers: timers, every: 500, limit: 20000 });
+    await timers.run(awaited); var back = await awaited;
+    check('awaitLive asks for the ports until they are back, then reads the options as applied',
+          asks === 4 && back.pending.length === 0 && back.fields.options.knob2 === 'swing', asks + ' asks');
+    var stale = fakeInstrument(); timers = fakeTimers();
+    for (var so = 0; so < 0x2a8; so++) stale.mirror[so] = record[so];   // holds the cells, never restarted
+    var never = M.awaitLive(function () { return { output: stale.output, input: stale.input }; }, record,
+                            { timers: timers, every: 500, limit: 2000 }).then(function () { return null; }, function (e) { return e; });
+    await timers.run(never); var ne = await never;
+    check('a keyboard that comes back still running other options is "not applied", with the read',
+          ne && ne.reason === 'not applied' && ne.read && ne.read.pending.length === 7);
+    timers = fakeTimers();
+    var gone = M.awaitLive(function () { return null; }, record, { timers: timers, every: 500, limit: 2000 })
+        .then(function () { return null; }, function (e) { return e; });
+    await timers.run(gone); ne = await gone;
+    check('and one that never comes back is "no reply"', ne && ne.reason === 'no reply');
+
+    // A record whose option cells equal the live bytes commits without a restart.
+    inst = fakeInstrument(); timers = fakeTimers(); stages = [];
+    installP = M.install(inst.output, inst.input, quietRecord, { timers: timers, onStage: function (s) { stages.push(s); } });
+    settle = timers.setTimeout; timers.setTimeout = function (fn, ms) { return settle(function () { inst.scan(); fn(); }, ms); };
+    await timers.run(installP); result = await installP;
+    check('a send that changes no option does not restart', result.commitState === 2 && result.restarted === false
+          && result.pending.length === 0 && inst.restarts === 0 && stages.join(',') === 'push,verify,commit');
 
     // install refusals, each its own reason
     async function refusal(inst, opts) {
@@ -190,7 +261,7 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     }
     var e = await refusal(fakeInstrument({ marker: 0x1111 }));
     check('a record for another image is refused before anything is sent', e && e.reason === 'wrong image' && e.identity.imageMarker === 0x1111);
-    e = await refusal(fakeInstrument({ layout: 2 }));
+    e = await refusal(fakeInstrument({ layout: 1 }));
     check('another layout is refused', e && e.reason === 'wrong layout');
     e = await refusal(fakeInstrument({ drop: 0x83 }));
     check('a parameter lost on the wire is a mismatch, and nothing is committed',

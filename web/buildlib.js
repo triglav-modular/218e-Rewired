@@ -1120,6 +1120,11 @@ var BUILDLIB = (function () {
             // What the keyboard reports over MIDI as its firmware version;
             // tools/build.py derives the same number from the config.
             firmware_version_code: versionCode(GEN.version),
+            // The option cells, 16..27 of the settings mirror: the config's
+            // choices, as tools/build.py derives them from the same fields.
+            latching_arp: 0, knob1: 0, knob2: 0, knob3: 0, knob4: 0, sequencer: 0,
+            clock_divide: 0, pressure_fix: 0, pressure_portamento: 0, quantize_presets: 0,
+            portamento_in: 0,
             // The jack transposer, as tools/build.py derives it: one period
             // per cv_volts_per_period of CV at 4095 counts over 20 V.
             transpose_cv_filter_shift: cfg.portamento_in.cv_filter_shift,
@@ -1195,6 +1200,20 @@ var BUILDLIB = (function () {
         numbers.vibrato_dither = cfg.vibrato.dither;
         var smoothing = cfg.pressure.output_smoothing;
         if (smoothing) numbers.output_interpolation_steps = smoothing;
+        var cells = optionCells({
+            latching_arp: cfg.arp.switch === 'latch',
+            knob1: cfg.knobs.knob1 === 'factory' ? 'factory' : (cfg.arp_order.knob1_orders === 1 ? 'orders' : 'order'),
+            knob2: cfg.knobs.knob2 === 'factory' ? 'factory' : (cfg.knob2.mode === 'randomness' ? 'spacing' : cfg.knob2.mode),
+            knob3: cfg.knobs.knob3 === 'factory' ? 'factory' : 'octaves',
+            knob4: cfg.knobs.knob4 === 'factory' ? 'factory' : (cfg.knob4.octaves === 1 ? 'trn' : 'vibrato'),
+            sequencer: !!(cfg.sequencer && cfg.sequencer.on),
+            clock_divide: !!(cfg.clock && cfg.clock.divide),
+            pressure_fix: !cfg._pressure_factory,
+            pressure_portamento: !!cfg.portamento.pressure_blend,
+            quantize_presets: !!cfg.presets.quantize,
+            portamento_in: cfg.portamento_in.transpose ? 'transpose' : 'portamento'
+        });
+        Object.keys(cells).forEach(function (k) { numbers[k] = cells[k]; });
         return numbers;
     }
 
@@ -1215,9 +1234,64 @@ var BUILDLIB = (function () {
         ['chord_hold_scans', 300, 20, 2000],
         ['latch_state_hold_scans', 200, 20, 2000]
     ];
+    // The option cells, 16..26 (docs/PLAN-SETTINGS-2.md): the page's own
+    // option values in the page's order, the cell holding the index; the
+    // default is the page's and config/218e.toml's.  A build bakes its
+    // config's choices into the image the way it bakes a table, and the
+    // firmware copies the low byte of cells 16..31 to its live option
+    // bytes at boot, which its code paths read until the next power-up.
+    var SETTINGS_OPTIONS = [
+        ['latching_arp', [false, true], true],
+        ['knob1', ['order', 'orders', 'factory'], 'order'],
+        ['knob2', ['spacing', 'quantized', 'swing', 'patterns', 'factory'], 'spacing'],
+        ['knob3', ['octaves', 'factory'], 'octaves'],
+        ['knob4', ['vibrato', 'trn', 'factory'], 'vibrato'],
+        ['sequencer', [false, true], true],
+        ['clock_divide', [false, true], true],
+        ['pressure_fix', [false, true], true],
+        ['pressure_portamento', [false, true], true],
+        ['quantize_presets', [false, true], true],
+        ['portamento_in', ['portamento', 'transpose'], 'transpose']
+    ];
+    var SETTINGS_OPTION_CELL = 16;
+    // Every cell: [name or null for a reserved one, default, low, high] -
+    // tools/settings.py's CELL_LIST, and the firmware's bounds table.
+    var SETTINGS_CELLS = (function () {
+        var cells = SETTINGS_NUMBERS.slice();
+        while (cells.length < SETTINGS_OPTION_CELL) cells.push([null, 0, 0, 0]);
+        SETTINGS_OPTIONS.forEach(function (o) {
+            cells.push([o[0], o[1].indexOf(o[2]), 0, o[1].length - 1]);
+        });
+        while (cells.length < 32) cells.push([null, 0, 0, 0]);
+        return cells;
+    })();
+    // The option cells' values for a page option set: name -> index.
+    function optionCells(options) {
+        var out = {};
+        SETTINGS_OPTIONS.forEach(function (o) {
+            var value = options[o[0]] === undefined ? o[2] : options[o[0]];
+            var i = o[1].indexOf(value);
+            if (i < 0) throw new Error(o[0] + ' must be one of ' + JSON.stringify(o[1]) + ', got ' + JSON.stringify(value));
+            out[o[0]] = i;
+        });
+        return out;
+    }
+    // And back: the page's values out of the cells, name -> value.
+    function optionsOf(cells) {
+        var out = {};
+        SETTINGS_OPTIONS.forEach(function (o) { out[o[0]] = o[1][cells[o[0]]]; });
+        return out;
+    }
+    // pressure_portamento needs pressure_fix, on the record as on the page:
+    // the blend weights pitch by a pressure only the reworked path measures.
+    function checkPair(cells) {
+        if (cells.pressure_portamento && !cells.pressure_fix) {
+            throw new Error('pressure_portamento needs pressure_fix');
+        }
+    }
     var SETTINGS_LAYOUT = {
-        marker: 0x32313853, version: 1, header: 0x10, payload: 0x298, length: 0x2a8,
-        slots: [0x8003d000, 0x8003d800], mirror: 0x6800,
+        marker: 0x32313853, version: 2, header: 0x10, payload: 0x298, length: 0x2a8,
+        slots: [0x8003d000, 0x8003d800], mirror: 0x6800, live: 0x6d28,
         imageMarker: 0x10, octaveUnits: 0x12, numbers: 0x20, pitch: 0x60,
         tuning: 0x100, periodKeys: 0x1c0, bank: 0x1c8, lengths: 0x248,
         reserved: 0x288
@@ -1271,13 +1345,16 @@ var BUILDLIB = (function () {
         word(0, L.marker); halfword(4, L.version); halfword(6, L.payload); word(8, generation);
         halfword(L.imageMarker, initMarker & 0xFFFF);
         halfword(L.octaveUnits, octaveUnits & 0xFFFF);
-        var values = SETTINGS_NUMBERS.map(function (n) {
-            var value = numbers[n[0]] === undefined ? n[1] : numbers[n[0]];
-            if (!(value >= n[2] && value <= n[3])) {
-                throw new Error(n[0] + ' must be ' + n[2] + '..' + n[3] + ', got ' + value);
+        var cells = {};
+        var values = SETTINGS_CELLS.map(function (n) {
+            var value = n[0] === null || numbers[n[0]] === undefined ? n[1] : numbers[n[0]];
+            if (typeof value !== 'number' || value !== Math.floor(value) || !(value >= n[2] && value <= n[3])) {
+                throw new Error((n[0] || 'a reserved cell') + ' must be ' + n[2] + '..' + n[3] + ', got ' + value);
             }
+            if (n[0] !== null) cells[n[0]] = value;
             return value;
         });
+        checkPair(cells);
         halfwords(L.numbers, values, 'numbers', 0, 0xFFFF);
         if (tables.pitch_remap.length !== 79) {
             throw new Error('pitch_remap must have 79 entries, got ' + tables.pitch_remap.length);
@@ -1315,7 +1392,7 @@ var BUILDLIB = (function () {
     // what the instrument sends back at the end of every dump.
     var NRPN_CHANNEL = 15;          // channel 16, the telemetry's
     var NRPN_SECTIONS = [
-        { base: 0x0000, count: 10, offset: 0x20, kind: 'half' },
+        { base: 0x0000, count: 32, offset: 0x20, kind: 'half' },
         { base: 0x0080, count: 79, offset: 0x60, kind: 'half' },
         { base: 0x0100, count: 96, offset: 0x100, kind: 'half' },
         { base: 0x0160, count: 3, offset: 0x1c0, kind: 'half' },
@@ -1324,8 +1401,12 @@ var BUILDLIB = (function () {
     ];
     var NRPN_COMMANDS = {
         commit: 0x3f00, commitKey: 0x2a2a, reload: 0x3f01, defaults: 0x3f02,
-        dump: 0x3f03, identity: 0x3f7f
+        dump: 0x3f03, restart: 0x3f04, restartKey: 0x2a2a, identity: 0x3f7f
     };
+    // 0x0020..0x002f: the live option bytes - cells 16..31 as the keyboard
+    // booted them - which a dump sends and a write cannot reach.  Not a
+    // section of the record: a push never sends them.
+    var NRPN_LIVE = { base: 0x0020, count: 16 };
     // The image marker is sixteen bits and a value fourteen, so it rides
     // as two: its top two bits at 0x3f77, its low fourteen at 0x3f7e.  The
     // block's parameter numbers are frozen: a keyboard says what it runs
@@ -1453,6 +1534,31 @@ var BUILDLIB = (function () {
         };
     }
 
+    // The live option bytes out of a dump's pairs, all sixteen or null.
+    function nrpnLiveOf(pairs) {
+        var got = {};
+        pairs.forEach(function (p) { got[p[0]] = p[1]; });
+        var out = [];
+        for (var i = 0; i < NRPN_LIVE.count; i++) {
+            if (got[NRPN_LIVE.base + i] === undefined) return null;
+            out.push(got[NRPN_LIVE.base + i]);
+        }
+        return out;
+    }
+    // The options whose cell in a record differs from the keyboard's live
+    // byte: what a restart would change.  By name; a reserved cell by number.
+    function pendingOptions(record, live) {
+        var out = [];
+        if (!live) return out;
+        for (var i = 0; i < NRPN_LIVE.count; i++) {
+            var cell = SETTINGS_CELLS[SETTINGS_OPTION_CELL + i];
+            if ((halfAt(record, SETTINGS_LAYOUT.numbers + 2 * (SETTINGS_OPTION_CELL + i)) & 0xFF) !== live[i]) {
+                out.push(cell[0] || ('cell ' + (SETTINGS_OPTION_CELL + i)));
+            }
+        }
+        return out;
+    }
+
     // A dump's pairs back into a record-shaped array: the payload the
     // instrument holds, with the header left zero - what the header would
     // say is in the identity block, decoded on its own.
@@ -1467,8 +1573,15 @@ var BUILDLIB = (function () {
     // 32 masks and 32 lengths, a zero length being an unused pattern.
     function settingsFields(bytes) {
         var L = SETTINGS_LAYOUT, i;
-        var out = { numbers: {}, pitch_remap: [], tuning_period_keys: [], masks: [], lengths: [] };
+        var out = { numbers: {}, cells: {}, pitch_remap: [], tuning_period_keys: [], masks: [], lengths: [] };
         SETTINGS_NUMBERS.forEach(function (n, k) { out.numbers[n[0]] = halfAt(bytes, L.numbers + 2 * k); });
+        SETTINGS_OPTIONS.forEach(function (o, k) {
+            out.cells[o[0]] = halfAt(bytes, L.numbers + 2 * (SETTINGS_OPTION_CELL + k));
+        });
+        // The page's values, where the cells are inside their ranges; a
+        // cell past its range (which the firmware would never hold) reads
+        // as undefined rather than as some other choice.
+        out.options = optionsOf(out.cells);
         for (i = 0; i < 79; i++) out.pitch_remap.push(halfAt(bytes, L.pitch + 2 * i));
         for (var slot = 0; slot < 3; slot++) {
             var table = [];
@@ -1631,7 +1744,9 @@ var BUILDLIB = (function () {
         NRPN_COMMANDS: NRPN_COMMANDS, NRPN_IDENTITY: NRPN_IDENTITY,
         nrpnValueOf: nrpnValueOf, nrpnApply: nrpnApply, nrpnParamsOf: nrpnParamsOf,
         nrpnMessages: nrpnMessages, nrpnDecoder: nrpnDecoder, nrpnIdentity: nrpnIdentity,
-        nrpnRecordOf: nrpnRecordOf, settingsFields: settingsFields,
+        nrpnRecordOf: nrpnRecordOf, nrpnLiveOf: nrpnLiveOf, pendingOptions: pendingOptions,
+        NRPN_LIVE: NRPN_LIVE, SETTINGS_OPTIONS: SETTINGS_OPTIONS, SETTINGS_CELLS: SETTINGS_CELLS,
+        SETTINGS_OPTION_CELL: SETTINGS_OPTION_CELL, optionCells: optionCells, optionsOf: optionsOf, settingsFields: settingsFields,
         versionCode: versionCode, versionText: versionText, compareVersions: compareVersions,
         pitchTableSettings: pitchTableSettings, pitchCents: pitchCents,
         settingsDiff: settingsDiff, settingsPick: settingsPick,

@@ -100,14 +100,14 @@ musical record.
 | Offset | Bytes | Meaning |
 |---|---:|---|
 | `0x000` | 4 | Commit marker `0x32313853` (`"218S"`); erased until final commit |
-| `0x004` | 2 | Layout version, `1` |
+| `0x004` | 2 | Layout version: `1` for stage 1; `2` since stage 2 phase A (2026-09-23), see [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md) |
 | `0x006` | 2 | Payload length, `0x298`; the record is `0x2a8` with its header |
 | `0x008` | 4 | Generation, nonzero, wrapping to 1 |
 | `0x00c` | 4 | CRC-32/ISO-HDLC over `0x004..0x00b` and `0x010..end`, as persistence |
 | `0x010` | 2 | Image marker: the low 16 bits of `init_marker`, so a record written against one image is refused by another |
 | `0x012` | 2 | `octave_units` the record was generated for; refused unless it matches the image |
 | `0x014` | 12 | Reserved, zero |
-| `0x020` | 64 | 32 numbers, halfwords; the ten above, the rest zero |
+| `0x020` | 64 | 32 numbers, halfwords; the ten above, then the option cells at 16..27 (stage 2), the rest zero |
 | `0x060` | 158 | `pitch_remap`, 79 halfwords |
 | `0x0fe` | 2 | Pad |
 | `0x100` | 192 | Tuning slots 0..2, 32 halfwords each |
@@ -237,7 +237,8 @@ main-loop pass, like the parser it sits in.
 
 | Parameter | Meaning | Value |
 |---|---|---|
-| `0x0000..0x0009` | number *n* | the bounds of `settings_valid`'s table; out of range is ignored, not clamped |
+| `0x0000..0x001f` | cell *n* | the bounds of `settings_bounds`' table; out of range is ignored, not clamped. Stage 1 had `0x0000..0x0009`; the option cells are 16..27 (stage 2) |
+| `0x0020..0x002f` | the live option bytes, read-only (stage 2) | a dump sends them; a write is ignored |
 | `0x0080..0x00ce` | `pitch_remap[0..78]` | `0..0xfff` |
 | `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | `0..0xfff`; a write clears the applier's guard |
 | `0x0160..0x0162` | keys per period | `1..32` with the rotation built, else `1..127` |
@@ -247,6 +248,7 @@ main-loop pass, like the parser it sits in.
 | `0x3f01` | reload the mirror from flash, dropping live edits | |
 | `0x3f02` | put the image's own settings back in the mirror (flash untouched until a commit) | |
 | `0x3f03` | dump: every parameter, then the identity block | |
+| `0x3f04` | restart through the watchdog, so a changed option cell takes effect (stage 2) | data `0x2a2a`; anything else ignored |
 | `0x3f7f` | the identity block alone | |
 
 The identity block, sent last in every dump so it is also the page's
@@ -261,7 +263,7 @@ end-of-dump marker, and on its own for `0x3f7f`:
 | `0x3f7a` | commit state: `0` clean, `1` requested, `2` written, `3` failed |
 | `0x3f7b`, `0x3f7c`, `0x3f7d` | the loaded record's generation, bits 28..31, 14..27, 0..13 |
 | `0x3f7e` | the image marker's low fourteen bits |
-| `0x3f7f` | the layout version, `1` |
+| `0x3f7f` | the layout version: `1` for stage 1, `2` since stage 2 phase A |
 
 The block's parameter numbers are frozen from 2026-09-22 on, and the layout
 version is bumped only when the settings map changes: a keyboard can then

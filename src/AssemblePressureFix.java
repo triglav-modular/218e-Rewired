@@ -239,6 +239,16 @@ public class AssemblePressureFix extends GhidraScript {
         println(String.format("PATCH %08x %s ; %s: %s", address, hex(bytes.toByteArray()), name, instruction));
     }
 
+    // A body of emit() calls that compiles to its own method: run() is one
+    // method and Java holds a method to 64 KB of bytecode, which the
+    // settings caves took it past on 2026-09-23.  A lambda captures run()'s
+    // constants, so a cave's labels stay where they are declared; the
+    // transpiler turns it into a nested function, which sees them the same
+    // way (tools/avr32/transpile.py).
+    private interface Emitter {
+        void go() throws Exception;
+    }
+
     @Override
     protected void run() throws Exception {
         String[] scriptArgs = getScriptArgs();
@@ -258,6 +268,44 @@ public class AssemblePressureFix extends GhidraScript {
         long arpSelector = number("knob2_patterns", 0, 0, 1) == 1 ? 0x8001b050L
                          : number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0L
                          : 0x8001a0a0L;
+
+        // The settings caves (docs/PLAN-SETTINGS.md, docs/PLAN-SETTINGS-2.md)
+        // as constants, so a cave that grows moves as one edit, declared
+        // here ahead of every pool word that names one: the transpiled
+        // JavaScript hoists a later `var` as undefined and would emit a
+        // pool word of zero where Java refuses to compile.  settings_copy,
+        // settings_newest, settings_boot, settings_defaults and
+        // settings_reload keep their literal addresses; everything from
+        // settings_valid's labels and settings_target on is here.
+        long vdEntry = 0x8001f010L, vdNum = vdEntry + 0x70, vdTab = vdEntry + 0xa0, vdKeys = vdEntry + 0xc0;
+        long vdLen = vdEntry + 0xe0, vdGood = vdEntry + 0x10c, vdBad = vdEntry + 0x114, vdExit = vdEntry + 0x118;
+        long vdPool = vdEntry + 0x120, vdEnd = 0x8001f150L;
+        long tgEntry = 0x8001f340L, tgLive = tgEntry + 0x20, tgPitch = tgEntry + 0x38, tgTune = tgEntry + 0x60;
+        long tgKeys = tgEntry + 0x88, tgMask = tgEntry + 0xb0, tgLen = tgEntry + 0xe0, tgNone = tgEntry + 0x100;
+        long tgPool = tgEntry + 0x104, tgEnd = 0x8001f480L;
+        long apEntry = tgEnd, apC1 = apEntry + 0x30, apC2 = apEntry + 0x40, apC3 = apEntry + 0x50;
+        long apC4 = apEntry + 0x68, apC5 = apEntry + 0x80, apData = apEntry + 0x98, apStore = apData + 0x34;
+        long apTuning = apData + 0x50, apMask = apEntry + 0x108, apMid = apEntry + 0x120, apTop = apEntry + 0x148;
+        long apDone = apEntry + 0x15c, apPool = apEntry + 0x160, apEnd = apEntry + 0x170;
+        long nrEntry = apEnd, nrLsb = nrEntry + 0x28, nrMsb = nrEntry + 0x34, nrDat = nrEntry + 0x40;
+        long nrDone = nrEntry + 0x60, nrPass = nrEntry + 0x68, nrPool = nrEntry + 0x74, nrEnd = nrEntry + 0x80;
+        long sdEntry = nrEnd, sdPool = sdEntry + 0x4c, sdEnd = sdEntry + 0x50;
+        long vaEntry = sdEnd, vaHi = vaEntry + 0x28, vaPeriod = vaEntry + 0x48, vaSlot = vaEntry + 0x68;
+        long vaState = vaEntry + 0x78, vaGenHi = vaEntry + 0x88, vaGenMid = vaEntry + 0x9c, vaGenLo = vaEntry + 0xb4;
+        long vaMarker = vaEntry + 0xc8, vaVersion = vaEntry + 0xdc, vaData = vaEntry + 0xe0;
+        long vaMask = vaEntry + 0x10c, vaMid = vaEntry + 0x124, vaTop = vaEntry + 0x13c, vaLive = vaEntry + 0x144;
+        long vaNone = vaEntry + 0x14c, vaDone = vaEntry + 0x150, vaPool = vaEntry + 0x154, vaEnd = vaEntry + 0x160;
+        long scEntry = vaEnd, scDump = scEntry + 0x20, scLoop = scEntry + 0x24;
+        long scG1 = scEntry + 0x40, scG2 = scEntry + 0x4c, scG3 = scEntry + 0x58, scG4 = scEntry + 0x64;
+        long scStore = scEntry + 0x70, scOut = scEntry + 0x98, scPool = scEntry + 0xa0, scEnd = scEntry + 0xb0;
+        long cmEntry = scEnd, cmGen = cmEntry + 0x30, cmTail = cmEntry + 0x60, cmSlot = cmEntry + 0xc0;
+        long cmFail = cmEntry + 0x130, cmDone = cmEntry + 0x140, cmPool = cmEntry + 0x144, cmEnd = cmEntry + 0x160;
+        long vfEntry = cmEnd, vfLoop = vfEntry + 0x4, vfBad = vfEntry + 0x24, vfEnd = vfEntry + 0x30;
+        long ccPool = vfEnd, ccEnd = ccPool + 0x4;
+        long bdTable = 0x8001fa80L, bdEnd = bdTable + 0x80;
+        long nmTable = bdEnd, nmEnd = nmTable + 0x40;
+        long lvEntry = nmEnd, lvLoop = lvEntry + 0xa, lvEnd = lvEntry + 0x20;
+        long rsEntry = lvEnd, rsSpin = rsEntry + 0xa, rsPool = rsEntry + 0x10, rsEnd = rsEntry + 0x20;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -10144,7 +10192,7 @@ public class AssemblePressureFix extends GhidraScript {
         // With persistence on, the preset editor is reached through a shim
         // that runs editor, sequencer controls and persistence in that order,
         // so a completed gesture is committed in the same control scan.
-        word(0x8001f780L);              // settings_scan, in front of the shim or the editor
+        word(scEntry);                  // settings_scan, in front of the shim or the editor
         word(0x8001b180L);              // the sequencer chord
         word(0x8001b980L);              // the external clock, per scan
         padTo(0x8001a52cL);
@@ -10298,129 +10346,130 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV PC,LR");
         finish("settings_copy", 0x8001f010L);
 
+        Emitter settingsCaves = () -> {
         // Validate a slot: R12 = its address, returns the generation, or
         // zero.  Marker, version, length, generation, CRC, then the image
         // marker and the period the record was made for, then every value's
         // bounds - a halfword off flash is untrusted input, and a number
         // past its range is a wrong immediate.  The bounds are the same ones
         // number() enforces at each site, so a build that would refuse a
-        // value is a record that refuses it too.
-        begin(0x8001f010L);
+        // value is a record that refuses it too.  Layout 2: 32 cells, the
+        // options among them, and one pair rule - pressure_portamento needs
+        // pressure_fix, as the page and the build refuse it.
+        begin(vdEntry);
         emit("STM --SP,R0,R1,R2,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");
         emit("LD.W R8,R0[0x0]");
-        emit("LDDPC R9,0x8001f118");
+        emit(String.format("LDDPC R9,0x%x", vdPool));
         emit("CP.W R8,R9");
-        emit("BR{ne} 0x8001f110");
+        emit(String.format("BR{ne} 0x%x", vdBad));
         emit("LD.UH R8,R0[0x4]");
-        emit("CP.W R8,0x1");
-        emit("BR{ne} 0x8001f110");
+        emit("CP.W R8,0x2");
+        emit(String.format("BR{ne} 0x%x", vdBad));
         emit("LD.UH R8,R0[0x6]");
         emit("CP.W R8,0x298");
-        emit("BR{ne} 0x8001f110");
+        emit(String.format("BR{ne} 0x%x", vdBad));
         emit("LD.W R8,R0[0x8]");
         emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001f110");
+        emit(String.format("BR{eq} 0x%x", vdBad));
         // CRC-32 over bytes 4..11 then 0x10..0x2a7, one stream, as the
         // musical record's: persist_crc takes the running value in R12.
         emit("MOV R11,R0");
         emit("SUB R11,-0x4");
         emit("MOV R10,0x8");
         emit("MOV R12,-0x1");
-        emit("MCALL PC[0x8001f11c]");
+        emit(String.format("MCALL PC[0x%x]", vdPool + 4));
         emit("MOV R11,R0");
         emit("SUB R11,-0x10");
         emit("MOV R10,0x298");
-        emit("MCALL PC[0x8001f11c]");
+        emit(String.format("MCALL PC[0x%x]", vdPool + 4));
         emit("MOV R8,-0x1");
         emit("EOR R12,R8");
         emit("LD.W R8,R0[0xc]");
         emit("CP.W R12,R8");
-        emit("BR{ne} 0x8001f110");
+        emit(String.format("BR{ne} 0x%x", vdBad));
         // A record is for one image: the marker every build derives from
         // everything that shapes it, and the period its tables step.
         emit("LD.UH R8,R0[0x10]");
         emit(String.format("MOV R9,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
         emit("CASTU.H R9");             // a marker past 0x7fff would sign-extend
         emit("CP.W R8,R9");
-        emit("BR{ne} 0x8001f110");
+        emit(String.format("BR{ne} 0x%x", vdBad));
         emit("LD.UH R8,R0[0x12]");
         emit(String.format("CP.W R8,0x%x", number("octave_units", 484, 1, 2000)));
-        emit("BR{ne} 0x8001f110");
-        // The ten numbers against their bounds table.
+        emit(String.format("BR{ne} 0x%x", vdBad));
+        // The 32 cells against the bounds table in settings_bounds.
         emit("MOV R1,0x0");
-        emit("LDDPC R2,0x8001f120");    // the bounds table's address, off the pool
-        padTo(0x8001f080L);
+        emit(String.format("LDDPC R2,0x%x", vdPool + 8));   // the bounds table's address, off the pool
+        padTo(vdNum);
         emit("ADD R8,R0,R1 << 0x1");
         emit("LD.UH R8,R8[0x20]");
         emit("ADD R9,R2,R1 << 0x2");
         emit("LD.UH R10,R9[0x0]");
         emit("CP.W R8,R10");
-        emit("BR{lt} 0x8001f110");
+        emit(String.format("BR{lt} 0x%x", vdBad));
         emit("LD.UH R10,R9[0x2]");
         emit("CP.W R8,R10");
-        emit("BR{gt} 0x8001f110");
+        emit(String.format("BR{gt} 0x%x", vdBad));
         emit("SUB R1,-0x1");
-        emit("CP.W R1,0xa");
-        emit("BR{lt} 0x8001f080");
+        emit("CP.W R1,0x20");
+        emit(String.format("BR{lt} 0x%x", vdNum));
         // The pitch curve, its pad and the three tuning tables are one run
         // of 176 halfwords, every one inside the 12-bit DAC.
         emit("MOV R1,0x0");
-        padTo(0x8001f0b0L);
+        padTo(vdTab);
         emit("ADD R8,R0,R1 << 0x1");
         emit("LD.UH R8,R8[0x60]");
         emit("CP.W R8,0xfff");
-        emit("BR{hi} 0x8001f110");
+        emit(String.format("BR{hi} 0x%x", vdBad));
         emit("SUB R1,-0x1");
         emit("CP.W R1,0xb0");
-        emit("BR{lt} 0x8001f0b0");
+        emit(String.format("BR{lt} 0x%x", vdTab));
         // Keys per period: one below is the unsigned wrap the HI branch
         // catches.  Up to 32 where the key-table rotation is built, since
         // its wrap loop walks a period of the 32-entry table; up to a
         // .kbm's 127 positions otherwise, as the build allows.
         emit("MOV R1,0x0");
-        padTo(0x8001f0d0L);
+        padTo(vdKeys);
         emit("ADD R8,R0,R1 << 0x1");
         emit("LD.UH R8,R8[0x1c0]");
         emit("SUB R8,0x1");
         emit(String.format("CP.W R8,0x%x", block("preset_entry") ? 0x1f : 0x7e));
-        emit("BR{hi} 0x8001f110");
+        emit(String.format("BR{hi} 0x%x", vdBad));
         emit("SUB R1,-0x1");
         emit("CP.W R1,0x3");
-        emit("BR{lt} 0x8001f0d0");
+        emit(String.format("BR{lt} 0x%x", vdKeys));
         // Pattern lengths, 0..32: zero is an unused pattern.
         emit("MOV R1,0x0");
-        padTo(0x8001f0f0L);
+        padTo(vdLen);
         emit("ADD R8,R0,R1 << 0x1");
         emit("LD.UH R8,R8[0x248]");
         emit("CP.W R8,0x20");
-        emit("BR{hi} 0x8001f110");
+        emit(String.format("BR{hi} 0x%x", vdBad));
         emit("SUB R1,-0x1");
         emit("CP.W R1,0x20");
-        emit("BR{lt} 0x8001f0f0");
+        emit(String.format("BR{lt} 0x%x", vdLen));
+        // The pair: cell 24 (pressure_portamento) on needs cell 23
+        // (pressure_fix) on.  Record offsets 0x20 + 2 * cell.
+        emit("LD.UH R8,R0[0x50]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", vdGood));
+        emit("LD.UH R8,R0[0x4e]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", vdBad));
+        padTo(vdGood);
         emit("LD.W R12,R0[0x8]");
-        emit("RJMP 0x8001f112");
-        padTo(0x8001f110L);
+        emit(String.format("RJMP 0x%x", vdExit));
+        padTo(vdBad);
         emit("MOV R12,0x0");
-        padTo(0x8001f112L);
+        padTo(vdExit);
         emit("LDM SP++,R0,R1,R2,R7,PC");
-        padTo(0x8001f118L);
+        padTo(vdPool);
         word(0x32313853L); // "218S", the commit marker
         word(0x8001cc00L); // persist_crc
-        word(0x8001f124L); // the bounds table below
-        // Low and high for each number cell, in cell order.
-        halfword(1);    halfword(1024);   // tie_glide_rate
-        halfword(128);  halfword(3968);   // strip_halfway_units
-        halfword(1);    halfword(4);      // clock_min_ms
-        halfword(1);    halfword(1000);   // clock_rearm_us
-        halfword(2);    halfword(32);     // clock_lock_pulses
-        halfword(1);    halfword(1023);   // transpose_cv_period
-        halfword(0);    halfword(1023);   // transpose_cv_zero
-        halfword(0);    halfword(64);     // transpose_cv_hysteresis
-        halfword(20);   halfword(2000);   // chord_hold_scans
-        halfword(20);   halfword(2000);   // latch_state_hold_scans
-        finish("settings_valid", 0x8001f150L);
+        word(bdTable);     // settings_bounds: low and high for every cell
+        finish("settings_valid", vdEnd);
 
         // The newer valid slot of the two: R12 = its address (zero if
         // neither), R11 = its index (-1), R10 = its generation.  Serial
@@ -10478,6 +10527,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001f1f0]");   // settings_defaults
         emit("MCALL PC[0x8001f1f4]");   // settings_reload
+        emit("MCALL PC[0x8001f1fc]");   // settings_live: the option bytes, as booted
         // The NRPN state: no parameter or data byte in hand, the dump
         // cursor idle.  0x4000 is idle because it is past every parameter
         // and a MOV of it is the same positive value a LD.UH reads back.
@@ -10495,12 +10545,13 @@ public class AssemblePressureFix extends GhidraScript {
         word(block("persist") ? 0x8001d540L
              : block("clock_capture") ? 0x8001c300L
              : block("seq_boot") ? 0x8001dfa8L : 0x80007340L);
+        word(lvEntry);     // settings_live
         finish("settings_boot", 0x8001f200L);
 
-        // The image's own settings into the mirror: zero it, then the ten
-        // numbers - the only immediates they have left; the sites that used
-        // to carry them load the cells - then the tables from where the
-        // image keeps them.  Also what NRPN 0x3f02 asks for.
+        // The image's own settings into the mirror: zero it, then the 32
+        // cells out of their table - the sites that used to carry the ten
+        // numbers as immediates load the cells - then the tables from where
+        // the image keeps them.  Also what NRPN 0x3f02 asks for.
         begin(0x8001f200L);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -10512,27 +10563,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R10,-0x4");
         emit("SUB R9,0x1");
         emit("BR{ge} 0x8001f210");
-        emit("MOV R10,0x6800");
-        emit(String.format("MOV R9,0x%x", number("tie_glide_rate", 60, 1, 1024)));
-        emit("ST.H R10[0x0],R9");
-        emit(String.format("MOV R9,0x%x", number("strip_halfway_units", 2048, 128, 3968)));
-        emit("ST.H R10[0x2],R9");
-        emit(String.format("MOV R9,0x%x", number("clock_min_ms", 4, 1, 4)));
-        emit("ST.H R10[0x4],R9");
-        emit(String.format("MOV R9,0x%x", number("clock_rearm_us", 250, 1, 1000)));
-        emit("ST.H R10[0x6],R9");
-        emit(String.format("MOV R9,0x%x", number("clock_lock_pulses", 5, 2, 32)));
-        emit("ST.H R10[0x8],R9");
-        emit(String.format("MOV R9,0x%x", number("transpose_cv_period", 123, 1, 1023)));
-        emit("ST.H R10[0xa],R9");
-        emit(String.format("MOV R9,0x%x", number("transpose_cv_zero", 0, 0, 1023)));
-        emit("ST.H R10[0xc],R9");
-        emit(String.format("MOV R9,0x%x", number("transpose_cv_hysteresis", 2, 0, 64)));
-        emit("ST.H R10[0xe],R9");
-        emit(String.format("MOV R9,0x%x", number("chord_hold_scans", 300, 20, 2000)));
-        emit("ST.H R10[0x10],R9");
-        emit(String.format("MOV R9,0x%x", number("latch_state_hold_scans", 200, 20, 2000)));
-        emit("ST.H R10[0x12],R9");
+        // The 32 cells - the ten numbers and the twelve options the config
+        // chose - as one copy out of settings_numbers.
+        emit("MOV R12,0x6800");
+        emit("LDDPC R11,0x8001f2f8");   // settings_numbers
+        emit("MOV R10,0x20");
+        emit("MCALL PC[0x8001f2f4]");
         emit("MOV R12,0x6840");
         emit("LDDPC R11,0x8001f2e0");   // the pitch curve
         emit("MOV R10,0x4f");
@@ -10567,6 +10603,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019f20L); // the pattern bank, when emitted
         word(0x80019fa0L); // its lengths, when emitted
         word(0x8001f000L); // settings_copy
+        word(nmTable);     // settings_numbers: the 32 cells as built
         finish("settings_defaults", 0x8001f300L);
 
         // The newer valid record over the mirror, if there is one, and the
@@ -10597,15 +10634,17 @@ public class AssemblePressureFix extends GhidraScript {
 
         // Where a parameter lives.  R12 = the 14-bit NRPN parameter number;
         // returns R12 = its mirror address (zero for a number that names
-        // nothing), R11 = kind (0 a halfword, 1 a third of a pattern mask),
+        // nothing), R11 = kind (0 a halfword, 1 a third of a pattern mask,
+        // 2 a live option byte, which a dump reads and a receive ignores),
         // R10 and R9 = the value's bounds, and for a mask R8 = which third.
         // A leaf: the receive and the dump both ask it, so the map is in one
-        // place.  docs/PLAN-SETTINGS.md has the map.
-        begin(0x8001f340L);
-        emit("CP.W R12,0xa");
-        emit("BR{ge} 0x8001f360");
-        // 0x0000..0x0009: the numbers, bounded by settings_valid's table.
-        emit("LDDPC R9,0x8001f418");
+        // place.  docs/PLAN-SETTINGS.md has the map, PLAN-SETTINGS-2.md the
+        // cells and the live section.
+        begin(tgEntry);
+        emit("CP.W R12,0x20");
+        emit(String.format("BR{ge} 0x%x", tgLive));
+        // 0x0000..0x001f: the 32 cells, bounded by settings_bounds.
+        emit(String.format("LDDPC R9,0x%x", tgPool));
         emit("ADD R9,R9,R12 << 0x2");
         emit("LD.UH R10,R9[0x0]");
         emit("LD.UH R9,R9[0x2]");
@@ -10613,57 +10652,68 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R8,0x6800");
         emit("ADD R12,R8,R12 << 0x1");
         emit("MOV PC,LR");
-        padTo(0x8001f360L);
+        padTo(tgLive);
+        // 0x0020..0x002f: the live option bytes, read-only.
+        emit("CP.W R12,0x30");
+        emit(String.format("BR{ge} 0x%x", tgPitch));
+        emit("MOV R11,0x2");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0xff");
+        emit("MOV R8,0x6d28");
+        emit("SUB R12,0x20");
+        emit("ADD R12,R8");
+        emit("MOV PC,LR");
+        padTo(tgPitch);
         // 0x0080..0x00ce: the pitch curve.
         emit("MOV R8,R12");
         emit("SUB R8,0x80");
         emit("CP.W R8,0x0");
-        emit("BR{lt} 0x8001f414");
+        emit(String.format("BR{lt} 0x%x", tgNone));
         emit("CP.W R8,0x4f");
-        emit("BR{ge} 0x8001f384");
+        emit(String.format("BR{ge} 0x%x", tgTune));
         emit("MOV R11,0x0");
         emit("MOV R10,0x0");
         emit("MOV R9,0xfff");
         emit("MOV R12,0x6840");
         emit("ADD R12,R12,R8 << 0x1");
         emit("MOV PC,LR");
-        padTo(0x8001f384L);
+        padTo(tgTune);
         // 0x0100..0x015f: the three tuning tables, one run.
         emit("MOV R8,R12");
         emit("SUB R8,0x100");
         emit("CP.W R8,0x0");
-        emit("BR{lt} 0x8001f414");
+        emit(String.format("BR{lt} 0x%x", tgNone));
         emit("CP.W R8,0x60");
-        emit("BR{ge} 0x8001f3a8");
+        emit(String.format("BR{ge} 0x%x", tgKeys));
         emit("MOV R11,0x0");
         emit("MOV R10,0x0");
         emit("MOV R9,0xfff");
         emit("MOV R12,0x68e0");
         emit("ADD R12,R12,R8 << 0x1");
         emit("MOV PC,LR");
-        padTo(0x8001f3a8L);
+        padTo(tgKeys);
         // 0x0160..0x0162: keys per period, the bound settings_valid has.
         emit("MOV R8,R12");
         emit("SUB R8,0x160");
         emit("CP.W R8,0x0");
-        emit("BR{lt} 0x8001f414");
+        emit(String.format("BR{lt} 0x%x", tgNone));
         emit("CP.W R8,0x3");
-        emit("BR{ge} 0x8001f3c8");
+        emit(String.format("BR{ge} 0x%x", tgMask));
         emit("MOV R11,0x0");
         emit("MOV R10,0x1");
         emit(String.format("MOV R9,0x%x", block("preset_entry") ? 0x20 : 0x7f));
         emit("MOV R12,0x69a0");
         emit("ADD R12,R12,R8 << 0x1");
         emit("MOV PC,LR");
-        padTo(0x8001f3c8L);
+        padTo(tgMask);
         // 0x0180..0x01df: three parameters per pattern mask - bits 0..13,
         // 14..27 and 28..31 - so 32 bits ride on 14-bit values.
         emit("MOV R8,R12");
         emit("SUB R8,0x180");
         emit("CP.W R8,0x0");
-        emit("BR{lt} 0x8001f414");
+        emit(String.format("BR{lt} 0x%x", tgNone));
         emit("CP.W R8,0x60");
-        emit("BR{ge} 0x8001f3f4");
+        emit(String.format("BR{ge} 0x%x", tgLen));
         emit("MOV R10,0x3");
         emit("DIVU R8,R8,R10");         // R8 = pattern, R9 = third
         emit("MOV R12,0x69a8");
@@ -10673,26 +10723,26 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R10,0x0");
         emit("MOV R9,0x3fff");
         emit("MOV PC,LR");
-        padTo(0x8001f3f4L);
+        padTo(tgLen);
         // 0x01e0..0x01ff: pattern lengths; zero is an unused pattern.
         emit("MOV R8,R12");
         emit("SUB R8,0x1e0");
         emit("CP.W R8,0x0");
-        emit("BR{lt} 0x8001f414");
+        emit(String.format("BR{lt} 0x%x", tgNone));
         emit("CP.W R8,0x20");
-        emit("BR{ge} 0x8001f414");
+        emit(String.format("BR{ge} 0x%x", tgNone));
         emit("MOV R11,0x0");
         emit("MOV R10,0x0");
         emit("MOV R9,0x20");
         emit("MOV R12,0x6a28");
         emit("ADD R12,R12,R8 << 0x1");
         emit("MOV PC,LR");
-        padTo(0x8001f414L);
+        padTo(tgNone);
         emit("MOV R12,0x0");
         emit("MOV PC,LR");
-        padTo(0x8001f418L);
-        word(0x8001f124L); // settings_valid's bounds table
-        finish("settings_target", 0x8001f440L);
+        padTo(tgPool);
+        word(bdTable);     // settings_bounds
+        finish("settings_target", tgEnd);
 
         // Apply one received value.  R12 = parameter, R11 = 14-bit value.
         // Parameters from 0x3f00 are commands: 0x3f00 with 0x2a2a asks for
@@ -10702,13 +10752,12 @@ public class AssemblePressureFix extends GhidraScript {
         // out of range is ignored, not clamped - the page is expected to
         // know the bounds, and a wrong value is better left unapplied than
         // applied as some other value.  A tuning write clears the applier's
-        // guard so the next scan re-copies the slot on show.  Every label
-        // in these caves is a constant, so a cave that grows moves as one
-        // edit rather than a chain of them.
-        long apEntry = 0x8001f440L, apC1 = 0x8001f470L, apC2 = 0x8001f480L;
-        long apC3 = 0x8001f490L, apC4 = 0x8001f4a4L, apData = 0x8001f4c0L;
-        long apMask = 0x8001f510L, apMid = 0x8001f528L, apTop = 0x8001f54cL;
-        long apDone = 0x8001f560L, apPool = 0x8001f564L, apEnd = 0x8001f570L;
+        // guard so the next scan re-copies the slot on show.  0x3f04 with
+        // the commit's key restarts the instrument through the watchdog,
+        // which is how a changed option cell takes effect; a live option
+        // byte (0x20..0x2f) is read-only and a write to one is ignored.
+        // Every label in these caves is a constant, so a cave that grows
+        // moves as one edit rather than a chain of them.
         begin(apEntry);
         emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
@@ -10741,6 +10790,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.H R8[0x4],R9");        // the dump cursor, from the first parameter
         emit(String.format("RJMP 0x%x", apDone));
         padTo(apC4);
+        emit("CP.W R0,0x3f04");
+        emit(String.format("BR{ne} 0x%x", apC5));
+        emit("CP.W R1,0x2a2a");
+        emit(String.format("BR{ne} 0x%x", apDone));
+        emit(String.format("MCALL PC[0x%x]", apPool + 12));  // settings_restart: never returns
+        emit(String.format("RJMP 0x%x", apDone));
+        padTo(apC5);
         emit("CP.W R0,0x3f7f");
         emit(String.format("BR{ne} 0x%x", apDone));
         emit("MOV R8,0x6a68");
@@ -10752,13 +10808,37 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("MCALL PC[0x%x]", apPool));       // settings_target
         emit("CP.W R12,0x0");
         emit(String.format("BR{eq} 0x%x", apDone));
-        emit("CP.W R11,0x0");
-        emit(String.format("BR{ne} 0x%x", apMask));
+        emit("CP.W R11,0x1");
+        emit(String.format("BR{eq} 0x%x", apMask));
+        emit("CP.W R11,0x2");
+        emit(String.format("BR{eq} 0x%x", apDone));          // a live byte: read-only
         emit("CP.W R1,R10");
         emit(String.format("BR{lt} 0x%x", apDone));
         emit("CP.W R1,R9");
         emit(String.format("BR{gt} 0x%x", apDone));
+        // The pair, on receive as on load: pressure_portamento (cell 24,
+        // 0x6830) on is ignored while pressure_fix (cell 23, 0x682e) is
+        // off, and pressure_fix going off takes pressure_portamento with
+        // it, so the mirror never holds a pair the loader would refuse.
+        emit("MOV R8,0x6830");
+        emit("CP.W R12,R8");
+        emit(String.format("BR{ne} 0x%x", apStore));
+        emit("CP.W R1,0x0");
+        emit(String.format("BR{eq} 0x%x", apStore));
+        emit("LD.UH R9,R12[-0x2]");
+        emit("CP.W R9,0x0");
+        emit(String.format("BR{eq} 0x%x", apDone));
+        padTo(apStore);
         emit("ST.H R12[0x0],R1");
+        emit("MOV R8,0x682e");
+        emit("CP.W R12,R8");
+        emit(String.format("BR{ne} 0x%x", apTuning));
+        emit("CP.W R1,0x0");
+        emit(String.format("BR{ne} 0x%x", apDone));
+        emit("MOV R9,0x0");
+        emit("ST.H R12[0x2],R9");
+        emit(String.format("RJMP 0x%x", apDone));
+        padTo(apTuning);
         emit("MOV R8,0x68e0");
         emit("CP.W R12,R8");
         emit(String.format("BR{lt} 0x%x", apDone));
@@ -10804,9 +10884,10 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(apDone);
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(apPool);
-        word(0x8001f340L); // settings_target
+        word(tgEntry);     // settings_target
         word(0x8001f300L); // settings_reload
         word(0x8001f200L); // settings_defaults
+        word(rsEntry);     // settings_restart
         finish("settings_apply", apEnd);
 
         // The hook.  The factory's Control Change branch at 0x8000838e used
@@ -10819,9 +10900,6 @@ public class AssemblePressureFix extends GhidraScript {
         // through untouched, on the instrument's channel or not.  The
         // controller and value are read out of the receive ring the way
         // the factory reads them two instructions later.
-        long nrEntry = 0x8001f570L, nrLsb = 0x8001f598L, nrMsb = 0x8001f5a4L;
-        long nrDat = 0x8001f5b0L, nrDone = 0x8001f5d0L, nrPass = 0x8001f5d8L;
-        long nrPool = 0x8001f5e4L, nrEnd = 0x8001f5f0L;
         begin(nrEntry);
         emit("STM --SP,R0,LR");
         emit("LD.UB R9,R7[-0xa]");      // the message's channel
@@ -10876,7 +10954,6 @@ public class AssemblePressureFix extends GhidraScript {
         // in: 99 and 98 for the parameter, 6 and 38 for the value, all on
         // channel 16, through the factory's own USB-MIDI sender.  R12 =
         // parameter, R11 = value.
-        long sdEntry = 0x8001f5f0L, sdPool = 0x8001f63cL, sdEnd = 0x8001f640L;
         begin(sdEntry);
         emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
@@ -10915,11 +10992,6 @@ public class AssemblePressureFix extends GhidraScript {
         // loaded, the commit state, the generation in three parts, the
         // marker's low fourteen bits, and the layout version - the last one
         // sent, so it is also the page's end-of-dump marker.
-        long vaEntry = 0x8001f640L, vaHi = 0x8001f668L, vaPeriod = 0x8001f688L, vaSlot = 0x8001f6a8L, vaState = 0x8001f6b8L;
-        long vaGenHi = 0x8001f6c8L, vaGenMid = 0x8001f6dcL, vaGenLo = 0x8001f6f4L;
-        long vaMarker = 0x8001f708L, vaVersion = 0x8001f71cL, vaData = 0x8001f720L;
-        long vaMask = 0x8001f73cL, vaMid = 0x8001f754L, vaTop = 0x8001f76cL;
-        long vaNone = 0x8001f774L, vaDone = 0x8001f778L, vaPool = 0x8001f77cL, vaEnd = 0x8001f780L;
         begin(vaEntry);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
@@ -10990,14 +11062,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ANDL R12,0x3fff");        // the low fourteen bits; 0x3f77 has the rest
         emit(String.format("RJMP 0x%x", vaDone));
         padTo(vaVersion);
-        emit("MOV R12,0x1");            // 0x3f7f: the layout version
+        emit("MOV R12,0x2");            // 0x3f7f: the layout version
         emit(String.format("RJMP 0x%x", vaDone));
         padTo(vaData);
         emit(String.format("MCALL PC[0x%x]", vaPool));       // settings_target
         emit("CP.W R12,0x0");
         emit(String.format("BR{eq} 0x%x", vaNone));
-        emit("CP.W R11,0x0");
-        emit(String.format("BR{ne} 0x%x", vaMask));
+        emit("CP.W R11,0x1");
+        emit(String.format("BR{eq} 0x%x", vaMask));
+        emit("CP.W R11,0x2");
+        emit(String.format("BR{eq} 0x%x", vaLive));
         emit("LD.UH R12,R12[0x0]");
         emit("MOV R11,0x1");
         emit(String.format("RJMP 0x%x", vaDone));
@@ -11023,12 +11097,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R12,R9");
         emit("LSR R12,0xc");            // bits 28..31
         emit(String.format("RJMP 0x%x", vaDone));
+        padTo(vaLive);
+        emit("LD.UB R12,R12[0x0]");     // a live option byte
+        emit("MOV R11,0x1");
+        emit(String.format("RJMP 0x%x", vaDone));
         padTo(vaNone);
         emit("MOV R11,0x0");
         padTo(vaDone);
         emit("LDM SP++,R0,R7,PC");
         padTo(vaPool);
-        word(0x8001f340L); // settings_target
+        word(tgEntry);     // settings_target
         finish("settings_value", vaEnd);
 
         // Per scan, in front of what the housekeeping's pool word used to
@@ -11037,17 +11115,6 @@ public class AssemblePressureFix extends GhidraScript {
         // walks the parameter numbers and skips the gaps between sections
         // without spending the budget on them; past the last cell it takes
         // the identity block, then idles at 0x4000.
-        // The commit's and the verifier's labels are declared here, ahead
-        // of the scan whose pool names them: the transpiled JavaScript
-        // hoists a later `var` as undefined and would emit a pool word of
-        // zero where Java refuses to compile.
-        long cmEntry = 0x8001f840L, cmGen = 0x8001f870L, cmTail = 0x8001f8a0L;
-        long cmSlot = 0x8001f900L, cmFail = 0x8001f970L, cmDone = 0x8001f980L;
-        long cmPool = 0x8001f984L, cmEnd = 0x8001f9a0L;
-        long vfEntry = 0x8001f9a0L, vfLoop = 0x8001f9a4L, vfBad = 0x8001f9c4L, vfEnd = 0x8001f9d0L;
-        long scEntry = 0x8001f780L, scDump = 0x8001f7a0L, scLoop = 0x8001f7a4L;
-        long scG1 = 0x8001f7c0L, scG2 = 0x8001f7ccL, scG3 = 0x8001f7d8L, scG4 = 0x8001f7e4L;
-        long scStore = 0x8001f7f0L, scOut = 0x8001f818L, scPool = 0x8001f820L, scEnd = 0x8001f830L;
         begin(scEntry);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
@@ -11064,11 +11131,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UH R9,R8[0x4]");       // the cursor
         emit("CP.W R9,0x4000");
         emit(String.format("BR{ge} 0x%x", scOut));
-        // Advance first, over the gaps: 0x0a -> 0x80, 0xcf -> 0x100,
-        // 0x163 -> 0x180, 0x200 -> 0x3f76, 0x3f80 -> idle.
+        // Advance first, over the gaps: 0x30 -> 0x80 (the 32 cells and the
+        // 16 live bytes are one run), 0xcf -> 0x100, 0x163 -> 0x180,
+        // 0x200 -> 0x3f76, 0x3f80 -> idle.
         emit("MOV R10,R9");
         emit("SUB R10,-0x1");
-        emit("CP.W R10,0xa");
+        emit("CP.W R10,0x30");
         emit(String.format("BR{ne} 0x%x", scG1));
         emit("MOV R10,0x80");
         padTo(scG1);
@@ -11122,7 +11190,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R0,0x6a80");          // staging
         emit("MOV R8,-0x1");
         emit("ST.W R0[0x0],R8");        // marker erased
-        emit("MOV R8,0x1");
+        emit("MOV R8,0x2");             // layout 2
         emit("ST.H R0[0x4],R8");
         emit("MOV R8,0x298");
         emit("ST.H R0[0x6],R8");
@@ -11223,7 +11291,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x800108fcL); // the factory flash writer
         word(vfEntry);     // settings_verify
         word(0x32313853L); // the commit marker
-        word(0x8001f010L); // settings_valid
+        word(vdEntry);     // settings_valid
         finish("settings_commit", cmEnd);
 
         // Every byte of the slot at R1 against the staging at R0; returns
@@ -11249,15 +11317,129 @@ public class AssemblePressureFix extends GhidraScript {
         // the call into settings_nrpn, which does their work on the way
         // back.  0x8000838e is the only entry into this range.
         begin(0x8000838eL);
-        emit("MCALL PC[0x8001f9d0]");
+        emit(String.format("MCALL PC[0x%x]", ccPool));
         padTo(0x80008396L);
         finish("settings_cc_hook", 0x80008396L);
 
         // Its pool word, in our own flash: the MCALL reaches it from the
         // factory's code, and there is no free word nearer.
-        begin(0x8001f9d0L);
+        begin(ccPool);
         word(nrEntry);     // settings_nrpn
-        finish("settings_cc_pool", 0x8001f9d4L);
+        finish("settings_cc_pool", ccEnd);
+
+        // Low and high for every cell, in cell order: what settings_valid
+        // holds a record to and settings_target answers for a receive.
+        // Out of settings_valid's own extent since layout 2 made it 32
+        // pairs.  Cells 10..15 and 27..31 are reserved and must be zero.
+        begin(bdTable);
+        halfword(1);    halfword(1024);   // 0 tie_glide_rate
+        halfword(128);  halfword(3968);   // 1 strip_halfway_units
+        halfword(1);    halfword(4);      // 2 clock_min_ms
+        halfword(1);    halfword(1000);   // 3 clock_rearm_us
+        halfword(2);    halfword(32);     // 4 clock_lock_pulses
+        halfword(1);    halfword(1023);   // 5 transpose_cv_period
+        halfword(0);    halfword(1023);   // 6 transpose_cv_zero
+        halfword(0);    halfword(64);     // 7 transpose_cv_hysteresis
+        halfword(20);   halfword(2000);   // 8 chord_hold_scans
+        halfword(20);   halfword(2000);   // 9 latch_state_hold_scans
+        halfword(0);    halfword(0);      // 10 reserved
+        halfword(0);    halfword(0);      // 11
+        halfword(0);    halfword(0);      // 12
+        halfword(0);    halfword(0);      // 13
+        halfword(0);    halfword(0);      // 14
+        halfword(0);    halfword(0);      // 15
+        halfword(0);    halfword(1);      // 16 latching_arp: off, on
+        halfword(0);    halfword(2);      // 17 knob1: order, orders, factory
+        halfword(0);    halfword(4);      // 18 knob2: spacing, quantized, swing, patterns, factory
+        halfword(0);    halfword(1);      // 19 knob3: octaves, factory
+        halfword(0);    halfword(2);      // 20 knob4: vibrato, trn, factory
+        halfword(0);    halfword(1);      // 21 sequencer
+        halfword(0);    halfword(1);      // 22 clock_divide
+        halfword(0);    halfword(1);      // 23 pressure_fix
+        halfword(0);    halfword(1);      // 24 pressure_portamento (needs 23)
+        halfword(0);    halfword(1);      // 25 quantize_presets
+        halfword(0);    halfword(1);      // 26 portamento_in: portamento, transpose
+        halfword(0);    halfword(0);      // 27 reserved
+        halfword(0);    halfword(0);      // 28
+        halfword(0);    halfword(0);      // 29
+        halfword(0);    halfword(0);      // 30
+        halfword(0);    halfword(0);      // 31
+        finish("settings_bounds", bdEnd);
+
+        // The image's own value for every cell - the ten numbers and the
+        // twelve options the config chose, which are the baked defaults the
+        // way a table is - copied into the mirror whole by settings_defaults.
+        // The record the build serializes carries the same 32 halfwords,
+        // which is the first thing the regression checks.
+        begin(nmTable);
+        halfword(number("tie_glide_rate", 60, 1, 1024));
+        halfword(number("strip_halfway_units", 2048, 128, 3968));
+        halfword(number("clock_min_ms", 4, 1, 4));
+        halfword(number("clock_rearm_us", 250, 1, 1000));
+        halfword(number("clock_lock_pulses", 5, 2, 32));
+        halfword(number("transpose_cv_period", 123, 1, 1023));
+        halfword(number("transpose_cv_zero", 0, 0, 1023));
+        halfword(number("transpose_cv_hysteresis", 2, 0, 64));
+        halfword(number("chord_hold_scans", 300, 20, 2000));
+        halfword(number("latch_state_hold_scans", 200, 20, 2000));
+        halfword(0); halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
+        halfword(number("latching_arp", 1, 0, 1));
+        halfword(number("knob1", 0, 0, 2));
+        halfword(number("knob2", 0, 0, 4));
+        halfword(number("knob3", 0, 0, 1));
+        halfword(number("knob4", 0, 0, 2));
+        halfword(number("sequencer", 1, 0, 1));
+        halfword(number("clock_divide", 1, 0, 1));
+        halfword(number("pressure_fix", 1, 0, 1));
+        halfword(number("pressure_portamento", 1, 0, 1));
+        halfword(number("quantize_presets", 1, 0, 1));
+        halfword(number("portamento_in", 1, 0, 1));
+        halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
+        finish("settings_numbers", nmEnd);
+
+        // The live option bytes: the low byte of cells 16..31, copied once
+        // at boot after the record load.  Every dispatcher, shim and gate
+        // reads these and never the mirror, so a value that arrives over
+        // MIDI changes no code path until the next power-up - or the
+        // restart below, which the page sends after a commit that changed
+        // one.  A leaf.
+        begin(lvEntry);
+        emit("MOV R8,0x6820");
+        emit("MOV R9,0x6d28");
+        emit("MOV R10,0x10");
+        padTo(lvLoop);
+        emit("LD.UH R11,R8[0x0]");
+        emit("ST.B R9[0x0],R11");
+        emit("SUB R8,-0x2");
+        emit("SUB R9,-0x1");
+        emit("SUB R10,0x1");
+        emit(String.format("BR{ne} 0x%x", lvLoop));
+        emit("MOV PC,LR");
+        finish("settings_live", lvEnd);
+
+        // Restart, for NRPN 0x3f04 with the key: the watchdog, enabled with
+        // its two-key write and then left to fire - a power cycle by other
+        // means, which is what makes a changed option take effect.  Never
+        // returns.  The UC3B's WDT is at 0xffff0d30; CTRL has EN in bit 0,
+        // PSEL in bits 8..12 (a timeout of 2^(PSEL+1) cycles of the 115 kHz
+        // RC oscillator, so 7 is about 2 ms) and the key in bits 24..31,
+        // written as 0x55 and then 0xaa.  Not run under emulation past the
+        // two stores: the reset itself is the bench's to confirm.
+        begin(rsEntry);
+        emit(String.format("LDDPC R8,0x%x", rsPool));
+        emit(String.format("LDDPC R9,0x%x", rsPool + 4));
+        emit("ST.W R8[0x0],R9");
+        emit(String.format("LDDPC R9,0x%x", rsPool + 8));
+        emit("ST.W R8[0x0],R9");
+        padTo(rsSpin);
+        emit(String.format("RJMP 0x%x", rsSpin));
+        padTo(rsPool);
+        word(0xffff0d30L); // WDT CTRL
+        word(0x55000701L); // KEY 0x55, PSEL 7, EN
+        word(0xaa000701L); // KEY 0xaa, PSEL 7, EN
+        finish("settings_restart", rsEnd);
+        }; // end settingsCaves
+        settingsCaves.go();
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a

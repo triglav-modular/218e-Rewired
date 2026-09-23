@@ -734,6 +734,12 @@ def test_blend(cfg: dict) -> None:
         text = re.sub(
             r'emit\("MOV R9,0x20"\);\s*emit\("MOV R12,0x6a28"\);',
             "", text)
+        # settings_defaults copies the 32 cells out of settings_numbers in
+        # one settings_copy call: a count over the mirror's cells, not the
+        # keys.  Exempt only that count/call pair.
+        text = re.sub(
+            r'emit\("MOV R10,0x20"\);\s*emit\("MCALL PC\[0x8001f2f4\]"\);',
+            "", text)
         return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
@@ -2083,8 +2089,8 @@ def test_settings_record() -> None:
     }
     rec = S.record(numbers, tables, True, 0xb007, 484, generation=7)
     check("record is 0x2a8 bytes", len(rec) == S.LENGTH, str(len(rec)))
-    check("marker, version, length, generation in the header",
-          rec[:12] == bytes.fromhex("32313853 0001 0298 00000007".replace(" ", "")),
+    check("marker, layout 2, length, generation in the header",
+          rec[:12] == bytes.fromhex("32313853 0002 0298 00000007".replace(" ", "")),
           rec[:12].hex())
     back = S.parse(rec)
     check("parse reads the generation back", back["generation"] == 7)
@@ -2098,7 +2104,41 @@ def test_settings_record() -> None:
     check("the ten numbers sit in cell order at 0x20",
           rec[0x20:0x34] == bytes.fromhex("003c 0800 0004 00fa 0005 0333 0000 000c 00c8 00c8".replace(" ", "")),
           rec[0x20:0x34].hex())
-    check("the unused number cells are zero", rec[0x34:0x60] == bytes(0x2c))
+    check("cells 10..15 are zero", rec[0x34:0x40] == bytes(12))
+    # The option cells, 16..27, at 0x40: what the page's option values
+    # index to, in the page's order; every option left out is its default.
+    check("the option cells default to the config's defaults",
+          rec[0x40:0x58] == bytes.fromhex("0001 0000 0000 0000 0000 0001 0001 0001 0001 0001 0001 0000".replace(" ", "")),
+          rec[0x40:0x58].hex())
+    check("cells 27..31 are zero", rec[0x58:0x60] == bytes(8))
+    chosen = S.option_cells({"latching_arp": False, "knob1": "orders", "knob2": "patterns",
+                             "knob3": "factory", "knob4": "trn", "sequencer": False,
+                             "clock_divide": False, "pressure_fix": True,
+                             "pressure_portamento": False, "quantize_presets": False,
+                             "portamento_in": "portamento"})
+    rec2 = S.record(dict(numbers, **chosen), tables, True, 0xb007, 484)
+    check("option cells carry the page's choices as indices",
+          rec2[0x40:0x58] == bytes.fromhex("0000 0001 0003 0001 0001 0000 0000 0001 0000 0000 0000 0000".replace(" ", "")),
+          rec2[0x40:0x58].hex())
+    check("and parse names them again", S.parse(rec2)["options"] == {
+        "latching_arp": False, "knob1": "orders", "knob2": "patterns", "knob3": "factory",
+        "knob4": "trn", "sequencer": False, "clock_divide": False, "pressure_fix": True,
+        "pressure_portamento": False, "quantize_presets": False, "portamento_in": "portamento"},
+        str(S.parse(rec2)["options"]))
+    raises("an option outside its choices is refused",
+           lambda: S.option_cells({"knob2": "random"}), "knob2")
+    raises("an option cell past its range is refused",
+           lambda: S.record(dict(numbers, knob2=5), tables, True, 0, 484), "0..4")
+    raises("pressure_portamento without pressure_fix is refused",
+           lambda: S.record(dict(numbers, pressure_fix=0, pressure_portamento=1), tables, True, 0, 484),
+           "pressure_portamento needs pressure_fix")
+    bad = bytearray(rec); bad[0x4f] = 0; bad[0x51] = 1
+    import struct as _st
+    _st.pack_into(">I", bad, 12, S.crc(bytes(bad)))
+    raises("parse refuses the pair too", lambda: S.parse(bytes(bad)), "pressure_portamento needs pressure_fix")
+    bad = bytearray(rec); bad[5] = 1
+    _st.pack_into(">I", bad, 12, S.crc(bytes(bad)))
+    raises("parse refuses layout 1", lambda: S.parse(bytes(bad)), "version 1")
     check("pitch, tuning and period keys land at their offsets",
           back["pitch_remap"] == tables["pitch_remap"]
           and back["tuning_slot2"] == tables["tuning_slot2"]
