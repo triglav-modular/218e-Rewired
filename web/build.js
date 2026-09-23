@@ -124,9 +124,14 @@ var WEBBUILD = (function () {
         blocks.arp_gate_hook = true;
         ['arp_selector_pool', 'arp_rhythm_hook', 'arp_octave_hook',
          'vibrato_engine', 'vibrato_sine', 'pressure_vibrato_scale',
-         'pressure_vibrato_pool', 'knob4_early_pool']
+         'pressure_vibrato_pool', 'knob4_early_pool',
+         // Phase C: the latch, likewise.
+         'noteoff_pool_1', 'noteoff_pool_2', 'latch_pitch_toggle',
+         'release_count_guard', 'latch_owner', 'latch_hold',
+         'latch_state_toggle', 'factory_pad_latch_off']
             .forEach(function (n) { blocks[n] = true; });
         features.knob4_vibrato = true;
+        features.arp_latch = true;
         if (cfg._pressure_factory) {
             ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
              // Same rule as tools/build.py: the edit-mode curve knob is
@@ -155,16 +160,12 @@ var WEBBUILD = (function () {
         // runtime the build cannot know whether the knobs are all factory,
         // so the three transpose forcing patches stay in every image.
 
-        if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {
-            blocks.pitch_target_blend_hook = true;
-            blocks.blend_offset_apply = true;
-            // The conditioner calls the apply shim; they exist together.
-            blocks.blend_target_conditioner = true;
-        } else {
-            // Same rule as tools/build.py: the factory long-hold on the arp
-            // switch comes back when the factory switch does.
-            blocks.poly_arp_independence = false;
-        }
+        // Same rule as tools/build.py: the latch may be live in any image,
+        // so the blend caves are in every image, and poly_arp_independence
+        // stays whatever the latch does.
+        blocks.pitch_target_blend_hook = true;
+        blocks.blend_offset_apply = true;
+        blocks.blend_target_conditioner = true;
         features.pressure_trim_scale = cfg.pressure.calibration.trim_mode === 'scale';
         if (features.pressure_trim_scale) {
             blocks.knob3_pressure_floor = false;

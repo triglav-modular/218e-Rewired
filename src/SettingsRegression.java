@@ -33,6 +33,9 @@ public class SettingsRegression extends PersistenceRegression {
     static final long BLENDSEL=0x8001a0a0L, ZONES=0x8001aec0L, FACTORYSEL=0x800029a8L, GATE=0x8001b050L;
     static final long RAND=0x80019df8L, GRID=0x8001ea00L, SWING=0x8001b100L, VIB=0x8001a350L;
     static final long EARLY=0x8001d920L, ADC=0x80004a00L, LATE=0x8001b010L;
+    // Phase C: the latch dispatchers, the pad test, the chord shim, and what they choose.
+    static final long LT=0x8001fd20L, LTON=LT, LTOFF=LT+0x30, LTHOLD=LT+0x50, LTPAD=LT+0x70, LTSHIM=LT+0x90, LTPOOL=LT+0xb0;
+    static final long LOWNER=0x8001dde0L, LNOTEOFF=0x8001a280L, FNOTEOFF=0x80005a50L, LHOLD=0x8001e520L, FTIMER=0x800045e8L;
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -291,7 +294,13 @@ public class SettingsRegression extends PersistenceRegression {
         w(LIVE+1,1,1);
         check("and the gate's own word still reaches knob 1's choice",resolve(KBK1)==ZONES);
         long[] k2={RAND,GRID,SWING};
-        for(int c=0;c<3;c++) { w(LIVE+2,1,c); check("knob 2 cell "+c+" reloads through "+Long.toHexString(k2[c]),resolve(KBRHY)==k2[c]); }
+        for(int c=0;c<3;c++) {
+            w(LIVE+2,1,c); e.writeRegister("R12",321);
+            check("knob 2 cell "+c+" reloads through "+Long.toHexString(k2[c])+" with the tempo still in R12",
+                resolve(KBRHY)==k2[c]&&reg("R12")==321);
+        }
+        w(LIVE+1,1,1); w(LIVE+2,1,3); e.writeRegister("R12",0x377b); resolve(KBSEL);
+        check("the selector dispatcher leaves its argument in R12",reg("R12")==0x377b);
         for(int c=3;c<5;c++) {
             w(LIVE+2,1,c); w(S+0x38e,2,0); e.writeRegister("R12",321); e.writeRegister("R8",0); e.writeRegister("R9",0);
             long p=resolve(KBRHY);
@@ -321,6 +330,66 @@ public class SettingsRegression extends PersistenceRegression {
             &&r(0x800051f0L,4)==KBEARLY&&r(0x8001aeb8L,4)==KBLATE&&r(0x8001b0fcL,4)==KBK1
             &&(!seq||r(0x8001b434L,4)==KBSEL));
         println("PASS knob roles: every cell value reaches its cave, and the latches follow the roles");
+    }
+    void latch() throws Exception {
+        fresh();
+        w(LIVE,1,1);
+        check("latch on: the note-on reaches latch_owner, the note-off the latch's wrapper, the hold latch_hold",
+            resolve(LTON)==LOWNER&&resolve(LTOFF)==LNOTEOFF&&resolve(LTHOLD)==LHOLD);
+        // A dispatcher must leave what its target takes: the key in R12 for
+        // the note-on and note-off, and for latch_hold R8 (0x60a0), R9 (the
+        // transpose just published) and R12 (the pitch in hand).
+        e.writeRegister("R12",7); resolve(LTON);
+        check("the note-on dispatcher leaves the key in R12",reg("R12")==7);
+        e.writeRegister("R12",7); resolve(LTOFF);
+        check("the note-off dispatcher leaves the key in R12",reg("R12")==7);
+        e.writeRegister("R8",0x60a0); e.writeRegister("R9",-484&0xffffffffL); e.writeRegister("R12",1234); resolve(LTHOLD);
+        check("the hold dispatcher leaves R8, R9 and R12 for latch_hold",
+            reg("R8")==0x60a0&&reg("R9")==(-484&0xffffffffL)&&reg("R12")==1234);
+        w(LIVE,1,0); w(0x6521+5,1,0); w(0x6504+5,1,0);
+        e.writeRegister("R12",5); long p=resolve(LTON);
+        check("latch off: a press writes the identity ownership and hands the key back",
+            p==0x100&&reg("R12")==5&&r(0x6521+5,1)==6&&r(0x6504+5,1)==6);
+        e.writeRegister("R12",5); p=resolve(LTOFF);
+        check("and a release clears it on the way to the factory note-off",
+            p==FNOTEOFF&&reg("R12")==5&&r(0x6521+5,1)==0);
+        e.writeRegister("R12",29);
+        check("a key past 28 owns nothing and still reaches the factory note-off",resolve(LTOFF)==FNOTEOFF);
+        e.writeRegister("R12",1234); p=resolve(LTHOLD);
+        check("latch off: the hold hands the pitch back",p==0x100&&reg("R12")==1234);
+        w(0x46f1,1,2); e.writeRegister("R8",0x46f0);
+        w(LIVE,1,1); resolve(LTPAD);
+        check("latch on: the pad test reads pad 2 and says held",reg("R9")==2&&reg("Z")==1);
+        w(LIVE,1,0); resolve(LTPAD);
+        check("latch off: the pad test says not held whatever pad 2 does",reg("R9")==0&&reg("Z")==0);
+        w(LIVE,1,1);
+        check("latch on: the factory latch chord's timer is swallowed",resolve(LTSHIM)==0x100);
+        w(LIVE,1,0);
+        check("latch off: the factory latch chord's timer runs",resolve(LTSHIM)==FTIMER);
+        long disp=((LTPOOL+24)-(0x8000491eL&~3L))>>2;
+        check("the words name the dispatchers: the note-on, both note-off pools, the hold, and the chord's call is an MCALL to the shim's word",
+            r(0x80018d38L,4)==LTON&&r(0x80005b18L,4)==LTOFF&&r(0x80006278L,4)==LTOFF&&r(0x8001a8e0L,4)==LTHOLD
+            &&r(0x8000491eL,4)==(0xf01f0000L|(disp&0xffffL))&&r(LTPOOL+24,4)==LTSHIM);
+        // What the latch owns does not outlive it across the restart that
+        // turns it off: SRAM survives, the first-use initialiser does not
+        // run again, so option_boot clears the stamps, the term and the
+        // ownership maps when the live byte is zero - and leaves them when
+        // it is one.
+        keepSlots=true;
+        byte[] off=edited(); setHalf(off,0x20+2*16,0); stamp(off); plant(SLOT0,off);
+        // The 29 stamps are 0x60a2..0x60da; 0x60dc is the claimed beat's
+        // gate target, which the clear must leave alone.
+        cold(); w(0x60a2,2,0x1234); w(0x60da,2,0x5678); w(0x60dc,2,0x4321); w(0x609e,2,0x2222); w(0x6504,1,7); w(0x653d,1,9); boot();
+        check("latch off at boot: the stamps, the term and the ownership maps are cleared, and the cell after the stamps is not"
+            +" live="+r(LIVE,1)+" stamps="+Long.toHexString(r(0x60a2,2))+","+Long.toHexString(r(0x60da,2))
+            +" next="+Long.toHexString(r(0x60dc,2))+" term="+Long.toHexString(r(0x609e,2))+" own="+r(0x6504,1)+","+r(0x653d,1),
+            r(LIVE,1)==0&&r(0x60a2,2)==0&&r(0x60da,2)==0&&r(0x60dc,2)==0x4321&&r(0x609e,2)==0&&r(0x6504,1)==0&&r(0x653d,1)==0);
+        byte[] on=edited(); setHalf(on,0x20+2*16,1); setGen(on,4); stamp(on); plant(SLOT0,on);
+        cold(); w(0x60a2,2,0x1234); w(0x609e,2,0x2222); w(0x6504,1,7); boot();
+        check("latch on at boot: they are the latch's own and stay",
+            r(LIVE,1)==1&&r(0x60a2,2)==0x1234&&r(0x609e,2)==0x2222&&r(0x6504,1)==7);
+        keepSlots=false;
+        println("PASS latch: the four gates follow the live byte, the shim gives the factory chord back, and the latch's RAM does not outlive it");
     }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
@@ -463,7 +532,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

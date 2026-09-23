@@ -163,7 +163,7 @@ public class ControlRegression extends SequenceEditRegression {
         for(int position:lean?new int[]{2}:new int[]{1,2})for(int zone:new int[]{3,4}) {
             setup(0,false,position); command(1); command(1);
             for(int k:new int[]{4,14,9})key(k);
-            e.writeRegister("R12",14); call(position==1?0x80018d00L:0x8001a280L);
+            e.writeRegister("R12",14); call(position==1?0x80018d00L:r(0x80005b18L,4));
             check("real release/unlatch removes target",r(S+0x21b+14,1)==0&&r(S+0x21a,1)==2);
             w(S+0x34d,1,9); w(S+0x30a,2,zone*176+40); w(S+0x2fc,2,0);
             for(int i=0;i<6;i++) {
@@ -331,7 +331,9 @@ public class ControlRegression extends SequenceEditRegression {
             +", equal pitches, all/none held, missing current, regular arp");
     }
     void sound() throws Exception { controlScan(); call(0x80003590L); pitch(); }
-    void noteUp(int key) throws Exception { e.writeRegister("R12",key); call(0x8001a280L); }
+    // Through the pool word, as the factory releases a key: the latch's
+    // wrapper or the factory's note-off, by the latch's live byte.
+    void noteUp(int key) throws Exception { e.writeRegister("R12",key); call(r(0x80005b18L,4)); }
     void latchFixture() throws Exception {
         w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,0); controlScan();
     }

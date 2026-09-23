@@ -399,7 +399,8 @@ var BUILDLIB = (function () {
     // pressing one note releases another.  The page has no field for the
     // tolerance, so the message names what the page user can actually change.
     function checkLatchSpacing(cfg, slots) {
-        if (get(cfg, 'arp.switch') !== 'latch') return;
+        // The latch may be live in any image (stage 2 phase C), so the
+        // spacing is held to the tolerance whatever the page's checkbox says.
         var tolerance = cfg.arp.latch_match_tolerance;
         var closest = minKeySpacing(slots);
         // The table's gap is the nominal one and the runtime's is up to
@@ -1596,7 +1597,7 @@ var BUILDLIB = (function () {
     // option cells decided at runtime and the pattern bank only they read,
     // so a record made here is right for a keyboard that differs only in them.
     var MARKER_EXCLUDES = { knob1: 1, knob2: 1, knob3: 1, knob4: 1, pattern_count: 1,
-                            arp_pattern_bank: 1, arp_pattern_len: 1 };
+                            arp_pattern_bank: 1, arp_pattern_len: 1, latching_arp: 1 };
     function withoutExcluded(obj) {
         var out = {};
         Object.keys(obj).forEach(function (k) { if (!MARKER_EXCLUDES[k]) out[k] = obj[k]; });

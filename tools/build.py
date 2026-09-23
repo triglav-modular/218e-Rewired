@@ -103,15 +103,9 @@ FEATURE_MAP = {
     # The four knob roles are option cells since stage 2 phase B: every
     # knob cave is in every image and the live option bytes choose at boot
     # (docs/PLAN-SETTINGS-2.md), so they no longer appear here.
-    "arp.switch":             (
-        ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
-         "release_count_guard", "latch_owner",
-         # The latch's two states: the hold shim, the toggle, and the factory
-         # pads 2 & 3 latch chord taken out.  latch_state itself is core: it
-         # also shadows the octave the sequencer's pad-4 hold restores.
-         "latch_hold", "latch_state_toggle", "factory_pad_latch_off"],
-        ["arp_latch"],
-    ),
+    # The latching arp is an option cell since stage 2 phase C: its caves
+    # are in every image and dispatchers on the note-on, the note-off and
+    # the hold read the live byte at boot.
     "midi.poly_default":      (
         ["poly_powerup_default_off", "poly_factory_reset_default_off",
          "poly_arp_independence", "poly_settings_migration",
@@ -142,7 +136,6 @@ FEATURE_MAP = {
 # The value that means "new behaviour" for each setting; anything else (i.e.
 # "factory" / false) leaves the original firmware in charge.
 ENABLED_WHEN = {
-    "arp.switch": "latch",
     "midi.poly_default": "off",
     "pressure.common_mode": True,
     "pressure.multi_key": "max",
@@ -1194,6 +1187,7 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 MARKER_EXCLUDES = frozenset({
     "knob1", "knob2", "knob3", "knob4", "pattern_count",
     "arp_pattern_bank", "arp_pattern_len",
+    "latching_arp",
 })
 
 RAM_REGIONS = [
@@ -2139,9 +2133,15 @@ def main() -> None:
     blocks["arp_gate_hook"] = True
     for name in ("arp_selector_pool", "arp_rhythm_hook", "arp_octave_hook",
                  "vibrato_engine", "vibrato_sine", "pressure_vibrato_scale",
-                 "pressure_vibrato_pool", "knob4_early_pool"):
+                 "pressure_vibrato_pool", "knob4_early_pool",
+                 # Phase C: the latch, likewise.  release_count_guard is a
+                 # factory fix and stays whatever the latch does.
+                 "noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
+                 "release_count_guard", "latch_owner", "latch_hold",
+                 "latch_state_toggle", "factory_pad_latch_off"):
         blocks[name] = True
     features["knob4_vibrato"] = True
+    features["arp_latch"] = True
 
     if cfg.get("_pressure_factory"):
         # knob4_pool goes back too: edit-mode knob 4 is the curve selector,
@@ -2194,21 +2194,22 @@ def main() -> None:
     # *following* inside them (feature.pressure_blend) is independent, and can
     # be off.  Forcing the blocks on here decouples "latch" from "pressure
     # portamento": each is its own switch.
-    if get(cfg, "arp.switch") == "latch":
-        blocks["pitch_target_blend_hook"] = True
-        blocks["blend_offset_apply"] = True
-        # The conditioner ends in a call to the apply shim, so the two exist
-        # together - with neither the blend nor the latch, that call would
-        # name erased flash.  Dead today (the pitch pool routes around the
-        # conditioner when the blend is off), but not something to leave
-        # where a future route could reach it.
-        blocks["blend_target_conditioner"] = True
-    else:
-        # The factory's long-hold on the arp switch toggles polyphonic MIDI.
-        # We suppress it so the edit-mode setting has one owner, but that is
-        # only needed while we own the switch: with the factory arp switch
-        # back, its long-hold comes back with it.
-        blocks["poly_arp_independence"] = False
+    # The latch may be live in any image now, so the blend caves it reads
+    # the live octave offset through are in every image too.
+    blocks["pitch_target_blend_hook"] = True
+    blocks["blend_offset_apply"] = True
+    # The conditioner ends in a call to the apply shim, so the two exist
+    # together - with neither the blend nor the latch, that call would
+    # name erased flash.  Dead today (the pitch pool routes around the
+    # conditioner when the blend is off), but not something to leave
+    # where a future route could reach it.
+    blocks["blend_target_conditioner"] = True
+    # The factory's long-hold on the arp switch toggles polyphonic MIDI.
+    # poly_arp_independence suppresses it so the edit-mode setting has one
+    # owner, in every image since the latch went runtime: a build with the
+    # factory switch used to get the long-hold back, and giving it back at
+    # runtime would mean relocating 32 bytes of factory code with a pool
+    # call inside; the single owner is the better contract anyway.
 
     # How far apart two derived pitches may be and still count as the same
     # note.  Both sides of the toggle's match are built from the transpose at
@@ -2220,7 +2221,7 @@ def main() -> None:
     if isinstance(tolerance, bool) or not isinstance(tolerance, int) or not 0 <= tolerance <= 30:
         raise SystemExit("[arp].latch_match_tolerance must be an integer from 0 to 30")
     closest = cfg.get("_min_key_spacing")
-    if closest is not None and get(cfg, "arp.switch") == "latch":
+    if closest is not None:
         # The table's gap is the nominal one, and the runtime's is up to a unit
         # smaller: the note that was latched keeps the transpose it was pressed
         # at, and the two paths that publish it do not always agree to the unit
@@ -2242,12 +2243,11 @@ def main() -> None:
                   f"{closest}-unit gap between the closest keys; {closest // 2 - 1} "
                   "or less keeps the margin the semitone default has")
     cfg["_numbers"]["latch_match_tolerance"] = tolerance
-    if get(cfg, "arp.switch") == "latch":
-        gap = ("semitone is ~40 units" if closest is None
-               else f"closest keys are {closest} units apart")
-        summary.append(f"  {'arp.latch_match_tolerance':28s} "
-                       f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
-                       f"{'exact match' if tolerance == 0 else gap})")
+    gap = ("semitone is ~40 units" if closest is None
+           else f"closest keys are {closest} units apart")
+    summary.append(f"  {'arp.latch_match_tolerance':28s} "
+                   f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
+                   f"{'exact match' if tolerance == 0 else gap})")
 
     mode = calib.get("trim_mode", "independent")
     if mode not in ("independent", "scale"):

@@ -16,6 +16,15 @@ function assembleProgram() {
         var kbSel = 0x8001fb80, kbK1 = kbSel + 0x20, kbRhythm = kbSel + 0x60, kbVib = kbSel + 0xa0;
         var kbEarly = kbSel + 0xc0, kbLate = kbSel + 0xe0, kbLatch1 = kbSel + 0x100, kbLatch3 = kbSel + 0x130;
         var kbPool = kbSel + 0x160, kbEnd = kbSel + 0x1a0;
+        // Phase C: the latching arp, live byte 0x6d28.  Three dispatchers at
+        // the points where the latch engages - the note-on's toggle, the
+        // note-off's wrapper, the hold's re-base - a helper for the pads
+        // 2 & 3 test in latch_state, and a shim over the factory's own latch
+        // chord call.  Everything downstream of those sees zero stamps and
+        // the identity ownership with the latch off, which is what a
+        // non-latch switch position already gives it.
+        var ltOn = 0x8001fd20, ltOff = ltOn + 0x30, ltHold = ltOn + 0x50, ltPad = ltOn + 0x70;
+        var ltShim = ltOn + 0x90, ltPool = ltOn + 0xb0, ltEnd = ltOn + 0xd0;
 
         // The key selector: the dispatcher, for the factory's pool word and
         // the sequencer's alike, so the two can never disagree.
@@ -58,6 +67,12 @@ function assembleProgram() {
         var nmTable = bdEnd, nmEnd = nmTable + 0x40;
         var lvEntry = nmEnd, lvLoop = lvEntry + 0xa, lvEnd = lvEntry + 0x20;
         var rsEntry = lvEnd, rsSpin = rsEntry + 0xa, rsPool = rsEntry + 0x10, rsEnd = rsEntry + 0x20;
+        // option_boot took settings_live's job on 2026-09-23 (phase C): the
+        // live copy, the blend latch, and the latch's own RAM cleared when
+        // the latch is off - SRAM survives the restart that applies an
+        // option, and the first-use initialiser does not run again for it.
+        var obEntry = 0x8001fdf0, obLoop = obEntry + 0xa, obLive = obEntry + 0x2c, obStamps = obEntry + 0x36;
+        var obOwn = obEntry + 0x4a, obDone = obEntry + 0x54, obEnd = obEntry + 0x60;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -188,7 +203,7 @@ function assembleProgram() {
         word(0x80005a04); // original note-on initialization
         word(0x00006080); // raw-filter sample count
         word(0x8001a020); // press-order list append
-        word(0x8001dde0); // latch_owner -> the pitch-aware latch toggle
+        word(ltOn);        // latch_noteon_dispatch -> latch_owner and the toggle, or the identity ownership
         word(0x8001b9d0); // the sequencer's recorder
         finish("note_on_reset_raw_filter", 0x80018d40);
 
@@ -1992,7 +2007,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001a8e0]");
             emit("RJMP 0x8001a8e4");    // over the pool word, never through it
             padTo(0x8001a8e0);
-            word(0x8001e520);          // latch_hold
+            word(ltHold);               // latch_hold_dispatch: latch_hold, or the pitch back as it came
         }
         padTo(0x8001a8e4);
         emit("MCALL PC[0x8001a8ec]");
@@ -6867,6 +6882,13 @@ function assembleProgram() {
         emit("MOV R8,0x854");
         emit("LD.UH R9,R8[R12 << 0x1]");
         if (feature("arp_latch")) {
+            // And only while the latch is live: a stamp left in RAM by a
+            // session with the latch on must not reorder the regular arp
+            // after a restart with it off.
+            emit("MOV R8,0x6d28");
+            emit("LD.UB R8,R8[0x0]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8001dc30");
             emit("MOV R8,0x3560");
             emit("LD.UB R8,R8[0x340]");
             emit("CP.W R8,0x1");
@@ -7326,8 +7348,10 @@ function assembleProgram() {
         emit("ST.H R10[0x4e4],R9");     // 0x6584: the transpose shadow
         padTo(0x8001e634);
         if (feature("arp_latch")) {
-            emit("LD.UB R9,R8[0x1]");
-            emit("CP.W R9,0x2");
+            // Pad 2's level against "held", through latch_pad_test, which
+            // answers "not held" while the latch is off so this chord never
+            // counts and the factory's own latch chord has the pads.
+            emit(StringFormat("MCALL PC[0x%x]", ltPool + 20));
             emit("BR{ne} 0x8001e698");
             emit("LD.UB R9,R8[0x2]");
             emit("CP.W R9,0x2");
@@ -9944,12 +9968,13 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("scan_housekeeping", 0x8001a53c);
 
-        // Note-off pointer pools -> latch-gated wrapper.
+        // Note-off pointer pools -> the latch dispatcher: the latch's wrapper
+        // while the latch is live, else the factory's own note-off.
         begin(0x80005b18);
-        word(0x8001a280);
+        word(ltOff);
         finish("noteoff_pool_1", 0x80005b1c);
         begin(0x80006278);
-        word(0x8001a280);
+        word(ltOff);
         finish("noteoff_pool_2", 0x8000627c);
 
         // Guard the touch-scan release bookkeeping, in place.
@@ -10269,7 +10294,7 @@ function assembleProgram() {
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001f1f0]");   // settings_defaults
         emit("MCALL PC[0x8001f1f4]");   // settings_reload
-        emit("MCALL PC[0x8001f1fc]");   // settings_live: the option bytes, as booted
+        emit("MCALL PC[0x8001f1fc]");   // option_boot: the option bytes, as booted
         // The NRPN state: no parameter or data byte in hand, the dump
         // cursor idle.  0x4000 is idle because it is past every parameter
         // and a MOV of it is the same positive value a LD.UH reads back.
@@ -10287,7 +10312,7 @@ function assembleProgram() {
         word(block("persist") ? 0x8001d540
              : block("clock_capture") ? 0x8001c300
              : block("seq_boot") ? 0x8001dfa8 : 0x80007340);
-        word(lvEntry);     // settings_live
+        word(obEntry);     // option_boot: the live option bytes, as booted
         finish("settings_boot", 0x8001f200);
 
         // The image's own settings into the mirror: zero it, then the 32
@@ -11139,29 +11164,6 @@ function assembleProgram() {
         halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
         finish("settings_numbers", nmEnd);
 
-        // The live option bytes: the low byte of cells 16..31, copied once
-        // at boot after the record load.  Every dispatcher, shim and gate
-        // reads these and never the mirror, so a value that arrives over
-        // MIDI changes no code path until the next power-up - or the
-        // restart below, which the page sends after a commit that changed
-        // one.  A leaf.
-        begin(lvEntry);
-        emit("MOV R8,0x6820");
-        emit("MOV R9,0x6d28");
-        emit("MOV R10,0x10");
-        padTo(lvLoop);
-        emit("LD.UH R11,R8[0x0]");
-        emit("ST.B R9[0x0],R11");
-        emit("SUB R8,-0x2");
-        emit("SUB R9,-0x1");
-        emit("SUB R10,0x1");
-        emit(StringFormat("BR{ne} 0x%x", lvLoop));
-        emit("MOV R8,0x6d38");
-        emit("MOV R9,0x0");
-        emit("ST.B R8[0x0],R9");        // knob 1's blend latch, until the first scan writes it
-        emit("MOV PC,LR");
-        finish("settings_live", lvEnd);
-
         // Restart, for NRPN 0x3f04 with the key: the watchdog, enabled with
         // its two-key write and then left to fire - a power cycle by other
         // means, which is what makes a changed option take effect.  Never
@@ -11323,6 +11325,158 @@ function assembleProgram() {
         word(kbLatch3);    // knob3_latch
         finish("knob_dispatch_pool", kbEnd);
         }        knobCaves();
+
+        function latchCaves() {        // Note-on: latch_owner and the pitch-aware toggle while the latch is
+        // live; otherwise the identity ownership a non-latch position keeps
+        // (current[key] = key + 1, owner[key] = key + 1), so the blend's
+        // slot map is the raw cache by key, and the key back unchanged.
+        begin(ltOn);
+        emit("MOV R8,0x6d28");            // the latch's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltOn + 0xe));
+        emit(StringFormat("LDDPC R8,0x%x", ltPool));       // latch_owner
+        emit("MOV PC,R8");
+        padTo(ltOn + 0xe);
+        emit("CP.W R12,0x1c");
+        emit(StringFormat("BR{hi} 0x%x", ltOn + 0x28));
+        emit("MOV R9,0x6521");
+        emit("MOV R8,R12");
+        emit("SUB R8,-0x1");
+        emit("ST.B R9[R12 << 0x0],R8");   // current[key] = key + 1
+        emit("SUB R9,0x1d");              // 0x6504: owner[]
+        emit("ST.B R9[R12 << 0x0],R8");   // owner[key] = key + 1
+        padTo(ltOn + 0x28);
+        emit("MOV PC,LR");
+        finish("latch_noteon_dispatch", ltOff);
+        // Note-off: the latch's wrapper while live; otherwise clear the
+        // key's ownership as that wrapper does in every position, and the
+        // factory's own note-off.
+        begin(ltOff);
+        emit("MOV R8,0x6d28");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltOff + 0xe));
+        emit(StringFormat("LDDPC R8,0x%x", ltPool + 4));   // the latch's note-off wrapper
+        emit("MOV PC,R8");
+        padTo(ltOff + 0xe);
+        emit("CP.W R12,0x1d");
+        emit(StringFormat("BR{ge} 0x%x", ltOff + 0x1c));
+        emit("MOV R9,0x6521");
+        emit("MOV R8,0x0");
+        emit("ST.B R9[R12 << 0x0],R8");   // current[key] = none
+        padTo(ltOff + 0x1c);
+        emit(StringFormat("LDDPC R8,0x%x", ltPool + 8));   // the factory note-off
+        emit("MOV PC,R8");
+        finish("latch_noteoff_dispatch", ltHold);
+        // latch_hold, from transpose_capture, while live; otherwise the
+        // pitch in hand goes back as it came.  latch_hold takes R8 (0x60a0)
+        // and R9 (the transpose just published) as arguments and spends
+        // R10 and R11, so those two are the only scratch this dispatcher may
+        // use - the interposition trap in practices/embedded.md, met here on
+        // 2026-09-23 when R8 was spent and the clock regression saw the pitch
+        // move between notes.
+        begin(ltHold);
+        emit("MOV R11,0x6d28");
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltHold + 0x10));
+        emit(StringFormat("LDDPC R10,0x%x", ltPool + 12));  // latch_hold
+        emit("MOV PC,R10");
+        padTo(ltHold + 0x10);
+        emit("MOV PC,LR");
+        finish("latch_hold_dispatch", ltPad);
+        // latch_state's pads 2 & 3 test: R8 = the pad array; R9 comes back
+        // as pad 2's level compared with 2, held - or as zero, compared the
+        // same way, while the latch is off, so the chord never counts and
+        // the factory's own latch chord, which the shim below gives back,
+        // has the pads to itself.  The flags travel back with the compare.
+        begin(ltPad);
+        emit("MOV R9,0x6d28");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltPad + 0x10));
+        emit("LD.UB R9,R8[0x1]");
+        emit("CP.W R9,0x2");
+        emit("MOV PC,LR");
+        padTo(ltPad + 0x10);
+        emit("MOV R9,0x0");
+        emit("CP.W R9,0x2");
+        emit("MOV PC,LR");
+        finish("latch_pad_test", ltShim);
+        // The factory's pads 2 & 3 latch chord: its dispatcher calls the
+        // three-second hold timer here.  With the latch live the call is
+        // swallowed, as the NOP that stood at 0x8000491e used to do;
+        // otherwise the timer runs and the factory latch is back.
+        begin(ltShim);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x6d28");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", ltShim + 0x14));
+        emit(StringFormat("MCALL PC[0x%x]", ltPool + 16));  // the factory latch timer
+        padTo(ltShim + 0x14);
+        emit("LDM SP++,R7,PC");
+        finish("latch_pad_shim", ltPool);
+        begin(ltPool);
+        word(0x8001dde0); // latch_owner
+        word(0x8001a280); // the latch's note-off wrapper
+        word(0x80005a50); // the factory note-off
+        word(0x8001e520); // latch_hold
+        word(0x800045e8); // the factory pads 2 & 3 latch timer
+        word(ltPad);       // latch_pad_test
+        word(ltShim);      // latch_pad_shim
+        finish("latch_dispatch_pool", ltEnd);
+        // The live option bytes: the low byte of cells 16..31, copied once
+        // at boot after the record load.  Every dispatcher, shim and gate
+        // reads these and never the mirror, so a value that arrives over
+        // MIDI changes no code path until the next power-up - or the
+        // restart the page sends after a commit that changed one.  Then
+        // the state an option owns that must not outlive it: SRAM survives
+        // that restart and the first-use initialiser does not run again,
+        // so with the latch off its stamps, its transpose term and its
+        // ownership maps are zeroed here - a stamp left by a session with
+        // the latch on would otherwise weight the blend and rank the
+        // regular arp.  A leaf.
+        begin(obEntry);
+        emit("MOV R8,0x6820");
+        emit("MOV R9,0x6d28");
+        emit("MOV R10,0x10");
+        padTo(obLoop);
+        emit("LD.UH R11,R8[0x0]");
+        emit("ST.B R9[0x0],R11");
+        emit("SUB R8,-0x2");
+        emit("SUB R9,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", obLoop));
+        emit("MOV R8,0x6d38");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // knob 1's blend latch, until the first scan writes it
+        emit("MOV R8,0x6d28");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", obDone));   // the latch is live: its state is its own
+        padTo(obLive);
+        emit("MOV R8,0x60a2");          // the 29 latch stamps, key 28 down
+        emit("MOV R10,0x1c");
+        padTo(obStamps);
+        emit("ST.H R8[R10 << 0x1],R9");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ge} 0x%x", obStamps));
+        emit("MOV R8,0x609e");
+        emit("ST.H R8[0x0],R9");        // the toggle's transpose term
+        emit("MOV R8,0x6504");          // owner[] and current[], 58 bytes
+        emit("MOV R10,0x3a");
+        padTo(obOwn);
+        emit("ST.B R8[0x0],R9");
+        emit("SUB R8,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", obOwn));
+        padTo(obDone);
+        emit("MOV PC,LR");
+        finish("option_boot", obEnd);
+        }        latchCaves();
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a
@@ -11678,11 +11832,14 @@ function assembleProgram() {
         // timer is the factory latch: it sets the sustain gate at state+0x2ea
         // and sends MIDI CC 64, and nothing else ever sets that gate.  With
         // the latching arp the same two pads toggle the latch's transpose
-        // state instead, so the call is taken out and the factory latch is
-        // gone completely - not shadowed, not conditional.  The dispatcher's
-        // own bookkeeping before the call (the pad code, the timer reset)
-        // and the edit-mode meaning of the chord are untouched.
-        fixedPatch("factory_pad_latch_off", 0x8000491e, 4, "NOP");
+        // state instead, so the call goes through latch_pad_shim, which
+        // swallows it while the latch is live - as the NOP that stood here
+        // did - and lets the timer run otherwise.  The dispatcher's own
+        // bookkeeping before the call (the pad code, the timer reset) and
+        // the edit-mode meaning of the chord are untouched.
+        begin(0x8000491e);
+        emit(StringFormat("MCALL PC[0x%x]", ltPool + 24));   // latch_pad_shim
+        finish("factory_pad_latch_off", 0x80004922);
         wordPatch("poly_settings_loader_pool", 0x80007da8, 0x8001aca4,
             "settings loader -> one-time poly-MIDI migration wrapper");
 

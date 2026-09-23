@@ -8,7 +8,7 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): phases A and B built; C next.** The owner's calls at
+**Status (2026-09-23): phases A, B and C built; D next.** The owner's calls at
 the end were answered the same day: the whole scope, layout 2, and options
 that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
@@ -444,8 +444,54 @@ rises along it:
   both latch helpers under every role, the seven words naming the
   dispatchers), controls 12/12 with the roles now decided by the
   dispatchers, clock 6/6.
-- **C. Latch.** Three engagement tests, one shim, one branch in
-  `poly_arp_independence`'s own 32 bytes (it has 11 NOPs).
+- **C. Latch.** Built 2026-09-23. Three dispatchers, a helper and a shim
+  at `0x8001fd20..0x8001fdf0`, on the live byte at `0x6d28`: the note-on
+  wrapper's word for `latch_owner` goes to `latch_noteon_dispatch`, which
+  with the latch off writes the identity ownership a non-latch position
+  keeps (`current[key] = key + 1`, `owner[key] = key + 1`, so the blend's
+  slot map is the raw cache by key) and hands the key back; both note-off
+  pools go to `latch_noteoff_dispatch`, which with the latch off clears the
+  key's ownership as the latch's wrapper does in every position and goes on
+  to the factory note-off; `transpose_capture`'s word for `latch_hold` goes
+  to `latch_hold_dispatch`, which with the latch off hands the pitch back.
+  `latch_state`'s pads 2 & 3 test reads pad 2 through `latch_pad_test`,
+  which answers "not held" while the latch is off (a 6-byte
+  load-compare-branch became call-branch, so the cave did not move), and
+  the NOP over the factory's own latch chord call became an `MCALL` to
+  `latch_pad_shim`, which swallows the call while the latch is live and
+  lets the three-second timer run otherwise, so the factory chord is back
+  with the latch off. Downstream, the blend's stamp add, the slot map and
+  the switch-edge release in the housekeeping see zero stamps and the
+  identity ownership with the latch off, which is what a non-latch switch
+  position already gave them. Two of the ten `arp_latch` sections needed
+  more than that, and the lean variant of the controls suite found the
+  first: the pitch rank added stamps at switch position 1 whatever the
+  option said, and SRAM survives the restart that turns the latch off, so
+  stamps from a latch-on session would have reordered the regular arp. The
+  rank now tests the live byte too (it had 14 bytes of slack), and
+  `option_boot` (`0x8001fdf0`, which took over `settings_live`'s live copy
+  and blend latch) zeroes the 29 stamps, the toggle's term and both
+  ownership maps at every boot with the latch off - the first-use
+  initialiser does not run again for a restart. Two things differ from a
+  build with the option off: `release_count_guard` stays in (a factory
+  fix), and `poly_arp_independence` stays in, so the factory's long-hold on
+  the arp switch no longer toggles polyphonic MIDI in any image - giving it
+  back at runtime would mean relocating 32 bytes of factory code with a
+  pool call inside, and edit mode as the single owner was the intent. The
+  latch spacing refusal now applies to every build, since the latch may be
+  live. The latch cell is out of the image marker (checked: 44606 with the
+  latch on and off). Verified: both toolchains at `06258c88`, historical
+  `45cb758f` (sweep: match + known image), parity 44/44, `test.py
+  --golden` (which caught the chord call assembled without a listing
+  entry, an MCALL the audit could not count), the corpus (11,614
+  instructions), `SettingsRegression` in all four modes (732..735
+  assertions: every gate under both states, the registers each target
+  takes preserved - `latch_hold` takes R8 and R9, and the first version
+  of its dispatcher spent R8, which the clock modes caught as the pitch
+  moving between notes - the words naming the dispatchers, and the
+  latch's RAM cleared at a latch-off boot and kept at a latch-on one),
+  controls 12/12 with both lean variants running the latch off through
+  the dispatchers, clock 6/6.
 - **D. Sequencer.** One test at the arm.
 - **E. Jack and presets.** One shim, two zero-degree gates, up to three
   branches in `cv_transpose`/`preset_degrees` (both have 4 bytes of slack;
