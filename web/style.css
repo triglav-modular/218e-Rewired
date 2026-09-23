@@ -1384,54 +1384,32 @@ td input {
 .danger p:last-child {
   margin-bottom: 0;
 }
-.winsetup {
-  border: 1px solid var(--accent);
-  border-radius: 16px;
-  padding: 20px 22px;
-  margin: 0 0 14px;
-  background: color-mix(in srgb,var(--accent) 8%,var(--panel));
+/* The Windows-only notes fold into the step that runs the flasher: a Mac
+   reader never needs them, and a Windows reader opens the one that applies
+   when it happens.  The first sits closer to the step text than the default
+   details margin; the second keeps a smaller gap from the first. */
+.windrop {
+  margin-top: 10px;
 }
-.winsetup h3 {
-  margin: 0 0 14px;
-  font-size: 14px;
-  letter-spacing: .16em;
-  color: var(--accent);
-  text-transform: uppercase;
+.windrop + .windrop {
+  margin-top: 6px;
 }
-.winsetup p {
-  margin: 0 0 10px;
-  font-size: 16px;
+.windrop > div {
+  margin: 6px 0 4px;
+  color: var(--muted);
 }
-.winsetup ol {
-  margin: 0 0 12px;
-  padding-left: 22px;
-  font-size: 16px;
-  line-height: 1.9;
+.windrop p {
+  margin: 0 0 6px;
 }
-.winsetup p:last-child {
+.windrop p:last-child {
   margin-bottom: 0;
 }
-.prereq {
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 20px 22px;
-  margin: 14px 0;
-}
-.prereq h3 {
-  margin: 0 0 14px;
-  font-size: 13px;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.prereq dl {
+.windrop ol {
   margin: 0;
-  font-size: 16px;
-  line-height: 1.65;
+  padding-left: 22px;
 }
-.prereq dd {
-  margin: 6px 0 0;
-  color: var(--muted);
+.windrop strong {
+  color: var(--ink);
 }
 svg {
   width: 100%;
@@ -1474,14 +1452,23 @@ svg {
   position: relative;
   top: -1px;
 }
-/* Same mark in the Windows-only heading, sized to its type and sitting on the
-   text baseline rather than on its own line. */
-.winsetup h3 .os {
-  width: 15px;
-  height: 15px;
-  margin: 0 4px 0 0;
+/* Same mark in the Windows-only dropdowns, sized to their type.  It sits
+   inline in the label rather than as a flex item beside the chevron, so on a
+   phone, where these labels wrap to three lines, it stays on the first line
+   with the words it belongs to.  The chevron goes to the first line too:
+   centred on a three-line block it pointed at the middle of a sentence. */
+.windrop summary {
+  align-items: flex-start;
+}
+.windrop summary::before {
+  margin-top: calc((1lh - 15px) / 2);
+}
+.windrop summary .os {
   display: inline-block;
-  vertical-align: -2px;
+  width: 13px;
+  height: 13px;
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
 }
 a {
   color: var(--accent);
@@ -2201,8 +2188,6 @@ section,
               0 16px 36px -20px rgba(0, 0, 0, .36);
 }
 .group,
-.winsetup,
-.prereq,
 .steps > li {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .032),
               0 1px 2px rgba(0, 0, 0, .10),
@@ -2252,19 +2237,17 @@ section,
      or two; on a phone the same description wraps to four, and at that width
      the gaps stop reading as breathing room and start reading as space
      between separate things.  Everything that carries its own looser leading
-     - the numbered steps, the Zadig list, the how-to - comes down with it,
+     - the numbered steps, the how-to - comes down with it,
      because those were opened up against the same wide column. */
   body {
     line-height: 1.45;
   }
-  .steps,
-  .winsetup ol {
+  .steps {
     line-height: 1.6;
   }
   .howto {
     line-height: 1.5;
   }
-  .prereq dl,
   .faq {
     line-height: 1.45;
   }
