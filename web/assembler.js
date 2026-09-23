@@ -811,6 +811,22 @@ function assembleProgram() {
         // helper the chord calls where it used to read the preset editor's
         // hold flag itself, answering R10 zero to arm and nonzero to refuse.
         var sqArm = 0x8001fe50, sqDone = sqArm + 0x14, sqEnd = sqArm + 0x20;
+        // Phase E: the jack and the presets, live bytes 0x6d32 and 0x6d31.
+        // The rotation caves are in every image and idle at zero degrees;
+        // the bytes decide where the degrees come from - the jack's reading
+        // (jack_read) and the preset's degree count (preset_degrees_gate) -
+        // and give the factory its two jobs back with the byte off: the
+        // glide-rate addend through glide_cv_shim, the preset voltage's
+        // straight add through preset_quantize's own dispatch.  With the
+        // jack's filter pole built, cv_chain_dispatch puts it in front of
+        // the transposer only while the jack transposes.
+        // From 0x8001fea0, not 0x8001fe70: the factory control-flow table
+        // reads a branch to 0x8001fe92 out of a data table at 0x80017f36,
+        // and the build refuses a cave that buries a recorded target.
+        var jkEntry = 0x8001fea0, jkOff = jkEntry + 0x1c, jkDone = jkEntry + 0x20, jkPool = jkEntry + 0x24, jkEnd = jkEntry + 0x30;
+        var pgEntry = 0x8001fed0, pgOff = pgEntry + 0x10, pgPool = pgEntry + 0x18, pgEnd = pgEntry + 0x20;
+        var gaEntry = 0x8001fef0, gaLoad = gaEntry + 0x10, gaPool = gaEntry + 0x18, gaEnd = gaEntry + 0x20;
+        var cdEntry = 0x8001ff10, cdPlain = cdEntry + 0x10, cdPool = cdEntry + 0x14, cdEnd = cdEntry + 0x20;
 
         // The key selector: the dispatcher, for the factory's pool word and
         // the sequencer's alike, so the two can never disagree.
@@ -2313,18 +2329,14 @@ function assembleProgram() {
         // With the jack transposing, the housekeeping is reached through
         // the transposer's cave, which calls it first and shifts the key
         // table after - the applier has run by then.
-        // With a filter built, the chain enters there and it tail jumps into
-        // the transposer; without one it enters the transposer directly.
-        // "Built" has to be the emit guard's own question, cv_jack and all:
-        // cv_transpose is given by presets.quantize as well as by the jack,
-        // so quantized presets with the jack left on portamento pointed this
-        // word at 0x8001eb20 with nothing assembled there - unprogrammed
-        // flash, MCALLed every 5 ms scan (audit 2026-09-13).
-        word(feature("cv_transpose")
-             ? (feature("cv_jack")
-                && number("transpose_cv_filter_shift", 2, 0, 4) > 0
-                ? 0x8001eb20 : 0x8001e7c0)
-             : 0x8001a480); // latch watch + poly-MIDI boot force + common-mode
+        // The transposer is in every image (stage 2 phase E), so the chain
+        // always enters it, and it calls the housekeeping first.  With the
+        // filter pole built - the emit guard's own question, since a word
+        // naming a cave that was not assembled is unprogrammed flash MCALLed
+        // every 5 ms scan (audit 2026-09-13) - the chain enters
+        // cv_chain_dispatch, which puts the filter in front only while the
+        // jack's live byte says transpose.
+        word(number("transpose_cv_filter_shift", 2, 0, 4) > 0 ? cdEntry : 0x8001e7c0);
         word(0x8001a750); // octave-switch shadow sync
         finish("latch_v2", 0x8001a350);
 
@@ -3617,10 +3629,22 @@ function assembleProgram() {
         // 5-limit slot.  Only the offset was ever checked against the table,
         // and only from the bottom key, so the suite agreed with it.
         //
-        // R12 in: the scaled float.  R12 out: zero.
+        // R12 in: the scaled float.  R12 out: zero - or, with the option
+        // off (live byte 0x6d31 zero, phase E), the float goes on to the
+        // factory's own float-to-int and the voltage adds as it is.  R9 is
+        // spent; the factory helper clobbers R10 and R11 itself.
         begin(0x8001e140);
+        emit("MOV R9,0x6d31");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001e150");      // presets added as they are: the factory's conversion
         emit("MOV R12,0x0");
         emit("MOV PC,LR");
+        padTo(0x8001e150);
+        emit("LDDPC R9,0x8001e158");
+        emit("MOV PC,R9");
+        padTo(0x8001e158);
+        word(0x80013434); // the factory's float-to-int
         finish("preset_quantize", 0x8001e1c0);
 
         // The preset voltage as a DEGREE COUNT, for the key-table rotation.
@@ -3815,7 +3839,9 @@ function assembleProgram() {
         var cvFilter = 0x8001eb20;
         var cvFilterPool = 0x8001eb40;
         var cvShift = number("transpose_cv_filter_shift", 2, 0, 4);
-        if (feature("cv_jack") && cvShift > 0) {
+        // Built by the filter shift alone since phase E; whether the chain
+        // enters through it is cv_chain_dispatch's question, by the live byte.
+        if (cvShift > 0) {
             begin(cvFilter);
             emit(StringFormat("LDDPC R9,0x%x", cvFilterPool));   // global state base
             emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
@@ -3921,23 +3947,13 @@ function assembleProgram() {
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
         emit("MOV R7,SP");
         emit(StringFormat("MCALL PC[0x%x]", cvPool));            // the housekeeping this stands in front of
-        // Only when the jack is the transposer.  With it left on portamento
-        // the factory still reads its own glide-rate addend off state+0x2f0
-        // (glide_cv_addend is not patched in that build), so this must not
-        // read a shift out of it either: the rotation is then the preset
-        // voltage's alone.
-        if (feature("cv_jack")) {
-            emit(StringFormat("LDDPC R9,0x%x", cvPool + 4));     // global state base
-            emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
-            emit(StringFormat("LDDPC R10,0x%x", cvPool + 8));    // the settings mirror
-            emit("LD.UH R10,R10[0xc]");                           // its zero, settings cell 6
-            emit("SUB R8,R10");
-            emit("CP.W R8,0x0");
-            emit(StringFormat("BR{ge} 0x%x", cvClamp));
-            emit("MOV R8,0x0");
-        } else {
-            emit("MOV R8,0x0");
-        }
+        // The jack's reading less its zero, clamped at zero - or zero, by
+        // the live byte (phase E): with the jack on portamento the factory
+        // reads its own glide-rate addend off state+0x2f0 again, so the
+        // rotation must not read a shift out of it, and is then the preset
+        // voltage's alone.  jack_read spends R8-R10, which this cave
+        // reloads before it reads them.
+        emit(StringFormat("MCALL PC[0x%x]", cvPool + 12));       // jack_read -> R8
         padTo(cvClamp);
         emit("MOV R10,0x6090");                                   // tuning slot
         emit("LD.UB R10,R10[0x0]");
@@ -3953,10 +3969,8 @@ function assembleProgram() {
         // The preset voltage's own shift, already scaled to these units, so
         // the hysteresis and the cache word below see one combined position
         // rather than two that could disagree about which N is current.
-        if (feature("preset_rotate")) {
-            emit(StringFormat("MCALL PC[0x%x]", cvPool + 40));
-            emit("ADD R1,R12");
-        }
+        emit(StringFormat("MCALL PC[0x%x]", cvPool + 40));       // preset_degrees_gate -> R12, zero with the option off
+        emit("ADD R1,R12");
         emit("MOV R3,0x60fa");
         emit("LD.UH R4,R3[0x0]");
         emit("LSR R8,R4,0xc");
@@ -4029,14 +4043,14 @@ function assembleProgram() {
         word(0x8001a480); // per-scan housekeeping: latch watch + poly-MIDI boot force + common-mode
         word(0x00003560); // global state base
         word(0x00006800); // the settings mirror: the period, its zero and the hysteresis are cells 5, 6 and 7
-        word(0x00000000); // retired: the zero, read from the mirror now
+        word(jkEntry);     // jack_read: the reading less its zero, clamped, or zero by the live byte
         word(0x00000000); // retired: the hysteresis, read from the mirror now
         word(0x000069a0); // the keys-per-period table, in the settings mirror
         word(0x000068e0); // the three tuning tables, in the settings mirror
         word(number("octave_units", 484, 1, 2000));
         word(cvStampsPre);
         word(cvStampsPost);
-        word(0x8001e1c0); // preset_degrees
+        word(pgEntry);     // preset_degrees_gate -> preset_degrees, or zero degrees published
         finish("cv_transpose", 0x8001e8e0);
 
         // latch_preset_pin: the preset's half of the latch's hold state.
@@ -12296,6 +12310,100 @@ function assembleProgram() {
         finish("seq_arm_gate", sqEnd);
         }        seqCaves();
 
+        // Phase E: the jack and the presets (docs/PLAN-SETTINGS-2.md).
+        function jackCaves() {        // jack_read: cv_transpose's reading of the jack.  R8 = the raw
+        // count at state+0x2f0 less the zero in settings cell 6, clamped at
+        // zero - the jack has no negative range - or zero while the live
+        // byte says portamento, so the rotation is then the preset's alone
+        // and the factory's glide-rate addend owns the cell again.  Spends
+        // R8-R10.  A leaf.
+        begin(jkEntry);
+        emit("MOV R8,0x6d32");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", jkOff));
+        emit(StringFormat("LDDPC R9,0x%x", jkPool));         // global state base
+        emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
+        emit(StringFormat("LDDPC R10,0x%x", jkPool + 4));    // the settings mirror
+        emit("LD.UH R10,R10[0xc]");                           // its zero, settings cell 6
+        emit("SUB R8,R10");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ge} 0x%x", jkDone));
+        padTo(jkOff);
+        emit("MOV R8,0x0");
+        padTo(jkDone);
+        emit("MOV PC,LR");
+        padTo(jkPool);
+        word(0x00003560); // global state base
+        word(0x00006800); // the settings mirror
+        finish("jack_read", jkEnd);
+
+        // preset_degrees_gate: cv_transpose's word for preset_degrees.  With
+        // the option on it hands over, LR and all, so preset_degrees returns
+        // to the transposer as before; with it off it answers zero degrees
+        // and publishes them at 0x60f3, which preset_degrees does on its
+        // own no-add path and the recorder and playback read every scan.
+        // Spends R9 and R12; R0, R2, R8 and R10 are live in the caller.
+        begin(pgEntry);
+        emit("MOV R12,0x6d31");
+        emit("LD.UB R12,R12[0x0]");
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", pgOff));
+        emit(StringFormat("LDDPC R9,0x%x", pgPool));
+        emit("MOV PC,R9");
+        padTo(pgOff);
+        emit("MOV R9,0x60f3");
+        emit("ST.B R9[0x0],R12");       // zero degrees, published
+        emit("MOV PC,LR");
+        padTo(pgPool);
+        word(0x8001e1c0); // preset_degrees
+        finish("preset_degrees_gate", pgEnd);
+
+        // glide_cv_shim: the factory's glide-rate addend at 0x8000313e.
+        // R8 in: the state base.  R8 out: 0x28 while the jack transposes -
+        // the halve-and-subtract-twenty after the call turns it into
+        // exactly zero, as glide_cv_addend's constant did - or the
+        // factory's own load of the jack while it is on portamento.
+        // Spends R9, dead at the site.  Its own word is what the site's
+        // MCALL reads.
+        begin(gaEntry);
+        emit("MOV R9,0x6d32");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", gaLoad));
+        emit("MOV R8,0x28");
+        emit("MOV PC,LR");
+        padTo(gaLoad);
+        emit("LD.SH R8,R8[0x2f0]");     // the factory's own instruction
+        emit("MOV PC,LR");
+        padTo(gaPool);
+        word(gaEntry);
+        finish("glide_cv_shim", gaEnd);
+
+        // cv_chain_dispatch: the per-scan chain's entry when the filter
+        // pole is built.  Through the filter while the jack transposes, so
+        // the filtered count is what the transposer reads; straight into
+        // the transposer otherwise, so the factory's addend sees the raw
+        // cell it expects.  Spends R8, which both targets overwrite before
+        // reading it.
+        if (cvShift > 0) {
+            begin(cdEntry);
+            emit("MOV R8,0x6d32");
+            emit("LD.UB R8,R8[0x0]");
+            emit("CP.W R8,0x0");
+            emit(StringFormat("BR{eq} 0x%x", cdPlain));
+            emit(StringFormat("LDDPC R8,0x%x", cdPool));
+            emit("MOV PC,R8");
+            padTo(cdPlain);
+            emit(StringFormat("LDDPC R8,0x%x", cdPool + 4));
+            emit("MOV PC,R8");
+            padTo(cdPool);
+            word(cvFilter);
+            word(cvEntry);
+            finish("cv_chain_dispatch", cdEnd);
+        }
+        }        jackCaves();
+
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a
         // table out of it, whatever else is built.  settings_boot's last
@@ -12735,9 +12843,15 @@ function assembleProgram() {
             StringFormat("SUB R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
 
         // With the jack transposing, the factory must stop adding it to the
-        // glide-rate index: the load at 0x8000313e becomes a constant that
-        // the halve-and-subtract-twenty below it turns into exactly zero.
-        fixedPatch("glide_cv_addend", 0x8000313e, 4, "MOV R8,0x28");
+        // glide-rate index: the load at 0x8000313e becomes a call to
+        // glide_cv_shim, which answers a constant that the
+        // halve-and-subtract-twenty below it turns into exactly zero, or
+        // does the factory's own load while the jack is on portamento
+        // (phase E).  The routine saves LR - it calls the strip at
+        // 0x8000312a - and R9 is dead here, reloaded at 0x80003150.
+        begin(0x8000313e);
+        emit(StringFormat("MCALL PC[0x%x]", gaPool));   // glide_cv_shim -> R8
+        finish("glide_cv_addend", 0x80003142);
 
         wordPatch("knob1_pool", 0x800043c4, 0x800194c0,
             "knob-1 pointer -> pressure-ceiling wrapper");

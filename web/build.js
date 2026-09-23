@@ -71,20 +71,14 @@ var WEBBUILD = (function () {
                 });
             }
         });
-        // Same rule as tools/build.py, word for word: the rotation shifts a
-        // 32-entry table and wraps by the map's size, so a wider map cannot
-        // be shifted and is refused with either input to it on.
+        // The wider-than-32 map is refused in build() below, after the latch
+        // spacing check, as tools/build.py orders them.
         var widest = Math.max.apply(null, tables.tuning_period_keys);
-        if ((cfg.portamento_in.transpose || cfg.presets.quantize) && widest > 32) {
-            throw new Error('alternate_tunings: a keyboard map of ' + widest +
-                ' positions cannot be shifted by the key-table rotation, ' +
-                'whose table holds 32 entries - use a map of up to 32, or ' +
-                'turn off both the jack transposer and preset quantisation');
-        }
         // Same rule as tools/build.py, word for word: one degree has to be
         // able to cross the rotation's hysteresis band or the shift never
-        // changes.
-        if (cfg.portamento_in.transpose || cfg.presets.quantize) {
+        // changes.  Every image, for the same reason; a map wider than 32
+        // is refused in build() whatever its hysteresis, so not measured here.
+        if (widest <= 32) {
             var cvPeriod = Math.floor(cfg.portamento_in.cv_counts_per_volt
                                       * cfg.portamento_in.cv_volts_per_period + 0.5);
             var hyst = cfg.portamento_in.cv_hysteresis;
@@ -132,6 +126,18 @@ var WEBBUILD = (function () {
             .forEach(function (n) { blocks[n] = true; });
         features.knob4_vibrato = true;
         features.arp_latch = true;
+        // Phase E: the jack transposer and the quantised preset voltage.
+        // The key-table rotation and everything that follows it are in
+        // every image and idle at zero degrees; the live bytes decide.
+        ['preset_quantize', 'preset_quantize_pool', 'glide_cv_addend',
+         'cv_transpose', 'midi_transpose', 'preset_entry', 'latch_preset_pin',
+         'midi_transpose_arp_pool', 'midi_transpose_poly_pool',
+         'midi_transpose_lift_pool', 'midi_transpose_compare_pool',
+         'seq_record_pitch_cv', 'seq_cv_shift', 'cv_stamps']
+            .forEach(function (n) { blocks[n] = true; });
+        features.cv_transpose = true;
+        features.cv_jack = true;
+        features.preset_rotate = true;
         if (cfg._pressure_factory) {
             ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
              // Same rule as tools/build.py: the edit-mode curve knob is
@@ -367,6 +373,17 @@ var WEBBUILD = (function () {
         // together than the latch can tell apart, and the image that comes out
         // is valid in every other way - nothing downstream would catch it.
         BUILDLIB.checkLatchSpacing(cfg, spacingSlots);
+        // Same rule as tools/build.py, word for word, and in the same order:
+        // the rotation shifts a 32-entry table and wraps by the map's size,
+        // so a wider map cannot be shifted.  Since stage 2 phase E the
+        // rotation is in every image - either input can be turned on over
+        // MIDI - so the map is refused outright.
+        var widest = Math.max.apply(null, tables.tuning_period_keys);
+        if (widest > 32) {
+            throw new Error('alternate_tunings: a keyboard map of ' + widest +
+                ' positions cannot be shifted by the key-table rotation, ' +
+                'whose table holds 32 entries - use a map of up to 32');
+        }
         var flags = flagsFor(cfg);
         var numbers = BUILDLIB.computeNumbers(cfg);
         numbers.init_marker = BUILDLIB.initMarker(flags.blocks, flags.features, numbers, tables);

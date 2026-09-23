@@ -38,6 +38,10 @@ public class SettingsRegression extends PersistenceRegression {
     static final long LOWNER=0x8001dde0L, LNOTEOFF=0x8001a280L, FNOTEOFF=0x80005a50L, LHOLD=0x8001e520L, FTIMER=0x800045e8L;
     // Phase D: the sequencer's arm gate, the chord that calls it, its word in the chord's slack and the MCALL that reads it.
     static final long SQARM=0x8001fe50L, CHORD=0x8001b180L, CHORDWORD=0x8001b29cL, CHORDCALL=0x8001b1baL;
+    // Phase E: the jack's reading, the degree gate, the glide shim and its word, the chain dispatch, the adder's dispatch and what they choose.
+    static final long JK=0x8001fea0L, PG=0x8001fed0L, GA=0x8001fef0L, GAPOOL=GA+0x18, CD=0x8001ff10L;
+    static final long PQ=0x8001e140L, PD=0x8001e1c0L, CVENTRY=0x8001e7c0L, CVFILTER=0x8001eb20L, CVPOOL=0x8001e8b0L;
+    static final long F2I=0x80013434L, GLIDESITE=0x8000313eL, CHAINWORD=0x8001a348L;
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -437,6 +441,60 @@ public class SettingsRegression extends PersistenceRegression {
         w(0x46f3,1,0); call(CHORD);
         println("PASS sequencer: the arm follows the live byte, and with it off the chord never leaves mode 0");
     }
+    void jack() throws Exception {
+        fresh();
+        int zero=(int)r(MIRROR+0xc,2), period=(int)r(MIRROR+0xa,2);
+        // jack_read: the reading less its zero, clamped, or zero by the byte.  It spends R8-R10.
+        w(LIVE+10,1,1); w(S+0x2f0,2,zero+600); e.writeRegister("R11",33); e.writeRegister("R12",44);
+        long p=resolve(JK);
+        check("jack on: jack_read answers the reading less its zero and leaves R11 and R12",
+            p==0x100&&reg("R8")==600&&reg("R11")==33&&reg("R12")==44);
+        w(S+0x2f0,2,zero>0?zero-1:0); p=resolve(JK);
+        check("jack on: a reading below the zero clamps to zero",p==0x100&&reg("R8")==0);
+        w(LIVE+10,1,0); w(S+0x2f0,2,zero+600); p=resolve(JK);
+        check("jack off: jack_read answers zero whatever the jack reads",p==0x100&&reg("R8")==0);
+        // preset_degrees_gate: preset_degrees itself, or zero degrees published.  It spends R9 and R12.
+        w(LIVE+9,1,1);
+        check("presets on: the gate hands over to preset_degrees",resolve(PG)==PD);
+        w(LIVE+9,1,0); w(0x60f3,1,5);
+        e.writeRegister("R0",1); e.writeRegister("R2",2); e.writeRegister("R8",3); e.writeRegister("R10",4); e.writeRegister("R11",6);
+        p=resolve(PG);
+        check("presets off: the gate answers zero degrees, publishes them, and leaves R0, R2, R8, R10 and R11",
+            p==0x100&&reg("R12")==0&&r(0x60f3,1)==0&&reg("R0")==1&&reg("R2")==2&&reg("R8")==3&&reg("R10")==4&&reg("R11")==6);
+        // preset_quantize: zero with the option on; the factory's float-to-int with it off, the float still in R12.
+        w(LIVE+9,1,1); e.writeRegister("R12",0x3f800000L); p=resolve(PQ);
+        check("presets on: the adder's float-to-int answers zero",p==0x100&&reg("R12")==0);
+        w(LIVE+9,1,0); e.writeRegister("R12",0x3f800000L); p=resolve(PQ);
+        check("presets off: it hands the float on to the factory's own",p==F2I&&reg("R12")==0x3f800000L);
+        // glide_cv_shim: 0x28 with the jack transposing, the factory's load with it on portamento.  It spends R9.
+        w(LIVE+10,1,1); e.writeRegister("R8",S); e.writeRegister("R10",10); e.writeRegister("R11",11); e.writeRegister("R12",12); p=resolve(GA);
+        check("jack on: the glide-rate addend is the constant the factory turns into zero, R10-R12 kept",
+            p==0x100&&reg("R8")==0x28&&reg("R10")==10&&reg("R11")==11&&reg("R12")==12);
+        w(LIVE+10,1,0); w(S+0x2f0,2,0x1234); e.writeRegister("R8",S); p=resolve(GA);
+        check("jack off: the addend is the factory's own load of the jack",p==0x100&&reg("R8")==0x1234);
+        boolean filtered=num("transpose_cv_filter_shift",0)>0;
+        long disp=(GAPOOL-(GLIDESITE&~3L))>>2;
+        check("the words: the transposer's jack and degrees words, the adder's, the glide site's MCALL and its word, and the chain's entry"
+            +(filtered?" through the filter dispatch":""),
+            r(CVPOOL+12,4)==JK&&r(CVPOOL+40,4)==PG&&r(0x80003914L,4)==PQ&&r(GAPOOL,4)==GA
+            &&r(GLIDESITE,4)==(0xf01f0000L|(disp&0xffffL))&&r(CHAINWORD,4)==(filtered?CD:CVENTRY));
+        if(filtered) {
+            w(LIVE+10,1,1); check("filter built, jack on: the chain enters through the filter",resolve(CD)==CVFILTER);
+            w(LIVE+10,1,0); check("filter built, jack off: the chain enters the transposer",resolve(CD)==CVENTRY);
+        }
+        // The transposer itself with both inputs asking for degrees: the
+        // jack three periods above its zero, the add-to-pitch switch in its
+        // middle position and the active pad's store at full.  With both
+        // bytes off nothing rotates; with both on it does.
+        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,1023); w(S+0x2f0,2,zero+3*period); w(0x6090,1,0);
+        w(LIVE+9,1,0); w(LIVE+10,1,0); call(CVENTRY);
+        check("both off: the transposer rebuilds at zero degrees, state="+Long.toHexString(r(0x60fa,2))+" degrees="+r(0x60f3,1),
+            r(0x60fa,2)==0xa000&&r(0x60f3,1)==0);
+        w(LIVE+9,1,1); w(LIVE+10,1,1); call(CVENTRY);
+        check("both on: the jack and the preset shift the table, state="+Long.toHexString(r(0x60fa,2))+" degrees="+r(0x60f3,1),
+            (r(0x60fa,2)&0xff)>=3&&r(0x60f3,1)>0);
+        println("PASS jack and presets: the four gates follow the live bytes, and the transposer idles at zero degrees with both off");
+    }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
     static void stamp(byte[] rec) {
@@ -578,7 +636,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

@@ -107,7 +107,9 @@ FEATURE_MAP = {
     # are in every image and dispatchers on the note-on, the note-off and
     # the hold read the live byte at boot.  The sequencer since phase D:
     # every sequencer cave is in every image and the pad-4 chord's arm
-    # reads the live byte.
+    # reads the live byte.  The jack transposer and the quantised preset
+    # voltage since phase E: the rotation caves are in every image and idle
+    # at zero degrees, and the live bytes decide where degrees come from.
     "midi.poly_default":      (
         ["poly_powerup_default_off", "poly_factory_reset_default_off",
          "poly_arp_independence", "poly_settings_migration",
@@ -119,12 +121,6 @@ FEATURE_MAP = {
     "pressure.error_diffusion": ([], ["error_diffusion"]),
     "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
     "portamento.zero_snap":   (["glide_rate_hook"], []),
-    "presets.quantize":       (
-        ["preset_quantize", "preset_quantize_pool"] + TABLE_ROTATION,
-        ["cv_transpose", "preset_rotate"]),
-    "portamento_in.transpose": (
-        ["glide_cv_addend"] + TABLE_ROTATION,
-        ["cv_transpose", "cv_jack"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -144,8 +140,6 @@ ENABLED_WHEN = {
     "pressure.error_diffusion": True,
     "portamento.pressure_blend": True,
     "portamento.zero_snap": True,
-    "presets.quantize": True,
-    "portamento_in.transpose": True,
     "diagnostics.scan_profiler": True,
     "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
@@ -1189,7 +1183,7 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 MARKER_EXCLUDES = frozenset({
     "knob1", "knob2", "knob3", "knob4", "pattern_count",
     "arp_pattern_bank", "arp_pattern_len",
-    "latching_arp", "sequencer",
+    "latching_arp", "sequencer", "quantize_presets", "portamento_in",
 })
 
 RAM_REGIONS = [
@@ -1961,20 +1955,6 @@ def main() -> None:
               f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
     cfg["_min_key_spacing"] = min_key_spacing(spacing_slots)
     tables["tuning_period_keys"] = period_keys
-    # The jack transposer shifts a 32-entry table and wraps by the map's
-    # size, so a map wider than the table cannot be shifted: index 32 less
-    # 36 keys is -4, and the rebuild read the flash before the table as
-    # pitches.  Refuse the pair; a wider map stays usable with the
-    # transposer off.  web/build.js applies the same rule, word for word.
-    # Either input to the rotation is enough to need it: the preset voltage
-    # shifts the same table by the same path.
-    if (cfg.get("portamento_in", {}).get("transpose")
-            or cfg.get("presets", {}).get("quantize")) and max(period_keys) > 32:
-        raise SystemExit(
-            f"alternate_tunings: a keyboard map of {max(period_keys)} positions "
-            "cannot be shifted by the key-table rotation, whose table holds "
-            "32 entries - use a map of up to 32, or turn off both the jack "
-            "transposer and preset quantisation")
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that
@@ -2052,8 +2032,11 @@ def main() -> None:
     # brings it down to 12, which the default hysteresis sits exactly on.  The
     # preset voltage used to add its offset outright, with no hysteresis at
     # all, so this pairing is only reachable since the rotation carries it.
-    # web/build.js applies the same rule, word for word.
-    if cfg.get("portamento_in", {}).get("transpose") or cfg.get("presets", {}).get("quantize"):
+    # web/build.js applies the same rule, word for word.  Every image since
+    # stage 2 phase E, since either input can be turned on over MIDI; a map
+    # wider than 32 is refused further down whatever its hysteresis, so it
+    # is not measured here.
+    if max(tables["tuning_period_keys"]) <= 32:
         cv_period = cfg["_numbers"]["transpose_cv_period"]
         widest = max(tables["tuning_period_keys"])
         hyst = cfg["portamento_in"]["cv_hysteresis"]
@@ -2144,6 +2127,17 @@ def main() -> None:
         blocks[name] = True
     features["knob4_vibrato"] = True
     features["arp_latch"] = True
+    # Phase E: the jack transposer and the quantised preset voltage.  The
+    # key-table rotation and everything that follows it are in every image
+    # and idle at zero degrees; the live bytes decide where the degrees
+    # come from (jack_read, preset_degrees_gate) and give the factory its
+    # two jobs back with a byte off (glide_cv_shim, preset_quantize's own
+    # dispatch to the factory's float-to-int).
+    for name in ("preset_quantize", "preset_quantize_pool", "glide_cv_addend", *TABLE_ROTATION):
+        blocks[name] = True
+    features["cv_transpose"] = True
+    features["cv_jack"] = True
+    features["preset_rotate"] = True
 
     if cfg.get("_pressure_factory"):
         # knob4_pool goes back too: edit-mode knob 4 is the curve selector,
@@ -2250,6 +2244,20 @@ def main() -> None:
     summary.append(f"  {'arp.latch_match_tolerance':28s} "
                    f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
                    f"{'exact match' if tolerance == 0 else gap})")
+    # The key-table rotation shifts a 32-entry table and wraps by the map's
+    # size, so a map wider than the table cannot be shifted: index 32 less
+    # 36 keys is -4, and the rebuild read the flash before the table as
+    # pitches.  Since stage 2 phase E the rotation is in every image - the
+    # jack and the preset quantiser are option cells that can be turned on
+    # over MIDI - so the map is refused outright, after the latch spacing
+    # above so a mapping that is also too fine is told about that first.
+    # web/build.js applies the same rule, word for word.
+    widest = max(tables["tuning_period_keys"])
+    if widest > 32:
+        raise SystemExit(
+            f"alternate_tunings: a keyboard map of {widest} positions "
+            "cannot be shifted by the key-table rotation, whose table holds "
+            "32 entries - use a map of up to 32")
 
     mode = calib.get("trim_mode", "independent")
     if mode not in ("independent", "scale"):
@@ -2539,6 +2547,8 @@ def main() -> None:
     blocks["blend_offset_apply"] = True
     blocks["blend_target_conditioner"] = True
     summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}  (option cell; every cave built)")
+    summary.append(f"  {'presets.quantize':28s} {bool(get(cfg, 'presets.quantize'))!r}  (option cell; every cave built)")
+    summary.append(f"  {'portamento_in.transpose':28s} {bool(get(cfg, 'portamento_in.transpose'))!r}  (option cell; every cave built)")
     blocks["arp_swing"] = True
     # Quantized randomness takes the randomiser's hook the way swing does;
     # the pool word at 0x80019d40 names whichever of the three is built.

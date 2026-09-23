@@ -740,6 +740,13 @@ def test_blend(cfg: dict) -> None:
         text = re.sub(
             r'emit\("MOV R10,0x20"\);\s*emit\("MCALL PC\[0x8001f2f4\]"\);',
             "", text)
+        # glide_cv_shim answers the factory's glide-rate addend as 0x28,
+        # which the halve-and-subtract-twenty after the call turns into
+        # exactly zero - the constant the old in-place patch held.  Exempt
+        # only that answer/return pair, never a loop using 40 keys.
+        text = re.sub(
+            r'emit\("MOV R8,0x28"\);\s*emit\("MOV PC,LR"\);',
+            "", text)
         return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
     # fail this, but a walk that starts past key 28 must.
@@ -1803,9 +1810,12 @@ def test_option_messages() -> None:
           _options.expand({})["presets"]["quantize"] is True)
     on, _, _ = B.resolve_flags(_options.expand({"quantize_presets": True}))
     off, _, _ = B.resolve_flags(_options.expand({"quantize_presets": False}))
-    check("the quantiser's cave and pool word are gated together",
-          on["preset_quantize"] and on["preset_quantize_pool"]
-          and not off["preset_quantize"] and not off["preset_quantize_pool"])
+    # Stage 2 phase E: the quantiser's cave and pool word are in every image
+    # and the option cell decides at boot, so neither setting names them any
+    # more; the cell carries the choice, which the record tests pin.
+    check("the quantiser's cave and pool word are no longer a build-time gate",
+          all(k not in flags for flags in (on, off)
+              for k in ("preset_quantize", "preset_quantize_pool")))
     check("arp_patterns = true is the default bank",
           _options.expand({"arp_patterns": True})["knob2"] == _options.expand({})["knob2"])
     check("knob2 = quantized asks for the quantized randomiser",

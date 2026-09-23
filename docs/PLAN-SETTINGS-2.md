@@ -8,7 +8,7 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): phases A, B, C and D built; E next.** The owner's calls at
+**Status (2026-09-23): phases A to E built; F next.** The owner's calls at
 the end were answered the same day: the whole scope, layout 2, and options
 that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
@@ -523,9 +523,46 @@ rises along it:
   same hold arms and pad 1 opens record with the byte on), controls
   12/12 with the lean variants running every sequencer cave with the
   byte off, clock 6/6.
-- **E. Jack and presets.** One shim, two zero-degree gates, up to three
-  branches in `cv_transpose`/`preset_degrees` (both have 4 bytes of slack;
-  a third branch relocates one of them).
+- **E. Jack and presets.** Built 2026-09-23. The key-table rotation and
+  everything that follows it (`cv_transpose`, `cv_stamps`,
+  `latch_preset_pin`, `midi_transpose` and its four pool words,
+  `preset_entry`, `seq_record_pitch_cv`, `seq_cv_shift`) are in every
+  image and idle at zero degrees, which is the state the shipped image
+  already rests in with the jack at its zero and the add-to-pitch switch
+  off its middle position. Four helpers at `0x8001fea0..0x8001ff30`
+  decide the rest, on the live bytes at `0x6d32` (jack) and `0x6d31`
+  (presets): `cv_transpose`'s 18-byte jack read became a call to
+  `jack_read`, which answers the reading less its zero, clamped, or zero
+  with the jack on portamento; its word for `preset_degrees` goes to
+  `preset_degrees_gate`, which hands over with the option on and with it
+  off answers zero degrees and publishes them at `0x60f3`, as
+  `preset_degrees`' own no-add path does; the factory's glide-rate load
+  at `0x8000313e` (4 bytes, in a routine that saves LR, with R9 dead) is
+  an `MCALL` to `glide_cv_shim`, which answers the constant the factory
+  turns into zero while the jack transposes and does the factory's own
+  load otherwise; and `preset_quantize` itself dispatches - zero with the
+  option on, the float handed on to the factory's float-to-int at
+  `0x80013434` with it off, so the voltage adds as it is. The filter pole
+  stays build-time (`cv_filter_shift`, off by default); when it is built
+  the chain enters through `cv_chain_dispatch`, which puts the filter in
+  front only while the jack transposes, so the factory's addend never
+  sees a filtered cell. Two build refusals that used to apply only with an
+  input on - a keyboard map wider than 32 positions, and a hysteresis one
+  degree cannot cross - now apply to every build, since either input can
+  be turned on over MIDI. The lean variant of the controls suite now puts
+  the jack on portamento, so the off paths run through the real pitch
+  chain there. Both cells are out of the image marker (checked: 50351
+  with each off and with both off; the images differ only in the cells).
+  Verified: both toolchains at `993ddb6e`, historical `64484906` (sweep:
+  match + known image), parity 44/44, `test.py --golden`, the corpus
+  (11,641 instructions), `SettingsRegression` in all four modes
+  (1192..1195 assertions: each helper under both states with the
+  registers its caller keeps, the adder's dispatch with the float kept,
+  the five words and the glide site's `MCALL`, and `cv_transpose` itself
+  run with the jack three periods up and a full preset in the middle
+  position - zero degrees with both bytes off, a shift with both on),
+  controls 12/12 with lean running the jack and the presets off, clock
+  6/6.
 - **F. Pressure.** Four pool dispatchers, three 6-byte hooks and their caves,
   `glide_rate_clamp` relocated, the interpolator's pass-through.
 - **G. Clock.** The ISR cave's factory body, the acquisition gate, the
