@@ -702,8 +702,7 @@ rises along it:
   the sequencer turned off the mode stays 2 for `pulse_guard`,
   `pressure_blend` and `midi_step_degree` to read. Pre-existing for a DFU
   of the same image; the settings restart makes it reachable from the
-  page. The owner's call whether `seq_boot` should zero the runtime cells
-  (`0x6154..0x6160`, `0x61e1..0x61e5`) in every build.
+  page. Closed the same evening by `seq_restart_clear`, record L.
 - **J. The period as a setting.** Done 2026-09-23, the owner's rule: no
   setting change may need a flash, a non-octave scale included. Number
   cell 10 is `octave_units` (default 484, bounds 1..2000, mirror
@@ -746,9 +745,50 @@ rises along it:
   Result: 62 of 63 steps identical, events included. The one difference:
   after the first pass with the switches set and no key held, 3.0 holds
   the transpose at state+0x350 as -2 where 2.4 holds 0; from the first
-  key on the two are identical. The owner classifies. Not covered: the
-  pads and the chord (their scan is ours in both images), the sequencer,
-  the strip's own scan, anything analog.
+  key on the two are identical. Chased with the harness's watch mode
+  (`--watch` names every instruction that moves the transpose): the
+  write is `cv_stamps`' refresh at `0x8001ec90`. 3.0's transposer
+  carries the sounding base across a tuning rebuild, and with nothing
+  played yet it stands the bottom key in, so the first rebuild after
+  boot publishes the tuning's A-anchoring offset against the factory's
+  bottom entry (483 - 485) as the transpose, until the first key. Nothing
+  sounds, the DAC slot does not move, and the first key recomputes the
+  transpose identically on both images: a 3.0 design choice with an
+  inaudible transient, not a defect; publishing nothing when nothing has
+  played would remove it. The harness runs the factory's state
+  initialiser (`0x800070d8`, three init calls before our hook) before the
+  hook, as the factory does, so the live note is "none" at the first
+  pass. Not covered: the pads and the chord (their scan is ours in both
+  images), the sequencer, the strip's own scan, anything analog.
+- **L. The batch after the owner's call (2026-09-23).** Three things.
+  `seq_restart_clear` (`0x8001ed60`, called from `seq_restart_init`, which
+  every configuration runs): the sequencer's runtime - the preset
+  snapshot and following flags, the arp's step cells, the chord and
+  mode, the cursor and the audition's history, the borrowed strip mode,
+  the acknowledgment countdown, the pickup stamps, the take's reference,
+  the edge stamp, the logical mode, the edited flags, the preview and
+  CLEAR events, the audition's pin, the lamps, the latch's shadow, the
+  preset count the last rebuild saw - zeroed at every boot in every
+  image, which is what `persist_boot` already did in a persistent build;
+  the musical cells stay, the take's preset reference at `0x6091` among
+  them, which `persist_load` restores from the first per-step count (the
+  suite caught the clear taking it: `clock_init` calls the wrapper after
+  the restore). The sixth octave site, the add-to-pitch `-484` at `0x800035c0`,
+  calls `octave_period`'s "down" word like the panel's octave-down, so
+  with `quantize_presets` the base shift is a whole period. And the
+  residue test runs in both directions - every option on restarting
+  into every option off, and every option off restarting into every
+  option on - in both builds. The reverse direction found eight bytes a
+  boot with an option on inherited from a session with it off: the
+  blend's re-base history, the jack's state tag, and identity entries
+  in the latch's ownership maps. Each is the state of something that is
+  not happening when the chip comes up, so every clear `option_boot`,
+  `option_boot_state` and `option_boot_blend` make is now unconditional,
+  and the live transpose at `0x60a0` is allowlisted as republished by
+  the first pass. First run in the persistent build also caught the
+  sequencer clear zeroing `0x62fd`, the restored-this-power-up flag
+  `persist_boot` sets before `clock_init` calls the wrapper again; the
+  clear stops short of it.
 
 F and G are the ones that can be left build-time if the ISR body or the
 pressure stretches turn out to cost more than they are worth; nothing in A-E

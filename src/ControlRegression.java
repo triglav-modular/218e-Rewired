@@ -1728,6 +1728,7 @@ public class ControlRegression extends SequenceEditRegression {
         {0x604e,0x6050}, // jack transposer: the slot's own pitch of the key being recorded, parked between the recorder's two halves and written before it is read
         {0x608e,0x608f}, // latch-position mirror: housekeeping rewrites it from the switch every scan; the blend is its only reader
         {0x609c,0x609e}, // held pitch for a claimed beat: read under a claim, and clock_init zeroes the claim
+        {0x60a0,0x60a2}, // the live transpose: republished from state+0x350 by transpose_capture on the first pass, before any press reads it
         {0x60dc,0x60e0}, // claimed beat's gate target: the same
         {0x60e6,0x60e8}, // arp knob 2 latch: rewritten by the first housekeeping pass; the role caves a factory knob bypasses are its readers
         {0x60ea,0x60ec}, // arp knob 3 latch: the same
@@ -1735,6 +1736,10 @@ public class ControlRegression extends SequenceEditRegression {
         {0x60f0,0x60f4}, // knob 4 and knob 1 latches, as knob 2's; 0x60f3 the preset's degree count, republished by the first scan's transposer chain before any press
         {0x60fc,0x6100}, // jack bookkeeping: table entry 0 as last written and the key the refresh belongs to, which the first scan's rebuild rewrites
         {0x6100,0x613a}, // corrected-pressure cache: rebuilt for every key each pass with the fix on, bypassed with it off
+        {0x613a,0x6142}, // preset voltage store: musical, kept in SRAM by a volatile build and restored from the ring by a persistent one
+        {0x6160,0x61e1}, // the take's steps and their count: musical, the same
+        {0x61e6,0x61e8}, // the clock's millisecond counter: free-running
+        {0x61ee,0x622e}, // the take's rest keys: musical, the same
         {0x6300,0x6420}, // persistence's staged record: written by every capture before the commit reads it
         {0x6503,0x6504}, // the sequencer step sounding now: every reader asks the mode first, and persist_boot zeroes the mode
         {0x6540,0x657a}, // slot-indexed pressure weights: zeroed and rebuilt per scan by the blend
@@ -1742,17 +1747,17 @@ public class ControlRegression extends SequenceEditRegression {
         {0x6600,0x6640}, // per-step preset degrees: playback's, behind the mode, and restored from the ring
     };
     static boolean residueAllowed(long a) { for(long[] r:RESIDUE_OK) if(a>=r[0]&&a<r[1]) return true; return false; }
-    byte[] allOffRecord() {
-        // The image's own record with every option off: the mirror after a
-        // boot without a record is the payload, the marker is what the
-        // first-use initialiser left at 0x602a, and the period is 484
-        // (every controls variant repeats at the octave).  The knobs' "off"
-        // is the factory role, not zero.
+    byte[] settingsRecord(boolean allOff) {
+        // The image's own record, its options as built or every one off:
+        // the mirror after a boot without a record is the payload, the
+        // marker is what the first-use initialiser left at 0x602a, and the
+        // period is 484 (every controls variant repeats at the octave).
+        // The knobs' "off" is the factory role, not zero.
         byte[] rec=new byte[0x2a8];
         byte[] payload=e.readMemory(toAddr(0x6800),0x288-0x20);
         System.arraycopy(payload,0,rec,0x20,payload.length);
         int[] off={0,2,4,1,2,0,0,0,0,0,0,0};
-        for(int c=16;c<28;c++) { rec[0x20+2*c]=0; rec[0x21+2*c]=(byte)off[c-16]; }
+        if(allOff) for(int c=16;c<28;c++) { rec[0x20+2*c]=0; rec[0x21+2*c]=(byte)off[c-16]; }
         rec[0]=0x32; rec[1]=0x31; rec[2]=0x38; rec[3]=0x53;     // "218S"
         rec[5]=2; rec[6]=0x02; rec[7]=(byte)0x98; rec[11]=1;   // layout 2, payload 0x298, generation 1
         int marker=(int)r(0x602a,2); rec[0x10]=(byte)(marker>>8); rec[0x11]=(byte)marker;
@@ -1787,30 +1792,58 @@ public class ControlRegression extends SequenceEditRegression {
         check("the first-use marker survives the restart",r(0x602a,2)==marker);
         call(0x8001ab60L);
     }
-    void residue() throws Exception {
-        setup(4,true,1);                       // every option on, a take of four steps, the arp in latch
-        byte[] record=allOffRecord();
-        // The session.
-        touchOn(9); touchOn(4); w(0x6100+18,2,600); w(0x6100+8,2,300); sound(); sound();
-        touchOff(4); sound();                  // a latched key, a held key with pressure
-        octavePad(2); sound(); octavePad(1); sound();
-        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,900); sound();   // the preset in the middle position
-        w(S+0x2f0,2,2*(int)r(0x680a,2)); sound(); sound();                          // the jack two periods up
-        w(S+0x30a,2,700); w(S+0x30c,2,650); w(S+0x30e,2,600); w(S+0x310,2,500); sound(); sound();  // the knobs moved
-        append(5); append(7); command(0); command(1); sound(); sound();             // two more steps, the take closed and played
-        for(int i=0;i<3;i++) { externalBeat(); sound(); }                          // edges into the divider
-        check("the session left a take playing: mode="+r(0x6158,1)+" steps="+r(0x61e0,1),r(0x6158,1)==2&&r(0x61e0,1)>=6);
-        // The restart that turns everything off, custom RAM kept.
+    void residue() throws Exception { residueRun(true); residueRun(false); }
+    // Both directions: a session with every option on restarting into
+    // every option off, and a session with every option off restarting
+    // into every option on.
+    void residueRun(boolean onToOff) throws Exception {
+        byte[] record, session;
+        if(onToOff) {
+            setup(4,true,1);                       // every option on, a take of four steps, the arp in latch
+            record=settingsRecord(true);
+            // The session.
+            touchOn(9); touchOn(4); w(0x6100+18,2,600); w(0x6100+8,2,300); sound(); sound();
+            touchOff(4); sound();                  // a latched key, a held key with pressure
+            octavePad(2); sound(); octavePad(1); sound();
+            w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,900); sound();   // the preset in the middle position
+            w(S+0x2f0,2,2*(int)r(0x680a,2)); sound(); sound();                          // the jack two periods up
+            w(S+0x30a,2,700); w(S+0x30c,2,650); w(S+0x30e,2,600); w(S+0x310,2,500); sound(); sound();  // the knobs moved
+            append(5); append(7); command(0); command(1); sound(); sound();             // two more steps, the take closed and played
+            for(int i=0;i<3;i++) { externalBeat(); sound(); }                          // edges into the divider
+            check("the session left a take playing: mode="+r(0x6158,1)+" steps="+r(0x61e0,1),r(0x6158,1)==2&&r(0x61e0,1)>=6);
+        } else {
+            fresh(); record=settingsRecord(false); session=settingsRecord(true);
+            plantSettings(session); cold();
+            check("the session boots with every option off",r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4);
+            // The same gestures through the factory's own paths: no chord
+            // arms, no latch holds, the divider never sees an edge of ours.
+            touchOn(9); touchOn(4); w(0x6100+18,2,600); w(0x6100+8,2,300); sound(); sound();
+            touchOff(4); sound();
+            octavePad(2); sound(); octavePad(1); sound();
+            w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,900); sound();
+            w(S+0x2f0,2,2*(int)r(0x680a,2)); sound(); sound();
+            w(S+0x30a,2,700); w(S+0x30c,2,650); w(S+0x30e,2,600); w(S+0x310,2,500); sound(); sound();
+            w(0x46f3,1,2); for(int i=0;i<320;i++) scan();
+            w(0x46f0,1,2); scan(); w(0x46f0,1,0); w(0x46f3,1,0); scan();
+            for(int i=0;i<3;i++) {
+                long t=1000+20*i;
+                time(t-2); w(0xffff1060L,4,0); w(0xffff10d0L,4,32); call(0x800072e4L,0x80007328L); w(0xffff10d0L,4,0);
+                time(t); w(0xffff1060L,4,32); w(0xffff10d0L,4,32); call(0x800072e4L,0x80007328L); w(0xffff10d0L,4,0);
+                sound();
+            }
+            check("nothing armed with the sequencer off: mode="+r(0x6158,1),r(0x6158,1)==0);
+        }
+        // The restart into the other record, custom RAM kept.
         plantSettings(record);
         warmRestart();
-        check("the restart booted the all-off record",r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4);
+        check("the restart booted the "+(onToOff?"all-off":"as-built")+" record",
+            onToOff?(r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4):(r(0x6d28,1)==1&&r(0x6d2d,1)==1));
         byte[] warmRam=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
         // The cold boot with the same record: a new machine, the record in
         // its slot and the same musical persistence ring in flash before the
         // first boot, so a take restored from the ring is on both sides.
         byte[] ring=e.readMemory(toAddr(BASE),0x1000);
         fresh(); plantSettings(record); e.writeMemory(toAddr(BASE),ring); cold();
-        check("the cold boot booted the all-off record",r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4);
         byte[] coldRam=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
         // Runs of differing bytes, each with what the two boots hold; the
         // ones outside the allowlist are the residue.
@@ -1827,8 +1860,9 @@ public class ControlRegression extends SequenceEditRegression {
             }
             i=j-1;
         }
-        println("RESIDUE "+n+" byte(s) in "+runs+" run(s) differ after a warm all-off restart (warm/cold), "+allowed+" allowlisted, "+residue+" residue:"+diff);
-        check("a warm restart with every option off leaves the same custom RAM as a cold boot with it, bar the allowlist: "+residue+" byte(s) of residue",residue==0);
+        String dir=onToOff?"on -> off":"off -> on";
+        println("RESIDUE "+dir+": "+n+" byte(s) in "+runs+" run(s) differ after the warm restart (warm/cold), "+allowed+" allowlisted, "+residue+" residue:"+diff);
+        check("a warm restart "+dir+" leaves the same custom RAM as a cold boot with the same record, bar the allowlist: "+residue+" byte(s) of residue",residue==0);
     }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
@@ -1878,12 +1912,11 @@ public class ControlRegression extends SequenceEditRegression {
             if(gridRhythm)try { quantizedRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(knob2.equals("swing"))try { swingRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(knob2.equals("patterns"))try { patternGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            // The default variant alone: one image with every option on, and
-            // the persistent build, whose persist_boot resets the sequencer's
-            // runtime; the volatile build keeps a take and its mode in SRAM
-            // by design and is reported, not asserted (docs/PLAN-SETTINGS-2.md).
+            // The default variant alone: one image with every option on, in
+            // both builds now that seq_restart_clear resets the sequencer's
+            // runtime whether or not persistence is built.
             if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { periodCell(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing")&&persistent)try { residue(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { residue(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }

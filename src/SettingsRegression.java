@@ -49,6 +49,8 @@ public class SettingsRegression extends PersistenceRegression {
     static final long OB=0x8001fdf0L, OBS=0x8001ff30L;
     // octave_period: the five factory octave sites call its pool words and read number cell 10.
     static final long OP=0x8001ff74L, OPPOOL=OP+0x30;
+    // seq_restart_clear: the sequencer's runtime, zeroed from seq_restart_init at every boot.
+    static final long SQC=0x8001ed60L;
     static final long CURVE=0x80019580L, I2F=0x80013350L, KNOB1=0x800194c0L, FKNOB1=0x80004188L, KNOB4=0x80014380L, FKNOB4=0x80004070L;
     static final long COND=0x8001ad78L, REMAPCAVE=0x80019980L, INTERP=0x8001a600L, INTERPOUT=0x8001a688L, GLIDETABLE=0x80015150L;
     // Phase G: the ISR dispatch, the event-10 dispatch, the pulse dispatch, and what they choose.
@@ -416,10 +418,10 @@ public class SettingsRegression extends PersistenceRegression {
             r(LIVE,1)==0&&r(0x60a2,2)==0&&r(0x60da,2)==0&&r(0x60dc,2)==0x4321&&r(0x609e,2)==0&&r(0x6504,1)==0&&r(0x653d,1)==0);
         byte[] on=edited(); setHalf(on,0x20+2*16,1); setGen(on,4); stamp(on); plant(SLOT0,on);
         cold(); w(0x60a2,2,0x1234); w(0x609e,2,0x2222); w(0x6504,1,7); boot();
-        check("latch on at boot: they are the latch's own and stay",
-            r(LIVE,1)==1&&r(0x60a2,2)==0x1234&&r(0x609e,2)==0x2222&&r(0x6504,1)==7);
+        check("latch on at boot: cleared just the same, nothing is held when the chip comes up",
+            r(LIVE,1)==1&&r(0x60a2,2)==0&&r(0x609e,2)==0&&r(0x6504,1)==0);
         keepSlots=false;
-        println("PASS latch: the four gates follow the live byte, the shim gives the factory chord back, and the latch's RAM does not outlive it");
+        println("PASS latch: the four gates follow the live byte, the shim gives the factory chord back, and the latch's RAM does not outlive a boot");
     }
     void sequencer() throws Exception {
         fresh();
@@ -582,28 +584,43 @@ public class SettingsRegression extends PersistenceRegression {
         check("blend off at boot: the conditioner's offset is cleared, live="+r(LIVE+8,1),r(LIVE+8,1)==0&&r(0x60e2,2)==0);
         byte[] on=edited(); setHalf(on,0x20+2*24,1); setGen(on,4); stamp(on); plant(SLOT0,on);
         cold(); w(0x60e2,2,0x1234); boot();
-        check("blend on at boot: it is the conditioner's own and stays",r(LIVE+8,1)==1&&r(0x60e2,2)==0x1234);
+        check("blend on at boot: cleared just the same, nothing sounds when the chip comes up",r(LIVE+8,1)==1&&r(0x60e2,2)==0);
         keepSlots=false;
         println("PASS pressure: the fix's three words, three hooks and the interpolator follow its byte; the blend's route, glide value and boot clear follow its own");
     }
     // option_boot_state (criterion 3, 2026-09-23): the vibrato engine's
-    // state with knob 4 off vibrato, the jack transposer's state word with
-    // the jack on portamento, and the blend's re-base history with the
-    // blend off, cleared at boot and left alone otherwise - the three cells
-    // the residue test found read with their option off.
+    // state, the jack transposer's state word and the blend's re-base
+    // history, cleared at every boot whichever way their bytes point - the
+    // three cells the residue test found read with their option off, and
+    // then, run the other way, inherited by a boot with it on.
     void state() throws Exception {
         fresh(); keepSlots=true;
         check("option_boot chains through option_boot_state to the blend tail",
             r(OB+0x58,4)==OBS&&r(OBS+0x40,4)==OBC);
         // The period as a setting: the five factory octave sites are calls
         // onto octave_period's pool words, which name its four entries.
-        long[][] sites={{0x80003776L,0},{0x80003788L,4},{0x80003792L,8},{0x800035e4L,4},{0x800035faL,12}};
+        long[][] sites={{0x80003776L,0},{0x80003788L,4},{0x80003792L,8},{0x800035e4L,4},{0x800035faL,12},{0x800035c0L,0}};
         boolean hooked=r(OPPOOL,4)==OP&&r(OPPOOL+4,4)==OP+0x10&&r(OPPOOL+8,4)==OP+0x18&&r(OPPOOL+12,4)==OP+0x24;
         for(long[] s:sites) {
             long disp=((OPPOOL+s[1])-(s[0]&~3L))>>2;
             hooked&=r(s[0],4)==(0xf01f0000L|(disp&0xffffL));
         }
-        check("the five factory octave sites call octave_period's words, and the words name its entries",hooked);
+        check("the six factory octave sites call octave_period's words, and the words name its entries",hooked);
+        // seq_restart_clear: called from seq_restart_init, zeroes the
+        // sequencer's runtime and leaves its musical cells.
+        check("seq_restart_init's second word names seq_restart_clear",r(0x8001dfa4L,4)==SQC);
+        w(0x613a,2,0x111); w(0x6142,2,0x222); w(0x614d,1,3); w(0x6154,2,0x333); w(0x6158,1,2); w(0x615f,1,7);
+        w(0x6160,2,0x444); w(0x61e0,1,5); w(0x61e1,1,3); w(0x61e5,1,1); w(0x61e6,2,0x555); w(0x61ee,1,9);
+        w(0x622e,2,2); w(0x6230,2,5); w(0x62e2,1,1); w(0x62e3,1,4); w(0x62e8,2,0x666); w(0x62f4,2,0x777); w(0x62fe,1,1); w(0x62ff,1,1);
+        w(0x6500,2,0x888); w(0x6503,1,2); w(0x657a,2,0x999); w(0x657c,1,3); w(0x657e,1,8); w(0x6580,4,0xaaaaL); w(0x6584,2,0xbbb);
+        w(0x6090,1,1); w(0x6091,1,4); w(0x6092,1,5); w(0x6600,2,0xccc);
+        call(SQC);
+        check("seq_restart_clear zeroes the runtime: snapshot, flags, chord and mode, cursor, borrowed strip, countdown, stamps, reference, preview, audition, lamps, latch shadow, the count the rebuild saw",
+            r(0x6142,2)==0&&r(0x614d,1)==0&&r(0x6154,2)==0&&r(0x6158,1)==0&&r(0x615f,1)==0&&r(0x61e1,1)==0&&r(0x61e5,1)==0&&r(0x622e,2)==0&&r(0x6230,2)==0
+            &&r(0x62e3,1)==0&&r(0x62e8,2)==0&&r(0x62f4,2)==0&&r(0x62fe,1)==0&&r(0x62ff,1)==0&&r(0x6500,2)==0&&r(0x6503,1)==0&&r(0x657c,1)==0&&r(0x657e,1)==0
+            &&r(0x6580,4)==0&&r(0x6584,2)==0&&r(0x6092,1)==0);
+        check("and keeps the musical cells: presets, steps and count, keys, the latch's state, the tuning slot, the take's preset reference, the per-step degrees, the strip's slot, the clock's counter",
+            r(0x613a,2)==0x111&&r(0x6160,2)==0x444&&r(0x61e0,1)==5&&r(0x61ee,1)==9&&r(0x62e2,1)==1&&r(0x6090,1)==1&&r(0x6091,1)==4&&r(0x6600,2)==0xccc&&r(0x657a,2)==0x999&&r(0x61e6,2)==0x555);
         for(int p:new int[]{767,484}) {
             w(0x6814,2,p);
             e.writeRegister("R8",1000); long q=resolve(OP);
@@ -629,12 +646,12 @@ public class SettingsRegression extends PersistenceRegression {
         check("knob 4 as trn clears the vibrato too",r(LIVE+4,1)==1&&r(0x6028,2)==0);
         byte[] on=edited(); setHalf(on,0x20+2*20,0); setHalf(on,0x20+2*26,1); setHalf(on,0x20+2*23,1); setHalf(on,0x20+2*24,1); setGen(on,6); stamp(on); plant(SLOT0,on);
         cold(); w(0x6024,2,0x1111); w(0x6026,2,0x2222); w(0x6028,2,0x3333); w(0x60fa,2,0xa035); w(0x60f4,2,0x0c82); boot();
-        check("knob 4 vibrato, jack transposing, blend on at boot: all three are their own and stay"
+        check("knob 4 vibrato, jack transposing, blend on at boot: cleared just the same, none of them is happening when the chip comes up"
             +" live="+r(LIVE+4,1)+","+r(LIVE+10,1)+","+r(LIVE+8,1),
             r(LIVE+4,1)==0&&r(LIVE+10,1)==1&&r(LIVE+8,1)==1
-            &&r(0x6024,2)==0x1111&&r(0x6026,2)==0x2222&&r(0x6028,2)==0x3333&&r(0x60fa,2)==0xa035&&r(0x60f4,2)==0x0c82);
+            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0xffff);
         keepSlots=false;
-        println("PASS option state: the vibrato's cells, the transposer's word and the re-base history follow their bytes at boot");
+        println("PASS option state: the vibrato's cells, the transposer's word and the re-base history are cleared at every boot; the six octave sites and the sequencer's clear");
     }
     void clock() throws Exception {
         fresh();

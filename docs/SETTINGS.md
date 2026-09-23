@@ -32,7 +32,7 @@ per octave all share the default build's marker.
 | Any option in step 2 (the eleven below), and whether tunings are in use | Send settings; the keyboard restarts itself to run it |
 | The arpeggiator's pattern bank, the three tuning tables, the pitch table (calibration, volts per octave, pitch offset) | Send settings; tables go live in the mirror at once |
 | The ten timing numbers | Carried in the record and editable by any NRPN sender; the page has no controls for them |
-| A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read; knob 4's octave-switch step count stays the build's |
+| A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read, the add-to-pitch octave included; knob 4's octave-switch step count stays the build's |
 
 `Read settings` works against any 3.0 keyboard: it lists what the keyboard
 holds, loads the patterns and the options into the page, and loads the
@@ -82,14 +82,14 @@ sees the state it sees today when the gesture is not made:
 
 | Option off | What the byte does |
 |---|---|
-| `latching_arp` | Three dispatchers at the note-on, the note-off and the hold give the key back the way a non-latch switch position does; the pads 2 and 3 test says "not held"; a shim lets the factory's own latch chord run; `option_boot` clears the latch's stamps, term and ownership so nothing outlives it |
-| `knob1..knob4` | Dispatchers on the pool words the knob caves stand behind name the blend, the six orders, the factory selector, the randomiser, the grid, swing, the pattern gate, the vibrato engine, the octave switch or the factory handler; a knob left factory latches into RAM nothing else reads. With knob 4 off vibrato, `option_boot_state` zeroes the engine's phase, depth and output offset, since the pitch remap adds that offset every scan |
-| `sequencer` | The pad-4 chord never arms, so the mode byte stays 0 and every sequencer cave answers the factory way; a take restored from the persistence record is kept but cannot be played |
+| `latching_arp` | Three dispatchers at the note-on, the note-off and the hold give the key back the way a non-latch switch position does; the pads 2 and 3 test says "not held"; a shim lets the factory's own latch chord run. `option_boot` clears the latch's stamps, term and ownership at every boot, whichever way the byte points: nothing is held when the keyboard comes up |
+| `knob1..knob4` | Dispatchers on the pool words the knob caves stand behind name the blend, the six orders, the factory selector, the randomiser, the grid, swing, the pattern gate, the vibrato engine, the octave switch or the factory handler; a knob left factory latches into RAM nothing else reads. `option_boot_state` zeroes the vibrato engine's phase, depth and output offset at every boot, since the pitch remap adds that offset every scan whatever knob 4's role |
+| `sequencer` | The pad-4 chord never arms, so the mode byte stays 0 and every sequencer cave answers the factory way; a take restored from the persistence record is kept but cannot be played. `seq_restart_clear` zeroes the sequencer's runtime (the mode, the cursor, the chord, the audition) at every boot in every image, so no restart resumes a take, in a build without persistence too |
 | `clock_divide` | The GPIO interrupt runs the factory's own body instead of the capture cave, event 10 reaches the factory's arp step again, and the four pulse pools go back to the scan-grid pulse; the divider never sees an edge, so it never acquires. The 4 ms trigger spike stays either way |
 | `pressure_fix` | The curve, knob 1 and knob 4 pool words go back to the factory's routines; the two clamp skips and the gain branch replay the factory's own instructions; the pressure store passes straight through the interpolator to the DAC slot |
-| `pressure_portamento` | The pitch hook goes straight to the remap around the blend's conditioner; the glide clamp keeps the classic portamento with its zero-snap; `option_boot` zeroes the conditioner's last offset and `option_boot_state` resets the re-base history, which `transpose_capture` still consults |
+| `pressure_portamento` | The pitch hook goes straight to the remap around the blend's conditioner; the glide clamp keeps the classic portamento with its zero-snap. The conditioner's last offset and the re-base history, which `transpose_capture` consults in every configuration, are reset at every boot: nothing sounds when the keyboard comes up |
 | `quantize_presets` | The preset adder's float-to-int is the factory's own again, so the voltage adds as it is, and the rotation is asked for zero degrees from the preset |
-| `portamento_in` = portamento | The transposer reads no jack (zero degrees from it) and the factory's glide-rate addend reads the jack again; `option_boot_state` unseeds the transposer's state word, whose shift the MIDI note conversion would otherwise still apply |
+| `portamento_in` = portamento | The transposer reads no jack (zero degrees from it) and the factory's glide-rate addend reads the jack again. The transposer's state word, whose shift the MIDI note conversion honours, is unseeded at every boot and recomputed by the first scan |
 | `alternate_tunings` | The per-scan applier word returns at once, so the slot LEDs and the transpose-mode byte stay the factory's; edit keys 27 and 28 replay the factory's transpose-mode and remote-enable toggles instead of selecting slots; the three remote-enable reads read the flag instead of zero |
 
 Two things differ from a build that never had the option: the factory's

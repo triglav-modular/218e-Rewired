@@ -27,6 +27,13 @@ public class AbTrace extends PersistenceRegression {
         w(0xffff1060L,4,0); w(0xffff10d0L,4,0);
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202);
         w(0xffff10c4L,4,32); w(0xffff1c08L,4,1);
+        // The factory's state initialiser, the fourth call of its init
+        // sequence and three calls before our hook: the state defaults,
+        // the live note among them as "none".  A boot that starts at the
+        // hook leaves that cell at zero, "key 0 sounding", and the first
+        // pass's transposer refresh republishes a base for a key nobody
+        // holds - a difference between images that no hardware boot has.
+        call(0x800070d8L,0x100);
         boot();
     }
     double getDouble(int low) { return Double.longBitsToDouble((reg("R"+(low+1))<<32)|reg("R"+low)); }
@@ -56,6 +63,21 @@ public class AbTrace extends PersistenceRegression {
         println("TRACE "+b);
     }
     void musical() throws Exception { call(0x80004d4eL,0x80004d52L); call(0x80003590L); call(0x8000307cL); call(0x800031b8L,0x80003256L); }
+    // The same pass, watched: every instruction that changes the transpose
+    // at state+0x350 is named by its address, so a difference between two
+    // images can be chased to the code that wrote it.
+    void watched(long entry,long end) throws Exception {
+        e.writeRegister("SP",0x7800); e.writeRegister("R7",0x7600); e.writeRegister("LR",0x100); jump(entry);
+        long was=r(S+0x350,2);
+        for(int i=0;i<500000;i++) {
+            if(pc()==end) return;
+            long p=pc(); step();
+            long now=r(S+0x350,2);
+            if(now!=was) { println(String.format("WATCH %08x wrote state+0x350: %04x -> %04x",p,was,now)); was=now; }
+        }
+        throw new Exception("instruction budget at "+Long.toHexString(pc()));
+    }
+    void musicalWatched() throws Exception { watched(0x80004d4eL,0x80004d52L); watched(0x80003590L,0x100); watched(0x8000307cL,0x100); watched(0x800031b8L,0x80003256L); }
     void touchOn(int k) throws Exception { e.writeRegister("R12",k); call(0x80005b6aL); }
     void touchOff(int k) throws Exception { e.writeRegister("R12",k); e.writeRegister("R11",0); call(0x80005edcL); }
     void pad(int p) throws Exception { e.writeRegister("R12",p); call(0x8000698cL); }
@@ -73,7 +95,9 @@ public class AbTrace extends PersistenceRegression {
             // slots, the keys per period; and the applier's guard cleared so
             // the live copy at 0x854 is refreshed from them on the first pass.
             String[] args=getScriptArgs();
-            if(args.length>0) {
+            boolean watch=false;
+            for(String a:args) if(a.equals("watch")) watch=true;
+            if(args.length>0&&!args[0].equals("watch")) {
                 String[] words=new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(args[0]))).trim().split("\\s+");
                 int i=0;
                 for(int k=0;k<79;k++) w(0x6840+2*k,2,Integer.parseInt(words[i++],16));
@@ -86,7 +110,8 @@ public class AbTrace extends PersistenceRegression {
             w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x340,1,0); w(S+0x341,1,0);
             w(0x2ee6,2,1023); w(S+0x308,2,1000); w(S+0x2f2,2,0); w(0x2ee0,2,20); w(S+0x34a,2,20);
             for(int k=0;k<4;k++) w(S+0x30a+2*k,2,512);
-            musical(); trace("switches set, knobs mid");
+            if(watch) musicalWatched(); else musical();
+            trace("switches set, knobs mid");
             // One key, pressed and released, with pressure rising and falling.
             touchOn(9); w(0x3490+9,1,2); for(int q:new int[]{110,300,600,600,300}) { w(0x3686+18,2,q); musical(); trace("key 9 held, raw "+q); }
             w(0x3490+9,1,0); w(0x3686+18,2,0); touchOff(9); musical(); trace("key 9 lifted");

@@ -149,6 +149,10 @@ function assembleProgram() {
         // (2026-09-23, the owner's rule: no setting change needs a flash).
         var opEntry = obsEnd, opUp = opEntry + 0x10, opUp2 = opEntry + 0x18, opBias = opEntry + 0x24;
         var opPool = opEntry + 0x30, opEnd = opEntry + 0x40;
+        // seq_restart_clear: the sequencer's runtime zeroed at every boot in
+        // every image, from seq_restart_init (2026-09-23).  In the hole
+        // between latch_preset_pin and the phase F caves.
+        var sqcEntry = 0x8001ed60, sqcLoop1 = sqcEntry + 0x8, sqcLoop2 = sqcEntry + 0x16, sqcLoop3 = sqcEntry + 0x30, sqcEnd = sqcEntry + 0x70;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -7719,9 +7723,11 @@ function assembleProgram() {
         emit("MOV R8,0x0");
         emit("MOV R9,0x6502");
         emit("ST.B R9[0x0],R8");
+        emit("MCALL PC[0x8001dfa4]");   // seq_restart_clear: the sequencer's runtime, so no restart resumes a take
         emit("LDM SP++,R7,PC");
         padTo(0x8001dfa0);
         word(0x8001ab60);
+        word(sqcEntry);
         finish("seq_restart_init", 0x8001dfa8);
 
         begin(0x8001dfa8);
@@ -11523,12 +11529,12 @@ function assembleProgram() {
         // reads these and never the mirror, so a value that arrives over
         // MIDI changes no code path until the next power-up - or the
         // restart the page sends after a commit that changed one.  Then
-        // the state an option owns that must not outlive it: SRAM survives
-        // that restart and the first-use initialiser does not run again,
-        // so with the latch off its stamps, its transpose term and its
-        // ownership maps are zeroed here - a stamp left by a session with
-        // the latch on would otherwise weight the blend and rank the
-        // regular arp.  A leaf.
+        // the latch's runtime: SRAM survives that restart and the first-use
+        // initialiser does not run again, so its stamps, its transpose term
+        // and its ownership maps are zeroed here at every boot - a stamp
+        // left by a session would otherwise weight the blend and rank the
+        // regular arp, and identity ownership left by a session with the
+        // latch off would meet the first press with it on.  A leaf.
         begin(obEntry);
         emit("MOV R8,0x6820");
         emit("MOV R9,0x6d28");
@@ -11543,10 +11549,11 @@ function assembleProgram() {
         emit("MOV R8,0x6d38");
         emit("MOV R9,0x0");
         emit("ST.B R8[0x0],R9");        // knob 1's blend latch, until the first scan writes it
-        emit("MOV R8,0x6d28");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit(StringFormat("BR{ne} 0x%x", obDone));   // the latch is live: its state is its own
+        // At every boot, whichever way the latch's byte points: nothing is
+        // held or latched when the chip comes up, so the stamps, the term
+        // and the maps are runtime, and a session with the latch off leaves
+        // identity ownership in the maps that a boot with it on would
+        // otherwise inherit (the residue test's off -> on run, 2026-09-23).
         padTo(obLive);
         emit("MOV R8,0x60a2");          // the 29 latch stamps, key 28 down
         emit("MOV R10,0x1c");
@@ -11570,45 +11577,33 @@ function assembleProgram() {
         word(obsEntry);
         finish("option_boot", obEnd);
 
-        // option_boot_state: what the residue test found still read with
-        // its option off after the restart (ControlRegression.residue,
-        // 2026-09-23).  The vibrato engine's output offset at 0x6028 is
-        // added by the pitch remap every scan whichever role knob 4 has,
-        // and only the engine writes it, so with knob 4 not on vibrato the
-        // last offset would sit under every pitch; its phase and depth go
-        // with it so the engine restarts clean when the role comes back.
+        // option_boot_state: what the residue test found still read after
+        // the restart (ControlRegression.residue, 2026-09-23), at every boot
+        // whichever way the bytes point - each is the state of something
+        // that is not happening when the chip comes up.  The vibrato
+        // engine's output offset at 0x6028 is added by the pitch remap
+        // every scan whichever role knob 4 has, and only the engine writes
+        // it; its phase and depth go with it so the engine starts clean.
         // The jack transposer's state word at 0x60fa carries a validity
         // tag that midi_transpose, seq_cv_shift and the pin honour whether
-        // or not the jack transposes, so with the jack on portamento it is
-        // unseeded again, as a first boot leaves it.  The blend's re-base
-        // history at 0x60f4 is read by blend_rebase from transpose_capture
-        // with the blend off too, and a base from a session with the blend
-        // on would fold (old - new) into the offset the boot just zeroed on
-        // the first octave pad; -1 is "nothing has sounded under the blend",
-        // the first-use seed.  R9 is zero from option_boot.  Chains on to
+        // or not the jack transposes; unseeded, the first scan recomputes
+        // it from the live jack, as a first boot does.  The blend's
+        // re-base history at 0x60f4 is read by blend_rebase from
+        // transpose_capture in every configuration, and a base from the
+        // last session would fold (old - new) into the offset on the first
+        // octave pad; -1 is "nothing has sounded under the blend", the
+        // first-use seed.  R9 is zero from option_boot.  Chains on to
         // option_boot_blend.  A leaf, R8..R10 spent.
         begin(obsEntry);
         emit("MOV R9,0x0");
-        emit("MOV R8,0x6d2c");          // knob 4: 0 vibrato, 1 trn, 2 factory
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit(StringFormat("BR{eq} 0x%x", obsJack));
         emit("MOV R8,0x6024");
         emit("ST.H R8[0x0],R9");        // LFO phase
         emit("ST.H R8[0x2],R9");        // smoothed depth
         emit("ST.H R8[0x4],R9");        // the output offset the remap adds
         padTo(obsJack);
-        emit("MOV R8,0x6d32");          // portamento_in: 1 transpose, 0 portamento
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x1");
-        emit(StringFormat("BR{eq} 0x%x", obsBlend));
         emit("MOV R8,0x60fa");
         emit("ST.H R8[0x0],R9");        // the transposer's state word: unseeded
         padTo(obsBlend);
-        emit("MOV R8,0x6d30");          // pressure_portamento, the blend
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit(StringFormat("BR{ne} 0x%x", obsDone));
         emit("MOV R10,-0x1");
         emit("MOV R8,0x60f4");
         emit("ST.H R8[0x0],R10");       // the re-base history: nothing has sounded under the blend
@@ -11654,6 +11649,62 @@ function assembleProgram() {
         word(opUp2);
         word(opBias);
         finish("octave_period", opEnd);
+
+        // seq_restart_clear: what persist_boot zeroes and persist_load does
+        // not put back - the sequencer's runtime - cleared at every boot in
+        // every image, from seq_restart_init.  A volatile build used to keep
+        // the mode, the cursor and the chord across a warm restart, so a
+        // take resumed playing after the settings restart, and with the
+        // sequencer turned off the mode stayed 2 for pulse_guard,
+        // pressure_blend and midi_step_degree to read (the residue test,
+        // 2026-09-23).  The musical cells - the presets, the steps and their
+        // count, the keys, the latch's state, the tuning slot, the per-step
+        // degrees and the take's preset reference - are left alone: a
+        // volatile build keeps them in SRAM, and persist_load puts the
+        // reference back after persist_boot's own clear, which this runs
+        // after too, from clock_init.  A leaf; R8..R10 spent.
+        begin(sqcEntry);
+        emit("MOV R8,0x0");
+        emit("MOV R9,0x6142");          // the preset snapshot, the following flags, the arp's step cells, the chord and mode
+        emit("MOV R10,0xf");            // fifteen halfwords, not thirty bytes: a bare 0x1e reads to test.py as a key walk
+        padTo(sqcLoop1);
+        emit("ST.H R9[0x0],R8");
+        emit("SUB R9,-0x2");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", sqcLoop1));
+        emit("MOV R9,0x61e1");          // the cursor and the audition's history, after the count
+        emit("MOV R10,0x5");
+        padTo(sqcLoop2);
+        emit("ST.B R9[0x0],R8");
+        emit("SUB R9,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", sqcLoop2));
+        emit("MOV R9,0x622e");          // the borrowed strip mode and the key yet to sound
+        emit("ST.W R9[0x0],R8");
+        emit("MOV R9,0x62e3");          // the pads 2 & 3 acknowledgment countdown
+        emit("ST.B R9[0x0],R8");
+        emit("MOV R9,0x62e8");          // the pickup stamps, the claim stamp, the take's reference, the edge stamp, the logical mode, the edited flags
+        emit("MOV R10,0x15");           // up to 0x62fd, the restored-this-power-up flag: persist_boot's own, set before clock_init calls here again
+        padTo(sqcLoop3);
+        emit("ST.B R9[0x0],R8");
+        emit("SUB R9,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", sqcLoop3));
+        emit("MOV R9,0x62fe");          // the preview and the CLEAR event
+        emit("ST.H R9[0x0],R8");
+        emit("MOV R9,0x6500");          // the audition's pinned pitch, the delete flash, the step sounding now
+        emit("ST.W R9[0x0],R8");
+        emit("MOV R9,0x657c");          // the lamp countdown, which lamp, last scan's step count
+        emit("ST.B R9[0x0],R8");
+        emit("ST.B R9[0x1],R8");
+        emit("ST.B R9[0x2],R8");
+        emit("MOV R9,0x6580");          // the latch's transpose reference, the pads 2 & 3 hold count, the transpose shadow
+        emit("ST.W R9[0x0],R8");
+        emit("ST.H R9[0x4],R8");
+        emit("MOV R9,0x6092");          // the preset count the last rebuild saw; 0x6091 beside it is the take's reference, musical, which persist_load restores
+        emit("ST.B R9[0x0],R8");
+        emit("MOV PC,LR");
+        finish("seq_restart_clear", sqcEnd);
         }        latchCaves();
 
         // Phase D: the sequencer's one gate (docs/PLAN-SETTINGS-2.md).
@@ -11959,14 +12010,10 @@ function assembleProgram() {
         // option_boot_blend: option_boot's tail.  The offset the blend's
         // conditioner last applied (0x60e2) is read by the clock's fast
         // pitch stage every beat, and only the conditioner writes it - so
-        // with the blend off it is zeroed here, or a session with the blend
-        // on would leave its last offset under every staged pitch after
-        // the restart.  With the blend on it is the conditioner's own.
+        // it is zeroed here at every boot, or a session would leave its
+        // last offset under every staged pitch after the restart; nothing
+        // sounds when the chip comes up, so there is no offset to keep.
         begin(obcEntry);
-        emit("MOV R8,0x6d30");
-        emit("LD.UB R8,R8[0x0]");
-        emit("CP.W R8,0x0");
-        emit(StringFormat("BR{ne} 0x%x", obcDone));
         emit("MOV R8,0x60e2");
         emit("MOV R9,0x0");
         emit("ST.H R8[0x0],R9");
@@ -12581,7 +12628,7 @@ function assembleProgram() {
         // every image and a tuning with another period travels over MIDI.
         // Hooks, as the phase F sites are, so the listing counts their calls.
         // The sixth 484 in the block, the add-to-pitch octave at 0x800035c0,
-        // was never patched and is left as a non-octave build left it.
+        // joined them the same day; a non-octave build had left it at 484.
         begin(0x80003776);
         emit(StringFormat("MCALL PC[0x%x]", opPool));       // -period: the panel's octave down
         finish("octave_step_down", 0x8000377a);
@@ -12597,6 +12644,13 @@ function assembleProgram() {
         begin(0x800035fa);
         emit(StringFormat("MCALL PC[0x%x]", opPool + 12));  // its two-octave bias
         finish("octave_scale_bias", 0x800035fe);
+        // The sixth, the add-to-pitch octave: with quantize_presets the
+        // preset adds whole degrees, so the base shift has to be a whole
+        // period too or the sum leaves a non-octave scale.  R9 is dead
+        // here as at the panel sites (2026-09-23).
+        begin(0x800035c0);
+        emit(StringFormat("MCALL PC[0x%x]", opPool));       // -period: the keyboard an octave down under add-to-pitch
+        finish("octave_pitch_add", 0x800035c4);
 
         // With the jack transposing, the factory must stop adding it to the
         // glide-rate index: the load at 0x8000313e becomes a call to

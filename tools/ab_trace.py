@@ -28,6 +28,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("a", type=Path); ap.add_argument("b", type=Path)
     ap.add_argument("--ghidra", type=Path)
+    ap.add_argument("--watch", action="store_true", help="name every instruction that moves the transpose in the first pass")
     args = ap.parse_args()
     settings = tomllib.loads((REPO / "config/218e.toml").read_text()).get("tools", {})
     local = REPO / "config/local.toml"
@@ -56,11 +57,16 @@ def main() -> None:
                "-scriptPath", str(REPO / "src"), "-postScript", "AbTrace.java"]
         if tag == "b":
             cmd.append(str(table_file))
+        if args.watch:
+            cmd.append("watch")
         out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
         log = work / f"{tag}.log"; log.write_text(out.stdout + out.stderr)
         lines = [re.sub(r"^INFO\s+\S+>\s*", "", l).replace(" (GhidraScript)", "").rstrip()
                  for l in (out.stdout + out.stderr).splitlines()]
         trace = [l for l in lines if l.startswith("TRACE ")]
+        for l in lines:
+            if l.startswith("WATCH "):
+                print(f"  {tag} {l}")
         done = any(l.startswith("AB TRACE DONE") for l in lines)
         (work / f"{tag}.trace").write_text("\n".join(trace) + "\n")
         print(f"{tag}: {image.name}: {len(trace)} steps{'' if done else '  (did not finish - see ' + str(log) + ')'}")
