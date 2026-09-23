@@ -2123,7 +2123,8 @@ def test_settings_record() -> None:
     check("the ten numbers sit in cell order at 0x20",
           rec[0x20:0x34] == bytes.fromhex("003c 0800 0004 00fa 0005 0333 0000 000c 00c8 00c8".replace(" ", "")),
           rec[0x20:0x34].hex())
-    check("cells 10..15 are zero", rec[0x34:0x40] == bytes(12))
+    check("cell 10 is the period", rec[0x34:0x36] == (484).to_bytes(2, "big"))
+    check("cells 11..15 are zero", rec[0x36:0x40] == bytes(10))
     # The option cells, 16..27, at 0x40: what the page's option values
     # index to, in the page's order; every option left out is its default.
     check("the option cells default to the config's defaults",

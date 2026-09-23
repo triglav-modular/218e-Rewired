@@ -1696,6 +1696,27 @@ public class ControlRegression extends SequenceEditRegression {
     // record.  Whatever differs is state an option left behind for the
     // others to read; each run in the allowlist below is one that is read
     // only by the option that wrote it, and says why.
+    // The period as a setting (2026-09-23): the panel octave pads and the
+    // stored-octave (trn) arithmetic step what number cell 10 holds.  The
+    // factory nudges a transpose by one at two thresholds, hence the slack.
+    void periodCell() throws Exception {
+        setup(0,false,0); latchFixture();
+        for(int p:new int[]{484,767}) {
+            w(0x6814,2,p);
+            octavePad(1); sound(); long zero=livePad();
+            octavePad(2); sound(); long up=livePad()-zero;
+            octavePad(0); sound(); long down=livePad()-zero;
+            octavePad(3); sound(); long up2=livePad()-zero;
+            check("the octave pads step the period cell at "+p+": "+down+", "+up+", "+up2,
+                Math.abs(down+p)<=1&&Math.abs(up-p)<=1&&Math.abs(up2-2*p)<=1);
+            octavePad(1); w(S+0x6a,1,1); w(S+0x6b,1,3); sound(); long trn3=livePad();
+            w(S+0x6b,1,4); sound(); long trn=livePad()-trn3;
+            w(S+0x6a,1,0); w(S+0x6b,1,0); sound();
+            check("the stored octave steps the period cell at "+p+": "+trn,Math.abs(trn-p)<=1);
+        }
+        w(0x6814,2,PERIOD);
+        println("PASS the period cell: the panel octaves and the stored octave step what cell 10 holds");
+    }
     static final long RES_LO=0x6000, RES_HI=0x7000;
     // The allowlist: each run is state read only by the option that wrote
     // it, or rewritten before anything reads it.  What is NOT here is what
@@ -1861,6 +1882,7 @@ public class ControlRegression extends SequenceEditRegression {
             // the persistent build, whose persist_boot resets the sequencer's
             // runtime; the volatile build keeps a take and its mode in SRAM
             // by design and is reported, not asserted (docs/PLAN-SETTINGS-2.md).
+            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { periodCell(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing")&&persistent)try { residue(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);

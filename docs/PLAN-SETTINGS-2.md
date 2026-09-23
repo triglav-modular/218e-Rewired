@@ -704,6 +704,31 @@ rises along it:
   of the same image; the settings restart makes it reachable from the
   page. The owner's call whether `seq_boot` should zero the runtime cells
   (`0x6154..0x6160`, `0x61e1..0x61e5`) in every build.
+- **J. The period as a setting.** Done 2026-09-23, the owner's rule: no
+  setting change may need a flash, a non-octave scale included. Number
+  cell 10 is `octave_units` (default 484, bounds 1..2000, mirror
+  `0x6814`). The five factory sites that carried it as an immediate - the
+  panel switch's -484, +484 and +968 at `0x80003776/88/92`, the stored
+  octave's multiplier at `0x800035e4` and its two-octave bias at
+  `0x800035fa` - are 4-byte calls onto the pool words of `octave_period`
+  (`0x8001ff74`, four entries: -p, p, 2p, R8 - 2p) in every image; the
+  block is one routine whose prologue saves LR, and R9 is dead at every
+  site but the multiply, whose entry spends R8 alone. Our own nine
+  immediates load the cell: the arp octave pads (R9, saved by the cave),
+  `preset_degrees` (R0), `cv_transpose` (the pool word names the cell and
+  the site loads through it), `preset_entry` (R11, saved), the identity's
+  `0x3f78`, the commit staging's `0x012`. `settings_valid` no longer
+  refuses a record on `0x012`; the cell's bounds do the checking, and the
+  page sends whatever period its tuning declares. Both builders force the
+  five `octave_*` blocks on and leave `octave_units` out of the marker, so
+  a Bohlen-Pierce build and the default are one image. Left as it was:
+  the sixth 484 in the block, the add-to-pitch octave at `0x800035c0`,
+  which a non-octave build never patched either; and knob 4's
+  octave-switch step count, derived from the build's period.
+  `SettingsRegression.state` checks the five sites' words and each
+  entry's answer at 767 and 484; `ControlRegression.periodCell` drives
+  the panel pads and the stored octave through the real routine at both
+  periods.
 
 F and G are the ones that can be left build-time if the ISR body or the
 pressure stretches turn out to cost more than they are worth; nothing in A-E

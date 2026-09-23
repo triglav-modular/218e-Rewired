@@ -153,7 +153,9 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   share the default's marker), and cell 27 (`alternate_tunings`, live
   byte `0x6d33`) decides the two edit keys, the applier and the
   remote-enable guards, so a keyboard built without a tuning takes tables
-  over MIDI; only a scale with a non-octave period still takes a flash;
+  over MIDI, and since the same evening the period too, as number cell
+  10 read by every octave site (PLAN-SETTINGS-2.md, record J), so no
+  setting change needs a flash;
   (3) no side effects - the residue test (`ControlRegression.residue`: a
   session with every option on, a warm all-off restart, custom RAM
   compared against a cold boot with the same record and ring) ran

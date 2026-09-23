@@ -143,6 +143,12 @@ function assembleProgram() {
         // Above cv_chain_dispatch, where nothing else is placed.
         var obsEntry = 0x8001ff30, obsJack = obsEntry + 0x18, obsBlend = obsEntry + 0x28, obsDone = obsEntry + 0x3c;
         var obsPool = obsEntry + 0x40, obsEnd = obsEntry + 0x44;
+        // octave_period: the five factory sites that step an octave read
+        // number cell 10 (0x6814) instead of carrying the period as an
+        // immediate, so a scale with another period travels over MIDI
+        // (2026-09-23, the owner's rule: no setting change needs a flash).
+        var opEntry = obsEnd, opUp = opEntry + 0x10, opUp2 = opEntry + 0x18, opBias = opEntry + 0x24;
+        var opPool = opEntry + 0x30, opEnd = opEntry + 0x40;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -1163,13 +1169,18 @@ function assembleProgram() {
         emit("BFEXTU R9,R12,0x14,0x1");
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x80019de0");
-        emit(StringFormat("SUB R8,-0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R9,0x6814");          // the period: number cell 10 (R9 is saved above)
+        emit("LD.UH R9,R9[0x0]");
+        emit("ADD R8,R9");
         emit("RJMP 0x80019df0");
         padTo(0x80019de0);
-        emit(StringFormat("SUB R8,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R9,0x6814");
+        emit("LD.UH R9,R9[0x0]");
+        emit("SUB R8,R9");
         emit("CP.W R8,0x1");
         emit("BR{ge} 0x80019df0");
-        emit(StringFormat("SUB R8,-0x%x", 2 * number("octave_units", 484, 1, 2000)));
+        emit("ADD R8,R9");
+        emit("ADD R8,R9");
         padTo(0x80019df0);
         emit("LDM SP++,R0,R7,R9,R10,R11,R12,PC");
         padTo(0x80019df8);
@@ -2964,7 +2975,8 @@ function assembleProgram() {
         emit("MOV R10,0x64");
         emit("DIVU R2,R1,R10");                      // R2 units, R3 remainder
         emit("MOV R1,R2");
-        emit(StringFormat("MOV R0,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R0,0x6814");                       // the period: number cell 10
+        emit("LD.UH R0,R0[0x0]");
         emit("DIVU R2,R1,R0");                       // R2 whole periods, R3 within one
         // Seed the search with the whole period above: degree `keys`, which
         // the sentinel below stands for, at distance period - remainder.
@@ -3266,7 +3278,8 @@ function assembleProgram() {
         padTo(cvBuild);
         emit("ST.H R3[0x0],R11");
         emit(StringFormat("MCALL PC[0x%x]", cvPool + 32));       // stamps: against the keys, not the slots
-        emit(StringFormat("LDDPC R2,0x%x", cvPool + 28));        // one period, in pitch units
+        emit(StringFormat("LDDPC R2,0x%x", cvPool + 28));        // the period cell's address
+        emit("LD.UH R2,R2[0x0]");                                 // one period, in pitch units
         emit(StringFormat("LDDPC R12,0x%x", cvPool + 24));       // the three slot tables
         emit("LSL R9,R10,0x6");
         emit("ADD R12,R9");                                       // this slot's, 64 bytes each
@@ -3301,7 +3314,7 @@ function assembleProgram() {
         word(0x00000000); // retired: the hysteresis, read from the mirror now
         word(0x000069a0); // the keys-per-period table, in the settings mirror
         word(0x000068e0); // the three tuning tables, in the settings mirror
-        word(number("octave_units", 484, 1, 2000));
+        word(0x00006814); // the period: number cell 10 of the settings mirror
         word(cvStampsPre);
         word(cvStampsPost);
         word(pgEntry);     // preset_degrees_gate -> preset_degrees, or zero degrees published
@@ -3910,7 +3923,9 @@ function assembleProgram() {
         emit("CP.W R12,0x1f");
         emit(StringFormat("BR{le} 0x%x", peNoWrap));
         emit("SUB R12,R9");                                   // back one period of keys
-        emit(StringFormat("SUB R8,-0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R11,0x6814");                               // up one period of pitch: number cell 10 (R11 is saved above)
+        emit("LD.UH R11,R11[0x0]");
+        emit("ADD R8,R11");
         emit(StringFormat("RJMP 0x%x", peWrap));
         padTo(peNoWrap);
         emit("LD.SH R12,R10[R12 << 0x1]");
@@ -10230,14 +10245,12 @@ function assembleProgram() {
         emit("CP.W R12,R8");
         emit(StringFormat("BR{ne} 0x%x", vdBad));
         // A record is for one image: the marker every build derives from
-        // everything that shapes it, and the period its tables step.
+        // everything that shapes it.  The period at 0x012 is informational
+        // since 2026-09-23: cell 10 carries it and is bounded below.
         emit("LD.UH R8,R0[0x10]");
         emit(StringFormat("MOV R9,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
         emit("CASTU.H R9");             // a marker past 0x7fff would sign-extend
         emit("CP.W R8,R9");
-        emit(StringFormat("BR{ne} 0x%x", vdBad));
-        emit("LD.UH R8,R0[0x12]");
-        emit(StringFormat("CP.W R8,0x%x", number("octave_units", 484, 1, 2000)));
         emit(StringFormat("BR{ne} 0x%x", vdBad));
         // The 32 cells against the bounds table in settings_bounds.
         emit("MOV R1,0x0");
@@ -10861,7 +10874,8 @@ function assembleProgram() {
         padTo(vaPeriod);
         emit("CP.W R0,0x3f78");
         emit(StringFormat("BR{ne} 0x%x", vaSlot));
-        emit(StringFormat("MOV R12,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R12,0x6814");         // the period as it stands: number cell 10
+        emit("LD.UH R12,R12[0x0]");
         emit(StringFormat("RJMP 0x%x", vaDone));
         padTo(vaSlot);
         emit("CP.W R0,0x3f79");
@@ -11044,7 +11058,8 @@ function assembleProgram() {
         emit("ST.W R0[0x8],R2");
         emit(StringFormat("MOV R8,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
         emit("ST.H R0[0x10],R8");
-        emit(StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R8,0x6814");          // the period as it stands: number cell 10
+        emit("LD.UH R8,R8[0x0]");
         emit("ST.H R0[0x12],R8");
         emit("MOV R8,0x0");
         emit("ST.W R0[0x14],R8");
@@ -11170,7 +11185,7 @@ function assembleProgram() {
         // Low and high for every cell, in cell order: what settings_valid
         // holds a record to and settings_target answers for a receive.
         // Out of settings_valid's own extent since layout 2 made it 32
-        // pairs.  Cells 10..15 and 27..31 are reserved and must be zero.
+        // pairs.  Cells 11..15 and 28..31 are reserved and must be zero.
         begin(bdTable);
         halfword(1);    halfword(1024);   // 0 tie_glide_rate
         halfword(128);  halfword(3968);   // 1 strip_halfway_units
@@ -11182,7 +11197,7 @@ function assembleProgram() {
         halfword(0);    halfword(64);     // 7 transpose_cv_hysteresis
         halfword(20);   halfword(2000);   // 8 chord_hold_scans
         halfword(20);   halfword(2000);   // 9 latch_state_hold_scans
-        halfword(0);    halfword(0);      // 10 reserved
+        halfword(1);    halfword(2000);   // 10 octave_units: the period, in DAC units
         halfword(0);    halfword(0);      // 11
         halfword(0);    halfword(0);      // 12
         halfword(0);    halfword(0);      // 13
@@ -11222,7 +11237,8 @@ function assembleProgram() {
         halfword(number("transpose_cv_hysteresis", 2, 0, 64));
         halfword(number("chord_hold_scans", 300, 20, 2000));
         halfword(number("latch_state_hold_scans", 200, 20, 2000));
-        halfword(0); halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
+        halfword(number("octave_units", 484, 1, 2000));   // 10: the period the octave controls step
+        halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
         halfword(number("latching_arp", 1, 0, 1));
         halfword(number("knob1", 0, 0, 2));
         halfword(number("knob2", 0, 0, 4));
@@ -11602,6 +11618,42 @@ function assembleProgram() {
         padTo(obsPool);
         word(obcEntry);
         finish("option_boot_state", obsEnd);
+
+        // octave_period: what the factory's octave-switch block and its
+        // stored-octave scaling used to carry as immediates - -484, 484,
+        // 968 and the two-octave bias - read out of number cell 10, the
+        // period the tuning repeats at.  Four entries, one per shape of
+        // answer; each site is a 4-byte MCALL onto the matching pool word
+        // where the 4-byte immediate stood.  The block sits in one routine
+        // whose prologue saves LR (0x80003590), and at every site but the
+        // multiply R9 is dead - there R9 is the octave index the MUL takes
+        // next, so that entry spends R8 alone.  Leaves.
+        begin(opEntry);
+        emit("MOV R9,0x6814");
+        emit("LD.UH R9,R9[0x0]");
+        emit("MOV R8,0x0");
+        emit("SUB R8,R9");              // -period: the panel's octave down
+        emit("MOV PC,LR");
+        padTo(opUp);
+        emit("MOV R8,0x6814");
+        emit("LD.UH R8,R8[0x0]");       // +period: octave up, and the stored octave's multiplier
+        emit("MOV PC,LR");
+        padTo(opUp2);
+        emit("MOV R8,0x6814");
+        emit("LD.UH R8,R8[0x0]");
+        emit("LSL R8,0x1");             // two periods: the top position
+        emit("MOV PC,LR");
+        padTo(opBias);
+        emit("MOV R9,0x6814");
+        emit("LD.UH R9,R9[0x0]");
+        emit("SUB R8,R8,R9 << 0x1");    // R8 less two periods: the stored octave's bias
+        emit("MOV PC,LR");
+        padTo(opPool);
+        word(opEntry);
+        word(opUp);
+        word(opUp2);
+        word(opBias);
+        finish("octave_period", opEnd);
         }        latchCaves();
 
         // Phase D: the sequencer's one gate (docs/PLAN-SETTINGS-2.md).
@@ -12523,21 +12575,28 @@ function assembleProgram() {
         // -484, 0, +484 or +968 DAC units by position, and the stored octave
         // setting multiplies by 484 with a two-octave bias.  With a scale that
         // repeats somewhere else those move the keyboard off its own scale, so
-        // each constant becomes one period.  All are plain immediates of the
-        // same width, so nothing after them moves; at 484 the patches are not
-        // emitted at all.
-        fixedPatch("octave_step_down", 0x80003776, 4,
-            StringFormat("MOV R8,-0x%x", number("octave_units", 484, 1, 2000)));
-        fixedPatch("octave_step_up", 0x80003788, 4,
-            StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
-        fixedPatch("octave_step_up2", 0x80003792, 4,
-            StringFormat("MOV R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
-        fixedPatch("octave_scale_mul", 0x800035e4, 4,
-            StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
-        // The factory writes this one as the three-operand SUB R8,R8,0x3c8;
-        // the two-operand form is the same operation and the same width.
-        fixedPatch("octave_scale_bias", 0x800035fa, 4,
-            StringFormat("SUB R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
+        // each constant is one period - and since 2026-09-23 the period is
+        // number cell 10 of the settings record, read by octave_period, so
+        // the five 4-byte immediates are 4-byte calls onto its pool words in
+        // every image and a tuning with another period travels over MIDI.
+        // Hooks, as the phase F sites are, so the listing counts their calls.
+        // The sixth 484 in the block, the add-to-pitch octave at 0x800035c0,
+        // was never patched and is left as a non-octave build left it.
+        begin(0x80003776);
+        emit(StringFormat("MCALL PC[0x%x]", opPool));       // -period: the panel's octave down
+        finish("octave_step_down", 0x8000377a);
+        begin(0x80003788);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 4));   // +period: octave up
+        finish("octave_step_up", 0x8000378c);
+        begin(0x80003792);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 8));   // two periods: the top position
+        finish("octave_step_up2", 0x80003796);
+        begin(0x800035e4);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 4));   // the stored octave's multiplier
+        finish("octave_scale_mul", 0x800035e8);
+        begin(0x800035fa);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 12));  // its two-octave bias
+        finish("octave_scale_bias", 0x800035fe);
 
         // With the jack transposing, the factory must stop adding it to the
         // glide-rate index: the load at 0x8000313e becomes a call to

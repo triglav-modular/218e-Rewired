@@ -32,7 +32,7 @@ per octave all share the default build's marker.
 | Any option in step 2 (the eleven below), and whether tunings are in use | Send settings; the keyboard restarts itself to run it |
 | The arpeggiator's pattern bank, the three tuning tables, the pitch table (calibration, volts per octave, pitch offset) | Send settings; tables go live in the mirror at once |
 | The ten timing numbers | Carried in the record and editable by any NRPN sender; the page has no controls for them |
-| A scale that repeats at something other than the octave | A new build and a flash: the octave controls' step is patched in place, and the record's `octave_units` must match the image's |
+| A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read; knob 4's octave-switch step count stays the build's |
 
 `Read settings` works against any 3.0 keyboard: it lists what the keyboard
 holds, loads the patterns and the options into the page, and loads the
@@ -113,9 +113,9 @@ Big-endian.
 | `0x008` | 4 | Generation, nonzero, wrapping to 1 |
 | `0x00c` | 4 | CRC-32/ISO-HDLC over `0x004..0x00b` and `0x010..end` |
 | `0x010` | 2 | Image marker: the low 16 bits of `init_marker` |
-| `0x012` | 2 | `octave_units` the record was generated for |
+| `0x012` | 2 | `octave_units` the record was generated for; informational, cell 10 is what the keyboard reads |
 | `0x014` | 12 | Reserved, zero |
-| `0x020` | 64 | 32 numbers: the ten timing numbers, cells 16..27 the options (27 the tunings' switch), the rest zero |
+| `0x020` | 64 | 32 numbers: the ten timing numbers, cell 10 the period, cells 16..27 the options (27 the tunings' switch), the rest zero |
 | `0x060` | 158 | `pitch_remap`, 79 halfwords |
 | `0x0fe` | 2 | Pad |
 | `0x100` | 192 | Tuning slots 0..2, 32 halfwords each |
@@ -129,9 +129,12 @@ The ten timing numbers, cells 0..9: `tie_glide_rate`,
 `strip_halfway_units`, `clock_min_ms`, `clock_rearm_us`,
 `clock_lock_pulses`, `transpose_cv_period`, `transpose_cv_zero`,
 `transpose_cv_hysteresis`, `chord_hold_scans`, `latch_state_hold_scans`.
+Cell 10 is `octave_units`, the period the octave controls step, in DAC
+units: 484 for a scale that repeats at the octave, 767 for a tritave;
+the page sends the period its tuning declares.
 
-Load validates the marker, version, length, generation, CRC, image marker
-and period, then every field's bounds: table entries inside the 12-bit
+Load validates the marker, version, length, generation, CRC and image
+marker, then every field's bounds: table entries inside the 12-bit
 DAC range, keys per period `1..32`, lengths `0..32`, numbers and option
 cells inside their ranges, and `pressure_portamento` only with
 `pressure_fix`. Any failure means the record is ignored and the image's
@@ -191,7 +194,7 @@ The identity block, the last thing in every dump:
 |---|---|
 | `0x3f76` | the firmware version, major.minor.patch as 6, 4 and 4 bits: `0x300` is 3.0.0 |
 | `0x3f77` | the image marker's top two bits |
-| `0x3f78` | `octave_units` the image was built for |
+| `0x3f78` | cell 10, the period the octave controls step |
 | `0x3f79` | the slot loaded, `0xff` for none |
 | `0x3f7a` | commit state: `0` clean, `1` requested, `2` written, `3` failed |
 | `0x3f7b`, `0x3f7c`, `0x3f7d` | the loaded record's generation, bits 28..31, 14..27, 0..13 |

@@ -35,7 +35,7 @@ LIVE = 0x6D28                # RAM; the low byte of cells 16..31, as booted
 # shifted by MIRROR - NUMBERS.
 IMAGE_MARKER = 0x10          # the image's init_marker, halfword
 OCTAVE_UNITS = 0x12          # the period the image was built for, halfword
-NUMBERS = 0x20               # 32 halfwords: ten numbers, the options at 16..27
+NUMBERS = 0x20               # 32 halfwords: eleven numbers, the options at 16..27
 PITCH = 0x60                 # 79 halfwords and a pad
 TUNING = 0x100               # three slots of 32 halfwords
 PERIOD_KEYS = 0x1C0          # 3 halfwords and a pad
@@ -71,6 +71,9 @@ NUMBER_LIST = (
     ("transpose_cv_hysteresis", 2, 0, 64),
     ("chord_hold_scans", 300, 20, 2000),
     ("latch_state_hold_scans", 200, 20, 2000),
+    # Cell 10 since 2026-09-23: the period the octave controls step, so a
+    # scale that repeats at something other than the octave travels too.
+    ("octave_units", 484, 1, 2000),
 )
 
 # The option cells, 16..27: one halfword each, an index into the choices,

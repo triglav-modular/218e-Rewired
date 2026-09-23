@@ -469,5 +469,6 @@ The owner's:
   the port list is clicked.
 - **Non-octave tunings at runtime** need `octave_units` moved to RAM, five
   of whose sites are in the factory octave-switch block. Default here:
-  build-time only in stage 1.
+  build-time only in stage 1. Done 2026-09-23 as number cell 10, see
+  [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md) record J.
 - **The user-facing wording** for the page step.

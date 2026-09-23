@@ -20,8 +20,8 @@ public class SettingsRegression extends PersistenceRegression {
     static final int LEN=0x2a8, PAY=0x20, END=0x288, LAYOUT=2;
     static final String[] NUMBERS={"tie_glide_rate","strip_halfway_units","clock_min_ms",
         "clock_rearm_us","clock_lock_pulses","transpose_cv_period","transpose_cv_zero",
-        "transpose_cv_hysteresis","chord_hold_scans","latch_state_hold_scans"};
-    static final int[] DEFAULTS={60,2048,4,250,5,123,0,2,300,200};
+        "transpose_cv_hysteresis","chord_hold_scans","latch_state_hold_scans","octave_units"};
+    static final int[] DEFAULTS={60,2048,4,250,5,123,0,2,300,200,484};
     // The option cells, 16..26, and the top of each one's range.
     static final String[] OPTIONS={"latching_arp","knob1","knob2","knob3","knob4","sequencer",
         "clock_divide","pressure_fix","pressure_portamento","quantize_presets","portamento_in","alternate_tunings"};
@@ -47,6 +47,8 @@ public class SettingsRegression extends PersistenceRegression {
     static final long IP=0x8001eec0L, PB=0x8001eef0L, GR=0x8001ef10L, OBC=0x8001ef40L;
     // option_boot, and option_boot_state between it and the blend tail: the state an option owns, cleared with it off.
     static final long OB=0x8001fdf0L, OBS=0x8001ff30L;
+    // octave_period: the five factory octave sites call its pool words and read number cell 10.
+    static final long OP=0x8001ff74L, OPPOOL=OP+0x30;
     static final long CURVE=0x80019580L, I2F=0x80013350L, KNOB1=0x800194c0L, FKNOB1=0x80004188L, KNOB4=0x80014380L, FKNOB4=0x80004070L;
     static final long COND=0x8001ad78L, REMAPCAVE=0x80019980L, INTERP=0x8001a600L, INTERPOUT=0x8001a688L, GLIDETABLE=0x80015150L;
     // Phase G: the ISR dispatch, the event-10 dispatch, the pulse dispatch, and what they choose.
@@ -179,8 +181,13 @@ public class SettingsRegression extends PersistenceRegression {
         check("an option past its range is ignored",r(MIRROR+2*17,2)==(was17==2?1:2));
         nrpn(18,4); check("knob 2 reaches factory, its top value",r(MIRROR+2*18,2)==4);
         nrpn(18,5); check("and not past it",r(MIRROR+2*18,2)==4);
-        nrpn(10,1); nrpn(28,1);
-        check("a reserved cell refuses everything but zero",r(MIRROR+2*10,2)==0&&r(MIRROR+2*28,2)==0);
+        nrpn(11,1); nrpn(28,1);
+        check("a reserved cell refuses everything but zero",r(MIRROR+2*11,2)==0&&r(MIRROR+2*28,2)==0);
+        long period=r(MIRROR+20,2); nrpn(10,767);
+        check("the period cell, 10, takes a value",r(MIRROR+20,2)==767);
+        nrpn(10,2001); nrpn(10,0);
+        check("and not one past its bounds",r(MIRROR+20,2)==767);
+        nrpn(10,(int)period);
         int was27=(int)r(MIRROR+2*27,2); nrpn(27,was27==1?0:1);
         check("the tunings' switch, cell 27, takes the other value",r(MIRROR+2*27,2)==(was27==1?0:1));
         nrpn(27,2); check("and not past it",r(MIRROR+2*27,2)==(was27==1?0:1));
@@ -588,6 +595,28 @@ public class SettingsRegression extends PersistenceRegression {
         fresh(); keepSlots=true;
         check("option_boot chains through option_boot_state to the blend tail",
             r(OB+0x58,4)==OBS&&r(OBS+0x40,4)==OBC);
+        // The period as a setting: the five factory octave sites are calls
+        // onto octave_period's pool words, which name its four entries.
+        long[][] sites={{0x80003776L,0},{0x80003788L,4},{0x80003792L,8},{0x800035e4L,4},{0x800035faL,12}};
+        boolean hooked=r(OPPOOL,4)==OP&&r(OPPOOL+4,4)==OP+0x10&&r(OPPOOL+8,4)==OP+0x18&&r(OPPOOL+12,4)==OP+0x24;
+        for(long[] s:sites) {
+            long disp=((OPPOOL+s[1])-(s[0]&~3L))>>2;
+            hooked&=r(s[0],4)==(0xf01f0000L|(disp&0xffffL));
+        }
+        check("the five factory octave sites call octave_period's words, and the words name its entries",hooked);
+        for(int p:new int[]{767,484}) {
+            w(0x6814,2,p);
+            e.writeRegister("R8",1000); long q=resolve(OP);
+            check("octave down answers -"+p,q==0x100&&(int)reg("R8")==-p);
+            q=resolve(OP+0x10);
+            check("octave up answers "+p,q==0x100&&reg("R8")==p);
+            q=resolve(OP+0x18);
+            check("two octaves answer "+2*p,q==0x100&&reg("R8")==2*p);
+            e.writeRegister("R8",3000); e.writeRegister("R9",7); q=resolve(OP+0x24);
+            check("the bias takes two periods off R8",q==0x100&&reg("R8")==3000-2*p);
+            e.writeRegister("R9",7); q=resolve(OP+0x10);
+            check("the multiplier's entry leaves R9, the octave index",q==0x100&&reg("R9")==7);
+        }
         byte[] off=edited(); setHalf(off,0x20+2*20,2); setHalf(off,0x20+2*26,0); setHalf(off,0x20+2*24,0); stamp(off); plant(SLOT0,off);
         cold(); w(0x6024,2,0x1111); w(0x6026,2,0x2222); w(0x6028,2,0x3333); w(0x60fa,2,0xa035); w(0x60f4,2,0x0c82); boot();
         check("knob 4 factory, jack on portamento, blend off at boot: the vibrato's phase, depth and offset, the transposer's word and the re-base history are cleared"
@@ -715,7 +744,7 @@ public class SettingsRegression extends PersistenceRegression {
         for(int i=0;i<16;i++) if(r(LIVE+i,1)!=(r(MIRROR+2*(16+i),2)&0xff)) live=false;
         check("the live option bytes are cells 16..31 as booted",live);
         check("the blend latch starts at zero",r(BLEND,1)==0);
-        check("the reserved cells are zero",r(MIRROR+2*10,4)==0&&r(MIRROR+2*27,2)==0&&r(MIRROR+2*30,4)==0);
+        check("the reserved cells are zero, and cell 10 is the period",r(MIRROR+2*11,4)==0&&r(MIRROR+2*10,2)==num("octave_units",484)&&r(MIRROR+2*28,4)==0&&r(MIRROR+2*30,4)==0);
         check("nothing loaded: state clean, no slot, generation zero",
             r(STATE,1)==0&&r(STATE+1,1)==0xff&&r(STATE+4,4)==0);
         check("the pitch curve is the emitted one",
@@ -768,10 +797,10 @@ public class SettingsRegression extends PersistenceRegression {
         // the CRC restamped so only that check can be the reason.
         // Keys per period: 33 is past the rotation's table, 128 past a .kbm.
         long keys=props.getProperty("block.preset_entry","0").trim().equals("1")?33:128;
-        long[][] bad={{0,1,0xff},{4,2,1},{4,2,3},{6,2,0x299},{8,4,0},{0x10,2,0x1234},{0x12,2,485},
+        long[][] bad={{0,1,0xff},{4,2,1},{4,2,3},{6,2,0x299},{8,4,0},{0x10,2,0x1234},
             {0x20,2,0},{0x20,2,1025},{0x24,2,5},{0x2e,2,65},{0x60,2,0x1000},{0xfe,2,0x1000},
             {0x100,2,0x1000},{0x1c0,2,0},{0x1c4,2,keys},{0x248,2,33},
-            {0x34,2,1},{0x56,2,2},{0x58,2,1},{0x42,2,3},{0x44,2,5},{0x48,2,3}};   // cell 27 is the tunings' switch now: 2 is out of range, 28 is reserved
+            {0x34,2,0},{0x34,2,2001},{0x36,2,1},{0x56,2,2},{0x58,2,1},{0x42,2,3},{0x44,2,5},{0x48,2,3}};   // cell 10 is the period, bounded 1..2000; 11 is reserved; cell 27 is the tunings' switch: 2 is out of range, 28 is reserved
         for(long[] b:bad) {
             byte[] rec=good.clone();
             for(int i=0;i<b[1];i++) rec[(int)b[0]+i]=(byte)(b[2]>>>(8*(b[1]-1-i)));

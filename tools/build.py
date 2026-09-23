@@ -1185,10 +1185,10 @@ MARKER_EXCLUDES = frozenset({
     "latching_arp", "sequencer", "quantize_presets", "portamento_in",
     "pressure_fix", "pressure_portamento", "clock_divide", "alternate_tunings",
     # And the record's own data, since 2026-09-23 (the owner's criterion:
-    # every setting over MIDI): the record bounds-checks all of it, and
-    # octave_units, which the octave arithmetic is patched for, is checked
-    # on its own at load.
-    "pitch_remap", "tuning_slot0", "tuning_slot1", "tuning_slot2", "tuning_period_keys",
+    # every setting over MIDI): the record bounds-checks all of it, the
+    # period included, which is number cell 10 and read by every octave
+    # site since the same evening.
+    "octave_units", "pitch_remap", "tuning_slot0", "tuning_slot1", "tuning_slot2", "tuning_period_keys",
     "tie_glide_rate", "strip_halfway_units", "clock_min_ms", "clock_rearm_us",
     "clock_lock_pulses", "transpose_cv_period", "transpose_cv_zero",
     "transpose_cv_hysteresis", "chord_hold_scans", "latch_state_hold_scans",
@@ -2095,13 +2095,8 @@ def main() -> None:
     check_ram_regions()
     check_ram_coverage()
     blocks, features, summary = resolve_flags(cfg)
-    # The factory's own octave arithmetic only needs rewriting when an octave
-    # has stopped being a 2/1; at 484 these patches would write back the bytes
-    # that are already there.
-    for name in ("octave_step_down", "octave_step_up", "octave_step_up2",
-                 "octave_scale_mul", "octave_scale_bias"):
-        blocks[name] = (cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
-                        != cfg["tuning"]["units_per_octave"])
+    # The factory's own octave arithmetic reads the period out of number cell
+    # 10 in every image (2026-09-23): its five sites are hooks, not blocks.
     claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe",
                           "clock_latency")
               if features.get(n)]

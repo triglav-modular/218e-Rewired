@@ -60,7 +60,8 @@ check('an option cell reads its index: knob2 swing, knob4 trn, sequencer off, ja
 check('an option left out is the page\'s default: latch on, knob 1 order, the fix and its portamento on',
       B.nrpnValueOf(record, 16) === 1 && B.nrpnValueOf(record, 17) === 0 && B.nrpnValueOf(record, 23) === 1
       && B.nrpnValueOf(record, 24) === 1 && B.nrpnValueOf(record, 25) === 1);
-check('the reserved cells are zero', B.nrpnValueOf(record, 10) === 0 && B.nrpnValueOf(record, 15) === 0
+check('cell 10 is the period', B.nrpnValueOf(record, 10) === 484);
+check('the reserved cells are zero', B.nrpnValueOf(record, 11) === 0 && B.nrpnValueOf(record, 15) === 0
       && B.nrpnValueOf(record, 28) === 0 && B.nrpnValueOf(record, 31) === 0);
 check('the cells are where the firmware has them', B.SETTINGS_OPTION_CELL === 16 && B.SETTINGS_CELLS.length === 32
       && B.SETTINGS_CELLS[16][0] === 'latching_arp' && B.SETTINGS_CELLS[26][0] === 'portamento_in'

@@ -165,13 +165,9 @@ var WEBBUILD = (function () {
             blocks.knob3_pressure_floor = false;
             blocks.knob3_pool = false;
         }
-        // Same rule as tools/build.py: the factory's octave arithmetic is only
-        // rewritten when an octave has stopped being a 2/1.
-        var octave = BUILDLIB.computeNumbers(cfg).octave_units;
-        ['octave_step_down', 'octave_step_up', 'octave_step_up2',
-         'octave_scale_mul', 'octave_scale_bias'].forEach(function (n) {
-            blocks[n] = octave !== cfg.tuning.units_per_octave;
-        });
+        // Same rule as tools/build.py: the factory's octave arithmetic reads
+        // the period out of number cell 10 in every image (2026-09-23), so
+        // its five sites are hooks, not blocks.
         // Every knob-2 and knob-1 cave, in every image (stage 2 phase B).
         ['arp_order_zones', 'arp_pattern_gate', 'arp_pattern_tables', 'arp_swing', 'arp_quantized']
             .forEach(function (n) { blocks[n] = true; });

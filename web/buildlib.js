@@ -1228,7 +1228,9 @@ var BUILDLIB = (function () {
         ['transpose_cv_zero', 0, 0, 1023],
         ['transpose_cv_hysteresis', 2, 0, 64],
         ['chord_hold_scans', 300, 20, 2000],
-        ['latch_state_hold_scans', 200, 20, 2000]
+        ['latch_state_hold_scans', 200, 20, 2000],
+        // Cell 10 since 2026-09-23: the period the octave controls step.
+        ['octave_units', 484, 1, 2000]
     ];
     // The option cells, 16..26 (docs/PLAN-SETTINGS-2.md): the page's own
     // option values in the page's order, the cell holding the index; the
@@ -1603,10 +1605,9 @@ var BUILDLIB = (function () {
                             pressure_fix: 1, pressure_portamento: 1, clock_divide: 1,
                             alternate_tunings: 1,
                             // And the record's own data, as tools/build.py: the
-                            // keyboard bounds-checks it and checks octave_units
-                            // on its own, so a record with other tables is right
-                            // for the same code.
-                            pitch_remap: 1, tuning_slot0: 1, tuning_slot1: 1, tuning_slot2: 1,
+                            // keyboard bounds-checks it, the period included, so
+                            // a record with other tables is right for the same code.
+                            octave_units: 1, pitch_remap: 1, tuning_slot0: 1, tuning_slot1: 1, tuning_slot2: 1,
                             tuning_period_keys: 1, tie_glide_rate: 1, strip_halfway_units: 1,
                             clock_min_ms: 1, clock_rearm_us: 1, clock_lock_pulses: 1,
                             transpose_cv_period: 1, transpose_cv_zero: 1,
