@@ -5,6 +5,11 @@
 # and tested with; see tools/options.py for those constants and docs/BUILD.md
 # for what they are.
 #
+# The eleven options below are the image's defaults, not its shape: every
+# one of their code paths is in every image, and the builder page can change
+# them later over MIDI without flashing again (docs/SETTINGS.md).  The
+# tunings, the pitch correction and the volts per octave still take a flash.
+#
 #   python3 tools/build.py
 # ===========================================================================
 

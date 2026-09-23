@@ -1411,9 +1411,11 @@
     // The verdict is one line.  With a build here it says how the keyboard
     // relates to it: the same build, this build with edits, or another
     // build, told apart by the firmware version the keyboard reports -
-    // the same version with different options wants a flash, an older one
-    // a flash to update, a newer one a fresher page.  With no build here
-    // it says whether anything was ever changed over MIDI.
+    // the same version from another build wants a flash (since stage 2
+    // the options are not in the image marker, so "another build" means
+    // other tunings, another pitch table or scaling, or another page), an
+    // older one a flash to update, a newer one a fresher page.  With no
+    // build here it says whether anything was ever changed over MIDI.
     function describeKeyboard(r) {
         var f = r.fields, id = r.identity, ver = id.firmwareVersion, page = GEN.version;
         var build = state.result ? recordBytes(state.result.settings) : null;
@@ -1431,8 +1433,8 @@
         } else if (ver === null) {
             verdict = 'This keyboard runs a different build. Its settings are listed below.';
         } else if (BUILDLIB.compareVersions(ver, page) === 0) {
-            verdict = 'This keyboard runs Rewired ' + ver + ' with different options. ' +
-                      'Flash the firmware from step 3 to change them.';
+            verdict = 'This keyboard runs Rewired ' + ver + ' built with other tunings, pitch table or scaling. ' +
+                      'Flash the firmware from step 3 to bring it to this build; its options can be sent from here after that.';
         } else if (BUILDLIB.compareVersions(ver, page) < 0) {
             verdict = 'This keyboard runs Rewired ' + ver + '; this page builds ' + page + '. ' +
                       'Its settings are loaded here. Flash the firmware from step 3 to update it.';

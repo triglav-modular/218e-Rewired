@@ -951,7 +951,9 @@ def test_call_pools_feature_off(cfg: dict) -> None:
     """The pool and reachability guards, over images with blocks turned off.
 
     test_call_pools reads exactly one file - [firmware].output_hex - while
-    docs/BUILD.md states that a disabled feature is never reachable and
+    docs/BUILD.md states that a disabled feature is never reachable (for
+    what stays build-time; the options are cells since stage 2, and these
+    configurations now differ from the default only in their cells) and
     docs/HANDOFF.md says to trust the guard.  web/test_matrix.js passes all
     1,536 combinations without touching this, because it compares two
     toolchains that were told the same thing.

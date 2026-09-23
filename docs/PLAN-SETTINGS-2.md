@@ -8,7 +8,9 @@ is stage 1 and stays authoritative for everything it lays out: the record,
 the mirror, the boot chain, the wire protocol and the identity block. This
 file adds to it and changes nothing in it except the layout version.
 
-**Status (2026-09-23): phases A to G built; H next.** The owner's calls at
+**Status (2026-09-23): built, all phases.** The reference for what was
+built is [SETTINGS.md](SETTINGS.md); this file keeps the design, the
+reasoning and the verification record per phase. The owner's calls at
 the end were answered the same day: the whole scope, layout 2, and options
 that take effect at once through a restart the page sends. Every address and byte count
 below was read out of the assembler, the golden build's manifest and log,
@@ -654,7 +656,18 @@ rises along it:
   controls 12/12, clock 6/6 with the divider live through the
   dispatchers (the GPIO interrupt's longest path is 85 steps where it was
   79: the dispatch's six instructions).
-- **H. Page, copy (owner's), docs, `SETTINGS.md`.**
+- **H. Page, copy, docs.** Done 2026-09-23: `SETTINGS.md` written as the
+  reference for both stages; `BUILD.md`'s gating paragraph and the README
+  say which options are cells; the page's step 5 says what moves over
+  MIDI and that a changed option restarts the keyboard, and its verdict
+  for a same-version keyboard from another build names the tunings, pitch
+  table or scaling rather than "options". The two new sentences of page
+  copy are proposals for the owner's veto. Found while writing it: the
+  image marker still hashes the pitch table and the tuning tables, so a
+  changed table is refused as another image and travels with a flash;
+  leaving them out of the marker, and building the edit-mode tuning keys
+  in every image, is what "every setting over MIDI" still needs - an open
+  call, listed in HANDOFF.md.
 
 F and G are the ones that can be left build-time if the ISR body or the
 pressure stretches turn out to cost more than they are worth; nothing in A-E

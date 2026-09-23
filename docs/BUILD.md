@@ -461,11 +461,24 @@ Feature gating works at two levels, both driven by `build/build.properties`:
 - **`block.<name>`** — whether a whole patch is emitted. Disabling one leaves
   the factory bytes at that address.
 - **`feature.<name>`** — whether an optional section *inside* a cave is
-  assembled (the per-key proximity correction, the latch toggle test, the vibrato
-  call in the per-scan chain).
+  assembled (the per-key proximity correction, the diagnostics, the
+  remote-enable guards).
 
 Code caves and the hooks that reach them are gated together, so a disabled
 feature is never reachable — it is not dead code that might still run.
+
+Since stage 2 of settings over MIDI (2026-09-23) this applies only to what
+stays build-time: the tunings, the diagnostics, the pressure trims and the
+octave arithmetic. The eleven options in `[options]` - the latching arp,
+the four knob roles, the sequencer, the clock divider, the pressure fix and
+portamento, the preset quantiser and the jack - are **option cells** in the
+settings record: every one of their caves is in every image, the build
+writes the config's choice into the record as the image's default, and a
+live byte copied from the record at boot decides, at the point where each
+option engages, whether the factory's path or ours runs. That is what lets
+them change over MIDI without a flash; the mechanism per option is in
+[SETTINGS.md](SETTINGS.md), the reasoning in
+[PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md).
 
 ## Verifying a build against the hardware image
 

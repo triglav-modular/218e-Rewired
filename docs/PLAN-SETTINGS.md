@@ -6,7 +6,16 @@ octave and pitch offset that live inside it, the three tuning slots, the
 pattern bank, and the build numbers nobody has measured yet. Everything that
 is *code* - which features are in, which role each knob has - stays a build
 option; that is stage 2, laid out in [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md)
-(planned 2026-09-23, not built).
+(planned and built 2026-09-23).
+
+**Built, both stages (2026-09-23).** The reference for what was built is
+[SETTINGS.md](SETTINGS.md); this file and stage 2's keep the design, the
+reasoning and the verification records. One thing in the design below did
+not come out as written: the image marker still hashes the pitch table and
+the tuning tables, so a record made for a changed table is refused by the
+keyboard's image - the tables travel with a flash, and what moves over
+MIDI is the options and the pattern bank. Leaving the tables out of the
+marker, as the option cells are, is an open call.
 
 **Built (2026-09-22):** the whole firmware side and the page's codec. The
 record and both serializers (`tools/settings.py`, `BUILDLIB.settingsRecord`);

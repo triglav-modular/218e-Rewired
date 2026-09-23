@@ -139,9 +139,18 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   patches stood, the interpolator's pass-through, the blend's route word
   and glide value) and phase G (the clock divider: the ISR hook reshaped
   to six bytes so the factory body stays for the off path, event 10's
-  handler and the four pulse pools dispatched) are built (2026-09-23).
-  Phase H (the page's copy, the docs, `SETTINGS.md`) remains, and the
-  page copy in it is the owner's. (Dispatcher event 32 at `0x80004fc2`
+  handler and the four pulse pools dispatched) and phase H (the docs,
+  the page's copy) are built (2026-09-23). The reference is
+  [SETTINGS.md](SETTINGS.md). Open, for the owner's three approval
+  criteria (2026-09-23): an emulator A/B of the new image against the
+  shipped 2.4 image through the factory entry points both share; every
+  setting over MIDI, which still needs the pitch table, the tuning tables
+  and the timing numbers left out of the image marker and the edit-mode
+  tuning keys built in every image (today a changed table is refused as
+  another image and travels with a flash); and a residue test that boots
+  each option off after a session with it on and compares our RAM
+  against a cold boot. Also open: bench validation of both stages, the
+  wide-map refusal (phase E) and the added page copy (phases A and H). (Dispatcher event 32 at `0x80004fc2`
   is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
