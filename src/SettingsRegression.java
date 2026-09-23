@@ -62,7 +62,7 @@ public class SettingsRegression extends PersistenceRegression {
     long wdtFirst=-1, wdtSecond=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
-    boolean keepSlots, stubChain, failWrite;
+    boolean keepSlots, stubChain, failWrite, stubSelector;
     int slotWrites;
     final List<int[]> sent=new ArrayList<>();
 
@@ -86,6 +86,9 @@ public class SettingsRegression extends PersistenceRegression {
     @Override void step() throws Exception {
         long p=pc();
         if(stubChain&&p==CHAIN) { ret(); return; }
+        // The pattern gate's hit calls the real selector through knob 1's
+        // dispatcher; answering 77 there tells a hit from a rest (-1).
+        if(stubSelector&&p==KBK1) { e.writeRegister("R12",77); ret(); return; }
         // The restart's two watchdog writes are read back where they land;
         // the spin that follows would never return, so it is returned from
         // by hand.  The reset itself is the bench's to see.
@@ -250,10 +253,17 @@ public class SettingsRegression extends PersistenceRegression {
             r(STATE,1)==3&&call(SNEWEST)==SLOT1&&r(SLOT1+0x20,2)==62&&r(0x6800,2)==63);
         failWrite=false; nrpn(0x3f00,0x2a2a); call(SETSCAN);
         check("the next request tries again",r(STATE,1)==2&&r(STATE+1,1)==0&&r(STATE+4,4)==3&&r(SLOT0+0x20,2)==63);
-        nrpn(0x3f01,0); w(0x6800,2,0); nrpn(0x3f01,0);
+        nrpn(0x3f01,0); w(0x6800,2,0); w(0x60e4,2,0xa5a0); nrpn(0x3f01,0);
         check("0x3f01 reloads the mirror from flash",r(0x6800,2)==63&&r(STATE,1)==0);
-        nrpn(0x3f02,0);
+        check("and clears the applier's guard, so the next scan re-copies the slot",r(0x60e4,2)==0);
+        w(0x60e4,2,0xa5a0); nrpn(0x3f02,0);
         check("0x3f02 puts the image's own settings back",Arrays.equals(mirror(),payloadOf(record)));
+        check("and clears the applier's guard too",r(0x60e4,2)==0);
+        // What the guard is for: the table in play follows the mirror.
+        for(int i=0;i<32;i++) w(0x854+2*i,2,0xabc);
+        w(0x6090,1,0); call(APPLIER);
+        check("the applier then copies the slot the defaults put back, not the stale table",
+            Arrays.equals(e.readMemory(toAddr(0x854),64),e.readMemory(toAddr(0x68e0),64)));
         // The restart: the watchdog's two-key write, and only with the key.
         restarts=0; wdtFirst=-1; wdtSecond=-1;
         nrpn(0x3f04,0x1111); nrpn(0x3f04,0);
@@ -305,6 +315,31 @@ public class SettingsRegression extends PersistenceRegression {
         check("the firmware version leads the block",got.get(0)[0]==0x3f76&&got.get(0)[1]==num("firmware_version_code",0x300));
         keepSlots=false;
         println("PASS dump: every parameter, paced, in order, then the identity block");
+    }
+    // The pattern gate reaches the bank the mirror holds, up to its first
+    // zero length, whatever count the image was built with: a bank sent over
+    // MIDI is reached whole, and a shorter one leaves no silent positions.
+    long gate(int knob) throws Exception {
+        w(0x60e6,2,knob); w(0x6150,2,0); e.writeRegister("R12",5);
+        return call(GATE)&0xffffffffL;
+    }
+    void mask(int i,long m) { w(0x69a8+4*i,2,m&0xffff); w(0x69aa+4*i,2,(m>>>16)&0xffff); }
+    void patterns() throws Exception {
+        fresh(); stubSelector=true;
+        for(int i=0;i<32;i++) { mask(i,0); w(0x6a28+2*i,2,0); }
+        // Pattern 0 never sounds and pattern 1 always does, four steps each.
+        mask(1,0xffffffffL); w(0x6a28,2,4); w(0x6a2a,2,4);
+        check("knob 2 at the bottom picks pattern 0, a rest",gate(0)==0xffffffffL);
+        check("and at the top pattern 1 of a two-pattern bank, a hit",gate(0x3ff)==77);
+        w(0x6a2a,2,0); mask(2,0xffffffffL); w(0x6a2c,2,4);
+        check("a zero length ends the bank: the top is pattern 0 again",gate(0x3ff)==0xffffffffL);
+        w(0x6a28,2,0);
+        check("an empty bank is one pattern that rests",gate(0x3ff)==0xffffffffL&&gate(0)==0xffffffffL);
+        for(int i=0;i<32;i++) { mask(i,i==31?0xffffffffL:0); w(0x6a28+2*i,2,1); }
+        check("a full bank reaches pattern 31 at the top",gate(0x3ff)==77);
+        check("and pattern 30 just below it",gate(0x3ff-32)==0xffffffffL);
+        stubSelector=false;
+        println("PASS the pattern gate reaches the mirror's bank, however many patterns the image was built with");
     }
     // Where a dispatcher lands: run it from a caller at 0x100 until the PC
     // leaves it, and answer the PC - a cave's address, or 0x100 for a return.
@@ -859,7 +894,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
+            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

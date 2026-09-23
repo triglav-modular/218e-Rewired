@@ -157,6 +157,12 @@ the mirror. The NRPN state sits at `0x6a68`, the loader's state at
 `0x6a70` (commit state, slot loaded, generation), a commit's staging at
 `0x6a80`, and the live option bytes at `0x6d28`.
 
+The pattern gate reads the bank's size out of the mirror too:
+`pattern_count_of` counts pattern 0 and each pattern after it up to the
+first zero length, so knob 2 reaches a bank that came over MIDI whole
+whatever count the image was built with, and a shorter bank leaves no
+silent positions at the top of the knob.
+
 At boot, `settings_boot` copies the image's own tables and numbers into
 the mirror, then the newer valid record over them, then zeroes the NRPN
 and commit state and the tuning applier's guard so the first scan copies
@@ -181,10 +187,10 @@ channel is 16, data entry on it is the settings'.
 | `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | `0..0xfff`; a write clears the applier's guard |
 | `0x0160..0x0162` | keys per period | `1..32` |
 | `0x0180 + 3p + 0..2` | pattern *p*'s mask, bits 0..13, 14..27, 28..31 | each third replaces its own bits |
-| `0x01e0..0x01ff` | pattern lengths | `0..32`, zero unused |
+| `0x01e0..0x01ff` | pattern lengths | `0..32`, zero unused; the bank ends at the first zero after pattern 0, and knob 2 spreads over the patterns before it |
 | `0x3f00` | commit on the next scan | data `0x2a2a` |
-| `0x3f01` | reload the mirror from flash, dropping live edits | |
-| `0x3f02` | the image's own settings back in the mirror; flash untouched until a commit | |
+| `0x3f01` | reload the mirror from flash, dropping live edits; the next scan copies the selected tuning slot again | |
+| `0x3f02` | the image's own settings back in the mirror, the tuning slot copied again likewise; flash untouched until a commit | |
 | `0x3f03` | dump: every parameter, then the identity block | |
 | `0x3f04` | restart through the watchdog | data `0x2a2a` |
 | `0x3f7f` | the identity block alone | |

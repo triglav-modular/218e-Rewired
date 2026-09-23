@@ -390,8 +390,10 @@ public class AssemblePressureFix extends GhidraScript {
         long ccPool = vfEnd, ccEnd = ccPool + 0x4;
         long bdTable = 0x8001fa80L, bdEnd = bdTable + 0x80;
         long nmTable = bdEnd, nmEnd = nmTable + 0x40;
-        long lvEntry = nmEnd, lvLoop = lvEntry + 0xa, lvEnd = lvEntry + 0x20;
-        long rsEntry = lvEnd, rsSpin = rsEntry + 0xa, rsPool = rsEntry + 0x10, rsEnd = rsEntry + 0x20;
+        // pattern_count_of, in the hole settings_live left: how many patterns
+        // the mirror's bank holds, which the pattern gate spreads knob 2 over.
+        long pcEntry = nmEnd, pcLoop = pcEntry + 0x8, pcDone = pcEntry + 0x18, pcEnd = pcEntry + 0x20;
+        long rsEntry = pcEnd, rsSpin = rsEntry + 0xa, rsPool = rsEntry + 0x10, rsEnd = rsEntry + 0x20;
         // option_boot took settings_live's job on 2026-09-23 (phase C): the
         // live copy, the blend latch, and the latch's own RAM cleared when
         // the latch is off - SRAM survives the restart that applies an
@@ -4362,12 +4364,15 @@ public class AssemblePressureFix extends GhidraScript {
         // through it.
         //
         // Knob 2 picks the pattern; RAM 0x6150 is the step, wrapped at that
-        // pattern's own length.
+        // pattern's own length.  The bank is the mirror's, so knob 2 spreads
+        // over as many patterns as it holds - up to its first zero length -
+        // and not the count the image was built with: a bank that came over
+        // MIDI is reached whole, and a shorter one leaves no silent positions.
         begin(0x8001b050L);
         emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");             // hold the caller's argument
-        emit("LDDPC R1,0x8001b0f0");    // state base
+        emit("MCALL PC[0x8001b0f0]");   // pattern_count_of: R9, R8 kept
         // Which pattern: knob 2's latch across the bank.
         emit("MOV R8,0x60e6");
         emit("LD.SH R8,R8[0x0]");
@@ -4375,7 +4380,6 @@ public class AssemblePressureFix extends GhidraScript {
         emit("BR{ge} 0x8001b06c");
         emit("MOV R8,0x0");
         padTo(0x8001b06cL);
-        emit(String.format("MOV R9,0x%x", number("pattern_count", 1, 1, 32)));
         emit("MUL R8,R8,R9");
         emit("LSR R8,0xa");
         emit("CP.W R8,R9");
@@ -4428,7 +4432,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R12,0x1");            // a rest
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001b0f0L);
-        word(0x00003560L); // global state base
+        word(pcEntry);     // pattern_count_of
         word(0x000069a8L); // pattern bank, in the settings mirror
         word(0x00006a28L); // pattern lengths, in the settings mirror
         word(kbK1);        // knob1_dispatch: the blend, the zones, or the factory selector
@@ -10635,6 +10639,24 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001f010L); // settings_valid
         finish("settings_newest", 0x8001f1c0L);
 
+        // How many patterns the mirror's bank holds: pattern 0 always, then
+        // each one after it up to the first zero length, 32 at most.  A leaf
+        // for the pattern gate: answers R9, spends R10 and R11, keeps R8.
+        begin(pcEntry);
+        emit("MOV R10,0x6a2a");         // pattern 1's length
+        emit("MOV R9,0x1");
+        padTo(pcLoop);
+        emit("LD.UH R11,R10[0x0]");
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{eq} 0x%x", pcDone));
+        emit("SUB R10,-0x2");
+        emit("SUB R9,-0x1");
+        emit("CP.W R9,0x20");
+        emit(String.format("BR{lt} 0x%x", pcLoop));
+        padTo(pcDone);
+        emit("MOV PC,LR");
+        finish("pattern_count_of", pcEnd);
+
         // Boot.  The factory's startup pool word names this, and this
         // continues into whatever that word used to name, so it runs before
         // persist_boot restores the tuning slot and before the first scan
@@ -10682,6 +10704,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R10,-0x4");
         emit("SUB R9,0x1");
         emit("BR{ge} 0x8001f210");
+        // The tuning applier's guard, so the next scan copies the selected
+        // slot out of the tables put back here: NRPN 0x3f02 changes them
+        // under a slot that has not changed, which the guard alone would
+        // skip, leaving the previous table in play at RAM 0x854.
+        emit("MOV R9,0x60e4");
+        emit("ST.H R9[0x0],R8");
         // The 32 cells - the ten numbers and the twelve options the config
         // chose - as one copy out of settings_numbers.
         emit("MOV R12,0x6800");
@@ -10727,7 +10755,9 @@ public class AssemblePressureFix extends GhidraScript {
 
         // The newer valid record over the mirror, if there is one, and the
         // loader's state either way: commit state clean, the slot loaded
-        // (0xff for none) and its generation.  Boot, and NRPN 0x3f01.
+        // (0xff for none) and its generation, and the tuning applier's guard
+        // clear so the tables loaded here reach RAM 0x854 on the next scan.
+        // Boot, and NRPN 0x3f01.
         begin(0x8001f300L);
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
@@ -10737,6 +10767,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.W R0[0x4],R10");
         emit("MOV R8,0x0");
         emit("ST.B R0[0x0],R8");
+        emit("MOV R9,0x60e4");
+        emit("ST.H R9[0x0],R8");        // the applier re-copies the slot, as for 0x3f02
         emit("CP.W R12,0x0");
         emit("BR{eq} 0x8001f330");
         emit("MOV R11,R12");
