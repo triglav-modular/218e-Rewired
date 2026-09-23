@@ -493,14 +493,14 @@
 
       <section>
         <h2>5 · Change the settings over MIDI</h2>
-        <p class="d muted section-note">Change any setting later without flashing again: Send settings sends what the page has now, and Read settings brings back what the keyboard holds. Sending settings restarts the keyboard.</p>
+        <p class="d muted section-note">Change any setting later without flashing again: Read settings brings back what the keyboard holds, and Send settings sends what the page has now. Sending settings restarts the keyboard.</p>
         <div class="row">
           <label class="row">Keyboard
             <select id="kbdPort"><option value="">Looking&hellip;</option></select></label>
           <button class="primary" id="kbdRead" type="button" disabled>Read settings</button>
           <button id="kbdSend" type="button" disabled>Send settings</button>
         </div>
-        <p id="kbdVer" class="muted kbdver hidden" role="status"></p>
+        <p id="kbdVer" class="muted kbdver" role="status">Firmware: not read yet</p>
         <div id="kbdMsg" role="status"></div>
       </section>
 

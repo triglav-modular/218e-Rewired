@@ -1357,12 +1357,13 @@
     // the buttons rather than only inside a read's report.  Filled from
     // every identity the page already gets - a read, a send, a refusal that
     // carries one - and never by asking on its own: nothing goes out to a
-    // port until a button is pressed.  Cleared when the port changes or the
-    // keyboard stops answering, since the next reply may be another device.
+    // port until a button is pressed.  Back to the placeholder when the port
+    // changes or the keyboard stops answering, since the next reply may be
+    // another device.  Every firmware that answers over MIDI reports its
+    // version, so the placeholder only ever means no answer yet.
     function showFirmware(id) {
         var ver = id && id.firmwareVersion;
-        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + ver : '';
-        $('kbdVer').classList.toggle('hidden', !ver);
+        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + ver : 'Firmware: not read yet';
     }
     function firmwareFrom(err) {
         if (err && err.identity) showFirmware(err.identity);
