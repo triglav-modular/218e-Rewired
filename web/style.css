@@ -2688,12 +2688,17 @@ section,
     background: color-mix(in srgb, var(--ink) 3%, transparent);
 }
 .autorow { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
-/* A device and the channel within it are one choice, so they wrap together
-   or not at all.  Four loose fields broke three-and-one, which put a
-   channel picker on a line of its own with nothing to say which device it
-   belonged to. */
-.autopair { display: flex; gap: 1rem; flex: 1 1 22rem; min-width: 0; }
-.autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 13rem; flex: 1 1 13rem; }
+/* A device and the channel within it are one choice, so the pairs wrap as
+   units.  Four loose fields broke three-and-one, which put a channel picker
+   on a line of its own with nothing to say which device it belonged to.
+   Inside a pair the channel drops directly under its own device when the
+   two cannot share a line: held on one line, they needed 360px and a phone
+   has about 250, so both pickers ran off the page.  The row gap inside a
+   pair is smaller than the 1rem between pairs, so a stacked pair still
+   reads as one.  min-width 0 lets the device shrink below its basis on the
+   narrowest screens; the basis alone still decides when things wrap. */
+.autopair { display: flex; flex-wrap: wrap; gap: .6rem 1rem; flex: 1 1 22rem; min-width: 0; }
+.autofield { display: flex; flex-direction: column; gap: .3rem; min-width: 0; flex: 1 1 13rem; }
 /* Wide enough for the longest of these labels rather than for the value:
    the values are one or two digits, the labels are not. */
 .autofield.autochan { min-width: 8.5rem; flex: 0 0 8.5rem; }
