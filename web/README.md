@@ -54,7 +54,7 @@ array and reads `app.js` to catch an applier that was never added to it.
 | File | Role |
 |---|---|
 | `index.html`, `app.js` | the interface |
-| `build.js` | the whole build: options + factory image → flashable image |
+| `build.js` | the whole build: options + factory image → flashable image; `test_readback.js` builds, reads the record back into table slots as the page's read does, and builds again (local only: it needs the factory image) |
 | `calibrate.js` | the automatic measurement: drives the keyboard over MIDI, measures the 208 on an audio input, fills in the calibration offsets |
 | `settings.js` | the settings transport: pushes a build's record to the keyboard as NRPN, reads it back, commits it; `test_settingsmidi.js` runs it against a fake instrument, `test_nrpn.js` the codec in `buildlib.js` |
 | `buildlib.js` | ported from `tools/build.py` — tables, hex, flags, properties, and the fold that accumulates readings onto a flashed table |

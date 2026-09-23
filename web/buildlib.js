@@ -311,6 +311,24 @@ var BUILDLIB = (function () {
         return { cents: cents, degrees: map.degrees, formal: map.formal };
     }
 
+    // A slot read back from a keyboard: its 32-entry table as the keyboard
+    // holds it, its keys per period and the period in DAC units, with no
+    // scale behind it - a table does not turn back into one.  The page
+    // builds it as it came, so reading a keyboard and building again keeps
+    // its tunings; every other slot is a Scala file or 'factory'.
+    function isTableSlot(slot) {
+        return !!slot && slot !== 'factory' && Array.isArray(slot.table);
+    }
+
+    // A slot read back from a keyboard: its 32-entry table as the keyboard
+    // holds it, its keys per period and the period in DAC units, with no
+    // scale behind it - a table does not turn back into one.  The page
+    // builds it as it came, so reading a keyboard and building again keeps
+    // its tunings; every other slot is a Scala file or 'factory'.
+    function isTableSlot(slot) {
+        return !!slot && slot !== 'factory' && Array.isArray(slot.table);
+    }
+
     // The interval one step of the octave controls covers, in cents.  The
     // 1200 fallback is tools/build.py's probe, not a default: it stands in
     // for a scale too short to declare a period, which the twelve-degree
@@ -1052,6 +1070,8 @@ var BUILDLIB = (function () {
         var per = cfg.tuning.units_per_octave, seen = {};
         (cfg._tunings || []).forEach(function (slot) {
             if (slot === 'factory') { seen[per] = true; return; }
+            // A keyboard's table already is in units: the period it was read with.
+            if (isTableSlot(slot)) { seen[slot.octaveUnits] = true; return; }
             seen[floorHalf(slotPeriod(slot) * per / 1200)] = true;
         });
         var keys = Object.keys(seen);
@@ -1533,6 +1553,28 @@ var BUILDLIB = (function () {
         };
     }
 
+    // The parameters a reply was due to carry and did not, in the order the
+    // instrument sends them.  A dump is every parameter of the record, the
+    // sixteen live bytes and the identity block; with `identityOnly`, the
+    // block alone, which is what an identity request answers.  A reply that
+    // lost part of itself on the wire still ends with the layout version, so
+    // it looks finished, and decoding it would read the lost values as zeros
+    // - a pitch table of zeros, every option at its first choice, and live
+    // bytes that cannot be compared, which is how a send used to skip a
+    // restart it needed.  So a reply with anything missing is refused whole.
+    function nrpnMissing(pairs, identityOnly) {
+        var got = {}, want = [];
+        pairs.forEach(function (p) { got[p[0]] = true; });
+        if (!identityOnly) {
+            NRPN_SECTIONS.forEach(function (s) {
+                for (var i = 0; i < s.count; i++) want.push(s.base + i);
+            });
+            for (var v = 0; v < NRPN_LIVE.count; v++) want.push(NRPN_LIVE.base + v);
+        }
+        Object.keys(NRPN_IDENTITY).forEach(function (k) { want.push(NRPN_IDENTITY[k]); });
+        return want.filter(function (q) { return !got[q]; });
+    }
+
     // The live option bytes out of a dump's pairs, all sixteen or null.
     function nrpnLiveOf(pairs) {
         var got = {};
@@ -1754,7 +1796,7 @@ var BUILDLIB = (function () {
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
         baseUnits: baseUnits, patternBank: patternBank,
-        slotScale: slotScale, slotPeriod: slotPeriod,
+        slotScale: slotScale, slotPeriod: slotPeriod, isTableSlot: isTableSlot, isTableSlot: isTableSlot,
         idealKeyPitches: idealKeyPitches,
         minKeySpacing: minKeySpacing, checkLatchSpacing: checkLatchSpacing,
         checkTableRange: checkTableRange,
@@ -1766,6 +1808,7 @@ var BUILDLIB = (function () {
         nrpnValueOf: nrpnValueOf, nrpnApply: nrpnApply, nrpnParamsOf: nrpnParamsOf,
         nrpnMessages: nrpnMessages, nrpnDecoder: nrpnDecoder, nrpnIdentity: nrpnIdentity,
         nrpnRecordOf: nrpnRecordOf, nrpnLiveOf: nrpnLiveOf, pendingOptions: pendingOptions,
+        nrpnMissing: nrpnMissing,
         NRPN_LIVE: NRPN_LIVE, SETTINGS_OPTIONS: SETTINGS_OPTIONS, SETTINGS_CELLS: SETTINGS_CELLS,
         SETTINGS_OPTION_CELL: SETTINGS_OPTION_CELL, optionCells: optionCells, optionsOf: optionsOf, settingsFields: settingsFields,
         versionCode: versionCode, versionText: versionText, compareVersions: compareVersions,

@@ -11,6 +11,10 @@
 // pause between them, and a push is never trusted until a dump has read it
 // back equal: that is the check that catches a dropped packet.
 //
+// A reply is only believed whole: every parameter a dump or an identity
+// block is due to carry has to arrive (BUILDLIB.nrpnMissing), or the reply
+// is refused rather than decoded with zeros where the lost values were.
+//
 // A record's option cells (docs/PLAN-SETTINGS-2.md) take effect at the
 // next power-up, from the live option bytes the boot copies them to.  So
 // `install` ends by asking for a restart when a committed cell differs
@@ -86,20 +90,26 @@ var SETTINGSMIDI = (function () {
         return pairs.length > 0 && pairs[pairs.length - 1][0] === B.NRPN_IDENTITY.layoutVersion;
     }
 
-    // Who is listening: the identity block, or Error('no reply').
+    // Who is listening: the identity block, or Error('no reply').  The
+    // block carries `missing`, the parameters of it that did not arrive.
     function identity(output, input, timeoutMs, timers) {
         var waiting = collect(input, hasVersion, timeoutMs || 2000, timers);
         sendParam(output, B.NRPN_COMMANDS.identity, 0);
-        return waiting.then(B.nrpnIdentity);
+        return waiting.then(function (pairs) {
+            var id = B.nrpnIdentity(pairs);
+            id.missing = B.nrpnMissing(pairs, true);
+            return id;
+        });
     }
 
     // Everything the instrument holds: the pairs of a full dump, with the
-    // identity block decoded beside them.
+    // identity block decoded beside them and `missing`, the parameters of
+    // the dump that did not arrive.
     function dump(output, input, timeoutMs, timers) {
         var waiting = collect(input, hasVersion, timeoutMs || 5000, timers);
         sendParam(output, B.NRPN_COMMANDS.dump, 0);
         return waiting.then(function (pairs) {
-            return { pairs: pairs, identity: B.nrpnIdentity(pairs) };
+            return { pairs: pairs, identity: B.nrpnIdentity(pairs), missing: B.nrpnMissing(pairs) };
         });
     }
 
@@ -138,13 +148,15 @@ var SETTINGSMIDI = (function () {
     // beside them, the live option bytes, and `pending` - the options whose
     // cell the keyboard holds but does not run yet, which a restart would
     // apply.  Rejects with `reason` 'no reply' or 'wrong layout' - a map
-    // this page does not know is not read into it.
+    // this page does not know is not read into it - or 'incomplete' (with
+    // `missing`) when the dump lost parameters on the way.
     function read(output, input, opts) {
         opts = opts || {};
         return dump(output, input, opts.timeout, opts.timers).catch(function () {
             return fail('no reply');
         }).then(function (d) {
             if (d.identity.layoutVersion !== LAYOUT) return fail('wrong layout', { identity: d.identity });
+            if (d.missing.length) return fail('incomplete', { identity: d.identity, missing: d.missing });
             var record = B.nrpnRecordOf(d.pairs), live = B.nrpnLiveOf(d.pairs);
             return { identity: d.identity, pairs: d.pairs, record: record, fields: B.settingsFields(record),
                      live: live, pending: B.pendingOptions(record, live) };
@@ -184,8 +196,10 @@ var SETTINGSMIDI = (function () {
     // `restarted` and `pending` (the options the restart applies; the
     // caller waits with awaitLive).  Rejects with an Error whose `reason`
     // is one of 'no reply', 'wrong layout', 'wrong image', 'mismatch'
-    // (with `differences`), or 'not written' (with `state`), so the page
-    // can say which - they have different fixes.
+    // (with `differences` and `missing`: a value read back otherwise, or a
+    // reply - the verifying dump or an identity block - that lost
+    // parameters, which a retry answers either way), or 'not written' (with
+    // `state`), so the page can say which - they have different fixes.
     function install(output, input, record, opts) {
         opts = opts || {};
         var live = null;
@@ -193,6 +207,7 @@ var SETTINGSMIDI = (function () {
             return fail('no reply');
         }).then(function (id) {
             if (id.layoutVersion !== LAYOUT) return fail('wrong layout', { identity: id });
+            if (id.missing.length) return fail('mismatch', { identity: id, differences: [], missing: id.missing });
             if (id.imageMarker !== markerOf(record)) return fail('wrong image', { identity: id });
             if (opts.onStage) opts.onStage('push');
             return push(output, record, opts);
@@ -202,8 +217,11 @@ var SETTINGSMIDI = (function () {
                 return fail('no reply');
             });
         }).then(function (d) {
+            // Every value read back equal, and the dump whole: without all
+            // sixteen live bytes there is no telling whether a restart is
+            // owed, so a dump short of one is not good enough to commit on.
             var diff = differences(record, d.pairs);
-            if (diff.length) return fail('mismatch', { differences: diff });
+            if (diff.length || d.missing.length) return fail('mismatch', { differences: diff, missing: d.missing });
             live = B.nrpnLiveOf(d.pairs);
             if (opts.onStage) opts.onStage('commit');
             commit(output);
@@ -215,6 +233,7 @@ var SETTINGSMIDI = (function () {
                 return fail('no reply');
             });
         }).then(function (id) {
+            if (id.missing.length) return fail('mismatch', { identity: id, differences: [], missing: id.missing });
             if (id.commitState !== 2) return fail('not written', { identity: id, state: id.commitState });
             id.pending = B.pendingOptions(record, live);
             id.restarted = id.pending.length > 0;

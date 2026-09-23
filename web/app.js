@@ -525,9 +525,9 @@
             // belongs to one scale and nothing about the file says which.
             var m = document.createElement('button');
             m.textContent = '.kbm';
-            m.disabled = !entry;
+            m.disabled = !entry || !entry.text;
             m.className = 'kbmbtn' + (entry && entry.kbmText ? ' mapped' : '');
-            m.title = !entry ? 'no scale in this slot'
+            m.title = !entry || !entry.text ? 'no scale in this slot'
                 : entry.kbmText ? 'replace ' + entry.kbmName + ' — the keyboard mapping'
                 : 'add a keyboard mapping (.kbm) for ' + entry.name;
             m.addEventListener('click', function () {
@@ -1340,6 +1340,7 @@
         'wrong layout': 'This keyboard runs a different build: flash the firmware from step 3 first.',
         'wrong image': 'This keyboard runs a different build: flash the firmware from step 3 first.',
         'mismatch': 'The keyboard did not read everything back the same: try again.',
+        'incomplete': 'The keyboard\u2019s reply was incomplete: try again.',
         'not written': 'The keyboard could not save: try again, and if it keeps failing, flash the firmware again.',
         'not applied': 'The keyboard restarted but still runs its old options: read its settings, and if they are not what you sent, flash the firmware again.',
         'gone': 'The keyboard did not come back after restarting: power-cycle it, then read its settings to check.'
@@ -1422,11 +1423,14 @@
     // the page: the patterns into the pattern list, and the pitch table into
     // the calibration as the table already on the instrument, with the
     // scaling and the offset it was built with - both read off the table
-    // itself, since the record does not say.  The timing numbers have no
-    // controls on this page and a tuning table does not turn back into a
-    // scale, so those are shown and not loaded.  Loading invalidates the
-    // build the way any option change does: the next image is made from
-    // what was read.
+    // itself, since the record does not say.  The tunings come in as the
+    // keyboard holds them: a table does not turn back into a scale, so each
+    // slot is its table, its keys per period and the period, built as it
+    // came until a scale replaces it - otherwise a read and a rebuild sent
+    // the page's own slots and switched the keyboard's tunings off.  The
+    // timing numbers have no controls on this page, so those are shown and
+    // not loaded.  Loading invalidates the build the way any option change
+    // does: the next image is made from what was read.
     // The verdict is one line.  With a build here it says how the keyboard
     // relates to it: the same build, this build with edits, or another
     // build, told apart by the firmware version the keyboard reports -
@@ -1485,6 +1489,25 @@
             'Tunings: three tables of 32 entries, ' + f.tuning_period_keys.join(' · ') +
                 ' keys per period.';
     }
+    // A slot of the keyboard's, for the page: null where it holds the
+    // factory temperament - its table the factory image's own, twelve keys
+    // to the period - which the build makes again from the factory image,
+    // or its table as it came.  Without the factory image here there is
+    // nothing to compare against, and every slot comes in as a table.
+    function keyboardSlots(f) {
+        var factory = null;
+        if (state.factoryText) {
+            try {
+                factory = BUILDLIB.factoryTuning(BUILDLIB.parseHexText(state.factoryText, 'factory image').memory);
+            } catch (e) { factory = null; }
+        }
+        return [0, 1, 2].map(function (s) {
+            var table = f['tuning_slot' + s], keys = f.tuning_period_keys[s];
+            if (factory && keys === 12 && table.every(function (v, k) { return v === factory[k]; })) return null;
+            return { name: 'the keyboard\u2019s tuning', table: table.slice(), periodKeys: keys,
+                     octaveUnits: f.numbers.octave_units };
+        });
+    }
     function loadFromKeyboard(r) {
         var f = r.fields;
         var rows = [];
@@ -1508,6 +1531,13 @@
         BUILDLIB.SETTINGS_ORDER.forEach(function (k) {
             if (APPLY[k] && opts[k] !== undefined) APPLY[k](opts[k]);
         });
+        // The tunings' switch, cell 27, is the page's checkbox; with it on
+        // the three slots come in as the keyboard holds them.  With it off
+        // the keyboard plays the factory temperament whatever its tables
+        // say, and the page's own slots are left for the next time.
+        var tunings = f.options.alternate_tunings === true;
+        if (tunings) { state.slots = keyboardSlots(f); renderSlots(); }
+        if (f.options.alternate_tunings !== undefined) tick('useTunings', tunings);
         // The scaling and the offset first: switching the offset drops a
         // loaded table by design, so the table goes in after it.
         var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
@@ -1526,9 +1556,10 @@
         interpolated = {};
         $('useCal').checked = true;
         syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
-        return (rows.length ? 'The options, the patterns and the pitch table are' : 'The options and the pitch table are') +
+        var loaded = ['options'].concat(rows.length ? ['patterns'] : [], tunings ? ['tunings'] : []);
+        return 'The ' + loaded.join(', the ') + ' and the pitch table are' +
             ' now loaded here, the table as the calibration already on the keyboard. ' +
-            'Build again to make an image from ' + (rows.length ? 'them.' : 'it.') +
+            'Build again to make an image from ' + (rows.length || tunings ? 'them.' : 'it.') +
             (had ? ' The readings that were entered have been cleared: they were taken ' +
                    'against whatever was flashed at the time, which the keyboard now says. ' +
                    'Measure again.' : '');
@@ -1975,7 +2006,7 @@
                            // shell has its own set - so anything outside a
                            // plain allowlist becomes a space.  Display only;
                            // the file itself is untouched.
-                           return named.replace(/\.scl$/i, '')
+                           return named.replace(/\.scl$/i, '').replace(/\u2019/g, "'")
                                .replace(/[^\w .,+'\/:()\-]/g, ' ')
                                .replace(/\s+/g, ' ').trim();
                        }).join(', '));
@@ -2539,10 +2570,23 @@
         });
         return out;
     }
+    // A keyboard's table (BUILDLIB.isTableSlot) is kept whole or not at all:
+    // 32 entries inside the DAC, keys per period and a period inside the
+    // bounds the keyboard's loader enforces.
+    function goodTableSlot(e) {
+        function whole(n, lo, hi) { return typeof n === 'number' && n % 1 === 0 && n >= lo && n <= hi; }
+        return typeof e.name === 'string' && Array.isArray(e.table) && e.table.length === 32
+            && e.table.every(function (n) { return whole(n, 0, 0xFFF); })
+            && whole(e.periodKeys, 1, 32) && whole(e.octaveUnits, 1, 2000);
+    }
     function goodSlots(v) {
         if (!Array.isArray(v)) return null;
         var out = [];
         v.slice(0, SLOTS.length).forEach(function (e) {
+            if (e && goodTableSlot(e)) {
+                out.push({ name: e.name, table: e.table.slice(), periodKeys: e.periodKeys, octaveUnits: e.octaveUnits });
+                return;
+            }
             if (!e || typeof e.name !== 'string' || typeof e.text !== 'string') {
                 out.push(null);
                 return;

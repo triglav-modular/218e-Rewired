@@ -33,7 +33,7 @@ var WEBBUILD = (function () {
         // the rule inside slot_scale(), which its own probe goes through, so
         // the two refuse the same input the same way whichever slot it is in.
         cfg._tunings.forEach(function (slot) {
-            if (slot === 'factory') return;
+            if (slot === 'factory' || BUILDLIB.isTableSlot(slot)) return;
             var probe = BUILDLIB.slotScale(slot);
             if (!probe.degrees && probe.cents.length - 1 !== 12) {
                 throw new Error(slot.name + ': ' + (probe.cents.length - 1) +
@@ -45,6 +45,13 @@ var WEBBUILD = (function () {
             if (slot === 'factory') {
                 tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
                 tables.tuning_period_keys.push(12);
+            } else if (BUILDLIB.isTableSlot(slot)) {
+                // Read back from a keyboard: its table and its keys per period
+                // as they came, and nothing for the latch-spacing check, which
+                // needs the scale's ideal pitches and a table has none.  The
+                // keyboard's loader bounded every entry when it took them.
+                tables['tuning_slot' + index] = slot.table.slice();
+                tables.tuning_period_keys.push(slot.periodKeys);
             } else {
                 var scale = BUILDLIB.slotScale(slot);
                 var period = scale.cents[scale.formal];

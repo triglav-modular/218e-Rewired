@@ -80,10 +80,12 @@ function fakeInstrument(options) {
         layout: options.layout === undefined ? 2 : options.layout, version: options.version,
         state: 0, slot: 0xff, generation: 0, received: [], sent: [], scans: 0, restarts: 0,
         drop: options.drop || null,     // a parameter number to lose on the wire
+        lose: options.lose || [],       // parameter numbers lost on the way back
         refuseCommit: !!options.refuseCommit
     };
     var input = { onmidimessage: null };
     function reply(param, value) {
+        if (inst.lose.indexOf(param) >= 0) return;
         B.nrpnMessages(param, value).forEach(function (m) {
             inst.sent.push(m);
             if (input.onmidimessage) input.onmidimessage({ data: m });
@@ -186,6 +188,27 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     rl = M.read(older.output, older.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
     await timers.run(rl); re = await rl;
     check('layout 1 is refused too', re && re.reason === 'wrong layout' && re.identity.layoutVersion === 1);
+    // A reply that lost parameters on the way back still ends with the
+    // layout version, so it looks finished; read refuses it rather than
+    // decoding zeros where the values were.
+    async function readOf(inst) {
+        var timers = fakeTimers();
+        var p = M.read(inst.output, inst.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
+        await timers.run(p); return p;
+    }
+    var lossy = fakeInstrument({ lose: [0x25] });
+    for (var lo = 0; lo < 0x2a8; lo++) lossy.mirror[lo] = record[lo];
+    re = await readOf(lossy);
+    check('a dump that lost a live byte is "incomplete", naming it', re && re.reason === 'incomplete'
+          && re.missing.join(',') === '37' && re.identity.imageMarker === 0xB007);
+    var every = B.nrpnParamsOf(record).map(function (p) { return p[0]; });
+    re = await readOf(fakeInstrument({ lose: every }));
+    check('and one that is the identity block alone is too, not a record of zeros', re && re.reason === 'incomplete'
+          && re.missing.length === 338);
+    re = await readOf(fakeInstrument({ lose: [0x3f7a] }));
+    check('as is one short of an identity parameter', re && re.reason === 'incomplete' && re.missing.join(',') === String(0x3f7a));
+    re = await readOf(fakeInstrument({ lose: [0x25], layout: 3 }));
+    check('a layout this page does not know is still told apart first', re && re.reason === 'wrong layout');
     var mute = fakeInstrument(); mute.output.send = function () {}; timers = fakeTimers();
     var rq = M.read(mute.output, mute.input, { timers: timers, timeout: 50 }).then(function () { return null; }, function (x) { return x; });
     await timers.run(rq); re = await rq;
@@ -266,6 +289,23 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     e = await refusal(fakeInstrument({ drop: 0x83 }));
     check('a parameter lost on the wire is a mismatch, and nothing is committed',
           e && e.reason === 'mismatch' && e.differences.length === 1 && e.differences[0][0] === 0x83 && e.differences[0][1] === 485 + 120);
+    // The dump that verifies a push lost one of the live bytes: without it
+    // there is no telling whether the options changed, so nothing is
+    // committed and no restart is skipped.
+    var shortLive = fakeInstrument({ lose: [0x21] });
+    e = await refusal(shortLive);
+    check('a verifying dump without all sixteen live bytes is a mismatch: no commit, no restart',
+          e && e.reason === 'mismatch' && e.differences.length === 0 && e.missing.join(',') === '33'
+          && shortLive.state === 0 && shortLive.restarts === 0
+          && !shortLive.received.some(function (p) { return p[0] === 0x3f00 || p[0] === 0x3f04; }));
+    var shortRecord = fakeInstrument({ lose: [0x1ff] });
+    e = await refusal(shortRecord);
+    check('as is one without a record parameter, which is also a difference',
+          e && e.reason === 'mismatch' && e.missing.join(',') === String(0x1ff) && shortRecord.state === 0);
+    var shortId = fakeInstrument({ lose: [0x3f7c] });
+    e = await refusal(shortId);
+    check('and an identity block short of a parameter refuses before anything is pushed',
+          e && e.reason === 'mismatch' && e.missing.join(',') === String(0x3f7c) && shortId.received.length === 1);
     e = await refusal(fakeInstrument({ refuseCommit: true }));
     check('a commit the instrument could not write is reported with its state', e && e.reason === 'not written' && e.state === 3);
     var quiet = fakeInstrument(); quiet.output.send = function () {};

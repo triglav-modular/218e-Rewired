@@ -35,9 +35,15 @@ per octave all share the default build's marker.
 | A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read, the add-to-pitch octave included; knob 4's octave-switch step count stays the build's |
 
 `Read settings` works against any 3.0 keyboard: it lists what the keyboard
-holds, loads the patterns and the options into the page, and loads the
-pitch table into the calibration as the table already on the instrument,
-so a new measurement accumulates on it.
+holds, loads the patterns, the options and the tunings into the page, and
+loads the pitch table into the calibration as the table already on the
+instrument, so a new measurement accumulates on it. A tuning table does not
+turn back into a scale, so with cell 27 on each slot comes in as its table,
+its keys per period and the period (a slot holding the factory temperament
+comes back as factory), and the next build carries it as it came until a
+scale replaces it: reading a keyboard and building again keeps its tunings.
+With cell 27 off the page's tunings box is unticked and its slots are left
+alone.
 
 ## The options as cells
 
@@ -212,8 +218,16 @@ must match the build here), the values in bursts of 16, a dump compared
 against what was sent, a commit on a match, identity again for the commit
 state, and, when an option cell differs from its live byte, the restart
 and a wait for the keyboard to come back. **Read settings**: one dump,
-listed, then the patterns and the options loaded into their controls and
-the pitch table into the calibration. The page's verdict tells apart a
+listed, then the patterns, the options and the tunings loaded into their
+controls and the pitch table into the calibration.
+
+A reply is believed only whole. A dump or an identity block that lost a
+parameter on the way still ends with the layout version, so it looks
+finished; decoded, the lost values would read as zeros, and a dump without
+all sixteen live bytes gives no way to tell whether a restart is owed. So
+anything short of every parameter it is due to carry (`BUILDLIB.nrpnMissing`)
+is refused whole: a send calls it a mismatch and commits nothing, a read
+says the reply was incomplete and loads nothing. The page's verdict tells apart a
 keyboard on the settings built into its firmware, one holding saved
 settings, this build with *n* differences, the same version from another
 build, an older build and a newer one.
