@@ -1153,6 +1153,16 @@ public class ControlRegression extends SequenceEditRegression {
     // preview jumped an octave, and a sounding note stopped following the
     // pad entirely.  A suite that only checks the mechanism it was written
     // for agrees with the defects around it.
+    // preset_entry's arithmetic, done here from the tables: the selected
+    // slot's entry i, wrapping by keys per period either way and moving a
+    // period of pitch (cell 10) per wrap.
+    long wrappedEntry(int i) {
+        int slot=(int)r(0x6090,1); if(slot>2) slot=0;
+        long kpp=r(0x69a0+2*slot,2), period=r(0x6814,2), wrap=0;
+        while(i>31) { i-=kpp; wrap+=period; }
+        while(i<0) { i+=kpp; wrap-=period; }
+        return (short)r(0x68e0+64*slot+2*i,2)+wrap;
+    }
     void presetSequencer() throws Exception {
         // 1. A take keeps the preset each step was played under.  The
         //    recorder normalises the JACK's shift out so playback can
@@ -1227,8 +1237,61 @@ public class ControlRegression extends SequenceEditRegression {
                             :"carries the whole set")+", moved "+moved,
                   state==0 ? moved==0 : moved>0);
         }
+        // 6. A step recorded under a lower preset than the take's reference
+        //    reads below the bottom of the slot table once the pad is low:
+        //    key + N - X + e under zero.  It has to wrap down a period the
+        //    way an index past the top wraps up, so the step moves by the
+        //    same interval as its neighbour (audit 2026-09-24: a step due at
+        //    258 sounded at 2979, read from below the tables).  The steps sit
+        //    a thousand units up, so seven degrees down stays off the floor
+        //    in images without the pitch offset too.
+        setup(2,false,1); w(0x6160,2,1500); w(0x6162,2,1540); w(0x6600,1,0); w(0x6601,1,0); w(0x6091,1,0);
+        command(1); presetSwitch(0,0);
+        externalBeat(); sound(); long up0=r(S+0x352,2);
+        externalBeat(); sound(); long up1=r(S+0x352,2);
+        check("the fixture has room seven degrees down: "+up0+", "+up1,up0>=600&&up1>=600);
+        setup(2,false,1); w(0x6160,2,1500); w(0x6162,2,1540); w(0x6600,1,7); w(0x6601,1,0); w(0x6091,1,7);
+        command(1); presetSwitch(0,0);
+        check("the fixture reaches an index under zero: step 1's key is "+r(0x61ee+1,1),r(0x61ee+1,1)<7);
+        externalBeat(); sound(); long down0=r(S+0x352,2);
+        externalBeat(); sound(); long down1=r(S+0x352,2);
+        // Each step moves by its own interval, read off the slot table: on an
+        // unequal scale seven degrees down from two keys are two intervals.
+        int n=(int)(r(0x60fa,2)&255), k0=(int)r(0x61ee,1), k1=(int)r(0x61ee+1,1);
+        long move0=(wrappedEntry(k0+n)-wrappedEntry(k0+7))-(wrappedEntry(k0+n)-wrappedEntry(k0));
+        long move1=(wrappedEntry(k1+n-7)-wrappedEntry(k1))-(wrappedEntry(k1+n)-wrappedEntry(k1));
+        check("a step under the take's reference wraps down a period: step 0 "
+              +up0+" -> "+down0+" (table says "+move0+"), step 1 "+up1+" -> "+down1+" (table says "+move1+")",
+              down0<up0 && down1<up1 && Math.abs(down0-up0-move0)<=1 && Math.abs(down1-up1-move1)<=1);
+        // 7. Its MIDI note carries the same N + e - X, which is negative
+        //    here: the note goes down by the degrees the CV did, never under
+        //    zero, and what the press freezes the lift reads back - a byte
+        //    that read -7 as 249 named note 127 in the note-off.
+        if(r(0x80002428L,4)==0x8001e740L) {
+            w(0x6158,1,2); w(0x33c5,1,0); w(0x6503,1,1); w(0x6601,1,0); w(0x60fa,2,0xa000);
+            e.writeRegister("R12",9); long plain=call(0x800057a8L);
+            w(0x6091,1,7);
+            e.writeRegister("R12",9); long live=call(0x8001e740L);
+            check("a step seven degrees under the reference sends its note seven lower: "+plain+" -> "+live,live==plain-7);
+            w(0x6091,1,plain+5);
+            e.writeRegister("R12",9); live=call(0x8001e740L);
+            check("and never a note under zero: "+(int)live,live==0);
+            w(0x6091,1,7); w(S+0x2e1,1,0xff);
+            e.writeRegister("R12",9); long pressed=call(0x8001e748L);
+            w(S+0x2e1,1,pressed);
+            e.writeRegister("R12",9); long lifted=call(0x8001e744L);
+            check("the lift names the note the press named: "+pressed+" and "+lifted,pressed==plain-7&&lifted==pressed);
+            // And a shift past a byte: 200 degrees of jack and a step 100 over
+            // its reference name note 127 on the press, and the lift has to
+            // read back the same - frozen as a byte, 300 came back as 44.
+            w(0x60fa,2,0xa0c8); w(0x6601,1,100); w(0x6091,1,0); w(S+0x2e1,1,0xff);
+            e.writeRegister("R12",9); pressed=call(0x8001e748L);
+            w(S+0x2e1,1,pressed);
+            e.writeRegister("R12",9); lifted=call(0x8001e744L);
+            check("a shift of 300 names note 127 on the press and on the lift: "+pressed+" and "+lifted,pressed==127&&lifted==127);
+        }
         println("PASS preset voltage downstream: takes keep their intervals, "
-                +"previews stay pinned, sounding notes follow the pad");
+                +"previews stay pinned, sounding notes follow the pad, and a step under the reference wraps");
     }
     void presetQuantize() throws Exception {
         setup(0,false,0);
@@ -1749,7 +1812,7 @@ public class ControlRegression extends SequenceEditRegression {
     static final long[][] RESIDUE_OK={
         {0x6000,0x6021}, // arp press-order list: the walk re-checks the held flags before it returns a key, the append moves a key it finds before adding it, and knob 1 factory never reads it
         {0x604e,0x6050}, // jack transposer: the slot's own pitch of the key being recorded, parked between the recorder's two halves and written before it is read
-        {0x608e,0x608f}, // latch-position mirror: housekeeping rewrites it from the switch every scan; the blend is its only reader
+        {0x608e,0x608f}, // latch-position mirror: housekeeping rewrites it from the switch and the latch's byte every scan; the blend is its only reader
         {0x609c,0x609e}, // held pitch for a claimed beat: read under a claim, and clock_init zeroes the claim
         {0x60a0,0x60a2}, // the live transpose: republished from state+0x350 by transpose_capture on the first pass, before any press reads it
         {0x60dc,0x60e0}, // claimed beat's gate target: the same

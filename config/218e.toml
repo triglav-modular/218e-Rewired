@@ -7,8 +7,8 @@
 #
 # The eleven options below are the image's defaults, not its shape: every
 # one of their code paths is in every image, and the builder page can change
-# them later over MIDI without flashing again (docs/SETTINGS.md).  The
-# tunings, the pitch correction and the volts per octave still take a flash.
+# them later over MIDI without flashing again (docs/SETTINGS.md), and so can
+# the tunings, the pitch correction and the volts per octave.
 #
 #   python3 tools/build.py
 # ===========================================================================
@@ -225,7 +225,7 @@ version        = "3.0.0"
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "d48d6dcfffe5349b1adbce944c3451831faccd33921265ba25a7e7f60203f4b0"
+golden_sha256  = "d5ae94fc00a059c11f3f89d1742bff2c40d8cfb8604ba820888450d46af46595"
 
 
 [tools]

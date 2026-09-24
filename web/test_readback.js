@@ -216,6 +216,28 @@ got = readThenBuild(corrected);
 check('a corrected one is, and its table comes back as it was',
       vm.runInContext('calibrationInBuild()', page) === true && same(corrected, got.back, 0x60, 0xfe));
 
+// --- a keyboard's tables kept across a reload -------------------------------
+// The record and the keyboard take table entries to 0x3FFF - a wide period,
+// a sparse .kbm, entries 29 to 31 past the playable keys - and the page's
+// check on the tables it kept must too.  At 0xFFF a reload put the factory's
+// in the read table's place while "use tunings" stayed ticked, and the next
+// Send turned the keyboard's tunings off (audit 2026-09-24).
+var kept = vm.createContext({ SLOTS: [{}, {}, {}] });
+vm.runInContext([appFunction('goodTableSlot'), appFunction('goodSlots')].join('\n'), kept,
+                { filename: 'web/app.js (extracted)' });
+var wide = [];
+for (var j = 0; j < 32; j++) wide.push(485 + Math.round(4719 * j / 31));
+kept.saved = [{ name: 'wide', table: wide, periodKeys: 7, octaveUnits: 1141 }, null, null];
+var reloaded = vm.runInContext('goodSlots(saved)', kept);
+check('a kept keyboard table reaching ' + wide[31] + ' survives a reload',
+      reloaded && reloaded[0] && Array.isArray(reloaded[0].table) && reloaded[0].table[31] === 5204,
+      JSON.stringify(reloaded && reloaded[0]));
+kept.saved = [{ name: 'over', table: wide.map(function (n, i) { return i === 31 ? 0x4000 : n; }),
+                periodKeys: 7, octaveUnits: 1141 }];
+reloaded = vm.runInContext('goodSlots(saved)', kept);
+check('and one past the record’s 0x3FFF does not', reloaded && reloaded[0] === null,
+      JSON.stringify(reloaded && reloaded[0]));
+
 if (failures) { console.log(failures + ' failure(s)'); process.exit(1); }
 process.exitCode = 0;
 console.log('ALL READ-BACK TESTS PASSED');

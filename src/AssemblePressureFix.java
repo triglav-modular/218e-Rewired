@@ -349,7 +349,7 @@ public class AssemblePressureFix extends GhidraScript {
         long tk27Entry = 0x8001e8e0L, tk27Two = tk27Entry + 0x18, tk27Off = tk27Entry + 0x30, tk27Pool = tk27Entry + 0x40, tk27End = tk27Entry + 0x50;
         long tk28Entry = 0x8001e930L, tk28Two = tk28Entry + 0x18, tk28Off = tk28Entry + 0x30, tk28Pool = tk28Entry + 0x40, tk28End = tk28Entry + 0x50;
         long rgEntry = 0x8001e980L, rgOff = rgEntry + 0x10, rgPool = rgEntry + 0x18, rgEnd = rgEntry + 0x20;
-        long taEntry = 0x8001e9a0L, taOff = taEntry + 0x10, taPool = taEntry + 0x14, taEnd = taEntry + 0x20;
+        long taEntry = 0x8001e9a0L, taOff = taEntry + 0x10, taPool = taEntry + 0x18, taEnd = taEntry + 0x20;
 
         // The key selector: the dispatcher, for the factory's pool word and
         // the sequencer's alike, so the two can never disagree.
@@ -384,7 +384,8 @@ public class AssemblePressureFix extends GhidraScript {
         long vaNone = vaEntry + 0x14c, vaDone = vaEntry + 0x150, vaPool = vaEntry + 0x154, vaEnd = vaEntry + 0x160;
         long scEntry = vaEnd, scDump = scEntry + 0x20, scLoop = scEntry + 0x24;
         long scG1 = scEntry + 0x40, scG2 = scEntry + 0x4c, scG3 = scEntry + 0x58, scG4 = scEntry + 0x64;
-        long scStore = scEntry + 0x70, scOut = scEntry + 0x98, scPool = scEntry + 0xa0, scEnd = scEntry + 0xb0;
+        long scStore = scEntry + 0x70, scStop = scEntry + 0x92, scOut = scEntry + 0x9c;
+        long scPool = scEntry + 0xa0, scEnd = scEntry + 0xb0;
         long cmEntry = scEnd, cmGen = cmEntry + 0x30, cmTail = cmEntry + 0x60, cmSlot = cmEntry + 0xc0;
         long cmFail = cmEntry + 0x130, cmDone = cmEntry + 0x140, cmPool = cmEntry + 0x144, cmEnd = cmEntry + 0x160;
         long vfEntry = cmEnd, vfLoop = vfEntry + 0x4, vfBad = vfEntry + 0x24, vfEnd = vfEntry + 0x30;
@@ -2926,14 +2927,23 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.SH R10,R8[0x0]");
         emit("ST.H R8[0x0],R11");
         emit("CP.W R10,0x0");
-        emit("BR{lt} 0x8001ad58");
+        emit("BR{lt} 0x8001ad5e");
         emit("CP.W R10,R11");
-        emit("BR{eq} 0x8001ad58");
+        emit("BR{eq} 0x8001ad5e");
         // The cave's own engagement gate, mirrored: with the knob in the
         // deadzone the blend is off and notes snap by design.
         emit("LD.SH R9,R9[0x306]");
         emit("CP.W R9,0x30");
-        emit("BR{lt} 0x8001ad58");
+        emit("BR{lt} 0x8001ad5e");
+        // And only while the blend IS the portamento.  With its byte off
+        // the apply shim never runs, so nothing slews the offset back out,
+        // and the clock's fast stage adds it under every staged pitch: a
+        // knob raised while notes changed, then parked, left -200 there
+        // until the next boot (audit 2026-09-24).
+        emit("MOV R8,0x6d30");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001ad5e");
         // The step itself is applied one cave along, where the sequencer
         // mode can veto it: during PLAY the base moves because the FACTORY
         // GLIDE is walking between steps, not because a note handed over,
@@ -2941,10 +2951,10 @@ public class AssemblePressureFix extends GhidraScript {
         // backwards.  The base history above updates every scan regardless,
         // so returning to live playing measures from the current base.
         emit("SUB R10,R10,R11 << 0x0");
-        emit("RJMP 0x8001ad5a");
-        padTo(0x8001ad58L);
+        emit("RJMP 0x8001ad60");
+        padTo(0x8001ad5eL);
         emit("MOV R10,0x0");
-        padTo(0x8001ad5aL);
+        padTo(0x8001ad60L);
         emit("MCALL PC[0x8001ad6c]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001ad6cL);
@@ -3632,6 +3642,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R3,R2");
         emit(String.format("BR{eq} 0x%x", lppDone));              // the preset did not move
         emit("MOV R0,0x62e2");
+        // With the latch off nothing is latched to hold, and a hold state
+        // restored from a session with it on would pin every held key:
+        // 176 units of blend target until the next boot (audit 2026-09-24).
+        // The count is still kept, as it is in transpose.
+        emit("LD.UB R8,R0[0xa46]");                               // 0x6d28, the latch's byte
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", lppSave));
         emit("LD.UB R0,R0[0x0]");
         emit("CP.W R0,0x0");
         emit(String.format("BR{ne} 0x%x", lppSave));              // transpose: the set follows
@@ -3948,16 +3965,27 @@ public class AssemblePressureFix extends GhidraScript {
         // its note-off, with the shift it was sent under - and used to
         // inherit that note's shift, so its MIDI note disagreed with its
         // pitch CV by however far the jack had moved.  The routine's 0xff
-        // for a bad key is left alone, and the result is capped at 127.
+        // for a bad key is left alone, and the result is held to 0..127.
+        //
+        // A sounding step's shift, N + e - X, is negative when the step was
+        // recorded under a lower pad than the take's reference: -127 at the
+        // least, X being bounded at 0x7f.  So the note is floored at zero as
+        // well as capped - a take sent note -5, a status byte on the wire -
+        // and the frozen byte is read back signed, which needs the shift
+        // capped at 127 before it is frozen: that changes no note, since a
+        // key's own note is at least zero.  Read back unsigned, -7 came back
+        // as 249 and the lift named note 127 (audit 2026-09-24).
         long mtLive    = 0x8001e740L;
         long mtHeld    = 0x8001e744L;
         long mtPress   = 0x8001e748L;
         long mtCommon  = 0x8001e74aL;
-        long mtFreeze  = 0x8001e788L;
-        long mtLatched = 0x8001e78cL;
-        long mtAdd     = 0x8001e78eL;
-        long mtDone    = 0x8001e79aL;
-        long mtPool    = 0x8001e7a0L;
+        long mtCapped  = 0x8001e77eL;
+        long mtFreeze  = 0x8001e792L;
+        long mtLatched = 0x8001e796L;
+        long mtAdd     = 0x8001e79eL;
+        long mtFloor   = 0x8001e7a6L;
+        long mtDone    = 0x8001e7b0L;
+        long mtPool    = 0x8001e7b4L;
         begin(mtLive);
         emit("MOV R11,0x1");                                      // live
         emit(String.format("RJMP 0x%x", mtCommon));
@@ -3985,6 +4013,10 @@ public class AssemblePressureFix extends GhidraScript {
         // back - which is what keeps a note-off naming the note its note-on
         // named, after 0x6503 has already moved to the next step.
         emit(String.format("MCALL PC[0x%x]", mtPool + 8));
+        emit("CP.W R9,0x7f");
+        emit(String.format("BR{le} 0x%x", mtCapped));
+        emit("MOV R9,0x7f");
+        padTo(mtCapped);
         emit("CP.W R0,0x1");
         emit(String.format("BR{eq} 0x%x", mtAdd));                // live: as it stands
         emit("CP.W R0,0x2");
@@ -3998,11 +4030,17 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("RJMP 0x%x", mtAdd));
         padTo(mtLatched);
         emit("LD.UB R9,R8[0x4]");
+        emit("LSL R9,0x18");                                      // signed: -127..127 went in
+        emit("ASR R9,0x18");
         // A sounding SEQUENCER step carries the preset count it was
         // recorded under; the shift so far says nothing about it.  The
         // helper adds (e - d_ref), the same term the CV shift applies.
         padTo(mtAdd);
         emit("ADD R12,R9");
+        emit("CP.W R12,0x0");
+        emit(String.format("BR{ge} 0x%x", mtFloor));
+        emit("MOV R12,0x0");
+        padTo(mtFloor);
         emit("CP.W R12,0x7f");
         emit(String.format("BR{le} 0x%x", mtDone));
         emit("MOV R12,0x7f");
@@ -4154,6 +4192,12 @@ public class AssemblePressureFix extends GhidraScript {
         // The entry this key would have if ONLY the preset had rotated the
         // table: slot[key + preset degrees], wrapping by the map's size and
         // adding one period per wrap, exactly as cv_transpose's rebuild does.
+        // Playback's index, key + N - X + e, goes under zero as well as past
+        // the top - a step recorded under a lower pad than the take's
+        // reference, played with the pad low - so it wraps both ways: below
+        // zero it is up a period of keys and down a period of pitch.  Read
+        // from under the tables, a step due at 258 sounded at 2979 (audit
+        // 2026-09-24).
         //
         // The recorder stores a step against the tuning's own entry for its
         // key so the live shift is normalised out and re-applied on playback.
@@ -4173,8 +4217,8 @@ public class AssemblePressureFix extends GhidraScript {
         // reference.  Reading the live count on both sides cancels the
         // preset exactly and a playing take stops transposing at all.
         // Out: R12 the pitch.  R8-R11 saved.
-        long peEntry = 0x8001e420L, peSlot = 0x8001e43cL, peWrap = 0x8001e458L;
-        long peNoWrap = 0x8001e46aL, pePool = 0x8001e478L;
+        long peEntry = 0x8001e420L, peSlot = 0x8001e43cL, peWrap = 0x8001e454L;
+        long peDown = 0x8001e460L, peNoWrap = 0x8001e46aL, pePool = 0x8001e478L;
         begin(peEntry);
         emit("STM --SP,R8,R9,R10,R11,LR");
         emit("LD.UB R11,R9[0x0]");                            // the count the caller chose
@@ -4191,14 +4235,20 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UH R9,R8[R9 << 0x1]");
         emit("ADD R12,R11");                                  // key + those degrees
         emit("MOV R8,0x0");
+        emit("MOV R11,0x6814");                               // one period of pitch: number cell 10 (R11 is saved above)
+        emit("LD.UH R11,R11[0x0]");
         padTo(peWrap);
         emit("CP.W R12,0x1f");
-        emit(String.format("BR{le} 0x%x", peNoWrap));
+        emit(String.format("BR{le} 0x%x", peDown));
         emit("SUB R12,R9");                                   // back one period of keys
-        emit("MOV R11,0x6814");                               // up one period of pitch: number cell 10 (R11 is saved above)
-        emit("LD.UH R11,R11[0x0]");
-        emit("ADD R8,R11");
+        emit("ADD R8,R11");                                   // and up one of pitch
         emit(String.format("RJMP 0x%x", peWrap));
+        padTo(peDown);
+        emit("CP.W R12,0x0");
+        emit(String.format("BR{ge} 0x%x", peNoWrap));
+        emit("ADD R12,R9");                                   // on one period of keys
+        emit("SUB R8,R11");                                   // and down one of pitch
+        emit(String.format("RJMP 0x%x", peDown));
         padTo(peNoWrap);
         emit("LD.SH R12,R10[R12 << 0x1]");
         emit("ADD R12,R8");
@@ -10303,7 +10353,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001ac80]");
         emit("LDDPC R10,0x8001a534");
-        padTo(0x8001a4dcL);
+        padTo(0x8001a4d0L);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases the keys the latch
             // was holding - and ONLY those.  A key still under a finger is
@@ -10327,6 +10377,18 @@ public class AssemblePressureFix extends GhidraScript {
             // flag is already clear, so a count that disagrees with its own
             // flags can never walk back down.
             emit("LD.UB R8,R10[0x340]");
+            // With the latch off the switch has no latch position: the
+            // factory's own latch (pads 2 & 3) holds released keys in the
+            // note flags, and the copy below handed them back to the touch
+            // flags on the way out of a latch that was never engaged.  The
+            // blend, this mirror's only reader, weighted held keys at stamps
+            // a restored hold state had written (audit 2026-09-24).
+            emit("MOV R9,0x6d28");
+            emit("LD.UB R9,R9[0x0]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001a4e0");
+            emit("MOV R8,0x0");
+            padTo(0x8001a4e0L);
             // Mirror the latch position where the blend can read it cheaply.
             emit("MOV R9,0x608e");
             emit("ST.B R9[0x0],R8");
@@ -11232,6 +11294,13 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ANDL R11,0x7f");
         emit("MOV R10,0xf");
         emit(String.format("MCALL PC[0x%x]", sdPool));
+        // R12: whether the host took them.  The factory's endpoint wait
+        // (0x8000d9c4) sets this byte when it times out and clears it when
+        // a wait succeeds, and the sender reports only the flush of its own
+        // packet - a packet refused by the stream write before it is not
+        // said anywhere else.
+        emit("MOV R12,0x4718");
+        emit("LD.UB R12,R12[0x0]");
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(sdPool);
         word(0x80008034L); // the factory's USB-MIDI CC sender
@@ -11419,8 +11488,19 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R11,R12");
         emit("MOV R12,R9");
         emit(String.format("MCALL PC[0x%x]", scPool + 12));  // settings_send
+        // A host that stopped reading: the wait took 100 frames the first
+        // time and takes a frame a packet after that, eight packets a scan
+        // for as long as the cursor runs - so the dump ends here (audit
+        // 2026-09-24).  The page reads a dump that stops short as refused.
+        emit("CP.W R12,0x0");
+        emit(String.format("BR{ne} 0x%x", scStop));
         emit("SUB R0,0x1");
         emit(String.format("BR{ne} 0x%x", scLoop));
+        emit(String.format("RJMP 0x%x", scOut));
+        padTo(scStop);
+        emit("MOV R8,0x6a68");
+        emit("MOV R10,0x4000");
+        emit("ST.H R8[0x4],R10");       // the cursor idle
         padTo(scOut);
         emit("LDM SP++,R0,R7,PC");
         padTo(scPool);
@@ -12250,7 +12330,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x80019580L); // the calibrated pressure curve
         word(0x80013350L); // the factory's int-to-float
         finish("pressure_fn_dispatch", pfEnd);
-        // knob1_dispatch: the pressure ceiling, or the factory's knob 1.
+        // knob1_pressure_dispatch: the pressure ceiling, or the factory's knob 1.
         begin(k1Entry);
         emit("MOV R8,0x6d2f");
         emit("LD.UB R8,R8[0x0]");
@@ -12264,7 +12344,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(k1Pool);
         word(0x800194c0L); // knob1_pressure_ceiling
         word(0x80004188L); // the factory knob-1 handler
-        finish("knob1_dispatch", k1End);
+        finish("knob1_pressure_dispatch", k1End);
         // knob4_dispatch: knob4_curve, or the factory's knob 4.
         begin(k4Entry);
         emit("MOV R8,0x6d2f");
@@ -12412,10 +12492,12 @@ public class AssemblePressureFix extends GhidraScript {
 
         // option_boot_blend: option_boot's tail.  The offset the blend's
         // conditioner last applied (0x60e2) is read by the clock's fast
-        // pitch stage every beat, and only the conditioner writes it - so
-        // it is zeroed here at every boot, or a session would leave its
-        // last offset under every staged pitch after the restart; nothing
-        // sounds when the chip comes up, so there is no offset to keep.
+        // pitch stage every beat, and only the blend writes it - the apply
+        // shim, and blend_rebase's fold, which is gated on the blend's byte
+        // too - so it is zeroed here at every boot, or a session would
+        // leave its last offset under every staged pitch after the restart;
+        // nothing sounds when the chip comes up, so there is no offset to
+        // keep.
         begin(obcEntry);
         emit("MOV R8,0x60e2");
         emit("MOV R9,0x0");
@@ -12588,7 +12670,12 @@ public class AssemblePressureFix extends GhidraScript {
 
         // tuning_apply_dispatch: the per-scan chain's applier word.  The
         // applier with a tuning in use; a return without, so the LEDs and
-        // the transpose-mode byte stay the factory's.  Spends R8.
+        // the transpose-mode byte stay the factory's.  Without, the slot is
+        // put back to 0 as well: a record or the last session can leave 1
+        // or 2 there - SRAM outlives the restart that turns the cell off -
+        // and the transposer's rebuild, the preset rotation and the
+        // recorder read the slot tables by it, all after this word in the
+        // scan (audit 2026-09-24).  Spends R8 and R9, as the applier does.
         begin(taEntry);
         emit("MOV R8,0x6d33");
         emit("LD.UB R8,R8[0x0]");
@@ -12597,6 +12684,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("LDDPC R8,0x%x", taPool));
         emit("MOV PC,R8");
         padTo(taOff);
+        emit("MOV R9,0x6090");
+        emit("ST.B R9[0x0],R8");        // R8 is the cell's byte: zero
         emit("MOV PC,LR");
         padTo(taPool);
         word(0x80019a40L); // the tuning applier
@@ -13072,7 +13161,7 @@ public class AssemblePressureFix extends GhidraScript {
         finish("glide_cv_addend", 0x80003142L);
 
         wordPatch("knob1_pool", 0x800043c4L, k1Entry,
-            "knob-1 pointer -> knob1_dispatch: the pressure-ceiling wrapper, or the factory handler");
+            "knob-1 pointer -> knob1_pressure_dispatch: the pressure-ceiling wrapper, or the factory handler");
         wordPatch("knob3_pool", 0x800043ccL, 0x80014300L,
             "knob-3 pointer -> pressure-floor wrapper");
         wordPatch("knob4_pool", 0x800043d0L, k4Entry,

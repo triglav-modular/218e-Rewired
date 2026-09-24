@@ -23,11 +23,11 @@ keyboard.
   the selected tuning.
 - **The portamento banana jack as a transposer**, shifting the keyboard and
   its MIDI notes by whole degrees of the selected tuning.
-- **Settings over MIDI.** Every option above, and the arpeggiator's pattern
-  bank, can be changed from the builder page without flashing again: the
-  page sends them over Web MIDI and the keyboard restarts to run them.
-  Tunings, the pitch calibration and the volts per octave still travel
-  with a flash. See [docs/SETTINGS.md](docs/SETTINGS.md).
+- **Settings over MIDI.** Every option above, the arpeggiator's pattern
+  bank, the tunings, the pitch calibration and the volts per octave can be
+  changed from the builder page without flashing again: the page sends
+  them over Web MIDI, and the keyboard restarts to run a changed option.
+  See [docs/SETTINGS.md](docs/SETTINGS.md).
 
 
 ## Build it in your browser

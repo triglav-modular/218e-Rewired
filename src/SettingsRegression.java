@@ -45,6 +45,7 @@ public class SettingsRegression extends PersistenceRegression {
     // Phase F: the pressure dispatchers, the three hook caves, the interpolator's gate, the route word, the glide value, the boot clear.
     static final long PF=0x8001ee00L, K1=0x8001ee20L, K4=0x8001ee40L, C2=0x8001ee60L, C1=0x8001ee80L, GN=0x8001eea0L;
     static final long IP=0x8001eec0L, PB=0x8001eef0L, GR=0x8001ef10L, OBC=0x8001ef40L;
+    static final long REBASE=0x8001ad28L, PIN=0x8001eca8L, BLENDAT=0x80019c64L, STALLED=0x4718;
     // option_boot, and option_boot_state between it and the blend tail: the state an option owns, cleared with it off.
     static final long OB=0x8001fdf0L, OBS=0x8001ff30L;
     // octave_period: the five factory octave sites call its pool words and read number cell 10.
@@ -63,6 +64,11 @@ public class SettingsRegression extends PersistenceRegression {
     Properties props=new Properties();
     byte[] record;
     boolean keepSlots, stubChain, failWrite, stubSelector;
+    // The factory's endpoint wait sets the byte at 0x4718 when it times out
+    // and clears it when a wait succeeds (0x8000d9c4: 0x8000daf6 and
+    // 0x8000da34); the sender reaches it through the flush.  From this many
+    // packets on, the host has stopped reading.  -1: it reads everything.
+    int stallFrom=-1;
     int slotWrites;
     final List<int[]> sent=new ArrayList<>();
 
@@ -94,7 +100,11 @@ public class SettingsRegression extends PersistenceRegression {
         // by hand.  The reset itself is the bench's to see.
         if(p==RESTART_2ND) wdtFirst=r(WDT,4);
         if(p==RESTART_SPIN) { wdtSecond=r(WDT,4); restarts++; ret(); return; }
-        if(p==SENDER) { sent.add(new int[]{(int)reg("R12"),(int)reg("R11"),(int)reg("R10")}); ret(); return; }
+        if(p==SENDER) {
+            sent.add(new int[]{(int)reg("R12"),(int)reg("R11"),(int)reg("R10")});
+            w(STALLED,1,stallFrom>=0&&sent.size()>stallFrom?1:0);
+            ret(); return;
+        }
         if(p==WRITER&&reg("R12")>=SLOT0&&reg("R12")<SLOT1+0x800) {
             long dest=reg("R12"), src=reg("R11"), len=reg("R10"), erase=reg("R9");
             check("a settings write stays inside one page",(dest&~511L)==((dest+len-1)&~511L));
@@ -350,6 +360,18 @@ public class SettingsRegression extends PersistenceRegression {
         // A marker past 0x3fff needs its top bits: check the split, not the luck of this build's marker.
         check("the marker rides in two parts",(got.get(1)[1]<<14|got.get(8)[1])==marker);
         check("the firmware version leads the block",got.get(0)[0]==0x3f76&&got.get(0)[1]==num("firmware_version_code",0x300));
+        // A host that stops reading: the flush waits for it, 100 frames the
+        // first time and a frame at a time after that, eight packets a scan
+        // for as long as the cursor runs.  The dump ends at the first
+        // parameter that leaves a wait timed out (audit 2026-09-24).
+        sent.clear(); nrpn(0x3f03,0); stallFrom=10;
+        call(SETSCAN); call(SETSCAN);
+        int stalled=sent.size();
+        check("a stalled host ends the dump at the parameter it stalled on: cursor "
+            +Long.toHexString(r(NRPN+4,2))+", "+stalled+" packets",r(NRPN+4,2)==0x4000&&stalled==12);
+        call(SETSCAN);
+        check("and nothing more is sent",sent.size()==stalled);
+        stallFrom=-1;
         keepSlots=false;
         println("PASS dump: every parameter, paced, in order, then the identity block");
     }
@@ -484,6 +506,40 @@ public class SettingsRegression extends PersistenceRegression {
         check("the words name the dispatchers: the note-on, both note-off pools, the hold, and the chord's call is an MCALL to the shim's word",
             r(0x80018d38L,4)==LTON&&r(0x80005b18L,4)==LTOFF&&r(0x80006278L,4)==LTOFF&&r(0x8001a8e0L,4)==LTHOLD
             &&r(0x8000491eL,4)==(0xf01f0000L|(disp&0xffffL))&&r(LTPOOL+24,4)==LTSHIM);
+        // With the latch off the factory's own latch (pads 2 & 3) holds a
+        // released key in the note flags, and leaving the switch position
+        // must not hand the note flags back to the touch flags: that copy is
+        // the latch's exit, and there is no latch to exit (audit 2026-09-24).
+        for(int on=1;on>=0;on--) {
+            w(LIVE,1,on); w(S+0x340,1,1); w(S+0x341,1,0); call(SCAN);
+            for(int k=0;k<29;k++){ w(S+0x21b+k,1,0); w(S+0x239+k,1,0); }
+            w(S+0x2ea,1,1); w(S+0x21b+5,1,1); w(S+0x21a,1,1);
+            w(S+0x340,1,0); w(S+0x341,1,1); call(SCAN);
+            check("latch "+(on==1?"on: leaving its position releases a key no finger holds"
+                                 :"off: leaving the position keeps what the factory latch holds")
+                +", flag="+r(S+0x21b+5,1)+" count="+r(S+0x21a,1),
+                on==1 ? r(S+0x21b+5,1)==0&&r(S+0x21a,1)==0 : r(S+0x21b+5,1)==1&&r(S+0x21a,1)==1);
+        }
+        // Nor does its hold state reach the notes.  The pin writes a stamp
+        // for each held key when the preset's count moves and the restored
+        // state says hold, and the blend weights a held key at its stamped
+        // pitch while the switch sits in the latch position: with the latch
+        // off a restored state decided 4.4 semitones of blend target.
+        for(int on=1;on>=0;on--) {
+            w(LIVE,1,on);
+            for(int k=0;k<29;k++){ w(S+0x21b+k,1,0); w(0x60a2+2*k,2,0); }
+            w(S+0x21b+5,1,1); w(0x6504+5,1,6); w(0x6521+5,1,6); w(S+0x21a,1,1);
+            w(0x6582,2,0); w(0x62e2,1,0); w(0x6092,1,0); w(0x60f3,1,3);
+            call(PIN);
+            long stamp=(short)r(0x60a2+10,2);
+            check("latch "+(on==1?"on: a preset move in hold pins the held key":"off: a preset move pins nothing")
+                +", stamp="+stamp+", count seen "+r(0x6092,1),
+                (on==1 ? stamp!=0 : stamp==0) && r(0x6092,1)==3);
+            w(S+0x340,1,1); w(S+0x341,1,0); call(SCAN);
+            long plain=blendAt(0), stamped=blendAt(-121);
+            check("latch "+(on==1?"on: a stamp moves the blend's target":"off: a stamp left in RAM moves nothing")
+                +", "+plain+" and "+stamped, on==1 ? stamped!=plain : stamped==plain);
+        }
         // What the latch owns does not outlive it across the restart that
         // turns it off: SRAM survives, the first-use initialiser does not
         // run again, so option_boot clears the stamps, the term and the
@@ -504,6 +560,20 @@ public class SettingsRegression extends PersistenceRegression {
             r(LIVE,1)==1&&r(0x60a2,2)==0&&r(0x609e,2)==0&&r(0x6504,1)==0);
         keepSlots=false;
         println("PASS latch: the four gates follow the live byte, the shim gives the factory chord back, and the latch's RAM does not outlive a boot");
+    }
+    // The blend's target, keys 5 and 9 held under equal pressure and key
+    // 5 carrying a stamp; the switch position is whatever housekeeping
+    // mirrored last.
+    long blendAt(int stamp5) throws Exception {
+        w(0x6158,1,0); w(S+0x306,2,0x200);
+        for(int k=0;k<29;k++){ w(S+0x21b+k,1,0); w(0x6540+2*k,2,0); w(0x60a2+2*k,2,0); }
+        w(S+0x21b+5,1,1); w(S+0x21b+9,1,1);
+        w(0x6540+10,2,0x800); w(0x6540+18,2,0x800);
+        w(0x60a2+10,2,stamp5&0xffff);
+        long anchor=r(0x854+18,2);
+        e.writeRegister("R12",anchor); e.writeRegister("R10",anchor);
+        call(BLENDAT);
+        return (short)r(0x60e0,2);
     }
     void sequencer() throws Exception {
         fresh();
@@ -659,6 +729,21 @@ public class SettingsRegression extends PersistenceRegression {
             &&r(0x800033f8L,4)==(0xf01f0000L|(c1&0xffffL))&&r(C1+0x1c,4)==C1
             &&r(0x800033c0L,4)==(0xf01f0000L|(c2&0xffffL))&&r(C2+0x1c,4)==C2
             &&r(0x800043a4L,4)==(0xf01f0000L|(gn&0xffffL))&&r(GN+0x1c,4)==GN);
+        // The re-base folds a base step into the offset only while the blend
+        // is the portamento.  With it off nothing slews the offset back out,
+        // and the clock's fast stage adds it under every staged pitch: a knob
+        // raised while notes changed, then parked, left -200 there until the
+        // next boot (audit 2026-09-24).
+        for(int on=1;on>=0;on--) {
+            w(LIVE+8,1,on); w(0x6158,1,0); w(0x60e2,2,0); w(0x60f4,2,0xffff);
+            for(long b:new long[]{1000,1500,1200}) {
+                w(S+0x350,2,b); w(S+0x306,2,0x200); e.writeRegister("R12",b); call(REBASE);
+            }
+            long folded=(short)r(0x60e2,2);
+            check("blend "+(on==1?"on: a base step with the knob up folds into the offset"
+                                 :"off: nothing folds, so the fast stage adds nothing")+", offset="+folded,
+                on==1 ? folded==-200 : folded==0);
+        }
         // The blend's offset does not outlive it across the restart that turns it off.
         keepSlots=true;
         byte[] off=edited(); setHalf(off,0x20+2*24,0); stamp(off); plant(SLOT0,off);
@@ -790,6 +875,21 @@ public class SettingsRegression extends PersistenceRegression {
             p==K28FACTORY&&reg("R8")==1&&r(0x6090,1)==1);
         w(S+0x2,1,1); e.writeRegister("R8",S); p=resolve(RG);
         check("tunings off: the guard reads the flag itself, Z clear",p==0x100&&reg("R8")==1&&reg("Z")==0);
+        // A slot a record or the last session left is not the table in play
+        // with cell 27 off: the transposer's rebuild, the preset rotation
+        // and the recorder read the slot tables by it, and nothing else puts
+        // it back.  Slot 1 is made to differ so the table says which it was
+        // built from (audit 2026-09-24).
+        long[] slot1=new long[32];
+        for(int j=0;j<32;j++) { slot1[j]=r(0x6920+2*j,2); w(0x6920+2*j,2,r(0x68e0+2*j,2)+20); }
+        for(int on=1;on>=0;on--) {
+            w(LIVE+11,1,on); w(0x6090,1,1); w(0x60fa,2,0); w(0x60e4,2,0);
+            call(CHAIN); call(CHAIN);
+            check("tunings "+(on==1?"on: slot 1 is the table in play":"off: slot 0 is, whatever the cell held")
+                +", table[0]="+r(0x854,2)+", slot "+r(0x6090,1),
+                on==1 ? r(0x854,2)==r(0x6920,2)&&r(0x6090,1)==1 : r(0x854,2)==r(0x68e0,2)&&r(0x6090,1)==0);
+        }
+        for(int j=0;j<32;j++) w(0x6920+2*j,2,slot1[j]);
         w(S+0x2,1,0); e.writeRegister("R8",S); p=resolve(RG);
         check("and Z set when the flag is zero",p==0x100&&reg("R8")==0&&reg("Z")==1);
         long k27=(TK27+0x44-(0x80003d82L&~3L))>>2, k28=(TK28+0x44-(0x80003db8L&~3L))>>2;

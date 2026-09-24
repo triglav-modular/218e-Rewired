@@ -50,6 +50,17 @@ build until the next read or Reset. A pattern with no steps is not loaded,
 which is all the unused bank of a build without patterns holds, so choosing
 Patterns afterwards starts from the page's own bank.
 
+A take keeps the preset each step was played under as a count of degrees
+(`0x6600` per step, the take's reference at `0x6091`), and a count is
+degrees of the tuning in play when it was recorded. Changing that tuning
+under a take - a send that changes the slot tables, the keys per period or
+cell 10, edit keys 27 and 28, a restart with cell 27 changed - leaves the
+counts as they were and reads them in the new one, where the same count
+names another interval. In the emulator a take recorded an octave up the
+pads in twelve-tone equal temperament, played under five keys to the
+octave, fell to the bottom of the range. That is by design; record the
+take again under the new tuning.
+
 ## The options as cells
 
 Number cells 16..27 of the record are the option cells, one halfword each.
@@ -222,6 +233,15 @@ cycles again every pass. Commit is a request: the write
 happens from the per-scan chain, into the slot the loaded record is not
 in, with a read-back, and the identity block reports the outcome.
 
+A commit holds the main loop for an estimated 14 to 24 ms: three flash
+page programs at the 4 ms the AT32UC3B datasheet gives as typical (its
+tables state no erase time), and two CRC-32 passes over the record done a
+bit at a time, about 111,000 instructions. That is the trade persistence
+already makes (docs/PERSISTENCE.md), and it is not yet measured on an
+instrument. Every send commits; one that changes an option restarts the
+keyboard straight after, so the hold can only be heard on a send that
+changes tables or patterns and no option.
+
 The identity block, the last thing in every dump:
 
 | Parameter | Value |
@@ -237,7 +257,13 @@ The identity block, the last thing in every dump:
 
 The block's parameter numbers are frozen; the layout version changes only
 when the map changes. Replies go out at two parameters per scan, so a full
-dump takes about 0.8 s.
+dump takes about 0.8 s. A host that stops reading ends the dump: the
+factory's USB sender waits for the host to take each packet, 100 ms the
+first time and a frame at a time after that, and the byte it sets when a
+wait times out (`0x4718`) stops the dump at the parameter it was on,
+rather than holding every scan for as long as the cursor runs. The page
+reads a dump that stops short as incomplete. The sender's behaviour is
+read from the factory's disassembly, not measured.
 
 ## The page
 

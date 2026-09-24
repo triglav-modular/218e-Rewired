@@ -1498,6 +1498,9 @@ FACTORY_CELLS = [
     # The pads' own touch states, the same shape as the keys' array: one byte
     # each, 2 meaning held.  Read only - the factory owns the writing.
     (0x46F0, 0x46F4, "pad touch state"),
+    # LUFA's endpoint wait (0x8000d9c4) sets this byte when it times out and
+    # clears it when a wait succeeds.  Read only: the settings dump ends on it.
+    (0x4718, 0x4719, "USB endpoint wait timed out"),
     # Live again whenever pressure_fix is off: the clamp skips are gated now,
     # so the factory 16-tap pressure history shifts through here in that
     # build.  Declared so no region of ours can ever move back in.

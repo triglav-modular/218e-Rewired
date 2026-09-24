@@ -244,7 +244,7 @@
     function midiOutputs() {
         if (!root.navigator || !root.navigator.requestMIDIAccess) {
             return Promise.reject(new Error(
-                'Safari doesn\u2019t support Web MIDI. Use Chrome, Firefox or Edge to change settings.'));
+                'Safari doesn\u2019t support Web MIDI. Use Chrome, Firefox or Edge.'));
         }
         return root.navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
             // Ports come and go while the page is open and the list is built

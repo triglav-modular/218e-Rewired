@@ -2609,12 +2609,15 @@
         return out;
     }
     // A keyboard's table (BUILDLIB.isTableSlot) is kept whole or not at all:
-    // 32 entries inside the DAC, keys per period and a period inside the
-    // bounds the keyboard's loader enforces.
+    // 32 entries inside the record's 0x3FFF, keys per period and a period
+    // inside the bounds the keyboard's loader enforces.  Not the DAC's 0xFFF:
+    // a wide period, a sparse .kbm and the entries past the playable keys go
+    // over it, and a kept table refused here came back as the factory's
+    // while the tunings box stayed ticked (audit 2026-09-24).
     function goodTableSlot(e) {
         function whole(n, lo, hi) { return typeof n === 'number' && n % 1 === 0 && n >= lo && n <= hi; }
         return typeof e.name === 'string' && Array.isArray(e.table) && e.table.length === 32
-            && e.table.every(function (n) { return whole(n, 0, 0xFFF); })
+            && e.table.every(function (n) { return whole(n, 0, 0x3FFF); })
             && whole(e.periodKeys, 1, 32) && whole(e.octaveUnits, 100, 2000);
     }
     function goodSlots(v) {
