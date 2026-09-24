@@ -25,14 +25,15 @@ keys per period and the ten timing numbers - everything the record itself
 bounds-checks at load - so two builds that differ only in those produce
 one marker and one record fits both. Checked: builds with a tuning
 installed, with a pitch correction, without the pitch offset and at 1 V
-per octave all share the default build's marker.
+per octave all share the default build's marker, and so does a build whose
+scale repeats at the tritave (`web/test_readback.js`).
 
 | Changed on the page | Reaches the keyboard by |
 |---|---|
 | Any option in step 2 (the eleven below), and whether tunings are in use | Send settings; the keyboard restarts itself to run it |
 | The arpeggiator's pattern bank, the three tuning tables, the pitch table (calibration, volts per octave, pitch offset) | Send settings; tables go live in the mirror at once |
-| The ten timing numbers | Carried in the record and editable by any NRPN sender; the page has no controls for them |
-| A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read, the add-to-pitch octave included; knob 4's octave-switch step count stays the build's |
+| The ten timing numbers | Carried in the record and editable by any NRPN sender; the page has no controls for them, and a read keeps the ones that differ from its own for the next build |
+| A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read, the add-to-pitch octave included; knob 4's octave switch divides its six octaves by it, three silent zones and then one per period, thirteen at most |
 
 `Read settings` works against any 3.0 keyboard: it lists what the keyboard
 holds, loads the patterns, the options and the tunings into the page, and
@@ -43,7 +44,11 @@ its keys per period and the period (a slot holding the factory temperament
 comes back as factory), and the next build carries it as it came until a
 scale replaces it: reading a keyboard and building again keeps its tunings.
 With cell 27 off the page's tunings box is unticked and its slots are left
-alone.
+alone. The timing numbers ride through the same way: the ones that differ
+from what the page builds are kept, in the browser too, and go into every
+build until the next read or Reset. A pattern with no steps is not loaded,
+which is all the unused bank of a build without patterns holds, so choosing
+Patterns afterwards starts from the page's own bank.
 
 ## The options as cells
 
@@ -189,14 +194,17 @@ channel is 16, data entry on it is the settings'.
 | `0x0180 + 3p + 0..2` | pattern *p*'s mask, bits 0..13, 14..27, 28..31 | each third replaces its own bits |
 | `0x01e0..0x01ff` | pattern lengths | `0..32`, zero unused; the bank ends at the first zero after pattern 0, and knob 2 spreads over the patterns before it |
 | `0x3f00` | commit on the next scan | data `0x2a2a` |
-| `0x3f01` | reload the mirror from flash, dropping live edits; the next scan copies the selected tuning slot again | |
+| `0x3f01` | reload the mirror from flash, dropping live edits: the image's own settings, then the newer valid record over them, as at boot, so with no valid record it is the image's settings; the next scan copies the selected tuning slot again | |
 | `0x3f02` | the image's own settings back in the mirror, the tuning slot copied again likewise; flash untouched until a commit | |
 | `0x3f03` | dump: every parameter, then the identity block | |
 | `0x3f04` | restart through the watchdog | data `0x2a2a` |
 | `0x3f7f` | the identity block alone | |
 
 Table and cell writes go live in the mirror at once; an option cell's
-write takes effect at the next restart. Commit is a request: the write
+write takes effect at the next restart. The clock's two cells,
+`clock_min_ms` and `clock_rearm_us`, reach the capture interrupt's
+thresholds on the next pass of the main loop, which works them out in COUNT
+cycles again every pass. Commit is a request: the write
 happens from the per-scan chain, into the slot the loaded record is not
 in, with a read-back, and the identity block reports the outcome.
 
@@ -225,7 +233,8 @@ against what was sent, a commit on a match, identity again for the commit
 state, and, when an option cell differs from its live byte, the restart
 and a wait for the keyboard to come back. **Read settings**: one dump,
 listed, then the patterns, the options and the tunings loaded into their
-controls and the pitch table into the calibration.
+controls, the timing numbers kept for the next build, and the pitch table
+into the calibration.
 
 A reply is believed only whole. A dump or an identity block that lost a
 parameter on the way still ends with the layout version, so it looks

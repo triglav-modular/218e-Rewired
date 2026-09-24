@@ -72,6 +72,29 @@ public class ControlRegression extends SequenceEditRegression {
     }
     int setting(int raw) { return transpose?raw*zones/1024:raw; }
     long setting() { return r(transpose?S+0x6b:0x60f0,transpose?1:2); }
+    // Knob 4's zones follow number cell 10, not the period the image was
+    // built with: three that mean no transpose, then one per period in six
+    // octaves, thirteen at most.  Nine at the octave, six for a tritave, one
+    // step at the top of the cell's range, and the cap below it.  Written
+    // out here from the rule rather than read off the image, and driven
+    // through the real control scan with the knob unheld.  (Audit
+    // 2026-09-24, finding 1: the count was baked in, so a record with
+    // another period could not be sent to this image at all.)
+    void knob4Zones() throws Exception {
+        setup(0,false,0); command(2);
+        for(int p:new int[]{484,767,2000,300,100,1}) {
+            int expect=3+Math.min(13,2904/p);
+            w(0x6814,2,p);
+            for(int raw:new int[]{0,1023,512,1000,300}) {
+                w(S+0x310,2,raw); controlScan();
+                check("knob 4 at "+raw+" with the period cell at "+p+": zone "+setting()+" of "+expect,
+                    setting()==raw*expect/1024);
+            }
+        }
+        w(0x6814,2,PERIOD); w(S+0x310,2,1023); controlScan();
+        check("back at the octave, the top of the knob is zone 8",setting()==8);
+        println("PASS knob 4's zones follow the period cell: 9, 6, 4, 12 and 16 at the cap");
+    }
     void presetOwnership() throws Exception {
         for(int direction:new int[]{1,-1}) {
             setup(0,false,0); command(2);
@@ -1885,6 +1908,7 @@ public class ControlRegression extends SequenceEditRegression {
                 try { presetSequencer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             }
             if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(transpose)try { knob4Zones(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             // The pattern gate sits at the note selector and answers a rest
             // with -1 without moving the note on, so on a patterns build an
             // order walk no longer gives one key per beat and these three

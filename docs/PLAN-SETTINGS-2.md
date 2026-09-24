@@ -728,6 +728,12 @@ rises along it:
   entry's answer at 767 and 484; `ControlRegression.periodCell` drives
   the panel pads and the stored octave through the real routine at both
   periods.
+  Corrected 2026-09-24 by the 3.0 audit: the step count left baked was
+  a number the marker hashes, nine at the octave and six at the tritave,
+  so the two builds were not one image and a Bohlen-Pierce record was
+  refused as another image's. The count is worked out from cell 10 when
+  the knob is read since; `ControlRegression.knob4Zones` drives it at six
+  periods and `web/test_readback.js` compares the two builds' markers.
 - **K. The 2.4 A/B (criterion 1).** Run 2026-09-23. `src/AbTrace.java` and
   `tools/ab_trace.py`: one scripted session through the factory entry
   points every Rewired image shares - boot, the touch handlers, the ADC

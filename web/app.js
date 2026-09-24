@@ -6,7 +6,7 @@
 
     var $ = function (id) { return document.getElementById(id); };
     var state = { factoryText: null, factoryMtime: null, slots: null,
-                  calibration: null, result: null, patterns: [] };
+                  calibration: null, result: null, patterns: [], numbers: null };
     // What each preset knob is set to; the buttons below drive it.
     var knobRole = { knob1: 'order', knob2: 'spacing', knob3: 'octaves', knob4: 'vibrato' };
 
@@ -1428,17 +1428,21 @@
     // slot is its table, its keys per period and the period, built as it
     // came until a scale replaces it - otherwise a read and a rebuild sent
     // the page's own slots and switched the keyboard's tunings off.  The
-    // timing numbers have no controls on this page, so those are shown and
-    // not loaded.  Loading invalidates the build the way any option change
-    // does: the next image is made from what was read.
+    // timing numbers have no controls on this page, so they ride through
+    // the same way: the ones that differ from this page's own are kept and
+    // go into every build until the next read or a Reset - otherwise a read
+    // and a send put an NRPN sender's values back to the page's.  A pattern
+    // with no steps is not loaded: the unused bank of a build without
+    // patterns is one of those, and neither builder will build one.
+    // Loading invalidates the build the way any option change does: the
+    // next image is made from what was read.
     // The verdict is one line.  With a build here it says how the keyboard
     // relates to it: the same build, this build with edits, or another
     // build, told apart by the firmware version the keyboard reports -
     // the same version from another build wants a flash ("another build"
-    // means other code: the options, the tables and the timing numbers are
-    // not in the image marker, so it is a tuning whose period is not the
-    // octave, whose octave arithmetic is patched in place, or a different
-    // page), an
+    // means other code: the options, the tables, the period and the timing
+    // numbers are not in the image marker, so it is a different page or a
+    // build with other build-time settings), an
     // older one a flash to update, a newer one a fresher page.  With no
     // build here it says whether anything was ever changed over MIDI.
     function describeKeyboard(r) {
@@ -1458,7 +1462,7 @@
         } else if (ver === null) {
             verdict = 'This keyboard runs a different build. Its settings are listed below.';
         } else if (BUILDLIB.compareVersions(ver, page) === 0) {
-            verdict = 'This keyboard runs Rewired ' + ver + ' from another build: a scale with another period, or a different page. ' +
+            verdict = 'This keyboard runs Rewired ' + ver + ' from another build. ' +
                       'Flash the firmware from step 3 to bring it to this build.';
         } else if (BUILDLIB.compareVersions(ver, page) < 0) {
             verdict = 'This keyboard runs Rewired ' + ver + '; this page builds ' + page + '. ' +
@@ -1473,7 +1477,7 @@
             var v = f.options[o[0]];
             return o[0] + ' ' + (v === true ? 'on' : v === false ? 'off' : v === undefined ? '?' : v);
         }).join(' · ');
-        var lengths = f.lengths.filter(function (len) { return len > 0; });
+        var lengths = f.lengths.filter(function (len, i) { return len > 0 && f.masks[i] !== 0; });
         var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
         return verdict + '\n\n' +
             (ver === null ? '' : 'Firmware: Rewired ' + ver + '\n') +
@@ -1508,13 +1512,23 @@
                      octaveUnits: f.numbers.octave_units };
         });
     }
+    // The keyboard's timing numbers where they differ from what this page
+    // builds, or null where it holds the page's own.
+    function keyboardNumbers(f) {
+        var mine = BUILDLIB.timingDefaults(), out = null;
+        Object.keys(mine).forEach(function (k) {
+            if (f.numbers[k] !== mine[k]) { out = out || {}; out[k] = f.numbers[k]; }
+        });
+        return out;
+    }
     function loadFromKeyboard(r) {
         var f = r.fields;
         var rows = [];
         f.lengths.forEach(function (len, i) {
-            if (len > 0) rows.push({ text: clixPattern(f.masks[i]).text, length: len });
+            if (len > 0 && f.masks[i] !== 0) rows.push({ text: clixPattern(f.masks[i]).text, length: len });
         });
         if (rows.length) { state.patterns = rows; renderPatterns(); }
+        state.numbers = keyboardNumbers(f);
         // The options into their controls, through the same appliers a
         // restore uses and in its order - the patterns above first, because
         // knob 2 on patterns seeds an empty bank; the pressure fix before
@@ -1556,10 +1570,12 @@
         interpolated = {};
         $('useCal').checked = true;
         syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
-        var loaded = ['options'].concat(rows.length ? ['patterns'] : [], tunings ? ['tunings'] : []);
+        var loaded = ['options'].concat(rows.length ? ['patterns'] : [],
+                                        state.numbers ? ['timing numbers'] : [],
+                                        tunings ? ['tunings'] : []);
         return 'The ' + loaded.join(', the ') + ' and the pitch table are' +
             ' now loaded here, the table as the calibration already on the keyboard. ' +
-            'Build again to make an image from ' + (rows.length || tunings ? 'them.' : 'it.') +
+            'Build again to make an image from ' + (rows.length || state.numbers || tunings ? 'them.' : 'it.') +
             (had ? ' The readings that were entered have been cleared: they were taken ' +
                    'against whatever was flashed at the time, which the keyboard now says. ' +
                    'Measure again.' : '');
@@ -1795,6 +1811,8 @@
             o.alternate_tunings = slots.map(function (e) { return e || 'factory'; });
         }
         if (calibrationInBuild()) o.pitch_correction = rows();
+        // The timing numbers a read brought in, which have no controls here.
+        if (state.numbers) o.settings_numbers = state.numbers;
         return o;
     }
 
@@ -2516,6 +2534,7 @@
                 options: BUILDLIB.settingsDiff(scalars(), DEFAULTS),
                 patterns: state.patterns,
                 slots: state.slots,
+                numbers: state.numbers,
                 // The calibration's own working state, not the CSV.  Loading
                 // a CSV means "this table is already on the instrument": it
                 // becomes the baseline and the readings are cleared.  Saving
@@ -2600,6 +2619,18 @@
         });
         return out;
     }
+    // Kept timing numbers are taken whole or not at all, each inside the
+    // bounds the keyboard's loader enforces; the ones that match what the
+    // page builds today are dropped, so a changed default is followed.
+    function goodNumbers(v) {
+        if (!v || typeof v !== 'object') return null;
+        try { BUILDLIB.timingNumbersOf(v); } catch (e) { return null; }
+        var mine = BUILDLIB.timingDefaults(), out = null;
+        Object.keys(v).forEach(function (k) {
+            if (v[k] !== mine[k]) { out = out || {}; out[k] = v[k]; }
+        });
+        return out;
+    }
     // A stored calibration is taken whole or not at all, for the same reason
     // a loaded table is: a half-applied one leaves the rest at zero, which is
     // "no correction" rather than "unknown", and the fold would quietly undo
@@ -2661,6 +2692,7 @@
             var s = goodSlots(v);
             if (s) { state.slots = s; renderSlots(); }
         },
+        numbers: function (v) { state.numbers = goodNumbers(v); },
         calibration: function (v) {
             var c = goodCalibration(v);
             if (!c) return;
@@ -2718,6 +2750,7 @@
         if (saved) {
             all.patterns = saved.patterns;
             all.slots = saved.slots;
+            all.numbers = saved.numbers;
             all.calibration = saved.calibration;
         }
         all.factory = hex;
@@ -2731,7 +2764,7 @@
         var el = $('reset');
         if (!el || !DEFAULTS) return;
         el.classList.toggle('hidden',
-            !Object.keys(BUILDLIB.settingsDiff(scalars(), DEFAULTS)).length);
+            !Object.keys(BUILDLIB.settingsDiff(scalars(), DEFAULTS)).length && !state.numbers);
     }
 
     // Guarded: the entry document is served no-cache while the assets are
@@ -2746,7 +2779,9 @@
         // This puts the CHOICES back, not the work - re-ticking a box brings
         // what was loaded back with it, and a sweep is not thrown away by a
         // button labelled Reset.  The deviations then being empty is what
-        // empties the save.
+        // empties the save.  Timing numbers a read brought in are choices
+        // the keyboard held rather than work done here, so they go too.
+        if (state.numbers) { state.numbers = null; invalidate(); }
         applyAll(DEFAULTS);
         saveNow();
         syncReset();

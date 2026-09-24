@@ -888,13 +888,62 @@ public class SettingsRegression extends PersistenceRegression {
         keepSlots=false;
         println("PASS two slots: the newest wins, across the wrap, and the older stands in");
     }
+    // 0x3f01 on a keyboard with no valid record drops the edits to the
+    // image's own settings, which is what the next boot would give: with
+    // both slots erased, and with both corrupt.  A valid record still wins.
+    // (Audit 2026-09-24, finding 4: the reload copied nothing when neither
+    // slot was valid, and the edits stayed.)
+    void reloads() throws Exception {
+        fresh(); keepSlots=true;
+        nrpn(0,61); nrpn(2,1); nrpn(0x100,777); nrpn(0x1e5,9); w(0x60e4,2,0xa5a0);
+        check("the edits are in the mirror",r(0x6800,2)==61&&r(0x6804,2)==1&&r(0x68e0,2)==777&&r(0x6a28+2*5,2)==9);
+        nrpn(0x3f01,0);
+        check("0x3f01 with both slots erased gives the image's own settings back",Arrays.equals(mirror(),payloadOf(record)));
+        check("no slot loaded, the state clean and the applier's guard clear",
+            r(STATE+1,1)==0xff&&r(STATE,1)==0&&r(0x60e4,2)==0);
+        byte[] a=edited(); a[0x61]^=1;
+        byte[] b=edited(); setGen(b,4); stamp(b); b[0x101]^=1;
+        plant(SLOT0,a); plant(SLOT1,b); cold();
+        check("two corrupt slots boot the image's own settings",Arrays.equals(mirror(),payloadOf(record))&&r(STATE+1,1)==0xff);
+        nrpn(0,61); nrpn(0x3f01,0);
+        check("and 0x3f01 drops an edit back to them",Arrays.equals(mirror(),payloadOf(record))&&r(STATE+1,1)==0xff);
+        byte[] good=edited(); plant(SLOT1,good); nrpn(0,62); nrpn(0x3f01,0);
+        check("with a valid record beside a corrupt one, 0x3f01 gives the record",
+            Arrays.equals(mirror(),payloadOf(good))&&r(STATE+1,1)==1&&r(STATE+4,4)==3);
+        keepSlots=false;
+        println("PASS reload without a valid record: erased and corrupt slots give the image's own settings");
+    }
+    // The strip's lamp and its recorder split tie from rest at the same
+    // place, settings cell 1.  With the cell moved to 3000, a finger let go
+    // at 2500 - past the build's 2048, short of the cell - shows the rest
+    // lamp while it is down and records a rest; at 3500 the tie lamp and a
+    // tie.  (2026-09-24, beside the audit's finding 5: the lamp compared
+    // with the build's number and could show a tie the release then
+    // recorded as a rest.)
+    void stripHalfway() throws Exception {
+        fresh();
+        nrpn(1,3000);
+        check("cell 1 takes 3000",r(0x6802,2)==3000);
+        w(0x6158,1,1); w(0x61e0,1,0); w(0x61e4,1,0);
+        int[][] cases={{2500,num("strip_led_rest_units",0),0x7ffe},{3500,num("strip_led_tie_units",4095),0x7fff}};
+        for(int i=0;i<cases.length;i++) {
+            int[] c=cases[i];
+            w(S+0x206,1,1); w(S+0x1fe,2,c[0]); call(0x8001e000L);
+            check("the finger down at "+c[0]+" lights "+(c[2]==0x7fff?"the tie":"the rest")+" lamp: "+r(0x38be,2),r(0x38be,2)==c[1]);
+            w(S+0x206,1,0); call(0x8001e000L);
+            check("and let go there it records "+(c[2]==0x7fff?"a tie":"a rest")+": "+Long.toHexString(r(0x6160+2*i,2)),
+                r(0x61e0,1)==i+1&&r(0x6160+2*i,2)==c[2]);
+        }
+        w(0x6158,1,0);
+        println("PASS the strip's lamp and its recorder both split tie from rest at cell 1");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         String mode=args[0]; seq=mode.contains("seq"); clock=mode.contains("clock");
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
+            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

@@ -2385,18 +2385,14 @@ def main() -> None:
     k4 = cfg.get("knob4", {}).get("octaves", 0)
     if isinstance(k4, bool) or not isinstance(k4, int) or k4 not in (0, 1):
         raise SystemExit("[knob4].octaves must be 0 or 1")
-    # How many positions knob 4 gets.  The factory has nine: three that mean
-    # no transpose, then six steps up.  Six OCTAVES is the reach, so a scale
-    # whose period is wider gets proportionally fewer steps rather than a
-    # knob whose top half pushes everything past the DAC and the oscillator.
-    # An octave build comes out at nine, which is the factory's own count.
-    step = cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
-    cfg["_numbers"]["knob4_zones"] = 3 + max(
-        1, (6 * cfg["tuning"]["units_per_octave"]) // step)
-    if blocks.get("knob4_octave_switch"):
-        summary.append(f"  {'knob4.zones':28s} "
-                       f"{cfg['_numbers']['knob4_zones']}  "
-                       f"(3 silent, then {cfg['_numbers']['knob4_zones'] - 3} up)")
+    # How far knob 4 reaches.  The factory has nine positions: three that
+    # mean no transpose, then six steps up.  Six OCTAVES is the reach, so a
+    # scale whose period is wider gets proportionally fewer steps rather than
+    # a knob whose top half pushes everything past the DAC and the
+    # oscillator.  The firmware divides this by number cell 10, the period,
+    # when it reads the knob, so the step count follows a record with
+    # another period; only the reach is built in.
+    cfg["_numbers"]["knob4_reach_units"] = 6 * cfg["tuning"]["units_per_octave"]
     blocks["knob4_octave_switch"] = True
     summary.append(f"  {'knob4.octaves':28s} "
                    f"{k4}  ({'octave switch' if k4 == 1 else 'vibrato'}, the baked default)")
@@ -2492,7 +2488,7 @@ def main() -> None:
                  "clock_ms_tick", "clock_ms_pool",
                  "clock_gate", "clock_gate_hook", "clock_settle",
                  "clock_capture", "clock_irq_hook",
-                 "clock_edge_mode", "clock_init", "clock_init_pool",
+                 "clock_edge_mode", "clock_init", "clock_init_pool", "clock_thresholds",
                  "clock_service", "clock_output", "clock_low_age", "clock_attack_guard",
                  "clock_spike_units", "clock_fast_trigger", "clock_remap_bare",
                  "clock_deadline", "clock_pitch_target"):

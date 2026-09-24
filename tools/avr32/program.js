@@ -5270,7 +5270,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001b9c8]");   // and the gate, the pass it expires
             emit("LDM SP++,R7,PC");
             padTo(0x8001b9c0);
-            word(0x8001c400); // clock_service
+            word(block("clock_thresholds") ? 0x8001c3c0 : 0x8001c400); // clock_thresholds, then clock_service
             word(feature("scan_profiler") ? 0x8001a540 : 0x80004c64);
             word(0x8001c100); // pending-output service: the fast trigger
             finish("clock_scan", 0x8001b9cc);
@@ -5281,7 +5281,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001b9c0]");
             emit("LDM SP++,R7,PC");
             padTo(0x8001b9bc);
-            word(0x8001c400); // clock_service
+            word(block("clock_thresholds") ? 0x8001c3c0 : 0x8001c400); // clock_thresholds, then clock_service
             word(feature("scan_profiler") ? 0x8001a540 : 0x80004c64);
             finish("clock_scan", 0x8001b9c4);
         }
@@ -5345,8 +5345,13 @@ function assembleProgram() {
         emit("ST.H R10[0x2],R8");       // diagnostic dispatch time only
         emit("MOV R9,0x6233");
         emit("LD.UB R11,R10[0x6]");
-        emit(StringFormat("CP.W R11,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
+        // The cell the count above stops at, not the build's number: with
+        // fewer pulses in the record than in the build the count would
+        // stop short of the lock and the clock would never lock.  R12 is
+        // set again below before anything reads it.
+        emit("MOV R12,0x6800");
+        emit("LD.UH R12,R12[0x8]");     // clock_lock_pulses, settings cell 4
+        emit("CP.W R11,R12");
         emit("BR{lt} 0x8001c8ac");
         emit("MOV R11,0x1");
         emit("ST.B R9[0x0],R11");       // once acquired, latched until timeout
@@ -6819,17 +6824,36 @@ function assembleProgram() {
         emit("MOV R11,0x46f3");
         emit("LD.UB R11,R11[0x0]");
         emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001d9b0");
+        emit("BR{ne} 0x8001d9a0");
         emit("LD.SH R11,R10[0x58]");   // last unheld snapshot: 0x6148
         emit("SUB R11,R8,R11 << 0x0");
         emit("CP.W R11,0x8");
         emit("BR{gt} 0x8001d9d0");
         emit("CP.W R11,-0x8");
         emit("BR{lt} 0x8001d9d0");
-        padTo(0x8001d9b0);
-        emit(StringFormat("MOV R11,0x%x", number("knob4_zones", 9, 3, 16)));
-        emit("MUL R8,R8,R11");
+        padTo(0x8001d9a0);
+        // How many zones the knob has: three that mean no transpose, then
+        // one per period up to six octaves' reach, thirteen at most - nine
+        // at the octave, as the factory has it, and six for a tritave.
+        // Worked out here from number cell 10 rather than baked in, so a
+        // record with another period fits this image and the knob follows
+        // it.  The cell's bounds, 1..2000, keep the quotient at one or more;
+        // the unsigned clamp holds the top whatever the cell says.  DIVU
+        // wants an even destination and takes the next register for the
+        // remainder, so R10 and R11 go, and R10 is 0x60f0 again below.
+        emit("MOV R11,0x6814");         // the period: number cell 10
+        emit("LD.UH R11,R11[0x0]");
+        emit(StringFormat("MOV R10,0x%x",
+             number("knob4_reach_units", 2904, 1, 0x7fff)));
+        emit("DIVU R10,R10,R11");       // periods in reach; R11 the remainder
+        emit("CP.W R10,0xd");
+        emit("BR{ls} 0x8001d9b6");
+        emit("MOV R10,0xd");
+        padTo(0x8001d9b6);
+        emit("SUB R10,-0x3");           // the three silent zones
+        emit("MUL R8,R8,R10");
         emit("LSR R8,0xa");
+        emit("MOV R10,0x60f0");
         emit("ST.H R10[0x0],R8");
         padTo(0x8001d9d0);
         emit("LD.UH R8,R10[0x0]");
@@ -7833,6 +7857,32 @@ function assembleProgram() {
         padTo(0x8001c3b8);
         word(0x80007340);
         finish("clock_init", 0x8001c3c0);
+
+        // clock_min_ms and clock_rearm_us as the capture ISR compares them:
+        // COUNT cycles, from settings cells 2 and 3.  clock_init works them
+        // out once at boot; this works them out again on every pass of the
+        // main-loop wrapper, in front of clock_service, so a record or an
+        // NRPN write that changes either cell reaches the thresholds without
+        // a restart.  One reader covers every writer of the cells - a
+        // receive, a reload, the defaults, a boot - where a refresh per
+        // writer would miss the next one added.  Each threshold is a single
+        // word store, which the ISR reads whole.  Spends R8-R11:
+        // clock_service takes no arguments, and the wrapper keeps nothing
+        // live across the call.
+        begin(0x8001c3c0);
+        emit("MOV R10,0x6244");
+        emit("LD.W R8,R10[0x0]");       // cycles/ms
+        emit("MOV R11,0x6800");         // the settings mirror
+        emit("LD.UH R9,R11[0x4]");      // clock_min_ms, settings cell 2
+        emit("MUL R9,R8,R9");
+        emit("ST.W R10[0x8],R9");
+        emit("LD.UH R9,R11[0x6]");      // clock_rearm_us, settings cell 3
+        emit("MUL R8,R8,R9");
+        emit("MOV R9,0x3e8");
+        emit("DIVU R8,R8,R9");
+        emit("ST.W R10[0x4],R8");
+        emit("RJMP 0x8001c400");        // clock_service, returning to the wrapper
+        finish("clock_thresholds", 0x8001c400);
 
         // One bounded main-loop dequeue. The short critical section covers
         // timeout and tail publication; SR is restored EXACTLY, including
@@ -8936,8 +8986,11 @@ function assembleProgram() {
         emit("CP.W R8,0x40");
         emit("BR{ge} 0x8001e088");      // 64 steps: the release will refuse it
         emit("LD.SH R12,R9[0x1fe]");    // where the finger is
-        emit(StringFormat("MOV R8,0x%x",
-             number("strip_halfway_units", 2048, 128, 3968)));
+        // Halfway is settings cell 1, the one seq_strip_release decides the
+        // tie by, so the lamp cannot disagree with what is recorded.  R11
+        // is 0x657a here, which reaches 0x6802 in the four bytes the build's
+        // number took.
+        emit("LD.UH R8,R11[0x288]");    // strip_halfway_units, settings cell 1
         emit("CP.W R12,R8");
         emit("BR{ge} 0x8001e09c");      // above halfway: the tie's lamp
         padTo(0x8001e080);
@@ -10637,7 +10690,8 @@ function assembleProgram() {
 
         // Apply one received value.  R12 = parameter, R11 = 14-bit value.
         // Parameters from 0x3f00 are commands: 0x3f00 with 0x2a2a asks for
-        // a commit on the next scan, 0x3f01 reloads the mirror from flash,
+        // a commit on the next scan, 0x3f01 reloads the mirror from flash
+        // (the image's own settings where no record is valid),
         // 0x3f02 puts the image's own settings back, 0x3f03 starts a dump,
         // 0x3f7f asks for the identity block.  Anything else names a cell:
         // out of range is ignored, not clamped - the page is expected to
@@ -10666,6 +10720,11 @@ function assembleProgram() {
         padTo(apC1);
         emit("CP.W R0,0x3f01");
         emit(StringFormat("BR{ne} 0x%x", apC2));
+        // As at boot: the image's own settings, then the newer valid record
+        // over them.  The reload alone copies nothing when neither slot is
+        // valid, which left the edits in place on a keyboard that has never
+        // committed; the next boot would have dropped them.
+        emit(StringFormat("MCALL PC[0x%x]", apPool + 8));   // settings_defaults
         emit(StringFormat("MCALL PC[0x%x]", apPool + 4));   // settings_reload
         emit(StringFormat("RJMP 0x%x", apDone));
         padTo(apC2);

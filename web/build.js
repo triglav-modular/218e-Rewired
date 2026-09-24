@@ -221,7 +221,7 @@ var WEBBUILD = (function () {
          'clock_ms_tick', 'clock_ms_pool',
          'clock_gate', 'clock_gate_hook', 'clock_settle',
          'clock_capture', 'clock_irq_hook',
-         'clock_edge_mode', 'clock_init', 'clock_init_pool',
+         'clock_edge_mode', 'clock_init', 'clock_init_pool', 'clock_thresholds',
          'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard',
          'clock_spike_units', 'clock_fast_trigger', 'clock_remap_bare',
          'clock_deadline', 'clock_pitch_target']

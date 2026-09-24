@@ -64,6 +64,12 @@ var BUILDLIB = (function () {
             tunings.forEach(function (t, i) { cfg._tunings[i] = t || 'factory'; });
         }
 
+        // Timing numbers read back from a keyboard, which the page has no
+        // controls for: carried into the record as read, so a read and a
+        // build do not put an NRPN sender's values back to this page's.
+        // Page-only, like a tuning slot read back as a table.
+        cfg._timing_numbers = timingNumbersOf(want('settings_numbers', null));
+
         // A hardware limit, not a shortlist: 6.5 octaves against a 10.22 V
         // DAC caps the scaling at 1.573 V/oct.  2 V/oct would need 13.00 V
         // and strand the top 17 keys at the ceiling.  See tools/options.py.
@@ -1152,8 +1158,8 @@ var BUILDLIB = (function () {
                                            * cfg.portamento_in.cv_volts_per_period),
             transpose_cv_zero: cfg.portamento_in.cv_zero,
             transpose_cv_hysteresis: cfg.portamento_in.cv_hysteresis,
-            knob4_zones: 3 + Math.max(1, Math.floor(
-                (6 * cfg.tuning.units_per_octave) / octaveUnits(cfg))),
+            // Six octaves; the firmware divides it by the period cell.
+            knob4_reach_units: 6 * cfg.tuning.units_per_octave,
             strip_halfway_units: (cfg.sequencer && cfg.sequencer.strip_halfway_units) || 2048,
             tie_glide_rate: (cfg.sequencer && cfg.sequencer.tie_glide_rate) || 60,
             strip_ack_scans: (cfg.sequencer && cfg.sequencer.strip_ack_scans) || 20,
@@ -1230,7 +1236,40 @@ var BUILDLIB = (function () {
             alternate_tunings: (cfg._tunings || []).some(function (t) { return t !== 'factory'; })
         });
         Object.keys(cells).forEach(function (k) { numbers[k] = cells[k]; });
+        var timing = cfg._timing_numbers || {};
+        Object.keys(timing).forEach(function (k) { numbers[k] = timing[k]; });
         return numbers;
+    }
+
+    // The ten timing numbers by name, each inside the bounds the keyboard's
+    // loader enforces, or null for none.  Not the period: cell 10 is the
+    // tunings' to decide.
+    function timingNumbersOf(v) {
+        if (v === null || v === undefined) return null;
+        if (typeof v !== 'object') throw new Error('settings_numbers must name timing numbers');
+        var out = {};
+        Object.keys(v).forEach(function (k) {
+            var spec = null;
+            SETTINGS_NUMBERS.forEach(function (n) { if (n[0] === k && k !== 'octave_units') spec = n; });
+            if (!spec) throw new Error('settings_numbers: ' + k + ' is not a timing number');
+            var x = v[k];
+            if (typeof x !== 'number' || x % 1 !== 0 || x < spec[2] || x > spec[3]) {
+                throw new Error('settings_numbers.' + k + ' must be a whole number from ' +
+                                spec[2] + ' to ' + spec[3]);
+            }
+            out[k] = x;
+        });
+        return out;
+    }
+    // The ten as this page builds them with nothing read back: what the
+    // record carries, so what a read is compared with.
+    function timingDefaults() {
+        var numbers = computeNumbers(expand({})), out = {};
+        SETTINGS_NUMBERS.forEach(function (n) {
+            if (n[0] === 'octave_units') return;
+            out[n[0]] = numbers[n[0]] === undefined ? n[1] : numbers[n[0]];
+        });
+        return out;
     }
 
     // --- the settings record --------------------------------------------
@@ -1762,6 +1801,7 @@ var BUILDLIB = (function () {
         'pressure_fix', 'pressure_portamento',
         'quantize_presets', 'portamento_transpose',
         'slots', 'use_tunings',
+        'numbers',
         'calibration', 'use_cal',
         'factory'
     ];
@@ -1802,6 +1842,7 @@ var BUILDLIB = (function () {
         checkTableRange: checkTableRange,
         initMarker: initMarker, writeProperties: writeProperties, get: get,
         settingsRecord: settingsRecord, crc32: crc32,
+        timingNumbersOf: timingNumbersOf, timingDefaults: timingDefaults,
         SETTINGS_NUMBERS: SETTINGS_NUMBERS, SETTINGS_LAYOUT: SETTINGS_LAYOUT,
         NRPN_CHANNEL: NRPN_CHANNEL, NRPN_SECTIONS: NRPN_SECTIONS,
         NRPN_COMMANDS: NRPN_COMMANDS, NRPN_IDENTITY: NRPN_IDENTITY,
