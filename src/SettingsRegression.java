@@ -160,6 +160,21 @@ public class SettingsRegression extends PersistenceRegression {
         check("a pitch entry past the DAC is ignored",r(0x6840+6,2)==1234);
         w(0x60e4,2,0xa5a0); nrpn(0x105,999);
         check("a tuning entry lands and clears the applier's guard",r(0x68e0+10,2)==999&&r(0x60e4,2)==0);
+        nrpn(0x105,0x3fff);
+        check("a tuning entry takes all fourteen bits",r(0x68e0+10,2)==0x3fff);
+        nrpn(0x105,999);
+        // Keys per period and the period shape the rotated table too, so a
+        // write to either re-copies the slot as a slot write does.  (Audit
+        // 2026-09-24: only the slots cleared the guard, and the rotation
+        // kept the old wrap until the jack or the slot moved.)
+        for(int i=0;i<32;i++) w(0x854+2*i,2,0xabc);
+        w(0x60e4,2,0xa5a0); nrpn(0x160,(int)r(0x69a0,2));
+        check("a keys-per-period write clears the applier's guard",r(0x60e4,2)==0);
+        w(0x6090,1,0); call(APPLIER);
+        check("and the applier copies the slot again over a stale table",
+            Arrays.equals(e.readMemory(toAddr(0x854),64),e.readMemory(toAddr(0x68e0),64)));
+        w(0x60e4,2,0xa5a0); nrpn(10,(int)r(MIRROR+20,2));
+        check("a period write clears it too",r(0x60e4,2)==0);
         nrpn(0x161,7);
         check("keys per period land",r(0x69a2,2)==7);
         nrpn(0x161,0); nrpn(0x161,props.getProperty("block.preset_entry","0").trim().equals("1")?33:128);
@@ -190,8 +205,10 @@ public class SettingsRegression extends PersistenceRegression {
         check("a reserved cell refuses everything but zero",r(MIRROR+2*11,2)==0&&r(MIRROR+2*28,2)==0);
         long period=r(MIRROR+20,2); nrpn(10,767);
         check("the period cell, 10, takes a value",r(MIRROR+20,2)==767);
-        nrpn(10,2001); nrpn(10,0);
-        check("and not one past its bounds",r(MIRROR+20,2)==767);
+        nrpn(10,2001); nrpn(10,99);
+        check("and not one past its bounds, 100..2000",r(MIRROR+20,2)==767);
+        nrpn(10,100);
+        check("its floor lands",r(MIRROR+20,2)==100);
         nrpn(10,(int)period);
         int was27=(int)r(MIRROR+2*27,2); nrpn(27,was27==1?0:1);
         check("the tunings' switch, cell 27, takes the other value",r(MIRROR+2*27,2)==(was27==1?0:1));
@@ -225,8 +242,28 @@ public class SettingsRegression extends PersistenceRegression {
             r(S+0x3a2,2)==(41<<3));
         long state=r(NRPN,4); feed(0xb3,99,7); feed(0xb3,38,7);
         check("NRPN on another channel is not ours",r(NRPN,4)==state);
+        // An RPN select parks the parameter in hand where it names nothing,
+        // so a host's RPN data entry on channel 16 - the pitch-bend range an
+        // MPE upper zone sends - is not applied to the last NRPN.  (Audit
+        // 2026-09-24: it set cell 0 to 256.)
+        nrpn(0,61); byte[] held=mirror();
+        feed(0xbf,101,0); feed(0xbf,100,0); feed(0xbf,6,2); feed(0xbf,38,0);
+        check("RPN 0 data entry on channel 16 changes nothing",Arrays.equals(held,mirror()));
+        feed(0xbf,38,5);
+        check("nor does a lone data LSB after it",Arrays.equals(held,mirror()));
+        nrpn(0,62);
+        check("and an NRPN after it lands",r(0x6800,2)==62);
         check("nothing was sent",sent.isEmpty());
         println("PASS NRPN on channel 16 lands in the mirror, bounded; the factory's path is untouched");
+    }
+    // After a power-up the parameter in hand names nothing: a stray data
+    // entry on channel 16 is not a write to cell 0.  (Audit 2026-09-24.)
+    void strayDataEntry() throws Exception {
+        fresh();
+        check("the boot parks the parameter at 0x3fff",r(NRPN,2)==0x7f7f);
+        feed(0xbf,6,2); feed(0xbf,38,0);
+        check("a data entry with no parameter after boot changes nothing",Arrays.equals(mirror(),payloadOf(record)));
+        println("PASS a stray data entry lands nowhere, after boot and after an RPN select");
     }
     void commits() throws Exception {
         fresh(); keepSlots=true; slotWrites=0;
@@ -328,16 +365,26 @@ public class SettingsRegression extends PersistenceRegression {
         fresh(); stubSelector=true;
         for(int i=0;i<32;i++) { mask(i,0); w(0x6a28+2*i,2,0); }
         // Pattern 0 never sounds and pattern 1 always does, four steps each.
-        mask(1,0xffffffffL); w(0x6a28,2,4); w(0x6a2a,2,4);
+        // Never sounding is a hit past the length: a mask of no steps at all
+        // plays every step, below.
+        mask(0,0x80000000L); mask(1,0xffffffffL); w(0x6a28,2,4); w(0x6a2a,2,4);
         check("knob 2 at the bottom picks pattern 0, a rest",gate(0)==0xffffffffL);
         check("and at the top pattern 1 of a two-pattern bank, a hit",gate(0x3ff)==77);
         w(0x6a2a,2,0); mask(2,0xffffffffL); w(0x6a2c,2,4);
         check("a zero length ends the bank: the top is pattern 0 again",gate(0x3ff)==0xffffffffL);
         w(0x6a28,2,0);
         check("an empty bank is one pattern that rests",gate(0x3ff)==0xffffffffL&&gate(0)==0xffffffffL);
-        for(int i=0;i<32;i++) { mask(i,i==31?0xffffffffL:0); w(0x6a28+2*i,2,1); }
+        for(int i=0;i<32;i++) { mask(i,i==31?0xffffffffL:0x80000000L); w(0x6a28+2*i,2,1); }
         check("a full bank reaches pattern 31 at the top",gate(0x3ff)==77);
         check("and pattern 30 just below it",gate(0x3ff-32)==0xffffffffL);
+        // A pattern with no steps is no pattern: every step sounds.  The bank
+        // of an image built without patterns is one such, and an NRPN sender
+        // can turn knob 2 to patterns without sending a bank.  (Audit
+        // 2026-09-24: the arpeggiator went silent.)
+        for(int i=0;i<32;i++) { mask(i,0); w(0x6a28+2*i,2,0); }
+        w(0x6a28,2,32);
+        boolean every=true; for(int k=0;k<40;k++) every&=gate(0)==77;
+        check("an empty pattern plays every step",every);
         stubSelector=false;
         println("PASS the pattern gate reaches the mirror's bank, however many patterns the image was built with");
     }
@@ -826,6 +873,19 @@ public class SettingsRegression extends PersistenceRegression {
         for(int i=0;i<79;i++) w(0x6840+2*i,2,1000);
         w(0x6028,2,0); e.writeRegister("R12",0x300); stubChain=true; call(REMAP); stubChain=false;
         check("the pitch remap reads the mirror",r(0x3212,2)==1000);
+        // A falling curve: every segment interpolates between its own two
+        // entries, inside the DAC.  (Audit 2026-09-24: an unsigned divide
+        // put a falling segment's output near 0x6e16.)
+        for(int i=0;i<79;i++) w(0x6840+2*i,2,3900-40*i);
+        stubChain=true;
+        boolean inside=true; String worst="";
+        for(int p=0;p<0x1000;p+=37) {
+            w(0x6028,2,0); e.writeRegister("R12",p); call(REMAP);
+            long out=r(0x3212,2);
+            if(out<3900-40*78||out>3900) { inside=false; worst=p+"->"+Long.toHexString(out); }
+        }
+        stubChain=false;
+        check("a falling pitch curve interpolates inside its own entries "+worst,inside);
         for(int i=0;i<79;i++) w(0x6840+2*i,2,0);
         boot();
         check("a warm reset reloads the record",Arrays.equals(mirror(),payloadOf(rec)));
@@ -851,8 +911,8 @@ public class SettingsRegression extends PersistenceRegression {
         long keys=props.getProperty("block.preset_entry","0").trim().equals("1")?33:128;
         long[][] bad={{0,1,0xff},{4,2,1},{4,2,3},{6,2,0x299},{8,4,0},{0x10,2,0x1234},
             {0x20,2,0},{0x20,2,1025},{0x24,2,5},{0x2e,2,65},{0x60,2,0x1000},{0xfe,2,0x1000},
-            {0x100,2,0x1000},{0x1c0,2,0},{0x1c4,2,keys},{0x248,2,33},
-            {0x34,2,0},{0x34,2,2001},{0x36,2,1},{0x56,2,2},{0x58,2,1},{0x42,2,3},{0x44,2,5},{0x48,2,3}};   // cell 10 is the period, bounded 1..2000; 11 is reserved; cell 27 is the tunings' switch: 2 is out of range, 28 is reserved
+            {0x100,2,0x4000},{0x1c0,2,0},{0x1c4,2,keys},{0x248,2,33},
+            {0x34,2,0},{0x34,2,99},{0x34,2,2001},{0x36,2,1},{0x56,2,2},{0x58,2,1},{0x42,2,3},{0x44,2,5},{0x48,2,3}};   // cell 10 is the period, bounded 1..2000; 11 is reserved; cell 27 is the tunings' switch: 2 is out of range, 28 is reserved
         for(long[] b:bad) {
             byte[] rec=good.clone();
             for(int i=0;i<b[1];i++) rec[(int)b[0]+i]=(byte)(b[2]>>>(8*(b[1]-1-i)));
@@ -868,6 +928,9 @@ public class SettingsRegression extends PersistenceRegression {
         check("and both off loads",r(STATE+1,1)==0&&r(LIVE+7,1)==0&&r(LIVE+8,1)==0);
         plant(SLOT0,good); cold();
         check("and the good record loads again",r(STATE+1,1)==0);
+        rec=good.clone(); setHalf(rec,0x100+2*31,0x3fff); setHalf(rec,0x34,100); stamp(rec); plant(SLOT0,rec); cold();
+        check("a tuning entry of 0x3fff and the period's floor, 100, load",
+            r(STATE+1,1)==0&&r(0x68e0+2*31,2)==0x3fff&&r(MIRROR+20,2)==100);
         keepSlots=false;
         println("PASS header, CRC, image, period and every bound refuse a record");
     }
@@ -943,7 +1006,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
+            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

@@ -60,7 +60,12 @@ var SETTINGSMIDI = (function () {
     // stop or `timeoutMs` passes without the block completing.  Resolves
     // with the pairs; rejects with Error('no reply') on the timeout, and
     // the caller decides what that means.
-    function collect(input, until, timeoutMs, timers) {
+    // `start` sends whatever asks for the reply, once the listener is in
+    // place.  A port that has gone away throws from send(), and inside the
+    // promise that is a 'no reply' like any other silence rather than a
+    // throw out of the transport, which left the page's buttons disabled
+    // and the listener installed until its timeout.
+    function collect(input, until, timeoutMs, timers, start) {
         timers = timers || (typeof window !== 'undefined' ? window : globalThis);
         return new Promise(function (resolve, reject) {
             var dec = B.nrpnDecoder(), pairs = [], done = false;
@@ -83,6 +88,9 @@ var SETTINGSMIDI = (function () {
                     }
                 }
             };
+            if (start) {
+                try { start(); } catch (e) { finish(false); }
+            }
         });
     }
 
@@ -93,9 +101,9 @@ var SETTINGSMIDI = (function () {
     // Who is listening: the identity block, or Error('no reply').  The
     // block carries `missing`, the parameters of it that did not arrive.
     function identity(output, input, timeoutMs, timers) {
-        var waiting = collect(input, hasVersion, timeoutMs || 2000, timers);
-        sendParam(output, B.NRPN_COMMANDS.identity, 0);
-        return waiting.then(function (pairs) {
+        return collect(input, hasVersion, timeoutMs || 2000, timers, function () {
+            sendParam(output, B.NRPN_COMMANDS.identity, 0);
+        }).then(function (pairs) {
             var id = B.nrpnIdentity(pairs);
             id.missing = B.nrpnMissing(pairs, true);
             return id;
@@ -106,9 +114,9 @@ var SETTINGSMIDI = (function () {
     // identity block decoded beside them and `missing`, the parameters of
     // the dump that did not arrive.
     function dump(output, input, timeoutMs, timers) {
-        var waiting = collect(input, hasVersion, timeoutMs || 5000, timers);
-        sendParam(output, B.NRPN_COMMANDS.dump, 0);
-        return waiting.then(function (pairs) {
+        return collect(input, hasVersion, timeoutMs || 5000, timers, function () {
+            sendParam(output, B.NRPN_COMMANDS.dump, 0);
+        }).then(function (pairs) {
             return { pairs: pairs, identity: B.nrpnIdentity(pairs), missing: B.nrpnMissing(pairs) };
         });
     }
@@ -202,7 +210,13 @@ var SETTINGSMIDI = (function () {
     // `state`), so the page can say which - they have different fixes.
     function install(output, input, record, opts) {
         opts = opts || {};
-        var live = null;
+        // `before`, the identity the send started from: a commit is only
+        // believed when the generation moved past it, since the commit state
+        // a lost request leaves is whatever the last commit left.  `pushed`:
+        // from here the mirror holds values that went live on arrival, and a
+        // send that fails from here on reloads, so the keyboard does not play
+        // half a record nobody saved.
+        var live = null, before = null, pushed = false;
         return identity(output, input, opts.timeout, opts.timers).catch(function () {
             return fail('no reply');
         }).then(function (id) {
@@ -210,6 +224,7 @@ var SETTINGSMIDI = (function () {
             if (id.missing.length) return fail('mismatch', { identity: id, differences: [], missing: id.missing });
             if (id.imageMarker !== markerOf(record)) return fail('wrong image', { identity: id });
             if (opts.onStage) opts.onStage('push');
+            before = id; pushed = true;
             return push(output, record, opts);
         }).then(function () {
             if (opts.onStage) opts.onStage('verify');
@@ -234,7 +249,9 @@ var SETTINGSMIDI = (function () {
             });
         }).then(function (id) {
             if (id.missing.length) return fail('mismatch', { identity: id, differences: [], missing: id.missing });
-            if (id.commitState !== 2) return fail('not written', { identity: id, state: id.commitState });
+            if (id.commitState !== 2 || id.generation === before.generation) {
+                return fail('not written', { identity: id, state: id.commitState });
+            }
             id.pending = B.pendingOptions(record, live);
             id.restarted = id.pending.length > 0;
             if (id.restarted) {
@@ -242,6 +259,11 @@ var SETTINGSMIDI = (function () {
                 restart(output);
             }
             return id;
+        }).catch(function (err) {
+            if (pushed) {
+                try { reload(output); } catch (e) { /* the port is gone: nothing to reload through */ }
+            }
+            throw err;
         });
     }
 

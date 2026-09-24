@@ -141,12 +141,15 @@ The ten timing numbers, cells 0..9: `tie_glide_rate`,
 `clock_lock_pulses`, `transpose_cv_period`, `transpose_cv_zero`,
 `transpose_cv_hysteresis`, `chord_hold_scans`, `latch_state_hold_scans`.
 Cell 10 is `octave_units`, the period the octave controls step, in DAC
-units: 484 for a scale that repeats at the octave, 767 for a tritave;
-the page sends the period its tuning declares.
+units: 484 for a scale that repeats at the octave, 767 for a tritave,
+bounded `100..2000` (248 cents up; below that the octave arithmetic loops
+for milliseconds a scan); the page sends the period its tuning declares.
 
 Load validates the marker, version, length, generation, CRC and image
-marker, then every field's bounds: table entries inside the 12-bit
-DAC range, keys per period `1..32`, lengths `0..32`, numbers and option
+marker, then every field's bounds: pitch table entries inside the 12-bit
+DAC range, tuning table entries up to `0x3fff` (the fourteen bits an NRPN
+value carries; the builders clamp there, far above the DAC, where the pitch
+path clamps anyway), keys per period `1..32`, lengths `0..32`, numbers and option
 cells inside their ranges, and `pressure_portamento` only with
 `pressure_fix`. Any failure means the record is ignored and the image's
 own settings are used; a bad record is never repaired in place. A DFU
@@ -166,7 +169,14 @@ The pattern gate reads the bank's size out of the mirror too:
 `pattern_count_of` counts pattern 0 and each pattern after it up to the
 first zero length, so knob 2 reaches a bank that came over MIDI whole
 whatever count the image was built with, and a shorter bank leaves no
-silent positions at the top of the knob.
+silent positions at the top of the knob. A pattern with no steps at all is
+no pattern: every step sounds. The bank of an image built without
+patterns is one such, so knob 2 turned to patterns over NRPN with no bank
+sent plays the arpeggio unpatterned rather than silent.
+
+The pitch remap interpolates each segment signed, so a table that falls
+somewhere - an NRPN sender's, or a send caught halfway through a table
+that moved - plays between the segment's own entries, inside the DAC.
 
 At boot, `settings_boot` copies the image's own tables and numbers into
 the mirror, then the newer valid record over them, then zeroes the NRPN
@@ -182,15 +192,19 @@ A value is applied on the data LSB; the parameter number is not
 auto-incremented, so every value carries its own address. Values are 14
 bits. The hook sits at the factory's Control Change branch; the factory's
 own controllers keep working on the instrument's channel, and if that
-channel is 16, data entry on it is the settings'.
+channel is 16, data entry on it is the settings'. An RPN select, CC 101 or
+100, parks the parameter in hand at `0x3fff`, which names nothing, and the
+boot parks it there too: a host's RPN data entry on channel 16 (the
+pitch-bend range an MPE upper zone sends) lands nowhere, rather than on
+the last NRPN or on cell 0.
 
 | Parameter | Meaning | Value |
 |---|---|---|
 | `0x0000..0x001f` | cell *n* | its bounds; out of range is ignored |
 | `0x0020..0x002f` | the live option bytes | read-only; a dump sends them |
 | `0x0080..0x00ce` | `pitch_remap[0..78]` | `0..0xfff` |
-| `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | `0..0xfff`; a write clears the applier's guard |
-| `0x0160..0x0162` | keys per period | `1..32` |
+| `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | `0..0x3fff`; a write clears the applier's guard |
+| `0x0160..0x0162` | keys per period | `1..32`; a write clears the applier's guard, as does one to cell 10, since both shape the jack's rotated table |
 | `0x0180 + 3p + 0..2` | pattern *p*'s mask, bits 0..13, 14..27, 28..31 | each third replaces its own bits |
 | `0x01e0..0x01ff` | pattern lengths | `0..32`, zero unused; the bank ends at the first zero after pattern 0, and knob 2 spreads over the patterns before it |
 | `0x3f00` | commit on the next scan | data `0x2a2a` |
@@ -231,7 +245,11 @@ dump takes about 0.8 s.
 must match the build here), the values in bursts of 16, a dump compared
 against what was sent, a commit on a match, identity again for the commit
 state, and, when an option cell differs from its live byte, the restart
-and a wait for the keyboard to come back. **Read settings**: one dump,
+and a wait for the keyboard to come back. A commit counts only when the
+generation moved past the one the send started from: the commit state a
+lost request leaves is whatever the last commit left. A send that fails
+after its push sends `0x3f01`, so the keyboard drops the values that went
+live on arrival instead of playing half a record nobody saved. **Read settings**: one dump,
 listed, then the patterns, the options and the tunings loaded into their
 controls, the timing numbers kept for the next build, and the pitch table
 into the calibration.

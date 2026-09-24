@@ -116,22 +116,25 @@ vm.runInContext([
     'var state = { patterns: [], slots: [null, null, null], numbers: null, factoryText: null };',
     'var knobRole = { knob1: "order", knob2: "spacing", knob3: "octaves", knob4: "vibrato" };',
     'var vpo = 1.2, pitchOffset = true, nodes = {};',
+    'var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
     'var measured = [], baseline = {}, baselineSources = {}, baselineName = "", baselineHistory = null, interpolated = {};',
     'for (var i = 0; i < 79; i++) measured.push(0);',
     'function $(id) { return nodes[id] || (nodes[id] = { checked: false }); }',
     'function tick(id, v) { $(id).checked = !!v; }',
-    'function press(id, v) { if (id === "vpo") vpo = Number(v); else if (id === "offset") pitchOffset = v === "1"; else knobRole[id] = v; }',
+    'function press(id, v) { if (id === "vpo") vpo = Number(v); else if (id === "offset") { var on = v === "1"; if (on !== pitchOffset) { pitchOffset = on; PLAYABLE_LOW = on ? 3 : 0; PLAYABLE_HIGH = PLAYABLE_LOW + 64; if (haveBaseline()) clearBaseline(); } } else knobRole[id] = v; }',
     'function renderSlots() {} function renderPatterns() {} function syncCalBody() {} function syncBaseline() {}',
-    'function buildTable() {} function drawPlot() {} function validateCal() {} function invalidate() {}',
-    'function calibrationInBuild() { return false; }'
+    'function buildTable() {} function drawPlot() {} function validateCal() {} function invalidate() {}'
 ].join('\n'), page);
 vm.runInContext([
     appSource('\n    var CHECKS = [', '];\n'), appSource('\n    var DEFAULT_CLIX', ';\n'),
     appSource('\n    var APPLY = {', '\n    };\n'),
     appSource('\n    CHECKS.forEach(function (id) {\n        APPLY[id]', '\n    });\n'),
     appFunction('clixPattern'), appFunction('defaultPatterns'), appFunction('keyboardSlots'),
-    appFunction('keyboardNumbers'), appFunction('loadFromKeyboard'), appFunction('options')
+    appFunction('keyboardNumbers'), appFunction('loadFromKeyboard'), appFunction('options'),
+    appFunction('clearBaseline'), appFunction('haveBaseline'), appFunction('rows'),
+    appFunction('calibrationBlank'), appFunction('calibrationInBuild')
 ].join('\n'), page, { filename: 'web/app.js (extracted)' });
+vm.runInContext('clearBaseline();', page);
 page.factory = factory;
 page.state.factoryText = factory;
 function readThenBuild(record) {
@@ -188,6 +191,30 @@ got = readThenBuild(banked);
 check('a keyboard’s own bank is loaded pattern for pattern', page.state.patterns.length === 2,
       JSON.stringify(page.state.patterns));
 check('and read and built it gives its record back', same(banked, got.back, 0x20, banked.length));
+
+// Timing numbers kept from a read are held to the same rule the config's
+// are: a hysteresis the keyboard map cannot live with is refused.  (Audit
+// 2026-09-24: the check read the config's and let a kept one through.)
+refused = null;
+try { WEBBUILD.build({ settings_numbers: { transpose_cv_hysteresis: 64 } }, factory); }
+catch (e) { refused = e.message; }
+check('a kept hysteresis too wide for the map is refused, as the config\u2019s is',
+      refused !== null && /too wide/.test(refused), String(refused));
+
+// A read keyboard's table counts as a correction only when it changes the
+// table the build makes.  (Audit 2026-09-24: a keyboard that was never
+// corrected read back with rounding in its cents, and the download said a
+// correction was applied.)
+page.state.patterns = [];
+readThenBuild(plainRec);
+check('an uncorrected keyboard read back is not a correction',
+      vm.runInContext('calibrationInBuild()', page) === false);
+var bent = [];
+for (var s = 0; s < 79; s++) bent.push({ semitone: s, cents: s < 3 || s > 66 ? 0 : (s % 7) - 3 });
+var corrected = bytesOf(WEBBUILD.build({ pitch_correction: bent }, factory).settings);
+got = readThenBuild(corrected);
+check('a corrected one is, and its table comes back as it was',
+      vm.runInContext('calibrationInBuild()', page) === true && same(corrected, got.back, 0x60, 0xfe));
 
 if (failures) { console.log(failures + ' failure(s)'); process.exit(1); }
 process.exitCode = 0;

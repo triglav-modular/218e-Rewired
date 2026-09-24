@@ -818,8 +818,18 @@
     // beacon both said the correction was in while the image carried the
     // flat ramp.  The readings live only in this page, so a fresh visit
     // with the box ticked and no CSV loaded is exactly that table.
+    // Blank when it would not change the table the build makes.  A table
+    // read off a keyboard comes back as cents with its rounding in them -
+    // up to a cent and a half on a keyboard that was never corrected - so
+    // "every row zero" called that a correction, and the download said one
+    // was applied and shipped a CSV for a table identical to the plain one.
     function calibrationBlank() {
-        return rows().every(function (r) { return r.cents === 0; });
+        var rs = rows();
+        if (rs.every(function (r) { return r.cents === 0; })) return true;
+        var cfg = BUILDLIB.expand({ volts_per_octave: vpo, pitch_offset: pitchOffset });
+        var plain = BUILDLIB.pitchTable(cfg, cfg._calibration);
+        var corrected = BUILDLIB.pitchTable(cfg, rs);
+        return plain.every(function (v, i) { return v === corrected[i]; });
     }
 
     // Whether the image being built actually carries a table.  Three places
@@ -1304,7 +1314,7 @@
     // reason; each reason has its own line here.  The instrument is one
     // device with an input and an output of the same name, so the select
     // lists outputs and the input is found by that name.
-    var kbd = { outputs: [], inputs: [], listed: false };
+    var kbd = { outputs: [], inputs: [], listed: false, busy: false };
     function listKeyboard() {
         if (!$('kbdPort')) return Promise.resolve();
         return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
@@ -1349,8 +1359,11 @@
     // the same names: the fresh pair by name, or null while they are away.
     function freshPorts(name) {
         return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
-            var out = r[0].filter(function (p) { return p.name === name; })[0];
-            var inp = r[1].filter(function (p) { return p.name === name; })[0] || (out && r[1][0]);
+            // A port that went away with the restart can stay listed as
+            // disconnected, and send() on it throws: skip it until it is back.
+            function here(p) { return p.state !== 'disconnected'; }
+            var out = r[0].filter(function (p) { return p.name === name && here(p); })[0];
+            var inp = r[1].filter(function (p) { return p.name === name && here(p); })[0] || (out && r[1].filter(here)[0]);
             return out && inp ? { output: out, input: inp } : null;
         }, function () { return null; });
     }
@@ -1389,6 +1402,7 @@
         $('kbdSend').addEventListener('click', function () {
             var ports = keyboardPorts();
             if (!ports || !state.result) return;
+            kbd.busy = true;
             $('kbdSend').disabled = true;
             $('kbdRead').disabled = true;
             msg($('kbdMsg'), 'warn', 'Sending…');
@@ -1414,7 +1428,7 @@
                     firmwareFrom(err);
                     msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
                 })
-                .then(refresh);
+                .then(function () { kbd.busy = false; refresh(); });
         });
     }
 
@@ -1451,7 +1465,7 @@
         var verdict;
         if (!build) {
             verdict = id.slotLoaded === 0xff
-                ? 'This keyboard plays the settings built into its firmware. Nothing has been changed over MIDI.'
+                ? 'This keyboard has no saved settings: it starts with the ones built into its firmware.'
                 : 'This keyboard holds saved settings. Build an image here to compare them.';
         } else if (id.imageMarker === SETTINGSMIDI.markerOf(build)) {
             var n = SETTINGSMIDI.differences(build, r.pairs).length;
@@ -1584,6 +1598,7 @@
         $('kbdRead').addEventListener('click', function () {
             var ports = keyboardPorts();
             if (!ports) return;
+            kbd.busy = true;
             $('kbdRead').disabled = true;
             $('kbdSend').disabled = true;
             msg($('kbdMsg'), 'warn', 'Reading…');
@@ -1599,7 +1614,7 @@
                     firmwareFrom(err);
                     msg($('kbdMsg'), 'bad', readRefusal(err));
                 })
-                .then(refresh);
+                .then(function () { kbd.busy = false; refresh(); });
         });
     }
     // A keyboard whose settings map this page does not know still says
@@ -1851,10 +1866,14 @@
         $('dlMac').disabled = !state.result;
         $('dlWin').disabled = !state.result;
         // Step 5 wants the image's own record, which only a build has.
-        if ($('kbdSend')) $('kbdSend').disabled = !(state.result && $('kbdPort').value);
+        // Not while a read or a send is under way: a port coming and going
+        // - which the restart itself does - lists the ports again and lands
+        // here, and a second click would start a second listener on the
+        // same input.
+        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !(state.result && $('kbdPort').value);
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
-        if ($('kbdRead')) $('kbdRead').disabled = !$('kbdPort').value;
+        if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !$('kbdPort').value;
         // The accent marks whatever is next: Build until an image exists,
         // then Download.  Changing an option clears state.result, so it
         // hands the emphasis back on its own.
@@ -2596,7 +2615,7 @@
         function whole(n, lo, hi) { return typeof n === 'number' && n % 1 === 0 && n >= lo && n <= hi; }
         return typeof e.name === 'string' && Array.isArray(e.table) && e.table.length === 32
             && e.table.every(function (n) { return whole(n, 0, 0xFFF); })
-            && whole(e.periodKeys, 1, 32) && whole(e.octaveUnits, 1, 2000);
+            && whole(e.periodKeys, 1, 32) && whole(e.octaveUnits, 100, 2000);
     }
     function goodSlots(v) {
         if (!Array.isArray(v)) return null;

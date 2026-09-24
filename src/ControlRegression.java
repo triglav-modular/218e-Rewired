@@ -82,7 +82,7 @@ public class ControlRegression extends SequenceEditRegression {
     // another period could not be sent to this image at all.)
     void knob4Zones() throws Exception {
         setup(0,false,0); command(2);
-        for(int p:new int[]{484,767,2000,300,100,1}) {
+        for(int p:new int[]{484,767,2000,300,100}) {
             int expect=3+Math.min(13,2904/p);
             w(0x6814,2,p);
             for(int raw:new int[]{0,1023,512,1000,300}) {

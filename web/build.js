@@ -67,7 +67,13 @@ var WEBBUILD = (function () {
                     offset, scale.degrees, period);
                 var periodUnits = BUILDLIB.floorHalf(period * perOctave / 1200);
                 BUILDLIB.checkTableRange(slot.name, table, periodUnits);
-                tables['tuning_slot' + index] = table;
+                // Same rule as tools/build.py: a settings record carries
+                // fourteen bits, so the table stops at 0x3fff - an entry up
+                // there, or one no key reaches, is far past the DAC's 0xfff,
+                // where the pitch path clamps it anyway.
+                tables['tuning_slot' + index] = table.map(function (v) {
+                    return Math.max(0, Math.min(v, 0x3FFF));
+                });
                 tables.tuning_period_keys.push(scale.degrees ? scale.degrees.length : 12);
                 spacingSlots.push({
                     ideal: BUILDLIB.idealKeyPitches(
@@ -86,9 +92,15 @@ var WEBBUILD = (function () {
         // changes.  Every image, for the same reason; a map wider than 32
         // is refused in build() whatever its hysteresis, so not measured here.
         if (widest <= 32) {
-            var cvPeriod = Math.floor(cfg.portamento_in.cv_counts_per_volt
-                                      * cfg.portamento_in.cv_volts_per_period + 0.5);
-            var hyst = cfg.portamento_in.cv_hysteresis;
+            // With the numbers the record will carry: timing numbers read
+            // off a keyboard go in over the config's, and a hysteresis the
+            // map cannot live with is refused whichever way it came.
+            var timing = cfg._timing_numbers || {};
+            var cvPeriod = timing.transpose_cv_period !== undefined ? timing.transpose_cv_period
+                : Math.floor(cfg.portamento_in.cv_counts_per_volt
+                             * cfg.portamento_in.cv_volts_per_period + 0.5);
+            var hyst = timing.transpose_cv_hysteresis !== undefined ? timing.transpose_cv_hysteresis
+                : cfg.portamento_in.cv_hysteresis;
             var headroom = cvPeriod - Math.floor(cvPeriod / 2);
             if (hyst * widest >= headroom) {
                 throw new Error('portamento_in.cv_hysteresis: ' + hyst +

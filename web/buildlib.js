@@ -1289,7 +1289,7 @@ var BUILDLIB = (function () {
         ['chord_hold_scans', 300, 20, 2000],
         ['latch_state_hold_scans', 200, 20, 2000],
         // Cell 10 since 2026-09-23: the period the octave controls step.
-        ['octave_units', 484, 1, 2000]
+        ['octave_units', 484, 100, 2000]
     ];
     // The option cells, 16..26 (docs/PLAN-SETTINGS-2.md): the page's own
     // option values in the page's order, the cell holding the index; the
@@ -1421,7 +1421,8 @@ var BUILDLIB = (function () {
         for (var slot = 0; slot < 3; slot++) {
             var table = tables['tuning_slot' + slot];
             if (table.length !== 32) throw new Error('tuning_slot' + slot + ' must have 32 entries');
-            halfwords(L.tuning + 64 * slot, table, 'tuning_slot' + slot, 0, 0xFFF);
+            // Fourteen bits, what an NRPN value carries: the builders clamp there.
+            halfwords(L.tuning + 64 * slot, table, 'tuning_slot' + slot, 0, 0x3FFF);
         }
         if (tables.tuning_period_keys.length !== 3) {
             throw new Error('tuning_period_keys must have 3 entries');

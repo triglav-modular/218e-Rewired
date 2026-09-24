@@ -1957,7 +1957,10 @@ def main() -> None:
             check_table_range(path.name, table, period_units)
         except ValueError as error:
             raise SystemExit(str(error))
-        tables[f"tuning_slot{index}"] = table
+        # A settings record carries fourteen bits, so the table stops at
+        # 0x3fff - an entry up there, or one no key reaches, is far past the
+        # DAC's 0xfff, where the pitch path clamps it anyway.
+        tables[f"tuning_slot{index}"] = [max(0, min(v, 0x3FFF)) for v in table]
         period_keys.append(12 if degrees is None else len(degrees))
         periods.add(period_units)
         spacing_slots.append((
@@ -2629,9 +2632,13 @@ def main() -> None:
     write_properties(properties, cfg, blocks, features, tables)
     # The record this image's own tables make, stamped with its marker: what
     # a fresh boot mirrors, and what the regressions plant to prove a load.
-    (BUILD / "settings.bin").write_bytes(SETTINGS.record(
-        cfg["_numbers"], tables, blocks["arp_pattern_tables"],
-        cfg["_numbers"]["init_marker"], cfg["_numbers"]["octave_units"]))
+    try:
+        record = SETTINGS.record(
+            cfg["_numbers"], tables, blocks["arp_pattern_tables"],
+            cfg["_numbers"]["init_marker"], cfg["_numbers"]["octave_units"])
+    except ValueError as error:
+        raise SystemExit(str(error))
+    (BUILD / "settings.bin").write_bytes(record)
 
     # --- assemble ---------------------------------------------------------
     if args.no_ghidra:

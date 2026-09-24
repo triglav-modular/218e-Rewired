@@ -104,6 +104,7 @@ function fakeInstrument(options) {
             var got = dec.feed(m[0], m[1], m[2]);
             if (!got) return;
             inst.received.push([got.param, got.value]);
+            if (got.param === inst.drop) return;
             if (got.param === 0x3f00) { if (got.value === 0x2a2a) inst.state = 1; return; }
             if (got.param === 0x3f03) {
                 var params = B.nrpnParamsOf(inst.mirror);
@@ -122,7 +123,6 @@ function fakeInstrument(options) {
                 return;
             }
             if (got.param >= 0x20 && got.param < 0x30) return;   // read-only
-            if (got.param === inst.drop) return;
             B.nrpnApply(inst.mirror, got.param, got.value);
         }
     };
@@ -311,6 +311,38 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     var quiet = fakeInstrument(); quiet.output.send = function () {};
     e = await refusal(quiet, { timeout: 50 });
     check('no reply is its own reason', e && e.reason === 'no reply');
+
+    // A send that fails after its push drops what it pushed: the values went
+    // live on arrival and nothing saved them.  (Audit 2026-09-24.)
+    function lastSent(inst) { return inst.received.length ? inst.received[inst.received.length - 1][0] : null; }
+    var lossy = fakeInstrument({ drop: 0x83 });
+    e = await refusal(lossy);
+    check('a send that fails after its push reloads, so the keyboard drops the half it got',
+          e && e.reason === 'mismatch' && lastSent(lossy) === 0x3f01);
+    var early = fakeInstrument({ marker: 0x1111 });
+    e = await refusal(early);
+    check('and one refused before the push sends nothing more', e && e.reason === 'wrong image'
+          && !early.received.some(function (p) { return p[0] === 0x3f01; }));
+    // A commit request lost on the way: the state still says what the last
+    // commit left, 2, and only the generation tells.  (Audit 2026-09-24.)
+    var lost = fakeInstrument({ drop: 0x3f00 }); lost.state = 2; lost.generation = 5;
+    e = await refusal(lost);
+    check('a commit that never arrived is not written, whatever state the last one left',
+          e && e.reason === 'not written' && lost.generation === 5 && lastSent(lost) === 0x3f01);
+    // A port that went away: send() throws.  That is a refusal the caller
+    // handles, with the listener put back, not a throw out of the transport.
+    var gone = fakeInstrument(), listener = function () {};
+    gone.output.send = function () { throw new Error('Port is disconnected.'); };
+    gone.input.onmidimessage = listener;
+    var threw = false, rp = null;
+    try { rp = M.read(gone.output, gone.input, { timers: fakeTimers() }).then(function () { return null; }, function (x) { return x; }); }
+    catch (x) { threw = true; }
+    e = threw ? null : await rp;
+    check('a port whose send throws reads as no reply, and the listener is put back',
+          !threw && e && e.reason === 'no reply' && gone.input.onmidimessage === listener);
+    threw = false;
+    try { e = await refusal(gone); } catch (x) { threw = true; }
+    check('and a send through it is no reply too', !threw && e && e.reason === 'no reply');
 
     check('markerOf reads the record\'s image marker', M.markerOf(record) === 0xB007);
 

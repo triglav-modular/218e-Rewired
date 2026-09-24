@@ -893,7 +893,8 @@ function assembleProgram() {
         var apC4 = apEntry + 0x68, apC5 = apEntry + 0x80, apData = apEntry + 0x98, apStore = apData + 0x34;
         var apTuning = apData + 0x50, apMask = apEntry + 0x108, apMid = apEntry + 0x120, apTop = apEntry + 0x148;
         var apDone = apEntry + 0x15c, apPool = apEntry + 0x160, apEnd = apEntry + 0x170;
-        var nrEntry = apEnd, nrLsb = nrEntry + 0x28, nrMsb = nrEntry + 0x34, nrDat = nrEntry + 0x40;
+        var nrEntry = apEnd, nrRpn = nrEntry + 0x3e, nrPar = nrEntry + 0x42, nrLsb = nrEntry + 0x46;
+        var nrMsb = nrEntry + 0x4a, nrDat = nrEntry + 0x4e;
         var nrDone = nrEntry + 0x60, nrPass = nrEntry + 0x68, nrPool = nrEntry + 0x74, nrEnd = nrEntry + 0x80;
         var sdEntry = nrEnd, sdPool = sdEntry + 0x4c, sdEnd = sdEntry + 0x50;
         var vaEntry = sdEnd, vaHi = vaEntry + 0x28, vaPeriod = vaEntry + 0x48, vaSlot = vaEntry + 0x68;
@@ -1662,7 +1663,12 @@ function assembleProgram() {
         emit("MUL R8,R11,R9");
         emit("SUB R8,-0xf2");
         emit("MOV R11,0x1e4");
-        emit("DIVU R8,R8,R11");
+        // Signed: the table is a setting now, and a falling segment - one an
+        // NRPN sender left, or a send caught halfway through a table that
+        // moved up - gives a negative product.  Unsigned, that came out
+        // near 0x87xxxx and drove the DAC word far past 0xfff; signed, the
+        // output stays between the segment's two entries.
+        emit("DIVS R8,R8,R11");
         emit("ADD R9,R12,R8 << 0x0");
         padTo(0x800199e0);
         emit("LDDPC R8,0x800199fc");
@@ -4914,6 +4920,7 @@ function assembleProgram() {
         emit("LD.UH R12,R10[0x2]");
         emit("LSL R12,0x10");
         emit("OR R11,R12");             // the 32 steps
+        emit("MOV R1,R11");             // kept whole: an empty mask plays every step
         emit("LDDPC R10,0x8001b0f8");   // lengths
         emit("ADD R10,R10,R8 << 0x1");
         emit("LD.UH R9,R10[0x0]");
@@ -4948,6 +4955,11 @@ function assembleProgram() {
         emit("MCALL PC[0x8001b0fc]");
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001b0d8);
+        // A pattern with no steps at all is no pattern: every step sounds.
+        // The bank of an image built without patterns is one such, and an
+        // NRPN sender can turn knob 2 to patterns without sending a bank.
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001b0c4");
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");            // a rest
         emit("LDM SP++,R0,R1,R7,PC");
@@ -11112,13 +11124,22 @@ function assembleProgram() {
         emit("CP.W R1,0x20");
         emit(StringFormat("BR{lt} 0x%x", vdNum));
         // The pitch curve, its pad and the three tuning tables are one run
-        // of 176 halfwords, every one inside the 12-bit DAC.
+        // of 176 halfwords.  The curve and its pad, the first 0x50, stay
+        // inside the 12-bit DAC; a tuning entry may sit above it, as the
+        // image's own tables always could - the pitch path clamps - up to
+        // the fourteen bits an NRPN value carries.  One test for both: the
+        // curve's entries go up two bits first, so anything at bit 14 or
+        // above is the refusal.
         emit("MOV R1,0x0");
         padTo(vdTab);
         emit("ADD R8,R0,R1 << 0x1");
         emit("LD.UH R8,R8[0x60]");
-        emit("CP.W R8,0xfff");
-        emit(StringFormat("BR{hi} 0x%x", vdBad));
+        emit("CP.W R1,0x50");
+        emit(StringFormat("BR{ge} 0x%x", vdTab + 0x10));
+        emit("LSL R8,0x2");
+        padTo(vdTab + 0x10);
+        emit("LSR R8,0xe");
+        emit(StringFormat("BR{ne} 0x%x", vdBad));
         emit("SUB R1,-0x1");
         emit("CP.W R1,0xb0");
         emit(StringFormat("BR{lt} 0x%x", vdTab));
@@ -11246,8 +11267,10 @@ function assembleProgram() {
         // cursor idle.  0x4000 is idle because it is past every parameter
         // and a MOV of it is the same positive value a LD.UH reads back.
         emit("MOV R8,0x6a68");
+        emit("MOV R9,0x7f7f");          // parameter 0x3fff in hand: it names nothing
+        emit("ST.H R8[0x0],R9");
         emit("MOV R9,0x0");
-        emit("ST.W R8[0x0],R9");
+        emit("ST.H R8[0x2],R9");
         emit("MOV R9,0x4000");
         emit("ST.H R8[0x4],R9");
         emit("ST.H R8[0x6],R9");
@@ -11411,7 +11434,7 @@ function assembleProgram() {
         emit(StringFormat("BR{ge} 0x%x", tgKeys));
         emit("MOV R11,0x0");
         emit("MOV R10,0x0");
-        emit("MOV R9,0xfff");
+        emit("MOV R9,0x3fff");        // a tuning entry: fourteen bits, as the loader
         emit("MOV R12,0x68e0");
         emit("ADD R12,R12,R8 << 0x1");
         emit("MOV PC,LR");
@@ -11569,12 +11592,18 @@ function assembleProgram() {
         emit("ST.H R12[0x2],R9");
         emit(StringFormat("RJMP 0x%x", apDone));
         padTo(apTuning);
-        emit("MOV R8,0x68e0");
-        emit("CP.W R12,R8");
+        // The slot tables, the keys per period behind them and number cell
+        // 10 all shape the table the jack's rotation builds at RAM 0x854,
+        // which it rebuilds only when its own state word or the table's
+        // first entry changes: a write to any of them clears the applier's
+        // guard, so the slot is copied again and the rotation follows.
+        emit("CP.W R12,0x6814");
+        emit(StringFormat("BR{eq} 0x%x", apTuning + 0x12));
+        emit("CP.W R12,0x68e0");
         emit(StringFormat("BR{lt} 0x%x", apDone));
-        emit("MOV R8,0x69a0");
-        emit("CP.W R12,R8");
+        emit("CP.W R12,0x69a6");
         emit(StringFormat("BR{ge} 0x%x", apDone));
+        padTo(apTuning + 0x12);
         emit("MOV R8,0x60e4");
         emit("MOV R9,0x0");
         emit("ST.H R8[0x0],R9");        // the applier re-copies the slot on show
@@ -11641,23 +11670,36 @@ function assembleProgram() {
         emit("LD.UB R11,R8[0x5]");      // the controller
         emit("LD.UB R12,R8[0x6]");      // its value
         emit("MOV R0,0x6a68");
+        // An RPN select, CC 101 or 100, parks the parameter in hand at
+        // 0x3fff, which names nothing, as the boot does: a host's RPN data
+        // entry on this channel - the pitch-bend range an MPE upper zone
+        // sends on 16 - then lands nowhere rather than on the last NRPN, or
+        // on cell 0 after a power-up.
         emit("CP.W R11,0x63");
-        emit(StringFormat("BR{ne} 0x%x", nrLsb));
+        emit(StringFormat("BR{eq} 0x%x", nrPar));
+        emit("CP.W R11,0x62");
+        emit(StringFormat("BR{eq} 0x%x", nrLsb));
+        emit("CP.W R11,0x6");
+        emit(StringFormat("BR{eq} 0x%x", nrMsb));
+        emit("CP.W R11,0x26");
+        emit(StringFormat("BR{eq} 0x%x", nrDat));
+        emit("CP.W R11,0x64");
+        emit(StringFormat("BR{eq} 0x%x", nrRpn));
+        emit("CP.W R11,0x65");
+        emit(StringFormat("BR{ne} 0x%x", nrPass));
+        padTo(nrRpn);
+        emit("MOV R12,0x7f");           // 0x7f in both bytes: parameter 0x3fff
+        emit("ST.B R0[0x1],R12");
+        padTo(nrPar);
         emit("ST.B R0[0x0],R12");       // parameter MSB
         emit(StringFormat("RJMP 0x%x", nrDone));
         padTo(nrLsb);
-        emit("CP.W R11,0x62");
-        emit(StringFormat("BR{ne} 0x%x", nrMsb));
         emit("ST.B R0[0x1],R12");       // parameter LSB
         emit(StringFormat("RJMP 0x%x", nrDone));
         padTo(nrMsb);
-        emit("CP.W R11,0x6");
-        emit(StringFormat("BR{ne} 0x%x", nrDat));
         emit("ST.B R0[0x2],R12");       // data MSB
         emit(StringFormat("RJMP 0x%x", nrDone));
         padTo(nrDat);
-        emit("CP.W R11,0x26");
-        emit(StringFormat("BR{ne} 0x%x", nrPass));
         // Data LSB completes a value: apply it to the parameter in hand.
         emit("LD.UB R11,R0[0x2]");
         emit("LSL R11,0x7");
@@ -12074,7 +12116,7 @@ function assembleProgram() {
         halfword(0);    halfword(64);     // 7 transpose_cv_hysteresis
         halfword(20);   halfword(2000);   // 8 chord_hold_scans
         halfword(20);   halfword(2000);   // 9 latch_state_hold_scans
-        halfword(1);    halfword(2000);   // 10 octave_units: the period, in DAC units
+        halfword(100);  halfword(2000);   // 10 octave_units: the period, in DAC units, 248 cents up
         halfword(0);    halfword(0);      // 11
         halfword(0);    halfword(0);      // 12
         halfword(0);    halfword(0);      // 13
@@ -12114,7 +12156,7 @@ function assembleProgram() {
         halfword(number("transpose_cv_hysteresis", 2, 0, 64));
         halfword(number("chord_hold_scans", 300, 20, 2000));
         halfword(number("latch_state_hold_scans", 200, 20, 2000));
-        halfword(number("octave_units", 484, 1, 2000));   // 10: the period the octave controls step
+        halfword(number("octave_units", 484, 100, 2000));   // 10: the period the octave controls step
         halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
         halfword(number("latching_arp", 1, 0, 1));
         halfword(number("knob1", 0, 0, 2));

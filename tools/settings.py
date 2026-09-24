@@ -48,6 +48,7 @@ PITCH_ENTRIES = 79
 TUNING_ENTRIES = 32
 PATTERNS = 32
 DAC_MAX = 0xFFF
+TUNING_MAX = 0x3FFF
 CELLS = 32
 
 # The NRPN map's commands, as settings_apply has them (the parameters of
@@ -73,7 +74,7 @@ NUMBER_LIST = (
     ("latch_state_hold_scans", 200, 20, 2000),
     # Cell 10 since 2026-09-23: the period the octave controls step, so a
     # scale that repeats at something other than the octave travels too.
-    ("octave_units", 484, 1, 2000),
+    ("octave_units", 484, 100, 2000),
 )
 
 # The option cells, 16..27: one halfword each, an index into the choices,
@@ -167,7 +168,8 @@ def payload(numbers: dict, tables: dict, pattern_tables: bool,
         table = list(tables[f"tuning_slot{slot}"])
         if len(table) != TUNING_ENTRIES:
             raise ValueError(f"tuning_slot{slot} must have {TUNING_ENTRIES} entries")
-        halfwords(TUNING + 2 * TUNING_ENTRIES * slot, table, f"tuning_slot{slot}", 0, DAC_MAX)
+        # Fourteen bits, what an NRPN value carries: the builders clamp there.
+        halfwords(TUNING + 2 * TUNING_ENTRIES * slot, table, f"tuning_slot{slot}", 0, TUNING_MAX)
     keys = list(tables["tuning_period_keys"])
     if len(keys) != 3:
         raise ValueError("tuning_period_keys must have 3 entries")
