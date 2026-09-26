@@ -692,7 +692,8 @@ Inspector](https://www.linkedin.com/post-inspector/).
 ## Counting builds
 
 The page reports one thing, once, when someone downloads: which options were
-chosen, which platform, which version. It is a `POST` to `beacon` beside the
+chosen, which platform, which version. (And, separately, how a read or a send
+of the settings over MIDI ended; see the end of this section.) It is a `POST` to `beacon` beside the
 page, handled by the worker in [../deploy/worker.js](../deploy/worker.js) and
 written to a Cloudflare Analytics Engine dataset.
 
@@ -852,6 +853,25 @@ Nothing on the route is authenticated — it cannot be, since the page is public
 — so anyone who finds it can add to a count. Every field is validated against
 what the page can actually send, so the worst case is noise in the numbers
 rather than arbitrary strings in the dataset.
+
+**Reads and sends of the settings over MIDI** are counted the same way, on a
+route of their own: `settings-beacon`, posted when step 5's Read settings or
+Send settings ends. The body is which button (`read`, `send`), how it ended
+(`ok`, the name of the page's refusal from `KBD_REASONS` in `web/app.js`, or
+`error` for a failure the page has no name for), the page's version, the
+firmware version the keyboard reported (absent when it never answered),
+whether a send restarted the keyboard to run a changed option, and a daily
+ordinal kept apart from the downloads'. Never the settings, the patterns, the
+tunings or the pitch table: those are one person's instrument.
+
+A route of its own rather than a field on the download's, because a worker
+from before it would have counted every read as a build from platform
+`other`. It is written to the `COUNTS` namespace only, as keys prefixed `s:`
+where the builds are `b:`, so a reader listing builds sees exactly what it
+did before; not to the dataset, whose positional columns all mean a build.
+The dev page's is answered and dropped like its download beacon.
+`tools/test_worker.mjs` holds the page's reasons and body against the
+worker's `ACTIONS`, `OUTCOMES` and fields, in both directions.
 
 
 ## Watching buchla.com

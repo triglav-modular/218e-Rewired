@@ -1355,6 +1355,37 @@
         'not applied': 'The keyboard restarted but still runs its old options: read its settings, and if they are not what you sent, flash the firmware again.',
         'gone': 'The keyboard did not come back after restarting: power-cycle it, then read its settings to check.'
     };
+    // A read or a send, reported the way a download is (see report() below):
+    // which button, how it ended, this page's version and the firmware the
+    // keyboard said it runs - never the settings themselves, which are one
+    // person's instrument, and no identifier.  How it ended is a reason's
+    // name from the list above, 'ok', or 'error' for anything the list does
+    // not name, so no message text ever leaves.  Its own route rather than
+    // the download's, so a worker that predates it cannot count one as a
+    // build, and its own daily ordinal, so a morning of reads is one person.
+    function reportSettings(action, outcome, id, restarted) {
+        try {
+            if (!navigator.sendBeacon) return;
+            var event = JSON.stringify({
+                action: action,
+                outcome: outcome,
+                version: GEN.version,
+                // Absent when the keyboard never answered; JSON drops it.
+                firmware: (id && id.firmwareVersion) || undefined,
+                // A send only: whether an option changed and the keyboard
+                // had to restart to run it.
+                restarted: restarted,
+                nth_today: countToday(K_MIDI_TODAY)
+            });
+            navigator.sendBeacon('settings-beacon', new Blob([event], { type: 'text/plain' }));
+        } catch (e) {
+            // Counting must never be able to stop a read or a send.
+        }
+    }
+    function outcomeOf(err) {
+        var reason = err && err.reason;
+        return KBD_REASONS[reason] ? reason : 'error';
+    }
     // After a restart the ports are gone for a moment and come back, under
     // the same names: the fresh pair by name, or null while they are away.
     function freshPorts(name) {
@@ -1410,7 +1441,11 @@
             SETTINGSMIDI.install(ports.output, ports.input, record, {})
                 .then(function (id) {
                     showFirmware(id);
-                    if (!id.restarted) { msg($('kbdMsg'), 'ok', 'Sent and saved.'); return; }
+                    if (!id.restarted) {
+                        msg($('kbdMsg'), 'ok', 'Sent and saved.');
+                        reportSettings('send', 'ok', id, false);
+                        return;
+                    }
                     // An option changed: the keyboard is restarting to run
                     // it, and its ports go away and come back meanwhile.
                     msg($('kbdMsg'), 'warn', 'Sent and saved. The keyboard is restarting to apply ' +
@@ -1419,14 +1454,18 @@
                         .then(function () {
                             msg($('kbdMsg'), 'ok', 'Sent and saved. The keyboard has restarted and now runs ' +
                                 optionWords(id.pending) + ' as set here.');
+                            reportSettings('send', 'ok', id, true);
                         }, function (err) {
-                            msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason === 'no reply' ? 'gone' : err && err.reason]
+                            var reason = err && err.reason === 'no reply' ? 'gone' : err && err.reason;
+                            msg($('kbdMsg'), 'bad', KBD_REASONS[reason]
                                 || String(err && err.message || err));
+                            reportSettings('send', outcomeOf({ reason: reason }), id, true);
                         })
                         .then(function () { kbd.listed = false; return listKeyboard(); });
                 }, function (err) {
                     firmwareFrom(err);
                     msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
+                    reportSettings('send', outcomeOf(err), err && err.identity);
                 })
                 .then(function () { kbd.busy = false; refresh(); });
         });
@@ -1609,10 +1648,12 @@
                     showFirmware(r.identity);
                     var text = describeKeyboard(r);
                     msg($('kbdMsg'), 'ok', text + '\n\n' + loadFromKeyboard(r));
+                    reportSettings('read', 'ok', r.identity);
                 })
                 .catch(function (err) {
                     firmwareFrom(err);
                     msg($('kbdMsg'), 'bad', readRefusal(err));
+                    reportSettings('read', outcomeOf(err), err && err.identity);
                 })
                 .then(function () { kbd.busy = false; refresh(); });
         });
@@ -2430,6 +2471,10 @@
     var STORE = '218e-rewired' + location.pathname.replace(/[^/]*$/, '');
     var K_SETTINGS = STORE + 'settings', K_FACTORY = STORE + 'factory';
     var K_TODAY = STORE + 'today';
+    // The same count for the settings over MIDI, kept apart: a read is not a
+    // download, and sharing one count would make a first build of the day
+    // look like somebody's second.
+    var K_MIDI_TODAY = STORE + 'midi-today';
 
     // Where the ordinal the beacon sends stops going up.  The worker holds the
     // same ceiling; tools/test_worker.mjs keeps the two in step.
@@ -2448,12 +2493,13 @@
     // count does not know this is a first download, and reporting every one of
     // its downloads as somebody's first would inflate the very number this
     // exists to make honest.
-    function countToday() {
+    function countToday(key) {
+        key = key || K_TODAY;
         var d = new Date();
         var day = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
         var n = 0;
         try {
-            var was = JSON.parse(readStore(K_TODAY) || 'null');
+            var was = JSON.parse(readStore(key) || 'null');
             if (was && was.day === day && typeof was.n === 'number' && was.n > 0) {
                 n = was.n;
             }
@@ -2461,7 +2507,7 @@
             n = 0;
         }
         n += 1;
-        if (!writeStore(K_TODAY, JSON.stringify({ day: day, n: n }))) return -1;
+        if (!writeStore(key, JSON.stringify({ day: day, n: n }))) return -1;
         return n > MAX_PER_DAY ? MAX_PER_DAY : n;
     }
 

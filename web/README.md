@@ -14,11 +14,14 @@ triglavmodular.hu, which the licence covers there and does not allow copying
 here. A clone served anywhere else is refused them and falls back to the
 system sans; the build is identical either way.
 
-One thing does leave, and only on a download: which options were chosen, which
-platform, and which version, POSTed to `beacon` beside the page. No identifier,
-no header kept, and never the image or the calibration. The URL is relative, so
-it reports only where something is listening for it — a clone served anywhere
-else, or the page opened from a file, reports nowhere. See "Counting builds" in
+Two things leave. On a download: which options were chosen, which platform,
+and which version, POSTed to `beacon` beside the page. And when a read or a
+send of the settings over MIDI ends: which button, how it ended, the page's
+version and the firmware the keyboard reported, POSTed to `settings-beacon`.
+No identifier, no header kept, and never the image, the calibration or the
+settings themselves. The URLs are relative, so they report only where
+something is listening — a clone served anywhere else, or the page opened
+from a file, reports nowhere. See "Counting builds" in
 [../docs/BUILD.md](../docs/BUILD.md).
 
 Some things now stay. The options, the tunings, the pattern bank, the

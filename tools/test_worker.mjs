@@ -512,5 +512,129 @@ const OLD = {
                     : 'could not read the beacon body from app.js');
 }
 
+// The settings over MIDI: a read or a send, on a route of its own.
+const SETTINGS = BEACON.replace('/beacon', '/settings-beacon');
+async function postSettings(body, env, url) {
+  const res = await worker.fetch(new Request(url || SETTINGS, {
+    method: 'POST',
+    body: typeof body === 'string' ? body : JSON.stringify(body)
+  }), env, ctx);
+  await Promise.all(pending.splice(0));
+  return res;
+}
+const SEND = { action: 'send', outcome: 'ok', version: '3.0.0', firmware: '3.0.0',
+               restarted: true, nth_today: 2 };
+
+{
+  const env = fakeEnv();
+  const res = await postSettings(SEND, env);
+  const k = env.keys[0];
+  check('a send is answered with no body', res.status === 204, `status ${res.status}`);
+  check('and written to the namespace, under its own prefix',
+        env.keys.length === 1
+        && /^s:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z:[a-z0-9]{4,8}$/.test(k.name),
+        k && k.name);
+  check('carrying what the page said and nothing more',
+        k && JSON.stringify(k.opts.metadata) === JSON.stringify(
+          { action: 'send', outcome: 'ok', version: '3.0.0', firmware: '3.0.0',
+            restarted: 1, nth_today: 2 }),
+        k && JSON.stringify(k.opts.metadata));
+  check('and ages out like a download',
+        k && k.opts.expirationTtl === 400 * 24 * 60 * 60, k && String(k.opts.expirationTtl));
+  check('never in the dataset, whose columns all mean a build',
+        env.written.length === 0, `${env.written.length} point(s)`);
+}
+
+{
+  // A read that got no reply: no firmware to report and nothing restarted.
+  const env = fakeEnv();
+  await postSettings({ action: 'read', outcome: 'no reply', version: '3.0.0', nth_today: 1 }, env);
+  const m = env.keys[0].opts.metadata;
+  check('a refused read keeps its reason, and no firmware is not other',
+        m.action === 'read' && m.outcome === 'no reply' && m.firmware === ''
+        && m.restarted === -1 && m.nth_today === 1, JSON.stringify(m));
+}
+
+{
+  const env = fakeEnv();
+  await postSettings({ action: 'delete', outcome: 'rm -rf /', version: '<b>',
+                       firmware: '3.0.0; DROP', restarted: 'yes', nth_today: 99 }, env);
+  const m = env.keys[0].opts.metadata;
+  check('hostile settings fields never reach the namespace as themselves',
+        m.action === 'other' && m.outcome === 'other' && m.version === 'other'
+        && m.firmware === 'other' && m.restarted === -1 && m.nth_today === -1,
+        JSON.stringify(m));
+}
+
+{
+  const env = fakeEnv();
+  let res = await postSettings('not json{{', env);
+  check('a settings body that is not JSON writes nothing',
+        res.status === 204 && env.keys.length === 0);
+  res = await postSettings(JSON.stringify(SEND) + ' '.repeat(2000), env);
+  check('nor does an oversized one', res.status === 204 && env.keys.length === 0);
+  res = await worker.fetch(new Request(SETTINGS), env);
+  check('a GET on the settings route is refused', res.status === 405, `status ${res.status}`);
+  res = await postSettings(SEND, {});
+  check('no namespace means no error', res.status === 204, `status ${res.status}`);
+  res = await postSettings(SEND, env, SETTINGS.replace('/settings-beacon', '/dev/settings-beacon'));
+  check('a dev read or send is answered and not counted',
+        res.status === 204 && env.keys.length === 0, `status ${res.status}, ${env.keys.length} key(s)`);
+  const dl = fakeEnv();
+  await postSettings(SEND, dl, BEACON);
+  check('a settings body posted at the download route is not a build',
+        dl.written.length === 1 && dl.written[0].blobs[0] === 'other',
+        JSON.stringify(dl.written[0] && dl.written[0].blobs));
+}
+
+// The same two drifts as the download beacon's, read off the page: every way
+// the page can say a read or a send ended has to be one the worker knows, or
+// it lands as 'other'; and every field it sends has to be one the worker
+// reads, or it is collected and thrown away.
+{
+  const app = readFileSync(join(here, '..', 'web', 'app.js'), 'utf8');
+  const list = (name) => {
+    const m = source.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`));
+    return m ? m[1].match(/'([^']*)'/g).map((q) => q.slice(1, -1)) : [];
+  };
+  const reasons = app.match(/var KBD_REASONS = \{([\s\S]*?)\n    \};/);
+  const named = reasons ? (reasons[1].match(/^\s{8}'([^']+)':/gm) || [])
+    .map((m) => m.trim().slice(1, -2)) : [];
+  // The page's own literals besides the reasons: every reportSettings call's
+  // action and outcome, as written.
+  const calls = [...app.matchAll(/reportSettings\('(\w+)', (?:'([^']+)'|outcomeOf)/g)];
+  const actions = [...new Set(calls.map((c) => c[1]))];
+  const outcomes = [...new Set(named.concat(calls.map((c) => c[2]).filter(Boolean), ['error']))];
+  const knownOutcomes = list('OUTCOMES');
+  const unknownOutcomes = outcomes.filter((o) => !knownOutcomes.includes(o));
+  check('every way the page says a read or a send ended is one the worker knows',
+        named.length > 0 && unknownOutcomes.length === 0,
+        named.length ? `the worker would record ${unknownOutcomes.join(', ')} as other`
+                     : 'could not read KBD_REASONS from app.js');
+  const unknownActions = actions.filter((a) => !list('ACTIONS').includes(a));
+  check('and every button it reports is one the worker knows',
+        actions.length === 2 && unknownActions.length === 0,
+        `page ${actions.join(', ')}; unknown ${unknownActions.join(', ')}`);
+  // The mirror image: a name the worker allows that the page can never
+  // send is a column that reads zero forever.
+  const unsent = knownOutcomes.filter((o) => !outcomes.includes(o));
+  check('and the worker allows no outcome the page cannot send',
+        unsent.length === 0, `never sent: ${unsent.join(', ')}`);
+
+  const body = app.match(/var event = JSON\.stringify\(\{([\s\S]*?)\n            \}\);/);
+  const sent = body ? (body[1].match(/^\s{16}(\w+):/gm) || [])
+    .map((m) => m.trim().replace(':', '')) : [];
+  const fn = source.slice(source.indexOf('async function recordSettings'),
+                          source.indexOf('export default'));
+  const ignored = sent.filter((f) => !fn.includes(`body.${f}`));
+  check('every field the settings beacon sends is one the worker records',
+        sent.length > 0 && ignored.length === 0,
+        sent.length ? `the worker never reads ${ignored.join(', ')}`
+                    : 'could not read the settings beacon body from app.js');
+  check('and it posts to the route the worker answers',
+        /sendBeacon\('settings-beacon'/.test(app)
+        && source.includes("const SETTINGS_BEACON = PUBLIC + '/settings-beacon'"));
+}
+
 console.log(failures ? `\n  ${failures} failure(s)` : '\n  the beacon only records what the page can send, and the deploy matches it');
 process.exit(failures ? 1 : 0);

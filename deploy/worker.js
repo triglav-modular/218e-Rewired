@@ -39,6 +39,16 @@ const BEACON = PUBLIC + '/beacon';
 // dropped: the counts describe the released page, and a build of whatever
 // the development branch held that afternoon is not one of those.
 const DEV_BEACON = PUBLIC + DEV + '/beacon';
+// Where the page reports a read or a send of the settings over MIDI.  A route
+// of its own, not a field on the download's: a worker from before it would
+// have counted every read as a build from platform 'other', and the two
+// describe different things - a download is somebody building the firmware,
+// this is somebody changing an instrument that already runs it.  Written to
+// the namespace only: the dataset's columns are positional and every one of
+// them means a build.  The dev page's is answered and dropped, like its
+// download beacon.
+const SETTINGS_BEACON = PUBLIC + '/settings-beacon';
+const DEV_SETTINGS_BEACON = PUBLIC + DEV + '/settings-beacon';
 
 // Nothing here is trusted: it arrives from anyone who can reach the route.
 // Every value is checked against what the page can actually send and dropped
@@ -58,6 +68,13 @@ const KNOBS = {
 const PORTAMENTO_IN = ['portamento', 'transpose'];
 // The most patterns the page lets into a bank.
 const MAX_PATTERNS = 32;
+// The settings over MIDI: which button, and how it ended - 'ok', or the name
+// of the page's own refusal (KBD_REASONS in web/app.js), or 'error' for one
+// the page has no name for.  tools/test_worker.mjs holds this list against
+// the page's.
+const ACTIONS = ['read', 'send'];
+const OUTCOMES = ['ok', 'error', 'no reply', 'wrong layout', 'wrong image',
+                  'mismatch', 'incomplete', 'not written', 'not applied', 'gone'];
 // Where the page's count of downloads-so-far-today stops going up.  A number
 // whose job is to separate one build from an afternoon of them does not need
 // to be exact at the top, and a low ceiling is also what keeps the value from
@@ -94,6 +111,31 @@ function oneOf(allowed, value) {
   return allowed.includes(value) ? value : 'other';
 }
 
+// A version string is ours, but it arrives from the page like everything
+// else, so it is held to the shape a version has.
+const VERSION = /^[0-9]{1,3}(\.[0-9]{1,3}){0,2}$/;
+
+// The page's daily ordinal: 1..MAX_PER_DAY, or -1 for a page that did not
+// send one or a browser that could not count.  See record() for why.
+function ordinal(value) {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_PER_DAY ? value : -1;
+}
+
+// The body of a beacon, or null for anything that is not a small JSON object.
+async function bodyOf(request) {
+  try {
+    // The page's body is a few hundred bytes.  Refused rather than
+    // truncated: slicing and then parsing would accept whatever the first
+    // kilobyte of a much larger body happened to spell.
+    const text = await request.text();
+    if (text.length > 1024) return null;
+    const body = JSON.parse(text);
+    return body && typeof body === 'object' ? body : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function record(request, env, context) {
   // No IP, no user-agent, no header of any kind: what is not written cannot
   // later turn an option set into a person.
@@ -110,26 +152,13 @@ async function record(request, env, context) {
   if (!dataset && !env.COUNTS) {
     return new Response(null, { status: 204 });
   }
-  let body;
-  try {
-    // The page's body is a few hundred bytes.  Refused rather than
-    // truncated: slicing and then parsing would accept whatever the first
-    // kilobyte of a much larger body happened to spell.
-    const text = await request.text();
-    if (text.length > 1024) return new Response(null, { status: 204 });
-    body = JSON.parse(text);
-  } catch (e) {
-    return new Response(null, { status: 204 });
-  }
-  if (!body || typeof body !== 'object') return new Response(null, { status: 204 });
+  const body = await bodyOf(request);
+  if (!body) return new Response(null, { status: 204 });
 
   const platform = PLATFORMS.includes(body.platform) ? body.platform : 'other';
   const volts = VOLTS.includes(String(body.volts_per_octave))
     ? String(body.volts_per_octave) : 'other';
-  // A version string is ours, but it arrives from the page like everything
-  // else, so it is held to the shape a version has.
-  const version = /^[0-9]{1,3}(\.[0-9]{1,3}){0,2}$/.test(String(body.version))
-    ? String(body.version) : 'other';
+  const version = VERSION.test(String(body.version)) ? String(body.version) : 'other';
   const tunings = Number.isInteger(body.alternate_tunings)
     && body.alternate_tunings >= 0 && body.alternate_tunings <= 3
     ? body.alternate_tunings : -1;
@@ -149,9 +178,7 @@ async function record(request, env, context) {
   // -1 is "could not count" as well as "older page": a browser with no usable
   // storage cannot know, and saying so is better than reporting every one of
   // its downloads as somebody's first.
-  const nth_today = Number.isInteger(body.nth_today)
-    && body.nth_today >= 1 && body.nth_today <= MAX_PER_DAY
-    ? body.nth_today : -1;
+  const nth_today = ordinal(body.nth_today);
 
   const point = {
     platform, version, volts,
@@ -214,12 +241,50 @@ async function record(request, env, context) {
   return new Response(null, { status: 204 });
 }
 
+// A read or a send of the settings over MIDI.  The same rules as a download:
+// no header of any kind, every field held to what the page can send, and a
+// missing namespace costs the page nothing.
+async function recordSettings(request, env, context) {
+  if (request.method !== 'POST') return new Response(null, { status: 405 });
+  if (!env || !env.COUNTS) return new Response(null, { status: 204 });
+  const body = await bodyOf(request);
+  if (!body) return new Response(null, { status: 204 });
+
+  const point = {
+    action: oneOf(ACTIONS, body.action),
+    outcome: oneOf(OUTCOMES, body.outcome),
+    version: VERSION.test(String(body.version)) ? String(body.version) : 'other',
+    // What the keyboard said it runs.  '' when it never answered - a read
+    // that got no reply has no firmware to report - which is not 'other'.
+    firmware: body.firmware === undefined ? ''
+      : VERSION.test(String(body.firmware)) ? String(body.firmware) : 'other',
+    // A send only: whether an option changed and the keyboard restarted to
+    // run it.  -1 on a read, which has nothing to restart.
+    restarted: tri(body.restarted),
+    // The page keeps a count of its own for these, apart from the downloads'.
+    nth_today: ordinal(body.nth_today),
+  };
+
+  // Prefixed apart from the downloads, so a reader listing 'b:' sees only
+  // builds, exactly as it did before these existed.
+  const at = new Date().toISOString();
+  const key = `s:${at}:${Math.random().toString(36).slice(2, 10)}`;
+  const write = env.COUNTS.put(key, '', {
+    metadata: point,
+    expirationTtl: 400 * 24 * 60 * 60,
+  }).catch(() => {});
+  if (context && context.waitUntil) context.waitUntil(write);
+  return new Response(null, { status: 204 });
+}
+
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
 
     if (url.pathname === BEACON) return record(request, env, context);
     if (url.pathname === DEV_BEACON) return new Response(null, { status: 204 });
+    if (url.pathname === SETTINGS_BEACON) return recordSettings(request, env, context);
+    if (url.pathname === DEV_SETTINGS_BEACON) return new Response(null, { status: 204 });
 
     // Without the trailing slash every relative asset resolves into /mods/.
     // The dev page the same: the origin would answer its own redirect to the
