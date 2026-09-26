@@ -337,7 +337,7 @@
                   <p><strong class="step">2. Warm it up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
                   <p><strong class="step">3. Load the table it already has,</strong> if it has one. Readings are taken against whatever is flashed, so they accumulate onto that table rather than replacing it.</p>
                   <p><strong class="step">4. Patch the 208 into an audio input and set it droning:</strong> a steady tone, no envelope, nothing else modulating its pitch. Pick the channel it arrives on. Leave <strong>add to pitch</strong> off, the arpeggiator off, vibrato down, and no alternate tuning selected.</p>
-                  <p><strong class="step">5. Measure, build, flash.</strong> Then save the table: it is what the next round measures on top of &mdash; and put <strong>add to pitch</strong> back, or the keyboard sits an octave above where the sweep played.</p>
+                  <p><strong class="step">5. Measure, then flash or send.</strong> Then save the table: it is what the next round measures on top of &mdash; and put <strong>add to pitch</strong> back, or the keyboard sits an octave above where the sweep played.</p>
                 </div>
               </details>
               <div class="row autorow">
@@ -434,76 +434,71 @@
       </section>
 
       <section>
-        <h2>3 · Build it</h2>
-        <div class="row">
-          <button class="primary" id="build" disabled>Build firmware</button>
-          <button id="dlMac" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16.7 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .8 1.1 1.7 2.3 2.9 2.2 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.2 0 2-1.1 2.8-2.2.9-1.3 1.2-2.5 1.3-2.5-.1 0-2.5-1-2.5-3.6zM14.4 5.9c.6-.8 1-1.9.9-3-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-.9 2.9 1 .1 2-.5 2.7-1.3z"/></svg><span>Download for Mac</span></button>
-          <button id="dlWin" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg><span>Download for Windows</span></button>
+        <h2>3 · Flash it</h2>
+        <div class="group finish-midi">
+          <h3>Already running Rewired <span id="kbdNeeds"></span></h3>
+          <p class="d muted section-note">Change any setting without flashing.</p>
+          <div class="row finish-row">
+            <label class="autofield"><span class="d">Keyboard</span>
+              <select id="kbdPort"><option value="">Looking&hellip;</option></select></label>
+            <button class="primary" id="kbdSend" type="button" disabled>Send settings</button>
+            <button id="kbdRead" type="button" disabled>Read settings</button>
+          </div>
+          <p id="kbdVer" class="muted kbdver" role="status">Firmware: not read yet</p>
+          <div id="kbdMsg" role="status"></div>
         </div>
-        <div id="buildMsg" role="status"></div>
-      </section>
 
-      <section>
-        <h2>4 · Flash it</h2>
+        <div class="group finish-flash">
+          <h3>Install or update</h3>
+          <div class="row">
+            <button class="primary" id="dlMac" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M16.7 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .8 1.1 1.7 2.3 2.9 2.2 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.2 0 2-1.1 2.8-2.2.9-1.3 1.2-2.5 1.3-2.5-.1 0-2.5-1-2.5-3.6zM14.4 5.9c.6-.8 1-1.9.9-3-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-.9 2.9 1 .1 2-.5 2.7-1.3z"/></svg><span>Download for Mac</span></button>
+            <button class="primary" id="dlWin" disabled><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg><span>Download for Windows</span></button>
+          </div>
+          <div id="buildMsg" role="status"></div>
 
-        <ol class="steps">
-          <li>Download and extract the built package for your operating system.</li>
-          <li>Connect the 218e via USB and power it on.</li>
-          <li>Run the flasher and follow the instructions:
-            <div>
-              <div><strong>macOS</strong>: double-click <span class="mono">218e Rewired Flasher.app</span></div>
-              <details class="windrop"><summary><strong>Windows</strong>: double-click <span class="mono">218e_Rewired_Flasher.bat</span></summary>
-                <div>
-                  <h4>Windows might warn you about unsigned software</h4>
-                  <p>If you get a Windows Defender prompt about the <span class="mono">.bat</span>: <strong>Click More info → Run anyway</strong>.</p>
-                  <h4>The first flash pauses for a driver</h4>
-                  <p>After the keyboard goes into DFU mode for the first time,<br>the flasher should open <strong>Zadig</strong>. Do the following steps in it:</p>
-                  <ol>
-                    <li><strong>Options → List All Devices</strong></li>
-                    <li>Select <strong>AT32UC3B DFU</strong></li>
-                    <li>Set the right-hand box to <strong>WinUSB</strong>, press the <strong>Install Driver</strong> or <strong>Replace Driver</strong> button</li>
-                    <li>Close Zadig.</li>
-                  </ol>
-                </div>
-              </details>
-            </div>
-          </li>
-        </ol>
+          <ol class="steps">
+            <li>Download and extract the built package for your operating system.</li>
+            <li>Connect the 218e via USB and power it on.</li>
+            <li>Run the flasher and follow the instructions:
+              <div>
+                <div><strong>macOS</strong>: double-click <span class="mono">218e Rewired Flasher.app</span></div>
+                <details class="windrop"><summary><strong>Windows</strong>: double-click <span class="mono">218e_Rewired_Flasher.bat</span></summary>
+                  <div>
+                    <h4>Windows might warn you about unsigned software</h4>
+                    <p>If you get a Windows Defender prompt about the <span class="mono">.bat</span>: <strong>Click More info → Run anyway</strong>.</p>
+                    <h4>The first flash pauses for a driver</h4>
+                    <p>After the keyboard goes into DFU mode for the first time,<br>the flasher should open <strong>Zadig</strong>. Do the following steps in it:</p>
+                    <ol>
+                      <li><strong>Options → List All Devices</strong></li>
+                      <li>Select <strong>AT32UC3B DFU</strong></li>
+                      <li>Set the right-hand box to <strong>WinUSB</strong>, press the <strong>Install Driver</strong> or <strong>Replace Driver</strong> button</li>
+                      <li>Close Zadig.</li>
+                    </ol>
+                  </div>
+                </details>
+              </div>
+            </li>
+          </ol>
 
-        <details><summary>Oh no… something went wrong</summary>
-          <dl class="faq">
-            <dt>The keyboard is unresponsive and some LEDs are lit</dt>
-            <dd>The keyboard is probably in DFU mode. Run the flasher again. If that doesn’t work, power cycle the keyboard. You can bring it back without flashing anything by choosing <strong>Get the keyboard out of DFU mode</strong> when the flasher opens.</dd>
+          <details><summary>Oh no… something went wrong</summary>
+            <dl class="faq">
+              <dt>The keyboard is unresponsive and some LEDs are lit</dt>
+              <dd>The keyboard is probably in DFU mode. Run the flasher again. If that doesn’t work, power cycle the keyboard. You can bring it back without flashing anything by choosing <strong>Get the keyboard out of DFU mode</strong> when the flasher opens.</dd>
 
-            <dt>Every LED is lit and nothing responds</dt>
-            <dd>There is no valid firmware on the keyboard: the erase finished and the write did not. Run the flasher again. The instrument stays in DFU for exactly this reason.</dd>
+              <dt>Every LED is lit and nothing responds</dt>
+              <dd>There is no valid firmware on the keyboard: the erase finished and the write did not. Run the flasher again. The instrument stays in DFU for exactly this reason.</dd>
 
-            <dt>The flasher can’t put the keyboard into DFU mode</dt>
-            <dd>Power cycle the keyboard and try again. If it still won’t go, open <strong>Audio MIDI Setup</strong> on a Mac (<strong>Window → Show MIDI Studio</strong>) and check the keyboard is listed there and not greyed out: a stale port looks fine to a DAW and still swallows the request. Then try a different USB port, and then a different computer.</dd>
+              <dt>The flasher can’t put the keyboard into DFU mode</dt>
+              <dd>Power cycle the keyboard and try again. If it still won’t go, open <strong>Audio MIDI Setup</strong> on a Mac (<strong>Window → Show MIDI Studio</strong>) and check the keyboard is listed there and not greyed out: a stale port looks fine to a DAW and still swallows the request. Then try a different USB port, and then a different computer.</dd>
 
-            <dt><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows: the flasher says <span class="mono">no device present</span>, or <strong>AT32UC3B DFU</strong> sits under <em>Other devices</em></dt>
-            <dd>WinUSB is not bound to the DFU device. Run Zadig as above. Once it is right, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
+              <dt><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows: the flasher says <span class="mono">no device present</span>, or <strong>AT32UC3B DFU</strong> sits under <em>Other devices</em></dt>
+              <dd>WinUSB is not bound to the DFU device. Run Zadig as above. Once it is right, the entry moves to <em>Universal Serial Bus devices</em>.</dd>
 
-            <dt><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows: the 218e sits under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
-            <dd>Windows picked the wrong MIDI driver, so the request to enter DFU never reaches the instrument. Right-click it, <strong>Update driver</strong>, choose manually, and pick <strong>USB Audio Device</strong>.</dd>
-          </dl>
-        </details>
-
-
-
-      </section>
-
-      <section>
-        <h2>5 · Change the settings over MIDI</h2>
-        <p class="d muted section-note">Change any setting without flashing.</p>
-        <div class="row">
-          <label class="row">Keyboard
-            <select id="kbdPort"><option value="">Looking&hellip;</option></select></label>
-          <button class="primary" id="kbdRead" type="button" disabled>Read settings</button>
-          <button id="kbdSend" type="button" disabled>Send settings</button>
+              <dt><svg class="os" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 5.7l7.4-1v7.1H3V5.7zm0 12.6l7.4 1v-7H3v6zm8.3 1.1L21 20.7v-8.4h-9.7v6.1zm0-14.1v6.2H21V3.3l-9.7 1.3z"/></svg>Windows: the 218e sits under <em>Universal Serial Bus devices</em> instead of <em>Sound, video and game controllers</em></dt>
+              <dd>Windows picked the wrong MIDI driver, so the request to enter DFU never reaches the instrument. Right-click it, <strong>Update driver</strong>, choose manually, and pick <strong>USB Audio Device</strong>.</dd>
+            </dl>
+          </details>
         </div>
-        <p id="kbdVer" class="muted kbdver" role="status">Firmware: not read yet</p>
-        <div id="kbdMsg" role="status"></div>
       </section>
 
       <h2 class="triglav-title">TRIGLAV MODULAR<br>2026</h2>

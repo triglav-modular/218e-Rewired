@@ -622,21 +622,21 @@
             return l.length > 32 || !/[^.]/.test(l);
         });
         if (!rows.length || bad.length) {
-            msg($('buildMsg'), 'bad', !rows.length
+            msg($('patMsg'), 'bad', !rows.length
                 ? 'Nothing to read there.'
                 : 'Each line needs 1 to 32 steps and at least one hit: '
                   + JSON.stringify(bad[0]));
             return;
         }
         if (rows.length > 32) {
-            msg($('buildMsg'), 'bad', rows.length + ' patterns; the bank holds 32.');
+            msg($('patMsg'), 'bad', rows.length + ' patterns; the bank holds 32.');
             return;
         }
         state.patterns = rows.map(function (l) {
             var t = l.replace(/[^.]/g, 'x');
             return { text: t + '.'.repeat(32 - t.length), length: t.length };
         });
-        msg($('buildMsg'), '', state.patterns.length + ' patterns read.');
+        msg($('patMsg'), '', state.patterns.length + ' patterns read.');
         renderPatterns(); invalidate();
     }
 
@@ -1307,7 +1307,7 @@
             .then(function () { $('calRescan').disabled = false; },
                   function () { $('calRescan').disabled = false; });
     });
-    // --- step 5: the settings, to and from the keyboard over MIDI --------
+    // --- step 3 without a flash: the settings, to and from the keyboard ---
     // The record a build serialized (WEBBUILD.build's `settings`, the same
     // bytes tools/build.py writes to build/settings.bin) goes to the
     // instrument through SETTINGSMIDI.install, which refuses with a named
@@ -1347,8 +1347,8 @@
     }
     var KBD_REASONS = {
         'no reply': 'No reply from the keyboard: check it is on and plugged in, that this is the right port, and that it runs Rewired 3.0 or later.',
-        'wrong layout': 'This keyboard runs a different build: flash the firmware from step 3 first.',
-        'wrong image': 'This keyboard runs a different build: flash the firmware from step 3 first.',
+        'wrong layout': 'This keyboard runs a different build. Flash the latest firmware to change settings.',
+        'wrong image': 'This keyboard runs a different build. Flash the latest firmware to change settings.',
         'mismatch': 'The keyboard did not read everything back the same: try again.',
         'incomplete': 'The keyboard\u2019s reply was incomplete: try again.',
         'not written': 'The keyboard could not save: try again, and if it keeps failing, flash the firmware again.',
@@ -1408,7 +1408,7 @@
     // version, so the placeholder only ever means no answer yet.
     function showFirmware(id) {
         var ver = id && id.firmwareVersion;
-        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + ver : 'Firmware: not read yet';
+        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + shown(ver) : 'Firmware: not read yet';
     }
     function firmwareFrom(err) {
         if (err && err.identity) showFirmware(err.identity);
@@ -1432,13 +1432,23 @@
         $('kbdPort').addEventListener('change', function () { showFirmware(null); refresh(); });
         $('kbdSend').addEventListener('click', function () {
             var ports = keyboardPorts();
-            if (!ports || !state.result) return;
+            if (!ports || !state.factoryText) return;
             kbd.busy = true;
             $('kbdSend').disabled = true;
             $('kbdRead').disabled = true;
             msg($('kbdMsg'), 'warn', 'Sending…');
-            var record = recordBytes(state.result.settings), name = ports.output.name;
-            SETTINGSMIDI.install(ports.output, ports.input, record, {})
+            // The record is a build's, made here from what the page shows now
+            // rather than by a button of its own: a send that needed a build
+            // pressed first failed for a reason the step never showed.  A
+            // build is a few hundred milliseconds of script, so it runs once
+            // the message has painted.
+            var record, name = ports.output.name;
+            new Promise(function (painted) { setTimeout(painted, 30); })
+                .then(function () {
+                    try { record = recordBytes(built().settings); }
+                    catch (e) { e.unbuilt = true; throw e; }
+                    return SETTINGSMIDI.install(ports.output, ports.input, record, {});
+                })
                 .then(function (id) {
                     showFirmware(id);
                     if (!id.restarted) {
@@ -1463,8 +1473,14 @@
                         })
                         .then(function () { kbd.listed = false; return listKeyboard(); });
                 }, function (err) {
+                    // A build that failed never reached the keyboard: not a
+                    // send, and not counted as one.
+                    if (err && err.unbuilt) {
+                        msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + err.message);
+                        return;
+                    }
                     firmwareFrom(err);
-                    msg($('kbdMsg'), 'bad', KBD_REASONS[err && err.reason] || String(err && err.message || err));
+                    msg($('kbdMsg'), 'bad', sendRefusal(err));
                     reportSettings('send', outcomeOf(err), err && err.identity);
                 })
                 .then(function () { kbd.busy = false; refresh(); });
@@ -1489,23 +1505,28 @@
     // patterns is one of those, and neither builder will build one.
     // Loading invalidates the build the way any option change does: the
     // next image is made from what was read.
-    // The verdict is one line.  With a build here it says how the keyboard
-    // relates to it: the same build, this build with edits, or another
+    // The verdict is one line.  With the factory image here the page builds
+    // what it shows and says how the keyboard relates to that: the same
+    // build, this build with edits, or another
     // build, told apart by the firmware version the keyboard reports -
     // the same version from another build wants a flash ("another build"
     // means other code: the options, the tables, the period and the timing
     // numbers are not in the image marker, so it is a different page or a
     // build with other build-time settings), an
     // older one a flash to update, a newer one a fresher page.  With no
-    // build here it says whether anything was ever changed over MIDI.
+    // factory image it says whether anything was ever changed over MIDI.
     function describeKeyboard(r) {
-        var f = r.fields, id = r.identity, ver = id.firmwareVersion, page = GEN.version;
-        var build = state.result ? recordBytes(state.result.settings) : null;
+        var f = r.fields, id = r.identity, ver = id.firmwareVersion;
+        var mine = null;
+        if (state.factoryText) {
+            try { mine = built(); } catch (e) { mine = null; }
+        }
+        var build = mine ? recordBytes(mine.settings) : null;
         var verdict;
         if (!build) {
             verdict = id.slotLoaded === 0xff
                 ? 'This keyboard has no saved settings: it starts with the ones built into its firmware.'
-                : 'This keyboard holds saved settings. Build an image here to compare them.';
+                : 'This keyboard holds saved settings.';
         } else if (id.imageMarker === SETTINGSMIDI.markerOf(build)) {
             var n = SETTINGSMIDI.differences(build, r.pairs).length;
             verdict = n === 0 ? 'This keyboard holds the settings of the build you have here.'
@@ -1514,14 +1535,8 @@
                   ' from the build here.';
         } else if (ver === null) {
             verdict = 'This keyboard runs a different build. Its settings are listed below.';
-        } else if (BUILDLIB.compareVersions(ver, page) === 0) {
-            verdict = 'This keyboard runs Rewired ' + ver + ' from another build. ' +
-                      'Flash the firmware from step 3 to bring it to this build.';
-        } else if (BUILDLIB.compareVersions(ver, page) < 0) {
-            verdict = 'This keyboard runs Rewired ' + ver + '; this page builds ' + page + '. ' +
-                      'Its settings are loaded here. Flash the firmware from step 3 to update it.';
         } else {
-            verdict = 'This keyboard runs Rewired ' + ver + '; this page is ' + page + '. Reload the page.';
+            verdict = otherImage(ver, true);
         }
         var numbers = BUILDLIB.SETTINGS_NUMBERS.map(function (x) {
             return x[0] + ' ' + f.numbers[x[0]];
@@ -1533,7 +1548,7 @@
         var lengths = f.lengths.filter(function (len, i) { return len > 0 && f.masks[i] !== 0; });
         var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
         return verdict + '\n\n' +
-            (ver === null ? '' : 'Firmware: Rewired ' + ver + '\n') +
+            (ver === null ? '' : 'Firmware: Rewired ' + shown(ver) + '\n') +
             'Options: ' + options + '\n' +
             (r.pending && r.pending.length
                 ? 'Not yet running: ' + optionWords(r.pending) + ' - the keyboard holds the new setting and applies it at its next restart.\n'
@@ -1545,6 +1560,29 @@
                 (was.pitch_offset ? 'on' : 'off') + '.\n' +
             'Tunings: three tables of 32 entries, ' + f.tuning_period_keys.join(' · ') +
                 ' keys per period.';
+    }
+    // A version as the page shows one: major.minor, as the masthead's is.
+    // Comparisons still use all three numbers.
+    function shown(v) { return String(v).split('.').slice(0, 2).join('.'); }
+    // What a keyboard running another image than this page's needs before a
+    // send can land, by the version it reports: the record fits only the
+    // image it was made for, so the same version from another build and an
+    // older one both want this page's firmware flashed, and a newer one a
+    // fresher page.  Two versions that differ only past major.minor would
+    // read as the same number, so they are named as another build.  `loaded`
+    // is a read's, which has just put the older keyboard's settings here.
+    function otherImage(ver, loaded) {
+        var page = GEN.version, c = BUILDLIB.compareVersions(ver, page);
+        var flash = 'Flash the latest firmware to change settings.';
+        if (c === 0 || shown(ver) === shown(page)) {
+            return 'This keyboard runs Rewired ' + shown(ver) + ' from another build. ' +
+                   (c > 0 ? 'Reload the page.' : flash);
+        }
+        if (c < 0) {
+            return 'This keyboard runs Rewired ' + shown(ver) + '; this page builds ' + shown(page) + '. ' +
+                   (loaded ? 'Its settings are loaded here. ' : '') + flash;
+        }
+        return 'This keyboard runs Rewired ' + shown(ver) + '; this page is ' + shown(page) + '. Reload the page.';
     }
     // A slot of the keyboard's, for the page: null where it holds the
     // factory temperament - its table the factory image's own, twelve keys
@@ -1627,8 +1665,7 @@
                                         state.numbers ? ['timing numbers'] : [],
                                         tunings ? ['tunings'] : []);
         return 'The ' + loaded.join(', the ') + ' and the pitch table are' +
-            ' now loaded here, the table as the calibration already on the keyboard. ' +
-            'Build again to make an image from ' + (rows.length || state.numbers || tunings ? 'them.' : 'it.') +
+            ' now loaded here, the table as the calibration already on the keyboard.' +
             (had ? ' The readings that were entered have been cleared: they were taken ' +
                    'against whatever was flashed at the time, which the keyboard now says. ' +
                    'Measure again.' : '');
@@ -1664,10 +1701,26 @@
     function readRefusal(err) {
         var id = err && err.identity;
         if (err && err.reason === 'wrong layout' && id && id.firmwareVersion !== null) {
-            return 'This keyboard runs Rewired ' + id.firmwareVersion + '; this page is ' + GEN.version +
+            // An older map than this page's is not read by a reload either:
+            // the keyboard needs this version flashed.
+            var v = id.firmwareVersion;
+            if (BUILDLIB.compareVersions(v, GEN.version) < 0 || shown(v) === shown(GEN.version)) {
+                return otherImage(v, false);
+            }
+            return 'This keyboard runs Rewired ' + shown(v) + '; this page is ' + shown(GEN.version) +
                    '. Reload the page to read its settings.';
         }
         return KBD_REASONS[err && err.reason] || String(err && err.message || err);
+    }
+    // A send refused for running another image says which version the
+    // keyboard runs and what it needs, where the reason alone could only
+    // say "a different build".
+    function sendRefusal(err) {
+        var id = err && err.identity, reason = err && err.reason;
+        if ((reason === 'wrong layout' || reason === 'wrong image') && id && id.firmwareVersion !== null) {
+            return otherImage(id.firmwareVersion, false);
+        }
+        return KBD_REASONS[reason] || String(err && err.message || err);
     }
 
     // A port appearing or going away invalidates a list that is only built
@@ -1892,8 +1945,8 @@
         });
 
     // Any change to what would be built makes the built image a lie, so the
-    // one thing every option handler does is drop it.  The download buttons
-    // go dark and Build takes the accent back through refresh().
+    // one thing every option handler does is drop it.  The next download,
+    // send or read builds again from what the controls say then.
     function invalidate() {
         state.result = null;
         state.options = null;
@@ -1903,58 +1956,49 @@
     }
 
     function refresh() {
-        $('build').disabled = !state.factoryText;
-        $('dlMac').disabled = !state.result;
-        $('dlWin').disabled = !state.result;
-        // Step 5 wants the image's own record, which only a build has.
+        // Both ways out of step 3 build first, and a build needs the
+        // factory image.
+        $('dlMac').disabled = !state.factoryText;
+        $('dlWin').disabled = !state.factoryText;
         // Not while a read or a send is under way: a port coming and going
         // - which the restart itself does - lists the ports again and lands
         // here, and a second click would start a second listener on the
         // same input.
-        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !(state.result && $('kbdPort').value);
+        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !(state.factoryText && $('kbdPort').value);
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
         if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !$('kbdPort').value;
-        // The accent marks whatever is next: Build until an image exists,
-        // then Download.  Changing an option clears state.result, so it
-        // hands the emphasis back on its own.
-        $('build').className = state.result ? '' : 'primary';
-        $('dlMac').className = state.result ? 'primary' : '';
-        $('dlWin').className = state.result ? 'primary' : '';
     bindDashes(document.body);
     }
 
-    $('build').addEventListener('click', function () {
-        msg($('buildMsg'), 'warn', 'Building…');
-        $('build').disabled = true;
-        // Yield first so the message paints before the synchronous build runs.
-        setTimeout(function () {
-            try {
-                var t0 = Date.now();
-                var chosen = options();
-                var r = WEBBUILD.build(chosen, state.factoryText);
-                // The options ride with the result: image.txt and the beacon
-                // must describe the build they accompany, not whatever the
-                // controls say by the time an async download assembles.
-                r.options = chosen;
-                state.result = r;
-                state.options = chosen;
-                msg($('buildMsg'), 'ok',
-                    r.version + '\n' +
-                    'Built in ' + (Date.now() - t0) + ' ms.\n\n' +
-                    'SHA-256  ' + r.sha256 + '\n' +
-                    r.patches + ' patches · ' + r.changed + ' bytes changed · ' +
-                    r.added + ' newly programmed · ' + r.skipped.length + ' left factory\n\n' +
-                    'Every difference from your factory image lies inside a declared patch, ' +
-                    'and the image was read back and verified before this was shown.');
-            } catch (e) {
-                state.result = null;
-                msg($('buildMsg'), 'bad', 'Build failed.\n\n' + e.message);
-            }
-            $('build').disabled = false;
-            refresh();
-        }, 30);
-    });
+    // The image for what the controls say now.  There is no Build button:
+    // a build takes milliseconds, so a download, a send and a read's
+    // comparison each ask for one when they need it.  The last one is kept
+    // until invalidate() drops it, so a second download of the same options
+    // is the same image.  Throws what the build throws.
+    function built() {
+        if (state.result) return state.result;
+        var t0 = Date.now();
+        var chosen = options();
+        var r = WEBBUILD.build(chosen, state.factoryText);
+        // The options ride with the result: image.txt and the beacon
+        // must describe the build they accompany, not whatever the
+        // controls say by the time an async download assembles.
+        r.options = chosen;
+        r.ms = Date.now() - t0;
+        state.result = r;
+        state.options = chosen;
+        return r;
+    }
+    function buildReport(r) {
+        return r.version + '\n' +
+            'Built in ' + r.ms + ' ms.\n\n' +
+            'SHA-256  ' + r.sha256 + '\n' +
+            r.patches + ' patches · ' + r.changed + ' bytes changed · ' +
+            r.added + ' newly programmed · ' + r.skipped.length + ' left factory\n\n' +
+            'Every difference from your factory image lies inside a declared patch, ' +
+            'and the image was read back and verified before this was shown.';
+    }
 
     // A download is everything needed to flash: the image, the flasher stamped
     // with that image's checksum, the rescue script, and the vendor tools the
@@ -2207,11 +2251,28 @@
 
     Object.keys(KIT).forEach(function (id) {
         $(id).addEventListener('click', function () {
-            var r = state.result;
-            if (!r) return;
-            var p = KIT[id];
+            if (!state.factoryText) return;
             var btn = $(id), label = btn.querySelector('span').textContent;
             btn.disabled = true;
+            // A build is a few hundred milliseconds of script: the button says
+            // so first, and the build runs once that has painted.
+            btn.querySelector('span').textContent = 'Building…';
+            setTimeout(function () {
+                var r;
+                try { r = built(); }
+                catch (e) {
+                    btn.querySelector('span').textContent = label;
+                    btn.disabled = false;
+                    msg($('buildMsg'), 'bad', 'Build failed.\n\n' + e.message);
+                    return;
+                }
+                msg($('buildMsg'), 'ok', buildReport(r));
+                pack(r, btn, label);
+            }, 30);
+        });
+        // Everything after the build: the kit, the zip and the download.
+        function pack(r, btn, label) {
+            var p = KIT[id];
             // A page opened from disk cannot fetch its neighbours: browsers
             // refuse cross-origin reads on file:, and every file: URL is its
             // own origin.  The tools simply cannot be collected, so the zip
@@ -2349,7 +2410,7 @@
                     'Could not assemble the download: ' + e.message +
                     '\n\nThe firmware itself built fine. This is the packaging step.');
             });
-        });
+        }
     });
 
 
@@ -2362,6 +2423,9 @@
     // with.  The patch number and the build's own fingerprint belong on the
     // build result, not in the masthead.
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
+    // The version a keyboard has to run for a send to land, shown as the
+    // masthead's is.
+    if ($('kbdNeeds')) $('kbdNeeds').textContent = shown(GEN.version);
 
     // Each preset knob picks its own role, the same control the volts-per-
     // octave choice uses; None hands that knob back to its preset voltage.
