@@ -1329,7 +1329,7 @@
             .then(function () { $('calRescan').disabled = false; },
                   function () { $('calRescan').disabled = false; });
     });
-    // --- the settings without a flash: read in step 1, sent in step 3 ---
+    // --- the settings without a flash: read before step 2, sent in step 3 ---
     // The record a build serialized (WEBBUILD.build's `settings`, the same
     // bytes tools/build.py writes to build/settings.bin) goes to the
     // instrument through SETTINGSMIDI.install, which refuses with a named
@@ -1337,7 +1337,7 @@
     // device with an input and an output of the same name, so the select
     // lists outputs and the input is found by that name.
     //
-    // Reading comes first, beside the factory image, so the options are
+    // Reading is its own box between steps 1 and 2, so the options are
     // loaded before they are changed; sending stays with the flash.  Each
     // has its own port list, linked with the calibration's (midiPick).
     var kbd = { outputs: [], inputs: [], listed: false, busy: false };
@@ -1447,13 +1447,14 @@
     // the buttons rather than only inside a read's report.  Filled from
     // every identity the page already gets - a read, a send, a refusal that
     // carries one - and never by asking on its own: nothing goes out to a
-    // port until a button is pressed.  Back to the placeholder when the port
-    // changes or the keyboard stops answering, since the next reply may be
-    // another device.  Every firmware that answers over MIDI reports its
-    // version, so the placeholder only ever means no answer yet.
+    // port until a button is pressed.  Hidden until then, and hidden again
+    // when the port changes or the keyboard stops answering, since the next
+    // reply may be another device.  Every firmware that answers over MIDI
+    // reports its version, so a hidden line only ever means no answer yet.
     function showFirmware(id) {
         var ver = id && id.firmwareVersion;
-        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + shown(ver) : 'Firmware: not read yet';
+        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + shown(ver) : '';
+        $('kbdVer').hidden = !ver;
     }
     function firmwareFrom(err) {
         if (err && err.identity) showFirmware(err.identity);

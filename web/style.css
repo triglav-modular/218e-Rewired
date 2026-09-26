@@ -1764,11 +1764,6 @@ strong {
   margin: 0 0 24px;
   padding-bottom: 20px;
 }
-/* Reading is its own card under the factory image in step 1, so a keyboard's
-   options are on the page before step 2 changes them. */
-.finish-load {
-  margin-top: 20px;
-}
 /* The picker has its label above it, so the buttons line up with the box,
    not with the middle of label and box together. */
 .finish-row {

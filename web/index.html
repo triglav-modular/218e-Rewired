@@ -114,18 +114,18 @@
         </div>
         <input type="file" id="file" accept=".hex" hidden>
         <div id="fileMsg" role="status"></div>
+      </section>
 
-        <div class="group finish-midi finish-load">
-          <h3>Already running Rewired <span id="kbdNeedsLoad"></span></h3>
-          <p class="d muted section-note">Load its settings into this page to start from them.</p>
-          <div class="row finish-row">
-            <label class="autofield"><span class="d">Keyboard</span>
-              <select id="kbdLoadPort"><option value="">Looking&hellip;</option></select></label>
-            <button class="primary" id="kbdRead" type="button" disabled>Read settings</button>
-          </div>
-          <p id="kbdVer" class="muted kbdver" role="status">Firmware: not read yet</p>
-          <div id="kbdLoadMsg" role="status"></div>
+      <section>
+        <h2>Already running Rewired <span id="kbdNeedsLoad"></span>?</h2>
+        <p class="d muted section-note">Load your settings via MIDI to start from them.</p>
+        <div class="row finish-row">
+          <label class="autofield"><span class="d">Keyboard</span>
+            <select id="kbdLoadPort"><option value="">Looking&hellip;</option></select></label>
+          <button class="primary" id="kbdRead" type="button" disabled>Read settings</button>
         </div>
+        <p id="kbdVer" class="muted kbdver" role="status" hidden></p>
+        <div id="kbdLoadMsg" role="status"></div>
       </section>
 
       <section>

@@ -4,7 +4,7 @@ One image serves every option set. The eleven options the page offers in
 step 2, the ten timing numbers, the pattern bank, the pitch table and the
 three tuning tables all live in a settings record the firmware reads at
 boot, and the page writes that record over Web MIDI from step 3 and reads
-it back from step 1. Changing an option costs a MIDI push and a restart the page sends,
+it back from the box between steps 1 and 2. Changing an option costs a MIDI push and a restart the page sends,
 not a DFU round trip.
 
 This is the reference for what was built. The design and the reasons for
