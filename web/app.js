@@ -1805,7 +1805,44 @@
         $('calChan').disabled = on || (chanFor[$('calAudio').value || ''] || 1) < 2;
     }
 
+    // The keyboard plays incoming MIDI notes relative to the last key
+    // pressed on it, so a sweep started after another key filed every
+    // reading that many notes off (the owner, 2026-09-26: a run whose C0
+    // came back two octaves up).  Nothing over MIDI resets that, so the
+    // sweep waits for the person to press the lowest key, heard as the
+    // keyboard's own note-on - note 24, which the lowest key sends on the
+    // lowest octave and only there (measured 2026-09-26: 48 an octave pad
+    // up, 25 for the key above) - and then for its release, since a key
+    // still held would play over the sweep's notes.  Any channel: the
+    // keyboard sends on its own, which need not be the one it listens on.
+    var LOWEST_KEY_NOTE = 24;
+    var keyWait = null;
+    function awaitLowestKey(output) {
+        return CALIBRATE.midiInputs().then(function (inputs) {
+            var input = inputs.filter(function (p) { return p.name === output.name; })[0];
+            if (!input) return;
+            return new Promise(function (resolve, reject) {
+                var previous = input.onmidimessage, pressed = false;
+                function done(err) {
+                    input.onmidimessage = previous || null;
+                    keyWait = null;
+                    if (err) reject(err); else resolve();
+                }
+                keyWait = { cancel: function () { done(new Error('Stopped.')); } };
+                input.onmidimessage = function (e) {
+                    var d = e && e.data;
+                    if (!d || d[1] !== LOWEST_KEY_NOTE) return;
+                    var on = (d[0] & 0xf0) === 0x90 && d[2] > 0;
+                    var off = (d[0] & 0xf0) === 0x80 || ((d[0] & 0xf0) === 0x90 && d[2] === 0);
+                    if (on) pressed = true;
+                    else if (off && pressed) done();
+                };
+            });
+        });
+    }
+
     $('calStop').addEventListener('click', function () {
+        if (keyWait) { keyWait.cancel(); return; }
         if (sweep) sweep.stop();
         autoNote('Stopping after this note\u2026');
     });
@@ -1828,79 +1865,82 @@
             }
             var got = {};
             setRunning(true);
-            autoNote('Listening for the bottom C\u2026', 0);
-            sweep = new CALIBRATE.Sweep({
-                output: chosen,
-                // Empty means Auto: the sweep finds the channel by playing on
-                // each in turn and watching for the pitch to move.
-                channel: $('calMidiChan').value === '' ? null
-                                                       : Number($('calMidiChan').value),
-                deviceId: $('calAudio').value || null,
-                audioChannel: parseInt($('calChan').value, 10) || 0,
-                // What listChannels() actually got the device to open.  The
-                // sweep needs it because "ideal" can negotiate two channels on
-                // a desk that hands over twelve when asked for twelve outright,
-                // and that is the number this dropdown was filled from.
-                audioChannels: chanFor[$('calAudio').value || ''] || null,
-                // Entries, not semitones.  The sweep counts in firmware table
-                // entries - the bottom key is entry 3 whatever the pitch
-                // offset is - while these boxes count in calibration
-                // semitones, where the bottom key is PLAYABLE_LOW.  The two
-                // coincide with the offset on and are three apart without it,
-                // so handing the sweep PLAYABLE_LOW/PLAYABLE_HIGH raw played
-                // 62 of the 65 keys on a 208c and filed every reading three
-                // rows high.
-                low: CALIBRATE.entryForSemitone(PLAYABLE_LOW, PLAYABLE_LOW),
-                high: CALIBRATE.entryForSemitone(PLAYABLE_HIGH, PLAYABLE_LOW),
-                octaveTerm: false, velocity: 100,
-                onReading: pushLog,
-                onProbe: function (ch, confirming) {
-                    autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
-                                         : 'Looking for the keyboard on MIDI channel ') +
-                             (ch + 1) + '\u2026', 0);
-                },
-                onChannel: function (ch) {
-                    $('calMidiChan').value = String(ch);
-                },
-                onNote: function (step, reading, i, total) {
-                    got[CALIBRATE.semitoneFor(step.index, PLAYABLE_LOW)] =
-                        reading ? reading.cents : null;
-                    var name = CALIBRATE.noteLabel(step.index);
-                    autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
-                             (reading && reading.cents !== null ?
-                                 (reading.cents >= 0 ? '+' : '') +
-                                 reading.cents.toFixed(1) + ' cents' : 'not heard'),
-                             (i + 1) / total);
-                }
-            });
-            return sweep.run().then(function (out) {
-                var bridged = bridgeGaps(got);
-                $('useCal').checked = true;
-                syncCalBody();
-                buildTable(); drawPlot(); validateCal(); invalidate();
-                var heard = out.readings.filter(function (r) { return r.cents !== null; });
-                autoNote('');
-                var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
-                    ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
-                    out.anchorHz.toFixed(2) + ' Hz; the ' +
-                    'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
-                    'which has been taken out of every reading.';
-                if (bridged) {
-                    note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
-                        ' not heard and have been carried across from their neighbours - ' +
-                        'check those by hand.';
-                }
-                if (out.warnings.length) {
-                    // Capped: a run that goes wrong everywhere would otherwise
-                    // bury its own summary under sixty-five lines.
-                    var show = out.warnings.slice(0, 12);
-                    note += '\n\n' + show.join('\n');
-                    if (out.warnings.length > show.length) {
-                        note += '\n...and ' + (out.warnings.length - show.length) +
-                                ' more.';
+            autoNote('Press the first key of the lowest octave on the keyboard.', 0);
+            return awaitLowestKey(chosen).then(function () {
+                autoNote('Listening for the bottom C\u2026', 0);
+                sweep = new CALIBRATE.Sweep({
+                    output: chosen,
+                    // Empty means Auto: the sweep finds the channel by playing on
+                    // each in turn and watching for the pitch to move.
+                    channel: $('calMidiChan').value === '' ? null
+                                                           : Number($('calMidiChan').value),
+                    deviceId: $('calAudio').value || null,
+                    audioChannel: parseInt($('calChan').value, 10) || 0,
+                    // What listChannels() actually got the device to open.  The
+                    // sweep needs it because "ideal" can negotiate two channels on
+                    // a desk that hands over twelve when asked for twelve outright,
+                    // and that is the number this dropdown was filled from.
+                    audioChannels: chanFor[$('calAudio').value || ''] || null,
+                    // Entries, not semitones.  The sweep counts in firmware table
+                    // entries - the bottom key is entry 3 whatever the pitch
+                    // offset is - while these boxes count in calibration
+                    // semitones, where the bottom key is PLAYABLE_LOW.  The two
+                    // coincide with the offset on and are three apart without it,
+                    // so handing the sweep PLAYABLE_LOW/PLAYABLE_HIGH raw played
+                    // 62 of the 65 keys on a 208c and filed every reading three
+                    // rows high.
+                    low: CALIBRATE.entryForSemitone(PLAYABLE_LOW, PLAYABLE_LOW),
+                    high: CALIBRATE.entryForSemitone(PLAYABLE_HIGH, PLAYABLE_LOW),
+                    octaveTerm: false, velocity: 100,
+                    onReading: pushLog,
+                    onProbe: function (ch, confirming) {
+                        autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
+                                             : 'Looking for the keyboard on MIDI channel ') +
+                                 (ch + 1) + '\u2026', 0);
+                    },
+                    onChannel: function (ch) {
+                        $('calMidiChan').value = String(ch);
+                    },
+                    onNote: function (step, reading, i, total) {
+                        got[CALIBRATE.semitoneFor(step.index, PLAYABLE_LOW)] =
+                            reading ? reading.cents : null;
+                        var name = CALIBRATE.noteLabel(step.index);
+                        autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
+                                 (reading && reading.cents !== null ?
+                                     (reading.cents >= 0 ? '+' : '') +
+                                     reading.cents.toFixed(1) + ' cents' : 'not heard'),
+                                 (i + 1) / total);
                     }
-                }
-                msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad', note);
+                });
+                return sweep.run().then(function (out) {
+                    var bridged = bridgeGaps(got);
+                    $('useCal').checked = true;
+                    syncCalBody();
+                    buildTable(); drawPlot(); validateCal(); invalidate();
+                    var heard = out.readings.filter(function (r) { return r.cents !== null; });
+                    autoNote('');
+                    var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
+                        ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
+                        out.anchorHz.toFixed(2) + ' Hz; the ' +
+                        'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
+                        'which has been taken out of every reading.';
+                    if (bridged) {
+                        note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
+                            ' not heard and have been carried across from their neighbours - ' +
+                            'check those by hand.';
+                    }
+                    if (out.warnings.length) {
+                        // Capped: a run that goes wrong everywhere would otherwise
+                        // bury its own summary under sixty-five lines.
+                        var show = out.warnings.slice(0, 12);
+                        note += '\n\n' + show.join('\n');
+                        if (out.warnings.length > show.length) {
+                            note += '\n...and ' + (out.warnings.length - show.length) +
+                                    ' more.';
+                        }
+                    }
+                    msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad', note);
+                });
             });
         }).catch(function (err) {
             autoNote('');
