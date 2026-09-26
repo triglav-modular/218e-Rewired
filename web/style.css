@@ -919,17 +919,23 @@ td input {
 /* A slot is two lines, not three columns: the name and its controls on the
    first, the file on the second, and the explanation under both at full
    width.  Squeezed into a 150px column that note wrapped to three lines of
-   12px and was the hardest thing on the page to read. */
+   12px and was the hardest thing on the page to read.
+   Each slot is a panel of its own, drawn as the calibration sweep's is: with
+   only a rule between them, a slot's file line ran on into the next slot's
+   name and the three read as one list. */
 .slot {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 6px 14px;
   align-items: center;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
 }
 .slot:last-child {
-  border-bottom: 0;
+  margin-bottom: 0;
 }
 .slot .who {
   grid-column: 1;
