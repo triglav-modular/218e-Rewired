@@ -116,15 +116,16 @@
         <div id="fileMsg" role="status"></div>
       </section>
 
-      <section>
+      <section class="shortcut">
         <h2>Already running Rewired <span id="kbdNeedsLoad"></span>?</h2>
-        <p class="d muted section-note">Load your settings via MIDI to start from them.</p>
-        <div class="row finish-row">
-          <label class="autofield"><span class="d">Keyboard</span>
-            <select id="kbdLoadPort"><option value="">Looking&hellip;</option></select></label>
+        <p class="d muted shortcut-note">Load your settings via MIDI to start from them.</p>
+        <div class="pickread">
+          <label class="pickread-port">
+            <svg class="midi" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10.5 3.3h3v2.1h-3z"/><g fill="currentColor"><circle cx="6.8" cy="12" r="1.35"/><circle cx="8.3" cy="15.7" r="1.35"/><circle cx="12" cy="17.2" r="1.35"/><circle cx="15.7" cy="15.7" r="1.35"/><circle cx="17.2" cy="12" r="1.35"/></g></svg>
+            <select id="kbdLoadPort" aria-label="Keyboard"><option value="">Looking&hellip;</option></select></label>
           <button class="primary" id="kbdRead" type="button" disabled>Read settings</button>
         </div>
-        <p id="kbdVer" class="muted kbdver" role="status" hidden></p>
+        <p id="kbdVer" class="kbdver" role="status" hidden></p>
         <div id="kbdLoadMsg" role="status"></div>
       </section>
 

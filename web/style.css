@@ -1764,6 +1764,141 @@ strong {
   margin: 0 0 24px;
   padding-bottom: 20px;
 }
+/* The read box between steps 1 and 2 is a shortcut, not a step: tighter
+   than a section, a heading a size down from the numbered ones, and one
+   control for its one action.  The port and the button are fused into a
+   single recessed pill (the keyboard well's shadow), so they read as "read
+   from this" rather than as a field and a button that happen to share a
+   line; the pill's own inset keeps the button clear of its edge.  The MIDI
+   socket stands in for the field's label, which is still there for a
+   screen reader. */
+section.shortcut {
+  padding: 24px 28px;
+}
+section.shortcut h2 {
+  font-size: 16px;
+  margin: 0 0 6px;
+}
+.shortcut-note {
+  margin: 0 0 18px;
+}
+.pickread {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 5px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .30),
+              inset 0 -1px 0 rgba(255, 255, 255, .03);
+}
+.pickread-port {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+.pickread-port .midi {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin-top: -11px;
+  color: var(--muted);
+  pointer-events: none;
+  transition: color .15s;
+}
+.pickread-port:hover .midi,
+.pickread-port:focus-within .midi {
+  color: var(--accent);
+}
+/* The chevron is drawn, as the calibration's selects draw theirs, so it has
+   room around it and takes currentColor. */
+.pickread select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background-color: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 44px 0 48px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 24px center, right 18px center;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+.pickread select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* Where the list opens inside the page (Windows) the options take the
+   select's own background, which here is transparent. */
+.pickread select option {
+  background: var(--bg);
+  color: var(--ink);
+}
+.pickread button {
+  flex: 0 0 auto;
+  padding: 12px 24px;
+}
+/* The firmware the keyboard answered with: a status, so a dot in the
+   colour the page uses for a good result, and nothing at all until then.
+   `hidden` alone would lose to the flex below, hence the :not(). */
+.shortcut .kbdver {
+  margin: 12px 0 0 16px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.shortcut .kbdver:not([hidden]) {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.shortcut .kbdver::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent);
+}
+.shortcut .msg:last-child {
+  margin-bottom: 0;
+}
+/* A phone has about 300px for the pill, which the port name and the button
+   cannot share, so they stack inside it: the pill becomes a rounded well
+   holding the list on top and the button across its width. */
+@media (max-width: 520px) {
+  section.shortcut {
+    padding: 20px 16px;
+  }
+  .pickread {
+    flex-direction: column;
+    border-radius: 18px;
+  }
+  .pickread select {
+    min-height: 46px;
+  }
+  .pickread button {
+    width: 100%;
+    border-radius: 14px;
+  }
+}
+@media (min-width: 521px) and (max-width: 640px) {
+  section.shortcut {
+    padding: 20px 16px;
+  }
+}
 /* The picker has its label above it, so the buttons line up with the box,
    not with the middle of label and box together. */
 .finish-row {
