@@ -1170,19 +1170,41 @@
         if (had && items.some(function (it) { return it.value === had; })) sel.value = had;
     }
 
+    // The page has one MIDI port choice, shown in three lists: the
+    // calibration's, and the keyboard's beside Read and beside Send.  They
+    // are the same instrument, so a pick in any of them shows in all of
+    // them, and a list lands on it whenever it is filled: by name, so it is
+    // picked again when the port comes back after a restart, and on the
+    // keyboard's own port until something else is picked.  It cannot be
+    // read back from a list: a select with options always has a value, the
+    // first one, so a list just filled looked chosen and the keyboard was
+    // only picked when it happened to be first.  A list that is locked, as
+    // the calibration's is while it runs, keeps the port it is using and
+    // catches up when it unlocks.
+    var midiPick = null;
+    function midiSelects() {
+        return ['calMidi', 'kbdLoadPort', 'kbdPort'].map(function (id) { return $(id); }).filter(Boolean);
+    }
+    function applyMidiPick(sel) {
+        if (sel.disabled) return;
+        var want = Array.prototype.filter.call(sel.options, function (o) {
+            return o.value && (midiPick ? o.text === midiPick : /218e/i.test(o.text));
+        })[0];
+        if (want) sel.value = want.value;
+    }
+
     function listMidi() {
         if (listed.midi) return Promise.resolve();
         return CALIBRATE.midiOutputs().then(function (ports) {
             listed.midi = true;
-            // The instrument names its own port, so a kit with several things
-            // plugged in still opens on the right one.
             var items = ports.map(function (p) {
                 return { value: p.id, label: p.name || p.id, port: p };
             });
             fillSelect($('calMidi'), items, 'No MIDI outputs found');
-            var mine = items.filter(function (i) { return /218e/i.test(i.label); })[0];
-            if (mine) $('calMidi').value = mine.value;
+            applyMidiPick($('calMidi'));
             window.__calPorts = ports;
+            // The keyboard's lists fill with it, so all three show the pick.
+            if (!kbd.listed) listKeyboard();
         }, function (err) {
             // Not latched: a browser that has no Web MIDI will say so again,
             // and one that was merely not ready gets another chance without
@@ -1307,41 +1329,49 @@
             .then(function () { $('calRescan').disabled = false; },
                   function () { $('calRescan').disabled = false; });
     });
-    // --- step 3 without a flash: the settings, to and from the keyboard ---
+    // --- the settings without a flash: read in step 1, sent in step 3 ---
     // The record a build serialized (WEBBUILD.build's `settings`, the same
     // bytes tools/build.py writes to build/settings.bin) goes to the
     // instrument through SETTINGSMIDI.install, which refuses with a named
     // reason; each reason has its own line here.  The instrument is one
     // device with an input and an output of the same name, so the select
     // lists outputs and the input is found by that name.
-    var kbd = { outputs: [], inputs: [], listed: false, busy: false, wantName: null };
+    //
+    // Reading comes first, beside the factory image, so the options are
+    // loaded before they are changed; sending stays with the flash.  Each
+    // has its own port list, linked with the calibration's (midiPick).
+    var kbd = { outputs: [], inputs: [], listed: false, busy: false };
+    function kbdSelects() {
+        return ['kbdLoadPort', 'kbdPort'].map(function (id) { return $(id); }).filter(Boolean);
+    }
+    function kbdMessages() {
+        return ['kbdLoadMsg', 'kbdMsg'].map(function (id) { return $(id); }).filter(Boolean);
+    }
     function listKeyboard() {
-        if (!$('kbdPort')) return Promise.resolve();
+        if (!kbdSelects().length) return Promise.resolve();
         return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
             kbd.outputs = r[0]; kbd.inputs = r[1]; kbd.listed = true;
             var items = kbd.outputs.map(function (p) {
                 return { value: p.id, label: p.name || p.id };
             });
-            fillSelect($('kbdPort'), items, 'No MIDI outputs found');
-            // The port shown is the one picked by name, or the keyboard's own
-            // until something else is picked.  It cannot be read back from
-            // the list: a select with options always has a value, the first
-            // one, so a list just filled looked chosen and the keyboard was
-            // only picked when it happened to be first.  By name it is picked
-            // again when it comes back after a restart.
-            var want = items.filter(function (i) {
-                return kbd.wantName ? i.label === kbd.wantName : /218e/i.test(i.label);
-            })[0];
-            if (want) $('kbdPort').value = want.value;
+            kbdSelects().forEach(function (sel) {
+                fillSelect(sel, items, 'No MIDI outputs found');
+                applyMidiPick(sel);
+            });
+            if (!listed.midi) listMidi();
             refresh();
         }, function (err) {
-            fillSelect($('kbdPort'), [], 'Web MIDI unavailable');
-            msg($('kbdMsg'), 'bad', err.message);
+            kbdSelects().forEach(function (sel) { fillSelect(sel, [], 'Web MIDI unavailable'); });
+            kbdMessages().forEach(function (m) { msg(m, 'bad', err.message); });
             refresh();
         });
     }
+    function keyboardPort() {
+        var sel = kbdSelects()[0];
+        return sel ? sel.value : '';
+    }
     function keyboardPorts() {
-        var out = kbd.outputs.filter(function (p) { return p.id === $('kbdPort').value; })[0];
+        var out = kbd.outputs.filter(function (p) { return p.id === keyboardPort(); })[0];
         if (!out) return null;
         var inp = kbd.inputs.filter(function (p) { return p.name === out.name; })[0] || kbd.inputs[0];
         return inp ? { output: out, input: inp } : null;
@@ -1437,33 +1467,40 @@
                        alternate_tunings: 'the tuning slots' };
         return names.map(function (n) { return labels[n] || n; }).join(', ');
     }
-    if ($('kbdSend')) {
-        // The MIDI permission is asked for when the port list or a button
+    if (kbdSelects().length) {
+        // The MIDI permission is asked for when a port list or a button
         // is clicked, not when the step scrolls into view and not on load:
-        // flashing already carries the settings, so this step is optional
+        // flashing already carries the settings, so this is optional
         // and someone building an image to download has no use for the
-        // prompt.  The list fills on the first focus or press, as the
+        // prompt.  The lists fill on the first focus or press, as the
         // calibration's does - and at once when MIDI is allowed already, as
         // on any visit after the first, where there is no prompt to show.
-        $('kbdPort').addEventListener('focus', function () { if (!kbd.listed) listKeyboard(); });
-        $('kbdPort').addEventListener('change', function () {
-            var sel = $('kbdPort'), picked = sel.options[sel.selectedIndex];
-            kbd.wantName = picked && picked.value ? picked.text : null;
-            showFirmware(null);
-            refresh();
+        kbdSelects().forEach(function (sel) {
+            sel.addEventListener('focus', function () { if (!kbd.listed) listKeyboard(); });
+        });
+        midiSelects().forEach(function (sel) {
+            sel.addEventListener('change', function () {
+                var picked = sel.options[sel.selectedIndex];
+                midiPick = picked && picked.value ? picked.text : null;
+                midiSelects().forEach(function (other) { if (other !== sel) applyMidiPick(other); });
+                showFirmware(null);
+                refresh();
+            });
         });
         try {
             navigator.permissions.query({ name: 'midi' }).then(function (status) {
                 if (status.state === 'granted' && !kbd.listed) listKeyboard();
             }, function () {});
         } catch (e) { /* no Permissions API, or no 'midi' in it: the first click lists */ }
+    }
+    if ($('kbdSend')) {
         $('kbdSend').addEventListener('click', function () {
             if (state.factoryText) withKeyboard(sendTo);
         });
         var sendTo = function (ports) {
             kbd.busy = true;
             $('kbdSend').disabled = true;
-            $('kbdRead').disabled = true;
+            if ($('kbdRead')) $('kbdRead').disabled = true;
             msg($('kbdMsg'), 'warn', 'Sending…');
             // The record is a build's, made here from what the page shows now
             // rather than by a button of its own: a send that needed a build
@@ -1703,20 +1740,20 @@
         var readFrom = function (ports) {
             kbd.busy = true;
             $('kbdRead').disabled = true;
-            $('kbdSend').disabled = true;
-            msg($('kbdMsg'), 'warn', 'Reading…');
+            if ($('kbdSend')) $('kbdSend').disabled = true;
+            msg($('kbdLoadMsg'), 'warn', 'Reading…');
             SETTINGSMIDI.read(ports.output, ports.input, {})
                 .then(function (r) {
                     // The verdict compares against the build before the load
                     // invalidates it.
                     showFirmware(r.identity);
                     var text = describeKeyboard(r);
-                    msg($('kbdMsg'), 'ok', text + '\n\n' + loadFromKeyboard(r));
+                    msg($('kbdLoadMsg'), 'ok', text + '\n\n' + loadFromKeyboard(r));
                     reportSettings('read', 'ok', r.identity);
                 })
                 .catch(function (err) {
                     firmwareFrom(err);
-                    msg($('kbdMsg'), 'bad', readRefusal(err));
+                    msg($('kbdLoadMsg'), 'bad', readRefusal(err));
                     reportSettings('read', outcomeOf(err), err && err.identity);
                 })
                 .then(function () { kbd.busy = false; refresh(); });
@@ -1751,18 +1788,13 @@
     }
 
     // A port appearing or going away invalidates a list that is only built
-    // once.  The selection is put back if it survived, so unplugging something
-    // else does not quietly move the choice out from under the next run.
+    // once.  A refill keeps the port shown if it survived (fillSelect), so
+    // unplugging something else does not quietly move the choice out from
+    // under the next run, and the pick comes back with its port.
     if (CALIBRATE.onMidiChange) {
         CALIBRATE.onMidiChange(function () {
-            var was = $('calMidi').value;
             listed.midi = false;
-            listMidi().then(function () {
-                var opts = $('calMidi').options, i;
-                for (i = 0; i < opts.length; i++) {
-                    if (opts[i].value === was) { $('calMidi').value = was; return; }
-                }
-            });
+            listMidi();
             if (kbd.listed) listKeyboard();
         });
     }
@@ -1808,6 +1840,7 @@
         $('calRun').disabled = on;
         $('calStop').disabled = !on;
         $('calMidi').disabled = on;
+        if (!on) applyMidiPick($('calMidi'));
         $('calMidiChan').disabled = on;
         $('calAudio').disabled = on;
         $('calChan').disabled = on || (chanFor[$('calAudio').value || ''] || 1) < 2;
@@ -1993,7 +2026,7 @@
         // same input.
         // A port picked, or no list yet: a press before the list is opened
         // makes one (withKeyboard).
-        var portReady = !kbd.listed || !!($('kbdPort') && $('kbdPort').value);
+        var portReady = !kbd.listed || !!keyboardPort();
         if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !(state.factoryText && portReady);
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
@@ -2455,7 +2488,7 @@
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
     // The version a keyboard has to run for a send to land, shown as the
     // masthead's is.
-    if ($('kbdNeeds')) $('kbdNeeds').textContent = shown(GEN.version);
+    ['kbdNeeds', 'kbdNeedsLoad'].forEach(function (id) { if ($(id)) $(id).textContent = shown(GEN.version); });
 
     // Each preset knob picks its own role, the same control the volts-per-
     // octave choice uses; None hands that knob back to its preset voltage.

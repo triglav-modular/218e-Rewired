@@ -872,8 +872,8 @@ what the page can actually send, so the worst case is noise in the numbers
 rather than arbitrary strings in the dataset.
 
 **Reads and sends of the settings over MIDI** are counted the same way, on a
-route of their own: `settings-beacon`, posted when step 3's Read settings or
-Send settings ends. The body is which button (`read`, `send`), how it ended
+route of their own: `settings-beacon`, posted when step 1's Read settings or
+step 3's Send settings ends. The body is which button (`read`, `send`), how it ended
 (`ok`, the name of the page's refusal from `KBD_REASONS` in `web/app.js`, or
 `error` for a failure the page has no name for), the page's version, the
 firmware version the keyboard reported (absent when it never answered),
