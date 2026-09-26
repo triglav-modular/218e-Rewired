@@ -91,8 +91,11 @@ divider - ever has to be unwound live. The dump carries both the cells and
 the live bytes (`0x0020..0x002f`), so the page can say which options are
 saved but not yet running.
 
-**The restart.** `0x3f04` with data `0x2a2a` enables the watchdog with a
-short timeout and spins; the boot treats the reset like power-up. The
+**The restart.** `0x3f04` with data `0x2a2a` writes the DFU bootloader's
+ISP RAM key, `ISPK`, to the first word of SRAM, then enables the watchdog
+with a short timeout and spins. The key is what makes the bootloader stop
+the watchdog before it starts the application again (see "what the bench
+still owes" below); the boot then treats the reset like power-up. The
 page's send restarts the keyboard only when the committed option cells
 differ from the live bytes, waits for the port to re-enumerate, and asks
 for the identity block again to confirm the live bytes now match. A send
@@ -303,6 +306,7 @@ checks the load, the refusals, the receive, the commit, the dump, the
 identity block, and every stage 2 gate under both states of its byte with
 the registers its callers keep; the controls and clock suites run the
 options both ways through the real scans. The restart command is checked
+to put the bootloader's key in SRAM word 0 before it arms the watchdog, and
 to write the watchdog's control register in its two-key sequence and
 nothing else.
 
@@ -332,18 +336,21 @@ The first stage 2 image that boots, 3.0.0 (8024dd3f), was flashed on
 2026-09-26 and came back as a MIDI device a second after the flasher's
 START.
 
-The watchdog reset is expected to fail as built (audit, 2026-09-26, from
+The watchdog reset needs the bootloader's key (audit, 2026-09-26, from
 the documents). A watchdog reset leaves the watchdog's control register as
 it was (UC3B datasheet 32059L, Table 9-4), and its next time-out counts
 from the reset itself (section 11.5). After a watchdog reset the DFU
 bootloader launches the application, and "the watchdog timer is not
 stopped if the application was running before reset" (AVR32784, section
-6.3). Nothing in the image clears or disables the watchdog. So the
-restart's PSEL 7, about 2.2 ms, should cut every following boot short with
-no USB, until a power cycle clears the register. The record is committed
-before the restart, so the boot after that power cycle runs it. The page
-asks for this restart whenever a committed option cell differs from its
-live byte. The bootloader's own START avoids the loop with the key
-`ISPK` in the first SRAM word, which its boot path answers by stopping
-the watchdog before it jumps to the application. On the bench, keep the
-power switch at hand.
+6.3). Nothing in the image clears or disables the watchdog. So the first
+restart, in 8024dd3f and every 3.0 image before it, should cut every
+following boot short about 2.2 ms in (PSEL 7), with no USB, until a power
+cycle clears the register. The record is committed before the restart, so
+the boot after that power cycle runs it. The bootloader's own START avoids
+the loop with its ISP RAM key, `ISPK` in the first word of SRAM: finding
+it after a watchdog reset, its boot path stops the watchdog, clears the
+key and jumps to the application (AVR32784, Figure 6-2). Since e5955fc3
+the restart writes that key before it arms the watchdog. Word 0 is outside
+everything the image uses, because the factory's data starts at `0x8`.
+That the reset now comes back into the application is still the bench's to
+see. Keep the power switch at hand for the first one.

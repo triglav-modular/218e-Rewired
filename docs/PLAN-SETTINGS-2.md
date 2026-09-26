@@ -262,6 +262,14 @@ nothing else; the reset itself, and that the bootloader hands a
 watchdog-reset chip back to the application, are the bench's to confirm
 *(verify on the instrument, first thing)*.
 
+  From the documents, it does not as first built (audit, 2026-09-26). The
+  watchdog survives its own reset, and the bootloader leaves it running for
+  an application it resets back into, so every boot after the restart would
+  have been cut off about 2 ms in. Since e5955fc3 the cave first writes the
+  bootloader's ISP RAM key, which makes the bootloader stop the watchdog
+  itself, as its own START does. The evidence is in docs/SETTINGS.md, under
+  what the bench still owes.
+
 ## The boot chain, and what always runs
 
 Today the startup pool word chain (`clock_init_pool` `0x80007d8c` ->

@@ -915,7 +915,7 @@ function assembleProgram() {
         // pattern_count_of, in the hole settings_live left: how many patterns
         // the mirror's bank holds, which the pattern gate spreads knob 2 over.
         var pcEntry = nmEnd, pcLoop = pcEntry + 0x8, pcDone = pcEntry + 0x18, pcEnd = pcEntry + 0x20;
-        var rsEntry = pcEnd, rsSpin = rsEntry + 0xa, rsPool = rsEntry + 0x10, rsEnd = rsEntry + 0x20;
+        var rsEntry = pcEnd, rsSpin = rsEntry + 0x12, rsPool = rsEntry + 0x14, rsEnd = rsEntry + 0x20;
         // option_boot took settings_live's job on 2026-09-23 (phase C): the
         // live copy, the blend latch, and the latch's own RAM cleared when
         // the latch is off - SRAM survives the restart that applies an
@@ -12268,10 +12268,24 @@ function assembleProgram() {
         // returns.  The UC3B's WDT is at 0xffff0d30; CTRL has EN in bit 0,
         // PSEL in bits 8..12 (a timeout of 2^(PSEL+1) cycles of the 115 kHz
         // RC oscillator, so 7 is about 2 ms) and the key in bits 24..31,
-        // written as 0x55 and then 0xaa.  Not run under emulation past the
-        // two stores: the reset itself is the bench's to confirm.
+        // written as 0x55 and then 0xaa.  A watchdog reset leaves CTRL as it
+        // was (UC3B datasheet, Table 9-4), and after one the DFU bootloader
+        // starts the application with the watchdog still running, unless
+        // its ISP RAM key - "ISPK" in the first word of SRAM - says the
+        // bootloader itself was running (AVR32784, 6.3 and Figure 6-2).
+        // Without the key every boot after this one would be cut off 2 ms
+        // in, until a power cycle (audit, 2026-09-26).  So the key goes in
+        // first, before the watchdog is armed, and the bootloader then
+        // stops the watchdog, clears the key and jumps to the application,
+        // as its own START does after every flash.  Word 0 is outside
+        // everything the image uses: the factory's data starts at 0x8.  Not
+        // run under emulation past the three stores: the reset itself is the
+        // bench's to confirm.
         begin(rsEntry);
-        emit(StringFormat("LDDPC R8,0x%x", rsPool));
+        emit("MOV R8,0x0");
+        emit(StringFormat("LDDPC R9,0x%x", rsPool));
+        emit("ST.W R8[0x0],R9");        // the bootloader's ISP RAM key, first
+        emit("MOV R8,-0xf2d0");         // WDT CTRL, 0xffff0d30
         emit(StringFormat("LDDPC R9,0x%x", rsPool + 4));
         emit("ST.W R8[0x0],R9");
         emit(StringFormat("LDDPC R9,0x%x", rsPool + 8));
@@ -12279,7 +12293,7 @@ function assembleProgram() {
         padTo(rsSpin);
         emit(StringFormat("RJMP 0x%x", rsSpin));
         padTo(rsPool);
-        word(0xffff0d30); // WDT CTRL
+        word(0x4953504b); // "ISPK", the ISP RAM key
         word(0x55000701); // KEY 0x55, PSEL 7, EN
         word(0xaa000701); // KEY 0xaa, PSEL 7, EN
         finish("settings_restart", rsEnd);

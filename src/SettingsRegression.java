@@ -21,8 +21,11 @@ public class SettingsRegression extends PersistenceRegression {
     // millisecond count, and the guard's two RAM cells.
     static final long GUARD=0x8003ce00L, ARM_SITE=0x8000b486L, LOOP_SITE=0x80007c66L;
     static final long FUSE_SET=0x8001071cL, FUSE_CLEAR=0x80010768L, MS=0x2efc, OWED=0x6d3a, CONFIG=0x6d3c;
-    // settings_restart: its second store is at +6 and its spin at +0xa.
-    static final long RESTART=0x8001fb60L, RESTART_2ND=RESTART+6, RESTART_SPIN=RESTART+0xa;
+    // settings_restart: the bootloader's ISP RAM key goes to SRAM word 0
+    // first, then the watchdog's first store is at +0xc, its second at
+    // +0x10 and the spin at +0x12.
+    static final long RESTART=0x8001fb60L, RESTART_1ST=RESTART+0xc, RESTART_2ND=RESTART+0x10, RESTART_SPIN=RESTART+0x12;
+    static final long ISPK=0x4953504bL;
     static final int LEN=0x2a8, PAY=0x20, END=0x288, LAYOUT=2;
     static final String[] NUMBERS={"tie_glide_rate","strip_halfway_units","clock_min_ms",
         "clock_rearm_us","clock_lock_pulses","transpose_cv_period","transpose_cv_zero",
@@ -66,7 +69,7 @@ public class SettingsRegression extends PersistenceRegression {
     // Cell 27: the two tuning keys' caves, the remote-enable guard, the applier's dispatch, and what they choose.
     static final long TK27=0x8001e8e0L, TK28=0x8001e930L, RG=0x8001e980L, TA=0x8001e9a0L, APPLIERCAVE=0x80019a40L;
     static final long K27FACTORY=0x80003d88L, K28FACTORY=0x80003dc0L;
-    long wdtFirst=-1, wdtSecond=-1; int restarts;
+    long wdtFirst=-1, wdtSecond=-1, keyAtArm=-1, keyAtSpin=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
     boolean keepSlots, stubChain, failWrite, stubSelector;
@@ -105,8 +108,12 @@ public class SettingsRegression extends PersistenceRegression {
         // The restart's two watchdog writes are read back where they land;
         // the spin that follows would never return, so it is returned from
         // by hand.  The reset itself is the bench's to see.
+        // The key has to be in SRAM word 0 before the watchdog is armed: after
+        // a watchdog reset the bootloader stops the watchdog only when it
+        // finds its key there (AVR32784, Figure 6-2).
+        if(p==RESTART_1ST) keyAtArm=r(0,4);
         if(p==RESTART_2ND) wdtFirst=r(WDT,4);
-        if(p==RESTART_SPIN) { wdtSecond=r(WDT,4); restarts++; ret(); return; }
+        if(p==RESTART_SPIN) { wdtSecond=r(WDT,4); keyAtSpin=r(0,4); restarts++; ret(); return; }
         if(p==SENDER) {
             sent.add(new int[]{(int)reg("R12"),(int)reg("R11"),(int)reg("R10")});
             w(STALLED,1,stallFrom>=0&&sent.size()>stallFrom?1:0);
@@ -330,12 +337,14 @@ public class SettingsRegression extends PersistenceRegression {
         check("the applier then copies the slot the defaults put back, not the stale table",
             Arrays.equals(e.readMemory(toAddr(0x854),64),e.readMemory(toAddr(0x68e0),64)));
         // The restart: the watchdog's two-key write, and only with the key.
-        restarts=0; wdtFirst=-1; wdtSecond=-1;
+        restarts=0; wdtFirst=-1; wdtSecond=-1; keyAtArm=-1; keyAtSpin=-1; w(0,4,0);
         nrpn(0x3f04,0x1111); nrpn(0x3f04,0);
-        check("a restart needs its key",restarts==0);
+        check("a restart needs its key",restarts==0&&r(0,4)==0);
         nrpn(0x3f04,0x2a2a);
         check("0x3f04 with the key reaches the watchdog: 0x55 then 0xaa, PSEL 7, enabled",
             restarts==1&&wdtFirst==0x55000701L&&wdtSecond==0xaa000701L);
+        check("and the bootloader's ISP RAM key is in SRAM word 0 before the watchdog is armed, so the bootloader stops the watchdog on the way back",
+            keyAtArm==ISPK&&keyAtSpin==ISPK);
         keepSlots=false;
         println("PASS commit: alternating slots, generations, a failed write, reload, defaults and the restart");
     }
