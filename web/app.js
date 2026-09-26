@@ -1571,61 +1571,24 @@
     // patterns is one of those, and neither builder will build one.
     // Loading invalidates the build the way any option change does: the
     // next image is made from what was read.
-    // The verdict is one line.  With the factory image here the page builds
-    // what it shows and says how the keyboard relates to that: the same
-    // build, this build with edits, or another
-    // build, told apart by the firmware version the keyboard reports -
-    // the same version from another build wants a flash ("another build"
-    // means other code: the options, the tables, the period and the timing
-    // numbers are not in the image marker, so it is a different page or a
-    // build with other build-time settings), an
-    // older one a flash to update, a newer one a fresher page.  With no
-    // factory image it says whether anything was ever changed over MIDI.
-    function describeKeyboard(r) {
-        var f = r.fields, id = r.identity, ver = id.firmwareVersion;
-        var mine = null;
-        if (state.factoryText) {
-            try { mine = built(); } catch (e) { mine = null; }
-        }
-        var build = mine ? recordBytes(mine.settings) : null;
-        var verdict;
-        if (!build) {
-            verdict = id.slotLoaded === 0xff
-                ? 'This keyboard has no saved settings: it starts with the ones built into its firmware.'
-                : 'This keyboard holds saved settings.';
-        } else if (id.imageMarker === SETTINGSMIDI.markerOf(build)) {
-            var n = SETTINGSMIDI.differences(build, r.pairs).length;
-            verdict = n === 0 ? 'This keyboard holds the settings of the build you have here.'
-                : 'This keyboard runs this build, but ' +
-                  (n === 1 ? 'one of its settings differs' : n + ' of its settings differ') +
-                  ' from the build here.';
-        } else if (ver === null) {
-            verdict = 'This keyboard runs a different build. Its settings are listed below.';
-        } else {
-            verdict = otherImage(ver, true);
-        }
-        var numbers = BUILDLIB.SETTINGS_NUMBERS.map(function (x) {
-            return x[0] + ' ' + f.numbers[x[0]];
-        }).join(' · ');
-        var options = BUILDLIB.SETTINGS_OPTIONS.map(function (o) {
-            var v = f.options[o[0]];
-            return o[0] + ' ' + (v === true ? 'on' : v === false ? 'off' : v === undefined ? '?' : v);
-        }).join(' · ');
-        var lengths = f.lengths.filter(function (len, i) { return len > 0 && f.masks[i] !== 0; });
-        var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
-        return verdict + '\n\n' +
-            (ver === null ? '' : 'Firmware: Rewired ' + shown(ver) + '\n') +
-            'Options: ' + options + '\n' +
-            (r.pending && r.pending.length
-                ? 'Not yet running: ' + optionWords(r.pending) + ' - the keyboard holds the new setting and applies it at its next restart.\n'
-                : '') +
-            'Timing numbers: ' + numbers + '\n' +
-            'Patterns: ' + (lengths.length
-                ? lengths.length + ', of ' + lengths.join(' · ') + ' steps' : 'none') + '\n' +
-            'Pitch table: ' + (was.volts_per_octave === 1.2 ? '1.2' : '1') + ' V/oct, pitch offset ' +
-                (was.pitch_offset ? 'on' : 'off') + '.\n' +
-            'Tunings: three tables of 32 entries, ' + f.tuning_period_keys.join(' · ') +
-                ' keys per period.';
+    // A read reports one line, that the settings are loaded, and adds only
+    // what changes what happens next.  One is here: a keyboard running
+    // another image than the one this page builds needs that image flashed,
+    // or a fresher page, before a send can land.  They are told apart by the
+    // image marker, and the version the keyboard reports says which ("another
+    // build" means other code: the options, the tables, the period and the
+    // timing numbers are not in the marker, so it is a different page or a
+    // build with other build-time settings).  The other is loadFromKeyboard's:
+    // readings entered before the read were cleared.  Without the factory
+    // image there is no build to compare against, and nothing is added.
+    // The listing of every setting a read used to print is gone; the page's
+    // controls show them once they are loaded.
+    function readVerdict(r) {
+        var ver = r.identity.firmwareVersion, mine;
+        if (!state.factoryText || ver === null) return null;
+        try { mine = built(); } catch (e) { return null; }
+        return r.identity.imageMarker === SETTINGSMIDI.markerOf(recordBytes(mine.settings))
+            ? null : otherImage(ver);
     }
     // A version as the page shows one: major.minor, as the masthead's is.
     // Comparisons still use all three numbers.
@@ -1635,9 +1598,8 @@
     // image it was made for, so the same version from another build and an
     // older one both want this page's firmware flashed, and a newer one a
     // fresher page.  Two versions that differ only past major.minor would
-    // read as the same number, so they are named as another build.  `loaded`
-    // is a read's, which has just put the older keyboard's settings here.
-    function otherImage(ver, loaded) {
+    // read as the same number, so they are named as another build.
+    function otherImage(ver) {
         var page = GEN.version, c = BUILDLIB.compareVersions(ver, page);
         var flash = 'Flash the latest firmware to change settings.';
         if (c === 0 || shown(ver) === shown(page)) {
@@ -1645,8 +1607,7 @@
                    (c > 0 ? 'Reload the page.' : flash);
         }
         if (c < 0) {
-            return 'This keyboard runs Rewired ' + shown(ver) + '; this page builds ' + shown(page) + '. ' +
-                   (loaded ? 'Its settings are loaded here. ' : '') + flash;
+            return 'This keyboard runs Rewired ' + shown(ver) + '; this page builds ' + shown(page) + '. ' + flash;
         }
         return 'This keyboard runs Rewired ' + shown(ver) + '; this page is ' + shown(page) + '. Reload the page.';
     }
@@ -1727,14 +1688,10 @@
         interpolated = {};
         $('useCal').checked = true;
         syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
-        var loaded = ['options'].concat(rows.length ? ['patterns'] : [],
-                                        state.numbers ? ['timing numbers'] : [],
-                                        tunings ? ['tunings'] : []);
-        return 'The ' + loaded.join(', the ') + ' and the pitch table are' +
-            ' now loaded here, the table as the calibration already on the keyboard.' +
-            (had ? ' The readings that were entered have been cleared: they were taken ' +
-                   'against whatever was flashed at the time, which the keyboard now says. ' +
-                   'Measure again.' : '');
+        // The one thing the read's line needs from here (readVerdict).
+        return had ? 'The readings that were entered have been cleared: they were taken ' +
+                     'against whatever was flashed at the time, which the keyboard now says. ' +
+                     'Measure again.' : '';
     }
     if ($('kbdRead')) {
         $('kbdRead').addEventListener('click', function () { withKeyboard(readFrom); });
@@ -1748,8 +1705,9 @@
                     // The verdict compares against the build before the load
                     // invalidates it.
                     showFirmware(r.identity);
-                    var text = describeKeyboard(r);
-                    msg($('kbdLoadMsg'), 'ok', text + '\n\n' + loadFromKeyboard(r));
+                    var verdict = readVerdict(r), cleared = loadFromKeyboard(r);
+                    msg($('kbdLoadMsg'), verdict ? 'warn' : 'ok',
+                        ['Keyboard settings loaded successfully.', verdict, cleared].filter(Boolean).join(' '));
                     reportSettings('read', 'ok', r.identity);
                 })
                 .catch(function (err) {
@@ -1770,7 +1728,7 @@
             // the keyboard needs this version flashed.
             var v = id.firmwareVersion;
             if (BUILDLIB.compareVersions(v, GEN.version) < 0 || shown(v) === shown(GEN.version)) {
-                return otherImage(v, false);
+                return otherImage(v);
             }
             return 'This keyboard runs Rewired ' + shown(v) + '; this page is ' + shown(GEN.version) +
                    '. Reload the page to read its settings.';
@@ -1783,7 +1741,7 @@
     function sendRefusal(err) {
         var id = err && err.identity, reason = err && err.reason;
         if ((reason === 'wrong layout' || reason === 'wrong image') && id && id.firmwareVersion !== null) {
-            return otherImage(id.firmwareVersion, false);
+            return otherImage(id.firmwareVersion);
         }
         return KBD_REASONS[reason] || String(err && err.message || err);
     }

@@ -159,7 +159,7 @@ var lost = Object.keys(moved).filter(function (k) { return gotFields.numbers[k] 
 check('a read and a build keep every timing number the keyboard held', lost.length === 0,
       lost.map(function (k) { return k + ' ' + moved[k] + ' -> ' + gotFields.numbers[k]; }).join(', '));
 check('the whole record comes back as it was read', same(custom, got.back, 0x20, custom.length));
-check('and the read says the timing numbers were loaded', /the timing numbers/.test(got.message), got.message);
+check('and with no readings entered it adds nothing to the read’s one line', got.message === '', got.message);
 check('the page carries the ten it read, each differing from its own',
       JSON.stringify(page.state.numbers) === JSON.stringify(moved), JSON.stringify(page.state.numbers));
 check('the build refuses a timing number outside the loader’s bounds',

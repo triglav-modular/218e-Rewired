@@ -35,10 +35,12 @@ scale repeats at the tritave (`web/test_readback.js`).
 | The ten timing numbers | Carried in the record and editable by any NRPN sender; the page has no controls for them, and a read keeps the ones that differ from its own for the next build |
 | A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read, the add-to-pitch octave included; knob 4's octave switch divides its six octaves by it, three silent zones and then one per period, thirteen at most |
 
-`Read settings` works against any 3.0 keyboard: it lists what the keyboard
-holds, loads the patterns, the options and the tunings into the page, and
-loads the pitch table into the calibration as the table already on the
-instrument, so a new measurement accumulates on it. A tuning table does not
+`Read settings` works against any 3.0 keyboard: it loads the patterns, the
+options and the tunings into the page, and the pitch table into the
+calibration as the table already on the instrument, so a new measurement
+accumulates on it. It says only that the settings loaded, plus what the
+keyboard needs first when it runs another image than the page builds, and
+that any readings entered before the read were cleared. A tuning table does not
 turn back into a scale, so with cell 27 on each slot comes in as its table,
 its keys per period and the period (a slot holding the factory temperament
 comes back as factory), and the next build carries it as it came until a
@@ -279,7 +281,7 @@ generation moved past the one the send started from: the commit state a
 lost request leaves is whatever the last commit left. A send that fails
 after its push sends `0x3f01`, so the keyboard drops the values that went
 live on arrival instead of playing half a record nobody saved. **Read settings**: one dump,
-listed, then the patterns, the options and the tunings loaded into their
+then the patterns, the options and the tunings loaded into their
 controls, the timing numbers kept for the next build, and the pitch table
 into the calibration.
 
