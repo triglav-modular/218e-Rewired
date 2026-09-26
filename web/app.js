@@ -1811,7 +1811,7 @@
     // came back two octaves up).  Nothing over MIDI resets that, so the
     // sweep waits for the person to press the lowest key, heard as the
     // keyboard's own note-on - note 24, which the lowest key sends on the
-    // lowest octave and only there (measured 2026-09-26: 48 an octave pad
+    // lowest octave and only there (measured 2026-09-26: 48 two octaves
     // up, 25 for the key above) - and then for its release, since a key
     // still held would play over the sweep's notes.  Any channel: the
     // keyboard sends on its own, which need not be the one it listens on.
