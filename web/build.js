@@ -248,6 +248,9 @@ var WEBBUILD = (function () {
          'settings_commit', 'settings_verify', 'settings_cc_hook',
          'settings_cc_pool', 'clock_init_pool', 'persist_crc']
             .forEach(function (n) { blocks[n] = true; });
+        // The boot guard is in every image, as tools/build.py has it.
+        ['boot_guard_arm', 'boot_guard_arm_pool', 'boot_guard_confirm']
+            .forEach(function (n) { blocks[n] = true; });
         blocks.profiler_pool = true;
         blocks.knob4_octave_switch = true;
         var smoothing = cfg.pressure.output_smoothing;

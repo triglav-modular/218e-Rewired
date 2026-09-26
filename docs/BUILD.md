@@ -249,6 +249,23 @@ mac/support/dfu/bin/dfu-programmer at32uc3b1256 start
 If the erase had already happened there is nothing to start — run the flasher
 again and let it finish. Both scripts now say which case you are in.
 
+**An image that never finishes booting comes back in DFU** (the boot guard,
+2026-09-26). The factory firmware clears `ISP_FORCE` early in every boot,
+and its fuses leave no boot pin (`ISP_IO_COND_EN` is 0), so before the guard
+only a running application could ask for DFU. The first 3.0 image faulted
+before USB came up, and JTAG was the only way back. Now `boot_guard_arm`, on
+the pool word the factory's board init calls to clear those bits, leaves
+`ISP_FORCE` set while the guard word at `0x8003ce00` does not hold this
+image's marker. `boot_guard_confirm`, on the main loop's hook word, clears
+the bit and writes the marker once the factory's millisecond count reaches
+1.5 s. A DFU flash erases the guard word, so only the first boot of a newly
+flashed image is armed, while the flasher is still connected. If that boot
+hangs, power-cycle: the keyboard comes up in DFU, and either flasher goes
+straight to flashing. A power cut or a reset in those first 1.5 s also lands
+in DFU, which the flasher's leave-DFU choice ends. Nothing else arms it,
+settings sends included, so no boot away from the computer can come up in
+DFU.
+
 **Connecting.** A standalone LEM218 takes USB-C to the computer with its own
 power connected and switched on. A 218e module is reached over USB-B through
 the 5xIO module that carries its USB and MIDI. Either way, connect directly

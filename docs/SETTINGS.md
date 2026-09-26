@@ -306,7 +306,25 @@ options both ways through the real scans. The restart command is checked
 to write the watchdog's control register in its two-key sequence and
 nothing else.
 
-Not yet done on an instrument: flashing a stage 2 image at all; the send
+The boot guard (docs/BUILD.md) does not cover a settings send. Only a
+flash arms it, because the boot after a send may happen anywhere, and a
+reset during an armed boot lands in DFU. A record that hung the boot
+would need JTAG, which is one more reason the loader refuses anything
+outside its bounds. `SettingsRegression` drives the guard through the
+factory's own two call sites, with the GP fuses modelled at the flashc
+entries, and checks that a new record does not arm it.
+
+The first stage 2 image flashed to the instrument (3.0.0, 2026-09-26)
+never booted. `seq_restart_clear` cleared two halfwords at `0x622e` with
+one `ST.W`, and the chip took the address exception with interrupts masked
+before USB came up. An SRAM dump over JTAG showed the exception frame.
+The emulator had moved the four bytes without complaint, so every suite
+passed. Every harness now traps misaligned accesses (`src/AlignGuard.java`),
+and the build refuses a misaligned constant-address access
+(`check_alignment` in `tools/build.py`).
+
+Not yet done on an instrument: flashing a stage 2 image that boots; the
+boot guard's arm and confirmation, and its DFU fallback; the send
 and read from the page against a real keyboard; that the watchdog reset
 comes back through the bootloader into the application; and that a
 falling edge on the clock jack, which the GPIO interrupt now also

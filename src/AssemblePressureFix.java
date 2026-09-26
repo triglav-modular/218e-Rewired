@@ -416,7 +416,15 @@ public class AssemblePressureFix extends GhidraScript {
         // seq_restart_clear: the sequencer's runtime zeroed at every boot in
         // every image, from seq_restart_init (2026-09-23).  In the hole
         // between latch_preset_pin and the phase F caves.
-        long sqcEntry = 0x8001ed60L, sqcLoop1 = sqcEntry + 0x8, sqcLoop2 = sqcEntry + 0x16, sqcLoop3 = sqcEntry + 0x30, sqcEnd = sqcEntry + 0x70;
+        long sqcEntry = 0x8001ed60L, sqcLoop1 = sqcEntry + 0x8, sqcLoop2 = sqcEntry + 0x16, sqcLoop3 = sqcEntry + 0x32, sqcEnd = sqcEntry + 0x70;
+        // The boot guard (2026-09-26), past the last cave at 0x8001ffb4.
+        // boot_guard_arm stands on the pool word the factory's board init
+        // calls to clear the bootloader's ISP bits; boot_guard_confirm on the
+        // main loop's hook word.  The guard word is the page below slot 0.
+        long bgArmEntry = 0x80020000L, bgArmKeep = bgArmEntry + 0x40, bgArmDone = bgArmEntry + 0x58;
+        long bgArmPool = bgArmEntry + 0x60, bgArmEnd = bgArmEntry + 0x70;
+        long bgConfEntry = bgArmEnd, bgConfNext = bgConfEntry + 0xc, bgConfDue = bgConfEntry + 0x10, bgConfPool = bgConfEntry + 0x50, bgConfEnd = bgConfEntry + 0x60;
+        long bgGuardWord = 0x8003ce00L;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -1944,9 +1952,10 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x01000000L); // window length in cycles (~280 ms at 60 MHz)
         finish("scan_profiler", 0x8001a5e8L);
 
-        // Main-loop dispatcher pointer -> profiler wrapper.
+        // Main-loop dispatcher pointer -> the boot guard's confirmation,
+        // which carries on into the profiler wrapper or the clock scan.
         begin(0x80007dc0L);
-        word(block("clock_scan") ? 0x8001b980L : 0x8001a540L);
+        word(block("boot_guard_confirm") ? bgConfEntry : block("clock_scan") ? 0x8001b980L : 0x8001a540L);
         finish("profiler_pool", 0x80007dc4L);
 
         // Pressure output interpolation.  The scan writes a target at RAM
@@ -12157,7 +12166,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R10,0x1");
         emit(String.format("BR{ne} 0x%x", sqcLoop2));
         emit("MOV R9,0x622e");          // the borrowed strip mode and the key yet to sound
-        emit("ST.W R9[0x0],R8");
+        emit("ST.H R9[0x0],R8");        // a halfword each: 0x622e is not word-aligned, and a
+        emit("ST.H R9[0x2],R8");        // word store there faults on the chip (2026-09-26)
         emit("MOV R9,0x62e3");          // the pads 2 & 3 acknowledgment countdown
         emit("ST.B R9[0x0],R8");
         emit("MOV R9,0x62e8");          // the pickup stamps, the claim stamp, the take's reference, the edge stamp, the logical mode, the edited flags
@@ -12692,6 +12702,94 @@ public class AssemblePressureFix extends GhidraScript {
         finish("tuning_apply_dispatch", taEnd);
         }; // end tuningCaves
         tuningCaves.go();
+
+        // The boot guard (2026-09-26).  The bootloader enters DFU at power-up
+        // only while GP fuse bit 31, ISP_FORCE, is set, and the factory's own
+        // board init clears it at every boot (0x8000b404, from the pool word
+        // at 0x8000b4b4), so an image that faults or hangs before it can take
+        // the DFU SysEx is out of reach of every flasher.  boot_guard_arm
+        // takes that pool word: it runs the factory's clear, then leaves
+        // ISP_FORCE set while the guard word does not hold this image's
+        // marker.  boot_guard_confirm, on the main loop's hook word, clears
+        // ISP_FORCE and writes the marker once the factory's millisecond
+        // count reaches 1.5 s.  A DFU flash erases the guard word, so only the
+        // first boot of a newly flashed image is armed, with the flasher still
+        // connected, and a boot that never gets to 1.5 s comes back in DFU at
+        // the next power-up.  Nothing else arms it, settings sends included: a
+        // reset or a power cut during an armed boot lands in DFU, and that must
+        // never happen away from the computer.
+        Emitter guardCaves = () -> {
+        begin(bgArmEntry);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit(String.format("MCALL PC[0x%x]", bgArmPool));        // the factory's clear: both ISP bits end 0
+        emit(String.format("MOV R9,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("MOV R10,0x6d3c");
+        emit("ST.W R10[0x0],R9");       // this image's marker, for the confirmation to write
+        emit(String.format("LDDPC R8,0x%x", bgArmPool + 4));     // the guard word
+        emit("LD.W R8,R8[0x0]");
+        emit("MOV R11,0x0");
+        emit("CP.W R8,R9");
+        emit(String.format("BR{eq} 0x%x", bgArmKeep));
+        emit("MOV R11,0x1");
+        padTo(bgArmKeep);
+        emit("MOV R10,0x6d3a");
+        emit("ST.B R10[0x0],R11");      // a confirmation owed, or none
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{eq} 0x%x", bgArmDone));
+        emit("MOV R11,0x0");            // no read-back
+        emit("MOV R12,0x1f");           // ISP_FORCE
+        emit(String.format("MCALL PC[0x%x]", bgArmPool + 8));    // erased is 1: DFU until confirmed
+        padTo(bgArmDone);
+        emit("LDM SP++,R7,PC");
+        padTo(bgArmPool);
+        word(0x8000b404L); // the factory's ISP-bit clear
+        word(bgGuardWord);
+        word(0x8001071cL); // flashc_erase_gp_fuse_bit
+        finish("boot_guard_arm", bgArmEnd);
+
+        // Per main-loop pass: nothing owed, straight on to the hook this word
+        // used to name.  Owed and 1.5 s gone: once, whatever the flash
+        // answers, clear ISP_FORCE, write the guard word, then the hook.
+        begin(bgConfEntry);
+        emit("MOV R8,0x6d3a");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit(String.format("BR{ne} 0x%x", bgConfDue));
+        padTo(bgConfNext);
+        emit(String.format("LDDPC R8,0x%x", bgConfPool));
+        emit("MOV PC,R8");
+        padTo(bgConfDue);
+        emit("MOV R9,0x2efc");          // the factory's millisecond count
+        emit("LD.W R9,R9[0x0]");
+        emit("CP.W R9,0x5dc");
+        emit(String.format("BR{lt} 0x%x", bgConfNext));
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // one attempt a boot
+        emit("MOV R11,0x0");
+        emit("MOV R12,0x1f");
+        emit(String.format("MCALL PC[0x%x]", bgConfPool + 4));   // flashc_write_gp_fuse_bit(31, 0)
+        emit(String.format("LDDPC R12,0x%x", bgConfPool + 8));   // the guard word
+        emit("MOV R11,0x6d3c");
+        emit("MOV R10,0x4");
+        emit("MOV R9,0x1");             // its page erased first
+        emit(String.format("MCALL PC[0x%x]", bgConfPool + 12));  // the factory flash writer
+        emit(String.format("MCALL PC[0x%x]", bgConfPool));      // then the hook, as every pass
+        emit("LDM SP++,R7,PC");
+        padTo(bgConfPool);
+        word(block("clock_scan") ? 0x8001b980L : 0x8001a540L);
+        word(0x80010768L); // flashc_write_gp_fuse_bit
+        word(bgGuardWord);
+        word(0x800108fcL); // flashc_memcpy
+        finish("boot_guard_confirm", bgConfEnd);
+
+        begin(0x8000b4b4L);
+        word(block("boot_guard_arm") ? bgArmEntry : 0x8000b404L);
+        finish("boot_guard_arm_pool", 0x8000b4b8L);
+        }; // end guardCaves
+        guardCaves.go();
 
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a

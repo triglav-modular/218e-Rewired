@@ -237,6 +237,15 @@ hang was in the main loop and USB is interrupt-driven.  `tools/test.py`-style
 sweeps in the plan's audit section cover it now; if a leaf needs to make a
 decision, give the decision its own leaf and repoint the callers.
 
+**Word accesses must be word-aligned.**  A word or doubleword access off a
+4-byte boundary, or a halfword at an odd address, raises an address
+exception on the chip. The emulator just moves the bytes. `seq_restart_clear`
+cleared two halfword cells at `0x622e` with one `ST.W` and hung the first
+3.0 image at boot, before USB, with only JTAG to bring it back
+(2026-09-26). `check_alignment` in `tools/build.py` refuses a misaligned
+constant-address access, and `src/AlignGuard.java` traps a misaligned
+access in every harness. Clear adjacent narrow cells at their own width.
+
 **A call destroys R8-R12.**  They are caller-saved, and a cave that holds a
 live value in one of them across a call is broken.  Two shipped that way in
 one afternoon - the mode being entered, and a MIDI port - because the

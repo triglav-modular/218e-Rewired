@@ -49,6 +49,11 @@ BUILD = REPO / "build"
 # slot declared as "factory" is copied verbatim from here, which keeps the
 # instrument's original temperament bit-exact instead of re-deriving it.
 FACTORY_KEY_TABLE = 0x80016574
+# Where application code may run to.  The flash is 256 KB; above this sit
+# the boot guard's word (0x8003ce00), the two settings slots, the
+# persistence ring and the factory settings page.  The caves stayed below
+# 0x80020000 until the boot guard went just past them (2026-09-26).
+CODE_END = 0x8003C000
 
 # Key names by semitone above the bottom key of the 218e, which is a C.  Used
 # only to say in the build log which note a tuning is anchored to.
@@ -1407,6 +1412,12 @@ RAM_REGIONS = [
     # kept unless the blend is the knob's job.  Written beside the knob-1
     # latch every scan; zeroed at boot with the live bytes.
     (0x6D38, 0x6D39, "knob 1 blend latch"),
+    # The boot guard (2026-09-26): whether this boot armed ISP_FORCE and
+    # still owes the confirmation, and the image marker the confirmation
+    # writes.  boot_guard_arm writes both at every boot before anything
+    # reads them.
+    (0x6D3A, 0x6D3B, "boot guard: confirmation owed"),
+    (0x6D3C, 0x6D40, "boot guard: the image marker to confirm"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to
@@ -1459,6 +1470,10 @@ RAM_REGIONS = [
 # be placed on top of one without the coverage check noticing.
 FACTORY_CELLS = [
     (0x29CC, 0x29D0, "CPU frequency, also used by the factory COUNT delay"),
+    # Advanced by the factory's 1 kHz timer from main's init on; the main
+    # loop times its once-a-second work off it, the boot guard its
+    # confirmation.
+    (0x2EFC, 0x2F00, "the factory millisecond count"),
     # The two cells preset_degrees reads to decide what the preset voltage is
     # worth: which pad is active, and whether the add-to-pitch switch is in
     # the middle position - the only one that adds the preset to the pitch.
@@ -1631,6 +1646,60 @@ def check_ram_coverage() -> None:
             + "\nAdd it to RAM_REGIONS (ours) or FACTORY_CELLS (theirs) in "
               "tools/build.py.")
     print(f"  {len(used)} addressed RAM cells, all declared")
+
+
+def check_alignment() -> None:
+    """Every constant-address load and store must suit its width.
+
+    The chip takes an address exception on a word or doubleword access that
+    is not word-aligned and on a halfword access at an odd address.  The
+    Ghidra emulator the suites run on does not, so one ST.W to 0x622e passed
+    every suite and hung the first 3.0 image at boot (2026-09-26).  This
+    reads the emit stream check_ram_coverage reads, knowing a register only
+    while it holds a MOV immediate, and checks every access through one -
+    across the whole source, so every configuration at once.
+    """
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    emits = [token.group(1) for token in re.finditer(
+        r'begin\(0x[0-9a-fA-F]+L?\)|emit\((?:String\.format\()?"([^"]+)"', source)]
+    movi = re.compile(r"^MOV (R\d+|LR),(-?0x[0-9a-f]+)$")
+    mem = re.compile(r"^(LD|ST)\.(UB|SB|UH|SH|W|D|B|H) (?:(R\d+|LR),)?(R\d+|LR)"
+                     r"\[(-?0x[0-9a-fA-F]+)\]")
+    width = {"W": 4, "D": 4, "UH": 2, "SH": 2, "H": 2}
+    known: dict[str, int] = {}
+    bad: list[tuple[int, str]] = []
+    checked = 0
+    for text in emits:
+        if text is None:
+            known.clear()
+            continue
+        match = movi.match(text)
+        if match:
+            known[match.group(1)] = int(match.group(2), 16)
+            continue
+        match = mem.match(text)
+        if match:
+            kind, size, dst, base, disp = match.groups()
+            if base in known:
+                checked += 1
+                cell = known[base] + int(disp, 16)
+                if cell % width.get(size, 1):
+                    bad.append((cell, text))
+            if kind == "LD" and dst:
+                known.pop(dst, None)
+            continue
+        if text.startswith(("MCALL", "RCALL", "ICALL")):
+            for scratch in ("R8", "R9", "R10", "R11", "R12", "LR"):
+                known.pop(scratch, None)
+            continue
+        match = re.match(r"^\w[\w.{}]*\s+(R\d+|LR)\b", text)
+        if match and not text.startswith(("ST.", "CP.", "BR", "TST")):
+            known.pop(match.group(1), None)
+    if bad:
+        raise SystemExit(
+            "Accesses the chip would fault on - not aligned to their width:\n"
+            + "\n".join(f"  0x{a & 0xFFFFFFFF:08X}  {t}" for a, t in bad))
+    print(f"  {checked} constant-address accesses, all aligned to their width")
 
 
 def check_ram_regions() -> None:
@@ -2100,6 +2169,7 @@ def main() -> None:
 
     check_ram_regions()
     check_ram_coverage()
+    check_alignment()
     blocks, features, summary = resolve_flags(cfg)
     # The factory's own octave arithmetic reads the period out of number cell
     # 10 in every image (2026-09-23): its five sites are hooks, not blocks.
@@ -2516,6 +2586,10 @@ def main() -> None:
                  "settings_send", "settings_value", "settings_scan",
                  "settings_commit", "settings_verify", "settings_cc_hook",
                  "settings_cc_pool", "clock_init_pool", "persist_crc"):
+        blocks[name] = True
+    # The boot guard is in every image: an image that never finishes
+    # booting has to come back in DFU whatever it was built with.
+    for name in ("boot_guard_arm", "boot_guard_arm_pool", "boot_guard_confirm"):
         blocks[name] = True
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
     # Stage 2 phase D: the sequencer is decided at boot from its option

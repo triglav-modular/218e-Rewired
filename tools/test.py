@@ -722,6 +722,13 @@ def test_blend(cfg: dict) -> None:
         text = re.sub(
             r'emit\("MOV R12,0x1f"\);\s*emit\("MCALL PC\[0x8001d5bc\]"\);',
             "", text)
+        # The boot guard hands GP fuse bit 31, ISP_FORCE, to the factory's
+        # flashc routines.  Exempt only those argument/call pairs, never a
+        # loop using 31 keys.
+        text = re.sub(
+            r'emit\("MOV R12,0x1f"\);[^\n]*\n\s*emit\(String\.format\("MCALL PC\[0x%x\]", '
+            r'bg(?:ArmPool \+ 8|ConfPool \+ 4)\)\);',
+            "", text)
         # The persistence scan asks for the latch state with mask bit 5.
         # Exempt only that load/or pair - the JS encoder has no ORL - never a
         # loop using 32 keys.
@@ -830,7 +837,7 @@ def pool_guard(flash: dict[int, int], factory: dict[int, int]):
     """
     ours = {a for a, v in flash.items() if factory.get(a) != v}
     calls = []
-    for pc in range(0x80002000, 0x80020000, 2):
+    for pc in range(0x80002000, B.CODE_END, 2):
         if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
             continue
         d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
@@ -849,8 +856,8 @@ def pool_guard(flash: dict[int, int], factory: dict[int, int]):
                 bad.append(f"{pc:#x} calls through {pool:#x}, outside the image")
                 continue
             value = word(pool)
-            # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
-            if not (0x80000000 <= value < 0x80020000 and value % 2 == 0):
+            # A code address in this part is even and below the data pages.
+            if not (0x80000000 <= value < B.CODE_END and value % 2 == 0):
                 bad.append(f"{pc:#x} -> {pool:#x} holds {value:#010x}")
                 continue
             # The address must land on emitted code, not erased flash: a cave
@@ -1018,7 +1025,7 @@ def test_call_pools_feature_off(cfg: dict) -> None:
             # And the reachability half on its own, planted: a pool word
             # pointing into erased flash is what a disabled block leaves.
             erased = next((a for a in sorted(flash)
-                           if 0x80002000 <= a < 0x80020000
+                           if 0x80002000 <= a < B.CODE_END
                            and a % 2 == 0 and flash[a] == 0xFF), None)
             if erased is None:
                 check(f"{name}: the image has erased flash to point into", False, "")

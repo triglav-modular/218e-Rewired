@@ -15,6 +15,12 @@ public class SettingsRegression extends PersistenceRegression {
     static final long SNEWEST=0x8001f150L, APPLIER=0x80019a40L, REMAP=0x80019980L, CHAIN=0x8001a2e8L;
     static final long PARSER=0x8000831cL, SENDER=0x80008034L, WRITER=0x800108fcL, SETSCAN=0x8001f820L;
     static final long USB=0x34b0, NRPN=0x6a68, LIVE=0x6d28, WDT=0xffff0d30L;
+    // The boot guard: its word, the factory board init's MCALL on the arm's
+    // pool word, the main loop's MCALL on the confirmation's, the two
+    // factory flashc entries every fuse change goes through, the factory
+    // millisecond count, and the guard's two RAM cells.
+    static final long GUARD=0x8003ce00L, ARM_SITE=0x8000b486L, LOOP_SITE=0x80007c66L;
+    static final long FUSE_SET=0x8001071cL, FUSE_CLEAR=0x80010768L, MS=0x2efc, OWED=0x6d3a, CONFIG=0x6d3c;
     // settings_restart: its second store is at +6 and its spin at +0xa.
     static final long RESTART=0x8001fb60L, RESTART_2ND=RESTART+6, RESTART_SPIN=RESTART+0xa;
     static final int LEN=0x2a8, PAY=0x20, END=0x288, LAYOUT=2;
@@ -70,6 +76,7 @@ public class SettingsRegression extends PersistenceRegression {
     // packets on, the host has stopped reading.  -1: it reads everything.
     int stallFrom=-1;
     int slotWrites;
+    long fuses=0x3c07ffffL; int guardWrites;
     final List<int[]> sent=new ArrayList<>();
 
     // The chip's slots are erased flash until something writes them; the
@@ -104,6 +111,17 @@ public class SettingsRegression extends PersistenceRegression {
             sent.add(new int[]{(int)reg("R12"),(int)reg("R11"),(int)reg("R10")});
             w(STALLED,1,stallFrom>=0&&sent.size()>stallFrom?1:0);
             ret(); return;
+        }
+        // The GP fuses, modelled where the firmware reaches them: an erase
+        // sets a bit, a write of zero clears one (UC3B 7.3, 7.4).
+        if(p==FUSE_SET) { fuses|=1L<<(reg("R12")&63); e.writeRegister("R12",1); ret(); return; }
+        if(p==FUSE_CLEAR) { if((reg("R11")&255)==0) fuses&=~(1L<<(reg("R12")&63)); ret(); return; }
+        if(p==WRITER&&reg("R12")>=GUARD&&reg("R12")<GUARD+0x200) {
+            check("the guard word is written whole from the configuration cell, its page erased first",
+                reg("R12")==GUARD&&reg("R11")==CONFIG&&reg("R10")==4&&(reg("R9")&255)!=0);
+            byte[] ff=new byte[0x200]; Arrays.fill(ff,(byte)255); e.writeMemory(toAddr(GUARD),ff);
+            e.writeMemory(toAddr(GUARD),e.readMemory(toAddr(CONFIG),4));
+            guardWrites++; ret(); return;
         }
         if(p==WRITER&&reg("R12")>=SLOT0&&reg("R12")<SLOT1+0x800) {
             long dest=reg("R12"), src=reg("R11"), len=reg("R10"), erase=reg("R9");
@@ -1100,13 +1118,60 @@ public class SettingsRegression extends PersistenceRegression {
         w(0x6158,1,0);
         println("PASS the strip's lamp and its recorder both split tie from rest at cell 1");
     }
+    // The boot guard (2026-09-26).  The factory's board init clears the
+    // bootloader's ISP bits at every boot; boot_guard_arm stands on that
+    // pool word and leaves ISP_FORCE set while the guard word does not hold
+    // this image's marker - the first boot after a DFU flash, and only
+    // then - so a boot that never reaches the main loop comes back in DFU.
+    // Driven through the two factory call sites.
+    long marker() { return num("init_marker",0)&0xffff; }
+    boolean ispForce() { return ((fuses>>>31)&1)==1; }
+    void arm() throws Exception { call(ARM_SITE,ARM_SITE+4); }
+    void pass() throws Exception { call(LOOP_SITE,LOOP_SITE+4); }
+    void bootGuard() throws Exception {
+        fresh();
+        byte[] ff=new byte[0x200]; Arrays.fill(ff,(byte)255); e.writeMemory(toAddr(GUARD),ff);
+        fuses=0x3c07ffffL; guardWrites=0;       // as read off the owner's chip
+        w(OWED,1,0x5a); w(CONFIG,4,0x12345678L);  // SRAM holds anything at power-up
+        arm();
+        check("a first boot after a flash arms: ISP_FORCE set, ISP_IO_COND_EN clear",
+            ispForce()&&((fuses>>>30)&1)==0);
+        check("and owes a confirmation of the image it runs",
+            r(OWED,1)==1&&r(CONFIG,4)==marker());
+        w(MS,4,1499); pass();
+        check("short of 1.5 s the main loop leaves it armed",ispForce()&&guardWrites==0&&r(OWED,1)==1);
+        w(MS,4,1500); pass();
+        check("at 1.5 s the main loop clears ISP_FORCE and records the image",
+            !ispForce()&&guardWrites==1&&r(GUARD,4)==marker()&&r(OWED,1)==0);
+        w(MS,4,90000); pass(); pass();
+        check("once a boot",guardWrites==1&&!ispForce());
+        fuses|=3L<<30; w(OWED,1,0x5a);
+        arm();
+        check("the confirmed image boots the factory way: both ISP bits clear, nothing owed",
+            ((fuses>>>30)&3)==0&&r(OWED,1)==0);
+        w(MS,4,5000); pass();
+        check("and writes nothing",guardWrites==1);
+        // A settings send never arms a boot: the next power-up may be
+        // anywhere, and a reset during an armed boot lands in DFU.
+        byte[] rec=edited(); setGen(rec,7); stamp(rec); plant(SLOT1,rec);
+        fuses|=3L<<30; w(OWED,1,0x5a);
+        arm();
+        check("a new settings record does not arm the next boot",((fuses>>>30)&3)==0&&r(OWED,1)==0);
+        // Another image's marker, as JTAG programming leaves the page: armed.
+        w(GUARD,4,marker()^1);
+        arm();
+        check("another image's marker in the guard word arms",ispForce()&&r(OWED,1)==1);
+        w(MS,4,1500); pass();
+        check("and is confirmed the same way",!ispForce()&&guardWrites==2&&r(GUARD,4)==marker());
+        println("PASS boot guard: only the first boot of a newly flashed image is armed, through the board init's own call; confirmed once at 1.5 s through the main loop's");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         String mode=args[0]; seq=mode.contains("seq"); clock=mode.contains("clock");
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings();
+            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings(); bootGuard();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

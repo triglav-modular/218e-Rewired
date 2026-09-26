@@ -146,7 +146,7 @@ public class ClockRegression extends GhidraScript {
     }
     void fresh(int divisor, int hz) throws Exception {
         if (e != null) e.dispose();
-        e = new EmulatorHelper(currentProgram);
+        e = AlignGuard.install(new EmulatorHelper(currentProgram));
         e.writeMemory(toAddr(0),new byte[0x8000]);
         e.writeMemory(toAddr(8),e.readMemory(toAddr(0x80015d28L),0x2ecc));
         w(0x2ed4,4,0xffffffffL);

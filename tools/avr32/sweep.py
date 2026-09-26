@@ -145,7 +145,7 @@ def audit_call_pools(image_path) -> list[str]:
     word = lambda a: int.from_bytes(bytes(flash.get(a + i, 0xFF) for i in range(4)), "big")
 
     def called(target: int) -> bool:
-        for pc in range(0x80002000, 0x80020000, 2):
+        for pc in range(0x80002000, build_mod.CODE_END, 2):
             if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
                 continue
             d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
@@ -163,7 +163,7 @@ def audit_call_pools(image_path) -> list[str]:
         if t not in flash or not called(t):
             continue
         v = word(t)
-        if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
+        if not (0x80000000 <= v < build_mod.CODE_END and v % 2 == 0):
             bad.append(f"{t:#x} holds {v:#010x}")
         elif flash.get(v, 0xFF) == 0xFF:
             bad.append(f"{t:#x} -> {v:#x} (erased flash)")
@@ -283,7 +283,7 @@ def audit_call_pools(image_path) -> list[str]:
 # walk keeps its index across the two calls that destroy it.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "57b7d7a384e7df0b1fc79c0bf1f9b999b58b0179393f8307eee23baa1a277405",
+    "historical_config": "0180a2bc720968cd903b9b772076642c3014826d4ada47a39fb031c3ecdefd5c",
 }
 
 
