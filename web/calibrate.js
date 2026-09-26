@@ -368,6 +368,22 @@
     // in one scan; apart, each is seen on its own.
     var GAP_MS = 60;
     var SETTLE_MS = 200;
+    // A note whose two half-windows disagree by more than this was still
+    // moving while it was measured.
+    var MOVED_CENTS = 8;
+    // The bottom C is the reference for every reading, so it is believed only
+    // once it has settled: its halves agree, and it is within this of the
+    // pitch the probe heard for the same note a second earlier (or of the
+    // last check, for the checks through the run).  Straight after the
+    // probe's high note it can still be that note.  On 2026-09-26, three
+    // runs in Safari with the Web MIDI extension, the first half of the
+    // anchor's window was still the probe's C2 and the second half C0,
+    // 2400 cents apart; the whole window read as C2 at clarity 1.00, so
+    // every note after it was looked for two octaves too high, found only a
+    // harmonic at clarity 0.00, and came back "not heard".  Held and
+    // measured again, it settles, so it gets this many tries.
+    var ANCHOR_NEAR_CENTS = 50;
+    var ANCHOR_TRIES = 3;
     var MAX_CHANNELS = 32;          // asked for; the device gives what it has
 
     function constraints(deviceId, want) {
@@ -683,8 +699,26 @@
                 // something is listening.
                 var lo = await hear(anchor.note, null, ch, 'probe');
                 var hi = await hear(hiNote, null, ch, 'probe');
-                return heard(lo) && heard(hi) &&
-                       Math.abs(cents(hi.hz, lo.hz) - apart) < 300;
+                var yes = heard(lo) && heard(hi) &&
+                          Math.abs(cents(hi.hz, lo.hz) - apart) < 300;
+                if (yes) probeLo = lo;
+                return yes;
+            }
+            var probeLo = null;
+
+            // The anchor, held until it has settled (ANCHOR_TRIES above).
+            function steady(r, near) {
+                return heard(r) && r.drift !== null && Math.abs(r.drift) <= MOVED_CENTS &&
+                       (!near || Math.abs(cents(r.hz, near)) <= ANCHOR_NEAR_CENTS);
+            }
+            async function steadyAnchor(expectHz, near) {
+                var r = null;
+                for (var tries = 0; tries < ANCHOR_TRIES; tries++) {
+                    if (self.stopped) throw new Error('Stopped.');
+                    r = await hear(anchor.note, expectHz, undefined, 'anchor');
+                    if (steady(r, near)) break;
+                }
+                return r;
             }
 
             if (o.channel === null || o.channel === undefined) {
@@ -717,11 +751,21 @@
                 }
             }
 
-            var first = await hear(anchor.note, null, undefined, 'anchor');
-            if (!heard(first)) {
+            // Searched over the whole range, like the probe: a band around
+            // the probe's reading would find a C2 still sounding there too,
+            // as its fourth subharmonic.
+            var first = await steadyAnchor(null, probeLo && probeLo.hz);
+            if (!steady(first, probeLo && probeLo.hz)) {
+                var why = !first.ok ? first.why
+                    : !heard(first) ? 'clarity ' + first.clarity.toFixed(2) + ', level ' +
+                                      first.rms.toFixed(4)
+                    : first.drift === null || Math.abs(first.drift) > MOVED_CENTS
+                        ? 'it moved ' + (first.drift === null ? '?' : Math.abs(first.drift).toFixed(0)) +
+                          ' cents while being measured'
+                        : first.hz.toFixed(2) + ' Hz, where the probe heard ' +
+                          probeLo.hz.toFixed(2) + ' Hz';
                 throw new Error('The bottom C did not come back as a steady tone' +
-                    (first.ok ? ' (clarity ' + first.clarity.toFixed(2) + ', level ' +
-                                first.rms.toFixed(4) + ')' : ' (' + first.why + ')') +
+                    ' (' + why + ')' +
                     '. Every reading is measured against it, so the sweep stops ' +
                     'here rather than anchoring on noise. Check the 208 is droning ' +
                     'into the chosen audio input and channel.');
@@ -732,9 +776,9 @@
                 if (self.stopped) throw new Error('Stopped.');
                 var step = steps[i];
                 if (i > 0 && i % ANCHOR_EVERY === 0) {
-                    var re = await hear(anchor.note, marks[marks.length - 1].hz,
-                                       undefined, 'anchor');
-                    if (heard(re)) marks.push({ t: Date.now(), hz: re.hz });
+                    var last = marks[marks.length - 1].hz;
+                    var re = await steadyAnchor(last, last);
+                    if (steady(re, last)) marks.push({ t: Date.now(), hz: re.hz });
                     else warnings.push('the drift check before ' +
                         noteLabel(step.index) + ' was not heard clearly and was ' +
                         'skipped - readings after it lean on the check before it');
@@ -809,7 +853,7 @@
                     results.push({ index: step.index, note: step.note, cents: off,
                                    hz: got.hz });
                 }
-                if (got.drift !== null && Math.abs(got.drift) > 8) {
+                if (got.drift !== null && Math.abs(got.drift) > MOVED_CENTS) {
                     warnings.push(noteLabel(step.index) + ' moved ' +
                         got.drift.toFixed(1) + ' cents while being measured');
                 }

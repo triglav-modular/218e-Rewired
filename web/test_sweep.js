@@ -53,6 +53,14 @@ function makeWorld(opts) {
         // "ideal" and twelve for "exact: 12" is the Model 12 shape.
         channels: opts.channels || 1,
         idealGives: opts.idealGives || null,
+        // Note-ons that arrive late, by their count on the listening channel
+        // (1 and 2 are the probe's): 'half' keeps the note before sounding
+        // through the first half of the next window read, 'whole' through
+        // all of it, and a number holds that pitch through the first half
+        // instead.  The Safari runs of 2026-09-26 had the anchor after the
+        // probe late by half a window, every time.
+        late: opts.late || {},
+        heardOn: 0, pending: null,
         hz: 130.81, quiet: false, sent: [], notesOn: 0,
         opened: [], splitFrom: null
     };
@@ -66,6 +74,9 @@ function makeWorld(opts) {
             if (status === 0x90) {
                 w.notesOn++;
                 if (ch === w.listening) {
+                    w.heardOn++;
+                    var late = w.late[w.heardOn];
+                    if (late) w.pending = { hz: typeof late === 'number' ? late : w.hz, whole: late === 'whole' };
                     if (!w.deaf[note]) {
                         var e = w.errorAt[note] !== undefined ? w.errorAt[note] : w.error;
                         w.hz = 32.703 * Math.pow(2, (note - 24 + e / 100) / 12);
@@ -130,7 +141,10 @@ function load(w) {
             return {
                 fftSize: 2048, smoothingTimeConstant: 0,
                 getFloatTimeDomainData: function (buf) {
+                    var was = w.pending, now = w.hz;
+                    w.pending = null;
                     for (var i = 0; i < buf.length; i++) {
+                        w.hz = was && (was.whole || i < buf.length / 2) ? was.hz : now;
                         buf[i] = w.noiseOnly
                             // A wandering hum plus hiss: periodic enough to be
                             // found, nowhere near steady enough to be a tone.
@@ -145,6 +159,7 @@ function load(w) {
                             : 0.25 * Math.sin(2*Math.PI*w.hz*i/RATE)
                               + 0.08 * Math.sin(4*Math.PI*w.hz*i/RATE);
                     }
+                    w.hz = now;
                 }
             };
         };
@@ -270,6 +285,54 @@ function noteForEntry(entry) {
        }),
        after.filter(function (r) { return r.cents === null; }).length + ' of ' +
        after.length + ' lost');
+
+    // --- the anchor is believed only once it has settled -----------------
+    // Three runs in Safari (2026-09-26): the bottom C after the probe's C2
+    // arrived half a window late, the whole window read as C2 at clarity
+    // 1.00, and it was taken as the anchor.  Every note after it was looked
+    // for two octaves too high, found only as a harmonic at clarity 0.00,
+    // and reported "not heard": sixty-five blanks.
+    var C0 = 32.703;
+    w = makeWorld({ listening: 2, late: { 3: 'half' } });
+    out = await sweep(w, { channel: 2, high: 20 });
+    heard = out.readings.filter(function (r) { return r.cents !== null; });
+    ok('an anchor still moving when measured is measured again',
+       out.log.filter(function (r) { return r.what === 'anchor'; }).length >= 2 &&
+       Math.abs(1200 * Math.log2(out.anchorHz / C0)) < 2,
+       'anchored at ' + out.anchorHz.toFixed(2) + ' Hz');
+    ok('and the sweep after it is heard', heard.length === out.readings.length,
+       heard.length + '/' + out.readings.length);
+    ok('and reads near zero', heard.every(function (r) { return Math.abs(r.cents) < 2; }));
+
+    // Late by a whole window, the anchor is the probe's C2 throughout: its
+    // halves agree, so only the probe's reading of the same note gives it
+    // away.
+    w = makeWorld({ listening: 2, late: { 3: 'whole' } });
+    out = await sweep(w, { channel: 2, high: 20 });
+    heard = out.readings.filter(function (r) { return r.cents !== null; });
+    ok('an anchor that is still the probe\u2019s high note is caught by the probe\u2019s reading',
+       Math.abs(1200 * Math.log2(out.anchorHz / C0)) < 2 && heard.length === out.readings.length,
+       'anchored at ' + out.anchorHz.toFixed(2) + ' Hz, ' + heard.length + '/' + out.readings.length);
+
+    // One that never settles stops the sweep and says why.
+    w = makeWorld({ listening: 2, late: { 3: 'half', 4: 130.81, 5: 130.81 } });
+    err = null;
+    try { await sweep(w, { channel: 2, high: 20 }); } catch (e) { err = e; }
+    ok('an anchor that never settles stops the sweep',
+       !!err && /did not come back as a steady tone \(it moved \d+ cents while being measured\)/.test(err.message),
+       err ? err.message : 'it ran to the end');
+    ok('and every note sent was released', w.notesOn === 0, 'still on: ' + w.notesOn);
+
+    // The checks through the run are held to the same: a late one is
+    // measured again rather than skipped or believed.
+    w = makeWorld({ listening: 2, late: { 12: 'half' } });
+    out = await sweep(w, { channel: 2, high: 34 });
+    heard = out.readings.filter(function (r) { return r.cents !== null; });
+    ok('a drift check that is still moving is measured again, not believed',
+       heard.length === out.readings.length &&
+       heard.every(function (r) { return Math.abs(r.cents) < 2; }) &&
+       !out.warnings.some(function (x) { return /drift check/.test(x); }),
+       heard.length + '/' + out.readings.length + ' ' + out.warnings.join(' | '));
 
     // --- a note that did not take is blank, not a -100 cent reading ------
     // The instrument ignores one note-on, so the drone holds the note before
