@@ -323,9 +323,27 @@ passed. Every harness now traps misaligned accesses (`src/AlignGuard.java`),
 and the build refuses a misaligned constant-address access
 (`check_alignment` in `tools/build.py`).
 
-Not yet done on an instrument: flashing a stage 2 image that boots; the
-boot guard's arm and confirmation, and its DFU fallback; the send
-and read from the page against a real keyboard; that the watchdog reset
-comes back through the bootloader into the application; and that a
-falling edge on the clock jack, which the GPIO interrupt now also
-receives with the divider off, costs nothing audible.
+Not yet done on an instrument: the boot guard's arm and confirmation, and
+its DFU fallback; the send and read from the page against a real keyboard;
+that the watchdog reset comes back through the bootloader into the
+application; and that a falling edge on the clock jack, which the GPIO
+interrupt now also receives with the divider off, costs nothing audible.
+The first stage 2 image that boots, 3.0.0 (8024dd3f), was flashed on
+2026-09-26 and came back as a MIDI device a second after the flasher's
+START.
+
+The watchdog reset is expected to fail as built (audit, 2026-09-26, from
+the documents). A watchdog reset leaves the watchdog's control register as
+it was (UC3B datasheet 32059L, Table 9-4), and its next time-out counts
+from the reset itself (section 11.5). After a watchdog reset the DFU
+bootloader launches the application, and "the watchdog timer is not
+stopped if the application was running before reset" (AVR32784, section
+6.3). Nothing in the image clears or disables the watchdog. So the
+restart's PSEL 7, about 2.2 ms, should cut every following boot short with
+no USB, until a power cycle clears the register. The record is committed
+before the restart, so the boot after that power cycle runs it. The page
+asks for this restart whenever a committed option cell differs from its
+live byte. The bootloader's own START avoids the loop with the key
+`ISPK` in the first SRAM word, which its boot path answers by stopping
+the watchdog before it jumps to the application. On the bench, keep the
+power switch at hand.
