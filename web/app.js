@@ -1314,7 +1314,7 @@
     // reason; each reason has its own line here.  The instrument is one
     // device with an input and an output of the same name, so the select
     // lists outputs and the input is found by that name.
-    var kbd = { outputs: [], inputs: [], listed: false, busy: false };
+    var kbd = { outputs: [], inputs: [], listed: false, busy: false, wantName: null };
     function listKeyboard() {
         if (!$('kbdPort')) return Promise.resolve();
         return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
@@ -1323,10 +1323,16 @@
                 return { value: p.id, label: p.name || p.id };
             });
             fillSelect($('kbdPort'), items, 'No MIDI outputs found');
-            if (!$('kbdPort').value) {
-                var mine = items.filter(function (i) { return /218e/i.test(i.label); })[0];
-                if (mine) $('kbdPort').value = mine.value;
-            }
+            // The port shown is the one picked by name, or the keyboard's own
+            // until something else is picked.  It cannot be read back from
+            // the list: a select with options always has a value, the first
+            // one, so a list just filled looked chosen and the keyboard was
+            // only picked when it happened to be first.  By name it is picked
+            // again when it comes back after a restart.
+            var want = items.filter(function (i) {
+                return kbd.wantName ? i.label === kbd.wantName : /218e/i.test(i.label);
+            })[0];
+            if (want) $('kbdPort').value = want.value;
             refresh();
         }, function (err) {
             fillSelect($('kbdPort'), [], 'Web MIDI unavailable');
@@ -1339,6 +1345,15 @@
         if (!out) return null;
         var inp = kbd.inputs.filter(function (p) { return p.name === out.name; })[0] || kbd.inputs[0];
         return inp ? { output: out, input: inp } : null;
+    }
+    // Read and Send work before the list has been opened: the first press
+    // lists the ports - which is when the browser asks about MIDI, if it
+    // has not been allowed already - picks the keyboard and carries on.
+    function withKeyboard(go) {
+        (kbd.listed ? Promise.resolve() : listKeyboard()).then(function () {
+            var ports = keyboardPorts();
+            if (ports) go(ports);
+        });
     }
     function recordBytes(hex) {
         var out = [];
@@ -1423,16 +1438,29 @@
         return names.map(function (n) { return labels[n] || n; }).join(', ');
     }
     if ($('kbdSend')) {
-        // The MIDI permission is asked for when the port list is clicked,
-        // not when the step scrolls into view and not on load: flashing
-        // already carries the settings, so this step is optional and
-        // someone building an image to download has no use for the prompt.
-        // The list fills on the first focus, as the calibration's does.
+        // The MIDI permission is asked for when the port list or a button
+        // is clicked, not when the step scrolls into view and not on load:
+        // flashing already carries the settings, so this step is optional
+        // and someone building an image to download has no use for the
+        // prompt.  The list fills on the first focus or press, as the
+        // calibration's does - and at once when MIDI is allowed already, as
+        // on any visit after the first, where there is no prompt to show.
         $('kbdPort').addEventListener('focus', function () { if (!kbd.listed) listKeyboard(); });
-        $('kbdPort').addEventListener('change', function () { showFirmware(null); refresh(); });
+        $('kbdPort').addEventListener('change', function () {
+            var sel = $('kbdPort'), picked = sel.options[sel.selectedIndex];
+            kbd.wantName = picked && picked.value ? picked.text : null;
+            showFirmware(null);
+            refresh();
+        });
+        try {
+            navigator.permissions.query({ name: 'midi' }).then(function (status) {
+                if (status.state === 'granted' && !kbd.listed) listKeyboard();
+            }, function () {});
+        } catch (e) { /* no Permissions API, or no 'midi' in it: the first click lists */ }
         $('kbdSend').addEventListener('click', function () {
-            var ports = keyboardPorts();
-            if (!ports || !state.factoryText) return;
+            if (state.factoryText) withKeyboard(sendTo);
+        });
+        var sendTo = function (ports) {
             kbd.busy = true;
             $('kbdSend').disabled = true;
             $('kbdRead').disabled = true;
@@ -1484,7 +1512,7 @@
                     reportSettings('send', outcomeOf(err), err && err.identity);
                 })
                 .then(function () { kbd.busy = false; refresh(); });
-        });
+        };
     }
 
     // Reading is the other direction.  What the keyboard holds is listed,
@@ -1671,9 +1699,8 @@
                    'Measure again.' : '');
     }
     if ($('kbdRead')) {
-        $('kbdRead').addEventListener('click', function () {
-            var ports = keyboardPorts();
-            if (!ports) return;
+        $('kbdRead').addEventListener('click', function () { withKeyboard(readFrom); });
+        var readFrom = function (ports) {
             kbd.busy = true;
             $('kbdRead').disabled = true;
             $('kbdSend').disabled = true;
@@ -1693,7 +1720,7 @@
                     reportSettings('read', outcomeOf(err), err && err.identity);
                 })
                 .then(function () { kbd.busy = false; refresh(); });
-        });
+        };
     }
     // A keyboard whose settings map this page does not know still says
     // what it runs: the identity block's numbers are frozen, so the
@@ -1964,10 +1991,13 @@
         // - which the restart itself does - lists the ports again and lands
         // here, and a second click would start a second listener on the
         // same input.
-        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !(state.factoryText && $('kbdPort').value);
+        // A port picked, or no list yet: a press before the list is opened
+        // makes one (withKeyboard).
+        var portReady = !kbd.listed || !!($('kbdPort') && $('kbdPort').value);
+        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !(state.factoryText && portReady);
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
-        if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !$('kbdPort').value;
+        if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !portReady;
     bindDashes(document.body);
     }
 
