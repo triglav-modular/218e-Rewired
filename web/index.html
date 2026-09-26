@@ -119,9 +119,9 @@
       <section class="shortcut">
         <h2>Already running Rewired <span id="kbdNeedsLoad"></span>?</h2>
         <p class="d muted shortcut-note">Load your settings via MIDI to start from them.</p>
-        <div class="pickread">
-          <label class="pickread-port">
-            <svg class="midi" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10.5 3.3h3v2.1h-3z"/><g fill="currentColor"><circle cx="6.8" cy="12" r="1.35"/><circle cx="8.3" cy="15.7" r="1.35"/><circle cx="12" cy="17.2" r="1.35"/><circle cx="15.7" cy="15.7" r="1.35"/><circle cx="17.2" cy="12" r="1.35"/></g></svg>
+        <div class="picker">
+          <label class="picker-field">
+            <svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10.5 3.3h3v2.1h-3z"/><g fill="currentColor"><circle cx="6.8" cy="12" r="1.35"/><circle cx="8.3" cy="15.7" r="1.35"/><circle cx="12" cy="17.2" r="1.35"/><circle cx="15.7" cy="15.7" r="1.35"/><circle cx="17.2" cy="12" r="1.35"/></g></svg>
             <select id="kbdLoadPort" aria-label="Keyboard"><option value="">Looking&hellip;</option></select></label>
           <button class="primary" id="kbdRead" type="button" disabled>Read settings</button>
         </div>
@@ -353,12 +353,13 @@
                   <p><strong class="step">5. Measure, then flash or send.</strong> Then save the table: it is what the next round measures on top of &mdash; and put <strong>add to pitch</strong> back, or the keyboard sits an octave above where the sweep played.</p>
                 </div>
               </details>
-              <div class="row autorow">
-                <div class="autopair">
-                <label class="autofield"><span class="d">MIDI output</span>
-                  <select id="calMidi"><option value="">Looking&hellip;</option></select></label>
-                <label class="autofield autochan"><span class="d">MIDI channel</span>
-                  <select id="calMidiChan">
+              <div class="autorow">
+                <div class="picker">
+                <label class="picker-field">
+                  <svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10.5 3.3h3v2.1h-3z"/><g fill="currentColor"><circle cx="6.8" cy="12" r="1.35"/><circle cx="8.3" cy="15.7" r="1.35"/><circle cx="12" cy="17.2" r="1.35"/><circle cx="15.7" cy="15.7" r="1.35"/><circle cx="17.2" cy="12" r="1.35"/></g></svg>
+                  <select id="calMidi" aria-label="MIDI output"><option value="">Looking&hellip;</option></select></label>
+                <label class="picker-chan"><span class="picker-tag">Channel</span>
+                  <select id="calMidiChan" aria-label="MIDI channel">
                     <option value="">Auto</option>
                     <option value="0">1</option><option value="1">2</option>
                     <option value="2">3</option><option value="3">4</option>
@@ -370,10 +371,11 @@
                     <option value="14">15</option><option value="15">16</option>
                   </select></label>
                 </div>
-                <div class="autopair">
-                <label class="autofield"><span class="d">Audio input</span>
-                  <select id="calAudio"><option value="">Looking&hellip;</option></select></label>
-                <label class="autofield autochan"><span class="d">Channel</span>
+                <div class="picker">
+                <label class="picker-field">
+                  <svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6.4 12c1.1-3.4 2.3-3.4 3.4 0s2.3 3.4 3.4 0 2.3-3.4 3.4 0"/></svg>
+                  <select id="calAudio" aria-label="Audio input"><option value="">Looking&hellip;</option></select></label>
+                <label class="picker-chan"><span class="picker-tag">Channel</span>
                   <select id="calChan"><option value="0">1</option></select></label>
                 </div>
               </div>
@@ -451,9 +453,10 @@
         <div class="group finish-midi">
           <h3>Already running Rewired <span id="kbdNeeds"></span>?</h3>
           <p class="d muted section-note">Change any setting without flashing.</p>
-          <div class="row finish-row">
-            <label class="autofield"><span class="d">Keyboard</span>
-              <select id="kbdPort"><option value="">Looking&hellip;</option></select></label>
+          <div class="picker">
+            <label class="picker-field">
+              <svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10.5 3.3h3v2.1h-3z"/><g fill="currentColor"><circle cx="6.8" cy="12" r="1.35"/><circle cx="8.3" cy="15.7" r="1.35"/><circle cx="12" cy="17.2" r="1.35"/><circle cx="15.7" cy="15.7" r="1.35"/><circle cx="17.2" cy="12" r="1.35"/></g></svg>
+              <select id="kbdPort" aria-label="Keyboard"><option value="">Looking&hellip;</option></select></label>
             <button class="primary" id="kbdSend" type="button" disabled>Send settings</button>
           </div>
           <div id="kbdMsg" role="status"></div>
