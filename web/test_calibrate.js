@@ -277,5 +277,55 @@ var r = C.measure(noise, RATE, 20, 4000);
 ok('noise is not reported as a clear pitch', !r.ok || r.clarity < 0.55,
    r.ok ? 'clarity ' + r.clarity.toFixed(3) : r.why);
 
-print_(failures ? ('FAILED ' + failures) : 'ALL CALIBRATION TESTS PASSED');
-if (failures && typeof process !== 'undefined') process.exit(1);
+// --- MIDI access is asked for once ----------------------------------------
+// Every requestMIDIAccess() returns a new MIDIAccess, and each one sends its
+// own statechange for every port.  The page lists ports on focus and again on
+// every port change, and while each list asked anew, each new object's
+// handler listed again and asked again: in Chrome, six seconds after the
+// grant, 195,786 requests and 29,831 MIDIAccess objects, and the browser out
+// of memory (2026-09-26).  A fake browser here counts the asks, refuses the
+// first one as a browser can, and fires port changes on every object it made.
+var R = (typeof CALIBRATE !== 'undefined') ? this : require('./calibrate.js');
+function midiAccessOnce() {
+    var asks = 0, made = [], refuseNext = true;
+    function port(id, kind) { return { id: id, name: '218e', type: kind, state: 'connected' }; }
+    R.navigator = {
+        requestMIDIAccess: function () {
+            asks++;
+            if (refuseNext) { refuseNext = false; return Promise.reject(new Error('not yet')); }
+            var a = { inputs: new Map([['i', port('i', 'input')]]),
+                      outputs: new Map([['o', port('o', 'output')]]), onstatechange: null };
+            made.push(a);
+            return Promise.resolve(a);
+        }
+    };
+    function changeEverywhere() {
+        made.forEach(function (a) { if (a.onstatechange) a.onstatechange({ port: a.outputs.get('o') }); });
+    }
+    var relists = 0;
+    // What the page's watcher does on a port change: list both again.
+    C.onMidiChange(function () {
+        relists++;
+        C.midiOutputs(); C.midiInputs();
+    });
+    return C.midiOutputs().then(function () { return 'resolved'; }, function (e) { return e.message; })
+    .then(function (first) {
+        ok('a refused request is reported', first === 'not yet', first);
+        return Promise.all([C.midiOutputs(), C.midiInputs(), C.midiOutputs(), C.midiInputs()]);
+    }).then(function (lists) {
+        ok('after a refusal the next list asks again, and gets the ports',
+           asks === 2 && lists[0].length === 1 && lists[1].length === 1, 'asks ' + asks);
+        changeEverywhere(); changeEverywhere(); changeEverywhere();
+        return new Promise(function (done) { setTimeout(done, 0); });
+    }).then(function () {
+        ok('lists and port changes reuse the one MIDIAccess', asks === 2 && made.length === 1,
+           'asks ' + asks + ', MIDIAccess objects ' + made.length);
+        ok('each port change runs the page watcher once', relists === 3, 'watcher ran ' + relists + ' times');
+    });
+}
+
+function finish() {
+    print_(failures ? ('FAILED ' + failures) : 'ALL CALIBRATION TESTS PASSED');
+    if (failures && typeof process !== 'undefined') process.exit(1);
+}
+midiAccessOnce().then(finish, function (e) { ok('the MIDI access test ran', false, String(e)); finish(); });

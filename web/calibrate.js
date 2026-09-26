@@ -240,24 +240,44 @@
     // --- talking to the instrument ---------------------------------------
     // Web MIDI without sysex: this asks for nothing the browser has to warn
     // about, and nothing the instrument treats as a command.
-    var midiAccess = null, midiWatchers = [];
-    function midiOutputs() {
+    //
+    // Access is asked for once and kept.  Every requestMIDIAccess() returns
+    // a new MIDIAccess, and each one sends its own statechange for every
+    // port.  This used to ask on every list, so each new object got a handler
+    // that listed again, which asked again: in Chrome, six seconds after the
+    // grant, 195,786 requests and 29,831 MIDIAccess objects, and the tab and
+    // then the browser out of memory (2026-09-26).  One object and one
+    // handler; a list reads that object's live port maps.
+    var midiRequest = null, midiWatchers = [];
+    function requestAccess() {
         if (!root.navigator || !root.navigator.requestMIDIAccess) {
             return Promise.reject(new Error(
                 'Safari doesn\u2019t support Web MIDI. Use Chrome, Firefox or Edge.'));
         }
-        return root.navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
-            // Ports come and go while the page is open and the list is built
-            // once, so without this a keyboard unplugged after the list was
-            // made stays in the dropdown looking perfectly selectable.
-            if (access !== midiAccess) {
-                midiAccess = access;
+        if (!midiRequest) {
+            midiRequest = root.navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
+                // Ports come and go while the page is open and the list is
+                // built once, so without this a keyboard unplugged after the
+                // list was made stays in the dropdown looking perfectly
+                // selectable.
                 access.onstatechange = function (e) {
                     midiWatchers.forEach(function (cb) {
                         try { cb(e && e.port); } catch (err) {}
                     });
                 };
-            }
+                return access;
+            }, function (err) {
+                // A refusal is not kept: a browser that was not ready, or a
+                // permission given later, gets another chance on the next ask.
+                midiRequest = null;
+                throw err;
+            });
+        }
+        return midiRequest;
+    }
+
+    function midiOutputs() {
+        return requestAccess().then(function (access) {
             var out = [];
             access.outputs.forEach(function (p) { out.push(p); });
             return out;
@@ -267,9 +287,9 @@
     // The inputs too, for the settings step: the instrument answers a dump
     // on the input that shares its output's name.
     function midiInputs() {
-        return midiOutputs().then(function () {
+        return requestAccess().then(function (access) {
             var out = [];
-            midiAccess.inputs.forEach(function (p) { out.push(p); });
+            access.inputs.forEach(function (p) { out.push(p); });
             return out;
         });
     }
