@@ -1879,6 +1879,68 @@ public class ControlRegression extends SequenceEditRegression {
         call(0x8001ab60L);
     }
     void residue() throws Exception { residueRun(true); residueRun(false); }
+    // What the remap makes of a raw pitch, from the image's own table: add
+    // 120 (and the vibrato), hold at entry 0, twelve entries to the 484-unit
+    // octave, clamp at entry 77, interpolate with the firmware's rounding.
+    long remapModel(long d) {
+        d=Math.max(0,d+0x78);
+        long idx=d*12/484, rem=d*12%484;
+        if(idx>0x4d) { idx=0x4d; rem=0x1e3; }
+        long lo=r(0x6840+2*idx,2), hi=r(0x6840+2*idx+2,2);
+        return lo+(rem*(hi-lo)+0xf2)/484;
+    }
+    long bent(int target,int bend) throws Exception {
+        w(S+0x352,2,target&0xffff); w(S+0x216,2,bend&0xffff);
+        for(int i=0;i<8;i++) pitch();
+        return r(S+0x358,2);
+    }
+    // A bend reaches under the bottom key, down to the pitch table's first
+    // entry, and no further.  The remap adds 120 before it reads the table,
+    // so the bottom key at the lowest octave position sits three entries
+    // over entry 0 - the 0 V pitch, with the offset - and the scan's clamp
+    // at 0 used to stop every bend at the bottom key: bent fully down, key 0
+    // stayed on its own pitch.  Driven through the real scan (glide, bend
+    // add, clamp, store hook, dispatcher, blend shim, remap) with the target
+    // and the bend staged and the vibrato at rest.
+    void bendUnderTheBottomKey() throws Exception {
+        setup(0,false,0); command(2);
+        w(S+0x310,2,0); w(S+0x306,2,0); controlScan();
+        long entry0=r(0x6840,2), entry3=r(0x6840+6,2);
+        check("the image's table has room under the bottom key: "+entry0+" < "+entry3,entry0<entry3);
+        int[][] cases={{0,0},{0,-1},{0,-40},{0,-119},{0,-120},{0,-121},{0,-480},
+                       {40,-80},{40,-200},{121,-241},{485,-120},{485,-480},{1000,-480}};
+        for(int[] c:cases) {
+            long dac=bent(c[0],c[1]);
+            long raw=Math.max(-0x78,c[0]+c[1]);
+            check("vibrato at rest under the bend fixture",r(0x6028,2)==0);
+            check("target "+c[0]+" bent "+c[1]+": the scan holds "+raw+", read "+(short)r(0x3210,2),
+                (short)r(0x3210,2)==raw);
+            check("target "+c[0]+" bent "+c[1]+": DAC "+dac+", the remap's "+remapModel(raw),
+                dac==remapModel(raw));
+        }
+        check("bent fully down, the bottom key reaches entry 0: "+bent(0,-480),bent(0,-480)==entry0);
+        check("and that is under the bottom key's own pitch",bent(0,-480)<bent(0,0));
+        // The remap's own floor, entered past its per-scan chain (the
+        // clock's bare entry) so the vibrato can be set: at the scan's floor
+        // the vibrato takes d 13 under entry 0, and the divide is unsigned.
+        for(int vib:new int[]{-13,-1,0,13}) {
+            w(0x6028,2,vib&0xffff); e.writeRegister("R12",(-0x78)&0xffffffffL);
+            call(0x8001c0e0L);
+            check("vibrato "+vib+" at the floor: DAC "+r(S+0x358,2)+", the remap's "+remapModel(-0x78+vib),
+                r(S+0x358,2)==remapModel(-0x78+vib));
+        }
+        w(0x6028,2,0);
+        // A 208c table - pitch_offset off - lays the curve three entries
+        // later and leaves 0 V under the bottom key: bent or not, it reads 0.
+        long[] table=new long[79];
+        for(int i=0;i<79;i++) table[i]=r(0x6840+2*i,2);
+        for(int i=0;i<79;i++) w(0x6840+2*i,2,i<3?0:table[i-3]);
+        check("a 208c table: a bend under the bottom key stays at 0 V",
+            bent(0,-480)==0&&bent(0,-40)==0&&bent(0,0)==remapModel(0));
+        for(int i=0;i<79;i++) w(0x6840+2*i,2,table[i]);
+        w(S+0x216,2,0); pitch();
+        println("PASS a bend reaches under the bottom key to the table's entry 0, and holds there");
+    }
     // Both directions: a session with every option on restarting into
     // every option off, and a session with every option off restarting
     // into every option on.
@@ -1966,6 +2028,7 @@ public class ControlRegression extends SequenceEditRegression {
         try {
             try { presetOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { quickTapGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { bendUnderTheBottomKey(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { presetQuantize(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(quantized&&seq) {
                 try { presetSequencer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

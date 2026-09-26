@@ -850,13 +850,23 @@ function assembleProgram() {
         word(0x80008034); // direct USB-MIDI CC sender
         finish("send_usb_midi_14bit", 0x80019980);
 
+        // What the remap adds before it reads the pitch table: three
+        // semitones at 484 units to the octave, which puts the bottom key at
+        // the lowest octave position on entry 3 and entry 0 - the 208's 0 V
+        // pitch - 120 units under it.  Its negative is the pitch floor: the
+        // scan's clamp (pitch_floor_compare and pitch_floor_store),
+        // blend_offset_apply and the clock's fast stage all hold a bent
+        // pitch at -remapOffset, which is entry 0.
+        var remapOffset = 0x78;
+
         // Pitch-CV calibration remap, stage 1.  The final
-        // pitch value (key table + transpose + glide + bend, clamped 0..4095,
-        // 484 units/octave, lowest key C0 = 485) is remapped through a
-        // piecewise-linear curve with one anchor per octave, encoding the
-        // user's 208p calibration (1 V/oct nominal; C5=5.0231 V, C6=6.232 V).
-        // Called with R12 = raw pitch; stores the DAC value and the last-sent
-        // mirror itself, replacing the tail of the factory update function.
+        // pitch value (key table + transpose + glide + bend, clamped to
+        // -remapOffset..4095, 484 units/octave, lowest key C0 = 485) is
+        // remapped through a piecewise-linear curve with one anchor per
+        // octave, encoding the user's 208p calibration (1 V/oct nominal;
+        // C5=5.0231 V, C6=6.232 V).  Called with R12 = raw pitch; stores the
+        // DAC value and the last-sent mirror itself, replacing the tail of
+        // the factory update function.
         begin(0x80019980);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -864,24 +874,33 @@ function assembleProgram() {
         emit("MCALL PC[0x80019a00]");
         emit("LD.W R12,SP++");
         emit("MOV R8,R12");
-        emit("SUB R8,-0x78");
+        emit(StringFormat("SUB R8,-0x%x", remapOffset));
         // Global vibrato (knob 4): signed offset in factory units (max +-13
         // = +-32 cents) computed each scan by the vibrato engine into RAM
         // 0x6028; added pre-remap so depth is constant in cents and rides
         // the tracking-corrected curve. Zero when the knob is in its
-        // deadzone. d stays >= 106, so no clamp is needed.
+        // deadzone.
         emit("MOV R10,0x6028");
         emit("LD.SH R10,R10[0x0]");
         emit("ADD R8,R10");
+        // Held at entry 0.  A pitch bent down to the floor arrives as
+        // -remapOffset, which the add above puts exactly on entry 0, and the
+        // vibrato can take it 13 under that; the divide below is unsigned,
+        // so a negative d would read the top of the table.  Nothing above
+        // the floor reaches this: without a bend d is at least 107.
+        emit("CP.W R8,0x0");
+        emit("BR{ge} 0x800199a0");
+        emit("MOV R8,0x0");
+        padTo(0x800199a0);
         emit("MOV R9,0xc");
         emit("MUL R8,R8,R9");
         emit("MOV R9,0x1e4");
         emit("DIVU R8,R8,R9");
         emit("CP.W R8,0x4d");
-        emit("BR{ls} 0x800199b8");
+        emit("BR{ls} 0x800199bc");
         emit("MOV R8,0x4d");
         emit("MOV R9,0x1e3");
-        padTo(0x800199b8);
+        padTo(0x800199bc);
         emit("MOV R11,R9");
         emit("LSL R8,0x1");
         emit("LDDPC R10,0x800199f8");
@@ -2136,9 +2155,12 @@ function assembleProgram() {
         emit("ADD R8,R11");
         emit("ST.H R9[0x2],R8");
         emit("ADD R12,R8");
-        emit("CP.W R12,0x0");
+        // The scan's floor, entry 0 of the pitch table, so a bend under the
+        // bottom key comes through the blend.
+        emit(StringFormat("MOV R8,-0x%x", remapOffset));
+        emit("CP.W R12,R8");
         emit("BR{ge} 0x8001a924");
-        emit("MOV R12,0x0");
+        emit("MOV R12,R8");
         padTo(0x8001a924);
         emit("MCALL PC[0x8001a92c]");
         emit("LDM SP++,R7,PC");
@@ -8569,10 +8591,12 @@ function assembleProgram() {
         emit("LD.SH R11,R10[0x216]");
         emit("ADD R12,R11");
         // and the scan's own clamp, both ends, so what is staged here cannot
-        // leave the range 0x3210 is held to.
-        emit("CP.W R12,0x0");
+        // leave the range 0x3210 is held to: -remapOffset, entry 0 of the
+        // pitch table, up to 0xfff.
+        emit(StringFormat("MOV R11,-0x%x", remapOffset));
+        emit("CP.W R12,R11");
         emit(StringFormat("BR{ge} 0x%x", fastClampLow));
-        emit("MOV R12,0x0");
+        emit("MOV R12,R11");
         padTo(fastClampLow);
         emit("MOV R11,0xfff");
         emit("CP.W R12,R11");
@@ -8586,9 +8610,10 @@ function assembleProgram() {
             emit("MOV R11,0x60e2");
             emit("LD.SH R11,R11[0x0]");
             emit("ADD R12,R11");
-            emit("CP.W R12,0x0");
+            emit(StringFormat("MOV R11,-0x%x", remapOffset));
+            emit("CP.W R12,R11");
             emit(StringFormat("BR{ge} 0x%x", fastStage));
-            emit("MOV R12,0x0");
+            emit("MOV R12,R11");
         }
         padTo(fastStage);
         emit(StringFormat("MCALL PC[0x%x]", fastPool + 4));  // pitch, slot 2
@@ -12767,7 +12792,9 @@ function assembleProgram() {
         finish("edit_key28_tuning_slot0", 0x80003dc0);
 
         // Hook: replace the factory pitch-DAC store and last-sent mirror with
-        // a call into the remap.  The 0..0xfff clamp still runs just before.
+        // a call into the remap.  The factory's clamp still runs just before,
+        // its floor moved to entry 0 of the pitch table (pitch_floor_compare,
+        // below).
         // After the remap stores the fresh pitch to DAC slot 2, fire any
         // pulse deferred by the flag at RAM 0x60ee — the trigger then always
         // rises with the correct pitch already in the DAC buffer (the arp
@@ -12808,6 +12835,22 @@ function assembleProgram() {
         emit("MCALL PC[0x8001a268]");
         }
         finish("pitch_store_hook", 0x80003256);
+
+        // The scan's floor.  The factory adds the strip's bend (state+0x216)
+        // to the glided pitch and clamps the sum into 0x3210 at 0..0xfff,
+        // just ahead of the hook above.  0 was the floor of a factory whose
+        // pitch was the DAC word; here the remap adds remapOffset before it
+        // reads the table, so the table's first entries - the 208's 0 V
+        // pitch and the two semitones over it - lay under the bottom key
+        // where only the vibrato reached them, and a bend on the lowest keys
+        // stopped at the bottom key.  The floor moves to entry 0: both of the
+        // clamp's immediates, the compare's and the store's.  The CP.H
+        // between them compares signed halfwords, and the store hook reads
+        // 0x3210 back with LD.SH.
+        fixedPatch("pitch_floor_compare", 0x8000320e, 2,
+            StringFormat("MOV R8,-0x%x", remapOffset));
+        fixedPatch("pitch_floor_store", 0x80003218, 2,
+            StringFormat("MOV R8,-0x%x", remapOffset));
 
         // The 1 ms task maintains diagnostics and banks long low intervals.
         // Input timestamps come directly from COUNT in the GPIO ISR.

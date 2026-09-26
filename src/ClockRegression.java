@@ -539,17 +539,24 @@ public class ClockRegression extends GhidraScript {
     // DAC word, or every trigger drops a wrong pitch under the gate until the
     // scan overwrites it - which is the bleed the instrument showed when the
     // fast path staged state+0x352 without the bend strip's offset. The
-    // centred case is the control; the pushed cases carry the defect, and the
-    // last two drive the sum past each end of the scan's clamp.
+    // centred case is the control; the pushed cases carry the defect, 4000
+    // drives the sum past the top of the scan's clamp and -1200 past its
+    // floor. -600 does not reach the floor: this fixture's note sits near 850
+    // raw, so the floor needs the larger bend, and the case asserts it
+    // arrived there - entry 0 of the pitch table - or it would compare two
+    // pitches the floor never touched.
     void bendAgreesWithTheScan() throws Exception {
-        for (int bend : new int[]{0, 60, -240, 4000, -600}) {
+        for (int bend : new int[]{0, 60, -240, 4000, -600, -1200}) {
             int[] r = fastVersusScan(bend);
             println("bend "+bend+": fast trigger staged "+r[0]
                     +", the scan reached "+r[1]);
             check("the fast trigger and the scan stage the same DAC word at "
                   +"bend "+bend+": "+r[0]+" vs "+r[1], r[0]==r[1]);
+            if (bend == -1200)
+                check("bend -1200 reaches the floor, entry 0 of the pitch table: "
+                      +r[1]+" vs "+r(0x6840,2), r[1]==r(0x6840,2));
         }
-        println("PASS fast trigger and scan agree across the bend range");
+        println("PASS fast trigger and scan agree across the bend range, both clamps included");
     }
     // The pitch scan and the 1 kHz DAC flush are separate dispatcher events
     // and nothing orders them within a millisecond. Run a whole clock both

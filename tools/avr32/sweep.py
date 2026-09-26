@@ -281,9 +281,11 @@ def audit_call_pools(image_path) -> list[str]:
 # rest or a tie entered as the first step of an empty take adopts the reference
 # and stamps its own degree, as the first note would have; and the chord's pad
 # walk keeps its index across the two calls that destroy it.
+# And again when the pitch floor moved to the table's entry 0, so a bend
+# reaches the three semitones under the bottom key.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "2867491f4d02d360bae201a79cb7a61b2dc8c75276897b60c750dbb91dcc0e4f",
+    "historical_config": "4f7918076451bb3e795d581985fa128c8717890f6ecb033558d84cb9e617b1e2",
 }
 
 

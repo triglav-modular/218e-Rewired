@@ -701,8 +701,10 @@ def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
     belongs there.  3 - a 208, 208r or 208p, which start from A - puts the
     table's 0 V pitch at entry 0, three semitones under the bottom C.  0 is
     the 208c, which starts from C: the curve is laid out three entries later
-    so the bottom key reads the 0 V pitch, and the entries under it, which
-    only a vibrato dipping below the lowest note can reach, sit at 0 V.
+    so the bottom key reads the 0 V pitch, and the entries under it sit at
+    0 V.  Only a bend or the vibrato reaches under the bottom key, and the
+    firmware holds them at entry 0: three semitones of room with the offset,
+    none without it.
     """
     vpo = cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE)
     scale = counts_per_volt(cfg) * (vpo / CALIBRATION_VOLTS_PER_OCTAVE)
