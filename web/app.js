@@ -1621,25 +1621,34 @@
     // just after the read's load, then each send's once it has landed: the
     // read's own record is not it, because a load that does not give the
     // keyboard's record back exactly is not a change anyone made.  `name` is
-    // the port it came from.  Nothing is armed before the first read, after
-    // a failed one, or once another port is picked.  The card stays up while
-    // a send runs and after one fails, so its line can be read; after one
-    // lands it goes SENT_LINGER_MS later, unless something changed.
+    // the port it came from and `marker` the image the keyboard said it runs.
+    // The card comes up only for what a send can land without a flash (the
+    // owner, 2026-09-27): settings read from the keyboard, and a record for
+    // the image it runs - not for a keyboard on another image, nor for
+    // settings the page cannot build.  No page setting moves the marker
+    // today; it is checked with each change all the same.  Nothing is armed
+    // before the first read, after a failed one, or once another port is
+    // picked.  The card stays up while a send runs and after one fails, so
+    // its line can be read; after one lands it goes SENT_LINGER_MS later,
+    // unless something changed.
     var UNSENT_CHECK_MS = 300, SENT_LINGER_MS = 4000;
-    var unsent = { armed: false, base: null, name: null, timer: null, linger: null,
+    var unsent = { armed: false, base: null, name: null, marker: null, timer: null, linger: null,
                    dirty: false, sending: false };
     function pageRecord() {
         try { return recordBytes(WEBBUILD.settings(options()).settings); } catch (e) { return null; }
     }
-    function unsentArm(name) {
+    function unsentArm(name, marker) {
         clearTimeout(unsent.timer); clearTimeout(unsent.linger);
-        unsent.armed = true; unsent.name = name; unsent.base = pageRecord();
+        var base = pageRecord();
+        if (!base || marker === null || marker === undefined ||
+            SETTINGSMIDI.markerOf(base) !== marker) { unsentOff(); return; }
+        unsent.armed = true; unsent.name = name; unsent.base = base; unsent.marker = marker;
         unsent.timer = null; unsent.linger = null; unsent.dirty = false;
         unsentShow();
     }
     function unsentOff() {
         clearTimeout(unsent.timer); clearTimeout(unsent.linger);
-        unsent.armed = false; unsent.base = null; unsent.name = null;
+        unsent.armed = false; unsent.base = null; unsent.name = null; unsent.marker = null;
         unsent.timer = null; unsent.linger = null; unsent.dirty = false;
         unsentShow();
     }
@@ -1649,12 +1658,12 @@
         clearTimeout(unsent.timer);
         unsent.timer = setTimeout(unsentCheck, UNSENT_CHECK_MS);
     }
-    // A record the page cannot build is unsent too: Send says why.
     function unsentCheck() {
         unsent.timer = null;
         if (!unsent.armed) return;
         var record = pageRecord();
-        unsent.dirty = !record || !unsent.base || SETTINGSMIDI.changes(unsent.base, record).length > 0;
+        unsent.dirty = !!record && SETTINGSMIDI.markerOf(record) === unsent.marker &&
+                       SETTINGSMIDI.changes(unsent.base, record).length > 0;
         unsentShow();
     }
     // A pick in the port lists: another port is not the keyboard that was read.
@@ -1900,7 +1909,7 @@
                     var verdict = readVerdict(r), cleared = loadFromKeyboard(r);
                     // From here a change brings up the unsent card.  After
                     // the load, whose own invalidate() is not a change.
-                    unsentArm(ports.output.name);
+                    unsentArm(ports.output.name, r.identity && r.identity.imageMarker);
                     msg($('kbdLoadMsg'), verdict ? 'warn' : 'ok',
                         ['Keyboard settings loaded successfully.', verdict, cleared].filter(Boolean).join(' '));
                     reportSettings('read', 'ok', r.identity);

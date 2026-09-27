@@ -316,14 +316,15 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     held = clone(page.opts);
 
     // --- a record the page cannot build ---------------------------------------------------
+    // Only what a send can land brings the card up.
     at = kb.received.length;
+    change({ pitch_correction: correction({ 20: 5, 30: -4, 40: 7, 70: 9 }) });
+    await T.run();
+    check('(up)', up());
     change({ pressure_fix: false, pressure_portamento: true });
     await T.run();
-    check('settings the page cannot build bring the card up too', up() && headShown());
-    send();
-    await T.run();
-    check('and Send says why, sending nothing', up() && /^Build failed\./.test(kbdMsg().text)
-          && kb.received.length === at, kbdMsg().text);
+    check('settings the page cannot build take the card down, and nothing is sent',
+          !up() && armed() && kb.received.length === at);
     page.opts = clone(held); run('invalidate()');
     await T.run();
     check('(put back)', !up());
@@ -376,6 +377,25 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     change({ pitch_correction: correction({ 20: 5, 30: -4, 40: 7, 50: 3, 64: 9 }) });
     await T.run();
     check('nor when the keyboard is picked again, until it is read', !up() && !armed());
+    page.opts = clone(held);
+
+    // --- a keyboard on another image ----------------------------------------------------------
+    // What the page sends is made for the image it builds: a keyboard on
+    // another needs a flash first, so reading it arms nothing.
+    var otherImage = bytesOf(held); otherImage[0x10] ^= 0x01;
+    var elsewhere = fakeInstrument(otherImage, 'kbd2', '218e on another build');
+    page.kbd.outputs.push(elsewhere.output); page.kbd.inputs.push(elsewhere.input);
+    run('$("kbdLoadPort").value = "kbd2";');
+    page.nextLoad = clone(held);
+    run('readFrom(keyboardPorts())');
+    await T.run();
+    check('(the read itself goes through)', page.nodes.kbdLoadMsg.kind !== 'bad', page.nodes.kbdLoadMsg.text);
+    at = elsewhere.received.length;
+    change({ pitch_correction: correction({ 20: 5, 30: -4, 40: 7, 50: 3, 65: 9 }) });
+    await T.run();
+    check('a keyboard running another image is not armed, and a change brings up nothing',
+          !armed() && !up() && elsewhere.received.length === at);
+    run('$("kbdLoadPort").value = "kbd";');
     page.opts = clone(held);
 
     // --- a read that fails ------------------------------------------------------------------
