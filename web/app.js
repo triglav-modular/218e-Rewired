@@ -1210,7 +1210,7 @@
             var items = ports.map(function (p) {
                 return { value: p.id, label: p.name || p.id, port: p };
             });
-            fillSelect($('calMidi'), items, 'No MIDI outputs found');
+            fillSelect($('calMidi'), items, 'No MIDI devices found');
             applyMidiPick($('calMidi'));
             window.__calPorts = ports;
             // The keyboard's lists fill with it, so all three show the pick.
@@ -1411,7 +1411,7 @@
                 return { value: p.id, label: p.name || p.id };
             });
             kbdSelects().forEach(function (sel) {
-                fillSelect(sel, items, 'No MIDI outputs found');
+                fillSelect(sel, items, 'No MIDI devices found');
                 applyMidiPick(sel);
             });
             if (!listed.midi) listMidi();
