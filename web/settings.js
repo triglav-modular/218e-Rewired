@@ -253,6 +253,7 @@ var SETTINGSMIDI = (function () {
     // is the same.  The verifying dump is still compared with the whole
     // record, so a keyboard that did not hold what the page thought is a
     // mismatch rather than a record saved half one and half the other.
+    var VERIFY_TIMEOUT = 20000, COMMIT_TIMEOUT = 5000;
     function install(output, input, record, opts) {
         opts = opts || {};
         // `before`, the identity the send started from: a commit is only
@@ -273,7 +274,12 @@ var SETTINGSMIDI = (function () {
             return opts.params ? pushParams(output, opts.params, opts) : push(output, record, opts);
         }).then(function () {
             if (opts.onStage) opts.onStage('verify');
-            return dump(output, input, opts.timeout, opts.timers).catch(function () {
+            // The dump request goes out behind the whole push.  Where MIDI is
+            // paced - Safari's Web MIDI extension, about twenty requests a
+            // second - that can be seconds after this line, and a send that
+            // Read settings could not fault ended in "no reply" (the owner,
+            // 2026-09-27).  So the verify waits longer than a read does.
+            return dump(output, input, opts.timeout || VERIFY_TIMEOUT, opts.timers).catch(function () {
                 return fail('no reply');
             });
         }).then(function (d) {
@@ -289,7 +295,7 @@ var SETTINGSMIDI = (function () {
             // that follows carries its state.
             return sleep(opts.settle === undefined ? 50 : opts.settle, opts.timers);
         }).then(function () {
-            return identity(output, input, opts.timeout, opts.timers).catch(function () {
+            return identity(output, input, opts.timeout || COMMIT_TIMEOUT, opts.timers).catch(function () {
                 return fail('no reply');
             });
         }).then(function (id) {
