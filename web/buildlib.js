@@ -486,23 +486,38 @@ var BUILDLIB = (function () {
     // and floors, so plain Math.floor(x + 0.5) is the same operation.
     function floorHalf(x) { return Math.floor(x + 0.5); }
 
-    // The factory's key table, as the factory image holds it: the 12-TET
-    // slot a build puts in any tuning slot left at the factory temperament.
-    // Written out so a settings record can be made without the image.  Not
-    // a formula: the steps are 40 and 41 counts in no rule a period repeats
-    // (entries 13 and 25 are one count above the octave below them plus
-    // 484), so the numbers themselves; test_readback holds them to
-    // factoryTuning() of the real image.
-    var FACTORY_KEY_TABLE = [485, 525, 566, 606, 647, 687, 727, 768, 808, 848, 889, 929,
-                             969, 1010, 1050, 1090, 1131, 1171, 1211, 1252, 1292, 1332, 1373, 1413,
-                             1453, 1494, 1534, 1574, 1615, 1655, 1695, 1736];
+    // The factory temperament, the slot a build puts in any tuning slot left
+    // at it: twelve equal steps of 484 counts above 485, each rounded to the
+    // nearest count, 485 + round(484k/12).  Same as tools/build.py's
+    // EXACT_KEY_TABLE, and the numbers the image carries in its own key
+    // table since 3.0.2, so the record needs nothing from the factory image.
+    var FACTORY_KEY_TABLE = [];
+    for (var fk = 0; fk < 32; fk++) FACTORY_KEY_TABLE.push(485 + Math.floor((484 * fk + 6) / 12));
+    // The factory image's own table, which a build copied into those slots
+    // until 3.0.2.  Its steps are 40 and 41 counts in no rule a period
+    // repeats, a count over the rule on every third key from key 4, which
+    // put those keys a count sharp of their pitch table entries.  Kept only
+    // so a keyboard on 3.0.1 or earlier reads back as holding the factory
+    // temperament; test_readback holds it to the factory image.
+    var LEGACY_KEY_TABLE = [485, 525, 566, 606, 647, 687, 727, 768, 808, 848, 889, 929,
+                            969, 1010, 1050, 1090, 1131, 1171, 1211, 1252, 1292, 1332, 1373, 1413,
+                            1453, 1494, 1534, 1574, 1615, 1655, 1695, 1736];
     function factoryTuningDefault() { return FACTORY_KEY_TABLE.slice(); }
-    function factoryTuning(memory) {
+    // Whether a slot's table is the factory temperament, as this build makes
+    // it or as a build before 3.0.2 copied it from the factory image.
+    function isFactoryTuning(table) {
+        function same(ref) {
+            return table.length === ref.length && table.every(function (v, k) { return v === ref[k]; });
+        }
+        return same(FACTORY_KEY_TABLE) || same(LEGACY_KEY_TABLE);
+    }
+    // The 32 entries an image holds at the key table's flash address.
+    function keyTableIn(memory) {
         var out = [], base = GEN.factoryKeyTable;
         for (var k = 0; k < 32; k++) {
             var hi = memory[base + 2 * k], lo = memory[base + 2 * k + 1];
             if (hi === undefined || lo === undefined) {
-                throw new Error('factory key table missing. Wrong base image?');
+                throw new Error('key table missing. Wrong base image?');
             }
             out.push((hi << 8) | lo);
         }
@@ -1849,7 +1864,8 @@ var BUILDLIB = (function () {
     return {
         pyRepr: pyRepr, reprSortedItems: reprSortedItems, expand: expand,
         parseScala: parseScala, parseKbm: parseKbm, keyPitch: keyPitch,
-        factoryTuning: factoryTuning, factoryTuningDefault: factoryTuningDefault,
+        factoryTuningDefault: factoryTuningDefault, isFactoryTuning: isFactoryTuning,
+        keyTableIn: keyTableIn, LEGACY_KEY_TABLE: LEGACY_KEY_TABLE,
         tuningTable: tuningTable, anchorOffset: anchorOffset, pressureCurve: pressureCurve,
         countsPerVolt: countsPerVolt, pitchTable: pitchTable,
         octaveWidth: octaveWidth, measuredGain: measuredGain, keyDelta: keyDelta,

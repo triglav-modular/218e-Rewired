@@ -12,7 +12,7 @@ var WEBBUILD = (function () {
     // is the only place they exist.  Reset per build, never accumulated.
     var spacingSlots = [];
 
-    function tablesFor(cfg, factoryMemory) {
+    function tablesFor(cfg) {
         var tables = {};
         spacingSlots = [];
         // How many keys each slot repeats over, for the jack transposer's
@@ -43,8 +43,7 @@ var WEBBUILD = (function () {
         });
         cfg._tunings.forEach(function (slot, index) {
             if (slot === 'factory') {
-                tables['tuning_slot' + index] = factoryMemory ? BUILDLIB.factoryTuning(factoryMemory)
-                                                              : BUILDLIB.factoryTuningDefault();
+                tables['tuning_slot' + index] = BUILDLIB.factoryTuningDefault();
                 tables.tuning_period_keys.push(12);
             } else if (BUILDLIB.isTableSlot(slot)) {
                 // Read back from a keyboard: its table and its keys per period
@@ -366,12 +365,11 @@ var WEBBUILD = (function () {
 
     // What a settings record is made of - the tables, the flags and the
     // numbers with the image marker they give - and the refusals that go
-    // with them.  `memory` is the factory image's, or null: then a tuning
-    // slot left at the factory temperament takes BUILDLIB's written-out copy
-    // of the factory key table, which is the only thing the record took from
-    // the image.
-    function recordInputs(cfg, memory) {
-        var tables = tablesFor(cfg, memory);
+    // with them.  Nothing in it comes from the factory image: a tuning slot
+    // left at the factory temperament is BUILDLIB's 485 + round(484k/12),
+    // which the image's own key table carries too since 3.0.2.
+    function recordInputs(cfg) {
+        var tables = tablesFor(cfg);
         // Same refusal tools/build.py makes, and it has to happen here rather
         // than in the editor: a fine keyboard mapping can put two notes closer
         // together than the latch can tell apart, and the image that comes out
@@ -398,7 +396,7 @@ var WEBBUILD = (function () {
     // a keyboard already running Rewired is sent its settings without the
     // factory image, since nothing in the record needs one (recordInputs).
     function settings(options) {
-        var inputs = recordInputs(BUILDLIB.expand(options), null);
+        var inputs = recordInputs(BUILDLIB.expand(options));
         var numbers = inputs.numbers;
         return {
             settings: BUILDLIB.settingsRecord(numbers, inputs.tables, inputs.flags.blocks.arp_pattern_tables,
@@ -421,7 +419,7 @@ var WEBBUILD = (function () {
         }
 
         var cfg = BUILDLIB.expand(options);
-        var inputs = recordInputs(cfg, factory.memory);
+        var inputs = recordInputs(cfg);
         var tables = inputs.tables, flags = inputs.flags, numbers = inputs.numbers;
 
         // The assembler takes the same flat key -> string map the properties

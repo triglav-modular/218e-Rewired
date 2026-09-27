@@ -286,9 +286,13 @@ def audit_call_pools(image_path) -> list[str]:
 # And again for calibration mode, NRPN 0x3f05: seven caves past the boot
 # guard, a hook inside the arp step, and the note-on, contact, pitch-hook and
 # bare-remap words through them, in every image.
+# And again for 3.0.2, where normal play lands on the pitch table entry the
+# way calibration mode does: the factory's +-1 target fix-ups skipped, only a
+# negative target floored, and the key table 485 + round(484k/12) in the
+# image and in every slot left at the factory temperament.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "b0050174c3c341f77174862737cc3503dcb413ee807c3ee9c8bd84f59d33269d",
+    "historical_config": "c2938b154b59de8cbda9b7c92fe9895a4ea789c4c04b2bdfa8c345b4ad484420",
 }
 
 

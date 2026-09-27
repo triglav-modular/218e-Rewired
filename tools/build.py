@@ -45,10 +45,19 @@ import settings as SETTINGS  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent
 BUILD = REPO / "build"
 
-# Flash address of the factory key -> pitch table (32 halfwords).  A tuning
-# slot declared as "factory" is copied verbatim from here, which keeps the
-# instrument's original temperament bit-exact instead of re-deriving it.
+# Flash address of the factory key -> pitch table: 132 halfwords, which the
+# .data copy puts at RAM 0x854.  The image carries EXACT_KEY_TABLE there
+# since 3.0.2 (key_table_exact in the assembler); nothing is read from here.
 FACTORY_KEY_TABLE = 0x80016574
+# The factory temperament: twelve equal steps of 484 counts above 485, each
+# rounded to the nearest count.  A tuning slot declared as "factory" carries
+# the first 32, and the image's own table the same numbers, so the settings
+# record takes nothing from the factory image.  The factory's own table runs
+# up to two counts over these, and the remap's rounding made every third key
+# a count sharp of the pitch table entry calibration mode plays; until 3.0.2
+# the slot was copied from it (the page still recognises that table on a
+# read-back, BUILDLIB.LEGACY_KEY_TABLE).
+EXACT_KEY_TABLE = [485 + (484 * k + 6) // 12 for k in range(132)]
 # Where application code may run to.  The flash is 256 KB; above this sit
 # the boot guard's word (0x8003ce00), the two settings slots, the
 # persistence ring and the factory settings page.  The caves stayed below
@@ -411,17 +420,9 @@ def key_pitch(cents: list[float], degrees: list[int], period: float, key: int) -
     return period * (key // size) + cents[degrees[key % size]]
 
 
-def factory_tuning(memory: dict[int, int]) -> list[int]:
-    """The original 32-entry key table, read straight out of the factory image."""
-    try:
-        return [
-            (memory[FACTORY_KEY_TABLE + 2 * k] << 8) | memory[FACTORY_KEY_TABLE + 2 * k + 1]
-            for k in range(32)
-        ]
-    except KeyError:
-        raise SystemExit(
-            f"factory key table missing at 0x{FACTORY_KEY_TABLE:08X} — wrong base image?"
-        )
+def factory_tuning() -> list[int]:
+    """The factory temperament's 32 key-table entries, 485 + round(484k/12)."""
+    return EXACT_KEY_TABLE[:32]
 
 
 def anchor_offset(cents: list[float], reference_key: int,
@@ -2002,7 +2003,7 @@ def main() -> None:
     periods = set()
     # One (ideal, table, period_cents, period_units) per slot that carries a
     # scale, for the latch-spacing check below.  The factory temperament is not
-    # among them: it is copied bit-exact and its semitones are ~40 units apart.
+    # among them: its semitones are 40 or 41 units apart.
     spacing_slots = []
     # How many keys each slot repeats over: twelve, or the .kbm's map size.
     # The jack transposer wraps its shift by this.
@@ -2010,10 +2011,10 @@ def main() -> None:
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             periods.add(tuning["units_per_octave"])
-            tables[f"tuning_slot{index}"] = factory_tuning(memory)
+            tables[f"tuning_slot{index}"] = factory_tuning()
             period_keys.append(12)
-            print(f"  tuning slot {index}: factory temperament (from the base image, "
-                  "copied bit-exact, so the anchor does not apply)")
+            print(f"  tuning slot {index}: factory temperament (485 + round(484k/12), "
+                  "so the anchor does not apply)")
             continue
         map_name = None if isinstance(relative, str) else (
             relative[1] if len(relative) > 1 else None)

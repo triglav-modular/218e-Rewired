@@ -2250,6 +2250,111 @@ public class ControlRegression extends SequenceEditRegression {
         check("and the next scan plays it: "+d+" = "+flash,d==flash);
         println("PASS calibration mode: a pitch-table write lands in the mirror and plays on the next scan; 0x3f01 puts the flash value back");
     }
+    // ---- Normal play on the table's entries (3.0.2) ----------------------
+    // Calibration mode plays mirror[entry] for an entry.  Normal play has to
+    // give the same DAC for every key and MIDI note that maps to that entry,
+    // once the glide has settled, or the page tunes one pitch and the
+    // keyboard plays another.  Three factory details kept it a count off:
+    // the +-1 target fix-ups at 0x80003800 (keys 0..11 and notes 24..35 a
+    // count flat under octave pad 0), the floor at 0x800038cc that zeroed
+    // every target up to 9 (note 24's target of 1 with add-to-pitch off),
+    // and the factory key table, which runs up to two counts over
+    // 485 + 484k/12, so that the remap's rounding put every third key a
+    // count sharp.
+    //
+    // The entry a key maps to, from the rule rather than off the image: key
+    // 0 at no offset is table 485, which the remap's +120 puts on entry 15,
+    // and each key is one entry and each period twelve.  Octave pad p adds
+    // p-1 periods on the octave position.  Off and the middle position add
+    // none, less one period where the factory's transpose mode is forced
+    // (state+0x6a: the -period at 0x800035c0).  A MIDI note plays key
+    // note-24, the index floored at 0, and the note-on drops it a further
+    // 484 with the switch off the octaves (0x800064f8).  Past entry 78 the
+    // remap holds the last entry.  Under entry 3 the target is negative and
+    // floors at 0, under the keyboard's reach: those are counted and held to
+    // that floor instead of to an entry.
+    void noteOff(int note) throws Exception {
+        w(0x7600-0x20,1,note); w(0x7600-0x1f,1,0); w(0x7600-0x1e,1,channel());
+        call(0x80004ebcL,0x80004ef8L);
+    }
+    void pressureFor(int held,int pressure) throws Exception {
+        for(int j=0;j<29;j++) { w(0x3490+j,1,j==held?2:0); w(0x3686+2*j,2,j==held?pressure:110); }
+        call(0x8001aa10L);
+    }
+    // Five scans, the last three the same: the glide at rest (knob 0) has
+    // landed by the second.
+    long settled(String what) throws Exception {
+        long[] h=new long[5];
+        for(int i=0;i<h.length;i++) h[i]=dac();
+        boolean still=true; for(int i=h.length-3;i<h.length;i++) still&=h[i]==h[h.length-1];
+        check(what+" settles: "+Arrays.toString(h),still);
+        return h[h.length-1];
+    }
+    void exactPosition(int p) throws Exception {
+        // 0 off, 1..4 octave pads 0..3, 5 the middle with no preset.
+        boolean octave=p>=1&&p<=4;
+        for(int i=0;i<4;i++) w(0x613a+2*i,2,0);
+        w(S+0x342,1,octave?1:0); w(S+0x343,1,p==5?1:0);
+        octavePad(octave?p-1:1);
+        w(S+0x306,2,0); w(S+0x310,2,0); w(S+0x216,2,0);
+    }
+    void exactPitch() throws Exception {
+        String[] names={"off","octave pad 0","octave pad 1","octave pad 2","octave pad 3","the middle, no preset"};
+        List<String> failed=new ArrayList<>();
+        int floored=0, clamped=0, played=0;
+        for(int p=0;p<6;p++) {
+            setup(0,false,0); command(2);
+            // The slot holding the image's own factory temperament: the
+            // flash key table the .data copy fills RAM 0x854 from, and the
+            // table MIDI notes past the slot read.
+            int slot=-1;
+            for(int s=0;s<3&&slot<0;s++) {
+                boolean same=true;
+                for(int k=0;k<32;k++) same&=r(0x68e0+64*s+2*k,2)==r(0x80016574L+2*k,2);
+                if(same) slot=s;
+            }
+            check("a tuning slot holds the image's factory temperament",slot>=0);
+            w(0x6090,1,slot); w(0x60e4,2,0); controlScan();
+            boolean live=true; for(int k=0;k<32;k++) live&=r(0x854+2*k,2)==r(0x80016574L+2*k,2);
+            check("slot "+slot+" is the live key table",live);
+            exactPosition(p); dac();
+            boolean octave=p>=1&&p<=4;
+            check("knob 4 leaves the transpose at rest: state+0x6a="+r(S+0x6a,1)+" 0x6b="+r(S+0x6b,1),
+                r(S+0x6a,1)==0||r(S+0x6b,1)<=2);
+            check("the vibrato at rest",(short)r(0x6028,2)==0);
+            int periods=octave?p-2:(r(S+0x6a,1)!=0?-1:0);
+            StringBuilder keys=new StringBuilder(), notes=new StringBuilder();
+            int keyWrong=0, noteWrong=0;
+            for(int k=0;k<=24;k++) {
+                int entry=15+k+12*periods;
+                touchOn(k); pressureFor(k,600);
+                long d=settled(names[p]+" key "+k);
+                long want=entry<3?remapModel(0):mirror(Math.min(entry,78));
+                if(d!=want) { keyWrong++; keys.append(String.format(" %d:%+d",k,d-want)); }
+                touchOff(k); pressureFor(-1,0); dac();
+                played++;
+            }
+            for(int n=21;n<=99;n++) {
+                int entry=15+Math.max(0,n-24)+12*(periods-(octave?0:1));
+                noteOn(n);
+                long d=settled(names[p]+" note "+n);
+                long want=entry<3?remapModel(0):mirror(Math.min(entry,78));
+                if(entry<3) floored++; else if(entry>78) clamped++;
+                if(d!=want) { noteWrong++; notes.append(String.format(" %d:%+d",n,d-want)); }
+                noteOff(n); dac();
+                played++;
+            }
+            println("EXACT "+names[p]+", slot "+slot+", "+periods+" period(s): keys 0..24 "+keyWrong+" off"
+                +(keyWrong>0?" (key:DAC-entry)"+keys:"")+"; notes 21..99 "+noteWrong+" off"
+                +(noteWrong>0?" (note:DAC-entry)"+notes:""));
+            if(keyWrong>0) failed.add(names[p]+": "+keyWrong+" key(s)");
+            if(noteWrong>0) failed.add(names[p]+": "+noteWrong+" note(s)");
+        }
+        check("normal play gives each key and MIDI note its entry's DAC, as calibration mode does: "
+            +(failed.isEmpty()?"all":failed.toString()),failed.isEmpty());
+        println("PASS normal play lands on the pitch table entry: "+played+" keys and notes in six add-to-pitch positions, "
+            +clamped+" past entry 78 held on it, "+floored+" under the keyboard's reach at the floor");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         transpose=args.length>0&&args[0].equals("trn");
@@ -2310,6 +2415,7 @@ public class ControlRegression extends SequenceEditRegression {
             try { calibrationSilence(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { calibrationExits(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { calibrationLiveEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { exactPitch(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }

@@ -43,7 +43,8 @@ keyboard needs first when it runs another image than the page builds, and
 that any readings entered before the read were cleared. A tuning table does not
 turn back into a scale, so with cell 27 on each slot comes in as its table,
 its keys per period and the period (a slot holding the factory temperament
-comes back as factory), and the next build carries it as it came until a
+comes back as factory, the table 3.0.2 builds for it or the factory image's
+own that earlier builds copied), and the next build carries it as it came until a
 scale replaces it: reading a keyboard and building again keeps its tunings.
 With cell 27 off the page's tunings box is unticked and its slots are left
 alone. The timing numbers ride through the same way: the ones that differ

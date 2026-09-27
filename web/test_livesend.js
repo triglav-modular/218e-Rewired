@@ -138,7 +138,7 @@ function fakeInstrument(record, id, name) {
         });
     }
     function identityBlock() {
-        reply(0x3f76, 0x301);
+        reply(0x3f76, B.versionCode(page.GEN.version));   // the image this page builds
         reply(0x3f77, inst.marker >>> 14); reply(0x3f78, 484); reply(0x3f79, inst.slot); reply(0x3f7a, inst.state);
         reply(0x3f7b, Math.floor(inst.generation / 268435456) & 0xF);
         reply(0x3f7c, Math.floor(inst.generation / 16384) & 0x3FFF);
@@ -206,7 +206,6 @@ page.CALIBRATE = {
     midiOutputs: function () { return Promise.resolve(page.kbd.outputs.slice()); },
     midiInputs: function () { return Promise.resolve(page.kbd.inputs.slice()); }
 };
-page.GEN.version = '3.0.1';
 run('$("kbdLoadPort").value = "kbd"; $("kbdPort").value = "kbd";');
 
 function kbdMsg() { return page.nodes.kbdMsg || {}; }

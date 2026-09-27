@@ -1742,20 +1742,13 @@
         return 'This keyboard runs Rewired ' + shown(ver) + '; this page is ' + shown(page) + '. Reload the page.';
     }
     // A slot of the keyboard's, for the page: null where it holds the
-    // factory temperament - its table the factory image's own, twelve keys
-    // to the period - which the build makes again from the factory image,
-    // or its table as it came.  Without the factory image here there is
-    // nothing to compare against, and every slot comes in as a table.
+    // factory temperament - twelve keys to the period, and the table a build
+    // makes for it, or the factory image's own that builds before 3.0.2
+    // copied - which the build makes again; or its table as it came.
     function keyboardSlots(f) {
-        var factory = null;
-        if (state.factoryText) {
-            try {
-                factory = BUILDLIB.factoryTuning(BUILDLIB.parseHexText(state.factoryText, 'factory image').memory);
-            } catch (e) { factory = null; }
-        }
         return [0, 1, 2].map(function (s) {
             var table = f['tuning_slot' + s], keys = f.tuning_period_keys[s];
-            if (factory && keys === 12 && table.every(function (v, k) { return v === factory[k]; })) return null;
+            if (keys === 12 && BUILDLIB.isFactoryTuning(table)) return null;
             return { name: 'the keyboard\u2019s tuning', table: table.slice(), periodKeys: keys,
                      octaveUnits: f.numbers.octave_units };
         });

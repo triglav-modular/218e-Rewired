@@ -240,16 +240,42 @@ check('and one past the record’s 0x3FFF does not', reloaded && reloaded[0] ===
 
 
 // --- Send settings without the factory image ------------------------------
-// The record takes one thing from the image, its 12-TET key table, for a
-// tuning slot left at the factory temperament; BUILDLIB writes it out so
-// WEBBUILD.settings can make the record with no image at all.  The two have
-// to agree with the real table and with a full build, byte for byte, or a
-// send without the image would put different settings on the keyboard than
-// the same page with it.
-var realKeys = B.factoryTuning(B.parseHexText(factory, 'factory image').memory);
-check('the written-out factory key table is the factory image\u2019s',
-      JSON.stringify(B.factoryTuningDefault()) === JSON.stringify(realKeys),
-      JSON.stringify(B.factoryTuningDefault()) + ' vs ' + JSON.stringify(realKeys));
+// The record takes nothing from the image.  Until 3.0.2 it took one thing,
+// the factory image's key table, for a tuning slot left at the factory
+// temperament, and this held BUILDLIB's written-out copy to the image.  That
+// table is a count or two over twelve equal steps, and the image now carries
+// 485 + round(484k/12) in its own key table, so the slot is that rule and
+// the checks below hold it to the rule and to the image a build makes; the
+// image's old table is still held to the factory image, because the page
+// recognises it when it reads a keyboard on 3.0.1 or earlier.  A full build
+// and WEBBUILD.settings must still agree byte for byte, or a send without
+// the image would put different settings on the keyboard than the same page
+// with it.
+var exactKeys = [];
+for (var ek = 0; ek < 32; ek++) exactKeys.push(485 + Math.round(484 * ek / 12));
+check('the factory temperament a build puts in a slot is 485 + round(484k/12)',
+      JSON.stringify(B.factoryTuningDefault()) === JSON.stringify(exactKeys),
+      JSON.stringify(B.factoryTuningDefault()));
+var builtKeys = B.keyTableIn(B.parseHexText(plain.hex, 'built image').memory);
+check('and the image a build makes carries the same table where its notes read it',
+      JSON.stringify(builtKeys) === JSON.stringify(exactKeys), JSON.stringify(builtKeys));
+var builtMemory = B.parseHexText(plain.hex, 'built image').memory, pastSlot = 0;
+for (var bk = 32; bk < 132; bk++) {
+    var at = GEN.factoryKeyTable + 2 * bk;
+    if (((builtMemory[at] << 8) | builtMemory[at + 1]) !== 485 + Math.round(484 * bk / 12)) pastSlot++;
+}
+check('past the slot too, all 132 entries: ' + pastSlot + ' differ', pastSlot === 0);
+var oldKeys = B.keyTableIn(B.parseHexText(factory, 'factory image').memory);
+check('the table builds before 3.0.2 put there is the factory image\u2019s own',
+      JSON.stringify(B.LEGACY_KEY_TABLE) === JSON.stringify(oldKeys),
+      JSON.stringify(B.LEGACY_KEY_TABLE) + ' vs ' + JSON.stringify(oldKeys));
+page.fields = { tuning_slot0: exactKeys, tuning_slot1: oldKeys,
+                tuning_slot2: exactKeys.map(function (v, k) { return k === 4 ? v + 1 : v; }),
+                tuning_period_keys: [12, 12, 12], numbers: { octave_units: 484 } };
+var readSlots = vm.runInContext('keyboardSlots(fields)', page);
+check('a read-back takes either table as the factory temperament, and one a count off as a table',
+      readSlots[0] === null && readSlots[1] === null && readSlots[2] !== null && readSlots[2].table[4] === 647,
+      JSON.stringify(readSlots));
 [{}, { alternate_tunings: [T[0], 'factory', T[1]] }, { alternate_tunings: ['factory', 'factory', T[0]] },
  { sequencer: true, knob2: 'patterns' }, { latching_arp: true, knob4: 'trn' }].forEach(function (o, n) {
     var full = null, alone = null, err = '';

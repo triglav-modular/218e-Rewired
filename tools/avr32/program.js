@@ -12922,6 +12922,49 @@ function assembleProgram() {
         padTo(0x800038c6);
         finish("pitch_target_blend_hook", 0x800038c6);
 
+        // Normal play on the pitch table's entries (3.0.2).  Calibration mode
+        // (NRPN 0x3f05) plays the table entry a note names; normal play has
+        // to land on the same DAC for the same entry, or the page tunes one
+        // pitch and the keyboard plays another.  Three factory details kept
+        // it a count off, about 2.5 cents.
+        function exactPitch() {            // The +-1 target fix-ups at 0x80003800..0x800038b8.  They move
+            // the target a unit when the base (state+0x350) and the target
+            // sit on opposite sides of 0x1e0/0x1e1 or of 0x789/0x78a, which
+            // put keys 0..11 and notes 24..35 a count flat under octave pad 0
+            // and stacked a count on the table's own error under pads 2 and
+            // 3.  The span holds nothing else: every branch into it but the
+            // entry at 0x80003800 comes from inside it
+            // (tools/factory_control_flow.txt), and the stores it makes are
+            // to the target at R7[-0x6] alone.  So the entry jumps to the
+            // blend hook's load of that target and the rest is dead.  The
+            // clock's fast stage runs the same preparation (clock_pitch_target)
+            // and loses them with it.
+            fixedPatch("pitch_fixups_skip", 0x80003800, 2, "RJMP 0x800038bc");
+            // The floor at 0x800038c6 zeroed every target up to 9: note 24's
+            // target of 1 with add-to-pitch off became 0, a count under entry
+            // 3.  Only a negative target floors now.
+            fixedPatch("pitch_floor_negative", 0x800038cc, 2, "MOV R8,-0x1");
+            // The factory key table, 132 halfwords the .data copy puts at RAM
+            // 0x854.  The tuning applier overwrites the first 32 with the
+            // selected slot; a MIDI note reads index note-24 (after reading
+            // index note, which it overwrites), so indices up to 127 are
+            // read, and every one past 31 comes from here.  The factory's
+            // entries run up to two counts over 485 + 484k/12, and the
+            // remap's rounding (+242, DIVS 484) turned every key with
+            // k = 1 (mod 3) from key 4 up into a count sharp.  These are
+            // 485 + round(484k/12), the same numbers a build puts in a tuning
+            // slot left at the factory temperament (tools/build.py
+            // EXACT_KEY_TABLE, BUILDLIB.FACTORY_KEY_TABLE).
+            begin(0x80016574);
+            // One line: the transpiler takes an array literal only whole.
+            var exactKeys = [485, 525, 566, 606, 646, 687, 727, 767, 808, 848, 888, 929, 969, 1009, 1050, 1090, 1130, 1171, 1211, 1251, 1292, 1332, 1372, 1413, 1453, 1493, 1534, 1574, 1614, 1655, 1695, 1735, 1776, 1816, 1856, 1897, 1937, 1977, 2018, 2058, 2098, 2139, 2179, 2219, 2260, 2300, 2340, 2381, 2421, 2461, 2502, 2542, 2582, 2623, 2663, 2703, 2744, 2784, 2824, 2865, 2905, 2945, 2986, 3026, 3066, 3107, 3147, 3187, 3228, 3268, 3308, 3349, 3389, 3429, 3470, 3510, 3550, 3591, 3631, 3671, 3712, 3752, 3792, 3833, 3873, 3913, 3954, 3994, 4034, 4075, 4115, 4155, 4196, 4236, 4276, 4317, 4357, 4397, 4438, 4478, 4518, 4559, 4599, 4639, 4680, 4720, 4760, 4801, 4841, 4881, 4922, 4962, 5002, 5043, 5083, 5123, 5164, 5204, 5244, 5285, 5325, 5365, 5406, 5446, 5486, 5527, 5567, 5607, 5648, 5688, 5728, 5769];
+            for (var __i1 = 0; __i1 < exactKeys.length; __i1++) {
+                var v = exactKeys[__i1];
+                halfword(v);
+            }
+            finish("key_table_exact", 0x8001667c);
+        }        exactPitch();
+
         // Tuning applier and tables.  Selector lives at RAM 0x6090 - see the
         // edit-key blocks below for why it is not state+2 - and is carried in
         // the persistence record's byte 0x1a, so the slot a player left

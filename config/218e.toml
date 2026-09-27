@@ -220,12 +220,12 @@ updaters       = ["mac/Program218e_v3_Rewired_macOS.command",
 # SHA-256, which is derived and cannot drift; this is the part people can say
 # out loud.  The build reports them together as "Rewired <version> (<sha8>)"
 # and writes that into both flashers.
-version        = "3.0.1"
+version        = "3.0.2"
 
 # The image this configuration is expected to produce.  tools/test.py --golden
 # rebuilds and compares against it, so any unintended change in the assembly,
 # the generated tables or the patch set shows up as a test failure.
-golden_sha256  = "9fcd8ef3c97b4ea485e1cba7dcff71de40d7cdca834098e360c7ba907bb73215"
+golden_sha256  = "9c2e5db16de86df35af47021ba3ac82b3c79408ebd1b7ced0e6b432575897359"
 
 
 [tools]

@@ -451,6 +451,19 @@ def test_tables(cfg: dict) -> None:
         table[k + 12] - table[k] == tuning["units_per_octave"] for k in range(20)))
     check("tuning table ascends", table == sorted(table))
 
+    # The factory temperament since 3.0.2: the slot a build makes for it,
+    # and the table the assembler writes over the factory's at 0x80016574
+    # (key_table_exact), are one rule, 485 + round(484k/12).
+    exact = B.EXACT_KEY_TABLE
+    check("the factory temperament is 485 + round(484k/12), 132 entries",
+          exact == [485 + round(484 * k / 12) for k in range(132)]
+          and B.factory_tuning() == exact[:32])
+    check("and octave-exact", all(exact[k + 12] - exact[k] == 484 for k in range(120)))
+    literal = re.search(r"int\[\] exactKeys = \{([^}]*)\};",
+                        (REPO / "src" / "AssemblePressureFix.java").read_text())
+    check("the assembler writes the same numbers into the image's key table",
+          literal is not None and [int(v) for v in literal.group(1).split(",")] == exact)
+
     # The anchor's whole point is that the reference key holds still across
     # slots, so check the shipped scales agree there rather than checking the
     # offsets one at a time.
