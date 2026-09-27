@@ -961,6 +961,13 @@ var BUILDLIB = (function () {
         return rows;
     }
 
+    // DAC counts per cent of the ramp cfg describes: the scale pitchTable
+    // and pitchCents work in, per cent.  About 0.40 at 1.2 V/oct and 0.33 at
+    // 1 V/oct.  Calibration mode moves an entry by a reading times this.
+    function pitchCountsPerCent(cfg) {
+        return countsPerVolt(cfg) * (cfg.pitch.volts_per_octave / GEN.calibrationVoltsPerOctave) / 1200;
+    }
+
     // --- Intel HEX ------------------------------------------------------
     function parseHexText(text, name) {
         var memory = {}, upper = 0, startLinear = 0x80002000;
@@ -1458,9 +1465,12 @@ var BUILDLIB = (function () {
         { base: 0x0180, count: 96, offset: 0x1c8, kind: 'mask' },
         { base: 0x01e0, count: 32, offset: 0x248, kind: 'half' }
     ];
+    // calibrate: calibration mode, on with its key and off with any other
+    // value (web/calibrate.js says what the mode does).
     var NRPN_COMMANDS = {
         commit: 0x3f00, commitKey: 0x2a2a, reload: 0x3f01, defaults: 0x3f02,
-        dump: 0x3f03, restart: 0x3f04, restartKey: 0x2a2a, identity: 0x3f7f
+        dump: 0x3f03, restart: 0x3f04, restartKey: 0x2a2a, identity: 0x3f7f,
+        calibrate: 0x3f05, calibrateKey: 0x2a2a
     };
     // 0x0020..0x002f: the live option bytes - cells 16..31 as the keyboard
     // booted them - which a dump sends and a write cannot reach.  Not a
@@ -1855,6 +1865,7 @@ var BUILDLIB = (function () {
         SETTINGS_OPTION_CELL: SETTINGS_OPTION_CELL, optionCells: optionCells, optionsOf: optionsOf, settingsFields: settingsFields,
         versionCode: versionCode, versionText: versionText, compareVersions: compareVersions,
         pitchTableSettings: pitchTableSettings, pitchCents: pitchCents,
+        pitchCountsPerCent: pitchCountsPerCent,
         settingsDiff: settingsDiff, settingsPick: settingsPick,
         SETTINGS_ORDER: SETTINGS_ORDER
     };

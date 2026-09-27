@@ -901,8 +901,11 @@
         buildTable(); drawPlot(); validateCal(); syncBaseline();
         msg($('calMsg'), '', haveBaseline()
             ? 'Readings cleared. ' + baselineName.charAt(0).toUpperCase() + baselineName.slice(1) +
-              ' is still loaded as the table on '
-              + 'the instrument.' : '');
+              // A tuned table is on the page until it is sent or flashed;
+              // every other kind came from the instrument or goes to it as is.
+              (baselineName === 'the tuned table' ? ' is loaded here.'
+                                                  : ' is still loaded as the table on the instrument.')
+            : '');
         // The table is part of the image: without this the image built
         // from the old readings stayed downloadable after they were cleared.
         invalidate();
@@ -1136,7 +1139,8 @@
             '# 218e calibration sweep log.',
             '# One row per note sent: what came back for it, as measured.',
             '# what: probe = finding the MIDI channel, anchor = the bottom note',
-            '#       re-measured to cancel drift, sweep = a note of the table.',
+            '#       re-measured to cancel drift, sweep = a note of the table,',
+            '#       retry = the same note again after its table entry was moved.',
             '# A sweep row whose detected_hz is below the sweep row before it is',
             '# a note that did not take - the firmware cannot play a higher note lower.',
             cols.join(',')
@@ -1693,6 +1697,28 @@
                      'against whatever was flashed at the time, which the keyboard now says. ' +
                      'Measure again.' : '';
     }
+    // A converging run's table into the calibration the way a read's goes
+    // in above: the table on the instrument, with nothing measured on top.
+    // `was` is the scaling and the offset the table was built with
+    // (BUILDLIB.pitchTableSettings).  The same steps as loadFromKeyboard's
+    // tail rather than a call from it, because web/test_readback.js runs
+    // loadFromKeyboard out of this file on its own.
+    function loadPitchTable(table, was, name) {
+        press('vpo', was.volts_per_octave === 1.2 ? '1.2' : '1.0');
+        press('offset', was.pitch_offset ? '1' : '0');
+        var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
+                                    pitch_offset: was.pitch_offset });
+        baseline = {}; baselineSources = {};
+        BUILDLIB.pitchCents(cfg, table).forEach(function (row) {
+            baseline[row.semitone] = row.cents;
+        });
+        baselineName = name;
+        baselineHistory = null;
+        measured = measured.map(function () { return 0; });
+        interpolated = {};
+        $('useCal').checked = true;
+        syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
+    }
     if ($('kbdRead')) {
         $('kbdRead').addEventListener('click', function () { withKeyboard(readFrom); });
         var readFrom = function (ports) {
@@ -1810,6 +1836,173 @@
         autoNote('Stopping after this note\u2026');
     });
 
+    // --- calibration mode: measured and corrected in one run -------------
+    // Firmware with calibration mode (calibrate.js) lets the sweep write a
+    // table entry live and play it again until it is in tune, so one run
+    // converges on the table instead of measuring once and folding the
+    // readings in at the next flash, which took a few rounds to settle.  The
+    // first version that has it is 3.0.1 (the owner, 2026-09-27); a keyboard
+    // reporting anything older gets the sweep it always did, and nothing
+    // more goes out to it than went before.
+    var CALIBRATION_MODE_FIRMWARE = '3.0.1';
+    function calibrationModeSupported(identity) {
+        return !!(CALIBRATION_MODE_FIRMWARE && identity && identity.firmwareVersion &&
+                  BUILDLIB.compareVersions(identity.firmwareVersion, CALIBRATION_MODE_FIRMWARE) >= 0);
+    }
+
+    // What both sweeps are given: the ports, the channels and the log.
+    function sweepOptions(chosen) {
+        return {
+            output: chosen,
+            // Empty means Auto: the sweep finds the channel by playing on
+            // each in turn and watching for the pitch to move.
+            channel: $('calMidiChan').value === '' ? null
+                                                   : Number($('calMidiChan').value),
+            deviceId: $('calAudio').value || null,
+            audioChannel: parseInt($('calChan').value, 10) || 0,
+            // What listChannels() actually got the device to open.  The
+            // sweep needs it because "ideal" can negotiate two channels on
+            // a desk that hands over twelve when asked for twelve outright,
+            // and that is the number this dropdown was filled from.
+            audioChannels: chanFor[$('calAudio').value || ''] || null,
+            velocity: 100,
+            onReading: pushLog,
+            onProbe: function (ch, confirming) {
+                autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
+                                     : 'Looking for the keyboard on MIDI channel ') +
+                         (ch + 1) + '\u2026', 0);
+            },
+            onChannel: function (ch) {
+                $('calMidiChan').value = String(ch);
+            }
+        };
+    }
+    function noteProgress(step, reading, i, total) {
+        var name = CALIBRATE.noteLabel(step.index);
+        autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
+                 (reading && reading.cents !== null ?
+                     (reading.cents >= 0 ? '+' : '') +
+                     reading.cents.toFixed(1) + ' cents' : 'not heard'),
+                 (i + 1) / total);
+    }
+    // A run's summary with its warnings under it.  Capped: a run that goes
+    // wrong everywhere would otherwise bury its own summary under sixty-five
+    // lines.
+    function withWarnings(note, warnings) {
+        if (!warnings.length) return note;
+        var show = warnings.slice(0, 12);
+        note += '\n\n' + show.join('\n');
+        if (warnings.length > show.length) {
+            note += '\n...and ' + (warnings.length - show.length) + ' more.';
+        }
+        return note;
+    }
+
+    // The sweep that measures: readings into the boxes, folded into the
+    // table at the next build.
+    function sweepAsBefore(chosen) {
+        var got = {};
+        setRunning(true);
+        autoNote('Listening for the bottom C\u2026', 0);
+        var o = sweepOptions(chosen);
+        // Entries, not semitones.  The sweep counts in firmware table
+        // entries - the bottom key is entry 3 whatever the pitch
+        // offset is - while these boxes count in calibration
+        // semitones, where the bottom key is PLAYABLE_LOW.  The two
+        // coincide with the offset on and are three apart without it,
+        // so handing the sweep PLAYABLE_LOW/PLAYABLE_HIGH raw played
+        // 62 of the 65 keys on a 208c and filed every reading three
+        // rows high.
+        o.low = CALIBRATE.entryForSemitone(PLAYABLE_LOW, PLAYABLE_LOW);
+        o.high = CALIBRATE.entryForSemitone(PLAYABLE_HIGH, PLAYABLE_LOW);
+        o.octaveTerm = false;
+        o.onNote = function (step, reading, i, total) {
+            got[CALIBRATE.semitoneFor(step.index, PLAYABLE_LOW)] =
+                reading ? reading.cents : null;
+            noteProgress(step, reading, i, total);
+        };
+        sweep = new CALIBRATE.Sweep(o);
+        return sweep.run().then(function (out) {
+            var bridged = bridgeGaps(got);
+            $('useCal').checked = true;
+            syncCalBody();
+            buildTable(); drawPlot(); validateCal(); invalidate();
+            var heard = out.readings.filter(function (r) { return r.cents !== null; });
+            autoNote('');
+            var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
+                ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
+                out.anchorHz.toFixed(2) + ' Hz; the ' +
+                'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
+                'which has been taken out of every reading.';
+            if (bridged) {
+                note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
+                    ' not heard and have been carried across from their neighbours - ' +
+                    'check those by hand.';
+            }
+            msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad',
+                withWarnings(note, out.warnings));
+        });
+    }
+
+    // The keyboard's settings, read on the calibration's own port the way
+    // Read settings reads them, the input being the one that shares the
+    // output's name.  Null for anything short of a whole read: the keyboard
+    // then gets the sweep that asks nothing of it.
+    function readForCalibration(output) {
+        return CALIBRATE.midiInputs().then(function (inputs) {
+            var input = inputs.filter(function (p) { return p.name === output.name; })[0] || inputs[0];
+            if (!input) return null;
+            return SETTINGSMIDI.read(output, input, {}).then(function (r) {
+                showFirmware(r.identity);
+                return r;
+            }, function (err) {
+                firmwareFrom(err);
+                return null;
+            });
+        }, function () { return null; });
+    }
+
+    // The sweep that converges (calibrate.js, opts.mode and opts.adjust).  It
+    // starts from the table the keyboard holds and moves each entry live
+    // until it plays in tune; then the keyboard gets its own table back, the
+    // mode off and the mirror reloaded from flash, however the run ends.
+    // What it found comes into the page the way a read's table does - the
+    // table on the instrument, nothing measured on top - so the next send or
+    // flash carries it.
+    function sweepInMode(chosen, r) {
+        var start = r.fields.pitch_remap.slice();
+        var was = BUILDLIB.pitchTableSettings(start);
+        var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
+                                    pitch_offset: was.pitch_offset });
+        var o = sweepOptions(chosen);
+        // Every entry that holds an offset: all 79 with the pitch offset.
+        // Without it the three under the bottom key sit at 0 V and are not
+        // offsets (BUILDLIB.pitchTable), so they are left as they are.
+        o.low = CALIBRATE.entryForSemitone(0, cfg.pitch.bottom_key_semitone);
+        o.high = TABLE_ENTRIES - 1;
+        o.mode = {
+            on: function () { SETTINGSMIDI.calibrationMode(chosen, true); },
+            off: function () { SETTINGSMIDI.endCalibration(chosen); }
+        };
+        o.adjust = {
+            table: start, countsPerCent: BUILDLIB.pitchCountsPerCent(cfg),
+            write: function (entry, value) { return SETTINGSMIDI.writePitch(chosen, entry, value); }
+        };
+        o.onNote = noteProgress;
+        autoNote('Listening for the bottom C\u2026', 0);
+        sweep = new CALIBRATE.Sweep(o);
+        return sweep.run().then(function (out) {
+            loadPitchTable(out.table, was, 'the tuned table');
+            var heard = out.readings.filter(function (x) { return x.cents !== null; });
+            autoNote('');
+            var note = 'Tuned ' + heard.length + ' of ' + out.readings.length +
+                ' notes on MIDI channel ' + (out.channel + 1) + '. Send the settings or ' +
+                'flash the firmware to keep the new table.';
+            msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad',
+                withWarnings(note, out.warnings));
+        });
+    }
+
     $('calRun').addEventListener('click', function () {
         msg($('calMsg'), '', '');
         Promise.resolve().then(listMidi).then(listAudio).then(listChannels).then(function () {
@@ -1826,82 +2019,27 @@
                     'Rescan inputs to pick another.');
                 return;
             }
-            var got = {};
+            if (!CALIBRATION_MODE_FIRMWARE) return sweepAsBefore(chosen);
+            // What the keyboard runs says which sweep, and its table is the
+            // one a converging run starts from, so it is read first.  Read
+            // and Send wait for the read, and for a converging run after it:
+            // a send in the middle of one would push over the entries it is
+            // moving, and its commit could save one of their tries.
+            var cancelled = false, held = false;
+            function hold(on) {
+                if (on && !kbd.busy) { kbd.busy = held = true; refresh(); }
+                else if (!on && held) { kbd.busy = held = false; refresh(); }
+            }
             setRunning(true);
-            autoNote('Listening for the bottom C\u2026', 0);
-            sweep = new CALIBRATE.Sweep({
-                output: chosen,
-                // Empty means Auto: the sweep finds the channel by playing on
-                // each in turn and watching for the pitch to move.
-                channel: $('calMidiChan').value === '' ? null
-                                                       : Number($('calMidiChan').value),
-                deviceId: $('calAudio').value || null,
-                audioChannel: parseInt($('calChan').value, 10) || 0,
-                // What listChannels() actually got the device to open.  The
-                // sweep needs it because "ideal" can negotiate two channels on
-                // a desk that hands over twelve when asked for twelve outright,
-                // and that is the number this dropdown was filled from.
-                audioChannels: chanFor[$('calAudio').value || ''] || null,
-                // Entries, not semitones.  The sweep counts in firmware table
-                // entries - the bottom key is entry 3 whatever the pitch
-                // offset is - while these boxes count in calibration
-                // semitones, where the bottom key is PLAYABLE_LOW.  The two
-                // coincide with the offset on and are three apart without it,
-                // so handing the sweep PLAYABLE_LOW/PLAYABLE_HIGH raw played
-                // 62 of the 65 keys on a 208c and filed every reading three
-                // rows high.
-                low: CALIBRATE.entryForSemitone(PLAYABLE_LOW, PLAYABLE_LOW),
-                high: CALIBRATE.entryForSemitone(PLAYABLE_HIGH, PLAYABLE_LOW),
-                octaveTerm: false, velocity: 100,
-                onReading: pushLog,
-                onProbe: function (ch, confirming) {
-                    autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
-                                         : 'Looking for the keyboard on MIDI channel ') +
-                             (ch + 1) + '\u2026', 0);
-                },
-                onChannel: function (ch) {
-                    $('calMidiChan').value = String(ch);
-                },
-                onNote: function (step, reading, i, total) {
-                    got[CALIBRATE.semitoneFor(step.index, PLAYABLE_LOW)] =
-                        reading ? reading.cents : null;
-                    var name = CALIBRATE.noteLabel(step.index);
-                    autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
-                             (reading && reading.cents !== null ?
-                                 (reading.cents >= 0 ? '+' : '') +
-                                 reading.cents.toFixed(1) + ' cents' : 'not heard'),
-                             (i + 1) / total);
-                }
-            });
-            return sweep.run().then(function (out) {
-                var bridged = bridgeGaps(got);
-                $('useCal').checked = true;
-                syncCalBody();
-                buildTable(); drawPlot(); validateCal(); invalidate();
-                var heard = out.readings.filter(function (r) { return r.cents !== null; });
-                autoNote('');
-                var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
-                    ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
-                    out.anchorHz.toFixed(2) + ' Hz; the ' +
-                    'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
-                    'which has been taken out of every reading.';
-                if (bridged) {
-                    note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
-                        ' not heard and have been carried across from their neighbours - ' +
-                        'check those by hand.';
-                }
-                if (out.warnings.length) {
-                    // Capped: a run that goes wrong everywhere would otherwise
-                    // bury its own summary under sixty-five lines.
-                    var show = out.warnings.slice(0, 12);
-                    note += '\n\n' + show.join('\n');
-                    if (out.warnings.length > show.length) {
-                        note += '\n...and ' + (out.warnings.length - show.length) +
-                                ' more.';
-                    }
-                }
-                msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad', note);
-            });
+            autoNote('Reading\u2026', 0);
+            hold(true);
+            sweep = { stop: function () { cancelled = true; } };
+            return readForCalibration(chosen).then(function (r) {
+                if (cancelled) throw new Error('Stopped.');
+                if (r && calibrationModeSupported(r.identity)) return sweepInMode(chosen, r);
+                hold(false);
+                return sweepAsBefore(chosen);
+            }).then(function () { hold(false); }, function (err) { hold(false); throw err; });
         }).catch(function (err) {
             autoNote('');
             msg($('calMsg'), 'bad', err.message || String(err));

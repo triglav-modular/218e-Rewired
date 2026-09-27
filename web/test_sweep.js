@@ -91,9 +91,22 @@ function makeWorld(opts) {
 
 function load(w) {
     var root = {};
-    root.setTimeout = function (fn) { return setTimeout(fn, 0); };
-    root.addEventListener = function () {};
-    root.removeEventListener = function () {};
+    // A world that keeps time (the calibration mode's, below) is told how
+    // long each wait was; nothing here waits on a real clock.
+    root.setTimeout = function (fn, ms) {
+        if (w.clock !== undefined) w.clock += ms || 0;
+        return setTimeout(fn, 0);
+    };
+    // And one with `listeners` is handed the page's, so a test can be the
+    // tab going away.
+    root.addEventListener = function (type, fn) {
+        if (w.listeners) (w.listeners[type] = w.listeners[type] || []).push(fn);
+    };
+    root.removeEventListener = function (type, fn) {
+        if (w.listeners && w.listeners[type]) {
+            w.listeners[type] = w.listeners[type].filter(function (f) { return f !== fn; });
+        }
+    };
     root.navigator = {
         requestMIDIAccess: function () {
             return Promise.resolve({
@@ -141,6 +154,8 @@ function load(w) {
             return {
                 fftSize: 2048, smoothingTimeConstant: 0,
                 getFloatTimeDomainData: function (buf) {
+                    // A world can act while a note is held and being read.
+                    if (w.onRead) w.onRead();
                     var was = w.pending, now = w.hz;
                     w.pending = null;
                     for (var i = 0; i < buf.length; i++) {
@@ -174,6 +189,10 @@ function load(w) {
     return new Function('window', SRC + '\nreturn window.CALIBRATE;')(root);
 }
 
+// The plain sweep's signature (see the end of the file), as the sweep stood
+// before calibration mode.
+var PLAIN_SWEEP = 'e85c4a93:5811 c725248a:5584 7b8cfaa5:8675 091563a2:5999';
+
 function sweep(w, opts) {
     var C = load(w);
     var o = { output: w.output, channel: 0, deviceId: null, audioChannel: 0,
@@ -189,6 +208,232 @@ function noteForEntry(entry) {
     var hit = C.plan(entry, entry, false)[0];
     if (!hit) throw new Error('no note reaches entry ' + entry);
     return hit.note;
+}
+
+// --- calibration mode: a keyboard that plays its table ---------------------
+// Firmware with calibration mode plays mirror[note - 21] exactly and takes
+// pitch-table writes into that mirror live, so the sweep can do in one run
+// what the page otherwise does over several flashes: read a note, move its
+// entry, read it again.  This is that firmware as the page sees it over
+// MIDI - NRPN decoded into a mirror, a mode that lapses after five seconds
+// without a note-on on its channel or on a key press, a reload from flash -
+// in front of a 208 that is not quite exponential: its slope a little off,
+// and its local gain wandering a few percent either side along the DAC.
+// Outside the mode a note goes through the key table and the remap and the
+// pads add 150 cents, so a note played outside it reads plausibly and wrong.
+require('vm').runInThisContext(fs.readFileSync(path.join(__dirname, 'generated.js'), 'utf8'),
+                               { filename: 'generated.js' });
+var B = require('./buildlib.js'), M = require('./settings.js');
+var PLAIN = load(makeWorld({ listening: 0 }));
+var F0 = 27.5;                  // the 208 at 0 V: the A three semitones under the bottom C
+
+function countsPerCentOf(cfg) {
+    return cfg.pitch.dac_counts / (cfg.pitch.dac_vref * cfg.pitch.dac_gain) *
+           cfg.pitch.volts_per_octave / GEN.calibrationVoltsPerOctave / 1200;
+}
+
+function modeWorld(opts) {
+    var w = makeWorld({ listening: opts.listening === undefined ? 2 : opts.listening,
+                        mute: opts.mute });
+    var cfg = B.expand({ volts_per_octave: opts.vpo || 1.2, pitch_offset: opts.offset !== false });
+    var cpo = countsPerCentOf(cfg) * 1200;          // DAC counts an octave of the ramp
+    w.cfg = cfg;
+    w.shift = GEN.bottomKeyIndex - cfg.pitch.bottom_key_semitone;
+    w.flash = (opts.table || B.pitchTable(cfg, cfg._calibration)).slice();
+    w.mirror = w.flash.slice();
+    w.mode = false; w.clock = 0; w.lastOn = -1e9; w.modeSince = 0; w.listeners = {};
+    w.events = []; w.pairs = []; w.writes = []; w.backwards = []; w.atModeOff = [];
+    w.outside = 0; w.keyAt = opts.keyAt || {};
+    var slope = opts.slope === undefined ? 0.015 : opts.slope;
+    var wobble = opts.wobble === undefined ? 0.03 : opts.wobble;
+    w.gMin = 1 + slope - wobble; w.gMax = 1 + slope + wobble;
+    var P = 700, amp = wobble * P / (2 * Math.PI);  // local gain (1 + slope) +/- wobble
+    var gainAt = opts.gainAt || {}, drift = opts.drift || 0;
+    var outside = opts.outside === undefined ? 150 : opts.outside;
+    function octaves(v) { return (v * (1 + slope) + amp * Math.sin(2 * Math.PI * v / P + 0.4)) / cpo; }
+    // The pitch entry e sounds at when it holds v.  gainAt makes one entry
+    // answer a move that many times over: not a 208, but the way to make a
+    // try that overshoots on purpose.  drift is cents a second.
+    w.pitchOf = function (e, v) {
+        var o = octaves(v);
+        if (gainAt[e]) o = octaves(w.flash[e]) + (o - octaves(w.flash[e])) * gainAt[e];
+        return F0 * Math.pow(2, o + drift * w.clock / 1000 / 1200);
+    };
+    // Where entry e is exactly in tune against the anchor, in counts: what a
+    // run is meant to get within half a count of.
+    w.ideal = function (e) {
+        var want = w.pitchOf(3, w.flash[3]) * Math.pow(2, (e - 3) / 12), lo = -4000, hi = 8000;
+        for (var k = 0; k < 80; k++) {
+            var mid = (lo + hi) / 2;
+            if (w.pitchOf(e, mid) < want) lo = mid; else hi = mid;
+        }
+        return (lo + hi) / 2;
+    };
+    var dec = B.nrpnDecoder();
+    w.output.send = function (m) {
+        var status = m[0] & 0xf0, ch = m[0] & 0x0f, note = m[1];
+        w.sent.push({ status: status, ch: ch, note: note });
+        if (!w.connected) return;
+        // Five seconds without a note-on, counted from the later of the
+        // last one and the mode going on.  A second "on" while it is on
+        // restarts nothing: that is the reading that makes a lapse likeliest.
+        if (w.mode && w.clock - Math.max(w.lastOn, w.modeSince) > 5000) w.mode = false;
+        if (status === 0xB0) {
+            var got = dec.feed(m[0], m[1], m[2]);
+            if (!got) return;
+            w.pairs.push([got.param, got.value]);
+            w.events.push(['nrpn', got.param, got.value]);
+            if (got.param === 0x3f05) {
+                if (got.value === 0x2a2a) {
+                    if (!w.mode) w.modeSince = w.clock;
+                    w.mode = true;
+                } else if (w.mode) {
+                    w.mode = false;
+                    w.atModeOff.push(w.mirror.slice());
+                }
+            } else if (got.param === 0x3f01) {
+                w.mirror = w.flash.slice();
+            } else if (got.param >= 0x80 && got.param < 0x80 + 79) {
+                var e = got.param - 0x80;
+                w.mirror[e] = got.value;
+                w.writes.push([e, got.value]);
+                for (var k = w.shift + 1; k < 79; k++) {
+                    if (w.mirror[k] <= w.mirror[k - 1]) { w.backwards.push([e, got.value, k]); break; }
+                }
+            }
+            return;
+        }
+        if (status === 0x90) {
+            w.notesOn++;
+            w.events.push(['on', ch, note]);
+            if (ch !== w.listening) return;
+            w.heardOn++;
+            w.lastOn = w.clock;
+            if (w.keyAt[w.heardOn]) { w.mode = false; w.keyNote = note; }   // a key pressed with this note
+            var idx, extra = 0;
+            if (w.mode) {
+                idx = Math.max(0, Math.min(78, note - 21));
+            } else {
+                w.outside++;
+                var hit = PLAIN.entryFor(note, false);
+                if (!hit) return;                       // no key reaches it: the drone holds
+                idx = hit.index; extra = outside;
+            }
+            w.hz = w.pitchOf(idx, w.mirror[idx]) * Math.pow(2, extra / 1200);
+            w.quiet = !!w.mute[note];
+        } else if (status === 0x80) {
+            w.notesOn--;
+        }
+    };
+    return w;
+}
+
+// The page's wiring, in the test's hands: the mode and the writes go
+// through SETTINGSMIDI exactly as app.js sends them.  Every entry that holds
+// an offset is swept - all 79 with the pitch offset, from the bottom key's
+// up without it - which is what the page asks for.
+function modeSweep(w, opts) {
+    var C = load(w);
+    var timers = { setTimeout: function (fn, ms) { w.clock += ms || 0; return setTimeout(fn, 0); } };
+    var o = { output: w.output, channel: w.listening, deviceId: null, audioChannel: 0,
+              low: w.shift, high: 78, velocity: 100,
+              mode: { on: function () { M.calibrationMode(w.output, true); },
+                      off: function () { M.endCalibration(w.output); } },
+              adjust: { table: w.flash.slice(), countsPerCent: countsPerCentOf(w.cfg),
+                        write: function (entry, value) {
+                            return M.writePitch(w.output, entry, value, { timers: timers });
+                        } } };
+    for (var k in opts) o[k] = opts[k];
+    w.run = new C.Sweep(o);
+    return w.run.run();
+}
+
+// How close a run came: the worst distance from in tune, in counts and in
+// the residuals the run itself read, over the entries it heard.
+function closeness(w, out) {
+    var r = { counts: Infinity, cents: Infinity, at: null, centsAt: null, heard: 0 };
+    if (!out || !out.table || !out.readings) return r;
+    r.counts = 0; r.cents = 0;
+    out.readings.forEach(function (x) {
+        if (x.residual === null || x.residual === undefined) return;
+        r.heard++;
+        var d = Math.abs(out.table[x.index] - w.ideal(x.index));
+        if (d > r.counts) { r.counts = d; r.at = x.index; }
+        if (Math.abs(x.residual) > r.cents) { r.cents = Math.abs(x.residual); r.centsAt = x.index; }
+    });
+    return r;
+}
+// What "within half a count" can mean, given how it is read.  Half a count
+// is judged at the ramp's rate, and a 208's own rate is a few percent either
+// side of it.  Where it is shallower a note stops up to 0.5/gMin of its own
+// counts out; where it is steeper and in tune midway between two counts,
+// neither comes within half a count at the ramp's rate, and the closer is
+// kept - reading up to half a count times gMax.  Plus 0.01 count and 0.02
+// cent for the estimator.
+function tolerance(w) {
+    return { counts: 0.5 / w.gMin + 0.01,
+             cents: 0.5 / countsPerCentOf(w.cfg) * w.gMax + 0.02 };
+}
+function lastPairs(w, n) { return JSON.stringify(w.pairs.slice(-n)); }
+var ENDED = JSON.stringify([[0x3f05, 0], [0x3f01, 0]]);
+function increasing(t, from) {
+    if (!t) return false;
+    for (var k = from + 1; k < t.length; k++) if (t[k] <= t[k - 1]) return false;
+    return true;
+}
+function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+
+// The page's own code for what a converging run hands it, out of app.js
+// with the DOM stubbed the way web/test_readback.js stubs it: the version
+// gate, and loadPitchTable with rows(), whose table is what a build makes.
+var APP = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+function appSource(open, close) {
+    var start = APP.indexOf(open);
+    if (start < 0) return '';
+    return APP.slice(start, APP.indexOf(close, start) + close.length);
+}
+function appFunction(name) { return appSource('\n    function ' + name + '(', '\n    }\n'); }
+function pageLoad(table) {
+    var vm = require('vm'), page = vm.createContext({ BUILDLIB: B, GEN: GEN });
+    vm.runInContext([
+        'var vpo = 1.2, pitchOffset = true, nodes = {};',
+        'var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
+        'var measured = [], baseline = {}, baselineSources = {}, baselineName = "", baselineHistory = null, interpolated = {};',
+        // Readings on the page before the run: the load clears them.
+        'for (var i = 0; i < 79; i++) measured.push(i % 7 ? 0 : 3.5);',
+        'function $(id) { return nodes[id] || (nodes[id] = { checked: false }); }',
+        'function press(id, v) { if (id === "vpo") vpo = Number(v); else if (id === "offset") { var on = v === "1"; if (on !== pitchOffset) { pitchOffset = on; PLAYABLE_LOW = on ? 3 : 0; PLAYABLE_HIGH = PLAYABLE_LOW + 64; if (haveBaseline()) clearBaseline(); } } }',
+        'function syncCalBody() {} function syncBaseline() {} function buildTable() {} function drawPlot() {} function validateCal() {} function invalidate() {}',
+        appFunction('clearBaseline'), appFunction('haveBaseline'), appFunction('rows'),
+        appFunction('loadPitchTable')
+    ].join('\n'), page, { filename: 'web/app.js (extracted)' });
+    page.table = table;
+    page.was = B.pitchTableSettings(table);
+    return vm.runInContext('clearBaseline(); loadPitchTable(table, was, "the tuned table");' +
+        '({ built: BUILDLIB.pitchTable(BUILDLIB.expand({ volts_per_octave: vpo, pitch_offset: pitchOffset }), rows()),' +
+        '   cleared: measured.every(function (v) { return v === 0; }), ticked: $("useCal").checked,' +
+        '   name: baselineName })', page);
+}
+
+// A sweep's whole outward behaviour, minus the clock: every MIDI message,
+// every reading, warning and log row, and which keys the result has.
+function signature(w, out) {
+    var text = JSON.stringify({
+        sent: w.sent.map(function (m) { return [m.status, m.ch, m.note]; }),
+        keys: Object.keys(out).sort(), readings: out.readings, warnings: out.warnings,
+        log: out.log.map(function (r) {
+            var c = {};
+            Object.keys(r).forEach(function (k) { if (k !== 't') c[k] = r[k]; });
+            return c;
+        }),
+        anchorHz: out.anchorHz, channel: out.channel, drift: out.drift
+    }, function (k, v) { return typeof v === 'number' ? Math.round(v * 1000) / 1000 : v; });
+    var h = 0x811c9dc5;
+    for (var i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return ('0000000' + h.toString(16)).slice(-8) + ':' + text.length;
 }
 
 (async function () {
@@ -498,6 +743,300 @@ function noteForEntry(entry) {
                .every(function (k) { return r[k] === null; });
        }),
        unread.length ? JSON.stringify(unread[0]) : '');
+
+    // --- the plain sweep is the sweep it was ------------------------------
+    // Converging is an option, and a sweep without it has to be exactly the
+    // one before it: the same MIDI, note for note, and the same readings,
+    // warnings, log and result.  Pinned by a hash taken from the sweep as it
+    // stood before calibration mode (2026-09-27), over four runs that reach
+    // its branches: a uniform error, an Auto search, three dropouts and a
+    // note that did not take, and an anchor that arrived late.
+    seed = 2026;
+    var sigs = [];
+    w = makeWorld({ listening: 2, error: 7 });
+    out = await sweep(w, { channel: 2, high: 20 });
+    sigs.push(signature(w, out));
+    w = makeWorld({ listening: 5 });
+    out = await sweep(w, { channel: null, high: 12 });
+    sigs.push(signature(w, out));
+    var dropped = {};
+    [20, 21, 22].forEach(function (e) { dropped[noteForEntry(e)] = true; });
+    var ignored = {}; ignored[noteForEntry(23)] = true;
+    w = makeWorld({ listening: 2, mute: dropped, deaf: ignored });
+    out = await sweep(w, { channel: 2, high: 30 });
+    sigs.push(signature(w, out));
+    w = makeWorld({ listening: 2, late: { 3: 'half' } });
+    out = await sweep(w, { channel: 2, high: 20 });
+    sigs.push(signature(w, out));
+    ok('without adjust or mode the sweep sends, reads and reports what it did before',
+       sigs.join(' ') === PLAIN_SWEEP, sigs.join(' '));
+
+    // --- calibration mode: one run converges -----------------------------
+    // 1.2 V/oct with the pitch offset: all 79 entries, from the flat table,
+    // on a 208 whose slope is 1.5% steep and whose gain wanders 3%.
+    w = modeWorld({ listening: 2 });
+    var half = 0.5 / countsPerCentOf(w.cfg);
+    err = null;
+    try { out = await modeSweep(w, {}); } catch (e) { err = e; out = { readings: [], warnings: [], log: [] }; }
+    ok('a run in calibration mode completes', !err, err ? err.message : '');
+    var rd = out.readings;
+    ok('calibration mode sweeps all 79 entries, notes 21 to 99, one apiece',
+       rd.length === 79 && rd.every(function (r, i) { return r.index === i && r.note === i + 21; }),
+       rd.length + ' readings, ' + (rd.length ? rd[0].note + '..' + rd[rd.length - 1].note : '-'));
+    ok('and returns the table it converged', !!out.table && out.table.length === 79);
+    var near = closeness(w, out), tol = tolerance(w);
+    ok('and every entry is heard', near.heard === 79, near.heard + '/79');
+    ok('one run brings every heard entry within half a count of in tune (' +
+       tol.counts.toFixed(3) + ' of this 208\u2019s counts)',
+       near.counts <= tol.counts, 'worst ' + near.counts.toFixed(3) + ' counts, at entry ' + near.at);
+    ok('with every residual ' + tol.cents.toFixed(2) + ' cents or less at 1.2 V/oct, half a count being ' +
+       half.toFixed(2), near.cents <= tol.cents,
+       'worst ' + near.cents.toFixed(3) + ' cents, at entry ' + near.centsAt);
+    var start = Math.max.apply(null, rd.map(function (r) { return Math.abs(r.first || 0); }));
+    ok('from a table that needed it', start > 50, 'the flat table read up to ' + start.toFixed(1) + ' cents out');
+    ok('in at most three tries a note', rd.every(function (r) { return r.tries >= 1 && r.tries <= 3; }),
+       rd.map(function (r) { return r.tries; }).join(''));
+    ok('the anchor is never written', !w.writes.some(function (p) { return p[0] === 3; }) &&
+       !!out.table && out.table[3] === w.flash[3], JSON.stringify(w.writes.filter(function (p) { return p[0] === 3; })));
+    ok('the table the keyboard plays never goes backwards, not even for a note',
+       w.backwards.length === 0 && increasing(out.table, w.shift), JSON.stringify(w.backwards.slice(0, 3)));
+    ok('and the mirror holds every kept value when the mode ends',
+       w.atModeOff.length === 1 && same(w.atModeOff[0], out.table),
+       w.atModeOff.length + ' mode-offs');
+    ok('the run ends with the mode off and the mirror reloaded from flash',
+       lastPairs(w, 2) === ENDED && !w.mode && same(w.mirror, w.flash), lastPairs(w, 2));
+    var firstOn = -1, firstMode = -1;
+    w.events.forEach(function (ev, k) {
+        if (firstOn < 0 && ev[0] === 'on') firstOn = k;
+        if (firstMode < 0 && ev[0] === 'nrpn' && ev[1] === 0x3f05 && ev[2] === 0x2a2a) firstMode = k;
+    });
+    ok('the mode goes on before the first note', firstMode >= 0 && firstMode < firstOn,
+       'mode at event ' + firstMode + ', first note at ' + firstOn);
+    ok('and no note is played outside it', w.outside === 0, w.outside + ' outside');
+    ok('every note sent was released', w.notesOn === 0, 'still on: ' + w.notesOn);
+    ok('the log carries the value each note played at',
+       out.log.some(function (r) { return r.what === 'retry'; }) &&
+       out.log.filter(function (r) { return r.what === 'sweep' || r.what === 'retry'; })
+              .every(function (r) { return typeof r.value === 'number'; }));
+
+    // What the page does with it: the table becomes offsets, and the offsets
+    // have to build that table again exactly - once straight, and once the
+    // way the page loads a keyboard's table, as the baseline with the
+    // readings cleared.
+    var cfg12 = w.cfg, conv12 = out.table;
+    var rows = conv12 ? B.pitchCents(cfg12, conv12) : [];
+    ok('the converged table builds again from its offsets, entry for entry',
+       !!conv12 && same(B.pitchTable(cfg12, rows), conv12));
+    var base = {}, zeros = [];
+    rows.forEach(function (r) { base[r.semitone] = r.cents; });
+    for (var z = 0; z < 79; z++) zeros.push(0);
+    var pageRows = B.calibrationRows(base, {}, zeros, 3, 67, 79, true, null)
+        .map(function (v, s) { return { semitone: s, cents: v }; });
+    ok('and through the page\u2019s own rows, loaded as a baseline',
+       !!conv12 && same(B.pitchTable(cfg12, pageRows), conv12));
+    var loaded = null;
+    try { loaded = conv12 && pageLoad(conv12); } catch (e) { loaded = { error: e.message }; }
+    ok('and through the page\u2019s own load of it: the build\u2019s table is the converged table',
+       !!loaded && !loaded.error && same(loaded.built, conv12) && loaded.cleared && loaded.ticked &&
+       loaded.name === 'the tuned table', loaded && loaded.error ? loaded.error : '');
+    ok('the page\u2019s counts per cent are the ramp\u2019s',
+       typeof B.pitchCountsPerCent === 'function' &&
+       Math.abs(B.pitchCountsPerCent(cfg12) - countsPerCentOf(cfg12)) < 1e-12 &&
+       Math.abs(B.pitchCountsPerCent(cfg12) - 0.4006) < 0.001,
+       typeof B.pitchCountsPerCent === 'function' ? String(B.pitchCountsPerCent(cfg12)) : 'missing');
+
+    // 1 V/oct without the pitch offset: the three entries under the bottom
+    // key sit at 0 V and are not offsets, so the sweep starts at entry 3;
+    // and a slope 1% shallow, where half a count in cents is a little more
+    // than half a count of the 208.
+    w = modeWorld({ listening: 2, vpo: 1.0, offset: false, slope: -0.01, wobble: 0.02 });
+    half = 0.5 / countsPerCentOf(w.cfg);
+    out = await modeSweep(w, {});
+    near = closeness(w, out); tol = tolerance(w);
+    ok('at 1 V/oct without the offset, entries 3 to 78 are swept',
+       out.readings.length === 76 && out.readings[0].index === 3 && near.heard === 76,
+       out.readings.length + ' readings, ' + near.heard + ' heard');
+    ok('and each comes within half a count of in tune (' + tol.counts.toFixed(3) + ' of its counts)',
+       near.counts <= tol.counts, 'worst ' + near.counts.toFixed(3) + ' counts at entry ' + near.at);
+    ok('with every residual ' + tol.cents.toFixed(2) + ' cents or less, half a count being ' + half.toFixed(2),
+       near.cents <= tol.cents, 'worst ' + near.cents.toFixed(3) + ' at entry ' + near.centsAt);
+    ok('the entries under the bottom key are neither played nor written',
+       !w.writes.some(function (p) { return p[0] < 3; }) && !!out.table &&
+       out.table.slice(0, 3).join() === '0,0,0' &&
+       !w.events.some(function (ev) { return ev[0] === 'on' && ev[2] < 24; }));
+    ok('and that table builds again from its offsets too', !!out.table &&
+       same(B.pitchTable(w.cfg, B.pitchCents(w.cfg, out.table)), out.table) &&
+       increasing(out.table, w.shift));
+    loaded = null;
+    try { loaded = out.table && pageLoad(out.table); } catch (e) { loaded = { error: e.message }; }
+    ok('and the page\u2019s load of it builds it again, the offset switched off to match',
+       !!loaded && !loaded.error && same(loaded.built, out.table), loaded && loaded.error ? loaded.error : '');
+
+    // --- which keyboards get it ---------------------------------------------
+    // The gate out of app.js: 3.0.1, the first firmware with the mode (the
+    // owner, 2026-09-27), and later; 3.0 and older get the sweep they always
+    // did.  Then the rule itself, against another threshold.
+    var gate = require('vm').createContext({ BUILDLIB: B }), allowed = null;
+    try {
+        require('vm').runInContext(appSource('\n    var CALIBRATION_MODE_FIRMWARE', ';\n') +
+                                   appFunction('calibrationModeSupported'), gate);
+        if (typeof gate.calibrationModeSupported === 'function') {
+            allowed = function (v) { return gate.calibrationModeSupported({ firmwareVersion: v }); };
+        }
+    } catch (e) { allowed = null; }
+    ok('3.0.1 is the first firmware put into calibration mode, and 3.0 is not',
+       !!allowed && gate.CALIBRATION_MODE_FIRMWARE === '3.0.1' && allowed('3.0.1') &&
+       allowed('3.1.0') && !allowed('3.0.0') && !allowed('2.4.0'));
+    if (allowed) require('vm').runInContext('CALIBRATION_MODE_FIRMWARE = "3.1.0";', gate);
+    ok('once one is, that version and later are, and earlier or silent ones are not',
+       !!allowed && allowed('3.1.0') && allowed('3.2.0') && allowed('4.0.0') && !allowed('3.0.9') &&
+       !allowed(null) && !gate.calibrationModeSupported(null));
+
+    // --- what is left alone -----------------------------------------------
+    // A note that is not heard keeps the value it came with, and is not
+    // written at all.
+    var hush = {}; hush[41] = true; hush[42] = true;       // entries 20 and 21
+    w = modeWorld({ listening: 2, mute: hush });
+    out = await modeSweep(w, { high: 26 });
+    var lost = out.readings.filter(function (r) { return r.index === 20 || r.index === 21; });
+    ok('a note not heard keeps its original value',
+       lost.length === 2 && lost.every(function (r) {
+           return r.cents === null && r.value === w.flash[r.index] && !!out.table &&
+                  out.table[r.index] === w.flash[r.index];
+       }), JSON.stringify(lost));
+    ok('and is never written', !w.writes.some(function (p) { return p[0] === 20 || p[0] === 21; }));
+    ok('and says so', out.warnings.some(function (x) {
+           return x.indexOf(PLAIN.noteLabel(20) + ': too quiet to read, left unchanged') === 0;
+       }), out.warnings.join(' | '));
+    ok('while the notes around it still converge', closeness(w, out).counts <= tolerance(w).counts,
+       closeness(w, out).counts.toFixed(3));
+
+    // The closest try is the one kept.  Entry 40 here answers a move two and
+    // a half times over, so each correction overshoots further than the
+    // last: the first value, never moved, was the closest, and it is
+    // written back.
+    w = modeWorld({ listening: 2, gainAt: { 40: 2.5 } });
+    out = await modeSweep(w, { low: 36, high: 44 });
+    var wild = out.readings.filter(function (r) { return r.index === 40; })[0] || {};
+    var to40 = w.writes.filter(function (p) { return p[0] === 40; });
+    ok('an entry whose tries only get worse is played three times', wild.tries === 3, 'tries ' + wild.tries);
+    ok('and keeps its best, the value it started at',
+       wild.value === w.flash[40] && !!out.table && out.table[40] === w.flash[40],
+       'kept ' + wild.value + ', started ' + w.flash[40]);
+    ok('which is written back, so the mirror plays it until the run ends',
+       to40.length === 3 && to40[2][1] === w.flash[40] && w.atModeOff.length === 1 &&
+       w.atModeOff[0][40] === w.flash[40], JSON.stringify(to40));
+    ok('and the entry is named as not converged',
+       out.warnings.some(function (x) { return /cents out after 3 tries/.test(x); }), out.warnings.join(' | '));
+
+    // Never past a neighbour.  Entry 30 here is a semitone flat and entry
+    // 31 sits six counts above 29, so 30 has five counts of room: it moves
+    // as far as the room allows and no further, and says so, and 31 - with
+    // room above it - converges.
+    var squeezed = B.pitchTable(B.expand({}), B.expand({})._calibration);
+    squeezed[30] = squeezed[29] + 3; squeezed[31] = squeezed[29] + 6;
+    w = modeWorld({ listening: 2, table: squeezed });
+    out = await modeSweep(w, { low: 26, high: 34 });
+    var at30 = out.readings.filter(function (r) { return r.index === 30; })[0] || {};
+    ok('an entry never passes the neighbour above it, not even for a note',
+       w.backwards.length === 0 && !!out.table && increasing(out.table, 0), JSON.stringify(w.backwards.slice(0, 2)));
+    ok('it goes as far as the room allows', at30.value === squeezed[31] - 1, 'value ' + at30.value);
+    ok('and is named as not converged', out.warnings.some(function (x) {
+           return x.indexOf(PLAIN.noteLabel(30) + ': ') === 0 && /cents out after/.test(x);
+       }),
+       out.warnings.join(' | '));
+    ok('while the neighbour with room converges',
+       !!out.table && Math.abs(out.table[31] - w.ideal(31)) <= tolerance(w).counts,
+       out.table ? (out.table[31] - w.ideal(31)).toFixed(2) + ' counts' : '-');
+
+    // The anchor is the reference, so it is never moved - even when drift
+    // makes its own sweep reading come back several cents off.
+    w = modeWorld({ listening: 2, slope: 0, wobble: 0, drift: 1.5 });
+    out = await modeSweep(w, { high: 10 });
+    var a3 = out.readings.filter(function (r) { return r.index === 3; })[0] || {};
+    ok('the anchor stays put when its own reading has drifted past half a count',
+       Math.abs(a3.cents) > half && a3.value === w.flash[3] &&
+       !w.writes.some(function (p) { return p[0] === 3; }),
+       'read ' + (a3.cents === undefined ? '-' : a3.cents.toFixed(2)) + ' cents, ' + w.writes.length + ' writes');
+
+    // --- the mode stays on while it is needed ------------------------------
+    // An Auto search spends two notes on every channel that does not answer,
+    // and the mode lapses five seconds after the last note on the one that
+    // does: nine channels in, a single "on" would have left the run playing
+    // through the pads.
+    w = modeWorld({ listening: 9 });
+    out = await modeSweep(w, { channel: null, high: 12 });
+    ok('an Auto search finds the channel with the mode on throughout',
+       out.channel === 9 && w.outside === 0 && closeness(w, out).counts <= tolerance(w).counts,
+       'channel ' + out.channel + ', ' + w.outside + ' outside, worst ' + closeness(w, out).counts.toFixed(2));
+
+    // A key pressed mid-run ends the mode.  The note it lands on is played
+    // outside, 150 cents off, and costs that entry its tries; the next note
+    // has the mode back, and every other entry converges as it would have.
+    w = modeWorld({ listening: 2, keyAt: { 20: true } });
+    out = await modeSweep(w, { high: 30 });
+    var hit = w.keyNote - 21, rest = 0;
+    (out.readings || []).forEach(function (r) {
+        if (r.index !== hit && r.residual !== null && r.residual !== undefined) {
+            rest = Math.max(rest, Math.abs(out.table[r.index] - w.ideal(r.index)));
+        }
+    });
+    ok('a key press mid-run costs one note, not the rest of the run',
+       w.outside === 1 && !!out.table && rest <= tolerance(w).counts,
+       w.outside + ' outside, at entry ' + hit + '; the others worst ' + rest.toFixed(3) + ' counts');
+
+    // --- and goes off however the run ends ---------------------------------
+    w = modeWorld({ listening: 2 });
+    err = null;
+    try {
+        await modeSweep(w, { high: 30, onNote: function (step, r, i) { if (i === 8) w.run.stop(); } });
+    } catch (e) { err = e; }
+    ok('Stop ends the mode and reloads the mirror',
+       !!err && /Stopped/.test(err.message) && lastPairs(w, 2) === ENDED && !w.mode &&
+       same(w.mirror, w.flash) && w.notesOn === 0, (err ? err.message : 'ran') + ' ' + lastPairs(w, 2));
+
+    w = modeWorld({ listening: 2 });
+    err = null;
+    var writes = 0;
+    try {
+        await modeSweep(w, { high: 30, adjust: {
+            table: w.flash.slice(), countsPerCent: countsPerCentOf(w.cfg),
+            write: function (entry, value) {
+                if (++writes === 5) return Promise.reject(new Error('port gone'));
+                return M.writePitch(w.output, entry, value, { gap: 0 });
+            } } });
+    } catch (e) { err = e; }
+    ok('an error mid-run ends the mode and reloads the mirror',
+       !!err && err.message === 'port gone' && lastPairs(w, 2) === ENDED && !w.mode &&
+       same(w.mirror, w.flash) && w.notesOn === 0, (err ? err.message : 'ran') + ' ' + lastPairs(w, 2));
+
+    // The tab going away: pagehide, with a sweep note held and being read,
+    // lets go of the note and ends the mode there and then.
+    w = modeWorld({ listening: 2 });
+    var atHide = null, reads = 0;
+    w.onRead = function () {
+        if (++reads !== 12) return;
+        var held = w.notesOn;
+        (w.listeners.pagehide || []).slice().forEach(function (f) { f(); });
+        atHide = { held: held, pairs: lastPairs(w, 2), mode: w.mode, on: w.notesOn,
+                   reloaded: same(w.mirror, w.flash), n: (w.listeners.pagehide || []).length };
+        w.run.stop();
+    };
+    try { await modeSweep(w, { high: 30 }); } catch (e) { /* stopped */ }
+    ok('pagehide lets go of the held note, ends the mode and reloads the mirror at once',
+       !!atHide && atHide.held === 1 && atHide.on === 0 && atHide.pairs === ENDED && !atHide.mode &&
+       atHide.reloaded, JSON.stringify(atHide));
+    ok('and the listeners go when the run does', (w.listeners.pagehide || []).length === 0 &&
+       (w.listeners.beforeunload || []).length === 0);
+
+    // An audio input that cannot be opened stops the run before anything
+    // goes out, the mode included: there is nothing to end.
+    w = modeWorld({ listening: 2 });
+    w.channels = 2;
+    err = null;
+    try { await modeSweep(w, { audioChannel: 11 }); } catch (e) { err = e; }
+    ok('a run refused before its first note sends nothing, the mode included',
+       !!err && w.sent.length === 0, (err ? err.message : 'ran') + ', ' + w.sent.length + ' sent');
 
     console.log(failures ? ('FAILED ' + failures) : 'ALL SWEEP DRIVER TESTS PASSED');
     if (failures) process.exit(1);

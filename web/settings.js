@@ -126,6 +126,32 @@ var SETTINGSMIDI = (function () {
     function reload(output) { sendParam(output, B.NRPN_COMMANDS.reload, 0); }
     function defaults(output) { sendParam(output, B.NRPN_COMMANDS.defaults, 0); }
 
+    // Calibration mode (web/calibrate.js): on with its key, off with
+    // anything else.  A run ends with endCalibration - the mode off and the
+    // mirror reloaded from flash - so nothing a run wrote outlives it: what
+    // it found goes into the page's build, and reaches the keyboard only
+    // through a send or a flash.  The reload is tried even when the mode's
+    // own message throws.
+    function calibrationMode(output, on) {
+        sendParam(output, B.NRPN_COMMANDS.calibrate, on ? B.NRPN_COMMANDS.calibrateKey : 0);
+    }
+    function endCalibration(output) {
+        try { calibrationMode(output, false); } finally { reload(output); }
+    }
+    // One pitch-table entry into the live mirror, never committed.  One
+    // parameter is four packets, well inside the ring, and it resolves
+    // after the pause a push leaves between bursts (`opts.gap`, default 3).
+    var PITCH = B.NRPN_SECTIONS.filter(function (s) { return s.offset === B.SETTINGS_LAYOUT.pitch; })[0];
+    function writePitch(output, entry, value, opts) {
+        opts = opts || {};
+        if (!(entry >= 0 && entry < PITCH.count && entry === Math.floor(entry)) ||
+            !(value >= 0 && value <= 0xFFF && value === Math.floor(value))) {
+            return Promise.reject(new Error('pitch entry ' + entry + ' = ' + value + ' is out of range'));
+        }
+        sendParam(output, PITCH.base + entry, value);
+        return sleep(opts.gap === undefined ? 3 : opts.gap, opts.timers);
+    }
+
     // The parameters of a record that a dump did not read back the same:
     // [param, sent, got] each.  A parameter the dump left out counts too.
     function differences(record, pairs) {
@@ -270,7 +296,8 @@ var SETTINGSMIDI = (function () {
     return {
         push: push, dump: dump, read: read, identity: identity, commit: commit, reload: reload,
         defaults: defaults, differences: differences, install: install, restart: restart,
-        awaitLive: awaitLive, markerOf: markerOf, sendParam: sendParam, LAYOUT: LAYOUT
+        awaitLive: awaitLive, markerOf: markerOf, sendParam: sendParam, LAYOUT: LAYOUT,
+        calibrationMode: calibrationMode, endCalibration: endCalibration, writePitch: writePitch
     };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = SETTINGSMIDI;

@@ -107,6 +107,34 @@
         return out;
     }
 
+    // --- calibration mode --------------------------------------------------
+    // Firmware with calibration mode plays the table itself.  NRPN 0x3f05
+    // with 0x2a2a turns it on (SETTINGSMIDI.calibrationMode), and while it
+    // is on the pitch output is exactly mirror[note - 21] for the last
+    // note-on on the instrument's channel, clamped to entries 0..78.  None
+    // of the arithmetic above applies: no key table, no remap and no lean,
+    // and nothing added - no transposition, pads, tuning slot, glide or
+    // vibrato - with the arpeggiator and the sequencer silent.  So every one
+    // of the 79 entries is reachable, notes 21 to 99, one apiece, and the
+    // bottom C is still note 24 on entry 3.  A pitch-table write (NRPN
+    // 0x0080 + entry) lands in the live mirror at once, so the next note
+    // plays it.  The mode ends after five seconds without a note-on, on a
+    // key press, and on boot.
+    var MODE_FIRST_NOTE = 21, MODE_ENTRIES = 79;
+    function modeEntryFor(note) {
+        var index = note - MODE_FIRST_NOTE;
+        if (index < 0 || index >= MODE_ENTRIES) return null;
+        return { note: note, index: index, lean: 0 };
+    }
+    // The sweep in the mode: every entry from lowEntry to highEntry.
+    function modePlan(lowEntry, highEntry) {
+        var out = [];
+        for (var e = Math.max(0, lowEntry); e <= Math.min(MODE_ENTRIES - 1, highEntry); e++) {
+            out.push(modeEntryFor(e + MODE_FIRST_NOTE));
+        }
+        return out;
+    }
+
     // --- pitch estimation ------------------------------------------------
     // Two stages, because neither alone is enough.  A period estimator picks
     // the right partial and cannot be fooled by a 208's harmonics, but its
@@ -385,6 +413,10 @@
     var ANCHOR_NEAR_CENTS = 50;
     var ANCHOR_TRIES = 3;
     var MAX_CHANNELS = 32;          // asked for; the device gives what it has
+    // Converging (opts.adjust): how many times one note is played, the first
+    // reading included, and the top of the 12-bit DAC.
+    var ADJUST_TRIES = 3;
+    var DAC_TOP = 0xFFF;
 
     function constraints(deviceId, want) {
         return {
@@ -476,6 +508,28 @@
         });
     }
 
+    // Two options change what a sweep is, and without them it is the sweep
+    // it always was.
+    //
+    // `opts.mode`, { on, off }: the instrument is in calibration mode for
+    // the run (above).  Notes map straight to entries, `low` and `high` can
+    // reach all 79, and the anchor is entry 3 whatever the range.  on() goes
+    // out before every note-on, not once: the mode lapses after five seconds
+    // without a note-on on the instrument's channel, and an Auto search
+    // spends longer than that playing on the others - so a single on()
+    // left everything after it played through the pads and the
+    // transposition, which is a plausible, wrong table.  off() goes out once
+    // the run ends, however it ends - done, failed, stopped, or the page
+    // going away - and only if on() ever did.
+    //
+    // `opts.adjust`, { table, write(entry, value) -> Promise, countsPerCent }:
+    // converge each entry instead of only reading it.  `table` is the 79
+    // entries the instrument is playing, `write` puts one into its live
+    // mirror, and countsPerCent is the DAC counts that move the ramp a cent
+    // (BUILDLIB.pitchCountsPerCent).  A note more than half a count out is
+    // moved by its reading and played again, up to ADJUST_TRIES times, and
+    // the closest value is the one kept.  The result carries `table`, and
+    // each reading its `value`, `original`, `tries` and `residual`.
     function Sweep(opts) {
         this.opts = opts;
         this.stopped = false;
@@ -485,7 +539,9 @@
 
     Sweep.prototype.run = async function () {
         var o = this.opts, self = this;
-        var steps = plan(o.low, o.high, o.octaveTerm);
+        var mode = o.mode || null, adjust = o.adjust || null;
+        var entryOf = mode ? modeEntryFor : function (note) { return entryFor(note, o.octaveTerm); };
+        var steps = mode ? modePlan(o.low, o.high) : plan(o.low, o.high, o.octaveTerm);
         if (!steps.length) throw new Error('Nothing to sweep.');
 
         var stream;
@@ -590,9 +646,29 @@
         root.addEventListener('pagehide', letGo);
         root.addEventListener('beforeunload', letGo);
 
+        // The mode, the same way: whatever a run wrote into the mirror is
+        // meant for this run alone, and off() is what gives the keyboard its
+        // own table back.  A listener of its own, after the note-off's, so a
+        // port that has gone away and throws from the first still gets the
+        // second tried.
+        var modeOn = false;
+        function modeUp() { modeOn = true; mode.on(); }
+        function modeDown() {
+            if (!modeOn) return;
+            modeOn = false;
+            try { mode.off(); } catch (e) { /* the port is gone: nothing to end it through */ }
+        }
+        if (mode) {
+            root.addEventListener('pagehide', modeDown);
+            root.addEventListener('beforeunload', modeDown);
+        }
+        // The DAC value a note is being played at, for the log (converging).
+        var trying = null;
+
         async function hear(note, expectHz, channel, what) {
             var ch = channel === undefined ? o.channel : channel;
             release();
+            if (mode) modeUp();
             await sleep(GAP_MS);
             send(o.output, 0x90, note, o.velocity || 100, ch);
             held = note;
@@ -624,7 +700,7 @@
         // sweep is often explained by the one before it that was not part of
         // the sweep at all.
         function note_log(note, ch, what, expectHz, r, firstHalf, secondHalf) {
-            var e = entryFor(note, o.octaveTerm);
+            var e = entryOf(note);
             var row = {
                 t: Date.now() - t0,
                 what: what || 'sweep',
@@ -645,13 +721,177 @@
                 rms: r ? r.rms : null,
                 why: r && r.ok ? '' : (r ? r.why : 'not measured')
             };
+            // Converging, the entry's DAC value as the note played; null
+            // for a note that is not a sweep note.
+            if (adjust) row.value = trying;
             log.push(row);
             if (o.onReading) o.onReading(row);
         }
 
-        var anchor = steps[0], results = [], marks = [], warnings = [];
+        // In the mode the anchor is the bottom C, entry 3, and not the first
+        // entry swept: a sweep from entry 0 starts three semitones under it,
+        // at the 0 V pitch, which is the note least able to be a reference.
+        var anchor = mode ? modeEntryFor(MODE_FIRST_NOTE + BOTTOM_KEY_ENTRY) : steps[0];
+        var results = [], marks = [], warnings = [];
         var log = [], t0 = Date.now();
         var previous = null;
+
+        // What one sweep reading says, and what is wrong with it: null for a
+        // note not heard, else its pitch and its cents, null where the
+        // reading cannot be kept.  `blank` finishes the "not heard" warning
+        // with what becomes of the entry; `quiet` keeps every warning back,
+        // which is how a note played again is judged.
+        function judge(step, got, t, blank, quiet) {
+            function say(text) { if (!quiet) warnings.push(text); }
+            if (!heard(got)) {
+                say(noteLabel(step.index) + ': ' +
+                    (got.ok && got.rms < MIN_RMS ? 'too quiet to read'
+                                                 : 'not heard clearly') + blank);
+                return null;
+            }
+            // Drift-corrected reference: where the anchor was at this moment.
+            var ref = anchorAt(marks, t);
+            var off = cents(got.hz, ref) - 100 * (step.index - anchor.index);
+            // The firmware cannot play a higher note lower: the output is
+            // table[index] interpolated towards table[index+1], the table
+            // is strictly increasing, and index rises with the note.  So a
+            // reading that goes backwards is not a tracking error being
+            // measured - it is the note not having taken, and the pitch
+            // that came back belongs to the note before it.
+            var backwards = !!(previous && got.hz <= previous.hz);
+            if (backwards) {
+                say(noteLabel(step.index) + ' came out ' +
+                    Math.abs(cents(got.hz, previous.hz)).toFixed(0) +
+                    ' cents BELOW ' + noteLabel(previous.index) + ' (' +
+                    previous.hz.toFixed(2) + ' Hz then ' + got.hz.toFixed(2) +
+                    ' Hz) - the note did not take');
+            }
+            // A reading anywhere in the band that was searched is a
+            // reading.  This used to stop at 120 cents on the argument
+            // that more than a semitone out is the wrong note rather than
+            // a tracking error - but a wrong note is caught by the
+            // backwards check below, and a real 208 does read that far
+            // out: a replaced expo converter came back 129 and 138 cents
+            // flat at the top two keys (2026-09-17), clarity 1.00, on top
+            // of a table already carrying +180 there, and the guard threw
+            // away exactly the two readings the recalibration was for.
+            // Beyond the band nothing is found at all, so this is a
+            // safety net for a reference that moved between the search
+            // and the reading, not a judgement about the instrument.
+            //
+            // A note that did not take is blanked on its shape and not on
+            // its size.  It lands about 100 cents out, so warning about it
+            // and then keeping it wrote a +100 cent correction into the
+            // table, one or two DAC counts clear of its neighbour, past
+            // the collision guard and past validateCal, and shipped a
+            // semitone playing very nearly its neighbour's pitch.
+            var keep = !(Math.abs(off) > SEARCH_CENTS || backwards);
+            if (!keep && !backwards) {
+                say(noteLabel(step.index) + ': ' + off.toFixed(0) + ' cents out, ignored');
+            }
+            if (got.drift !== null && Math.abs(got.drift) > MOVED_CENTS) {
+                say(noteLabel(step.index) + ' moved ' +
+                    got.drift.toFixed(1) + ' cents while being measured');
+            }
+            return { hz: got.hz, cents: keep ? off : null };
+        }
+
+        // --- converging (opts.adjust) --------------------------------------
+        // The instrument's table as it is being played: the caller's, with
+        // every write made since.
+        var table = adjust ? adjust.table.slice() : null;
+        // Half a DAC count, in cents: nearer than this, the next count over
+        // is no nearer, so the note is as right as the table can make it.
+        var HALF_COUNT = adjust ? 0.5 / adjust.countsPerCent : 0;
+        // Notes played since the anchor was last measured.  Converging, a
+        // step can be three notes, so the drift check counts notes rather
+        // than steps and keeps the spacing the plain sweep has.
+        var sinceAnchor = 0;
+
+        // Where an entry may move to: inside the DAC, and strictly between
+        // its neighbours as they stand now, so the table the instrument is
+        // playing is never one that plays a higher note lower - not even
+        // for the length of a note.  Null when there is no room.
+        function room(e, v) {
+            var lo = e > 0 ? table[e - 1] + 1 : 0;
+            var hi = e < table.length - 1 ? table[e + 1] - 1 : DAC_TOP;
+            lo = Math.max(0, lo); hi = Math.min(DAC_TOP, hi);
+            if (lo > hi) return null;
+            return Math.max(lo, Math.min(hi, v));
+        }
+
+        // One entry, brought as close to its pitch as the table allows.  It
+        // is read as the plain sweep reads it; more than half a count out,
+        // it is moved by that reading - the ramp's counts per cent, which a
+        // 208 answers with a few percent more or less, so the next reading
+        // says how far that fell short - and played again.  The closest of
+        // the tries is the one kept, and written back if it was not the last
+        // one played.  A note not heard, or not believed, keeps the value it
+        // came with; so does the anchor, which is the reference every other
+        // reading is taken against: moving it would move them all.
+        async function converge(step, i) {
+            var e = step.index, original = table[e], value = original;
+            var tried = [], best = null, played = 0, reading = null;
+            var fixed = e === anchor.index;
+            while (played < ADJUST_TRIES) {
+                if (played > 0 && self.stopped) throw new Error('Stopped.');
+                var wantHz = anchorAt(marks, Date.now()) *
+                             Math.pow(2, (e - anchor.index) / 12);
+                trying = value;
+                var got = await hear(step.note, wantHz, undefined, played ? 'retry' : 'sweep');
+                trying = null;
+                played++; sinceAnchor++;
+                // Only the first reading warns, the way a sweep always has.
+                // After it, the one thing worth saying is a note that did not
+                // come within half a count, and that is said below.
+                var j = judge(step, got, Date.now(), ', left unchanged', played > 1);
+                if (played === 1) reading = j;
+                if (!j || j.cents === null) break;
+                tried.push({ value: value, cents: j.cents, hz: j.hz });
+                if (!best || Math.abs(j.cents) < Math.abs(best.cents)) best = tried[tried.length - 1];
+                if (fixed || Math.abs(j.cents) <= HALF_COUNT || played >= ADJUST_TRIES) break;
+                // The first move is at the ramp's rate.  After it the note
+                // has been heard at two values, which is its own slope, and
+                // the next move goes by that: at the ramp's rate a 208 four
+                // percent steep there took 2123 to 2094 to 2096 around an
+                // in-tune 2095.45, and three tries ended 1.4 cents out.  A
+                // slope under half or over twice the ramp's is not a 208's
+                // and is not believed.
+                var rate = adjust.countsPerCent;
+                if (tried.length >= 2) {
+                    var a = tried[tried.length - 1], b = tried[tried.length - 2];
+                    var slope = (a.cents - b.cents) / (a.value - b.value);     // cents a count
+                    var ramp = 1 / adjust.countsPerCent;
+                    if (slope >= ramp / 2 && slope <= ramp * 2) rate = 1 / slope;
+                }
+                var next = room(e, value - Math.round(j.cents * rate));
+                // Nowhere to go, or somewhere already heard: another try
+                // would only say again what one has said.
+                if (next === null || next === value ||
+                    tried.some(function (t) { return t.value === next; })) break;
+                await adjust.write(e, next);
+                table[e] = value = next;
+            }
+            var keep = best ? best.value : original;
+            if (table[e] !== keep) {
+                await adjust.write(e, keep);
+                table[e] = keep;
+            }
+            var r = { index: e, note: step.note, cents: best ? best.cents : null,
+                      residual: best ? best.cents : null,
+                      first: tried.length ? tried[0].cents : null,
+                      original: original, value: keep, tries: played };
+            if (best) r.hz = best.hz;
+            results.push(r);
+            if (best && !fixed && Math.abs(best.cents) > HALF_COUNT) {
+                warnings.push(noteLabel(e) + ': ' + best.cents.toFixed(1) + ' cents out after ' +
+                              played + (played === 1 ? ' try' : ' tries'));
+            }
+            // What the next note is held to: the pitch this one was left at.
+            if (reading) previous = { hz: best ? best.hz : reading.hz, index: e };
+            if (o.onNote) o.onNote(step, best ? r : null, i, steps.length);
+        }
+
         try {
             // Is anything coming in at all?  The 208 is droning before the
             // first note goes out - that is what the guide asks for - so an
@@ -685,7 +925,7 @@
             // Searching costs up to sixteen of these; confirming costs one.
             async function probe(ch) {
                 var hiNote = anchor.note + 24;
-                var hiEntry = entryFor(hiNote, o.octaveTerm);
+                var hiEntry = entryOf(hiNote);
                 if (!hiEntry) return false;
                 var apart = 100 * (hiEntry.index - anchor.index);
                 // Both measurements search the whole range.  Handing the second
@@ -775,14 +1015,16 @@
             for (var i = 0; i < steps.length; i++) {
                 if (self.stopped) throw new Error('Stopped.');
                 var step = steps[i];
-                if (i > 0 && i % ANCHOR_EVERY === 0) {
+                if (adjust ? sinceAnchor >= ANCHOR_EVERY : (i > 0 && i % ANCHOR_EVERY === 0)) {
                     var last = marks[marks.length - 1].hz;
                     var re = await steadyAnchor(last, last);
                     if (steady(re, last)) marks.push({ t: Date.now(), hz: re.hz });
                     else warnings.push('the drift check before ' +
                         noteLabel(step.index) + ' was not heard clearly and was ' +
                         'skipped - readings after it lean on the check before it');
+                    sinceAnchor = 0;
                 }
+                if (adjust) { await converge(step, i); continue; }
                 // What this note should come back as: the drift-corrected
                 // anchor, times the ideal interval from the anchor's entry to
                 // this one.  Derived rather than carried forward from the last
@@ -798,79 +1040,37 @@
                 var wantHz = anchorAt(marks, Date.now()) *
                              Math.pow(2, (step.index - anchor.index) / 12);
                 var got = await hear(step.note, wantHz, undefined, 'sweep');
-                var t = Date.now();
-                if (!heard(got)) {
-                    warnings.push(noteLabel(step.index) + ': ' +
-                        (got.ok && got.rms < MIN_RMS ? 'too quiet to read'
-                                                     : 'not heard clearly') + ', left blank');
+                var j = judge(step, got, Date.now(), ', left blank');
+                if (!j) {
                     results.push({ index: step.index, note: step.note, cents: null });
                     if (o.onNote) o.onNote(step, null, i, steps.length);
                     continue;
                 }
-                // Drift-corrected reference: where the anchor was at this moment.
-                var ref = anchorAt(marks, t);
-                var off = cents(got.hz, ref) - 100 * (step.index - anchor.index);
-                // The firmware cannot play a higher note lower: the output is
-                // table[index] interpolated towards table[index+1], the table
-                // is strictly increasing, and index rises with the note.  So a
-                // reading that goes backwards is not a tracking error being
-                // measured - it is the note not having taken, and the pitch
-                // that came back belongs to the note before it.
-                var backwards = !!(previous && got.hz <= previous.hz);
-                if (backwards) {
-                    warnings.push(noteLabel(step.index) + ' came out ' +
-                        Math.abs(cents(got.hz, previous.hz)).toFixed(0) +
-                        ' cents BELOW ' + noteLabel(previous.index) + ' (' +
-                        previous.hz.toFixed(2) + ' Hz then ' + got.hz.toFixed(2) +
-                        ' Hz) - the note did not take');
-                }
-                // A reading anywhere in the band that was searched is a
-                // reading.  This used to stop at 120 cents on the argument
-                // that more than a semitone out is the wrong note rather than
-                // a tracking error - but a wrong note is caught by the
-                // backwards check below, and a real 208 does read that far
-                // out: a replaced expo converter came back 129 and 138 cents
-                // flat at the top two keys (2026-09-17), clarity 1.00, on top
-                // of a table already carrying +180 there, and the guard threw
-                // away exactly the two readings the recalibration was for.
-                // Beyond the band nothing is found at all, so this is a
-                // safety net for a reference that moved between the search
-                // and the reading, not a judgement about the instrument.
-                //
-                // A note that did not take is blanked on its shape and not on
-                // its size.  It lands about 100 cents out, so warning about it
-                // and then keeping it wrote a +100 cent correction into the
-                // table, one or two DAC counts clear of its neighbour, past
-                // the collision guard and past validateCal, and shipped a
-                // semitone playing very nearly its neighbour's pitch.
-                if (Math.abs(off) > SEARCH_CENTS || backwards) {
-                    if (!backwards) {
-                        warnings.push(noteLabel(step.index) + ': ' + off.toFixed(0) +
-                                      ' cents out, ignored');
-                    }
-                    results.push({ index: step.index, note: step.note, cents: null });
-                } else {
-                    results.push({ index: step.index, note: step.note, cents: off,
-                                   hz: got.hz });
-                }
-                if (got.drift !== null && Math.abs(got.drift) > MOVED_CENTS) {
-                    warnings.push(noteLabel(step.index) + ' moved ' +
-                        got.drift.toFixed(1) + ' cents while being measured');
-                }
-                previous = { hz: got.hz, index: step.index };
+                results.push(j.cents === null
+                    ? { index: step.index, note: step.note, cents: null }
+                    : { index: step.index, note: step.note, cents: j.cents, hz: j.hz });
+                previous = { hz: j.hz, index: step.index };
                 if (o.onNote) o.onNote(step, results[results.length - 1], i, steps.length);
             }
         } finally {
             root.removeEventListener('pagehide', letGo);
             root.removeEventListener('beforeunload', letGo);
-            release();
+            if (mode) {
+                root.removeEventListener('pagehide', modeDown);
+                root.removeEventListener('beforeunload', modeDown);
+            }
+            // The note-off first, then the mode - and the mode even when the
+            // note-off throws, which is what a port that has gone away does.
+            try { release(); } finally { modeDown(); }
             try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
             try { await ctx.close(); } catch (e) {}
         }
-        return { readings: results, warnings: warnings, anchorHz: first.hz,
-                 channel: o.channel, log: log,
-                 drift: marks.length > 1 ?
-                     cents(marks[marks.length - 1].hz, marks[0].hz) : 0 };
+        var out = { readings: results, warnings: warnings, anchorHz: first.hz,
+                    channel: o.channel, log: log,
+                    drift: marks.length > 1 ?
+                        cents(marks[marks.length - 1].hz, marks[0].hz) : 0 };
+        if (adjust) out.table = table;
+        return out;
     };
 
     // Where the anchor sat at time t, interpolated between the times it was
@@ -898,6 +1098,7 @@
         BOTTOM_KEY_ENTRY: BOTTOM_KEY_ENTRY,
         semitoneFor: semitoneFor, entryForSemitone: entryForSemitone,
         entryFor: entryFor, plan: plan, noteLabel: noteLabel,
+        MODE_FIRST_NOTE: MODE_FIRST_NOTE, modeEntryFor: modeEntryFor, modePlan: modePlan,
         measure: measure, cents: cents, yin: yin, refine: refine,
         audioTrouble: audioTrouble, channelCount: channelCount,
         onMidiChange: onMidiChange, portGone: portGone,
