@@ -288,7 +288,7 @@ def audit_call_pools(image_path) -> list[str]:
 # bare-remap words through them, in every image.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "83e6325c01fba87a1327406e36211a6d5906de10de483875eb6e3d6224a64afc",
+    "historical_config": "b0050174c3c341f77174862737cc3503dcb413ee807c3ee9c8bd84f59d33269d",
 }
 
 
