@@ -1778,13 +1778,17 @@
     // image it was made for, so the same version from another build and an
     // older one both want this page's firmware flashed, and a newer one a
     // fresher page.  Two versions that differ only past major.minor would
-    // read as the same number, so they are named as another build.
+    // read as the same number, so they are named earlier or later firmware
+    // (the owner, 2026-09-27).  The same version on another image is only
+    // ever a dev-page build, since a released version's image never changes
+    // without a new version: that one is another build.
     function otherImage(ver) {
         var page = GEN.version, c = BUILDLIB.compareVersions(ver, page);
         var flash = 'Flash the latest firmware to change settings.';
-        if (c === 0 || shown(ver) === shown(page)) {
-            return 'This keyboard runs Rewired ' + shown(ver) + ' from another build. ' +
-                   (c > 0 ? 'Reload the page.' : flash);
+        if (c === 0) return 'This keyboard runs Rewired ' + shown(ver) + ' from another build. ' + flash;
+        if (shown(ver) === shown(page)) {
+            return c < 0 ? 'This keyboard runs earlier firmware than this page builds. ' + flash
+                         : 'This keyboard runs later firmware than this page. Reload the page.';
         }
         if (c < 0) {
             return 'This keyboard runs Rewired ' + shown(ver) + '; this page builds ' + shown(page) + '. ' + flash;

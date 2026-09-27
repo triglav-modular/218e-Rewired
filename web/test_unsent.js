@@ -402,6 +402,21 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
           !armed() && !up() && elsewhere.received.length === at);
     run('$("kbdLoadPort").value = "kbd";');
     page.opts = clone(held);
+    // By the version it reports.  A patch apart shows as the same major.minor,
+    // so it is earlier or later firmware, not a number said twice.
+    var v = page.GEN.version.split('.').map(Number);
+    function said(ver) { return run('otherImage(' + JSON.stringify(ver) + ')'); }
+    var flashLine = 'Flash the latest firmware to change settings.';
+    check('a keyboard a patch behind runs earlier firmware',
+          v[2] === 0 || said([v[0], v[1], v[2] - 1].join('.')) ===
+          'This keyboard runs earlier firmware than this page builds. ' + flashLine,
+          said([v[0], v[1], Math.max(0, v[2] - 1)].join('.')));
+    check('a keyboard a patch ahead runs later firmware', said([v[0], v[1], v[2] + 1].join('.')) ===
+          'This keyboard runs later firmware than this page. Reload the page.');
+    check('a major.minor apart names both', said('2.4.0') ===
+          'This keyboard runs Rewired 2.4; this page builds ' + v[0] + '.' + v[1] + '. ' + flashLine
+          && said([v[0] + 1, 0, 0].join('.')) === 'This keyboard runs Rewired ' + (v[0] + 1) + '.0; this page is ' +
+          v[0] + '.' + v[1] + '. Reload the page.', said('2.4.0'));
 
     // --- a read that fails ------------------------------------------------------------------
     await read();
