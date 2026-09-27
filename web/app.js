@@ -1792,35 +1792,6 @@
         });
     }
 
-    // A note that could not be heard is not a note that played in tune.  Rather
-    // than leave a zero - which reads as "correct" and builds a table that says
-    // so - carry the reading across the gap from its measured neighbours.
-    function bridgeGaps(got) {
-        var known = [];
-        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            if (got[n] !== null && got[n] !== undefined) known.push(n);
-        }
-        if (!known.length) return 0;
-        var filled = 0;
-        for (n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            if (got[n] !== null && got[n] !== undefined) {
-                measured[n] = got[n]; delete interpolated[n]; continue;
-            }
-            var below = null, above = null;
-            known.forEach(function (k) {
-                if (k < n) below = k;
-                if (above === null && k > n) above = k;
-            });
-            if (below === null) measured[n] = got[above];
-            else if (above === null) measured[n] = got[below];
-            else measured[n] = got[below] + (got[above] - got[below]) *
-                               (n - below) / (above - below);
-            interpolated[n] = true;
-            filled++;
-        }
-        return filled;
-    }
-
     function setRunning(on) {
         $('calRun').disabled = on;
         $('calStop').disabled = !on;
@@ -1842,9 +1813,23 @@
     // converges on the table instead of measuring once and folding the
     // readings in at the next flash, which took a few rounds to settle.  The
     // first version that has it is 3.0.1 (the owner, 2026-09-27); a keyboard
-    // reporting anything older gets the sweep it always did, and nothing
-    // more goes out to it than went before.
+    // reporting anything older is asked to be flashed, and nothing goes out
+    // to it but the read.
     var CALIBRATION_MODE_FIRMWARE = '3.0.1';
+
+    // Safari has no Web MIDI of its own; the Web MIDI extension adds
+    // navigator.requestMIDIAccess before the page's first script runs.
+    // Without it the page cannot tell "not installed" from "turned off" or
+    // "not allowed on this site", so the note under each MIDI picker says
+    // all three, from the start rather than after a click fails.
+    (function () {
+        var ua = navigator.userAgent || '';
+        var safari = /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|OPR\/|Android/.test(ua);
+        if (!safari || 'requestMIDIAccess' in navigator) return;
+        Array.prototype.forEach.call(document.querySelectorAll('.safari-midi'), function (el) {
+            el.hidden = false;
+        });
+    })();
     function calibrationModeSupported(identity) {
         return !!(CALIBRATION_MODE_FIRMWARE && identity && identity.firmwareVersion &&
                   BUILDLIB.compareVersions(identity.firmwareVersion, CALIBRATION_MODE_FIRMWARE) >= 0);
@@ -1898,56 +1883,11 @@
         return note;
     }
 
-    // The sweep that measures: readings into the boxes, folded into the
-    // table at the next build.
-    function sweepAsBefore(chosen) {
-        var got = {};
-        setRunning(true);
-        autoNote('Listening for the bottom C\u2026', 0);
-        var o = sweepOptions(chosen);
-        // Entries, not semitones.  The sweep counts in firmware table
-        // entries - the bottom key is entry 3 whatever the pitch
-        // offset is - while these boxes count in calibration
-        // semitones, where the bottom key is PLAYABLE_LOW.  The two
-        // coincide with the offset on and are three apart without it,
-        // so handing the sweep PLAYABLE_LOW/PLAYABLE_HIGH raw played
-        // 62 of the 65 keys on a 208c and filed every reading three
-        // rows high.
-        o.low = CALIBRATE.entryForSemitone(PLAYABLE_LOW, PLAYABLE_LOW);
-        o.high = CALIBRATE.entryForSemitone(PLAYABLE_HIGH, PLAYABLE_LOW);
-        o.octaveTerm = false;
-        o.onNote = function (step, reading, i, total) {
-            got[CALIBRATE.semitoneFor(step.index, PLAYABLE_LOW)] =
-                reading ? reading.cents : null;
-            noteProgress(step, reading, i, total);
-        };
-        sweep = new CALIBRATE.Sweep(o);
-        return sweep.run().then(function (out) {
-            var bridged = bridgeGaps(got);
-            $('useCal').checked = true;
-            syncCalBody();
-            buildTable(); drawPlot(); validateCal(); invalidate();
-            var heard = out.readings.filter(function (r) { return r.cents !== null; });
-            autoNote('');
-            var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
-                ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
-                out.anchorHz.toFixed(2) + ' Hz; the ' +
-                'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
-                'which has been taken out of every reading.';
-            if (bridged) {
-                note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
-                    ' not heard and have been carried across from their neighbours - ' +
-                    'check those by hand.';
-            }
-            msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad',
-                withWarnings(note, out.warnings));
-        });
-    }
 
     // The keyboard's settings, read on the calibration's own port the way
     // Read settings reads them, the input being the one that shares the
-    // output's name.  Null for anything short of a whole read: the keyboard
-    // then gets the sweep that asks nothing of it.
+    // output's name.  Null for anything short of a whole read, which the
+    // run reports as no reply.
     function readForCalibration(output) {
         return CALIBRATE.midiInputs().then(function (inputs) {
             var input = inputs.filter(function (p) { return p.name === output.name; })[0] || inputs[0];
@@ -2019,7 +1959,6 @@
                     'Rescan inputs to pick another.');
                 return;
             }
-            if (!CALIBRATION_MODE_FIRMWARE) return sweepAsBefore(chosen);
             // What the keyboard runs says which sweep, and its table is the
             // one a converging run starts from, so it is read first.  Read
             // and Send wait for the read, and for a converging run after it:
@@ -2037,8 +1976,12 @@
             return readForCalibration(chosen).then(function (r) {
                 if (cancelled) throw new Error('Stopped.');
                 if (r && calibrationModeSupported(r.identity)) return sweepInMode(chosen, r);
-                hold(false);
-                return sweepAsBefore(chosen);
+                // Only firmware with calibration mode can be tuned: the
+                // sweep that merely measured is gone (the owner, 2026-09-27).
+                var ver = r && r.identity && r.identity.firmwareVersion;
+                throw new Error(!r ? KBD_REASONS['no reply']
+                    : ver ? 'This keyboard runs Rewired ' + shown(ver) + '. Flash the latest firmware, then measure.'
+                          : 'Flash the latest firmware, then measure.');
             }).then(function () { hold(false); }, function (err) { hold(false); throw err; });
         }).catch(function (err) {
             autoNote('');

@@ -1808,6 +1808,14 @@ section.shortcut h2 {
   }
 }
 
+/* Under a picker, only in Safari without the Web MIDI extension. */
+.safari-midi {
+  margin: 10px 0 0 16px;
+  font-size: 14px;
+}
+.autorow + .safari-midi {
+  margin-bottom: 0;
+}
 /* --- device pickers --------------------------------------------------------
    Every place the page picks a device is one recessed pill, with the
    keyboard well's shadow.  A drawn mark says what kind of device it is (a

@@ -280,7 +280,7 @@
     function requestAccess() {
         if (!root.navigator || !root.navigator.requestMIDIAccess) {
             return Promise.reject(new Error(
-                'Safari doesn\u2019t support Web MIDI. Use Chrome, Firefox or Edge.'));
+                'Safari needs the Web MIDI extension, turned on and allowed on this site. Or use Chrome, Firefox or Edge.'));
         }
         if (!midiRequest) {
             midiRequest = root.navigator.requestMIDIAccess({ sysex: false }).then(function (access) {

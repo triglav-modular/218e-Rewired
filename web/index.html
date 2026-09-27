@@ -125,6 +125,7 @@
             <select id="kbdLoadPort" aria-label="Keyboard"><option value="">Looking&hellip;</option></select></label>
           <button class="primary" id="kbdRead" type="button" disabled>Read settings</button>
         </div>
+        <p class="d muted safari-midi" hidden>Safari needs the Web MIDI extension for this: <a href="https://triglavmodular.hu/mods/safari-webmidi/">Get Web MIDI for Safari</a>. If it’s installed, turn it on and allow it on this site.</p>
         <p id="kbdVer" class="kbdver" role="status" hidden></p>
         <div id="kbdLoadMsg" role="status"></div>
       </section>
@@ -343,14 +344,13 @@
             </div>
 
             <div class="automeasure" id="autoCal">
-              <p class="d muted">The page plays <strong>C0 to E5</strong> into the keyboard over MIDI, listens to your 208, and fills in every offset below. It needs Chrome, Edge or Firefox.</p>
+              <p class="d muted">The page plays each note into the keyboard over MIDI, listens to your 208, and fills in every offset below. This needs the keyboard to be running Rewired 3+. It works in Chrome, Edge and Firefox, and in Safari with the <a href="https://triglavmodular.hu/mods/safari-webmidi/">Web MIDI extension</a>.</p>
               <details class="howto-details"><summary>How to measure your 208. Read this first!</summary>
                 <div class="howto">
                   <p><strong class="step">1. Set the volts per octave.</strong> Match the setting above to how your 208 is trimmed, and leave it there. A table measured at one scaling is wrong at the other.</p>
                   <p><strong class="step">2. Warm it up for at least 30 minutes.</strong> The oscillator drifts as it comes up to temperature, often by more than the error you are correcting.</p>
-                  <p><strong class="step">3. Load the table it already has,</strong> if it has one. Readings are taken against whatever is flashed, so they accumulate onto that table rather than replacing it.</p>
-                  <p><strong class="step">4. Patch the 208 into an audio input and set it droning:</strong> a steady tone, no envelope, nothing else modulating its pitch. Pick the channel it arrives on. Leave <strong>add to pitch</strong> off, the arpeggiator off, vibrato down, and no alternate tuning selected.</p>
-                  <p><strong class="step">5. Measure, then flash or send.</strong> Then save the table: it is what the next round measures on top of &mdash; and put <strong>add to pitch</strong> back, or the keyboard sits an octave above where the sweep played.</p>
+                  <p><strong class="step">3. Patch the 208 into an audio input and set it droning:</strong> a steady tone, no envelope, nothing else modulating its pitch. Pick the channel it arrives on.</p>
+                  <p><strong class="step">4. Measure, then send the settings or flash</strong> to keep the table, and save it.</p>
                 </div>
               </details>
               <div class="autorow">
@@ -379,6 +379,7 @@
                   <select id="calChan"><option value="0">1</option></select></label>
                 </div>
               </div>
+              <p class="d muted safari-midi" hidden>Safari needs the Web MIDI extension for this: <a href="https://triglavmodular.hu/mods/safari-webmidi/">Get Web MIDI for Safari</a>. If it’s installed, turn it on and allow it on this site.</p>
               <div class="row">
                 <button id="calRun" class="primary" type="button">Start measuring</button>
                 <button id="calStop" type="button" disabled>Stop</button>
@@ -459,6 +460,7 @@
               <select id="kbdPort" aria-label="Keyboard"><option value="">Looking&hellip;</option></select></label>
             <button class="primary" id="kbdSend" type="button" disabled>Send settings</button>
           </div>
+          <p class="d muted safari-midi" hidden>Safari needs the Web MIDI extension for this: <a href="https://triglavmodular.hu/mods/safari-webmidi/">Get Web MIDI for Safari</a>. If it’s installed, turn it on and allow it on this site.</p>
           <div id="kbdMsg" role="status"></div>
         </div>
 
