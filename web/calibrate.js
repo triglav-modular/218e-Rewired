@@ -572,27 +572,14 @@
     // 'extrapolated', or null where there was nothing to fill it from and it
     // keeps the value it came with.  The result adds `anchorEntry` and
     // `filled`, entry -> source for every entry filled in.
-    function Sweep(opts) {
-        this.opts = opts;
-        this.stopped = false;
-    }
-
-    Sweep.prototype.stop = function () { this.stopped = true; };
-
-    Sweep.prototype.run = async function () {
-        var o = this.opts, self = this;
-        var mode = o.mode || null, adjust = o.adjust || null;
-        var tuning = !!(mode && adjust);
-        // The 0 V entry, when tuning; nothing under it is swept.
-        var zero = tuning ? adjust.reference : null;
-        if (tuning && !(zero >= 0 && zero < MODE_ENTRIES && zero === Math.floor(zero))) {
-            throw new Error('The table’s 0 V entry is not known.');
-        }
-        var entryOf = mode ? modeEntryFor : function (note) { return entryFor(note, o.octaveTerm); };
-        var steps = mode ? modePlan(tuning ? Math.max(o.low, zero) : o.low, o.high)
-                         : plan(o.low, o.high, o.octaveTerm);
-        if (!steps.length) throw new Error('Nothing to sweep.');
-
+    //
+    // `opts.input`, an input from listen(): listened through when it still
+    // fits the options, and left open.  `opts.onPhase(name)` says what the
+    // run is doing before its first note: 'settle' for the warm-up, then
+    // 'reference' for the anchor (the channel search has onProbe).
+    // Opens the chosen input and channel: the stream, and the context and
+    // analyser listening to that one channel of it.
+    async function openInput(o) {
         var stream;
         try {
             // Every processing option is off because each would rewrite the
@@ -662,7 +649,6 @@
         // One channel of the interface, not a mix of it.  A splitter keeps
         // them apart - its channelInterpretation is 'discrete', so channel 7
         // arrives as channel 7 rather than being folded into a stereo pair.
-        if (o.onChannels) o.onChannels(count, want);
         if (count > 1) {
             var splitter = ctx.createChannelSplitter(count);
             source.connect(splitter);
@@ -670,6 +656,95 @@
         } else {
             source.connect(analyser);
         }
+        return new Input(o, stream, count, want, ctx, analyser);
+    }
+
+    // An open input.  `since` is when it started delivering: the later of
+    // the stream opening and its context running, since which of the two
+    // starts Safari's settling (the warm-up in run) is not known and the
+    // later is the safe one.  A track that ends or is muted spoils it:
+    // whatever it comes back as has not been waited out.
+    function Input(o, stream, count, want, ctx, analyser) {
+        var self = this;
+        this.deviceId = o.deviceId || null;
+        this.stream = stream; this.count = count; this.want = want;
+        this.ctx = ctx; this.analyser = analyser;
+        this.since = null; this.spoiled = false; this.closed = false;
+        this.running();
+        try { ctx.addEventListener('statechange', function () { self.running(); }); } catch (e) {}
+        stream.getAudioTracks().forEach(function (t) {
+            try {
+                t.addEventListener('ended', function () { self.spoiled = true; });
+                t.addEventListener('mute', function () { self.spoiled = true; });
+            } catch (e) {}
+        });
+    }
+    Input.prototype.running = function () {
+        var state = this.ctx.state;
+        if (this.since === null && (state === undefined || state === 'running')) this.since = Date.now();
+    };
+    Input.prototype.age = function () {
+        return this.since === null ? 0 : Date.now() - this.since;
+    };
+    // Whether a run with these options can listen through it.
+    Input.prototype.fits = function (o) {
+        if (this.closed || this.spoiled || this.ctx.state === 'closed') return false;
+        if ((o.deviceId || null) !== this.deviceId) return false;
+        if (Math.max(0, o.audioChannel || 0) !== this.want) return false;
+        return this.stream.getAudioTracks().every(function (t) {
+            return t.readyState !== 'ended' && !t.muted;
+        });
+    };
+    Input.prototype.close = function () {
+        if (this.closed) return;
+        this.closed = true;
+        stop(this.stream);
+        try {
+            var done = this.ctx.close();
+            if (done && done.catch) done.catch(function () {});
+        } catch (e) {}
+    };
+
+    // An input opened ahead of a run, which the page hands to it as
+    // `opts.input`.  Safari reads sharp for seconds after an input opens,
+    // so the page opens it as soon as it is picked, and the run waits out
+    // only what is left of the warm-up.  The page closes it.
+    function listen(o) { return openInput(o); }
+
+    function Sweep(opts) {
+        this.opts = opts;
+        this.stopped = false;
+    }
+
+    Sweep.prototype.stop = function () { this.stopped = true; };
+
+    Sweep.prototype.run = async function () {
+        var o = this.opts, self = this;
+        var mode = o.mode || null, adjust = o.adjust || null;
+        var tuning = !!(mode && adjust);
+        // The 0 V entry, when tuning; nothing under it is swept.
+        var zero = tuning ? adjust.reference : null;
+        if (tuning && !(zero >= 0 && zero < MODE_ENTRIES && zero === Math.floor(zero))) {
+            throw new Error('The table’s 0 V entry is not known.');
+        }
+        var entryOf = mode ? modeEntryFor : function (note) { return entryFor(note, o.octaveTerm); };
+        var steps = mode ? modePlan(tuning ? Math.max(o.low, zero) : o.low, o.high)
+                         : plan(o.low, o.high, o.octaveTerm);
+        if (!steps.length) throw new Error('Nothing to sweep.');
+
+        // The input it listens on: the one the page opened ahead of the run
+        // (listen, below) while it is still the chosen input and channel and
+        // still live, or one of its own, closed when the run ends.
+        var input = o.input && o.input.fits(o) ? o.input : null;
+        var own = !input;
+        if (own) input = await openInput(o);
+        var stream = input.stream, ctx = input.ctx, analyser = input.analyser;
+        var count = input.count, want = input.want;
+        if (ctx.state === 'suspended' && ctx.resume) {
+            try { await ctx.resume(); } catch (e) {}
+            input.running();
+        }
+        if (o.onChannels) o.onChannels(count, want);
         var buf = new Float32Array(analyser.fftSize);
         var rate = ctx.sampleRate;
         // The buffer is a rolling window, so it has to fill with the new note
@@ -995,8 +1070,14 @@
             // any note goes out: at least that long, and until its last two
             // seconds agree to 3 cents, or at most ten seconds more.  Counted
             // in the sleeps it waits, so a fake clock runs it at once.
-            var warm = o.warmupMs || 0, waited = 0, heardHz = [], STEP = 300;
-            while (warm > 0) {
+            // An input the page opened ahead of the run has been settling
+            // since, so only what is left is waited; its last two seconds
+            // still have to agree before a note goes out.
+            var watch = (o.warmupMs || 0) > 0;
+            var warm = watch ? Math.max(0, o.warmupMs - input.age()) : 0;
+            var waited = 0, heardHz = [], STEP = 300;
+            if (watch && o.onPhase) o.onPhase('settle');
+            while (watch) {
                 if (self.stopped) throw new Error('Stopped.');
                 await sleep(STEP);
                 waited += STEP;
@@ -1125,6 +1206,7 @@
             // at a note the probe never played.
             var near = !tuning ? probeLo && probeLo.hz
                 : zero === probeAt.index && start[zero] === 0 && probeLo ? probeLo.hz : null;
+            if (o.onPhase) o.onPhase('reference');
             var settled = await steadyAnchor(null, near, tuning);
             var first = settled.r;
             if (!settled.ok) {
@@ -1214,8 +1296,11 @@
             // The note-off first, then the mode - and the mode even when the
             // note-off throws, which is what a port that has gone away does.
             try { release(); } finally { modeDown(); }
-            try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-            try { await ctx.close(); } catch (e) {}
+            // One of its own is closed; one the page opened is the page's.
+            if (own) {
+                try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+                try { await ctx.close(); } catch (e) {}
+            }
         }
         var filled = null;
         if (tuning) {
@@ -1337,7 +1422,7 @@
         MODE_FIRST_NOTE: MODE_FIRST_NOTE, modeEntryFor: modeEntryFor, modePlan: modePlan,
         fillGaps: fillGaps, FILL_CENTS: FILL_CENTS,
         measure: measure, cents: cents, yin: yin, refine: refine,
-        audioTrouble: audioTrouble, channelCount: channelCount,
+        audioTrouble: audioTrouble, channelCount: channelCount, listen: listen,
         onMidiChange: onMidiChange, portGone: portGone,
         trackChannels: trackChannels,
         midiOutputs: midiOutputs, midiInputs: midiInputs, audioInputs: audioInputs,

@@ -1328,15 +1328,60 @@
 
     $('calMidi').addEventListener('focus', listMidi);
     $('calAudio').addEventListener('focus', listAudio);
-    $('calAudio').addEventListener('change', listChannels);
+    // Safari's audio input reads sharp for seconds after it opens, and the
+    // sweep waits that out (warmupMs in sweepOptions).  So there the input
+    // is opened as soon as it is picked and handed to the run
+    // (CALIBRATE.listen): by the time Measure is pressed it has usually
+    // settled, and the run waits only what is left, two seconds at least.
+    // It is closed when the pick changes, ten minutes after it was opened
+    // or last measured with, and with the page.
+    var warmed = null, warmToken = 0, warmTimer = null, WARM_MS = 600000;
+    function coolInput() {
+        warmToken++;
+        clearTimeout(warmTimer);
+        if (warmed) warmed.close();
+        warmed = null;
+    }
+    function keepWarm() {
+        clearTimeout(warmTimer);
+        warmTimer = setTimeout(function () {
+            if (sweep) keepWarm(); else coolInput();
+        }, WARM_MS);
+    }
+    function warmInput() {
+        if (!IS_SAFARI || !CALIBRATE.listen || sweep || !listed.audio) return;
+        var want = { deviceId: $('calAudio').value || null,
+                     audioChannel: parseInt($('calChan').value, 10) || 0,
+                     audioChannels: chanFor[$('calAudio').value || ''] || null };
+        if (warmed && warmed.fits(want)) { keepWarm(); return; }
+        coolInput();
+        var token = warmToken;
+        CALIBRATE.listen(want).then(function (input) {
+            if (token !== warmToken || sweep) { input.close(); return; }
+            warmed = input;
+            keepWarm();
+        }, function () {
+            // Nothing to say here: the run opens its own and names the fault.
+        });
+    }
+    if (window.addEventListener) window.addEventListener('pagehide', coolInput);
+    $('calAudio').addEventListener('change', function () {
+        coolInput();
+        listChannels().then(warmInput);
+    });
+    // Picked without a change: the only input, or the one already there.
+    $('calAudio').addEventListener('blur', function () {
+        if (listed.audio) listChannels().then(warmInput);
+    });
     $('calRescan').addEventListener('click', function () {
         listed.audio = false;
         listed.midi = false;
         chanFor = {};
+        coolInput();
         msg($('autoMsg'), '', '');
         $('calRescan').disabled = true;
         Promise.resolve().then(listMidi).then(listAudio).then(listChannels)
-            .then(function () { $('calRescan').disabled = false; },
+            .then(function () { $('calRescan').disabled = false; warmInput(); },
                   function () { $('calRescan').disabled = false; });
     });
     // --- the settings without a flash: read before step 2, sent in step 3 ---
@@ -1914,6 +1959,7 @@
     }
 
     $('calChan').addEventListener('focus', listChannels);
+    $('calChan').addEventListener('change', function () { warmInput(); });
     if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
         navigator.mediaDevices.addEventListener('devicechange', function () {
             listed.audio = false;
@@ -2007,6 +2053,8 @@
             // a desk that hands over twelve when asked for twelve outright,
             // and that is the number this dropdown was filled from.
             audioChannels: chanFor[$('calAudio').value || ''] || null,
+            // Safari's input, opened when it was picked (warmInput).
+            input: warmed,
             velocity: 100,
             onReading: pushLog,
             onProbe: function (ch, confirming) {
@@ -2016,6 +2064,10 @@
             },
             onChannel: function (ch) {
                 $('calMidiChan').value = String(ch);
+            },
+            onPhase: function (phase) {
+                if (phase === 'settle') autoNote('Letting Safari\u2019s audio input settle\u2026', 0);
+                else if (phase === 'reference') autoNote('Measuring the 0 V note\u2026', 0);
             }
         };
     }
@@ -2103,7 +2155,6 @@
             write: function (entry, value) { return SETTINGSMIDI.writePitch(chosen, entry, value); }
         };
         o.onNote = noteProgress;
-        autoNote('Listening for the bottom C\u2026', 0);
         sweep = new CALIBRATE.Sweep(o);
         return sweep.run().then(function (out) {
             loadPitchTable(out.table, was, 'the tuned table', runSources(out.readings, bottom));
@@ -2162,6 +2213,7 @@
             msg($('calMsg'), 'bad', err.message || String(err));
         }).then(function () {
             sweep = null; setRunning(false);
+            if (warmed) keepWarm();
             // A live send that waited for the run goes now (liveSend).
             refresh();
         });

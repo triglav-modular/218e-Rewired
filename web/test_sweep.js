@@ -658,6 +658,58 @@ function signature(w, out) {
        !!err || heard.length < out.readings.length,
        err ? err.message.slice(0, 60) : heard.length + '/' + out.readings.length);
 
+    // --- an input opened ahead of the run -----------------------------------
+    // The page opens Safari's input as soon as it is picked (CALIBRATE.listen)
+    // and hands it to the run, which waits out only what is left of the
+    // warm-up and still wants two steady seconds.  The world here has
+    // already settled: the sharp stretch went by while the page was open.
+    function firstNote(w) {
+        var send = w.output.send, at = { ms: null };
+        w.clock = 0;
+        w.output.send = function (m) {
+            if (at.ms === null && (m[0] & 0xf0) === 0x90) at.ms = w.clock;
+            return send(m);
+        };
+        return at;
+    }
+    async function warmRun(w, ageMs, extra) {
+        var C = load(w);
+        var input = await C.listen({ deviceId: null, audioChannel: 0 });
+        input.since -= ageMs;
+        if (extra) extra(input);
+        var at = firstNote(w), opened = w.opened.length;
+        var o = { output: w.output, channel: 2, deviceId: null, audioChannel: 0,
+                  low: 3, high: 20, octaveTerm: false, velocity: 100,
+                  warmupMs: 12000, input: input, phases: [] };
+        o.onPhase = function (p) { o.phases.push(p); };
+        var r = null, e = null;
+        try { r = await new C.Sweep(o).run(); } catch (x) { e = x; }
+        return { out: r, err: e, at: at.ms, input: input, reopened: w.opened.length > opened,
+                 phases: o.phases };
+    }
+    var early = await warmRun(makeWorld({ listening: 2 }), 20000);
+    heard = early.err ? [] : early.out.readings.filter(function (r) { return r.cents !== null && Math.abs(r.cents) < 2; });
+    ok('an input opened 20 s before the run is listened through, not opened again',
+       !early.err && !early.reopened && heard.length === early.out.readings.length,
+       early.err ? early.err.message : 'reopened ' + early.reopened + ', ' + heard.length + '/' + early.out.readings.length);
+    ok('and the first note goes out after two steady seconds, not twelve',
+       early.at !== null && early.at >= 2000 && early.at < 4000, 'first note at ' + early.at + ' ms');
+    ok('and the run leaves it open for the next one', !early.input.closed && early.input.fits({ deviceId: null, audioChannel: 0 }));
+    ok('and it says what it is doing before the first note',
+       early.phases.join(',') === 'settle,reference', early.phases.join(','));
+    var fresh = await warmRun(makeWorld({ listening: 2 }), 3000);
+    ok('one opened 3 s before waits out the other 9',
+       !fresh.err && fresh.at >= 9000 && fresh.at < 11000, fresh.err ? fresh.err.message : 'first note at ' + fresh.at + ' ms');
+    var ended = await warmRun(makeWorld({ listening: 2 }), 20000, function (input) {
+        input.stream = { getAudioTracks: function () { return [{ readyState: 'ended' }]; },
+                         getTracks: function () { return []; } };
+    });
+    ok('one whose track ended is not used: the run opens its own and waits the whole warm-up',
+       !ended.err && ended.reopened && ended.at >= 12000, ended.err ? ended.err.message : 'reopened ' + ended.reopened + ', first note at ' + ended.at + ' ms');
+    var elsewhere = await warmRun(makeWorld({ listening: 2, channels: 2 }), 20000, function (input) { input.want = 1; });
+    ok('nor one on another channel', !elsewhere.err && elsewhere.reopened && elsewhere.at >= 12000,
+       elsewhere.err ? elsewhere.err.message : 'reopened ' + elsewhere.reopened + ', first note at ' + elsewhere.at + ' ms');
+
     // --- a note that did not take is blank, not a -100 cent reading ------
     // The instrument ignores one note-on, so the drone holds the note before
     // it.  That reads about a semitone flat - inside the 120 the guard then
