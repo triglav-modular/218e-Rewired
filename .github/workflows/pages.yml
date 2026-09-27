@@ -225,15 +225,15 @@ jobs:
             echo "web/test_settingsmidi.js is not on ${{ matrix.ref }} yet - skipped"
           fi
 
-      - name: Live send against a fake instrument
+      - name: The unsent card against a fake instrument
         run: |
           # The page's own code for it, out of app.js: nothing before a read,
-          # only the parameters that changed, a burst as one send, and never
-          # while a calibration run or another send has the port.
-          if [ -f web/test_livesend.js ]; then
-            node web/test_livesend.js
+          # up once a change differs from what was read or sent, nothing sent
+          # until Send, and Send held while a calibration run has the port.
+          if [ -f web/test_unsent.js ]; then
+            node web/test_unsent.js
           else
-            echo "web/test_livesend.js is not on ${{ matrix.ref }} yet - skipped"
+            echo "web/test_unsent.js is not on ${{ matrix.ref }} yet - skipped"
           fi
 
       - name: The beacon route only records what the page can send

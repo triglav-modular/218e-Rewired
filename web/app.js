@@ -1541,7 +1541,7 @@
                 midiPick = picked && picked.value ? picked.text : null;
                 midiSelects().forEach(function (other) { if (other !== sel) applyMidiPick(other); });
                 showFirmware(null);
-                livePicked();
+                unsentPicked();
                 refresh();
             });
         });
@@ -1551,14 +1551,11 @@
             }, function () {});
         } catch (e) { /* no Permissions API, or no 'midi' in it: the first click lists */ }
     }
-    // A send from install on, the button's and a live one's alike: the line
-    // in the Send card, and the restart and the wait for it when an option
-    // changed.  `params` are what a live send pushes (SETTINGSMIDI.changes);
-    // without them every parameter goes.  Resolves with whether the keyboard
-    // now holds and runs `record`.  Only the button's is counted: a live
-    // send is not a press of anything.
-    function sendRecord(ports, record, params) {
-        var name = ports.output.name, counted = !params;
+    // A send from install on: the line in the unsent card, and the restart
+    // and the wait for it when an option changed.  Resolves with whether the
+    // keyboard now holds and runs `record`.
+    function sendRecord(ports, record) {
+        var name = ports.output.name;
         // Bursts of four parameters, sixteen packets, fit the keyboard's USB
         // receive ring of thirty-two.  Chrome delivers each burst as it is
         // sent; Safari's Web MIDI extension sends whatever queued while its
@@ -1567,13 +1564,12 @@
         // 2026-09-27) - and a whole-record Send read back short there while
         // Read worked.  60 ms gives each burst a request of its own.
         var how = { gap: typeof IS_SAFARI !== 'undefined' && IS_SAFARI ? 60 : 3 };
-        if (params) how.params = params;
         return SETTINGSMIDI.install(ports.output, ports.input, record, how)
             .then(function (id) {
                 showFirmware(id);
                 if (!id.restarted) {
                     msg($('kbdMsg'), 'ok', 'Sent and saved.');
-                    if (counted) reportSettings('send', 'ok', id, false);
+                    reportSettings('send', 'ok', id, false);
                     return true;
                 }
                 // An option changed: the keyboard is restarting to run
@@ -1585,13 +1581,13 @@
                     .then(function () {
                         msg($('kbdMsg'), 'ok', 'Sent and saved. The keyboard has restarted and now runs ' +
                             optionWords(id.pending) + ' as set here.');
-                        if (counted) reportSettings('send', 'ok', id, true);
+                        reportSettings('send', 'ok', id, true);
                         ok = true;
                     }, function (err) {
                         var reason = err && err.reason === 'no reply' ? 'gone' : err && err.reason;
                         msg($('kbdMsg'), 'bad', KBD_REASONS[reason]
                             || String(err && err.message || err));
-                        if (counted) reportSettings('send', outcomeOf({ reason: reason }), id, true);
+                        reportSettings('send', outcomeOf({ reason: reason }), id, true);
                     })
                     .then(function () { kbd.listed = false; return listKeyboard(); })
                     .then(function () { return ok; });
@@ -1611,81 +1607,83 @@
                     } catch (e) { /* never let the report stop the page */ }
                 }
                 msg($('kbdMsg'), 'bad', sendRefusal(err));
-                if (counted) reportSettings('send', outcomeOf(err), err && err.identity);
+                reportSettings('send', outcomeOf(err), err && err.identity);
                 return false;
             });
     }
 
-    // --- live send: each change to the keyboard as it is made -------------
-    // Once Read settings has loaded what the keyboard holds, a change on the
-    // page goes to it without a press of Send (the owner, 2026-09-27): only
-    // the parameters that differ from what the keyboard is known to hold,
-    // then the same verify, commit and restart a Send does, so it ends where
-    // a Send of the whole record would.  `known` is that record - the read's,
-    // then each send's once it has landed - and null is off: before the first
-    // read, and after anything that leaves the page unsure what the keyboard
-    // holds (a failed read or send, or another port picked), until the next
-    // read.  A change marks the record `due`; the send goes LIVE_DELAY ms
-    // after the last one, so a burst of edits is one send, and not while a
-    // read, a send or a calibration run has the port - each of those ends in
-    // refresh(), which starts the wait again.  `name` is the port the read
-    // was from.
-    var LIVE_DELAY = 400;
-    var live = { known: null, name: null, due: false, timer: null };
-    function liveArm(record, name) {
-        liveOff();
-        if (!$('kbdMsg')) return;
-        live.known = record.slice();
-        live.name = name;
+    // --- unsent settings: the card at the bottom of the window -------------
+    // Once Read settings has loaded what the keyboard holds, a change that
+    // makes the page's settings differ from it brings up a card fixed to the
+    // bottom of the window, with the port and Send settings (the owner,
+    // 2026-09-27: it replaced the live send, which sent each change on its
+    // own, and step 3's send card).  `base` is the record the page built
+    // just after the read's load, then each send's once it has landed: the
+    // read's own record is not it, because a load that does not give the
+    // keyboard's record back exactly is not a change anyone made.  `name` is
+    // the port it came from.  Nothing is armed before the first read, after
+    // a failed one, or once another port is picked.  The card stays up while
+    // a send runs and after one fails, so its line can be read; after one
+    // lands it goes SENT_LINGER_MS later, unless something changed.
+    var UNSENT_CHECK_MS = 300, SENT_LINGER_MS = 4000;
+    var unsent = { armed: false, base: null, name: null, timer: null, linger: null,
+                   dirty: false, sending: false };
+    function pageRecord() {
+        try { return recordBytes(WEBBUILD.settings(options()).settings); } catch (e) { return null; }
     }
-    function liveOff() {
-        if (live.timer) clearTimeout(live.timer);
-        live.known = null; live.name = null; live.due = false; live.timer = null;
+    function unsentArm(name) {
+        clearTimeout(unsent.timer); clearTimeout(unsent.linger);
+        unsent.armed = true; unsent.name = name; unsent.base = pageRecord();
+        unsent.timer = null; unsent.linger = null; unsent.dirty = false;
+        unsentShow();
     }
-    function liveSoon() {
-        if (live.timer) clearTimeout(live.timer);
-        live.timer = setTimeout(liveSend, LIVE_DELAY);
+    function unsentOff() {
+        clearTimeout(unsent.timer); clearTimeout(unsent.linger);
+        unsent.armed = false; unsent.base = null; unsent.name = null;
+        unsent.timer = null; unsent.linger = null; unsent.dirty = false;
+        unsentShow();
     }
-    // invalidate()'s: the record may have changed.
-    function liveChanged() {
-        if (!live.known) return;
-        live.due = true;
-        liveSoon();
+    // invalidate()'s: the settings may have changed.
+    function unsentSoon() {
+        if (!unsent.armed) return;
+        clearTimeout(unsent.timer);
+        unsent.timer = setTimeout(unsentCheck, UNSENT_CHECK_MS);
+    }
+    // A record the page cannot build is unsent too: Send says why.
+    function unsentCheck() {
+        unsent.timer = null;
+        if (!unsent.armed) return;
+        var record = pageRecord();
+        unsent.dirty = !record || !unsent.base || SETTINGSMIDI.changes(unsent.base, record).length > 0;
+        unsentShow();
     }
     // A pick in the port lists: another port is not the keyboard that was read.
-    function livePicked() {
-        if (!live.known) return;
+    function unsentPicked() {
+        if (!unsent.armed) return;
         var ports = keyboardPorts();
-        if (!ports || ports.output.name !== live.name) liveOff();
+        if (!ports || ports.output.name !== unsent.name) unsentOff();
     }
-    function liveSend() {
-        live.timer = null;
-        if (!live.known || !live.due) return;
-        if (kbd.busy || sweep) return;
-        var ports = keyboardPorts();
-        if (!ports) return;
-        if (ports.output.name !== live.name) { liveOff(); return; }
-        var record;
-        try { record = recordBytes(WEBBUILD.settings(options()).settings); }
-        catch (e) {
-            // Nothing reached the keyboard, so what it holds is still known;
-            // the next change that builds carries this one with it.
-            live.due = false;
-            msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + e.message);
-            return;
+    // A send from the card has ended.  One that landed is the new base.
+    function unsentLanded(ok, record, name) {
+        if (ok && unsent.armed && name === unsent.name) {
+            unsent.base = record.slice();
+            clearTimeout(unsent.linger);
+            unsent.linger = setTimeout(function () { unsent.linger = null; unsentShow(); }, SENT_LINGER_MS);
         }
-        live.due = false;
-        var params = SETTINGSMIDI.changes(live.known, record);
-        if (!params.length) return;
-        kbd.busy = true;
-        refresh();
-        msg($('kbdMsg'), 'warn', 'Sending…');
-        sendRecord(ports, record, params)
-            .then(function (ok) {
-                if (ok && live.known) live.known = record;
-                else liveOff();
-            })
-            .then(function () { kbd.busy = false; refresh(); });
+        unsentCheck();
+    }
+    function unsentShow() {
+        var card = $('unsent');
+        if (!card) return;
+        var up = unsent.armed && (unsent.dirty || unsent.sending || !!unsent.linger);
+        // Coming up for a new change, it starts without the last send's line.
+        if (up && !card.classList.contains('up') && !unsent.sending) msg($('kbdMsg'), '', '');
+        card.classList.toggle('up', up);
+        card.inert = !up;
+        $('unsentHead').hidden = !unsent.dirty;
+        // Room under the page's end, so the card never covers the last of it.
+        var body = document.body;
+        if (body && body.style) body.style.paddingBottom = up ? ((card.offsetHeight || 0) + 32) + 'px' : '';
     }
 
     if ($('kbdSend')) {
@@ -1697,6 +1695,8 @@
             $('kbdSend').disabled = true;
             if ($('kbdRead')) $('kbdRead').disabled = true;
             msg($('kbdMsg'), 'warn', 'Sending…');
+            unsent.sending = true;
+            unsentShow();
             // The record is a build's, made here from what the page shows now
             // rather than by a button of its own: a send that needed a build
             // pressed first failed for a reason the step never showed.  A
@@ -1716,15 +1716,12 @@
                         msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + e.message);
                         return;
                     }
-                    return sendRecord(ports, record, null).then(function (ok) {
-                        // With live send on, what the keyboard holds is now
-                        // this record; after a failure it is not known.
-                        if (!live.known) return;
-                        if (ok && ports.output.name === live.name) live.known = record;
-                        else liveOff();
+                    return sendRecord(ports, record).then(function (ok) {
+                        unsent.sending = false;
+                        unsentLanded(ok, record, ports.output.name);
                     });
                 })
-                .then(function () { kbd.busy = false; refresh(); });
+                .then(function () { kbd.busy = false; unsent.sending = false; refresh(); });
         };
     }
 
@@ -1901,16 +1898,15 @@
                     // invalidates it.
                     showFirmware(r.identity);
                     var verdict = readVerdict(r), cleared = loadFromKeyboard(r);
-                    // From here each change goes to the keyboard (liveSend),
-                    // diffed against what it was just read to hold.  After
+                    // From here a change brings up the unsent card.  After
                     // the load, whose own invalidate() is not a change.
-                    liveArm(r.record, ports.output.name);
+                    unsentArm(ports.output.name);
                     msg($('kbdLoadMsg'), verdict ? 'warn' : 'ok',
                         ['Keyboard settings loaded successfully.', verdict, cleared].filter(Boolean).join(' '));
                     reportSettings('read', 'ok', r.identity);
                 })
                 .catch(function (err) {
-                    liveOff();
+                    unsentOff();
                     firmwareFrom(err);
                     msg($('kbdLoadMsg'), 'bad', readRefusal(err));
                     reportSettings('read', outcomeOf(err), err && err.identity);
@@ -2214,7 +2210,7 @@
         }).then(function () {
             sweep = null; setRunning(false);
             if (warmed) keepWarm();
-            // A live send that waited for the run goes now (liveSend).
+            // Send settings was held while the run had the port.
             refresh();
         });
     });
@@ -2282,7 +2278,7 @@
         state.options = null;
         saveSoon();
         syncReset();
-        liveChanged();
+        unsentSoon();
         refresh();
     }
 
@@ -2302,8 +2298,7 @@
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
         if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !portReady;
-        // A live send that waited for the port, now perhaps free.
-        if (live.due && !live.timer) liveSoon();
+        unsentShow();
     bindDashes(document.body);
     }
 
@@ -2761,7 +2756,7 @@
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
     // The version a keyboard has to run for a send to land, shown as the
     // masthead's is.
-    ['kbdNeeds', 'kbdNeedsLoad'].forEach(function (id) { if ($(id)) $(id).textContent = shown(GEN.version); });
+    ['kbdNeedsLoad'].forEach(function (id) { if ($(id)) $(id).textContent = shown(GEN.version); });
 
     // Each preset knob picks its own role, the same control the volts-per-
     // octave choice uses; None hands that knob back to its preset voltage.

@@ -452,19 +452,6 @@
 
       <section>
         <h2>3 · Flash it</h2>
-        <div class="group finish-midi">
-          <h3>Already running Rewired <span id="kbdNeeds"></span>?</h3>
-          <p class="d muted section-note">Change any setting without flashing.</p>
-          <div class="picker">
-            <label class="picker-field">
-              <svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10.5 3.3h3v2.1h-3z"/><g fill="currentColor"><circle cx="6.8" cy="12" r="1.35"/><circle cx="8.3" cy="15.7" r="1.35"/><circle cx="12" cy="17.2" r="1.35"/><circle cx="15.7" cy="15.7" r="1.35"/><circle cx="17.2" cy="12" r="1.35"/></g></svg>
-              <select id="kbdPort" aria-label="Keyboard"><option value="">Looking&hellip;</option></select></label>
-            <button class="primary" id="kbdSend" type="button" disabled>Send settings</button>
-          </div>
-          <p class="d muted safari-midi" hidden>Safari needs the Web MIDI extension for this: <a href="https://triglavmodular.hu/mods/safari-webmidi/">Get Web MIDI for Safari</a>. If it’s installed, turn it on and allow it on this site.</p>
-          <div id="kbdMsg" role="status"></div>
-        </div>
-
         <div class="group finish-flash">
           <h3>Install or update</h3>
           <div class="row">
@@ -521,6 +508,17 @@
       <h2 class="triglav-title">TRIGLAV MODULAR<br>2026</h2>
 
     </div>
+
+    <aside class="unsent" id="unsent" aria-label="Unsent settings">
+      <p class="unsent-head" id="unsentHead">You have unsent settings.</p>
+      <div class="picker">
+        <label class="picker-field">
+          <svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10.5 3.3h3v2.1h-3z"/><g fill="currentColor"><circle cx="6.8" cy="12" r="1.35"/><circle cx="8.3" cy="15.7" r="1.35"/><circle cx="12" cy="17.2" r="1.35"/><circle cx="15.7" cy="15.7" r="1.35"/><circle cx="17.2" cy="12" r="1.35"/></g></svg>
+          <select id="kbdPort" aria-label="Keyboard"><option value="">Looking&hellip;</option></select></label>
+        <button class="primary" id="kbdSend" type="button" disabled>Send settings</button>
+      </div>
+      <div id="kbdMsg" role="status"></div>
+    </aside>
 
     <script src="generated.js"></script>
     <script src="sha256.js"></script>

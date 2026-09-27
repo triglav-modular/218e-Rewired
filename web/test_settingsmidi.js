@@ -365,7 +365,8 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     try { e = await refusal(gone); } catch (x) { threw = true; }
     check('and a send through it is no reply too', !threw && e && e.reason === 'no reply');
 
-    // A live send (web/app.js, test_livesend.js): only the parameters that
+    // A push of only some parameters (install's opts.params, which the
+    // page's live send used until 2026-09-27): only the parameters that
     // differ from what the keyboard is known to hold, then the same verify,
     // commit and restart.  The keyboard here holds `quietRecord`, committed
     // and booted, so its live bytes are that record's cells.

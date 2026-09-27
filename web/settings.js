@@ -248,8 +248,10 @@ var SETTINGSMIDI = (function () {
     // `state`), so the page can say which - they have different fixes.
     //
     // `opts.params`, [param, value] pairs, pushes those alone rather than
-    // every parameter: a live send's, the parameters that differ from what
-    // the keyboard is known to hold (`changes`).  Everything after the push
+    // every parameter: the parameters that differ from what the keyboard is
+    // known to hold (`changes`).  The page's live send pushed these until it
+    // gave way to the unsent card (2026-09-27), whose Send sends everything;
+    // nothing on the page passes them now.  Everything after the push
     // is the same.  The verifying dump is still compared with the whole
     // record, so a keyboard that did not hold what the page thought is a
     // mismatch rather than a record saved half one and half the other.
