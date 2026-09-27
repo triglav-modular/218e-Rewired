@@ -1766,7 +1766,7 @@ strong {
   left: 50%;
   bottom: 16px;
   z-index: 10;
-  width: min(780px, calc(100% - 32px));
+  width: min(632px, calc(100% - 32px));
   padding: 16px 20px 18px;
   background: var(--panel2);
   border: 1px solid var(--line);
