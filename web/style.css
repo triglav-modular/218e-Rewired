@@ -2893,7 +2893,10 @@ section,
 /* .row carries no margin of its own - it is a flex line, and everywhere
    else in the page something above it supplies the space.  Here the two
    lines are siblings, so the buttons sat against the selects. */
-.automeasure .autorow + .row { margin-top: 1rem; }
+/* The Safari note sits between them, hidden everywhere else, and a
+   hidden element still breaks the + chain. */
+.automeasure .autorow + .row,
+.automeasure .autorow + .safari-midi + .row { margin-top: 1rem; }
 .autoprogress { margin-top: .7rem; min-height: 1.2em; font-variant-numeric: tabular-nums; }
 .autoprogress .bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: .5rem; overflow: hidden; }
 .autoprogress .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }
