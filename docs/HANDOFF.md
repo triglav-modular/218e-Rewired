@@ -106,10 +106,74 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   for the save gesture/timing contract, record layout, failure states and
   `tools/test_persistence.py` regression coverage. Remaining work is bench
   validation of save/power-cycle behavior and physical flash failures.
-- **Settings over MIDI** — feasibility done (dispatcher event 32 at
-  `0x80004fc2` carries an incoming message with both data bytes). The cost is
-  that build numbers are compiled as immediates, so each one moved to
-  runtime needs a RAM cell and a load. Good candidates are the numbers below.
+- **Settings over MIDI** — stage 1's firmware is built (2026-09-22), laid
+  out in [PLAN-SETTINGS.md](PLAN-SETTINGS.md): a RAM mirror at `0x6800`
+  that every table reader and the ten numbers below address, filled at boot
+  from the image's own tables and then from the newer valid record in the
+  two slots at `0x8003d000`/`0x8003d800`; NRPN on channel 16 at the
+  factory's Control Change branch (`0x8000838e`) writes the mirror live,
+  `0x3f00`/`0x2a2a` commits it from the per-scan chain, `0x3f03` dumps it
+  back paced, `0x3f7f` answers with the identity block. `tools/settings.py`
+  and `BUILDLIB.settingsRecord` write the record, `BUILDLIB.nrpn*` is the
+  codec. The page's step 5 sends a build's record (`SETTINGSMIDI.install`:
+  identity, push, dump, compare, commit) and reads what the keyboard holds
+  back into the page (`SETTINGSMIDI.read`: the patterns and the pitch
+  table, with the scaling and offset read off the table). The identity
+  block leads with the firmware version (`0x3f76`, frozen numbers) and the
+  page's verdict tells an older, a newer and a same-version-other-options
+  keyboard apart. Nothing here has run on the instrument yet. Stage 2 -
+  the blocks and knob roles as option cells 16..27 of the same record,
+  applied at boot from live bytes at `0x6d28`, with a restart command
+  (`0x3f04`, the watchdog) so the page can apply them at once - is
+  planned in [PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md). Phase A (the
+  cells, layout 2, the live bytes, the restart, the page codec), phase B
+  (the four knob roles decided at boot by dispatchers on their pool words,
+  out of the image marker), phase C (the latching arp, three dispatchers,
+  a pad test and the factory chord given back by a shim), phase D (the
+  sequencer, one gate at the pad-4 chord's arm; every other sequencer cave
+  already asks the mode) and phase E (the jack and the presets: the
+  rotation idles at zero degrees in every image, and four helpers decide
+  where the degrees come from and give the factory its glide addend and
+  its straight preset add back) and phase F (the pressure path: three
+  dispatchers on the factory's pool words, three hooks where the 2-byte
+  patches stood, the interpolator's pass-through, the blend's route word
+  and glide value) and phase G (the clock divider: the ISR hook reshaped
+  to six bytes so the factory body stays for the off path, event 10's
+  handler and the four pulse pools dispatched) and phase H (the docs,
+  the page's copy) are built (2026-09-23). The reference is
+  [SETTINGS.md](SETTINGS.md). The owner's three approval criteria
+  (2026-09-23): (1) everything as in 2.4 - open: the evidence still owed
+  is an emulator A/B of the new image against the shipped 2.4 image
+  (`build/Rewired_marton_2.4.0_DFU.hex`, untracked) through the factory
+  entry points both share, scripted gestures in, DAC slots and MIDI sends
+  out, diffed with the same options; (2) every setting over MIDI - done
+  the same evening: the image marker leaves out the pitch table, the
+  tuning tables, the keys per period and the ten timing numbers (checked:
+  builds with a tuning, a pitch correction, no pitch offset and 1 V/oct
+  share the default's marker), and cell 27 (`alternate_tunings`, live
+  byte `0x6d33`) decides the two edit keys, the applier and the
+  remote-enable guards, so a keyboard built without a tuning takes tables
+  over MIDI, and since the same evening the period too, as number cell
+  10 read by every octave site (PLAN-SETTINGS-2.md, record J), so no
+  setting change needs a flash;
+  (3) no side effects - the residue test (`ControlRegression.residue`: a
+  session with every option on, a warm all-off restart, custom RAM
+  compared against a cold boot with the same record and ring) ran
+  2026-09-23 and found three cells read with their option off - the
+  vibrato offset the remap adds, the jack transposer's tagged state word,
+  the blend's re-base history - now cleared by `option_boot_state`; the
+  22 other runs are allowlisted in the test with their readers
+  (PLAN-SETTINGS-2.md, record I), the test runs both directions in both
+  builds since `seq_restart_clear` (record L); (1) works as in 2.4 - the A/B trace
+  (`tools/ab_trace.py`, record K) finds 62 of 63 steps identical with
+  2.4's tables planted, the one difference a transpose of -2 before the
+  first key: the transposer's refresh standing the bottom key in for
+  nothing played, inaudible and gone at the first key (record K). The
+  volatile build's sequencer runtime surviving a warm restart is closed
+  by `seq_restart_clear` (record L). Still open: bench validation of
+  both stages, the wide-map refusal (phase E) and the added page copy
+  (phases A and H). (Dispatcher event 32 at `0x80004fc2`
+  is the factory remote-note handler, not the CC path.)
 - **Numbers never measured on hardware**: `tie_glide_rate` (60),
   `strip_halfway_units` (2048), `clock_min_ms` (4), `clock_rearm_us` (250),
   `clock_lock_pulses` (5), and the jack transposer's `cv_counts_per_volt`
@@ -172,6 +236,15 @@ the running instrument: dead panel, still enumerating on USB, because the
 hang was in the main loop and USB is interrupt-driven.  `tools/test.py`-style
 sweeps in the plan's audit section cover it now; if a leaf needs to make a
 decision, give the decision its own leaf and repoint the callers.
+
+**Word accesses must be word-aligned.**  A word or doubleword access off a
+4-byte boundary, or a halfword at an odd address, raises an address
+exception on the chip. The emulator just moves the bytes. `seq_restart_clear`
+cleared two halfword cells at `0x622e` with one `ST.W` and hung the first
+3.0 image at boot, before USB, with only JTAG to bring it back
+(2026-09-26). `check_alignment` in `tools/build.py` refuses a misaligned
+constant-address access, and `src/AlignGuard.java` traps a misaligned
+access in every harness. Clear adjacent narrow cells at their own width.
 
 **A call destroys R8-R12.**  They are caller-saved, and a cave that holds a
 live value in one of them across a call is broken.  Two shipped that way in

@@ -145,7 +145,7 @@ def audit_call_pools(image_path) -> list[str]:
     word = lambda a: int.from_bytes(bytes(flash.get(a + i, 0xFF) for i in range(4)), "big")
 
     def called(target: int) -> bool:
-        for pc in range(0x80002000, 0x80020000, 2):
+        for pc in range(0x80002000, build_mod.CODE_END, 2):
             if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
                 continue
             d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
@@ -163,7 +163,7 @@ def audit_call_pools(image_path) -> list[str]:
         if t not in flash or not called(t):
             continue
         v = word(t)
-        if not (0x80000000 <= v < 0x80020000 and v % 2 == 0):
+        if not (0x80000000 <= v < build_mod.CODE_END and v % 2 == 0):
             bad.append(f"{t:#x} holds {v:#010x}")
         elif flash.get(v, 0xFF) == 0xFF:
             bad.append(f"{t:#x} -> {v:#x} (erased flash)")
@@ -281,9 +281,18 @@ def audit_call_pools(image_path) -> list[str]:
 # rest or a tie entered as the first step of an empty take adopts the reference
 # and stamps its own degree, as the first note would have; and the chord's pad
 # walk keeps its index across the two calls that destroy it.
+# And again when the pitch floor moved to the table's entry 0, so a bend
+# reaches the three semitones under the bottom key.
+# And again for calibration mode, NRPN 0x3f05: seven caves past the boot
+# guard, a hook inside the arp step, and the note-on, contact, pitch-hook and
+# bare-remap words through them, in every image.
+# And again for 3.0.2, where normal play lands on the pitch table entry the
+# way calibration mode does: the factory's +-1 target fix-ups skipped, only a
+# negative target floored, and the key table 485 + round(484k/12) in the
+# image and in every slot left at the factory temperament.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "1edea453c4253087c05da0d835f95eb2d0f99affc5338cda1de70966db2ce877",
+    "historical_config": "c2938b154b59de8cbda9b7c92fe9895a4ea789c4c04b2bdfa8c345b4ad484420",
 }
 
 

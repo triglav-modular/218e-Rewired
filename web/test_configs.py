@@ -173,20 +173,6 @@ CONFIGS = [
                               "alternate_tunings": mapped([
                                   ("tunings/diatonic7.scl", "tunings/diatonic7.kbm")])
                                   + scala(["tunings/12TET.scl"])}),
-    # A keyboard map wider than the transposer's 32-entry table builds with
-    # the transposer off; wide_map_transposed below is the refusal.
-    # A map wider than the 32-entry table cannot be rotated, and both
-    # builders refuse the pair - so this variant has to name the permitted
-    # twin explicitly now that both inputs to the rotation are on by
-    # default.  It is also the only configuration left that exercises the
-    # rotation being OFF in the parity matrix.
-    ("wide_map",          [(r"^alternate_tunings = false",
-                            f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]'),
-                           (r'^portamento_in = .*', 'portamento_in = "portamento"'),
-                           (r"^quantize_presets = .*", "quantize_presets = false")],
-                          {"alternate_tunings": mapped([(WIDE, WIDE_MAP)]),
-                           "portamento_in": "portamento",
-                           "quantize_presets": False}),
     ("one_volt",          [(r"^volts_per_octave = 1.2", "volts_per_octave = 1.0")],
                           {"volts_per_octave": 1.0}),
     # A slot written as a one-element list, which options.check documents and
@@ -324,8 +310,19 @@ REFUSALS = [
                           {"persist": False},
                           "not a supported configuration",
                           "not a supported configuration"),
-    # A map the transposer cannot shift.  The same map builds with the
-    # transposer off, which the wide_map row above proves.
+    # A map the rotation cannot shift.  Since stage 2 phase E the rotation is
+    # in every image - the jack and the preset quantiser are option cells -
+    # so the map is refused with both inputs off as well (wide_map) and with
+    # the jack on (wide_map_transposed), by both builders, for that reason.
+    ("wide_map",          [(r"^alternate_tunings = false",
+                            f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]'),
+                           (r'^portamento_in = .*', 'portamento_in = "portamento"'),
+                           (r"^quantize_presets = .*", "quantize_presets = false")],
+                          {"alternate_tunings": mapped([(WIDE, WIDE_MAP)]),
+                           "portamento_in": "portamento",
+                           "quantize_presets": False},
+                          "use a map of up to 32",
+                          "use a map of up to 32"),
     ("wide_map_transposed", [(r"^alternate_tunings = false",
                               f'alternate_tunings = [["{WIDE}", "{WIDE_MAP}"]]'),
                              (r'^portamento_in = .*', 'portamento_in = "transpose"')],
@@ -432,7 +429,7 @@ REFUSALS = [
 # overwrites them even though its hex is redirected to build/_web.hex.  Left
 # alone, the last variant's metadata sits there describing the default image -
 # build/VERSION naming a checksum no shipped file has.
-METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt")
+METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt", "settings.bin")
 
 
 def snapshot() -> dict[str, bytes | None]:
@@ -557,6 +554,9 @@ def run(base: str, rows: list) -> None:
             sha = re.search(r"SHA-256 ([0-9a-f]{64})", built.stdout).group(1)
 
             (TMP / "_opts.json").write_text(json.dumps(options))
+            # The settings record as hex text: jsc's readFile is for text,
+            # and the comparison is of the bytes either way.
+            (TMP / "_settings.hex").write_text((TMP / "settings.bin").read_bytes().hex())
             js = subprocess.run(
                 # The whole stack: the harness asks WEBBUILD.build() for the
                 # properties now instead of deriving the flags a second time,
@@ -565,7 +565,8 @@ def run(base: str, rows: list) -> None:
                  "tools/avr32/encoder.js", "tools/avr32/runtime.js",
                  "tools/avr32/program.js", "web/build.js",
                  "web/test_properties.js", "--", str(TMP / "_opts.json"),
-                 "firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties")],
+                 "firmware/218eV3_v369_DFU.hex", str(TMP / "build.properties"),
+                 str(TMP / "_settings.hex")],
                 capture_output=True, text=True, cwd=REPO)
             out = (js.stdout + js.stderr).strip()
             props_ok = out.startswith("IDENTICAL")

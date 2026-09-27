@@ -28,7 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 import options  # noqa: E402
 
-METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt")
+METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt", "settings.bin")
 # Ghidra ends every run with the JVM banner and its Unsafe warnings on stderr,
 # so a plain tail of the captured output never reaches the failure.
 NOISE = re.compile(r"^(WARNING: |openjdk version|OpenJDK |Picked up |WARN  Uninitialized memory read)")
@@ -101,12 +101,21 @@ def main() -> None:
             (work / f"{mode}-build.log").write_text(result.stdout + result.stderr)
             if result.returncode:
                 raise SystemExit(result.stdout + result.stderr)
+            # This image's own properties and settings record, kept beside
+            # it: the settings regression compares the mirror a boot fills
+            # against what tools/build.py serialized for the same build,
+            # and build/ holds only the last mode's by the time it runs.
+            for name, copy in (("build.properties", f"{mode}.properties"),
+                               ("settings.bin", f"{mode}.settings.bin")):
+                (work / copy).write_bytes((build / name).read_bytes())
             # Its own Ghidra project per mode: a shared one would serialise the
             # modes again on the project lock.
             command = [str(headless), str(work), f"persistence-{mode}", "-import", str(image),
                        "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src")]
             if not args.no_persist:
-                command += ["-postScript", "PersistenceRegression.java", mode]
+                command += ["-postScript", "PersistenceRegression.java", mode,
+                            "-postScript", "SettingsRegression.java", mode,
+                            str(work / f"{mode}.properties"), str(work / f"{mode}.settings.bin")]
             if "clock" in mode and not args.no_persist:
                 command += ["-postScript", "PersistenceClockRegression.java", "seq" if "seq" in mode else "arp"]
                 if args.quick:
@@ -137,6 +146,7 @@ def main() -> None:
             expected = []
             if not args.no_persist:
                 expected.append("PERSISTENCE REGRESSION PASS:")
+                expected.append("SETTINGS REGRESSION PASS:")
                 if "clock" in mode:
                     expected.append("CLOCK REGRESSION PASS:")
                 if mode == "seq-clock":

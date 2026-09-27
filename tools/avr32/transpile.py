@@ -45,6 +45,17 @@ def transpile_line(line: str, state: dict) -> str:
     line = re.sub(r"^(\s*)(?:final\s+)?(?:int|long|boolean)\s+(\w+)\s*=",
                   r"\1var \2 =", line)
 
+    # Emitter name = () -> {  ...  }; // end name  ...  name.go();
+    #   ->   function name() { ... }  ...  name();
+    # A lambda in the Java is a method of its own in bytecode, which is what
+    # keeps run() under the JVM's 64 KB; here it is a nested function, which
+    # sees run()'s vars exactly as the lambda captures its constants.  The
+    # closing brace is matched by its comment, never by a bare "};".
+    line = re.sub(r"^(\s*)Emitter\s+(\w+)\s*=\s*\(\)\s*->\s*\{\s*$",
+                  r"\1function \2() {", line)
+    line = re.sub(r"^(\s*)\};\s*// end (\w+)\s*$", r"\1}", line)
+    line = re.sub(r"^(\s*)(\w+)\.go\(\);", r"\1\2();", line)
+
     # for (int v : sine) {  ->  indexed loop with the element bound inside,
     # so the body's own closing brace still closes the loop.
     m = re.match(r"^(\s*)for\s*\(\s*int\s+(\w+)\s*:\s*(\w+)\s*\)\s*\{\s*$", line)

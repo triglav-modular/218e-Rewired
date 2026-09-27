@@ -91,9 +91,14 @@ def main() -> None:
                     # to the rotation in one image, which nothing else does.
                     # lean and roles prove the free add is untouched.
                     quantize = variant in ("default", "tuned", "jack")
+                    # Lean also runs the pressure path off (stage 2 phase F):
+                    # the dispatchers back to the factory's curve and knobs,
+                    # the interpolator's pass-through and the blend's route
+                    # word all through the real scans.
                     for key, value in (("persist", persist), ("sequencer", variant != "lean"),
                                        ("clock_divide", variant != "lean"), ("latching_arp", variant != "lean"),
-                                       ("quantize_presets", quantize)):
+                                       ("quantize_presets", quantize),
+                                       ("pressure_fix", variant != "lean"), ("pressure_portamento", variant != "lean")):
                         text, count = re.subn(rf"^{key} = (?:true|false)$",
                                              f"{key} = {str(value).lower()}", text, flags=re.M)
                         if count != 1:
@@ -115,6 +120,16 @@ def main() -> None:
                             if variant == "patterns"
                             else 'knob1 = "orders"\nknob4 = "trn"\n')
                     text = text.replace("[firmware]", role + "\n[firmware]", 1)
+                    if variant == "lean":
+                        # Stage 2 phase E: the jack's caves are in every image
+                        # and its live byte decides.  Lean runs them with the
+                        # byte off - the glide-rate addend is the factory's
+                        # load again and the transposer reads no jack - so the
+                        # off paths go through the real pitch chain here.
+                        text, count = re.subn(r'^portamento_in = .*$',
+                            'portamento_in = "portamento"', text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit("Cannot put the jack on portamento in regression config")
                     if variant == "jack":
                         # The jack transposer over an unequal scale: the one
                         # configuration where a shift by degrees is not a

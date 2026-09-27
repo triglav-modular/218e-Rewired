@@ -31,8 +31,12 @@ Saving is automatic at the end of an edit:
 - The selected tuning slot (edit keys 27 and 28, with `alternate_tunings`)
   saves on the scan that sees it change. There is no release to wait for:
   a key press steps the slot once and the next press steps it again, so
-  the value is already final when the scan reads it. Builds without
-  alternate tunings carry slot 0 in every record.
+  the value is already final when the scan reads it. With
+  `alternate_tunings` off the slot is put back to 0 at the head of every
+  scan. A record saved with the cell on still carries its slot, so the
+  first boot with the cell off loads it, the first scan puts it back, and
+  that change is saved like any other: one commit, once, after which the
+  record carries slot 0.
 - Only changed musical data causes a commit. An unchanged take, an empty
   clear, a pad tap without editing, or a value returned to its old setting
   does not write flash, including when storage is still empty.

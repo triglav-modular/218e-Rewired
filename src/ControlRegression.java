@@ -22,6 +22,7 @@ public class ControlRegression extends SequenceEditRegression {
     @Override void command(int pad) throws Exception { if(seq)super.command(pad); }
     @Override void step() throws Exception {
         steps++;
+        if(pc()==0x80019980L) remapIn=(int)reg("R12");   // what the scan hands the remap
         // These helpers only update LED RAM. Execute them too, so a changed
         // call chain cannot accidentally rely on the peripheral stub's ABI.
         if(pc()==0x80006808L||pc()==0x800068ccL) {
@@ -72,6 +73,29 @@ public class ControlRegression extends SequenceEditRegression {
     }
     int setting(int raw) { return transpose?raw*zones/1024:raw; }
     long setting() { return r(transpose?S+0x6b:0x60f0,transpose?1:2); }
+    // Knob 4's zones follow number cell 10, not the period the image was
+    // built with: three that mean no transpose, then one per period in six
+    // octaves, thirteen at most.  Nine at the octave, six for a tritave, one
+    // step at the top of the cell's range, and the cap below it.  Written
+    // out here from the rule rather than read off the image, and driven
+    // through the real control scan with the knob unheld.  (Audit
+    // 2026-09-24, finding 1: the count was baked in, so a record with
+    // another period could not be sent to this image at all.)
+    void knob4Zones() throws Exception {
+        setup(0,false,0); command(2);
+        for(int p:new int[]{484,767,2000,300,100}) {
+            int expect=3+Math.min(13,2904/p);
+            w(0x6814,2,p);
+            for(int raw:new int[]{0,1023,512,1000,300}) {
+                w(S+0x310,2,raw); controlScan();
+                check("knob 4 at "+raw+" with the period cell at "+p+": zone "+setting()+" of "+expect,
+                    setting()==raw*expect/1024);
+            }
+        }
+        w(0x6814,2,PERIOD); w(S+0x310,2,1023); controlScan();
+        check("back at the octave, the top of the knob is zone 8",setting()==8);
+        println("PASS knob 4's zones follow the period cell: 9, 6, 4, 12 and 16 at the cap");
+    }
     void presetOwnership() throws Exception {
         for(int direction:new int[]{1,-1}) {
             setup(0,false,0); command(2);
@@ -163,7 +187,7 @@ public class ControlRegression extends SequenceEditRegression {
         for(int position:lean?new int[]{2}:new int[]{1,2})for(int zone:new int[]{3,4}) {
             setup(0,false,position); command(1); command(1);
             for(int k:new int[]{4,14,9})key(k);
-            e.writeRegister("R12",14); call(position==1?0x80018d00L:0x8001a280L);
+            e.writeRegister("R12",14); call(position==1?0x80018d00L:r(0x80005b18L,4));
             check("real release/unlatch removes target",r(S+0x21b+14,1)==0&&r(S+0x21a,1)==2);
             w(S+0x34d,1,9); w(S+0x30a,2,zone*176+40); w(S+0x2fc,2,0);
             for(int i=0;i<6;i++) {
@@ -331,7 +355,9 @@ public class ControlRegression extends SequenceEditRegression {
             +", equal pitches, all/none held, missing current, regular arp");
     }
     void sound() throws Exception { controlScan(); call(0x80003590L); pitch(); }
-    void noteUp(int key) throws Exception { e.writeRegister("R12",key); call(0x8001a280L); }
+    // Through the pool word, as the factory releases a key: the latch's
+    // wrapper or the factory's note-off, by the latch's live byte.
+    void noteUp(int key) throws Exception { e.writeRegister("R12",key); call(r(0x80005b18L,4)); }
     void latchFixture() throws Exception {
         w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x310,2,0); controlScan();
     }
@@ -604,15 +630,21 @@ public class ControlRegression extends SequenceEditRegression {
         // one period stopped costing volts_per_octave - and the first move
         // shipped a red suite, because cv(123) silently stopped meaning one
         // period.  A fixture derived from the image cannot go stale that way.
-        // The base is named because the OFFSETS are the fragile half: this
-        // pool moved 8 bytes when it took a word for preset_degrees, and the
-        // suite went red reading the housekeeping pointer as a period.  One
-        // edit here covers the next move.
-        int period=(int)r(CV_POOL+8,4), degree=(period+6)/12;
+        // Since 2026-09-22 the period and the hysteresis are settings: the
+        // cave's pool word names the mirror at 0x6800 and the values sit in
+        // cells 5 and 7 of it, filled at boot - so they are read out of a
+        // booted image, which is still the image under test and not a
+        // number written here.  The pool word itself is checked to be the
+        // mirror, because reading a stale offset as a period is exactly
+        // how this suite went red the last time the pool moved.
+        setup(0,false,0);
+        check("the transposer reads its period out of the settings mirror",
+            r(CV_POOL+8,4)==0x6800);
+        int period=(int)r(0x680a,2), degree=(period+6)/12;
         check("the transposer's period is the one this build carries: "+period,
             period>100&&period<2048);
         cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
-        int hyst=(int)r(CV_POOL+16,4);
+        int hyst=(int)r(0x680e,2);
         println("JACK SHAPE period "+period+" counts, one degree "+degree
             +", hysteresis "+hyst+", "
             +(cvFiltered?"one pole in front":"no pole: hysteresis only"));
@@ -1122,6 +1154,16 @@ public class ControlRegression extends SequenceEditRegression {
     // preview jumped an octave, and a sounding note stopped following the
     // pad entirely.  A suite that only checks the mechanism it was written
     // for agrees with the defects around it.
+    // preset_entry's arithmetic, done here from the tables: the selected
+    // slot's entry i, wrapping by keys per period either way and moving a
+    // period of pitch (cell 10) per wrap.
+    long wrappedEntry(int i) {
+        int slot=(int)r(0x6090,1); if(slot>2) slot=0;
+        long kpp=r(0x69a0+2*slot,2), period=r(0x6814,2), wrap=0;
+        while(i>31) { i-=kpp; wrap+=period; }
+        while(i<0) { i+=kpp; wrap-=period; }
+        return (short)r(0x68e0+64*slot+2*i,2)+wrap;
+    }
     void presetSequencer() throws Exception {
         // 1. A take keeps the preset each step was played under.  The
         //    recorder normalises the JACK's shift out so playback can
@@ -1196,8 +1238,61 @@ public class ControlRegression extends SequenceEditRegression {
                             :"carries the whole set")+", moved "+moved,
                   state==0 ? moved==0 : moved>0);
         }
+        // 6. A step recorded under a lower preset than the take's reference
+        //    reads below the bottom of the slot table once the pad is low:
+        //    key + N - X + e under zero.  It has to wrap down a period the
+        //    way an index past the top wraps up, so the step moves by the
+        //    same interval as its neighbour (audit 2026-09-24: a step due at
+        //    258 sounded at 2979, read from below the tables).  The steps sit
+        //    a thousand units up, so seven degrees down stays off the floor
+        //    in images without the pitch offset too.
+        setup(2,false,1); w(0x6160,2,1500); w(0x6162,2,1540); w(0x6600,1,0); w(0x6601,1,0); w(0x6091,1,0);
+        command(1); presetSwitch(0,0);
+        externalBeat(); sound(); long up0=r(S+0x352,2);
+        externalBeat(); sound(); long up1=r(S+0x352,2);
+        check("the fixture has room seven degrees down: "+up0+", "+up1,up0>=600&&up1>=600);
+        setup(2,false,1); w(0x6160,2,1500); w(0x6162,2,1540); w(0x6600,1,7); w(0x6601,1,0); w(0x6091,1,7);
+        command(1); presetSwitch(0,0);
+        check("the fixture reaches an index under zero: step 1's key is "+r(0x61ee+1,1),r(0x61ee+1,1)<7);
+        externalBeat(); sound(); long down0=r(S+0x352,2);
+        externalBeat(); sound(); long down1=r(S+0x352,2);
+        // Each step moves by its own interval, read off the slot table: on an
+        // unequal scale seven degrees down from two keys are two intervals.
+        int n=(int)(r(0x60fa,2)&255), k0=(int)r(0x61ee,1), k1=(int)r(0x61ee+1,1);
+        long move0=(wrappedEntry(k0+n)-wrappedEntry(k0+7))-(wrappedEntry(k0+n)-wrappedEntry(k0));
+        long move1=(wrappedEntry(k1+n-7)-wrappedEntry(k1))-(wrappedEntry(k1+n)-wrappedEntry(k1));
+        check("a step under the take's reference wraps down a period: step 0 "
+              +up0+" -> "+down0+" (table says "+move0+"), step 1 "+up1+" -> "+down1+" (table says "+move1+")",
+              down0<up0 && down1<up1 && Math.abs(down0-up0-move0)<=1 && Math.abs(down1-up1-move1)<=1);
+        // 7. Its MIDI note carries the same N + e - X, which is negative
+        //    here: the note goes down by the degrees the CV did, never under
+        //    zero, and what the press freezes the lift reads back - a byte
+        //    that read -7 as 249 named note 127 in the note-off.
+        if(r(0x80002428L,4)==0x8001e740L) {
+            w(0x6158,1,2); w(0x33c5,1,0); w(0x6503,1,1); w(0x6601,1,0); w(0x60fa,2,0xa000);
+            e.writeRegister("R12",9); long plain=call(0x800057a8L);
+            w(0x6091,1,7);
+            e.writeRegister("R12",9); long live=call(0x8001e740L);
+            check("a step seven degrees under the reference sends its note seven lower: "+plain+" -> "+live,live==plain-7);
+            w(0x6091,1,plain+5);
+            e.writeRegister("R12",9); live=call(0x8001e740L);
+            check("and never a note under zero: "+(int)live,live==0);
+            w(0x6091,1,7); w(S+0x2e1,1,0xff);
+            e.writeRegister("R12",9); long pressed=call(0x8001e748L);
+            w(S+0x2e1,1,pressed);
+            e.writeRegister("R12",9); long lifted=call(0x8001e744L);
+            check("the lift names the note the press named: "+pressed+" and "+lifted,pressed==plain-7&&lifted==pressed);
+            // And a shift past a byte: 200 degrees of jack and a step 100 over
+            // its reference name note 127 on the press, and the lift has to
+            // read back the same - frozen as a byte, 300 came back as 44.
+            w(0x60fa,2,0xa0c8); w(0x6601,1,100); w(0x6091,1,0); w(S+0x2e1,1,0xff);
+            e.writeRegister("R12",9); pressed=call(0x8001e748L);
+            w(S+0x2e1,1,pressed);
+            e.writeRegister("R12",9); lifted=call(0x8001e744L);
+            check("a shift of 300 names note 127 on the press and on the lift: "+pressed+" and "+lifted,pressed==127&&lifted==127);
+        }
         println("PASS preset voltage downstream: takes keep their intervals, "
-                +"previews stay pinned, sounding notes follow the pad");
+                +"previews stay pinned, sounding notes follow the pad, and a step under the reference wraps");
     }
     void presetQuantize() throws Exception {
         setup(0,false,0);
@@ -1452,7 +1547,8 @@ public class ControlRegression extends SequenceEditRegression {
     }
     void swingRhythm() throws Exception {
         fresh();
-        check("the rhythm hook's pool word names the swing cave",r(0x80019d40L,4)==SWING);
+        check("the rhythm hook's pool word names the dispatcher, and knob 2's live byte says swing",
+            r(0x80019d40L,4)==KBRHY&&r(0x6d2a,1)==2);
         long step=400;
         w(0x60e6,2,0x2f); w(0x6152,1,0);
         check("below the deadzone the step is the step itself",
@@ -1493,6 +1589,9 @@ public class ControlRegression extends SequenceEditRegression {
     // down to bit zero instead.  Both the walk and the wrap shipped in every
     // patterns build with nothing executing them.
     static final long PATTERNS=0x8001b050L, BANK=0x80019f20L, LENGTHS=0x80019fa0L;
+    // The knob dispatchers (stage 2 phase B): the words name these, and the
+    // live option bytes decide where they go.
+    static final long KBSEL=0x8001fb80L, KBRHY=0x8001fbe0L;
     long patternMask(int i) { return r(BANK+4L*i,2)|(r(BANK+4L*i+2,2)<<16); }
     int patternLength(int i) { return (int)r(LENGTHS+2L*i,2); }
     // The bank entry as the gate should play it: 'x' for a step that sounds.
@@ -1532,8 +1631,9 @@ public class ControlRegression extends SequenceEditRegression {
         // Keys held, or the real selector answers -1 to a hit and a hit
         // cannot be told from a rest.
         orderFixture(0,0,4,9,14);
-        check("the factory selector pool names the pattern gate",r(0x80002420L,4)==PATTERNS);
-        check("and the sequencer reaches the same one",r(0x8001b434L,4)==PATTERNS);
+        check("the factory selector pool names the dispatcher, and knob 2's live byte says patterns",
+            r(0x80002420L,4)==KBSEL&&r(0x6d2a,1)==3);
+        check("and the sequencer reaches the same one",r(0x8001b434L,4)==KBSEL);
         // The gate hands a hit to the real selector through its own pool
         // word; with nothing held that selector answers -1 too, and a hit
         // could not be told from a rest.
@@ -1569,7 +1669,8 @@ public class ControlRegression extends SequenceEditRegression {
     }
     void quantizedRhythm() throws Exception {
         fresh();
-        check("the rhythm hook's pool word names the quantized cave",r(0x80019d40L,4)==GRID);
+        check("the rhythm hook's pool word names the dispatcher, and knob 2's live byte says quantized",
+            r(0x80019d40L,4)==KBRHY&&r(0x6d2a,1)==1);
         long beat=400;
         w(0x60e6,2,0); w(0x6152,1,0);
         check("below the deadzone the reload is the beat itself",gridReload(beat)==beat&&r(0x6152,1)==0);
@@ -1673,6 +1774,587 @@ public class ControlRegression extends SequenceEditRegression {
             r(0x60f2,1)==75&&r(0x60e6,2)==600&&r(0x60ea,2)==600);
         println("PASS retained-SRAM startup: pickup stamps cleared, no knob freeze");
     }
+    // Criterion 3 (2026-09-23): a setting change must not carry state over.
+    // One session with every option on, dirtying what each of them owns -
+    // latched notes, a take recorded and played, the divider fed edges,
+    // pressure in the cache, the jack up, a preset in the middle position,
+    // the knobs moved - then the restart that turns every option off, with
+    // custom RAM kept as SRAM keeps it, against a cold boot with the same
+    // record.  Whatever differs is state an option left behind for the
+    // others to read; each run in the allowlist below is one that is read
+    // only by the option that wrote it, and says why.
+    // The period as a setting (2026-09-23): the panel octave pads and the
+    // stored-octave (trn) arithmetic step what number cell 10 holds.  The
+    // factory nudges a transpose by one at two thresholds, hence the slack.
+    void periodCell() throws Exception {
+        setup(0,false,0); latchFixture();
+        for(int p:new int[]{484,767}) {
+            w(0x6814,2,p);
+            octavePad(1); sound(); long zero=livePad();
+            octavePad(2); sound(); long up=livePad()-zero;
+            octavePad(0); sound(); long down=livePad()-zero;
+            octavePad(3); sound(); long up2=livePad()-zero;
+            check("the octave pads step the period cell at "+p+": "+down+", "+up+", "+up2,
+                Math.abs(down+p)<=1&&Math.abs(up-p)<=1&&Math.abs(up2-2*p)<=1);
+            octavePad(1); w(S+0x6a,1,1); w(S+0x6b,1,3); sound(); long trn3=livePad();
+            w(S+0x6b,1,4); sound(); long trn=livePad()-trn3;
+            w(S+0x6a,1,0); w(S+0x6b,1,0); sound();
+            check("the stored octave steps the period cell at "+p+": "+trn,Math.abs(trn-p)<=1);
+        }
+        w(0x6814,2,PERIOD);
+        println("PASS the period cell: the panel octaves and the stored octave step what cell 10 holds");
+    }
+    static final long RES_LO=0x6000, RES_HI=0x7000;
+    // The allowlist: each run is state read only by the option that wrote
+    // it, or rewritten before anything reads it.  What is NOT here is what
+    // option_boot and option_boot_state clear: the latch's stamps, term and
+    // maps, the blend's offset and re-base history, the vibrato's cells and
+    // the jack transposer's state word.
+    static final long[][] RESIDUE_OK={
+        {0x6000,0x6021}, // arp press-order list: the walk re-checks the held flags before it returns a key, the append moves a key it finds before adding it, and knob 1 factory never reads it
+        {0x604e,0x6050}, // jack transposer: the slot's own pitch of the key being recorded, parked between the recorder's two halves and written before it is read
+        {0x608e,0x608f}, // latch-position mirror: housekeeping rewrites it from the switch and the latch's byte every scan; the blend is its only reader
+        {0x609c,0x609e}, // held pitch for a claimed beat: read under a claim, and clock_init zeroes the claim
+        {0x60a0,0x60a2}, // the live transpose: republished from state+0x350 by transpose_capture on the first pass, before any press reads it
+        {0x60dc,0x60e0}, // claimed beat's gate target: the same
+        {0x60e6,0x60e8}, // arp knob 2 latch: rewritten by the first housekeeping pass; the role caves a factory knob bypasses are its readers
+        {0x60ea,0x60ec}, // arp knob 3 latch: the same
+        {0x60ef,0x60f0}, // previous switch position: the latch-exit watch fires once on the first scan, clearing held flags that are already clear
+        {0x60f0,0x60f4}, // knob 4 and knob 1 latches, as knob 2's; 0x60f3 the preset's degree count, republished by the first scan's transposer chain before any press
+        {0x60fc,0x6100}, // jack bookkeeping: table entry 0 as last written and the key the refresh belongs to, which the first scan's rebuild rewrites
+        {0x6100,0x613a}, // corrected-pressure cache: rebuilt for every key each pass with the fix on, bypassed with it off
+        {0x613a,0x6142}, // preset voltage store: musical, kept in SRAM by a volatile build and restored from the ring by a persistent one
+        {0x6160,0x61e1}, // the take's steps and their count: musical, the same
+        {0x61e6,0x61e8}, // the clock's millisecond counter: free-running
+        {0x61ee,0x622e}, // the take's rest keys: musical, the same
+        {0x6300,0x6420}, // persistence's staged record: written by every capture before the commit reads it
+        {0x6503,0x6504}, // the sequencer step sounding now: every reader asks the mode first, and persist_boot zeroes the mode
+        {0x6540,0x657a}, // slot-indexed pressure weights: zeroed and rebuilt per scan by the blend
+        {0x657e,0x657f}, // last scan's step count: the strip's own, read in WRITE
+        {0x6600,0x6640}, // per-step preset degrees: playback's, behind the mode, and restored from the ring
+    };
+    static boolean residueAllowed(long a) { for(long[] r:RESIDUE_OK) if(a>=r[0]&&a<r[1]) return true; return false; }
+    byte[] settingsRecord(boolean allOff) {
+        // The image's own record, its options as built or every one off:
+        // the mirror after a boot without a record is the payload, the
+        // marker is what the first-use initialiser left at 0x602a, and the
+        // period is 484 (every controls variant repeats at the octave).
+        // The knobs' "off" is the factory role, not zero.
+        byte[] rec=new byte[0x2a8];
+        byte[] payload=e.readMemory(toAddr(0x6800),0x288-0x20);
+        System.arraycopy(payload,0,rec,0x20,payload.length);
+        int[] off={0,2,4,1,2,0,0,0,0,0,0,0};
+        if(allOff) for(int c=16;c<28;c++) { rec[0x20+2*c]=0; rec[0x21+2*c]=(byte)off[c-16]; }
+        rec[0]=0x32; rec[1]=0x31; rec[2]=0x38; rec[3]=0x53;     // "218S"
+        rec[5]=2; rec[6]=0x02; rec[7]=(byte)0x98; rec[11]=1;   // layout 2, payload 0x298, generation 1
+        int marker=(int)r(0x602a,2); rec[0x10]=(byte)(marker>>8); rec[0x11]=(byte)marker;
+        rec[0x12]=(byte)(PERIOD>>8); rec[0x13]=(byte)PERIOD;
+        java.util.zip.CRC32 c=new java.util.zip.CRC32(); c.update(rec,4,8); c.update(rec,0x10,0x2a8-0x10);
+        long v=c.getValue(); for(int i=0;i<4;i++) rec[12+i]=(byte)(v>>>(24-8*i));
+        return rec;
+    }
+    void plantSettings(byte[] rec) {
+        byte[] ff=new byte[0x800]; Arrays.fill(ff,(byte)255);
+        e.writeMemory(toAddr(0x8003d000L),ff); e.writeMemory(toAddr(0x8003d800L),ff);
+        e.writeMemory(toAddr(0x8003d000L),rec);
+    }
+    // The watchdog restart as the chip comes back from it: the C runtime
+    // zeroes the factory's RAM and copies its initialised data again, the
+    // peripherals are as a reset leaves them, and custom SRAM above 0x6000
+    // holds what the session left.  Then the startup hook, and the shared
+    // first-use bootstrap as the first handler would call it - a no-op
+    // when the marker survived, which is asserted first.
+    void warmRestart() throws Exception {
+        byte[] kept=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
+        long marker=r(0x602a,2);
+        e.writeMemory(toAddr(0),new byte[0x8000]);
+        e.writeMemory(toAddr(8),e.readMemory(toAddr(0x80015d28L),0x2ecc)); w(0x2ed4,4,0xffffffffL);
+        for(int i=0;i<=12;i++) e.writeRegister("R"+i,0);
+        e.writeRegister("SR",0); for(String f:new String[]{"N","Z","V","C"}) e.writeRegister(f,0);
+        w(0x29cc,4,25000000); w(S+0x20c,4,1); time(0);
+        w(0xffff1060L,4,0); w(0xffff10d0L,4,0);
+        w(0xffff2404L,4,0); w(0xffff2410L,4,0x202);
+        e.writeMemory(toAddr(RES_LO),kept);
+        boot();
+        check("the first-use marker survives the restart",r(0x602a,2)==marker);
+        call(0x8001ab60L);
+    }
+    void residue() throws Exception { residueRun(true); residueRun(false); }
+    // What the remap makes of a raw pitch, from the image's own table: add
+    // 120 (and the vibrato), hold at entry 0, twelve entries to the 484-unit
+    // octave, clamp at entry 77, interpolate with the firmware's rounding.
+    long remapModel(long d) {
+        d=Math.max(0,d+0x78);
+        long idx=d*12/484, rem=d*12%484;
+        if(idx>0x4d) { idx=0x4d; rem=0x1e3; }
+        long lo=r(0x6840+2*idx,2), hi=r(0x6840+2*idx+2,2);
+        return lo+(rem*(hi-lo)+0xf2)/484;
+    }
+    long bent(int target,int bend) throws Exception {
+        w(S+0x352,2,target&0xffff); w(S+0x216,2,bend&0xffff);
+        for(int i=0;i<8;i++) pitch();
+        return r(S+0x358,2);
+    }
+    // A bend reaches under the bottom key, down to the pitch table's first
+    // entry, and no further.  The remap adds 120 before it reads the table,
+    // so the bottom key at the lowest octave position sits three entries
+    // over entry 0 - the 0 V pitch, with the offset - and the scan's clamp
+    // at 0 used to stop every bend at the bottom key: bent fully down, key 0
+    // stayed on its own pitch.  Driven through the real scan (glide, bend
+    // add, clamp, store hook, dispatcher, blend shim, remap) with the target
+    // and the bend staged and the vibrato at rest.
+    void bendUnderTheBottomKey() throws Exception {
+        setup(0,false,0); command(2);
+        w(S+0x310,2,0); w(S+0x306,2,0); controlScan();
+        long entry0=r(0x6840,2), entry3=r(0x6840+6,2);
+        check("the image's table has room under the bottom key: "+entry0+" < "+entry3,entry0<entry3);
+        int[][] cases={{0,0},{0,-1},{0,-40},{0,-119},{0,-120},{0,-121},{0,-480},
+                       {40,-80},{40,-200},{121,-241},{485,-120},{485,-480},{1000,-480}};
+        for(int[] c:cases) {
+            long dac=bent(c[0],c[1]);
+            long raw=Math.max(-0x78,c[0]+c[1]);
+            check("vibrato at rest under the bend fixture",r(0x6028,2)==0);
+            check("target "+c[0]+" bent "+c[1]+": the scan holds "+raw+", read "+(short)r(0x3210,2),
+                (short)r(0x3210,2)==raw);
+            check("target "+c[0]+" bent "+c[1]+": DAC "+dac+", the remap's "+remapModel(raw),
+                dac==remapModel(raw));
+        }
+        check("bent fully down, the bottom key reaches entry 0: "+bent(0,-480),bent(0,-480)==entry0);
+        check("and that is under the bottom key's own pitch",bent(0,-480)<bent(0,0));
+        // The remap's own floor, entered past its per-scan chain (the
+        // clock's bare entry) so the vibrato can be set: at the scan's floor
+        // the vibrato takes d 13 under entry 0, and the divide is unsigned.
+        for(int vib:new int[]{-13,-1,0,13}) {
+            w(0x6028,2,vib&0xffff); e.writeRegister("R12",(-0x78)&0xffffffffL);
+            call(0x8001c0e0L);
+            check("vibrato "+vib+" at the floor: DAC "+r(S+0x358,2)+", the remap's "+remapModel(-0x78+vib),
+                r(S+0x358,2)==remapModel(-0x78+vib));
+        }
+        w(0x6028,2,0);
+        // A 208c table - pitch_offset off - lays the curve three entries
+        // later and leaves 0 V under the bottom key: bent or not, it reads 0.
+        long[] table=new long[79];
+        for(int i=0;i<79;i++) table[i]=r(0x6840+2*i,2);
+        for(int i=0;i<79;i++) w(0x6840+2*i,2,i<3?0:table[i-3]);
+        check("a 208c table: a bend under the bottom key stays at 0 V",
+            bent(0,-480)==0&&bent(0,-40)==0&&bent(0,0)==remapModel(0));
+        for(int i=0;i<79;i++) w(0x6840+2*i,2,table[i]);
+        w(S+0x216,2,0); pitch();
+        println("PASS a bend reaches under the bottom key to the table's entry 0, and holds there");
+    }
+    // Both directions: a session with every option on restarting into
+    // every option off, and a session with every option off restarting
+    // into every option on.
+    void residueRun(boolean onToOff) throws Exception {
+        byte[] record, session;
+        if(onToOff) {
+            setup(4,true,1);                       // every option on, a take of four steps, the arp in latch
+            record=settingsRecord(true);
+            // The session.
+            touchOn(9); touchOn(4); w(0x6100+18,2,600); w(0x6100+8,2,300); sound(); sound();
+            touchOff(4); sound();                  // a latched key, a held key with pressure
+            octavePad(2); sound(); octavePad(1); sound();
+            w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,900); sound();   // the preset in the middle position
+            w(S+0x2f0,2,2*(int)r(0x680a,2)); sound(); sound();                          // the jack two periods up
+            w(S+0x30a,2,700); w(S+0x30c,2,650); w(S+0x30e,2,600); w(S+0x310,2,500); sound(); sound();  // the knobs moved
+            append(5); append(7); command(0); command(1); sound(); sound();             // two more steps, the take closed and played
+            for(int i=0;i<3;i++) { externalBeat(); sound(); }                          // edges into the divider
+            check("the session left a take playing: mode="+r(0x6158,1)+" steps="+r(0x61e0,1),r(0x6158,1)==2&&r(0x61e0,1)>=6);
+        } else {
+            fresh(); record=settingsRecord(false); session=settingsRecord(true);
+            plantSettings(session); cold();
+            check("the session boots with every option off",r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4);
+            // The same gestures through the factory's own paths: no chord
+            // arms, no latch holds, the divider never sees an edge of ours.
+            touchOn(9); touchOn(4); w(0x6100+18,2,600); w(0x6100+8,2,300); sound(); sound();
+            touchOff(4); sound();
+            octavePad(2); sound(); octavePad(1); sound();
+            w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,900); sound();
+            w(S+0x2f0,2,2*(int)r(0x680a,2)); sound(); sound();
+            w(S+0x30a,2,700); w(S+0x30c,2,650); w(S+0x30e,2,600); w(S+0x310,2,500); sound(); sound();
+            w(0x46f3,1,2); for(int i=0;i<320;i++) scan();
+            w(0x46f0,1,2); scan(); w(0x46f0,1,0); w(0x46f3,1,0); scan();
+            for(int i=0;i<3;i++) {
+                long t=1000+20*i;
+                time(t-2); w(0xffff1060L,4,0); w(0xffff10d0L,4,32); call(0x800072e4L,0x80007328L); w(0xffff10d0L,4,0);
+                time(t); w(0xffff1060L,4,32); w(0xffff10d0L,4,32); call(0x800072e4L,0x80007328L); w(0xffff10d0L,4,0);
+                sound();
+            }
+            check("nothing armed with the sequencer off: mode="+r(0x6158,1),r(0x6158,1)==0);
+        }
+        // The restart into the other record, custom RAM kept.
+        plantSettings(record);
+        warmRestart();
+        check("the restart booted the "+(onToOff?"all-off":"as-built")+" record",
+            onToOff?(r(0x6d28,1)==0&&r(0x6d2d,1)==0&&r(0x6d2a,1)==4):(r(0x6d28,1)==1&&r(0x6d2d,1)==1));
+        byte[] warmRam=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
+        // The cold boot with the same record: a new machine, the record in
+        // its slot and the same musical persistence ring in flash before the
+        // first boot, so a take restored from the ring is on both sides.
+        byte[] ring=e.readMemory(toAddr(BASE),0x1000);
+        fresh(); plantSettings(record); e.writeMemory(toAddr(BASE),ring); cold();
+        byte[] coldRam=e.readMemory(toAddr(RES_LO),(int)(RES_HI-RES_LO));
+        // Runs of differing bytes, each with what the two boots hold; the
+        // ones outside the allowlist are the residue.
+        StringBuilder diff=new StringBuilder(); int n=0, runs=0, allowed=0, residue=0;
+        for(int i=0;i<warmRam.length;i++) {
+            if(warmRam[i]==coldRam[i]) continue;
+            int j=i; while(j<warmRam.length&&warmRam[j]!=coldRam[j]) j++;
+            n+=j-i; runs++;
+            boolean ok=true; for(int k=i;k<j;k++) if(!residueAllowed(RES_LO+k)) { ok=false; residue++; } else allowed++;
+            if(runs<=60) {
+                diff.append(String.format("\n  %s %04x..%04x (%d):",ok?"ok     ":"RESIDUE",RES_LO+i,RES_LO+j-1,j-i));
+                for(int k=i;k<Math.min(j,i+8);k++) diff.append(String.format(" %02x/%02x",warmRam[k]&255,coldRam[k]&255));
+                if(j-i>8) diff.append(" ...");
+            }
+            i=j-1;
+        }
+        String dir=onToOff?"on -> off":"off -> on";
+        println("RESIDUE "+dir+": "+n+" byte(s) in "+runs+" run(s) differ after the warm restart (warm/cold), "+allowed+" allowlisted, "+residue+" residue:"+diff);
+        check("a warm restart "+dir+" leaves the same custom RAM as a cold boot with the same record, bar the allowlist: "+residue+" byte(s) of residue",residue==0);
+    }
+    // ---- Calibration mode (NRPN 0x3f05) ---------------------------------
+    // The page's pitch sweep turns it on and plays MIDI notes; the pitch
+    // output is then the settings mirror's pitch-table entry for the last
+    // note, exactly, with nothing the instrument would add.  Driven through
+    // the parser (the NRPN), the dispatcher's own note-on case and its pool
+    // word (the notes), the real scan (musicalScan) and the touch scan's
+    // contact word (a key press).  remapIn is what the remap was handed on
+    // the scan just run, so normal() is the pitch the scan itself computed:
+    // what the instrument plays with the mode off.
+    static final long CAL=0x6a6b, CAL_STAMP=0x6d40, CAL_ENTRY=0x6d44, CAL_MS=0x2efc;
+    long remapIn=Long.MIN_VALUE;
+    // One USB-MIDI packet into the receive ring, then the factory parser
+    // over it, as SettingsRegression feeds them.
+    void usb(int status,int d1,int d2) throws Exception {
+        long idx=r(0x34b0+0x84,4);
+        w(0x34b0+4+idx,1,status); w(0x34b0+5+idx,1,d1); w(0x34b0+6+idx,1,d2); w(0x34b0+7+idx,1,0);
+        w(0x34b0+0x84,4,idx+4>0x7f?0:idx+4);
+        call(0x8000831cL);
+    }
+    void nrpn(int param,int value) throws Exception {
+        usb(0xbf,99,param>>7); usb(0xbf,98,param&0x7f); usb(0xbf,6,value>>7); usb(0xbf,38,value&0x7f);
+    }
+    int channel() { return (int)r(S+0x2e7,1); }
+    // Event 7's case in the dispatcher, the event where the case reads it
+    // (R7-0x20: note, velocity, channel), through its MCALL on 0x80005238.
+    void noteOn(int note) throws Exception { noteOn(note,channel()); }
+    void noteOn(int note,int ch) throws Exception {
+        w(0x7600-0x20,1,note); w(0x7600-0x1f,1,100); w(0x7600-0x1e,1,ch);
+        call(0x80004e7eL,0x80004eb8L);
+    }
+    // A key's contact as the touch scan reports it (0x8000550e): the key in
+    // R12, through the pool word.  touchOn() calls the handler directly.
+    void contact(int key) throws Exception { e.writeRegister("R12",key); call(r(0x80005650L,4)); }
+    long mirror(int entry) { return r(0x6840+2*entry,2); }
+    long dac() throws Exception { remapIn=Long.MIN_VALUE; musicalScan(); return r(S+0x358,2); }
+    long normal() throws Exception {
+        check("the scan ran the remap",remapIn!=Long.MIN_VALUE);
+        return remapModel(remapIn+(short)r(0x6028,2));
+    }
+    void calibrate() throws Exception { w(CAL_MS,4,1000); nrpn(0x3f05,0x2a2a); check("calibration mode on",r(CAL,1)==1); }
+    // One scan in the mode: the DAC and the last-sent mirror are the entry.
+    void plays(String what,int entry) throws Exception {
+        long d=dac();
+        check(what+": DAC "+d+", last sent "+r(0x3212,2)+", entry "+entry+" is "+mirror(entry),
+            d==mirror(entry)&&r(0x3212,2)==mirror(entry));
+    }
+    void calibrationCommand() throws Exception {
+        setup(0,false,0); command(2);
+        check("calibration mode is off after a boot",r(CAL,1)==0);
+        nrpn(0x3f05,0x1111); nrpn(0x3f05,0x2a2b); nrpn(0x3f05,0);
+        check("0x3f05 without the commit's key leaves it off",r(CAL,1)==0);
+        w(CAL_MS,4,20000); nrpn(0x3f05,0x2a2a);
+        check("0x3f05 with the key turns it on, at entry 3, its five seconds counted from now",
+            r(CAL,1)==1&&r(CAL_ENTRY,1)==3&&r(CAL_STAMP,4)==20000);
+        plays("before any note, entry 3",3);
+        noteOn(40); plays("note 40",19);
+        w(CAL_MS,4,20100); nrpn(0x3f05,0x2a2a);
+        check("the key again keeps the mode and the note's entry, and restarts the five seconds",
+            r(CAL,1)==1&&r(CAL_ENTRY,1)==19&&r(CAL_STAMP,4)==20100);
+        nrpn(0x3f06,0x2a2a);
+        check("another command leaves the mode alone",r(CAL,1)==1);
+        nrpn(0x3f05,0x2a2b);
+        check("any other value turns it off",r(CAL,1)==0);
+        long d=dac();
+        check("and the next scan plays its own pitch again: DAC "+d+", the remap's "+normal(),d==normal());
+        println("PASS calibration mode: 0x3f05 with the key turns it on at entry 3, the key again keeps the note, any other value turns it off");
+    }
+    void calibrationPitch() throws Exception {
+        setup(0,false,0); command(2); calibrate();
+        int[][] ends={{21,0},{99,78},{0,0},{20,0},{100,78},{127,78}};
+        for(int[] n:ends) { noteOn(n[0]); plays("note "+n[0]+" is entry "+n[1],n[1]); }
+        int wrong=0;
+        for(int i=0;i<=78;i++) { noteOn(21+i); if(dac()!=mirror(i)||r(CAL_ENTRY,1)!=i) wrong++; }
+        check("notes 21..99 play entries 0..78, every one exactly: "+wrong+" wrong",wrong==0);
+        noteOn(40); noteOn(50,(channel()+1)&15);
+        plays("a note on another channel leaves the entry",19);
+        // What the instrument would add, one thing at a time, on a key the
+        // keyboard has - note 40 is key 16 - so the scan's own pitch comes
+        // off the key table.  Each moves the scan's own pitch (normal()) and
+        // leaves the DAC on the entry.
+        int n=40, entry=19;
+        w(S+0x342,1,1); w(S+0x343,1,0); octavePad(0); noteOn(n); dac(); long own=normal();
+        octavePad(1); noteOn(n); long d=dac(), with=normal();
+        check("pad 2 with the add-to-pitch switch on the octaves moves the scan's own pitch: "+own+" -> "+with,with!=own);
+        check("and the DAC plays the entry exactly: "+d+" = "+mirror(entry),d==mirror(entry)&&r(0x3212,2)==mirror(entry));
+        octavePad(0);
+        // The preset rotates the key table on the scan, so it has one before
+        // the note reads the table.
+        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,0); dac(); noteOn(n); dac(); own=normal();
+        w(0x613a,2,900); dac(); dac(); noteOn(n); d=dac(); with=normal();
+        check("the preset up, the switch in the middle, moves the scan's own pitch: "+own+" -> "+with,with!=own);
+        check("and the DAC plays the entry exactly: "+d,d==mirror(entry));
+        w(0x613a,2,0); w(S+0x342,1,1); w(S+0x343,1,0);
+        noteOn(n); dac(); own=normal();
+        w(S+0x216,2,(-200)&0xffff); noteOn(n); d=dac(); with=normal();
+        check("the strip bent down moves the scan's own pitch: "+own+" -> "+with,with!=own);
+        check("and the DAC plays the entry exactly: "+d,d==mirror(entry));
+        w(S+0x216,2,0);
+        if(r(0x6d32,1)!=0) {
+            // The jack one degree up: N=1.
+            cv(0); noteOn(n); dac(); own=normal();
+            int degree=((int)r(0x680a,2)+6)/12;
+            cv(degree);
+            check("the jack stands one degree up: "+(r(0x60fa,2)&255),(r(0x60fa,2)&255)==1);
+            noteOn(n); d=dac(); with=normal();
+            check("the jack transposing one degree moves the scan's own pitch: "+own+" -> "+with,with!=own);
+            check("and the DAC plays the entry exactly: "+d,d==mirror(entry));
+            cv(0);
+        }
+        if(r(0x6d33,1)!=0) {
+            // Each tuning slot, applied by the per-scan applier.  A slot that
+            // puts key 16 somewhere else must move the scan's own pitch.
+            int moved=0;
+            w(0x6090,1,0); w(0x60e4,2,0); controlScan(); noteOn(n); dac(); own=normal();
+            long key0=r(0x854+2*16,2);
+            for(int s=0;s<3;s++) {
+                w(0x6090,1,s); w(0x60e4,2,0); controlScan();
+                noteOn(n); d=dac(); with=normal();
+                if(r(0x854+2*16,2)!=key0) {
+                    moved++;
+                    check("tuning slot "+s+" moves the scan's own pitch: "+own+" -> "+with,with!=own);
+                }
+                check("tuning slot "+s+": the DAC plays the entry exactly, "+d,d==mirror(entry));
+            }
+            w(0x6090,1,0); w(0x60e4,2,0); controlScan();
+            println("CALIBRATION tuning slots: "+moved+" of 3 put key 16 elsewhere");
+        }
+        println("PASS calibration mode: entries 0..78, both ends clamped, exact over the octave pads, the preset, the strip"
+            +(r(0x6d32,1)!=0?", the jack":"")+(r(0x6d33,1)!=0?", the tuning slots":""));
+    }
+    void calibrationSilence() throws Exception {
+        // The arp on the external clock, three keys held.
+        orderFixture(0,0,4,14,9);
+        externalBeat(); externalBeat();
+        check("the arp steps before the mode: "+outputs+" pulses",outputs>0);
+        calibrate();
+        long key=r(S+0x34d,1); int outs=outputs, wrong=0;
+        for(int i=0;i<8;i++) { externalBeat(); if(r(S+0x358,2)!=mirror(3)) wrong++; }
+        check("in the mode the arp makes no step on the clock: key "+r(S+0x34d,1)+" was "+key+", "+(outputs-outs)+" pulses",
+            r(S+0x34d,1)==key&&outputs==outs);
+        check("and every beat's scan plays the entry: "+wrong+" did not",wrong==0);
+        nrpn(0x3f05,0);
+        for(int i=0;i<3;i++) externalBeat();
+        check("the arp steps again once the mode ends",outputs>outs);
+        // And on its own tempo, through the DAC flush's step.
+        setup(0,true,1); command(1); command(1); w(S+0x308,2,1000);
+        w(S+0x21a,1,3);
+        for(int k:new int[]{4,14,9}) { w(S+0x21b+k,1,1); e.writeRegister("R12",k); call(0x8001a020L); }
+        w(S+0x34d,1,4);
+        internalTicks(300);
+        int before=outputs;
+        check("the internal arp steps before the mode: "+before+" pulses",before>0);
+        calibrate();
+        internalTicks(300);
+        check("and not in it: "+(outputs-before)+" pulses",outputs==before&&r(S+0x358,2)==mirror(3));
+        if(seq) {
+            // A take playing.
+            setup(4,false,0); command(1);
+            externalBeat(); externalBeat();
+            int steps=selected.size();
+            check("the take plays before the mode: mode "+r(0x6158,1)+", "+steps+" steps",r(0x6158,1)==2&&steps>0);
+            calibrate();
+            outs=outputs; wrong=0;
+            for(int i=0;i<8;i++) { externalBeat(); if(r(S+0x358,2)!=mirror(3)) wrong++; }
+            check("in the mode the take makes no step: "+(selected.size()-steps)+" steps, "+(outputs-outs)+" pulses",
+                selected.size()==steps&&outputs==outs);
+            check("it is still playing, and every scan plays the entry: "+wrong+" did not",r(0x6158,1)==2&&wrong==0);
+            nrpn(0x3f05,0);
+            for(int i=0;i<3;i++) externalBeat();
+            check("the take steps again once the mode ends",selected.size()>steps);
+            // Recording: a MIDI note records nothing; a key press ends the
+            // mode first and then records as ever.
+            setup(0,false,0);
+            calibrate(); noteOn(40); sound(); sound();
+            check("in WRITE a MIDI note in the mode records nothing",r(0x61e0,1)==0);
+            contact(5); sound();
+            check("a key press ends the mode and records its note",r(CAL,1)==0&&r(0x61e0,1)==1);
+        }
+        println("PASS calibration mode: the arp on either clock"+(seq?", a playing take and recording":"")+" silent while it is on, and back after");
+    }
+    void calibrationExits() throws Exception {
+        // A key press.
+        setup(0,false,0); command(2); calibrate();
+        noteOn(40); plays("before the press",19);
+        contact(9);
+        check("a key press ends the mode",r(CAL,1)==0);
+        check("and the handler has the press as ever: key 9 down",r(S+0x239+9,1)==1);
+        long d=dac();
+        check("the next scan plays its own pitch: "+d+" = "+normal(),d==normal());
+        // Five seconds without a note-on, on the factory's millisecond count.
+        setup(0,false,0); command(2);
+        w(CAL_MS,4,100000); nrpn(0x3f05,0x2a2a);
+        w(CAL_MS,4,104999); plays("4999 ms after the command",3);
+        noteOn(40);
+        w(CAL_MS,4,109998); plays("4999 ms after the last note-on",19);
+        w(CAL_MS,4,109999); d=dac();
+        check("5000 ms after it the scan ends the mode",r(CAL,1)==0);
+        check("and plays its own pitch: "+d+" = "+normal(),d==normal());
+        w(CAL_MS,4,200000); nrpn(0x3f05,0x2a2a);
+        w(CAL_MS,4,204000); noteOn(50,(channel()+1)&15);
+        w(CAL_MS,4,208999); plays("a note-on on another channel restarts the five seconds",3);
+        w(CAL_MS,4,209000); dac();
+        check("and they run out from it",r(CAL,1)==0);
+        w(CAL_MS,4,0xfffff000L); nrpn(0x3f05,0x2a2a); noteOn(40);
+        w(CAL_MS,4,0x387); plays("across the count's wrap, 4999 ms",19);
+        w(CAL_MS,4,0x388); dac();
+        check("and 5000 ms across it end the mode",r(CAL,1)==0);
+        // A boot: the watchdog's restart, custom SRAM kept.
+        setup(0,false,0); command(2); calibrate(); noteOn(40);
+        warmRestart();
+        check("the restart comes up with the mode off, the cells beside it kept",r(CAL,1)==0&&r(CAL_ENTRY,1)==19);
+        d=dac();
+        check("and plays its own pitch: "+d+" = "+normal(),d==normal());
+        println("PASS calibration mode ends on a key press, five seconds without a note-on, and a restart; the next scan is the instrument's own");
+    }
+    void calibrationLiveEdit() throws Exception {
+        setup(0,false,0); command(2); calibrate();
+        int n=40, entry=19;
+        long flash=r(0x80019bc0L+2*entry,2);
+        check("the mirror holds the image's own entry "+entry+": "+mirror(entry)+" = "+flash,mirror(entry)==flash);
+        noteOn(n); plays("note "+n,entry);
+        long state=r(0x6a70,1), guard=r(0x60e4,2);
+        int edit=(int)(flash>=0x800?flash-37:flash+37);
+        nrpn(0x80+entry,edit);
+        check("an NRPN write to parameter 0x"+Integer.toHexString(0x80+entry)+" lands in entry "+entry+" of the mirror itself: "+mirror(entry),
+            mirror(entry)==edit);
+        check("and moves nothing else: its neighbours, the commit state, the applier's guard",
+            mirror(entry-1)==r(0x80019bc0L+2*(entry-1),2)&&mirror(entry+1)==r(0x80019bc0L+2*(entry+1),2)
+            &&r(0x6a70,1)==state&&r(0x60e4,2)==guard);
+        long d=dac();
+        check("the next scan plays the new value: "+d+" = "+edit,d==edit);
+        nrpn(0x3f01,0);
+        check("0x3f01 puts the flash value back and leaves the mode on",mirror(entry)==flash&&r(CAL,1)==1);
+        d=dac();
+        check("and the next scan plays it: "+d+" = "+flash,d==flash);
+        println("PASS calibration mode: a pitch-table write lands in the mirror and plays on the next scan; 0x3f01 puts the flash value back");
+    }
+    // ---- Normal play on the table's entries (3.0.2) ----------------------
+    // Calibration mode plays mirror[entry] for an entry.  Normal play has to
+    // give the same DAC for every key and MIDI note that maps to that entry,
+    // once the glide has settled, or the page tunes one pitch and the
+    // keyboard plays another.  Three factory details kept it a count off:
+    // the +-1 target fix-ups at 0x80003800 (keys 0..11 and notes 24..35 a
+    // count flat under octave pad 0), the floor at 0x800038cc that zeroed
+    // every target up to 9 (note 24's target of 1 with add-to-pitch off),
+    // and the factory key table, which runs up to two counts over
+    // 485 + 484k/12, so that the remap's rounding put every third key a
+    // count sharp.
+    //
+    // The entry a key maps to, from the rule rather than off the image: key
+    // 0 at no offset is table 485, which the remap's +120 puts on entry 15,
+    // and each key is one entry and each period twelve.  Octave pad p adds
+    // p-1 periods on the octave position.  Off and the middle position add
+    // none, less one period where the factory's transpose mode is forced
+    // (state+0x6a: the -period at 0x800035c0).  A MIDI note plays key
+    // note-24, the index floored at 0, and the note-on drops it a further
+    // 484 with the switch off the octaves (0x800064f8).  Past entry 78 the
+    // remap holds the last entry.  Under entry 3 the target is negative and
+    // floors at 0, under the keyboard's reach: those are counted and held to
+    // that floor instead of to an entry.
+    void noteOff(int note) throws Exception {
+        w(0x7600-0x20,1,note); w(0x7600-0x1f,1,0); w(0x7600-0x1e,1,channel());
+        call(0x80004ebcL,0x80004ef8L);
+    }
+    void pressureFor(int held,int pressure) throws Exception {
+        for(int j=0;j<29;j++) { w(0x3490+j,1,j==held?2:0); w(0x3686+2*j,2,j==held?pressure:110); }
+        call(0x8001aa10L);
+    }
+    // Five scans, the last three the same: the glide at rest (knob 0) has
+    // landed by the second.
+    long settled(String what) throws Exception {
+        long[] h=new long[5];
+        for(int i=0;i<h.length;i++) h[i]=dac();
+        boolean still=true; for(int i=h.length-3;i<h.length;i++) still&=h[i]==h[h.length-1];
+        check(what+" settles: "+Arrays.toString(h),still);
+        return h[h.length-1];
+    }
+    void exactPosition(int p) throws Exception {
+        // 0 off, 1..4 octave pads 0..3, 5 the middle with no preset.
+        boolean octave=p>=1&&p<=4;
+        for(int i=0;i<4;i++) w(0x613a+2*i,2,0);
+        w(S+0x342,1,octave?1:0); w(S+0x343,1,p==5?1:0);
+        octavePad(octave?p-1:1);
+        w(S+0x306,2,0); w(S+0x310,2,0); w(S+0x216,2,0);
+    }
+    void exactPitch() throws Exception {
+        String[] names={"off","octave pad 0","octave pad 1","octave pad 2","octave pad 3","the middle, no preset"};
+        List<String> failed=new ArrayList<>();
+        int floored=0, clamped=0, played=0;
+        for(int p=0;p<6;p++) {
+            setup(0,false,0); command(2);
+            // The slot holding the image's own factory temperament: the
+            // flash key table the .data copy fills RAM 0x854 from, and the
+            // table MIDI notes past the slot read.
+            int slot=-1;
+            for(int s=0;s<3&&slot<0;s++) {
+                boolean same=true;
+                for(int k=0;k<32;k++) same&=r(0x68e0+64*s+2*k,2)==r(0x80016574L+2*k,2);
+                if(same) slot=s;
+            }
+            check("a tuning slot holds the image's factory temperament",slot>=0);
+            w(0x6090,1,slot); w(0x60e4,2,0); controlScan();
+            boolean live=true; for(int k=0;k<32;k++) live&=r(0x854+2*k,2)==r(0x80016574L+2*k,2);
+            check("slot "+slot+" is the live key table",live);
+            exactPosition(p); dac();
+            boolean octave=p>=1&&p<=4;
+            check("knob 4 leaves the transpose at rest: state+0x6a="+r(S+0x6a,1)+" 0x6b="+r(S+0x6b,1),
+                r(S+0x6a,1)==0||r(S+0x6b,1)<=2);
+            check("the vibrato at rest",(short)r(0x6028,2)==0);
+            int periods=octave?p-2:(r(S+0x6a,1)!=0?-1:0);
+            StringBuilder keys=new StringBuilder(), notes=new StringBuilder();
+            int keyWrong=0, noteWrong=0;
+            for(int k=0;k<=24;k++) {
+                int entry=15+k+12*periods;
+                touchOn(k); pressureFor(k,600);
+                long d=settled(names[p]+" key "+k);
+                long want=entry<3?remapModel(0):mirror(Math.min(entry,78));
+                if(d!=want) { keyWrong++; keys.append(String.format(" %d:%+d",k,d-want)); }
+                touchOff(k); pressureFor(-1,0); dac();
+                played++;
+            }
+            for(int n=21;n<=99;n++) {
+                int entry=15+Math.max(0,n-24)+12*(periods-(octave?0:1));
+                noteOn(n);
+                long d=settled(names[p]+" note "+n);
+                long want=entry<3?remapModel(0):mirror(Math.min(entry,78));
+                if(entry<3) floored++; else if(entry>78) clamped++;
+                if(d!=want) { noteWrong++; notes.append(String.format(" %d:%+d",n,d-want)); }
+                noteOff(n); dac();
+                played++;
+            }
+            println("EXACT "+names[p]+", slot "+slot+", "+periods+" period(s): keys 0..24 "+keyWrong+" off"
+                +(keyWrong>0?" (key:DAC-entry)"+keys:"")+"; notes 21..99 "+noteWrong+" off"
+                +(noteWrong>0?" (note:DAC-entry)"+notes:""));
+            if(keyWrong>0) failed.add(names[p]+": "+keyWrong+" key(s)");
+            if(noteWrong>0) failed.add(names[p]+": "+noteWrong+" note(s)");
+        }
+        check("normal play gives each key and MIDI note its entry's DAC, as calibration mode does: "
+            +(failed.isEmpty()?"all":failed.toString()),failed.isEmpty());
+        println("PASS normal play lands on the pitch table entry: "+played+" keys and notes in six add-to-pitch positions, "
+            +clamped+" past entry 78 held on it, "+floored+" under the keyboard's reach at the floor");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         transpose=args.length>0&&args[0].equals("trn");
@@ -1689,11 +2371,13 @@ public class ControlRegression extends SequenceEditRegression {
         try {
             try { presetOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { quickTapGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { bendUnderTheBottomKey(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { presetQuantize(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(quantized&&seq) {
                 try { presetSequencer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             }
             if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(transpose)try { knob4Zones(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             // The pattern gate sits at the note selector and answers a rest
             // with -1 without moving the note on, so on a patterns build an
             // order walk no longer gives one key per beat and these three
@@ -1721,6 +2405,17 @@ public class ControlRegression extends SequenceEditRegression {
             if(gridRhythm)try { quantizedRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(knob2.equals("swing"))try { swingRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(knob2.equals("patterns"))try { patternGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            // The default variant alone: one image with every option on, in
+            // both builds now that seq_restart_clear resets the sequencer's
+            // runtime whether or not persistence is built.
+            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { periodCell(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { residue(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationCommand(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationPitch(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationSilence(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationExits(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationLiveEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { exactPitch(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }

@@ -40,14 +40,29 @@ from pathlib import Path
 
 # tools/ on the path so `import options` works however build.py is invoked.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import settings as SETTINGS  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 BUILD = REPO / "build"
 
-# Flash address of the factory key -> pitch table (32 halfwords).  A tuning
-# slot declared as "factory" is copied verbatim from here, which keeps the
-# instrument's original temperament bit-exact instead of re-deriving it.
+# Flash address of the factory key -> pitch table: 132 halfwords, which the
+# .data copy puts at RAM 0x854.  The image carries EXACT_KEY_TABLE there
+# since 3.0.2 (key_table_exact in the assembler); nothing is read from here.
 FACTORY_KEY_TABLE = 0x80016574
+# The factory temperament: twelve equal steps of 484 counts above 485, each
+# rounded to the nearest count.  A tuning slot declared as "factory" carries
+# the first 32, and the image's own table the same numbers, so the settings
+# record takes nothing from the factory image.  The factory's own table runs
+# up to two counts over these, and the remap's rounding made every third key
+# a count sharp of the pitch table entry calibration mode plays; until 3.0.2
+# the slot was copied from it (the page still recognises that table on a
+# read-back, BUILDLIB.LEGACY_KEY_TABLE).
+EXACT_KEY_TABLE = [485 + (484 * k + 6) // 12 for k in range(132)]
+# Where application code may run to.  The flash is 256 KB; above this sit
+# the boot guard's word (0x8003ce00), the two settings slots, the
+# persistence ring and the factory settings page.  The caves stayed below
+# 0x80020000 until the boot guard went just past them (2026-09-26).
+CODE_END = 0x8003C000
 
 # Key names by semitone above the bottom key of the 218e, which is a C.  Used
 # only to say in the build log which note a tuning is anchored to.
@@ -99,22 +114,19 @@ TABLE_ROTATION = [
 ]
 
 FEATURE_MAP = {
-    "knobs.knob1":            (["arp_selector_pool"], []),
-    "knobs.knob2":            (["arp_rhythm_hook"], []),
-    "knobs.knob3":            (["arp_octave_hook"], []),
-    "knobs.knob4":            (
-        ["vibrato_engine", "vibrato_sine", "pressure_vibrato_scale", "pressure_vibrato_pool"],
-        ["knob4_vibrato"],
-    ),
-    "arp.switch":             (
-        ["noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
-         "release_count_guard", "latch_owner",
-         # The latch's two states: the hold shim, the toggle, and the factory
-         # pads 2 & 3 latch chord taken out.  latch_state itself is core: it
-         # also shadows the octave the sequencer's pad-4 hold restores.
-         "latch_hold", "latch_state_toggle", "factory_pad_latch_off"],
-        ["arp_latch"],
-    ),
+    # The four knob roles are option cells since stage 2 phase B: every
+    # knob cave is in every image and the live option bytes choose at boot
+    # (docs/PLAN-SETTINGS-2.md), so they no longer appear here.
+    # The latching arp is an option cell since stage 2 phase C: its caves
+    # are in every image and dispatchers on the note-on, the note-off and
+    # the hold read the live byte at boot.  The sequencer since phase D:
+    # every sequencer cave is in every image and the pad-4 chord's arm
+    # reads the live byte.  The jack transposer and the quantised preset
+    # voltage since phase E: the rotation caves are in every image and idle
+    # at zero degrees, and the live bytes decide where degrees come from.
+    # The pressure path since phase F: every pressure cave is in every
+    # image, three dispatchers and three hooks give the factory its path
+    # back by the live byte, and the blend's route word likewise.
     "midi.poly_default":      (
         ["poly_powerup_default_off", "poly_factory_reset_default_off",
          "poly_arp_independence", "poly_settings_migration",
@@ -124,14 +136,6 @@ FEATURE_MAP = {
     "pressure.common_mode":   (["proximity_estimator"], ["pressure_common_mode"]),
     "pressure.multi_key":     ([], ["multi_key_pressure"]),
     "pressure.error_diffusion": ([], ["error_diffusion"]),
-    "portamento.pressure_blend": (["pitch_target_blend_hook", "blend_offset_apply", "blend_target_conditioner"], ["pressure_blend"]),
-    "portamento.zero_snap":   (["glide_rate_hook"], []),
-    "presets.quantize":       (
-        ["preset_quantize", "preset_quantize_pool"] + TABLE_ROTATION,
-        ["cv_transpose", "preset_rotate"]),
-    "portamento_in.transpose": (
-        ["glide_cv_addend"] + TABLE_ROTATION,
-        ["cv_transpose", "cv_jack"]),
     "diagnostics.scan_profiler": (["scan_profiler", "profiler_pool"], ["scan_profiler"]),
     "diagnostics.clock_latency": (["clock_latency"], ["clock_latency"]),
     "diagnostics.telemetry_smoothing": ([], ["telemetry_smoothing"]),
@@ -145,19 +149,10 @@ FEATURE_MAP = {
 # The value that means "new behaviour" for each setting; anything else (i.e.
 # "factory" / false) leaves the original firmware in charge.
 ENABLED_WHEN = {
-    "knobs.knob1": "arp_order",
-    "knobs.knob2": "arp_rhythm",
-    "knobs.knob3": "arp_octaves",
-    "knobs.knob4": "vibrato",
-    "arp.switch": "latch",
     "midi.poly_default": "off",
     "pressure.common_mode": True,
     "pressure.multi_key": "max",
     "pressure.error_diffusion": True,
-    "portamento.pressure_blend": True,
-    "portamento.zero_snap": True,
-    "presets.quantize": True,
-    "portamento_in.transpose": True,
     "diagnostics.scan_profiler": True,
     "diagnostics.clock_latency": True,
     "diagnostics.telemetry_smoothing": True,
@@ -425,17 +420,9 @@ def key_pitch(cents: list[float], degrees: list[int], period: float, key: int) -
     return period * (key // size) + cents[degrees[key % size]]
 
 
-def factory_tuning(memory: dict[int, int]) -> list[int]:
-    """The original 32-entry key table, read straight out of the factory image."""
-    try:
-        return [
-            (memory[FACTORY_KEY_TABLE + 2 * k] << 8) | memory[FACTORY_KEY_TABLE + 2 * k + 1]
-            for k in range(32)
-        ]
-    except KeyError:
-        raise SystemExit(
-            f"factory key table missing at 0x{FACTORY_KEY_TABLE:08X} — wrong base image?"
-        )
+def factory_tuning() -> list[int]:
+    """The factory temperament's 32 key-table entries, 485 + round(484k/12)."""
+    return EXACT_KEY_TABLE[:32]
 
 
 def anchor_offset(cents: list[float], reference_key: int,
@@ -715,8 +702,10 @@ def pitch_table(cfg: dict, offsets: dict[int, float]) -> list[int]:
     belongs there.  3 - a 208, 208r or 208p, which start from A - puts the
     table's 0 V pitch at entry 0, three semitones under the bottom C.  0 is
     the 208c, which starts from C: the curve is laid out three entries later
-    so the bottom key reads the 0 V pitch, and the entries under it, which
-    only a vibrato dipping below the lowest note can reach, sit at 0 V.
+    so the bottom key reads the 0 V pitch, and the entries under it sit at
+    0 V.  Only a bend or the vibrato reaches under the bottom key, and the
+    firmware holds them at entry 0: three semitones of room with the offset,
+    none without it.
     """
     vpo = cfg["pitch"].get("volts_per_octave", CALIBRATION_VOLTS_PER_OCTAVE)
     scale = counts_per_volt(cfg) * (vpo / CALIBRATION_VOLTS_PER_OCTAVE)
@@ -1195,6 +1184,24 @@ EXTENT_RE = re.compile(r"^EXTENT ([0-9a-f]{8}) ([0-9a-f]{8}) (\S+)$")
 # means the build fails on an overlap instead of the instrument misbehaving:
 # a cave writing into another's state is invisible in the patch bytes, since
 # the addresses only exist as immediates.
+# What the image marker leaves out (see the fingerprint in main): the option
+# cells that are runtime since stage 2 phase B, and the pattern bank they
+# alone read.  Mirrored by MARKER_EXCLUDES in web/buildlib.js.
+MARKER_EXCLUDES = frozenset({
+    "knob1", "knob2", "knob3", "knob4", "pattern_count",
+    "arp_pattern_bank", "arp_pattern_len",
+    "latching_arp", "sequencer", "quantize_presets", "portamento_in",
+    "pressure_fix", "pressure_portamento", "clock_divide", "alternate_tunings",
+    # And the record's own data, since 2026-09-23 (the owner's criterion:
+    # every setting over MIDI): the record bounds-checks all of it, the
+    # period included, which is number cell 10 and read by every octave
+    # site since the same evening.
+    "octave_units", "pitch_remap", "tuning_slot0", "tuning_slot1", "tuning_slot2", "tuning_period_keys",
+    "tie_glide_rate", "strip_halfway_units", "clock_min_ms", "clock_rearm_us",
+    "clock_lock_pulses", "transpose_cv_period", "transpose_cv_zero",
+    "transpose_cv_hysteresis", "chord_hold_scans", "latch_state_hold_scans",
+})
+
 RAM_REGIONS = [
     # These used to sit inside the factory's own 16-tap pressure history at
     # 0x3216..0x3235, which was only free because pitch_clamp_skip_1 jumped
@@ -1384,6 +1391,45 @@ RAM_REGIONS = [
     # factory stages its own record rather than writing from scattered state.
     (0x6300, 0x6420, "canonical v3 record, staged for body then marker commit"),
     (0x6640, 0x674C, "canonical musical payload from completed edit gestures"),
+    # The settings mirror: the record's payload from 0x20, in RAM, which is
+    # what every table reader and the ten runtime numbers address.  Filled
+    # at boot from the image's own tables, then from the newer valid slot at
+    # 0x8003d000/0x8003d800.  See docs/PLAN-SETTINGS.md and tools/settings.py.
+    (0x6800, 0x6840, "settings mirror: 32 number cells"),
+    (0x6840, 0x68E0, "settings mirror: pitch curve, 79 halfwords and a pad"),
+    (0x68E0, 0x69A0, "settings mirror: three tuning tables"),
+    (0x69A0, 0x69A8, "settings mirror: keys per period"),
+    (0x69A8, 0x6A28, "settings mirror: pattern masks, two halfwords each"),
+    (0x6A28, 0x6A68, "settings mirror: pattern lengths"),
+    (0x6A68, 0x6A6B, "settings NRPN state: parameter MSB/LSB, data MSB"),
+    # Calibration mode (NRPN 0x3f05), 1 while it is on.  The byte that was
+    # the pad after the data MSB, so the boot's store that clears the data
+    # byte clears it too: SRAM survives the 0x3f04 restart.
+    (0x6A6B, 0x6A6C, "calibration mode: on while 1, cleared at every boot"),
+    (0x6A6C, 0x6A70, "settings NRPN state: the dump cursor"),
+    (0x6A70, 0x6A78, "settings loader state: commit state, slot loaded, generation"),
+    (0x6A80, 0x6D28, "settings record staged for a commit, marker erased"),
+    # The low byte of option cells 16..31, copied by settings_boot after the
+    # record load and read by every option's dispatcher, shim and gate: an
+    # NRPN write changes the mirror and not these, so a code path never
+    # switches under live state.  The page sends a restart (0x3f04) to
+    # apply them, which is a power cycle by way of the watchdog.
+    (0x6D28, 0x6D38, "live option bytes: cells 16..31 as booted"),
+    # Knob 1's value while knob 1 blends, zero while it picks orders or is
+    # factory: what the sequencer's shuffle reads, so a recorded order is
+    # kept unless the blend is the knob's job.  Written beside the knob-1
+    # latch every scan; zeroed at boot with the live bytes.
+    (0x6D38, 0x6D39, "knob 1 blend latch"),
+    # The boot guard (2026-09-26): whether this boot armed ISP_FORCE and
+    # still owes the confirmation, and the image marker the confirmation
+    # writes.  boot_guard_arm writes both at every boot before anything
+    # reads them.
+    (0x6D3A, 0x6D3B, "boot guard: confirmation owed"),
+    (0x6D3C, 0x6D40, "boot guard: the image marker to confirm"),
+    # Calibration mode's two cells, both written by the 0x3f05 that turns it
+    # on before anything reads them, so neither needs clearing at boot.
+    (0x6D40, 0x6D44, "calibration mode: the millisecond count at the last note-on"),
+    (0x6D44, 0x6D45, "calibration mode: the pitch-table entry it plays, 0..78"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to
@@ -1436,12 +1482,24 @@ RAM_REGIONS = [
 # be placed on top of one without the coverage check noticing.
 FACTORY_CELLS = [
     (0x29CC, 0x29D0, "CPU frequency, also used by the factory COUNT delay"),
+    # Advanced by the factory's 1 kHz timer from main's init on; the main
+    # loop times its once-a-second work off it, the boot guard its
+    # confirmation.
+    (0x2EFC, 0x2F00, "the factory millisecond count"),
     # The two cells preset_degrees reads to decide what the preset voltage is
     # worth: which pad is active, and whether the add-to-pitch switch is in
     # the middle position - the only one that adds the preset to the pitch.
     # ControlRegression drives both directly; 0x342/0x343 read 1/0 in every
     # other position the suite sets up.
     (0x384F, 0x3850, "state+0x2ef: the active preset pad"),
+    # The factory's pressure gain, which pitch_clamp_2 replays from the
+    # factory's own pair while the fix is off (stage 2 phase F).
+    (0x389C, 0x38A0, "state+0x33c: the factory pressure gain"),
+    # The two cells the edit keys' caves address by the state base since
+    # cell 27 (2026-09-23): the remote-enable flag the factory's key 28
+    # toggles and the guards read, and the dirty flag both keys set.
+    (0x3562, 0x3563, "state+0x2: the factory remote-enable flag"),
+    (0x359A, 0x359B, "state+0x3a: the factory settings dirty flag"),
     # The switch byte preset_degrees reads lives inside the region below at
     # 0x38A0, so it needs no entry of its own.
     # 32 halfwords - the tuning applier loop counts MOV R9,0x20 - so the
@@ -1467,6 +1525,9 @@ FACTORY_CELLS = [
     # The pads' own touch states, the same shape as the keys' array: one byte
     # each, 2 meaning held.  Read only - the factory owns the writing.
     (0x46F0, 0x46F4, "pad touch state"),
+    # LUFA's endpoint wait (0x8000d9c4) sets this byte when it times out and
+    # clears it when a wait succeeds.  Read only: the settings dump ends on it.
+    (0x4718, 0x4719, "USB endpoint wait timed out"),
     # Live again whenever pressure_fix is off: the clamp skips are gated now,
     # so the factory 16-tap pressure history shifts through here in that
     # build.  Declared so no region of ours can ever move back in.
@@ -1597,6 +1658,60 @@ def check_ram_coverage() -> None:
             + "\nAdd it to RAM_REGIONS (ours) or FACTORY_CELLS (theirs) in "
               "tools/build.py.")
     print(f"  {len(used)} addressed RAM cells, all declared")
+
+
+def check_alignment() -> None:
+    """Every constant-address load and store must suit its width.
+
+    The chip takes an address exception on a word or doubleword access that
+    is not word-aligned and on a halfword access at an odd address.  The
+    Ghidra emulator the suites run on does not, so one ST.W to 0x622e passed
+    every suite and hung the first 3.0 image at boot (2026-09-26).  This
+    reads the emit stream check_ram_coverage reads, knowing a register only
+    while it holds a MOV immediate, and checks every access through one -
+    across the whole source, so every configuration at once.
+    """
+    source = (REPO / "src" / "AssemblePressureFix.java").read_text()
+    emits = [token.group(1) for token in re.finditer(
+        r'begin\(0x[0-9a-fA-F]+L?\)|emit\((?:String\.format\()?"([^"]+)"', source)]
+    movi = re.compile(r"^MOV (R\d+|LR),(-?0x[0-9a-f]+)$")
+    mem = re.compile(r"^(LD|ST)\.(UB|SB|UH|SH|W|D|B|H) (?:(R\d+|LR),)?(R\d+|LR)"
+                     r"\[(-?0x[0-9a-fA-F]+)\]")
+    width = {"W": 4, "D": 4, "UH": 2, "SH": 2, "H": 2}
+    known: dict[str, int] = {}
+    bad: list[tuple[int, str]] = []
+    checked = 0
+    for text in emits:
+        if text is None:
+            known.clear()
+            continue
+        match = movi.match(text)
+        if match:
+            known[match.group(1)] = int(match.group(2), 16)
+            continue
+        match = mem.match(text)
+        if match:
+            kind, size, dst, base, disp = match.groups()
+            if base in known:
+                checked += 1
+                cell = known[base] + int(disp, 16)
+                if cell % width.get(size, 1):
+                    bad.append((cell, text))
+            if kind == "LD" and dst:
+                known.pop(dst, None)
+            continue
+        if text.startswith(("MCALL", "RCALL", "ICALL")):
+            for scratch in ("R8", "R9", "R10", "R11", "R12", "LR"):
+                known.pop(scratch, None)
+            continue
+        match = re.match(r"^\w[\w.{}]*\s+(R\d+|LR)\b", text)
+        if match and not text.startswith(("ST.", "CP.", "BR", "TST")):
+            known.pop(match.group(1), None)
+    if bad:
+        raise SystemExit(
+            "Accesses the chip would fault on - not aligned to their width:\n"
+            + "\n".join(f"  0x{a & 0xFFFFFFFF:08X}  {t}" for a, t in bad))
+    print(f"  {checked} constant-address accesses, all aligned to their width")
 
 
 def check_ram_regions() -> None:
@@ -1750,6 +1865,15 @@ def replace_atomically(path: Path, text: str) -> None:
 
 
 
+def version_code(text):
+    """major.minor.patch as the 14-bit number the identity block carries."""
+    parts = str(text).split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        raise SystemExit(f"[firmware].version must be major.minor.patch, got {text!r}")
+    major, minor, patch = (int(p) for p in parts)
+    if major > 63 or minor > 15 or patch > 15:
+        raise SystemExit(f"[firmware].version {text!r} does not fit 6.4.4 bits")
+    return major * 256 + minor * 16 + patch
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/218e.toml")
@@ -1879,7 +2003,7 @@ def main() -> None:
     periods = set()
     # One (ideal, table, period_cents, period_units) per slot that carries a
     # scale, for the latch-spacing check below.  The factory temperament is not
-    # among them: it is copied bit-exact and its semitones are ~40 units apart.
+    # among them: its semitones are 40 or 41 units apart.
     spacing_slots = []
     # How many keys each slot repeats over: twelve, or the .kbm's map size.
     # The jack transposer wraps its shift by this.
@@ -1887,10 +2011,10 @@ def main() -> None:
     for index, relative in enumerate(tuning["slots"]):
         if relative == "factory":
             periods.add(tuning["units_per_octave"])
-            tables[f"tuning_slot{index}"] = factory_tuning(memory)
+            tables[f"tuning_slot{index}"] = factory_tuning()
             period_keys.append(12)
-            print(f"  tuning slot {index}: factory temperament (from the base image, "
-                  "copied bit-exact, so the anchor does not apply)")
+            print(f"  tuning slot {index}: factory temperament (485 + round(484k/12), "
+                  "so the anchor does not apply)")
             continue
         map_name = None if isinstance(relative, str) else (
             relative[1] if len(relative) > 1 else None)
@@ -1917,7 +2041,10 @@ def main() -> None:
             check_table_range(path.name, table, period_units)
         except ValueError as error:
             raise SystemExit(str(error))
-        tables[f"tuning_slot{index}"] = table
+        # A settings record carries fourteen bits, so the table stops at
+        # 0x3fff - an entry up there, or one no key reaches, is far past the
+        # DAC's 0xfff, where the pitch path clamps it anyway.
+        tables[f"tuning_slot{index}"] = [max(0, min(v, 0x3FFF)) for v in table]
         period_keys.append(12 if degrees is None else len(degrees))
         periods.add(period_units)
         spacing_slots.append((
@@ -1931,20 +2058,6 @@ def main() -> None:
               f"  ({anchor} anchored, {offset:+.2f} cents{shape})")
     cfg["_min_key_spacing"] = min_key_spacing(spacing_slots)
     tables["tuning_period_keys"] = period_keys
-    # The jack transposer shifts a 32-entry table and wraps by the map's
-    # size, so a map wider than the table cannot be shifted: index 32 less
-    # 36 keys is -4, and the rebuild read the flash before the table as
-    # pitches.  Refuse the pair; a wider map stays usable with the
-    # transposer off.  web/build.js applies the same rule, word for word.
-    # Either input to the rotation is enough to need it: the preset voltage
-    # shifts the same table by the same path.
-    if (cfg.get("portamento_in", {}).get("transpose")
-            or cfg.get("presets", {}).get("quantize")) and max(period_keys) > 32:
-        raise SystemExit(
-            f"alternate_tunings: a keyboard map of {max(period_keys)} positions "
-            "cannot be shifted by the key-table rotation, whose table holds "
-            "32 entries - use a map of up to 32, or turn off both the jack "
-            "transposer and preset quantisation")
     # The octave controls - the panel switch, the arpeggiator's random octave,
     # knob 3's span - are one setting for the whole build, so every slot has to
     # agree about how big an octave is.  Mixing a 2/1 scale with one that
@@ -1979,6 +2092,10 @@ def main() -> None:
     # --- settings ---------------------------------------------------------
     calib = cfg["pressure"]["calibration"]
     cfg["_numbers"] = {
+        # What the keyboard reports over MIDI as its firmware version:
+        # major.minor.patch packed as 6, 4 and 4 bits, the same number
+        # web/buildlib.js derives from GEN.version.
+        "firmware_version_code": version_code(cfg["firmware"].get("version", "0.0.0")),
         "pressure_floor_default": calib["floor"],
         "pressure_ceiling_default": calib["ceiling"],
         "scan_period_ms": cfg["timing"]["scan_period_ms"],
@@ -2018,8 +2135,11 @@ def main() -> None:
     # brings it down to 12, which the default hysteresis sits exactly on.  The
     # preset voltage used to add its offset outright, with no hysteresis at
     # all, so this pairing is only reachable since the rotation carries it.
-    # web/build.js applies the same rule, word for word.
-    if cfg.get("portamento_in", {}).get("transpose") or cfg.get("presets", {}).get("quantize"):
+    # web/build.js applies the same rule, word for word.  Every image since
+    # stage 2 phase E, since either input can be turned on over MIDI; a map
+    # wider than 32 is refused further down whatever its hysteresis, so it
+    # is not measured here.
+    if max(tables["tuning_period_keys"]) <= 32:
         cv_period = cfg["_numbers"]["transpose_cv_period"]
         widest = max(tables["tuning_period_keys"])
         hyst = cfg["portamento_in"]["cv_hysteresis"]
@@ -2061,14 +2181,10 @@ def main() -> None:
 
     check_ram_regions()
     check_ram_coverage()
+    check_alignment()
     blocks, features, summary = resolve_flags(cfg)
-    # The factory's own octave arithmetic only needs rewriting when an octave
-    # has stopped being a 2/1; at 484 these patches would write back the bytes
-    # that are already there.
-    for name in ("octave_step_down", "octave_step_up", "octave_step_up2",
-                 "octave_scale_mul", "octave_scale_bias"):
-        blocks[name] = (cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
-                        != cfg["tuning"]["units_per_octave"])
+    # The factory's own octave arithmetic reads the period out of number cell
+    # 10 in every image (2026-09-23): its five sites are hooks, not blocks.
     claims = [n for n in ("scan_profiler", "telemetry_smoothing", "latch_probe",
                           "clock_latency")
               if features.get(n)]
@@ -2094,74 +2210,92 @@ def main() -> None:
     # behaviours.  With all three left factory nothing consumes the latches,
     # and a hook that only feeds our own RAM would still replace factory
     # code the config promised to keep - so it stays out entirely.
-    blocks["arp_gate_hook"] = any(
-        get(cfg, f"knobs.knob{i}") != "factory" for i in (1, 2, 3))
+    # Stage 2 phase B: the knob roles are decided at boot from the option
+    # cells, so every knob cave is in every image and the hooks that reach
+    # them always stand.  The gate hook latches knobs 1-3 into our own RAM
+    # whatever the roles, which nothing else reads.
+    blocks["arp_gate_hook"] = True
+    for name in ("arp_selector_pool", "arp_rhythm_hook", "arp_octave_hook",
+                 "vibrato_engine", "vibrato_sine", "pressure_vibrato_scale",
+                 "pressure_vibrato_pool", "knob4_early_pool",
+                 # Phase C: the latch, likewise.  release_count_guard is a
+                 # factory fix and stays whatever the latch does.
+                 "noteoff_pool_1", "noteoff_pool_2", "latch_pitch_toggle",
+                 "release_count_guard", "latch_owner", "latch_hold",
+                 "latch_state_toggle", "factory_pad_latch_off"):
+        blocks[name] = True
+    features["knob4_vibrato"] = True
+    features["arp_latch"] = True
+    # Phase E: the jack transposer and the quantised preset voltage.  The
+    # key-table rotation and everything that follows it are in every image
+    # and idle at zero degrees; the live bytes decide where the degrees
+    # come from (jack_read, preset_degrees_gate) and give the factory its
+    # two jobs back with a byte off (glide_cv_shim, preset_quantize's own
+    # dispatch to the factory's float-to-int).
+    for name in ("preset_quantize", "preset_quantize_pool", "glide_cv_addend", *TABLE_ROTATION):
+        blocks[name] = True
+    features["cv_transpose"] = True
+    features["cv_jack"] = True
+    features["preset_rotate"] = True
 
-    if cfg.get("_pressure_factory"):
-        # knob4_pool goes back too: edit-mode knob 4 is the curve selector,
-        # which is pressure work - left routed, a pressure-off build's knob-4
-        # sweep wrote curve-marked values into the factory velocity-min byte,
-        # which the factory persists.
-        for name in ("pressure_fn_pool", "pressure_float_helper_pool",
-                     "knob1_pool", "knob4_pool", "pressure_gain_nop"):
-            blocks[name] = False
-        # The clamp skips jump over the factory's own 16-tap pressure filter.
-        # They used to be unconditional, so "pressure off" still ran without
-        # that filter and without ours - neither factory nor Rewired.  The
-        # cells that made the skip necessary have moved out of the array, so
-        # it can go with the rest of the pressure work.
-        blocks["pitch_clamp_skip_1"] = False
-        blocks["pitch_clamp_skip_2"] = False
+    # Phase F: the pressure path is decided at boot from its two option
+    # cells, so every pressure cave is in every image.  The fix's pool
+    # words (the curve, knob 1 and knob 4 - the edit-mode curve selector is
+    # pressure work) are dispatchers, its three 2-byte patches are hooks
+    # with caves that do the factory's work or ours, and the interpolator
+    # copies straight through with the fix off.  The blend's route word
+    # dispatches and the glide clamp's value follows the live byte, so the
+    # blend hook and the zero-snap hook stand in every image.
+    blocks["glide_rate_hook"] = True
+    blocks["pitch_target_blend_hook"] = True
+    blocks["blend_offset_apply"] = True
+    blocks["blend_target_conditioner"] = True
+    features["pressure_blend"] = True
 
     # No Scala file supplied means no tuning to switch between, so the edit
     # keys and their LEDs stay factory.  Both key blocks overwrite factory code
     # in place — key 27 was the transpose-mode toggle, key 28 the remote-enable
     # toggle — and the applier asserts the LEDs and zeroes the old
     # transpose-mode byte, so all three have to go, not just the keys.
+    # Since 2026-09-23 that is option cell 27 (alternate_tunings), decided at
+    # boot: the two keys, the applier and the remote-enable guards are in
+    # every image and follow the live byte, so a keyboard built without a
+    # tuning takes tables over MIDI and its keys become the slot selectors.
     factory_tunings = all(slot == "factory" for slot in cfg["tuning"]["slots"])
-    if factory_tunings:
-        features["alternate_tunings"] = False
-        blocks["edit_key27_tuning_slot1"] = False
-        blocks["edit_key28_tuning_slot0"] = False
-        # Remote enable goes back with them.  The guards were added when the
-        # tuning selector lived in state+0x2, the factory's remote-enable
-        # flag; it moved to RAM 0x6090 and nothing shares that byte any more,
-        # so with no tuning installed there is nothing to protect against.
-        for name in ("remote_guard_1", "remote_guard_2", "remote_guard_3"):
-            blocks[name] = False
-    else:
-        features["alternate_tunings"] = True
+    features["alternate_tunings"] = True
 
     # Transpose mode survives only when nothing has taken what it needs.  The
     # tuning applier zeroes the transpose-mode byte outright, and the knob
     # remap takes the knobs transpose is driven with, so either option retires
     # it.  With both off there is nothing in its way, so key 27 and the trn
     # LED work as they shipped and these three forcing patches stay out.
-    factory_knobs = all(v == "factory" for v in cfg["knobs"].values())
-    if factory_tunings and factory_knobs:
-        for name in ("transpose_force_1", "transpose_force_2", "transpose_force_3"):
-            blocks[name] = False
+    # With the knob roles decided at runtime the build cannot know whether
+    # the knobs are all factory, so the forcing patches stay in every image:
+    # a keyboard set to four factory knobs and no tuning over MIDI keeps the
+    # factory transpose mode forced off, where a build made that way used to
+    # leave it.  A later phase can put the three sites on knob 4's live byte.
 
     # Arp latch reads the live octave offset through the blend hook, so the
     # blend *caves* have to exist whenever latch is on — but the pressure
     # *following* inside them (feature.pressure_blend) is independent, and can
     # be off.  Forcing the blocks on here decouples "latch" from "pressure
     # portamento": each is its own switch.
-    if get(cfg, "arp.switch") == "latch":
-        blocks["pitch_target_blend_hook"] = True
-        blocks["blend_offset_apply"] = True
-        # The conditioner ends in a call to the apply shim, so the two exist
-        # together - with neither the blend nor the latch, that call would
-        # name erased flash.  Dead today (the pitch pool routes around the
-        # conditioner when the blend is off), but not something to leave
-        # where a future route could reach it.
-        blocks["blend_target_conditioner"] = True
-    else:
-        # The factory's long-hold on the arp switch toggles polyphonic MIDI.
-        # We suppress it so the edit-mode setting has one owner, but that is
-        # only needed while we own the switch: with the factory arp switch
-        # back, its long-hold comes back with it.
-        blocks["poly_arp_independence"] = False
+    # The latch may be live in any image now, so the blend caves it reads
+    # the live octave offset through are in every image too.
+    blocks["pitch_target_blend_hook"] = True
+    blocks["blend_offset_apply"] = True
+    # The conditioner ends in a call to the apply shim, so the two exist
+    # together - with neither the blend nor the latch, that call would
+    # name erased flash.  Dead today (the pitch pool routes around the
+    # conditioner when the blend is off), but not something to leave
+    # where a future route could reach it.
+    blocks["blend_target_conditioner"] = True
+    # The factory's long-hold on the arp switch toggles polyphonic MIDI.
+    # poly_arp_independence suppresses it so the edit-mode setting has one
+    # owner, in every image since the latch went runtime: a build with the
+    # factory switch used to get the long-hold back, and giving it back at
+    # runtime would mean relocating 32 bytes of factory code with a pool
+    # call inside; the single owner is the better contract anyway.
 
     # How far apart two derived pitches may be and still count as the same
     # note.  Both sides of the toggle's match are built from the transpose at
@@ -2173,7 +2307,7 @@ def main() -> None:
     if isinstance(tolerance, bool) or not isinstance(tolerance, int) or not 0 <= tolerance <= 30:
         raise SystemExit("[arp].latch_match_tolerance must be an integer from 0 to 30")
     closest = cfg.get("_min_key_spacing")
-    if closest is not None and get(cfg, "arp.switch") == "latch":
+    if closest is not None:
         # The table's gap is the nominal one, and the runtime's is up to a unit
         # smaller: the note that was latched keeps the transpose it was pressed
         # at, and the two paths that publish it do not always agree to the unit
@@ -2195,12 +2329,25 @@ def main() -> None:
                   f"{closest}-unit gap between the closest keys; {closest // 2 - 1} "
                   "or less keeps the margin the semitone default has")
     cfg["_numbers"]["latch_match_tolerance"] = tolerance
-    if get(cfg, "arp.switch") == "latch":
-        gap = ("semitone is ~40 units" if closest is None
-               else f"closest keys are {closest} units apart")
-        summary.append(f"  {'arp.latch_match_tolerance':28s} "
-                       f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
-                       f"{'exact match' if tolerance == 0 else gap})")
+    gap = ("semitone is ~40 units" if closest is None
+           else f"closest keys are {closest} units apart")
+    summary.append(f"  {'arp.latch_match_tolerance':28s} "
+                   f"{tolerance}  (+-{tolerance * 2.48:.0f} cents, "
+                   f"{'exact match' if tolerance == 0 else gap})")
+    # The key-table rotation shifts a 32-entry table and wraps by the map's
+    # size, so a map wider than the table cannot be shifted: index 32 less
+    # 36 keys is -4, and the rebuild read the flash before the table as
+    # pitches.  Since stage 2 phase E the rotation is in every image - the
+    # jack and the preset quantiser are option cells that can be turned on
+    # over MIDI - so the map is refused outright, after the latch spacing
+    # above so a mapping that is also too fine is told about that first.
+    # web/build.js applies the same rule, word for word.
+    widest = max(tables["tuning_period_keys"])
+    if widest > 32:
+        raise SystemExit(
+            f"alternate_tunings: a keyboard map of {widest} positions "
+            "cannot be shifted by the key-table rotation, whose table holds "
+            "32 entries - use a map of up to 32")
 
     mode = calib.get("trim_mode", "independent")
     if mode not in ("independent", "scale"):
@@ -2317,8 +2464,7 @@ def main() -> None:
     orders = cfg.get("arp_order", {}).get("knob1_orders", 0)
     if isinstance(orders, bool) or not isinstance(orders, int) or orders not in (0, 1):
         raise SystemExit("[arp_order].knob1_orders must be 0 or 1")
-    cfg["_numbers"]["knob1_orders"] = orders
-    blocks["arp_order_zones"] = orders == 1
+    blocks["arp_order_zones"] = True
     summary.append(f"  {'arp.knob1_orders':28s} "
                    f"{orders}  ({'six zones' if orders else 'press-to-random blend'})")
     # Knob 4: vibrato as in 1.x, or an octave switch.  Both cannot run - they
@@ -2327,27 +2473,17 @@ def main() -> None:
     k4 = cfg.get("knob4", {}).get("octaves", 0)
     if isinstance(k4, bool) or not isinstance(k4, int) or k4 not in (0, 1):
         raise SystemExit("[knob4].octaves must be 0 or 1")
-    cfg["_numbers"]["knob4_octaves"] = k4
-    # How many positions knob 4 gets.  The factory has nine: three that mean
-    # no transpose, then six steps up.  Six OCTAVES is the reach, so a scale
-    # whose period is wider gets proportionally fewer steps rather than a
-    # knob whose top half pushes everything past the DAC and the oscillator.
-    # An octave build comes out at nine, which is the factory's own count.
-    step = cfg.get("_octave_units", cfg["tuning"]["units_per_octave"])
-    cfg["_numbers"]["knob4_zones"] = 3 + max(
-        1, (6 * cfg["tuning"]["units_per_octave"]) // step)
-    if blocks.get("knob4_octave_switch"):
-        summary.append(f"  {'knob4.zones':28s} "
-                       f"{cfg['_numbers']['knob4_zones']}  "
-                       f"(3 silent, then {cfg['_numbers']['knob4_zones'] - 3} up)")
-    blocks["knob4_octave_switch"] = k4 == 1 and get(cfg, "knobs.knob4") == "vibrato"
-    if blocks["knob4_octave_switch"]:
-        features["knob4_vibrato"] = False
-        for name in ("vibrato_engine", "vibrato_sine",
-                     "pressure_vibrato_scale", "pressure_vibrato_pool"):
-            blocks[name] = False
+    # How far knob 4 reaches.  The factory has nine positions: three that
+    # mean no transpose, then six steps up.  Six OCTAVES is the reach, so a
+    # scale whose period is wider gets proportionally fewer steps rather than
+    # a knob whose top half pushes everything past the DAC and the
+    # oscillator.  The firmware divides this by number cell 10, the period,
+    # when it reads the knob, so the step count follows a record with
+    # another period; only the reach is built in.
+    cfg["_numbers"]["knob4_reach_units"] = 6 * cfg["tuning"]["units_per_octave"]
+    blocks["knob4_octave_switch"] = True
     summary.append(f"  {'knob4.octaves':28s} "
-                   f"{k4}  ({'octave switch' if blocks['knob4_octave_switch'] else 'vibrato'})")
+                   f"{k4}  ({'octave switch' if k4 == 1 else 'vibrato'}, the baked default)")
     # Knob 2: randomness as in 1.x, or a bank of step patterns the knob
     # selects from.  A pattern says whether a step sounds at all, which is a
     # different question from how long the step is, so it is gated at the note
@@ -2383,8 +2519,8 @@ def main() -> None:
         tables["arp_pattern_bank"] = [0, 0]
         tables["arp_pattern_len"] = [32]
         cfg["_numbers"]["pattern_count"] = 1
-    blocks["arp_pattern_gate"] = k2 == "patterns"
-    blocks["arp_pattern_tables"] = k2 == "patterns"
+    blocks["arp_pattern_gate"] = True
+    blocks["arp_pattern_tables"] = True
     if k2 == "patterns":
         # The rhythm randomiser reads the SAME knob latch, so leaving it in
         # would mean a denser pattern also bought more jitter in the step
@@ -2392,10 +2528,7 @@ def main() -> None:
         # A pattern is about which steps sound, and the steps have to be
         # evenly spaced for that to mean anything, so the randomiser goes and
         # the factory's own reload stands.
-        blocks["arp_rhythm_hook"] = False
-    cfg["_numbers"]["knob2_patterns"] = 1 if k2 == "patterns" else 0
-    cfg["_numbers"]["knob2_swing"] = 1 if k2 == "swing" else 0
-    cfg["_numbers"]["knob2_quantized"] = 1 if k2 == "quantized" else 0
+        pass
     cfg["_numbers"]["chord_hold_scans"] = int(cfg.get("sequencer", {}).get("chord_hold_scans", 200))
     cfg["_numbers"]["strip_halfway_units"] = int(
         cfg.get("sequencer", {}).get("strip_halfway_units", 2048))
@@ -2432,27 +2565,53 @@ def main() -> None:
         cfg.get("sequencer", {}).get("trigger_spike_units", 5))
     seq = bool(cfg.get("sequencer", {}).get("on"))
     div = bool(cfg.get("clock", {}).get("divide"))
+    # Stage 2 phase G: the divider is decided at boot from its option cell,
+    # so every clock cave is in every image.  It engages only through edges
+    # its ISR cave captures; with the byte off the ISR hook runs the
+    # factory's own body, event 10 reaches the factory's arp step again and
+    # the pulse pools go back to pulse_defer_set.  trigger_spike_units
+    # stays at its configured value either way.
     for name in ("clock_scan", "clock_pulse", "clock_hook",
                  "clock_tempo", "clock_tempo_hook",
                  "clock_ms_tick", "clock_ms_pool",
                  "clock_gate", "clock_gate_hook", "clock_settle",
-                 "clock_capture", "clock_irq_hook", "clock_irq_pool",
-                 "clock_edge_mode", "clock_init", "clock_init_pool",
+                 "clock_capture", "clock_irq_hook",
+                 "clock_edge_mode", "clock_init", "clock_init_pool", "clock_thresholds",
                  "clock_service", "clock_output", "clock_low_age", "clock_attack_guard",
                  "clock_spike_units", "clock_fast_trigger", "clock_remap_bare",
                  "clock_deadline", "clock_pitch_target"):
-        blocks[name] = div
-    blocks["profiler_pool"] = div or features.get("scan_profiler", False)
-    summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}")
+        blocks[name] = True
+    blocks["profiler_pool"] = True
+    summary.append(f"  {'clock.divide':28s} {'on' if div else 'off'}  (option cell; every cave built)")
     keep = bool(cfg.get("persist", {}).get("on"))
     for name in ("persist_crc", "persist_record_crc", "persist_pack",
                  "persist_valid", "persist_newest", "persist_load",
                  "persist_same", "persist_verify", "persist_save", "persist_tick",
                  "persist_capture", "persist_boot", "persist_scan_shim", "persist"):
         blocks[name] = keep
-    blocks["clock_init_pool"] = div or keep or seq
+    # The settings mirror is in every image: the boot chain starts at
+    # settings_boot whatever else is built, and its record validator
+    # shares persist_crc, so both stay on with persistence off.
+    for name in ("settings_copy", "settings_valid", "settings_newest",
+                 "settings_boot", "settings_defaults", "settings_reload",
+                 "settings_target", "settings_apply", "settings_nrpn",
+                 "settings_send", "settings_value", "settings_scan",
+                 "settings_commit", "settings_verify", "settings_cc_hook",
+                 "settings_cc_pool", "clock_init_pool", "persist_crc"):
+        blocks[name] = True
+    # The boot guard is in every image: an image that never finishes
+    # booting has to come back in DFU whatever it was built with.
+    for name in ("boot_guard_arm", "boot_guard_arm_pool", "boot_guard_confirm"):
+        blocks[name] = True
     summary.append(f"  {'persist':28s} {'on' if keep else 'off'}")
-    blocks["seq_chord"] = seq
+    # Stage 2 phase D: the sequencer is decided at boot from its option
+    # cell, so every sequencer cave is in every image.  Each one already
+    # asks the mode at 0x6158 before doing anything of its own, and the
+    # mode only leaves 0 through the pad-4 chord, whose arm seq_arm_gate
+    # refuses while the live byte is off - so an image with the cell 0
+    # behaves as this build always did with the chord unused.
+    blocks["seq_chord"] = True
+    blocks["seq_arm_gate"] = True
     for name in ("seq_enter", "seq_record", "seq_select", "seq_pitch",
                  "seq_clock_enabled", "seq_transport", "seq_clock_rate_hook",
                  "seq_clock_change_hook", "seq_clock_setup_hook", "seq_clock_tick_hook",
@@ -2467,8 +2626,11 @@ def main() -> None:
                  "seq_preview_next", "seq_preview_start", "seq_preview_transport",
                  "seq_record_pitch", "seq_preview_pin", "seq_hold", "seq_flash",
                  "seq_restart_init", "seq_boot"):
-        blocks[name] = seq
-    blocks["seq_clock_input_hook"] = seq and not div
+        blocks[name] = True
+    # The factory's physical-clock event path for the sequencer: reached only
+    # when the factory ISR posts the event, which since phase G is whenever
+    # the divider's byte is off, so the hook stands in every image.
+    blocks["seq_clock_input_hook"] = True
     # transpose_capture lives inside the blend hook, and it is what keeps
     # 0x60a0 - the live transpose - current.  The sequencer reads that cell as
     # the take's reference and as the term every recorded step is stored
@@ -2478,16 +2640,43 @@ def main() -> None:
     # stays independently switchable.  Without it, sequencer = true with
     # latching_arp = false and pressure_portamento = false silently dropped
     # every per-note octave change from a take - measured two octaves apart
-    # sounding, both steps stored identical (audit 2026-09-13).
-    if seq:
-        blocks["pitch_target_blend_hook"] = True
-        blocks["blend_offset_apply"] = True
-        blocks["blend_target_conditioner"] = True
-    summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}")
-    blocks["arp_swing"] = k2 == "swing"
+    # sounding, both steps stored identical (audit 2026-09-13).  Since
+    # phase D the sequencer is in every image, so the hook is too.
+    blocks["pitch_target_blend_hook"] = True
+    blocks["blend_offset_apply"] = True
+    blocks["blend_target_conditioner"] = True
+    summary.append(f"  {'sequencer':28s} {'on' if seq else 'off'}  (option cell; every cave built)")
+    summary.append(f"  {'presets.quantize':28s} {bool(get(cfg, 'presets.quantize'))!r}  (option cell; every cave built)")
+    summary.append(f"  {'portamento_in.transpose':28s} {bool(get(cfg, 'portamento_in.transpose'))!r}  (option cell; every cave built)")
+    summary.append(f"  {'pressure_fix':28s} {not cfg.get('_pressure_factory')!r}  (option cell; every cave built)")
+    summary.append(f"  {'portamento.pressure_blend':28s} {bool(get(cfg, 'portamento.pressure_blend'))!r}  (option cell; every cave built)")
+    blocks["arp_swing"] = True
     # Quantized randomness takes the randomiser's hook the way swing does;
     # the pool word at 0x80019d40 names whichever of the three is built.
-    blocks["arp_quantized"] = k2 == "quantized"
+    blocks["arp_quantized"] = True
+    # The option cells, 16..27 of the settings mirror (docs/PLAN-SETTINGS-2.md):
+    # the config's own choices, baked into the image as its defaults the way
+    # a table is, and written into the record beside the numbers.  Stage 2
+    # phase A: the cells exist, load, dump and commit; nothing reads them
+    # yet, so every option is still decided by the blocks above.  The
+    # encodings are SETTINGS.OPTION_LIST's, the page's values in the page's
+    # order, and buildlib.js's computeNumbers derives the same twelve.
+    knobs = cfg["knobs"]
+    cfg["_numbers"].update(SETTINGS.option_cells({
+        "latching_arp": get(cfg, "arp.switch") == "latch",
+        "knob1": "factory" if knobs["knob1"] == "factory" else ("orders" if orders == 1 else "order"),
+        "knob2": "factory" if knobs["knob2"] == "factory"
+                 else {"randomness": "spacing"}.get(k2, k2),
+        "knob3": "factory" if knobs["knob3"] == "factory" else "octaves",
+        "knob4": "factory" if knobs["knob4"] == "factory" else ("trn" if k4 == 1 else "vibrato"),
+        "sequencer": seq,
+        "clock_divide": div,
+        "pressure_fix": not cfg.get("_pressure_factory"),
+        "pressure_portamento": bool(get(cfg, "portamento.pressure_blend")),
+        "quantize_presets": bool(get(cfg, "presets.quantize")),
+        "portamento_in": "transpose" if get(cfg, "portamento_in.transpose") else "portamento",
+        "alternate_tunings": not factory_tunings,
+    }))
     summary.append(f"  {'knob2.mode':28s} {k2!r}"
                    + (f"  ({len(bank)} patterns)" if k2 == "patterns" else ""))
     # The event-17 wrapper is shared: pressure smoothing runs its
@@ -2497,7 +2686,7 @@ def main() -> None:
     # and gating the whole wrapper on smoothing left that build's trigger back
     # on the 5 ms scan with the fast-trigger cave unreachable.
     for name in ("dac_interpolator", "dac_flush_pool"):
-        blocks[name] = bool(smoothing) or div
+        blocks[name] = bool(smoothing) or True   # the divider is in every image since phase G
     for name in ("dac_interpolate", "pressure_target_redirect"):
         blocks[name] = bool(smoothing)
     summary.append(f"  {'pressure.output_smoothing':28s} "
@@ -2514,17 +2703,31 @@ def main() -> None:
     # a different marker and forces a fresh init on the next power-up — SRAM
     # survives a DFU update, and a fixed marker would let an older build's
     # value suppress newly added initialisation.
+    # The option cells that are decided at runtime, and the data that only
+    # they read, do not shape the code: two builds that differ only in them
+    # produce one marker, so a record made on the page for either is right
+    # for both - which is what lets the knobs change over MIDI without a
+    # flash.  buildlib.js's initMarker leaves out the same keys.
     fingerprint = hashlib.sha256(
         repr(sorted(blocks.items())).encode()
         + repr(sorted(features.items())).encode()
-        + repr(sorted(cfg["_numbers"].items())).encode()
-        + repr(sorted(tables.items())).encode()
+        + repr(sorted(i for i in cfg["_numbers"].items() if i[0] not in MARKER_EXCLUDES)).encode()
+        + repr(sorted(i for i in tables.items() if i[0] not in MARKER_EXCLUDES)).encode()
         + (REPO / "src" / "AssemblePressureFix.java").read_bytes()
     ).digest()
     cfg["_numbers"]["init_marker"] = 0x1000 + (int.from_bytes(fingerprint[:2], "big") % 0xDFFE)
 
     properties = BUILD / "build.properties"
     write_properties(properties, cfg, blocks, features, tables)
+    # The record this image's own tables make, stamped with its marker: what
+    # a fresh boot mirrors, and what the regressions plant to prove a load.
+    try:
+        record = SETTINGS.record(
+            cfg["_numbers"], tables, blocks["arp_pattern_tables"],
+            cfg["_numbers"]["init_marker"], cfg["_numbers"]["octave_units"])
+    except ValueError as error:
+        raise SystemExit(str(error))
+    (BUILD / "settings.bin").write_bytes(record)
 
     # --- assemble ---------------------------------------------------------
     if args.no_ghidra:

@@ -6,7 +6,7 @@
 
     var $ = function (id) { return document.getElementById(id); };
     var state = { factoryText: null, factoryMtime: null, slots: null,
-                  calibration: null, result: null, patterns: [] };
+                  calibration: null, result: null, patterns: [], numbers: null };
     // What each preset knob is set to; the buttons below drive it.
     var knobRole = { knob1: 'order', knob2: 'spacing', knob3: 'octaves', knob4: 'vibrato' };
 
@@ -525,9 +525,9 @@
             // belongs to one scale and nothing about the file says which.
             var m = document.createElement('button');
             m.textContent = '.kbm';
-            m.disabled = !entry;
+            m.disabled = !entry || !entry.text;
             m.className = 'kbmbtn' + (entry && entry.kbmText ? ' mapped' : '');
-            m.title = !entry ? 'no scale in this slot'
+            m.title = !entry || !entry.text ? 'no scale in this slot'
                 : entry.kbmText ? 'replace ' + entry.kbmName + ' — the keyboard mapping'
                 : 'add a keyboard mapping (.kbm) for ' + entry.name;
             m.addEventListener('click', function () {
@@ -622,21 +622,21 @@
             return l.length > 32 || !/[^.]/.test(l);
         });
         if (!rows.length || bad.length) {
-            msg($('buildMsg'), 'bad', !rows.length
+            msg($('patMsg'), 'bad', !rows.length
                 ? 'Nothing to read there.'
                 : 'Each line needs 1 to 32 steps and at least one hit: '
                   + JSON.stringify(bad[0]));
             return;
         }
         if (rows.length > 32) {
-            msg($('buildMsg'), 'bad', rows.length + ' patterns; the bank holds 32.');
+            msg($('patMsg'), 'bad', rows.length + ' patterns; the bank holds 32.');
             return;
         }
         state.patterns = rows.map(function (l) {
             var t = l.replace(/[^.]/g, 'x');
             return { text: t + '.'.repeat(32 - t.length), length: t.length };
         });
-        msg($('buildMsg'), '', state.patterns.length + ' patterns read.');
+        msg($('patMsg'), '', state.patterns.length + ' patterns read.');
         renderPatterns(); invalidate();
     }
 
@@ -818,8 +818,18 @@
     // beacon both said the correction was in while the image carried the
     // flat ramp.  The readings live only in this page, so a fresh visit
     // with the box ticked and no CSV loaded is exactly that table.
+    // Blank when it would not change the table the build makes.  A table
+    // read off a keyboard comes back as cents with its rounding in them -
+    // up to a cent and a half on a keyboard that was never corrected - so
+    // "every row zero" called that a correction, and the download said one
+    // was applied and shipped a CSV for a table identical to the plain one.
     function calibrationBlank() {
-        return rows().every(function (r) { return r.cents === 0; });
+        var rs = rows();
+        if (rs.every(function (r) { return r.cents === 0; })) return true;
+        var cfg = BUILDLIB.expand({ volts_per_octave: vpo, pitch_offset: pitchOffset });
+        var plain = BUILDLIB.pitchTable(cfg, cfg._calibration);
+        var corrected = BUILDLIB.pitchTable(cfg, rs);
+        return plain.every(function (v, i) { return v === corrected[i]; });
     }
 
     // Whether the image being built actually carries a table.  Three places
@@ -890,8 +900,12 @@
         interpolated = {};
         buildTable(); drawPlot(); validateCal(); syncBaseline();
         msg($('calMsg'), '', haveBaseline()
-            ? 'Readings cleared. ' + baselineName + ' is still loaded as the table on '
-              + 'the instrument.' : '');
+            ? 'Readings cleared. ' + baselineName.charAt(0).toUpperCase() + baselineName.slice(1) +
+              // A tuned table is on the page until it is sent or flashed;
+              // every other kind came from the instrument or goes to it as is.
+              (baselineName === 'the tuned table' ? ' is loaded here.'
+                                                  : ' is still loaded as the table on the instrument.')
+            : '');
         // The table is part of the image: without this the image built
         // from the old readings stayed downloadable after they were cleared.
         invalidate();
@@ -1075,6 +1089,9 @@
                    r.what.padEnd(6) + ' n' + String(r.note).padStart(3) + ' ' +
                    r.name.padEnd(4) + ' e' + String(r.entry === null ? '--' : r.entry).padStart(2) +
                    ' ch' + String(r.channel + 1).padStart(3) + '  ';
+        // An entry the run filled in after it (calibrate.js): no note, and
+        // `why` is how it was made.
+        if (r.what === 'fill') return head + '<i>' + r.why + '</i>';
         if (r.hz === null) {
             return head + '<i>no pitch (' + r.why + ')  rms ' + f(r.rms, 4) + '</i>';
         }
@@ -1124,8 +1141,11 @@
         var out = [
             '# 218e calibration sweep log.',
             '# One row per note sent: what came back for it, as measured.',
-            '# what: probe = finding the MIDI channel, anchor = the bottom note',
-            '#       re-measured to cancel drift, sweep = a note of the table.',
+            '# what: probe = finding the MIDI channel, anchor = the 0 V note',
+            '#       every note is tuned against, re-measured to cancel drift,',
+            '#       sweep = a note of the table, retry = the same note again',
+            '#       after its table entry was moved, fill = an entry that did',
+            '#       not tune, filled in after the run (why says how).',
             '# A sweep row whose detected_hz is below the sweep row before it is',
             '# a note that did not take - the firmware cannot play a higher note lower.',
             cols.join(',')
@@ -1159,19 +1179,42 @@
         if (had && items.some(function (it) { return it.value === had; })) sel.value = had;
     }
 
+    // The page has one MIDI port choice, shown in three lists: the
+    // calibration's, and the keyboard's beside Read and beside Send.  They
+    // are the same instrument, so a pick in any of them shows in all of
+    // them, and a list lands on it whenever it is filled: by name, so it is
+    // picked again when the port comes back after a restart, and on the
+    // keyboard's own port until something else is picked.  It cannot be
+    // read back from a list: a select with options always has a value, the
+    // first one, so a list just filled looked chosen and the keyboard was
+    // only picked when it happened to be first.  A list that is locked, as
+    // the calibration's is while it runs, keeps the port it is using and
+    // catches up when it unlocks.
+    var midiPick = null;
+    function midiSelects() {
+        return ['calMidi', 'kbdLoadPort', 'kbdPort'].map(function (id) { return $(id); }).filter(Boolean);
+    }
+    function applyMidiPick(sel) {
+        if (sel.disabled) return;
+        var want = Array.prototype.filter.call(sel.options, function (o) {
+            return o.value && (midiPick ? o.text === midiPick : /218e/i.test(o.text));
+        })[0];
+        if (want) sel.value = want.value;
+    }
+
     function listMidi() {
         if (listed.midi) return Promise.resolve();
         return CALIBRATE.midiOutputs().then(function (ports) {
             listed.midi = true;
-            // The instrument names its own port, so a kit with several things
-            // plugged in still opens on the right one.
+            safariNotes(false);             // MIDI works: whatever Safari needed, it has
             var items = ports.map(function (p) {
                 return { value: p.id, label: p.name || p.id, port: p };
             });
-            fillSelect($('calMidi'), items, 'No MIDI outputs found');
-            var mine = items.filter(function (i) { return /218e/i.test(i.label); })[0];
-            if (mine) $('calMidi').value = mine.value;
+            fillSelect($('calMidi'), items, 'No MIDI devices found');
+            applyMidiPick($('calMidi'));
             window.__calPorts = ports;
+            // The keyboard's lists fill with it, so all three show the pick.
+            if (!kbd.listed) listKeyboard();
         }, function (err) {
             // Not latched: a browser that has no Web MIDI will say so again,
             // and one that was merely not ready gets another chance without
@@ -1285,34 +1328,646 @@
 
     $('calMidi').addEventListener('focus', listMidi);
     $('calAudio').addEventListener('focus', listAudio);
-    $('calAudio').addEventListener('change', listChannels);
+    // Safari's audio input reads sharp for seconds after it opens, and the
+    // sweep waits that out (warmupMs in sweepOptions).  So there the input
+    // is opened as soon as it is picked and handed to the run
+    // (CALIBRATE.listen): by the time Measure is pressed it has usually
+    // settled, and the run waits only what is left, two seconds at least.
+    // It is closed when the pick changes, ten minutes after it was opened
+    // or last measured with, and with the page.
+    var warmed = null, warmToken = 0, warmTimer = null, WARM_MS = 600000;
+    function coolInput() {
+        warmToken++;
+        clearTimeout(warmTimer);
+        if (warmed) warmed.close();
+        warmed = null;
+    }
+    function keepWarm() {
+        clearTimeout(warmTimer);
+        warmTimer = setTimeout(function () {
+            if (sweep) keepWarm(); else coolInput();
+        }, WARM_MS);
+    }
+    function warmInput() {
+        if (!IS_SAFARI || !CALIBRATE.listen || sweep || !listed.audio) return;
+        var want = { deviceId: $('calAudio').value || null,
+                     audioChannel: parseInt($('calChan').value, 10) || 0,
+                     audioChannels: chanFor[$('calAudio').value || ''] || null };
+        if (warmed && warmed.fits(want)) { keepWarm(); return; }
+        coolInput();
+        var token = warmToken;
+        CALIBRATE.listen(want).then(function (input) {
+            if (token !== warmToken || sweep) { input.close(); return; }
+            warmed = input;
+            keepWarm();
+        }, function () {
+            // Nothing to say here: the run opens its own and names the fault.
+        });
+    }
+    if (window.addEventListener) window.addEventListener('pagehide', coolInput);
+    $('calAudio').addEventListener('change', function () {
+        coolInput();
+        listChannels().then(warmInput);
+    });
+    // Picked without a change: the only input, or the one already there.
+    $('calAudio').addEventListener('blur', function () {
+        if (listed.audio) listChannels().then(warmInput);
+    });
     $('calRescan').addEventListener('click', function () {
         listed.audio = false;
         listed.midi = false;
         chanFor = {};
+        coolInput();
         msg($('autoMsg'), '', '');
         $('calRescan').disabled = true;
         Promise.resolve().then(listMidi).then(listAudio).then(listChannels)
-            .then(function () { $('calRescan').disabled = false; },
+            .then(function () { $('calRescan').disabled = false; warmInput(); },
                   function () { $('calRescan').disabled = false; });
     });
+    // --- the settings without a flash: read before step 2, sent in step 3 ---
+    // The record a build serialized (WEBBUILD.build's `settings`, the same
+    // bytes tools/build.py writes to build/settings.bin) goes to the
+    // instrument through SETTINGSMIDI.install, which refuses with a named
+    // reason; each reason has its own line here.  The instrument is one
+    // device with an input and an output of the same name, so the select
+    // lists outputs and the input is found by that name.
+    //
+    // Reading is its own box between steps 1 and 2, so the options are
+    // loaded before they are changed; sending stays with the flash.  Each
+    // has its own port list, linked with the calibration's (midiPick).
+    var kbd = { outputs: [], inputs: [], listed: false, busy: false };
+    function kbdSelects() {
+        return ['kbdLoadPort', 'kbdPort'].map(function (id) { return $(id); }).filter(Boolean);
+    }
+    function kbdMessages() {
+        return ['kbdLoadMsg', 'kbdMsg'].map(function (id) { return $(id); }).filter(Boolean);
+    }
+    function listKeyboard() {
+        if (!kbdSelects().length) return Promise.resolve();
+        return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
+            kbd.outputs = r[0]; kbd.inputs = r[1]; kbd.listed = true;
+            safariNotes(false);
+            var items = kbd.outputs.map(function (p) {
+                return { value: p.id, label: p.name || p.id };
+            });
+            kbdSelects().forEach(function (sel) {
+                fillSelect(sel, items, 'No MIDI devices found');
+                applyMidiPick(sel);
+            });
+            if (!listed.midi) listMidi();
+            refresh();
+        }, function (err) {
+            kbdSelects().forEach(function (sel) { fillSelect(sel, [], 'Web MIDI unavailable'); });
+            kbdMessages().forEach(function (m) { msg(m, 'bad', err.message); });
+            refresh();
+        });
+    }
+    function keyboardPort() {
+        var sel = kbdSelects()[0];
+        return sel ? sel.value : '';
+    }
+    function keyboardPorts() {
+        var out = kbd.outputs.filter(function (p) { return p.id === keyboardPort(); })[0];
+        if (!out) return null;
+        var inp = kbd.inputs.filter(function (p) { return p.name === out.name; })[0] || kbd.inputs[0];
+        return inp ? { output: out, input: inp } : null;
+    }
+    // Read and Send work before the list has been opened: the first press
+    // lists the ports - which is when the browser asks about MIDI, if it
+    // has not been allowed already - picks the keyboard and carries on.
+    function withKeyboard(go) {
+        (kbd.listed ? Promise.resolve() : listKeyboard()).then(function () {
+            var ports = keyboardPorts();
+            if (ports) go(ports);
+        });
+    }
+    function recordBytes(hex) {
+        var out = [];
+        for (var i = 0; i < hex.length; i += 2) out.push(parseInt(hex.substr(i, 2), 16));
+        return out;
+    }
+    var KBD_REASONS = {
+        'no reply': 'No reply from the keyboard: check it is on and plugged in, that this is the right port, and that it runs Rewired 3.0 or later.',
+        'wrong layout': 'This keyboard runs a different build. Flash the latest firmware to change settings.',
+        'wrong image': 'This keyboard runs a different build. Flash the latest firmware to change settings.',
+        'mismatch': 'The keyboard did not read everything back the same: try again.',
+        'incomplete': 'The keyboard\u2019s reply was incomplete: try again.',
+        'not written': 'The keyboard could not save: try again, and if it keeps failing, flash the firmware again.',
+        'not applied': 'The keyboard restarted but still runs its old options: read its settings, and if they are not what you sent, flash the firmware again.',
+        'gone': 'The keyboard did not come back after restarting: power-cycle it, then read its settings to check.'
+    };
+    // A read or a send, reported the way a download is (see report() below):
+    // which button, how it ended, this page's version and the firmware the
+    // keyboard said it runs - never the settings themselves, which are one
+    // person's instrument, and no identifier.  How it ended is a reason's
+    // name from the list above, 'ok', or 'error' for anything the list does
+    // not name, so no message text ever leaves.  Its own route rather than
+    // the download's, so a worker that predates it cannot count one as a
+    // build, and its own daily ordinal, so a morning of reads is one person.
+    function reportSettings(action, outcome, id, restarted) {
+        try {
+            if (!navigator.sendBeacon) return;
+            var event = JSON.stringify({
+                action: action,
+                outcome: outcome,
+                version: GEN.version,
+                // Absent when the keyboard never answered; JSON drops it.
+                firmware: (id && id.firmwareVersion) || undefined,
+                // A send only: whether an option changed and the keyboard
+                // had to restart to run it.
+                restarted: restarted,
+                nth_today: countToday(K_MIDI_TODAY)
+            });
+            navigator.sendBeacon('settings-beacon', new Blob([event], { type: 'text/plain' }));
+        } catch (e) {
+            // Counting must never be able to stop a read or a send.
+        }
+    }
+    function outcomeOf(err) {
+        var reason = err && err.reason;
+        return KBD_REASONS[reason] ? reason : 'error';
+    }
+    // After a restart the ports are gone for a moment and come back, under
+    // the same names: the fresh pair by name, or null while they are away.
+    function freshPorts(name) {
+        return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
+            // A port that went away with the restart can stay listed as
+            // disconnected, and send() on it throws: skip it until it is back.
+            function here(p) { return p.state !== 'disconnected'; }
+            var out = r[0].filter(function (p) { return p.name === name && here(p); })[0];
+            var inp = r[1].filter(function (p) { return p.name === name && here(p); })[0] || (out && r[1].filter(here)[0]);
+            return out && inp ? { output: out, input: inp } : null;
+        }, function () { return null; });
+    }
+    // The firmware the keyboard said it runs, kept in its own place beside
+    // the buttons rather than only inside a read's report.  Filled from
+    // every identity the page already gets - a read, a send, a refusal that
+    // carries one - and never by asking on its own: nothing goes out to a
+    // port until a button is pressed.  Hidden until then, and hidden again
+    // when the port changes or the keyboard stops answering, since the next
+    // reply may be another device.  Every firmware that answers over MIDI
+    // reports its version, so a hidden line only ever means no answer yet.
+    function showFirmware(id) {
+        var ver = id && id.firmwareVersion;
+        $('kbdVer').textContent = ver ? 'Firmware: Rewired ' + shown(ver) : '';
+        $('kbdVer').hidden = !ver;
+    }
+    function firmwareFrom(err) {
+        if (err && err.identity) showFirmware(err.identity);
+        else if (err && err.reason === 'no reply') showFirmware(null);
+    }
+    function optionWords(names) {
+        var labels = { latching_arp: 'the latching arpeggiator', knob1: 'knob 1', knob2: 'knob 2', knob3: 'knob 3',
+                       knob4: 'knob 4', sequencer: 'the sequencer', clock_divide: 'the clock divider',
+                       pressure_fix: 'the pressure fix', pressure_portamento: 'the pressure portamento',
+                       quantize_presets: 'preset quantization', portamento_in: 'the portamento jack',
+                       alternate_tunings: 'the tuning slots' };
+        return names.map(function (n) { return labels[n] || n; }).join(', ');
+    }
+    if (kbdSelects().length) {
+        // The MIDI permission is asked for when a port list or a button
+        // is clicked, not when the step scrolls into view and not on load:
+        // flashing already carries the settings, so this is optional
+        // and someone building an image to download has no use for the
+        // prompt.  The lists fill on the first focus or press, as the
+        // calibration's does - and at once when MIDI is allowed already, as
+        // on any visit after the first, where there is no prompt to show.
+        kbdSelects().forEach(function (sel) {
+            sel.addEventListener('focus', function () { if (!kbd.listed) listKeyboard(); });
+        });
+        midiSelects().forEach(function (sel) {
+            sel.addEventListener('change', function () {
+                var picked = sel.options[sel.selectedIndex];
+                midiPick = picked && picked.value ? picked.text : null;
+                midiSelects().forEach(function (other) { if (other !== sel) applyMidiPick(other); });
+                showFirmware(null);
+                unsentPicked();
+                refresh();
+            });
+        });
+        try {
+            navigator.permissions.query({ name: 'midi' }).then(function (status) {
+                if (status.state === 'granted' && !kbd.listed) listKeyboard();
+            }, function () {});
+        } catch (e) { /* no Permissions API, or no 'midi' in it: the first click lists */ }
+    }
+    // A send from install on: the line in the unsent card, and the restart
+    // and the wait for it when an option changed.  Resolves with whether the
+    // keyboard now holds and runs `record`.
+    function sendRecord(ports, record) {
+        var name = ports.output.name;
+        // Bursts of four parameters, sixteen packets, fit the keyboard's USB
+        // receive ring of thirty-two.  Chrome delivers each burst as it is
+        // sent; Safari's Web MIDI extension sends whatever queued while its
+        // last request was in flight as one batch, back to back - runs of up
+        // to eighty packets with the 3 ms gaps (its session measured this,
+        // 2026-09-27) - and a whole-record Send read back short there while
+        // Read worked.  60 ms gives each burst a request of its own.
+        var how = { gap: typeof IS_SAFARI !== 'undefined' && IS_SAFARI ? 60 : 3 };
+        return SETTINGSMIDI.install(ports.output, ports.input, record, how)
+            .then(function (id) {
+                showFirmware(id);
+                if (!id.restarted) {
+                    msg($('kbdMsg'), 'ok', 'Sent and saved.');
+                    reportSettings('send', 'ok', id, false);
+                    return true;
+                }
+                // An option changed: the keyboard is restarting to run
+                // it, and its ports go away and come back meanwhile.
+                msg($('kbdMsg'), 'warn', 'Sent and saved. The keyboard is restarting to apply ' +
+                    optionWords(id.pending) + '…');
+                var ok = false;
+                return SETTINGSMIDI.awaitLive(function () { return freshPorts(name); }, record, {})
+                    .then(function () {
+                        msg($('kbdMsg'), 'ok', 'Sent and saved. The keyboard has restarted and now runs ' +
+                            optionWords(id.pending) + ' as set here.');
+                        reportSettings('send', 'ok', id, true);
+                        ok = true;
+                    }, function (err) {
+                        var reason = err && err.reason === 'no reply' ? 'gone' : err && err.reason;
+                        msg($('kbdMsg'), 'bad', KBD_REASONS[reason]
+                            || String(err && err.message || err));
+                        reportSettings('send', outcomeOf({ reason: reason }), id, true);
+                    })
+                    .then(function () { kbd.listed = false; return listKeyboard(); })
+                    .then(function () { return ok; });
+            }, function (err) {
+                firmwareFrom(err);
+                // Which values did not come back, for whoever opens the
+                // console: the message names the kind of failure, not the
+                // parameters, and a mismatch has to be told apart - values
+                // lost on the way against values the keyboard keeps its own
+                // way.  Parameters as the NRPN numbers settings.js uses.
+                if (err && (err.differences || err.missing) && typeof console !== 'undefined') {
+                    try {
+                        console.warn('218e send: ' + (err.reason || 'failed'),
+                            { differences: (err.differences || []).slice(0, 40),
+                              missing: (err.missing || []).slice(0, 40),
+                              total: (err.differences || []).length + (err.missing || []).length });
+                    } catch (e) { /* never let the report stop the page */ }
+                }
+                msg($('kbdMsg'), 'bad', sendRefusal(err));
+                reportSettings('send', outcomeOf(err), err && err.identity);
+                return false;
+            });
+    }
+
+    // --- unsent settings: the card at the bottom of the window -------------
+    // Once Read settings has loaded what the keyboard holds, a change that
+    // makes the page's settings differ from it brings up a card fixed to the
+    // bottom of the window, with the port and Send settings (the owner,
+    // 2026-09-27: it replaced the live send, which sent each change on its
+    // own, and step 3's send card).  `base` is the record the page built
+    // just after the read's load, then each send's once it has landed: the
+    // read's own record is not it, because a load that does not give the
+    // keyboard's record back exactly is not a change anyone made.  `name` is
+    // the port it came from and `marker` the image the keyboard said it runs.
+    // The card comes up only for what a send can land without a flash (the
+    // owner, 2026-09-27): settings read from the keyboard, and a record for
+    // the image it runs - not for a keyboard on another image, nor for
+    // settings the page cannot build.  No page setting moves the marker
+    // today; it is checked with each change all the same.  Nothing is armed
+    // before the first read, after a failed one, or once another port is
+    // picked.  The card stays up while a send runs and after one fails, so
+    // its line can be read; after one lands it goes SENT_LINGER_MS later,
+    // unless something changed.
+    var UNSENT_CHECK_MS = 300, SENT_LINGER_MS = 4000;
+    var unsent = { armed: false, base: null, name: null, marker: null, timer: null, linger: null,
+                   dirty: false, sending: false };
+    function pageRecord() {
+        try { return recordBytes(WEBBUILD.settings(options()).settings); } catch (e) { return null; }
+    }
+    function unsentArm(name, marker) {
+        clearTimeout(unsent.timer); clearTimeout(unsent.linger);
+        var base = pageRecord();
+        if (!base || marker === null || marker === undefined ||
+            SETTINGSMIDI.markerOf(base) !== marker) { unsentOff(); return; }
+        unsent.armed = true; unsent.name = name; unsent.base = base; unsent.marker = marker;
+        unsent.timer = null; unsent.linger = null; unsent.dirty = false;
+        unsentShow();
+    }
+    function unsentOff() {
+        clearTimeout(unsent.timer); clearTimeout(unsent.linger);
+        unsent.armed = false; unsent.base = null; unsent.name = null; unsent.marker = null;
+        unsent.timer = null; unsent.linger = null; unsent.dirty = false;
+        unsentShow();
+    }
+    // invalidate()'s: the settings may have changed.
+    function unsentSoon() {
+        if (!unsent.armed) return;
+        clearTimeout(unsent.timer);
+        unsent.timer = setTimeout(unsentCheck, UNSENT_CHECK_MS);
+    }
+    function unsentCheck() {
+        unsent.timer = null;
+        if (!unsent.armed) return;
+        var record = pageRecord();
+        unsent.dirty = !!record && SETTINGSMIDI.markerOf(record) === unsent.marker &&
+                       SETTINGSMIDI.changes(unsent.base, record).length > 0;
+        unsentShow();
+    }
+    // A pick in the port lists: another port is not the keyboard that was read.
+    function unsentPicked() {
+        if (!unsent.armed) return;
+        var ports = keyboardPorts();
+        if (!ports || ports.output.name !== unsent.name) unsentOff();
+    }
+    // A send from the card has ended.  One that landed is the new base.
+    function unsentLanded(ok, record, name) {
+        if (ok && unsent.armed && name === unsent.name) {
+            unsent.base = record.slice();
+            clearTimeout(unsent.linger);
+            unsent.linger = setTimeout(function () { unsent.linger = null; unsentShow(); }, SENT_LINGER_MS);
+        }
+        unsentCheck();
+    }
+    function unsentShow() {
+        var card = $('unsent');
+        if (!card) return;
+        var up = unsent.armed && (unsent.dirty || unsent.sending || !!unsent.linger);
+        // Coming up for a new change, it starts without the last send's line.
+        if (up && !card.classList.contains('up') && !unsent.sending) msg($('kbdMsg'), '', '');
+        card.classList.toggle('up', up);
+        card.inert = !up;
+        $('unsentHead').hidden = !unsent.dirty;
+        // Room under the page's end, so the card never covers the last of it.
+        var body = document.body;
+        if (body && body.style) body.style.paddingBottom = up ? ((card.offsetHeight || 0) + 32) + 'px' : '';
+    }
+
+    if ($('kbdSend')) {
+        $('kbdSend').addEventListener('click', function () {
+            withKeyboard(sendTo);
+        });
+        var sendTo = function (ports) {
+            kbd.busy = true;
+            $('kbdSend').disabled = true;
+            if ($('kbdRead')) $('kbdRead').disabled = true;
+            msg($('kbdMsg'), 'warn', 'Sending…');
+            unsent.sending = true;
+            unsentShow();
+            // The record is a build's, made here from what the page shows now
+            // rather than by a button of its own: a send that needed a build
+            // pressed first failed for a reason the step never showed.  A
+            // build is a few hundred milliseconds of script, so it runs once
+            // the message has painted.
+            var record;
+            new Promise(function (painted) { setTimeout(painted, 30); })
+                .then(function () {
+                    // With the factory image here the send shares the build
+                    // a download would make; without it, the record alone,
+                    // which needs no image (WEBBUILD.settings).
+                    try { record = recordBytes(state.factoryText ? built().settings
+                                                                 : WEBBUILD.settings(options()).settings); }
+                    catch (e) {
+                        // A build that failed never reached the keyboard: not
+                        // a send, and not counted as one.
+                        msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + e.message);
+                        return;
+                    }
+                    return sendRecord(ports, record).then(function (ok) {
+                        unsent.sending = false;
+                        unsentLanded(ok, record, ports.output.name);
+                    });
+                })
+                .then(function () { kbd.busy = false; unsent.sending = false; refresh(); });
+        };
+    }
+
+    // Reading is the other direction.  What the keyboard holds is listed,
+    // compared with the build here when there is one, and then loaded into
+    // the page: the patterns into the pattern list, and the pitch table into
+    // the calibration as the table already on the instrument, with the
+    // scaling and the offset it was built with - both read off the table
+    // itself, since the record does not say.  The tunings come in as the
+    // keyboard holds them: a table does not turn back into a scale, so each
+    // slot is its table, its keys per period and the period, built as it
+    // came until a scale replaces it - otherwise a read and a rebuild sent
+    // the page's own slots and switched the keyboard's tunings off.  The
+    // timing numbers have no controls on this page, so they ride through
+    // the same way: the ones that differ from this page's own are kept and
+    // go into every build until the next read or a Reset - otherwise a read
+    // and a send put an NRPN sender's values back to the page's.  A pattern
+    // with no steps is not loaded: the unused bank of a build without
+    // patterns is one of those, and neither builder will build one.
+    // Loading invalidates the build the way any option change does: the
+    // next image is made from what was read.
+    // A read reports one line, that the settings are loaded, and adds only
+    // what changes what happens next.  One is here: a keyboard running
+    // another image than the one this page builds needs that image flashed,
+    // or a fresher page, before a send can land.  They are told apart by the
+    // image marker, and the version the keyboard reports says which ("another
+    // build" means other code: the options, the tables, the period and the
+    // timing numbers are not in the marker, so it is a different page or a
+    // build with other build-time settings).  The other is loadFromKeyboard's:
+    // readings entered before the read were cleared.  The comparison needs
+    // no factory image: the settings record alone carries the marker
+    // (pageRecord, WEBBUILD.settings, the bytes a full build's are).
+    // The listing of every setting a read used to print is gone; the page's
+    // controls show them once they are loaded.
+    function readVerdict(r) {
+        var ver = r.identity.firmwareVersion, mine = pageRecord();
+        if (ver === null || !mine) return null;
+        return r.identity.imageMarker === SETTINGSMIDI.markerOf(mine) ? null : otherImage(ver);
+    }
+    // A version as the page shows one: major.minor, as the masthead's is.
+    // Comparisons still use all three numbers.
+    function shown(v) { return String(v).split('.').slice(0, 2).join('.'); }
+    // What a keyboard running another image than this page's needs before a
+    // send can land, by the version it reports: the record fits only the
+    // image it was made for, so the same version from another build and an
+    // older one both want this page's firmware flashed, and a newer one a
+    // fresher page.  Two versions that differ only past major.minor would
+    // read as the same number, so they are named earlier or later firmware
+    // (the owner, 2026-09-27).  The same version on another image is only
+    // ever a dev-page build, since a released version's image never changes
+    // without a new version: that one is another build.
+    function otherImage(ver) {
+        var page = GEN.version, c = BUILDLIB.compareVersions(ver, page);
+        var flash = 'Flash the latest firmware to change settings.';
+        if (c === 0) return 'This keyboard runs Rewired ' + shown(ver) + ' from another build. ' + flash;
+        if (shown(ver) === shown(page)) {
+            return c < 0 ? 'This keyboard runs earlier firmware than this page builds. ' + flash
+                         : 'This keyboard runs later firmware than this page. Reload the page.';
+        }
+        if (c < 0) {
+            return 'This keyboard runs Rewired ' + shown(ver) + '; this page builds ' + shown(page) + '. ' + flash;
+        }
+        return 'This keyboard runs Rewired ' + shown(ver) + '; this page is ' + shown(page) + '. Reload the page.';
+    }
+    // A slot of the keyboard's, for the page: null where it holds the
+    // factory temperament - twelve keys to the period, and the table a build
+    // makes for it, or the factory image's own that builds before 3.0.2
+    // copied - which the build makes again; or its table as it came.
+    function keyboardSlots(f) {
+        return [0, 1, 2].map(function (s) {
+            var table = f['tuning_slot' + s], keys = f.tuning_period_keys[s];
+            if (keys === 12 && BUILDLIB.isFactoryTuning(table)) return null;
+            return { name: 'the keyboard\u2019s tuning', table: table.slice(), periodKeys: keys,
+                     octaveUnits: f.numbers.octave_units };
+        });
+    }
+    // The keyboard's timing numbers where they differ from what this page
+    // builds, or null where it holds the page's own.
+    function keyboardNumbers(f) {
+        var mine = BUILDLIB.timingDefaults(), out = null;
+        Object.keys(mine).forEach(function (k) {
+            if (f.numbers[k] !== mine[k]) { out = out || {}; out[k] = f.numbers[k]; }
+        });
+        return out;
+    }
+    function loadFromKeyboard(r) {
+        var f = r.fields;
+        var rows = [];
+        f.lengths.forEach(function (len, i) {
+            if (len > 0 && f.masks[i] !== 0) rows.push({ text: clixPattern(f.masks[i]).text, length: len });
+        });
+        if (rows.length) { state.patterns = rows; renderPatterns(); }
+        state.numbers = keyboardNumbers(f);
+        // The options into their controls, through the same appliers a
+        // restore uses and in its order - the patterns above first, because
+        // knob 2 on patterns seeds an empty bank; the pressure fix before
+        // its portamento, which needs it.  The jack's control is a
+        // checkbox named for one of its two settings.
+        var opts = {};
+        BUILDLIB.SETTINGS_OPTIONS.forEach(function (o) {
+            if (f.options[o[0]] !== undefined) opts[o[0]] = f.options[o[0]];
+        });
+        if (opts.portamento_in !== undefined) {
+            opts.portamento_transpose = opts.portamento_in === 'transpose';
+            delete opts.portamento_in;
+        }
+        BUILDLIB.SETTINGS_ORDER.forEach(function (k) {
+            if (APPLY[k] && opts[k] !== undefined) APPLY[k](opts[k]);
+        });
+        // The tunings' switch, cell 27, is the page's checkbox; with it on
+        // the three slots come in as the keyboard holds them.  With it off
+        // the keyboard plays the factory temperament whatever its tables
+        // say, and the page's own slots are left for the next time.
+        var tunings = f.options.alternate_tunings === true;
+        if (tunings) { state.slots = keyboardSlots(f); renderSlots(); }
+        if (f.options.alternate_tunings !== undefined) tick('useTunings', tunings);
+        // The scaling and the offset first: switching the offset drops a
+        // loaded table by design, so the table goes in after it.
+        var was = BUILDLIB.pitchTableSettings(f.pitch_remap);
+        press('vpo', was.volts_per_octave === 1.2 ? '1.2' : '1.0');
+        press('offset', was.pitch_offset ? '1' : '0');
+        var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
+                                    pitch_offset: was.pitch_offset });
+        var had = measured.some(function (v) { return v !== 0; });
+        baseline = {}; baselineSources = {};
+        BUILDLIB.pitchCents(cfg, f.pitch_remap).forEach(function (row) {
+            baseline[row.semitone] = row.cents;
+        });
+        baselineName = 'the keyboard\u2019s table';
+        baselineHistory = null;
+        measured = measured.map(function () { return 0; });
+        interpolated = {};
+        $('useCal').checked = true;
+        syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
+        // The one thing the read's line needs from here (readVerdict).
+        return had ? 'The readings that were entered have been cleared: they were taken ' +
+                     'against whatever was flashed at the time, which the keyboard now says. ' +
+                     'Measure again.' : '';
+    }
+    // A converging run's table into the calibration the way a read's goes
+    // in above: the table on the instrument, with nothing measured on top.
+    // `was` is the scaling and the offset the table was built with
+    // (BUILDLIB.pitchTableSettings).  The same steps as loadFromKeyboard's
+    // tail rather than a call from it, because web/test_readback.js runs
+    // loadFromKeyboard out of this file on its own.  `sources`, semitone ->
+    // 'measured', 'interpolated' or 'extrapolated', is what the run made of
+    // each row, and the saved table's Source column says it.
+    function loadPitchTable(table, was, name, sources) {
+        press('vpo', was.volts_per_octave === 1.2 ? '1.2' : '1.0');
+        press('offset', was.pitch_offset ? '1' : '0');
+        var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
+                                    pitch_offset: was.pitch_offset });
+        baseline = {}; baselineSources = {};
+        for (var s in sources || {}) {
+            if (sources.hasOwnProperty(s)) baselineSources[s] = sources[s];
+        }
+        BUILDLIB.pitchCents(cfg, table).forEach(function (row) {
+            baseline[row.semitone] = row.cents;
+        });
+        baselineName = name;
+        baselineHistory = null;
+        measured = measured.map(function () { return 0; });
+        interpolated = {};
+        $('useCal').checked = true;
+        syncCalBody(); syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
+    }
+    if ($('kbdRead')) {
+        $('kbdRead').addEventListener('click', function () { withKeyboard(readFrom); });
+        var readFrom = function (ports) {
+            kbd.busy = true;
+            $('kbdRead').disabled = true;
+            if ($('kbdSend')) $('kbdSend').disabled = true;
+            msg($('kbdLoadMsg'), 'warn', 'Reading…');
+            SETTINGSMIDI.read(ports.output, ports.input, {})
+                .then(function (r) {
+                    // The verdict compares against the build before the load
+                    // invalidates it.
+                    showFirmware(r.identity);
+                    var verdict = readVerdict(r), cleared = loadFromKeyboard(r);
+                    // From here a change brings up the unsent card.  After
+                    // the load, whose own invalidate() is not a change.
+                    unsentArm(ports.output.name, r.identity && r.identity.imageMarker);
+                    msg($('kbdLoadMsg'), verdict ? 'warn' : 'ok',
+                        ['Keyboard settings loaded successfully.', verdict, cleared].filter(Boolean).join(' '));
+                    reportSettings('read', 'ok', r.identity);
+                })
+                .catch(function (err) {
+                    unsentOff();
+                    firmwareFrom(err);
+                    msg($('kbdLoadMsg'), 'bad', readRefusal(err));
+                    reportSettings('read', outcomeOf(err), err && err.identity);
+                })
+                .then(function () { kbd.busy = false; refresh(); });
+        };
+    }
+    // A keyboard whose settings map this page does not know still says
+    // what it runs: the identity block's numbers are frozen, so the
+    // version comes through even when the layout is newer.
+    function readRefusal(err) {
+        var id = err && err.identity;
+        if (err && err.reason === 'wrong layout' && id && id.firmwareVersion !== null) {
+            // An older map than this page's is not read by a reload either:
+            // the keyboard needs this version flashed.
+            var v = id.firmwareVersion;
+            if (BUILDLIB.compareVersions(v, GEN.version) < 0 || shown(v) === shown(GEN.version)) {
+                return otherImage(v);
+            }
+            return 'This keyboard runs Rewired ' + shown(v) + '; this page is ' + shown(GEN.version) +
+                   '. Reload the page to read its settings.';
+        }
+        return KBD_REASONS[err && err.reason] || String(err && err.message || err);
+    }
+    // A send refused for running another image says which version the
+    // keyboard runs and what it needs, where the reason alone could only
+    // say "a different build".
+    function sendRefusal(err) {
+        var id = err && err.identity, reason = err && err.reason;
+        if ((reason === 'wrong layout' || reason === 'wrong image') && id && id.firmwareVersion !== null) {
+            return otherImage(id.firmwareVersion);
+        }
+        return KBD_REASONS[reason] || String(err && err.message || err);
+    }
+
     // A port appearing or going away invalidates a list that is only built
-    // once.  The selection is put back if it survived, so unplugging something
-    // else does not quietly move the choice out from under the next run.
+    // once.  A refill keeps the port shown if it survived (fillSelect), so
+    // unplugging something else does not quietly move the choice out from
+    // under the next run, and the pick comes back with its port.
     if (CALIBRATE.onMidiChange) {
         CALIBRATE.onMidiChange(function () {
-            var was = $('calMidi').value;
             listed.midi = false;
-            listMidi().then(function () {
-                var opts = $('calMidi').options, i;
-                for (i = 0; i < opts.length; i++) {
-                    if (opts[i].value === was) { $('calMidi').value = was; return; }
-                }
-            });
+            listMidi();
+            if (kbd.listed) listKeyboard();
         });
     }
 
     $('calChan').addEventListener('focus', listChannels);
+    $('calChan').addEventListener('change', function () { warmInput(); });
     if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
         navigator.mediaDevices.addEventListener('devicechange', function () {
             listed.audio = false;
@@ -1320,39 +1975,11 @@
         });
     }
 
-    // A note that could not be heard is not a note that played in tune.  Rather
-    // than leave a zero - which reads as "correct" and builds a table that says
-    // so - carry the reading across the gap from its measured neighbours.
-    function bridgeGaps(got) {
-        var known = [];
-        for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            if (got[n] !== null && got[n] !== undefined) known.push(n);
-        }
-        if (!known.length) return 0;
-        var filled = 0;
-        for (n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
-            if (got[n] !== null && got[n] !== undefined) {
-                measured[n] = got[n]; delete interpolated[n]; continue;
-            }
-            var below = null, above = null;
-            known.forEach(function (k) {
-                if (k < n) below = k;
-                if (above === null && k > n) above = k;
-            });
-            if (below === null) measured[n] = got[above];
-            else if (above === null) measured[n] = got[below];
-            else measured[n] = got[below] + (got[above] - got[below]) *
-                               (n - below) / (above - below);
-            interpolated[n] = true;
-            filled++;
-        }
-        return filled;
-    }
-
     function setRunning(on) {
         $('calRun').disabled = on;
         $('calStop').disabled = !on;
         $('calMidi').disabled = on;
+        if (!on) applyMidiPick($('calMidi'));
         $('calMidiChan').disabled = on;
         $('calAudio').disabled = on;
         $('calChan').disabled = on || (chanFor[$('calAudio').value || ''] || 1) < 2;
@@ -1362,6 +1989,192 @@
         if (sweep) sweep.stop();
         autoNote('Stopping after this note\u2026');
     });
+
+    // --- calibration mode: measured and corrected in one run -------------
+    // Firmware with calibration mode (calibrate.js) lets the sweep write a
+    // table entry live and play it again until it is in tune, so one run
+    // converges on the table instead of measuring once and folding the
+    // readings in at the next flash, which took a few rounds to settle.  The
+    // first version that has it is 3.0.1 (the owner, 2026-09-27); a keyboard
+    // reporting anything older is asked to be flashed, and nothing goes out
+    // to it but the read.
+    var CALIBRATION_MODE_FIRMWARE = '3.0.1';
+
+    // Safari has no Web MIDI of its own; the Web MIDI extension adds
+    // navigator.requestMIDIAccess before the page's first script runs.
+    // Without it the page cannot tell "not installed" from "turned off" or
+    // "not allowed on this site", so the note under each MIDI picker says
+    // all three, from the start rather than after a click fails.
+    var IS_SAFARI = (function () {
+        var ua = navigator.userAgent || '';
+        return /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|OPR\/|Android/.test(ua);
+    })();
+    // The extension can land after this script: the owner saw the note with
+    // it running and on (2026-09-27).  So the note is decided once the page
+    // has loaded and a moment after, and hidden again the moment MIDI access
+    // works, whenever that is.
+    function safariNotes(show) {
+        Array.prototype.forEach.call(document.querySelectorAll('.safari-midi'), function (el) {
+            el.hidden = !show;
+        });
+    }
+    // Watched for five seconds after load, every quarter second: the note
+    // goes the moment Web MIDI appears, and shows only if it is still
+    // missing 1.5 s in.  Safari injects an extension late into a tab that
+    // was already open when it started or updated.  The buttons ask for the
+    // API when pressed, not from this, so a late one still works.
+    if (IS_SAFARI) {
+        var decideSafariNotes = function () {
+            var ticks = 0;
+            var tick = setInterval(function () {
+                ticks++;
+                var there = 'requestMIDIAccess' in navigator;
+                if (there) safariNotes(false);
+                else if (ticks === 6) safariNotes(true);
+                if (there || ticks >= 20) clearInterval(tick);
+            }, 250);
+        };
+        if (document.readyState === 'complete') decideSafariNotes();
+        else window.addEventListener('load', decideSafariNotes);
+    }
+    function calibrationModeSupported(identity) {
+        return !!(CALIBRATION_MODE_FIRMWARE && identity && identity.firmwareVersion &&
+                  BUILDLIB.compareVersions(identity.firmwareVersion, CALIBRATION_MODE_FIRMWARE) >= 0);
+    }
+
+    // What both sweeps are given: the ports, the channels and the log.
+    function sweepOptions(chosen) {
+        return {
+            output: chosen,
+            // Safari's audio input reads about 90 cents sharp for seconds
+            // after it opens (calibrate.js, the warm-up), so the sweep watches
+            // the drone there before the first note.
+            warmupMs: IS_SAFARI ? 12000 : 0,
+            // Empty means Auto: the sweep finds the channel by playing on
+            // each in turn and watching for the pitch to move.
+            channel: $('calMidiChan').value === '' ? null
+                                                   : Number($('calMidiChan').value),
+            deviceId: $('calAudio').value || null,
+            audioChannel: parseInt($('calChan').value, 10) || 0,
+            // What listChannels() actually got the device to open.  The
+            // sweep needs it because "ideal" can negotiate two channels on
+            // a desk that hands over twelve when asked for twelve outright,
+            // and that is the number this dropdown was filled from.
+            audioChannels: chanFor[$('calAudio').value || ''] || null,
+            // Safari's input, opened when it was picked (warmInput).
+            input: warmed,
+            velocity: 100,
+            onReading: pushLog,
+            onProbe: function (ch, confirming) {
+                autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
+                                     : 'Looking for the keyboard on MIDI channel ') +
+                         (ch + 1) + '\u2026', 0);
+            },
+            onChannel: function (ch) {
+                $('calMidiChan').value = String(ch);
+            },
+            onPhase: function (phase) {
+                if (phase === 'settle') autoNote('Letting Safari\u2019s audio input settle\u2026', 0);
+                else if (phase === 'reference') autoNote('Measuring the 0 V note\u2026', 0);
+            }
+        };
+    }
+    function noteProgress(step, reading, i, total) {
+        var name = CALIBRATE.noteLabel(step.index);
+        autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
+                 (reading && reading.cents !== null ?
+                     (reading.cents >= 0 ? '+' : '') +
+                     reading.cents.toFixed(1) + ' cents' : 'not heard'),
+                 (i + 1) / total);
+    }
+    // A run's summary with its warnings under it.  Capped: a run that goes
+    // wrong everywhere would otherwise bury its own summary under sixty-five
+    // lines.
+    function withWarnings(note, warnings) {
+        if (!warnings.length) return note;
+        var show = warnings.slice(0, 12);
+        note += '\n\n' + show.join('\n');
+        if (warnings.length > show.length) {
+            note += '\n...and ' + (warnings.length - show.length) + ' more.';
+        }
+        return note;
+    }
+
+
+    // The keyboard's settings, read on the calibration's own port the way
+    // Read settings reads them, the input being the one that shares the
+    // output's name.  Null for anything short of a whole read, which the
+    // run reports as no reply.
+    function readForCalibration(output) {
+        return CALIBRATE.midiInputs().then(function (inputs) {
+            var input = inputs.filter(function (p) { return p.name === output.name; })[0] || inputs[0];
+            if (!input) return null;
+            return SETTINGSMIDI.read(output, input, {}).then(function (r) {
+                showFirmware(r.identity);
+                return r;
+            }, function (err) {
+                firmwareFrom(err);
+                return null;
+            });
+        }, function () { return null; });
+    }
+
+    // What a tuning run made of each row it reached, by semitone, the way
+    // loadPitchTable takes it.  The 0 V row is left to the saved table's
+    // own default, and so is a row the run could not fill.
+    function runSources(readings, bottom) {
+        var sources = {};
+        readings.forEach(function (x) {
+            if (x.source === 'measured' || x.source === 'interpolated' || x.source === 'extrapolated') {
+                sources[CALIBRATE.semitoneFor(x.index, bottom)] = x.source;
+            }
+        });
+        return sources;
+    }
+
+    // The sweep that converges (calibrate.js, opts.mode and opts.adjust).  It
+    // starts from the table the keyboard holds and moves each entry live
+    // until it plays in tune with the 208's 0 V pitch, the one its trimmer
+    // sets; then the keyboard gets its own table back, the mode off and the
+    // mirror reloaded from flash, however the run ends.  What it found comes
+    // into the page the way a read's table does - the table on the
+    // instrument, nothing measured on top - so the next send or flash
+    // carries it, and the rows it filled in rather than tuned say so.
+    function sweepInMode(chosen, r) {
+        var start = r.fields.pitch_remap.slice();
+        var was = BUILDLIB.pitchTableSettings(start);
+        var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
+                                    pitch_offset: was.pitch_offset });
+        var bottom = cfg.pitch.bottom_key_semitone;
+        var o = sweepOptions(chosen);
+        // Every entry that holds an offset: all 79 with the pitch offset.
+        // Without it the three under the bottom key sit at 0 V and are not
+        // offsets (BUILDLIB.pitchTable), so they are left as they are.
+        // `low` is the 0 V entry, semitone 0, which the run holds at 0
+        // counts and tunes everything else against.
+        o.low = CALIBRATE.entryForSemitone(0, bottom);
+        o.high = TABLE_ENTRIES - 1;
+        o.mode = {
+            on: function () { SETTINGSMIDI.calibrationMode(chosen, true); },
+            off: function () { SETTINGSMIDI.endCalibration(chosen); }
+        };
+        o.adjust = {
+            table: start, countsPerCent: BUILDLIB.pitchCountsPerCent(cfg), reference: o.low,
+            write: function (entry, value) { return SETTINGSMIDI.writePitch(chosen, entry, value); }
+        };
+        o.onNote = noteProgress;
+        sweep = new CALIBRATE.Sweep(o);
+        return sweep.run().then(function (out) {
+            loadPitchTable(out.table, was, 'the tuned table', runSources(out.readings, bottom));
+            var heard = out.readings.filter(function (x) { return x.cents !== null; });
+            autoNote('');
+            var note = 'Tuned ' + heard.length + ' of ' + out.readings.length +
+                ' notes on MIDI channel ' + (out.channel + 1) + '. Send the settings or ' +
+                'flash the firmware to keep the new table.';
+            msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad',
+                withWarnings(note, out.warnings));
+        });
+    }
 
     $('calRun').addEventListener('click', function () {
         msg($('calMsg'), '', '');
@@ -1379,86 +2192,39 @@
                     'Rescan inputs to pick another.');
                 return;
             }
-            var got = {};
+            // What the keyboard runs says which sweep, and its table is the
+            // one a converging run starts from, so it is read first.  Read
+            // and Send wait for the read, and for a converging run after it:
+            // a send in the middle of one would push over the entries it is
+            // moving, and its commit could save one of their tries.
+            var cancelled = false, held = false;
+            function hold(on) {
+                if (on && !kbd.busy) { kbd.busy = held = true; refresh(); }
+                else if (!on && held) { kbd.busy = held = false; refresh(); }
+            }
             setRunning(true);
-            autoNote('Listening for the bottom C\u2026', 0);
-            sweep = new CALIBRATE.Sweep({
-                output: chosen,
-                // Empty means Auto: the sweep finds the channel by playing on
-                // each in turn and watching for the pitch to move.
-                channel: $('calMidiChan').value === '' ? null
-                                                       : Number($('calMidiChan').value),
-                deviceId: $('calAudio').value || null,
-                audioChannel: parseInt($('calChan').value, 10) || 0,
-                // What listChannels() actually got the device to open.  The
-                // sweep needs it because "ideal" can negotiate two channels on
-                // a desk that hands over twelve when asked for twelve outright,
-                // and that is the number this dropdown was filled from.
-                audioChannels: chanFor[$('calAudio').value || ''] || null,
-                // Entries, not semitones.  The sweep counts in firmware table
-                // entries - the bottom key is entry 3 whatever the pitch
-                // offset is - while these boxes count in calibration
-                // semitones, where the bottom key is PLAYABLE_LOW.  The two
-                // coincide with the offset on and are three apart without it,
-                // so handing the sweep PLAYABLE_LOW/PLAYABLE_HIGH raw played
-                // 62 of the 65 keys on a 208c and filed every reading three
-                // rows high.
-                low: CALIBRATE.entryForSemitone(PLAYABLE_LOW, PLAYABLE_LOW),
-                high: CALIBRATE.entryForSemitone(PLAYABLE_HIGH, PLAYABLE_LOW),
-                octaveTerm: false, velocity: 100,
-                onReading: pushLog,
-                onProbe: function (ch, confirming) {
-                    autoNote((confirming ? 'Checking for the keyboard on MIDI channel '
-                                         : 'Looking for the keyboard on MIDI channel ') +
-                             (ch + 1) + '\u2026', 0);
-                },
-                onChannel: function (ch) {
-                    $('calMidiChan').value = String(ch);
-                },
-                onNote: function (step, reading, i, total) {
-                    got[CALIBRATE.semitoneFor(step.index, PLAYABLE_LOW)] =
-                        reading ? reading.cents : null;
-                    var name = CALIBRATE.noteLabel(step.index);
-                    autoNote(name + '  ' + (i + 1) + ' of ' + total + '   ' +
-                             (reading && reading.cents !== null ?
-                                 (reading.cents >= 0 ? '+' : '') +
-                                 reading.cents.toFixed(1) + ' cents' : 'not heard'),
-                             (i + 1) / total);
-                }
-            });
-            return sweep.run().then(function (out) {
-                var bridged = bridgeGaps(got);
-                $('useCal').checked = true;
-                syncCalBody();
-                buildTable(); drawPlot(); validateCal(); invalidate();
-                var heard = out.readings.filter(function (r) { return r.cents !== null; });
-                autoNote('');
-                var note = 'Measured ' + heard.length + ' of ' + out.readings.length +
-                    ' notes on MIDI channel ' + (out.channel + 1) + '. Bottom C was ' +
-                    out.anchorHz.toFixed(2) + ' Hz; the ' +
-                    'oscillator drifted ' + out.drift.toFixed(1) + ' cents over the run, ' +
-                    'which has been taken out of every reading.';
-                if (bridged) {
-                    note += ' ' + bridged + ' note' + (bridged === 1 ? ' was' : 's were') +
-                        ' not heard and have been carried across from their neighbours - ' +
-                        'check those by hand.';
-                }
-                if (out.warnings.length) {
-                    // Capped: a run that goes wrong everywhere would otherwise
-                    // bury its own summary under sixty-five lines.
-                    var show = out.warnings.slice(0, 12);
-                    note += '\n\n' + show.join('\n');
-                    if (out.warnings.length > show.length) {
-                        note += '\n...and ' + (out.warnings.length - show.length) +
-                                ' more.';
-                    }
-                }
-                msg($('calMsg'), heard.length && !out.warnings.length ? 'ok' : 'bad', note);
-            });
+            autoNote('Reading\u2026', 0);
+            hold(true);
+            sweep = { stop: function () { cancelled = true; } };
+            return readForCalibration(chosen).then(function (r) {
+                if (cancelled) throw new Error('Stopped.');
+                if (r && calibrationModeSupported(r.identity)) return sweepInMode(chosen, r);
+                // Only firmware with calibration mode can be tuned: the
+                // sweep that merely measured is gone (the owner, 2026-09-27).
+                var ver = r && r.identity && r.identity.firmwareVersion;
+                throw new Error(!r ? KBD_REASONS['no reply']
+                    : ver ? 'This keyboard runs Rewired ' + shown(ver) + '. Flash the latest firmware, then measure.'
+                          : 'Flash the latest firmware, then measure.');
+            }).then(function () { hold(false); }, function (err) { hold(false); throw err; });
         }).catch(function (err) {
             autoNote('');
             msg($('calMsg'), 'bad', err.message || String(err));
-        }).then(function () { sweep = null; setRunning(false); });
+        }).then(function () {
+            sweep = null; setRunning(false);
+            if (warmed) keepWarm();
+            // Send settings was held while the run had the port.
+            refresh();
+        });
     });
 
     // --- build ------------------------------------------------------------
@@ -1492,6 +2258,8 @@
             o.alternate_tunings = slots.map(function (e) { return e || 'factory'; });
         }
         if (calibrationInBuild()) o.pitch_correction = rows();
+        // The timing numbers a read brought in, which have no controls here.
+        if (state.numbers) o.settings_numbers = state.numbers;
         return o;
     }
 
@@ -1515,60 +2283,65 @@
         });
 
     // Any change to what would be built makes the built image a lie, so the
-    // one thing every option handler does is drop it.  The download buttons
-    // go dark and Build takes the accent back through refresh().
+    // one thing every option handler does is drop it.  The next download,
+    // send or read builds again from what the controls say then.
     function invalidate() {
         state.result = null;
         state.options = null;
         saveSoon();
         syncReset();
+        unsentSoon();
         refresh();
     }
 
     function refresh() {
-        $('build').disabled = !state.factoryText;
-        $('dlMac').disabled = !state.result;
-        $('dlWin').disabled = !state.result;
-        // The accent marks whatever is next: Build until an image exists,
-        // then Download.  Changing an option clears state.result, so it
-        // hands the emphasis back on its own.
-        $('build').className = state.result ? '' : 'primary';
-        $('dlMac').className = state.result ? 'primary' : '';
-        $('dlWin').className = state.result ? 'primary' : '';
+        // The downloads build an image, which needs the factory image; a
+        // send needs only the settings record, which does not.
+        $('dlMac').disabled = !state.factoryText;
+        $('dlWin').disabled = !state.factoryText;
+        // Not while a read or a send is under way: a port coming and going
+        // - which the restart itself does - lists the ports again and lands
+        // here, and a second click would start a second listener on the
+        // same input.
+        // A port picked, or no list yet: a press before the list is opened
+        // makes one (withKeyboard).
+        var portReady = !kbd.listed || !!keyboardPort();
+        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !portReady;
+        // Reading needs only the port: what the keyboard holds is worth
+        // seeing before anything is built.
+        if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !portReady;
+        unsentShow();
     bindDashes(document.body);
     }
 
-    $('build').addEventListener('click', function () {
-        msg($('buildMsg'), 'warn', 'Building…');
-        $('build').disabled = true;
-        // Yield first so the message paints before the synchronous build runs.
-        setTimeout(function () {
-            try {
-                var t0 = Date.now();
-                var chosen = options();
-                var r = WEBBUILD.build(chosen, state.factoryText);
-                // The options ride with the result: image.txt and the beacon
-                // must describe the build they accompany, not whatever the
-                // controls say by the time an async download assembles.
-                r.options = chosen;
-                state.result = r;
-                state.options = chosen;
-                msg($('buildMsg'), 'ok',
-                    r.version + '\n' +
-                    'Built in ' + (Date.now() - t0) + ' ms.\n\n' +
-                    'SHA-256  ' + r.sha256 + '\n' +
-                    r.patches + ' patches · ' + r.changed + ' bytes changed · ' +
-                    r.added + ' newly programmed · ' + r.skipped.length + ' left factory\n\n' +
-                    'Every difference from your factory image lies inside a declared patch, ' +
-                    'and the image was read back and verified before this was shown.');
-            } catch (e) {
-                state.result = null;
-                msg($('buildMsg'), 'bad', 'Build failed.\n\n' + e.message);
-            }
-            $('build').disabled = false;
-            refresh();
-        }, 30);
-    });
+    // The image for what the controls say now.  There is no Build button:
+    // a build takes milliseconds, so a download, a send and a read's
+    // comparison each ask for one when they need it.  The last one is kept
+    // until invalidate() drops it, so a second download of the same options
+    // is the same image.  Throws what the build throws.
+    function built() {
+        if (state.result) return state.result;
+        var t0 = Date.now();
+        var chosen = options();
+        var r = WEBBUILD.build(chosen, state.factoryText);
+        // The options ride with the result: image.txt and the beacon
+        // must describe the build they accompany, not whatever the
+        // controls say by the time an async download assembles.
+        r.options = chosen;
+        r.ms = Date.now() - t0;
+        state.result = r;
+        state.options = chosen;
+        return r;
+    }
+    function buildReport(r) {
+        return r.version + '\n' +
+            'Built in ' + r.ms + ' ms.\n\n' +
+            'SHA-256  ' + r.sha256 + '\n' +
+            r.patches + ' patches · ' + r.changed + ' bytes changed · ' +
+            r.added + ' newly programmed · ' + r.skipped.length + ' left factory\n\n' +
+            'Every difference from your factory image lies inside a declared patch, ' +
+            'and the image was read back and verified before this was shown.';
+    }
 
     // A download is everything needed to flash: the image, the flasher stamped
     // with that image's checksum, the rescue script, and the vendor tools the
@@ -1698,7 +2471,7 @@
                            // shell has its own set - so anything outside a
                            // plain allowlist becomes a space.  Display only;
                            // the file itself is untouched.
-                           return named.replace(/\.scl$/i, '')
+                           return named.replace(/\.scl$/i, '').replace(/\u2019/g, "'")
                                .replace(/[^\w .,+'\/:()\-]/g, ' ')
                                .replace(/\s+/g, ' ').trim();
                        }).join(', '));
@@ -1821,11 +2594,28 @@
 
     Object.keys(KIT).forEach(function (id) {
         $(id).addEventListener('click', function () {
-            var r = state.result;
-            if (!r) return;
-            var p = KIT[id];
+            if (!state.factoryText) return;
             var btn = $(id), label = btn.querySelector('span').textContent;
             btn.disabled = true;
+            // A build is a few hundred milliseconds of script: the button says
+            // so first, and the build runs once that has painted.
+            btn.querySelector('span').textContent = 'Building…';
+            setTimeout(function () {
+                var r;
+                try { r = built(); }
+                catch (e) {
+                    btn.querySelector('span').textContent = label;
+                    btn.disabled = false;
+                    msg($('buildMsg'), 'bad', 'Build failed.\n\n' + e.message);
+                    return;
+                }
+                msg($('buildMsg'), 'ok', buildReport(r));
+                pack(r, btn, label);
+            }, 30);
+        });
+        // Everything after the build: the kit, the zip and the download.
+        function pack(r, btn, label) {
+            var p = KIT[id];
             // A page opened from disk cannot fetch its neighbours: browsers
             // refuse cross-origin reads on file:, and every file: URL is its
             // own origin.  The tools simply cannot be collected, so the zip
@@ -1963,7 +2753,7 @@
                     'Could not assemble the download: ' + e.message +
                     '\n\nThe firmware itself built fine. This is the packaging step.');
             });
-        });
+        }
     });
 
 
@@ -1976,6 +2766,9 @@
     // with.  The patch number and the build's own fingerprint belong on the
     // build result, not in the masthead.
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
+    // The version a keyboard has to run for a send to land, shown as the
+    // masthead's is.
+    ['kbdNeedsLoad'].forEach(function (id) { if ($(id)) $(id).textContent = shown(GEN.version); });
 
     // Each preset knob picks its own role, the same control the volts-per-
     // octave choice uses; None hands that knob back to its preset voltage.
@@ -2085,6 +2878,10 @@
     var STORE = '218e-rewired' + location.pathname.replace(/[^/]*$/, '');
     var K_SETTINGS = STORE + 'settings', K_FACTORY = STORE + 'factory';
     var K_TODAY = STORE + 'today';
+    // The same count for the settings over MIDI, kept apart: a read is not a
+    // download, and sharing one count would make a first build of the day
+    // look like somebody's second.
+    var K_MIDI_TODAY = STORE + 'midi-today';
 
     // Where the ordinal the beacon sends stops going up.  The worker holds the
     // same ceiling; tools/test_worker.mjs keeps the two in step.
@@ -2103,12 +2900,13 @@
     // count does not know this is a first download, and reporting every one of
     // its downloads as somebody's first would inflate the very number this
     // exists to make honest.
-    function countToday() {
+    function countToday(key) {
+        key = key || K_TODAY;
         var d = new Date();
         var day = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
         var n = 0;
         try {
-            var was = JSON.parse(readStore(K_TODAY) || 'null');
+            var was = JSON.parse(readStore(key) || 'null');
             if (was && was.day === day && typeof was.n === 'number' && was.n > 0) {
                 n = was.n;
             }
@@ -2116,7 +2914,7 @@
             n = 0;
         }
         n += 1;
-        if (!writeStore(K_TODAY, JSON.stringify({ day: day, n: n }))) return -1;
+        if (!writeStore(key, JSON.stringify({ day: day, n: n }))) return -1;
         return n > MAX_PER_DAY ? MAX_PER_DAY : n;
     }
 
@@ -2208,6 +3006,7 @@
                 options: BUILDLIB.settingsDiff(scalars(), DEFAULTS),
                 patterns: state.patterns,
                 slots: state.slots,
+                numbers: state.numbers,
                 // The calibration's own working state, not the CSV.  Loading
                 // a CSV means "this table is already on the instrument": it
                 // becomes the baseline and the readings are cleared.  Saving
@@ -2262,10 +3061,26 @@
         });
         return out;
     }
+    // A keyboard's table (BUILDLIB.isTableSlot) is kept whole or not at all:
+    // 32 entries inside the record's 0x3FFF, keys per period and a period
+    // inside the bounds the keyboard's loader enforces.  Not the DAC's 0xFFF:
+    // a wide period, a sparse .kbm and the entries past the playable keys go
+    // over it, and a kept table refused here came back as the factory's
+    // while the tunings box stayed ticked (audit 2026-09-24).
+    function goodTableSlot(e) {
+        function whole(n, lo, hi) { return typeof n === 'number' && n % 1 === 0 && n >= lo && n <= hi; }
+        return typeof e.name === 'string' && Array.isArray(e.table) && e.table.length === 32
+            && e.table.every(function (n) { return whole(n, 0, 0x3FFF); })
+            && whole(e.periodKeys, 1, 32) && whole(e.octaveUnits, 100, 2000);
+    }
     function goodSlots(v) {
         if (!Array.isArray(v)) return null;
         var out = [];
         v.slice(0, SLOTS.length).forEach(function (e) {
+            if (e && goodTableSlot(e)) {
+                out.push({ name: e.name, table: e.table.slice(), periodKeys: e.periodKeys, octaveUnits: e.octaveUnits });
+                return;
+            }
             if (!e || typeof e.name !== 'string' || typeof e.text !== 'string') {
                 out.push(null);
                 return;
@@ -2276,6 +3091,18 @@
                 slot.kbmText = e.kbmText;
             }
             out.push(slot);
+        });
+        return out;
+    }
+    // Kept timing numbers are taken whole or not at all, each inside the
+    // bounds the keyboard's loader enforces; the ones that match what the
+    // page builds today are dropped, so a changed default is followed.
+    function goodNumbers(v) {
+        if (!v || typeof v !== 'object') return null;
+        try { BUILDLIB.timingNumbersOf(v); } catch (e) { return null; }
+        var mine = BUILDLIB.timingDefaults(), out = null;
+        Object.keys(v).forEach(function (k) {
+            if (v[k] !== mine[k]) { out = out || {}; out[k] = v[k]; }
         });
         return out;
     }
@@ -2340,6 +3167,7 @@
             var s = goodSlots(v);
             if (s) { state.slots = s; renderSlots(); }
         },
+        numbers: function (v) { state.numbers = goodNumbers(v); },
         calibration: function (v) {
             var c = goodCalibration(v);
             if (!c) return;
@@ -2397,6 +3225,7 @@
         if (saved) {
             all.patterns = saved.patterns;
             all.slots = saved.slots;
+            all.numbers = saved.numbers;
             all.calibration = saved.calibration;
         }
         all.factory = hex;
@@ -2410,7 +3239,7 @@
         var el = $('reset');
         if (!el || !DEFAULTS) return;
         el.classList.toggle('hidden',
-            !Object.keys(BUILDLIB.settingsDiff(scalars(), DEFAULTS)).length);
+            !Object.keys(BUILDLIB.settingsDiff(scalars(), DEFAULTS)).length && !state.numbers);
     }
 
     // Guarded: the entry document is served no-cache while the assets are
@@ -2425,7 +3254,9 @@
         // This puts the CHOICES back, not the work - re-ticking a box brings
         // what was loaded back with it, and a sweep is not thrown away by a
         // button labelled Reset.  The deviations then being empty is what
-        // empties the save.
+        // empties the save.  Timing numbers a read brought in are choices
+        // the keyboard held rather than work done here, so they go too.
+        if (state.numbers) { state.numbers = null; invalidate(); }
         applyAll(DEFAULTS);
         saveNow();
         syncReset();

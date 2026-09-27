@@ -14,10 +14,24 @@ var ARGV = (typeof arguments !== 'undefined') ? Array.prototype.slice.call(argum
 (function () {
     'use strict';
     var optionsJson = ARGV[0], factoryPath = ARGV[1], expectedPath = ARGV[2];
+    var settingsPath = ARGV[3];
 
     var options = JSON.parse(readFile(optionsJson));
-    var got = WEBBUILD.build(options, readFile(factoryPath)).properties;
+    var result = WEBBUILD.build(options, readFile(factoryPath));
+    var got = result.properties;
     var want = readFile(expectedPath);
+
+    // The settings record too, when Python's is given: the same bytes from
+    // both serializers, or the page would push what the CLI never built.
+    if (settingsPath) {
+        var wantRecord = readFile(settingsPath).trim();
+        if (result.settings !== wantRecord) {
+            print('SETTINGS DIFFER');
+            print('  js:     ' + result.settings.substring(0, 96));
+            print('  python: ' + wantRecord.substring(0, 96));
+            return;
+        }
+    }
 
     // build() names the stock config; Python is run against a temporary copy.
     // The filename on that comment line is not part of what the build means.

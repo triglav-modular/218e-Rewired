@@ -205,6 +205,37 @@ jobs:
             echo "web/test_settings.js is not on ${{ matrix.ref }} yet - skipped"
           fi
 
+      - name: The NRPN codec round-trips every setting
+        run: |
+          # Every parameter of a record through the four Control Changes and
+          # back, masks in thirds, in the order the instrument dumps them.
+          if [ -f web/test_nrpn.js ]; then
+            node web/test_nrpn.js
+          else
+            echo "web/test_nrpn.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
+      - name: The settings transport against a fake instrument
+        run: |
+          # Push, dump, compare, commit and identity over a fake that behaves
+          # as the firmware does under emulation, and each way install refuses.
+          if [ -f web/test_settingsmidi.js ]; then
+            node web/test_settingsmidi.js
+          else
+            echo "web/test_settingsmidi.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
+      - name: The unsent card against a fake instrument
+        run: |
+          # The page's own code for it, out of app.js: nothing before a read,
+          # up once a change differs from what was read or sent, nothing sent
+          # until Send, and Send held while a calibration run has the port.
+          if [ -f web/test_unsent.js ]; then
+            node web/test_unsent.js
+          else
+            echo "web/test_unsent.js is not on ${{ matrix.ref }} yet - skipped"
+          fi
+
       - name: The beacon route only records what the page can send
         run: |
           # It is a public, unauthenticated endpoint - it has to be, the page

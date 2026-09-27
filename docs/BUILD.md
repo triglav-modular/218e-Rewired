@@ -77,6 +77,7 @@ Everything the build produces lands in `build/` and is not tracked:
 | `build/build.properties` | the settings handed to the assembler |
 | `build/tables.txt` | every generated table, in decimal |
 | `build/patch_manifest.txt` | address, size and description of each patch |
+| `build/settings.bin` | the settings record this image's tables and numbers make, stamped with its marker - see [PLAN-SETTINGS.md](PLAN-SETTINGS.md) |
 | `build/assemble.log` | full Ghidra output, including the disassembly |
 
 ## What the build checks
@@ -248,6 +249,23 @@ mac/support/dfu/bin/dfu-programmer at32uc3b1256 start
 If the erase had already happened there is nothing to start — run the flasher
 again and let it finish. Both scripts now say which case you are in.
 
+**An image that never finishes booting comes back in DFU** (the boot guard,
+2026-09-26). The factory firmware clears `ISP_FORCE` early in every boot,
+and its fuses leave no boot pin (`ISP_IO_COND_EN` is 0), so before the guard
+only a running application could ask for DFU. The first 3.0 image faulted
+before USB came up, and JTAG was the only way back. Now `boot_guard_arm`, on
+the pool word the factory's board init calls to clear those bits, leaves
+`ISP_FORCE` set while the guard word at `0x8003ce00` does not hold this
+image's marker. `boot_guard_confirm`, on the main loop's hook word, clears
+the bit and writes the marker once the factory's millisecond count reaches
+1.5 s. A DFU flash erases the guard word, so only the first boot of a newly
+flashed image is armed, while the flasher is still connected. If that boot
+hangs, power-cycle: the keyboard comes up in DFU, and either flasher goes
+straight to flashing. A power cut or a reset in those first 1.5 s also lands
+in DFU, which the flasher's leave-DFU choice ends. Nothing else arms it,
+settings sends included, so no boot away from the computer can come up in
+DFU.
+
 **Connecting.** A standalone LEM218 takes USB-C to the computer with its own
 power connected and switched on. A 218e module is reached over USB-B through
 the 5xIO module that carries its USB and MIDI. Either way, connect directly
@@ -274,7 +292,7 @@ the options into the full internal settings the build has always used.
 | `pitch_correction` | `false` | Path to a per-semitone correction CSV. `false` emits an ideal ramp with no per-key trim. |
 | `alternate_tunings` | `false` | One to three Scala files, switchable from edit mode. `false` leaves the edit keys and their LEDs entirely alone. |
 | `volts_per_octave` | `1.2` | The standard Buchla scaling. `1.0` rescales the ramp for 1 V/oct gear. |
-| `pitch_offset` | `true` | The pitch CV starts three semitones above the 208's 0 V pitch, which puts the bottom C in tune on a 208, 208r or 208p — they start from A. `false` is for the 208c, which starts from C: the bottom key sounds the 0 V pitch. |
+| `pitch_offset` | `true` | The pitch CV starts three semitones above the 208's 0 V pitch, which puts the bottom C in tune on a 208, 208r or 208p — they start from A. A bend on the lowest keys reaches down to that 0 V pitch. `false` is for the 208c, which starts from C: the bottom key sounds the 0 V pitch. |
 | `quantize_presets` | `true` | With the add-to-pitch switch in the middle, the active pad's preset voltage shifts the whole keyboard by whole degrees of the tuning currently selected — the same rotation `portamento_in = "transpose"` performs — so every key still plays a note of the scale and the per-key correction applies to it. On an unequal scale the intervals between keys move with the shift. The preset voltage output jack is unchanged. `false` adds the voltage as it is. |
 | `portamento_in` | `"transpose"` | What the **portamento in** banana jack does. `"transpose"` shifts the whole keyboard by whole degrees of the selected tuning, one period of it per 4 V of CV — so the jack's 0–10 V is about two and a half periods, which the pitch output can render from any starting key — quantised with hysteresis and upward only; everything already sounding moves with it, held keys, the latch, the arp and a playing take alike, and a held key's MIDI note keeps the shift it was pressed under. Keyboard maps of more than 32 positions cannot be shifted and are refused with the transposer on. `"portamento"` leaves the jack adding to the portamento time, as the factory does. |
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
@@ -460,11 +478,24 @@ Feature gating works at two levels, both driven by `build/build.properties`:
 - **`block.<name>`** — whether a whole patch is emitted. Disabling one leaves
   the factory bytes at that address.
 - **`feature.<name>`** — whether an optional section *inside* a cave is
-  assembled (the per-key proximity correction, the latch toggle test, the vibrato
-  call in the per-scan chain).
+  assembled (the per-key proximity correction, the diagnostics, the
+  remote-enable guards).
 
 Code caves and the hooks that reach them are gated together, so a disabled
 feature is never reachable — it is not dead code that might still run.
+
+Since stage 2 of settings over MIDI (2026-09-23) this applies only to what
+stays build-time: the tunings, the diagnostics, the pressure trims and the
+octave arithmetic. The eleven options in `[options]` - the latching arp,
+the four knob roles, the sequencer, the clock divider, the pressure fix and
+portamento, the preset quantiser and the jack - are **option cells** in the
+settings record: every one of their caves is in every image, the build
+writes the config's choice into the record as the image's default, and a
+live byte copied from the record at boot decides, at the point where each
+option engages, whether the factory's path or ours runs. That is what lets
+them change over MIDI without a flash; the mechanism per option is in
+[SETTINGS.md](SETTINGS.md), the reasoning in
+[PLAN-SETTINGS-2.md](PLAN-SETTINGS-2.md).
 
 ## Verifying a build against the hardware image
 
@@ -678,7 +709,8 @@ Inspector](https://www.linkedin.com/post-inspector/).
 ## Counting builds
 
 The page reports one thing, once, when someone downloads: which options were
-chosen, which platform, which version. It is a `POST` to `beacon` beside the
+chosen, which platform, which version. (And, separately, how a read or a send
+of the settings over MIDI ended; see the end of this section.) It is a `POST` to `beacon` beside the
 page, handled by the worker in [../deploy/worker.js](../deploy/worker.js) and
 written to a Cloudflare Analytics Engine dataset.
 
@@ -838,6 +870,25 @@ Nothing on the route is authenticated — it cannot be, since the page is public
 — so anyone who finds it can add to a count. Every field is validated against
 what the page can actually send, so the worst case is noise in the numbers
 rather than arbitrary strings in the dataset.
+
+**Reads and sends of the settings over MIDI** are counted the same way, on a
+route of their own: `settings-beacon`, posted when Read settings (between steps
+1 and 2) or step 3's Send settings ends. The body is which button (`read`, `send`), how it ended
+(`ok`, the name of the page's refusal from `KBD_REASONS` in `web/app.js`, or
+`error` for a failure the page has no name for), the page's version, the
+firmware version the keyboard reported (absent when it never answered),
+whether a send restarted the keyboard to run a changed option, and a daily
+ordinal kept apart from the downloads'. Never the settings, the patterns, the
+tunings or the pitch table: those are one person's instrument.
+
+A route of its own rather than a field on the download's, because a worker
+from before it would have counted every read as a build from platform
+`other`. It is written to the `COUNTS` namespace only, as keys prefixed `s:`
+where the builds are `b:`, so a reader listing builds sees exactly what it
+did before; not to the dataset, whose positional columns all mean a build.
+The dev page's is answered and dropped like its download beacon.
+`tools/test_worker.mjs` holds the page's reasons and body against the
+worker's `ACTIONS`, `OUTCOMES` and fields, in both directions.
 
 
 ## Watching buchla.com

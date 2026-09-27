@@ -169,7 +169,7 @@ public class PersistenceRegression extends GhidraScript {
         check("factory strip mode preserved",r(S+0x20c,4)==1);
     }
     void fresh() throws Exception {
-        if(e!=null)e.dispose(); e=new EmulatorHelper(currentProgram);
+        if(e!=null)e.dispose(); e=AlignGuard.install(new EmulatorHelper(currentProgram));
         sizeFn=r(0x80010e80L,4); clearFn=r(0x80010e84L,4); errorCell=r(0x80010e88L,4);
         eraseFn=r(0x80010e8cL,4); programFn=r(0x80010e90L,4);
         byte[] ff=new byte[4096]; Arrays.fill(ff,(byte)255); e.writeMemory(toAddr(BASE),ff);

@@ -2,12 +2,193 @@
 // Do not edit: change the Java and re-run the transpiler.
 function assembleProgram() {
 
-        // Whichever key selector this build installed.  The sequencer calls
-        // the same one when it is not playing, so the two can never disagree
-        // about which selector is actually in the image.
-        var arpSelector = number("knob2_patterns", 0, 0, 1) == 1 ? 0x8001b050
-                         : number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0
-                         : 0x8001a0a0;
+        // Stage 2 phase B (docs/PLAN-SETTINGS-2.md): the knob roles are
+        // decided at boot from the live option bytes at 0x6d28 - knob 1 at
+        // 0x6d29, knob 2 at 0x6d2a, knob 3 at 0x6d2b, knob 4 at 0x6d2c.
+        // Dispatchers stand on the pool words that used to be built one way
+        // or another, and two latch helpers stand where a cave had no room
+        // for a test: knob 1's blend reaches the sequencer's shuffle through
+        // a latch of its own, and knob 3's randomiser sees a zero latch when
+        // knob 3 is factory, which is its own deadzone.  Each dispatcher
+        // spends only R8, dead at every one of its call sites because the
+        // caves it dispatches to clobber it first; the helpers spend R11
+        // and R9 where the housekeeping already had.
+        var kbSel = 0x8001fb80, kbK1 = kbSel + 0x20, kbRhythm = kbSel + 0x60, kbVib = kbSel + 0xa0;
+        var kbEarly = kbSel + 0xc0, kbLate = kbSel + 0xe0, kbLatch1 = kbSel + 0x100, kbLatch3 = kbSel + 0x130;
+        var kbPool = kbSel + 0x160, kbEnd = kbSel + 0x1a0;
+        // Phase C: the latching arp, live byte 0x6d28.  Three dispatchers at
+        // the points where the latch engages - the note-on's toggle, the
+        // note-off's wrapper, the hold's re-base - a helper for the pads
+        // 2 & 3 test in latch_state, and a shim over the factory's own latch
+        // chord call.  Everything downstream of those sees zero stamps and
+        // the identity ownership with the latch off, which is what a
+        // non-latch switch position already gives it.
+        var ltOn = 0x8001fd20, ltOff = ltOn + 0x30, ltHold = ltOn + 0x50, ltPad = ltOn + 0x70;
+        var ltShim = ltOn + 0x90, ltPool = ltOn + 0xb0, ltEnd = ltOn + 0xd0;
+        // Phase D: the sequencer, live byte 0x6d2d.  Every sequencer cave
+        // already asks the mode at 0x6158, which stays 0 until the pad-4
+        // chord arms and a pad is pressed, so the one gate is the arm: a
+        // helper the chord calls where it used to read the preset editor's
+        // hold flag itself, answering R10 zero to arm and nonzero to refuse.
+        var sqArm = 0x8001fe50, sqDone = sqArm + 0x14, sqEnd = sqArm + 0x20;
+        // Phase E: the jack and the presets, live bytes 0x6d32 and 0x6d31.
+        // The rotation caves are in every image and idle at zero degrees;
+        // the bytes decide where the degrees come from - the jack's reading
+        // (jack_read) and the preset's degree count (preset_degrees_gate) -
+        // and give the factory its two jobs back with the byte off: the
+        // glide-rate addend through glide_cv_shim, the preset voltage's
+        // straight add through preset_quantize's own dispatch.  With the
+        // jack's filter pole built, cv_chain_dispatch puts it in front of
+        // the transposer only while the jack transposes.
+        // From 0x8001fea0, not 0x8001fe70: the factory control-flow table
+        // reads a branch to 0x8001fe92 out of a data table at 0x80017f36,
+        // and the build refuses a cave that buries a recorded target.
+        var jkEntry = 0x8001fea0, jkOff = jkEntry + 0x1c, jkDone = jkEntry + 0x20, jkPool = jkEntry + 0x24, jkEnd = jkEntry + 0x30;
+        var pgEntry = 0x8001fed0, pgOff = pgEntry + 0x10, pgPool = pgEntry + 0x18, pgEnd = pgEntry + 0x20;
+        var gaEntry = 0x8001fef0, gaLoad = gaEntry + 0x10, gaPool = gaEntry + 0x18, gaEnd = gaEntry + 0x20;
+        var cdEntry = 0x8001ff10, cdPlain = cdEntry + 0x10, cdPool = cdEntry + 0x14, cdEnd = cdEntry + 0x20;
+        // Phase F: the pressure path, live bytes 0x6d2f (pressure_fix) and
+        // 0x6d30 (pressure_portamento), in the hole at 0x8001ee00.  Three
+        // dispatchers on the factory's pool words (the curve, knob 1, knob 4);
+        // three caves behind hooks where a 2-byte patch used to stand (the
+        // two clamp skips, the gain branch), each doing the factory's work or
+        // ours; the interpolator's clamp-and-pass-through; the pitch hook's
+        // route word; the glide clamp's rate value; and the blend's offset
+        // cleared at a boot with the blend off.
+        var pfEntry = 0x8001ee00, pfOff = pfEntry + 0x10, pfPool = pfEntry + 0x14, pfEnd = pfEntry + 0x20;
+        var k1Entry = 0x8001ee20, k1Off = k1Entry + 0x10, k1Pool = k1Entry + 0x14, k1End = k1Entry + 0x20;
+        var k4Entry = 0x8001ee40, k4Off = k4Entry + 0x10, k4Pool = k4Entry + 0x14, k4End = k4Entry + 0x20;
+        var c2Entry = 0x8001ee60, c2Skip = c2Entry + 0x14, c2Pool = c2Entry + 0x18, c2End = c2Entry + 0x20;
+        var c1Entry = 0x8001ee80, c1Skip = c1Entry + 0x14, c1Pool = c1Entry + 0x18, c1End = c1Entry + 0x20;
+        var gnEntry = 0x8001eea0, gnCall = gnEntry + 0xc, gnDone = gnEntry + 0x14, gnPool = gnEntry + 0x18, gnEnd = gnEntry + 0x20;
+        var ipEntry = 0x8001eec0, ipByte = ipEntry + 0xc, ipDone = ipEntry + 0x1c, ipPool = ipEntry + 0x20, ipEnd = ipEntry + 0x30;
+        var pbEntry = 0x8001eef0, pbOff = pbEntry + 0x10, pbPool = pbEntry + 0x14, pbEnd = pbEntry + 0x20;
+        var grEntry = 0x8001ef10, grClassic = grEntry + 0x10, grTable = grEntry + 0x20, grPool = grEntry + 0x2c, grEnd = grEntry + 0x30;
+        var obcEntry = 0x8001ef40, obcDone = obcEntry + 0x14, obcEnd = obcEntry + 0x20;
+        // Phase G: the clock divider, live byte 0x6d2e.  The divider engages
+        // only through edges its ISR cave captures, so with the byte off the
+        // GPIO interrupt runs the factory's own body instead (clock_irq_dispatch
+        // replays the two displaced instructions and continues in the factory
+        // code, which is left in flash), the event the factory body posts
+        // reaches the factory's arp step again (clock_event_dispatch), and the
+        // four pulse pools go back to pulse_defer_set (pulse_dispatch), so the
+        // beat keeps the scan grid a build without the divider had.
+        var ciEntry = 0x8001ef60, ciOff = ciEntry + 0x10, ciPool = ciEntry + 0x1c, ciEnd = ciEntry + 0x30;
+        var ceEntry = 0x8001ef90, ceOff = ceEntry + 0x10, cePool = ceEntry + 0x18, ceEnd = ceEntry + 0x30;
+        var puEntry = 0x8001efc0, puOff = puEntry + 0x10, puPool = puEntry + 0x14, puEnd = puEntry + 0x20;
+        // Cell 27, alternate_tunings, live byte 0x6d33 (2026-09-23, after
+        // phase H): the tuning slots' controls follow the record too, so a
+        // keyboard built without a tuning takes tables over MIDI and its
+        // edit keys become the slot selectors at the restart.  The two edit
+        // keys' in-place patches became six- and eight-byte hooks whose
+        // caves do the slot work or replay the factory's own key (the
+        // transpose-mode toggle, the remote-enable toggle); the three
+        // remote-enable guards call one cave that reads zero or the flag;
+        // and the per-scan chain's applier word dispatches.  In the hole
+        // cv_stamps left at 0x8001e8e0.
+        var tk27Entry = 0x8001e8e0, tk27Two = tk27Entry + 0x18, tk27Off = tk27Entry + 0x30, tk27Pool = tk27Entry + 0x40, tk27End = tk27Entry + 0x50;
+        var tk28Entry = 0x8001e930, tk28Two = tk28Entry + 0x18, tk28Off = tk28Entry + 0x30, tk28Pool = tk28Entry + 0x40, tk28End = tk28Entry + 0x50;
+        var rgEntry = 0x8001e980, rgOff = rgEntry + 0x10, rgPool = rgEntry + 0x18, rgEnd = rgEntry + 0x20;
+        var taEntry = 0x8001e9a0, taOff = taEntry + 0x10, taPool = taEntry + 0x18, taEnd = taEntry + 0x20;
+
+        // The key selector: the dispatcher, for the factory's pool word and
+        // the sequencer's alike, so the two can never disagree.
+        var arpSelector = kbSel;
+
+        // The settings caves (docs/PLAN-SETTINGS.md, docs/PLAN-SETTINGS-2.md)
+        // as constants, so a cave that grows moves as one edit, declared
+        // here ahead of every pool word that names one: the transpiled
+        // JavaScript hoists a later `var` as undefined and would emit a
+        // pool word of zero where Java refuses to compile.  settings_copy,
+        // settings_newest, settings_boot, settings_defaults and
+        // settings_reload keep their literal addresses; everything from
+        // settings_valid's labels and settings_target on is here.
+        var vdEntry = 0x8001f010, vdNum = vdEntry + 0x70, vdTab = vdEntry + 0xa0, vdKeys = vdEntry + 0xc0;
+        var vdLen = vdEntry + 0xe0, vdGood = vdEntry + 0x10c, vdBad = vdEntry + 0x114, vdExit = vdEntry + 0x118;
+        var vdPool = vdEntry + 0x120, vdEnd = 0x8001f150;
+        var tgEntry = 0x8001f340, tgLive = tgEntry + 0x20, tgPitch = tgEntry + 0x38, tgTune = tgEntry + 0x60;
+        var tgKeys = tgEntry + 0x88, tgMask = tgEntry + 0xb0, tgLen = tgEntry + 0xe0, tgNone = tgEntry + 0x100;
+        var tgPool = tgEntry + 0x104, tgEnd = 0x8001f480;
+        var apEntry = tgEnd, apC1 = apEntry + 0x30, apC2 = apEntry + 0x40, apC3 = apEntry + 0x50;
+        var apC4 = apEntry + 0x68, apC5 = apEntry + 0x80, apData = apEntry + 0x98, apStore = apData + 0x34;
+        var apTuning = apData + 0x50, apMask = apEntry + 0x108, apMid = apEntry + 0x120, apTop = apEntry + 0x148;
+        var apDone = apEntry + 0x15c, apPool = apEntry + 0x160, apEnd = apEntry + 0x170;
+        var nrEntry = apEnd, nrRpn = nrEntry + 0x3e, nrPar = nrEntry + 0x42, nrLsb = nrEntry + 0x46;
+        var nrMsb = nrEntry + 0x4a, nrDat = nrEntry + 0x4e;
+        var nrDone = nrEntry + 0x60, nrPass = nrEntry + 0x68, nrPool = nrEntry + 0x74, nrEnd = nrEntry + 0x80;
+        var sdEntry = nrEnd, sdPool = sdEntry + 0x4c, sdEnd = sdEntry + 0x50;
+        var vaEntry = sdEnd, vaHi = vaEntry + 0x28, vaPeriod = vaEntry + 0x48, vaSlot = vaEntry + 0x68;
+        var vaState = vaEntry + 0x78, vaGenHi = vaEntry + 0x88, vaGenMid = vaEntry + 0x9c, vaGenLo = vaEntry + 0xb4;
+        var vaMarker = vaEntry + 0xc8, vaVersion = vaEntry + 0xdc, vaData = vaEntry + 0xe0;
+        var vaMask = vaEntry + 0x10c, vaMid = vaEntry + 0x124, vaTop = vaEntry + 0x13c, vaLive = vaEntry + 0x144;
+        var vaNone = vaEntry + 0x14c, vaDone = vaEntry + 0x150, vaPool = vaEntry + 0x154, vaEnd = vaEntry + 0x160;
+        var scEntry = vaEnd, scDump = scEntry + 0x20, scLoop = scEntry + 0x24;
+        var scG1 = scEntry + 0x40, scG2 = scEntry + 0x4c, scG3 = scEntry + 0x58, scG4 = scEntry + 0x64;
+        var scStore = scEntry + 0x70, scStop = scEntry + 0x92, scOut = scEntry + 0x9c;
+        var scPool = scEntry + 0xa0, scEnd = scEntry + 0xb0;
+        var cmEntry = scEnd, cmGen = cmEntry + 0x30, cmTail = cmEntry + 0x60, cmSlot = cmEntry + 0xc0;
+        var cmFail = cmEntry + 0x130, cmDone = cmEntry + 0x140, cmPool = cmEntry + 0x144, cmEnd = cmEntry + 0x160;
+        var vfEntry = cmEnd, vfLoop = vfEntry + 0x4, vfBad = vfEntry + 0x24, vfEnd = vfEntry + 0x30;
+        var ccPool = vfEnd, ccEnd = ccPool + 0x4;
+        var bdTable = 0x8001fa80, bdEnd = bdTable + 0x80;
+        var nmTable = bdEnd, nmEnd = nmTable + 0x40;
+        // pattern_count_of, in the hole settings_live left: how many patterns
+        // the mirror's bank holds, which the pattern gate spreads knob 2 over.
+        var pcEntry = nmEnd, pcLoop = pcEntry + 0x8, pcDone = pcEntry + 0x18, pcEnd = pcEntry + 0x20;
+        var rsEntry = pcEnd, rsSpin = rsEntry + 0x12, rsPool = rsEntry + 0x14, rsEnd = rsEntry + 0x20;
+        // option_boot took settings_live's job on 2026-09-23 (phase C): the
+        // live copy, the blend latch, and the latch's own RAM cleared when
+        // the latch is off - SRAM survives the restart that applies an
+        // option, and the first-use initialiser does not run again for it.
+        var obEntry = 0x8001fdf0, obLoop = obEntry + 0xa, obLive = obEntry + 0x2c, obStamps = obEntry + 0x36;
+        var obOwn = obEntry + 0x4a, obDone = obEntry + 0x54, obEnd = obEntry + 0x60;
+        // option_boot_state: the state an option owns that must not outlive
+        // it, cleared at boot with the option off (criterion 3, 2026-09-23).
+        // Above cv_chain_dispatch, where nothing else is placed.
+        var obsEntry = 0x8001ff30, obsJack = obsEntry + 0x18, obsBlend = obsEntry + 0x28, obsDone = obsEntry + 0x3c;
+        var obsPool = obsEntry + 0x40, obsEnd = obsEntry + 0x44;
+        // octave_period: the five factory sites that step an octave read
+        // number cell 10 (0x6814) instead of carrying the period as an
+        // immediate, so a scale with another period travels over MIDI
+        // (2026-09-23, the owner's rule: no setting change needs a flash).
+        var opEntry = obsEnd, opUp = opEntry + 0x10, opUp2 = opEntry + 0x18, opBias = opEntry + 0x24;
+        var opPool = opEntry + 0x30, opEnd = opEntry + 0x40;
+        // seq_restart_clear: the sequencer's runtime zeroed at every boot in
+        // every image, from seq_restart_init (2026-09-23).  In the hole
+        // between latch_preset_pin and the phase F caves.
+        var sqcEntry = 0x8001ed60, sqcLoop1 = sqcEntry + 0x8, sqcLoop2 = sqcEntry + 0x16, sqcLoop3 = sqcEntry + 0x32, sqcEnd = sqcEntry + 0x70;
+        // The boot guard (2026-09-26), past the last cave at 0x8001ffb4.
+        // boot_guard_arm stands on the pool word the factory's board init
+        // calls to clear the bootloader's ISP bits; boot_guard_confirm on the
+        // main loop's hook word.  The guard word is the page below slot 0.
+        var bgArmEntry = 0x80020000, bgArmKeep = bgArmEntry + 0x40, bgArmDone = bgArmEntry + 0x58;
+        var bgArmPool = bgArmEntry + 0x60, bgArmEnd = bgArmEntry + 0x70;
+        var bgConfEntry = bgArmEnd, bgConfNext = bgConfEntry + 0xc, bgConfDue = bgConfEntry + 0x10, bgConfPool = bgConfEntry + 0x50, bgConfEnd = bgConfEntry + 0x60;
+        var bgGuardWord = 0x8003ce00;
+        // Calibration mode (2026-09-27), for the page's pitch sweep.  NRPN
+        // 0x3f05 with the commit's key, 0x2a2a, turns it on; any other value
+        // turns it off.  While it is on, every scan's pitch is the settings
+        // mirror's pitch-table entry for the last MIDI note - RAM 0x6840, as
+        // the remap reads it - with nothing added: the scan computes its own
+        // pitch as ever, and cal_store puts the entry over it before the DAC
+        // can send it.  The arp step does nothing, so neither the
+        // arpeggiator nor the sequencer writes a pitch, fires a gate or
+        // records.  A key press, five seconds without a MIDI note-on, or a
+        // boot ends it; it is never saved.  RAM 0x6a6b is the mode, 0x6d40
+        // the millisecond count at the last note-on, 0x6d44 the entry.  In
+        // the erased flash past the boot guard, clear of 0x80020186, which a
+        // factory branch at 0x8001832a names.
+        var calCmdEntry = 0x80020200, calCmdOn = calCmdEntry + 0x2a, calCmdStore = calCmdEntry + 0x2c;
+        var calCmdPool = calCmdEntry + 0x34, calCmdEnd = calCmdEntry + 0x40;
+        var calNoteEntry = calCmdEnd, calNoteLow = calNoteEntry + 0x2e, calNoteHigh = calNoteEntry + 0x36;
+        var calNoteDone = calNoteEntry + 0x38, calNoteGo = calNoteEntry + 0x3c;
+        var calNotePool = calNoteEntry + 0x40, calNoteEnd = calNoteEntry + 0x50;
+        var calPitchEntry = calNoteEnd, calPitchOff = calPitchEntry + 0xa, calPitchOn = calPitchEntry + 0xe;
+        var calPitchKeep = calPitchEntry + 0x2c, calPitchPool = calPitchEntry + 0x40, calPitchEnd = calPitchEntry + 0x50;
+        var calStoreEntry = calPitchEnd, calStorePool = calStoreEntry + 0x24, calStoreEnd = calStoreEntry + 0x30;
+        var calBareEntry = calStoreEnd, calBareOn = calBareEntry + 0xe, calBarePool = calBareEntry + 0x18, calBareEnd = calBareEntry + 0x20;
+        var calArpEntry = calBareEnd, calArpOn = calArpEntry + 0x18, calArpPool = calArpEntry + 0x1c, calArpEnd = calArpEntry + 0x20;
+        var calKeyEntry = calArpEnd, calKeyPool = calKeyEntry + 0xc, calKeyEnd = calKeyEntry + 0x10;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -138,7 +319,7 @@ function assembleProgram() {
         word(0x80005a04); // original note-on initialization
         word(0x00006080); // raw-filter sample count
         word(0x8001a020); // press-order list append
-        word(0x8001dde0); // latch_owner -> the pitch-aware latch toggle
+        word(ltOn);        // latch_noteon_dispatch -> latch_owner and the toggle, or the identity ownership
         word(0x8001b9d0); // the sequencer's recorder
         finish("note_on_reset_raw_filter", 0x80018d40);
 
@@ -693,13 +874,23 @@ function assembleProgram() {
         word(0x80008034); // direct USB-MIDI CC sender
         finish("send_usb_midi_14bit", 0x80019980);
 
+        // What the remap adds before it reads the pitch table: three
+        // semitones at 484 units to the octave, which puts the bottom key at
+        // the lowest octave position on entry 3 and entry 0 - the 208's 0 V
+        // pitch - 120 units under it.  Its negative is the pitch floor: the
+        // scan's clamp (pitch_floor_compare and pitch_floor_store),
+        // blend_offset_apply and the clock's fast stage all hold a bent
+        // pitch at -remapOffset, which is entry 0.
+        var remapOffset = 0x78;
+
         // Pitch-CV calibration remap, stage 1.  The final
-        // pitch value (key table + transpose + glide + bend, clamped 0..4095,
-        // 484 units/octave, lowest key C0 = 485) is remapped through a
-        // piecewise-linear curve with one anchor per octave, encoding the
-        // user's 208p calibration (1 V/oct nominal; C5=5.0231 V, C6=6.232 V).
-        // Called with R12 = raw pitch; stores the DAC value and the last-sent
-        // mirror itself, replacing the tail of the factory update function.
+        // pitch value (key table + transpose + glide + bend, clamped to
+        // -remapOffset..4095, 484 units/octave, lowest key C0 = 485) is
+        // remapped through a piecewise-linear curve with one anchor per
+        // octave, encoding the user's 208p calibration (1 V/oct nominal;
+        // C5=5.0231 V, C6=6.232 V).  Called with R12 = raw pitch; stores the
+        // DAC value and the last-sent mirror itself, replacing the tail of
+        // the factory update function.
         begin(0x80019980);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
@@ -707,24 +898,33 @@ function assembleProgram() {
         emit("MCALL PC[0x80019a00]");
         emit("LD.W R12,SP++");
         emit("MOV R8,R12");
-        emit("SUB R8,-0x78");
+        emit(StringFormat("SUB R8,-0x%x", remapOffset));
         // Global vibrato (knob 4): signed offset in factory units (max +-13
         // = +-32 cents) computed each scan by the vibrato engine into RAM
         // 0x6028; added pre-remap so depth is constant in cents and rides
         // the tracking-corrected curve. Zero when the knob is in its
-        // deadzone. d stays >= 106, so no clamp is needed.
+        // deadzone.
         emit("MOV R10,0x6028");
         emit("LD.SH R10,R10[0x0]");
         emit("ADD R8,R10");
+        // Held at entry 0.  A pitch bent down to the floor arrives as
+        // -remapOffset, which the add above puts exactly on entry 0, and the
+        // vibrato can take it 13 under that; the divide below is unsigned,
+        // so a negative d would read the top of the table.  Nothing above
+        // the floor reaches this: without a bend d is at least 107.
+        emit("CP.W R8,0x0");
+        emit("BR{ge} 0x800199a0");
+        emit("MOV R8,0x0");
+        padTo(0x800199a0);
         emit("MOV R9,0xc");
         emit("MUL R8,R8,R9");
         emit("MOV R9,0x1e4");
         emit("DIVU R8,R8,R9");
         emit("CP.W R8,0x4d");
-        emit("BR{ls} 0x800199b8");
+        emit("BR{ls} 0x800199bc");
         emit("MOV R8,0x4d");
         emit("MOV R9,0x1e3");
-        padTo(0x800199b8);
+        padTo(0x800199bc);
         emit("MOV R11,R9");
         emit("LSL R8,0x1");
         emit("LDDPC R10,0x800199f8");
@@ -735,7 +935,12 @@ function assembleProgram() {
         emit("MUL R8,R11,R9");
         emit("SUB R8,-0xf2");
         emit("MOV R11,0x1e4");
-        emit("DIVU R8,R8,R11");
+        // Signed: the table is a setting now, and a falling segment - one an
+        // NRPN sender left, or a send caught halfway through a table that
+        // moved up - gives a negative product.  Unsigned, that came out
+        // near 0x87xxxx and drove the DAC word far past 0xfff; signed, the
+        // output stays between the segment's two entries.
+        emit("DIVS R8,R8,R11");
         emit("ADD R9,R12,R8 << 0x0");
         padTo(0x800199e0);
         emit("LDDPC R8,0x800199fc");
@@ -744,7 +949,7 @@ function assembleProgram() {
         emit("ST.H R8[0x0],R9");
         emit("LDM SP++,R7,PC");
         padTo(0x800199f8);
-        word(0x80019bc0); // per-semitone tracking-corrected curve table
+        word(0x00006840); // per-semitone tracking-corrected curve table, in the settings mirror
         word(0x00003560); // global state base
         word(0x8001a2e8); // tuning applier + latch watch + vibrato chain
         finish("pitch_remap_calibration", 0x80019a04);
@@ -953,9 +1158,7 @@ function assembleProgram() {
         begin(0x80019d38);
         word(0x80019d44); // gate/housekeeping entry (hook at 0x21a0)
         word(block("seq_pitch") ? 0x8001ba30 : 0x80019da8);
-        word(number("knob2_swing", 0, 0, 1) == 1 ? 0x8001b100
-           : number("knob2_quantized", 0, 0, 1) == 1 ? 0x8001ea00
-           : 0x80019df8);
+        word(kbRhythm);    // the randomiser, quantized, swing, or the plain reload, by knob 2's live byte
         // R8 is dead at the hook site (factory overwrote it); do not push it,
         // so the final CP.H can run AFTER the LDM restore and survive the
         // return (LDM with PC would execute return-and-test-R12, destroying
@@ -982,8 +1185,7 @@ function assembleProgram() {
         emit("BR{ne} 0x80019d6a");
         emit("LD.SH R8,R10[0x30a]");
         emit("LSR R8,0x3");
-        emit("MOV R11,0x60f2");
-        emit("ST.B R11[0x0],R8");
+        emit(StringFormat("MCALL PC[0x%x]", kbPool + 48));   // knob1_blend_latch: 0x60f2, and 0x6d38 while blending
         padTo(0x80019d6a);
         emit("MOV R11,0x1");
         emit("MCALL PC[0x8001ddd4]");
@@ -998,8 +1200,7 @@ function assembleProgram() {
         emit("CP.W R9,0x0");
         emit("BR{ne} 0x80019d94");
         emit("LD.SH R8,R10[0x30e]");
-        emit("MOV R11,0x60ea");
-        emit("ST.H R11[0x0],R8");
+        emit(StringFormat("MCALL PC[0x%x]", kbPool + 52));   // knob3_latch: 0x60ea, or zero when knob 3 is factory
         padTo(0x80019d94);
         if (block("clock_attack_guard")) {
             emit("MCALL PC[0x8001cb1c]");
@@ -1032,13 +1233,18 @@ function assembleProgram() {
         emit("BFEXTU R9,R12,0x14,0x1");
         emit("CP.W R9,0x0");
         emit("BR{eq} 0x80019de0");
-        emit(StringFormat("SUB R8,-0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R9,0x6814");          // the period: number cell 10 (R9 is saved above)
+        emit("LD.UH R9,R9[0x0]");
+        emit("ADD R8,R9");
         emit("RJMP 0x80019df0");
         padTo(0x80019de0);
-        emit(StringFormat("SUB R8,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R9,0x6814");
+        emit("LD.UH R9,R9[0x0]");
+        emit("SUB R8,R9");
         emit("CP.W R8,0x1");
         emit("BR{ge} 0x80019df0");
-        emit(StringFormat("SUB R8,-0x%x", 2 * number("octave_units", 484, 1, 2000)));
+        emit("ADD R8,R9");
+        emit("ADD R8,R9");
         padTo(0x80019df0);
         emit("LDM SP++,R0,R7,R9,R10,R11,R12,PC");
         padTo(0x80019df8);
@@ -1277,40 +1483,21 @@ function assembleProgram() {
         word(0x8001a234);
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
-        if (feature("pressure_blend")) {
-            // No time-based glide: the pressure-based blend is the only
-            // portamento.  Notes snap; the knob means pressure-needed-to-bend.
-            emit("MOV R8,0x0");
-        } else {
-            // Blend-off builds keep classic portamento with the zero-snap.
-            emit("MOV R8,0x3866");
-            emit("LD.SH R8,R8[0x0]");
-            emit("CP.W R8,0x30");
-            emit("BR{ge} 0x8001a24c");
-            emit("MOV R8,0x0");
-            emit("RJMP 0x8001a254");
-            padTo(0x8001a24c);
-            emit("LDDPC R8,0x8001a260");
-            emit("LD.SH R8,R8[R9 << 0x1]");
-            emit("CASTS.H R8");
-        }
+        // The rate value comes from glide_rate_value (phase F): zero while
+        // the pressure blend is the portamento - notes snap, the knob means
+        // pressure-needed-to-bend - and the zero-snap over the factory table
+        // while it is not, by the live byte.  R9, the index, comes through.
+        emit("MCALL PC[0x8001a260]");   // glide_rate_value -> R8
         padTo(0x8001a254);
-        if (block("seq_gate")) {
-            // The store goes out of line so a tie can override the rate on
-            // its way past.  There is no room for the test here - the block
-            // ends where pulse_defer_set begins.
-            emit("MCALL PC[0x8001a25c]");
-        } else {
-            emit("MOV R9,0x2eee");
-            emit("ST.H R9[0x0],R8");
-        }
+        // The store goes out of line so a tie can override the rate on its
+        // way past.  There is no room for the test here - the block ends
+        // where pulse_defer_set begins.
+        emit("MCALL PC[0x8001a25c]");
         emit("LDM SP++,R7,PC");
-        if (block("seq_gate")) {
-            padTo(0x8001a25c);
-            word(0x8001b610); // store_glide_rate, with the tie's override
-        }
+        padTo(0x8001a25c);
+        word(0x8001b610); // store_glide_rate, with the tie's override
         padTo(0x8001a260);
-        word(0x80015150); // the factory glide-rate table
+        word(grEntry);     // glide_rate_value: zero with the blend, else the zero-snap and the table
         finish("glide_rate_clamp", 0x8001a264);
 
         // Pulse defer: the four factory pool words that pointed at the
@@ -1441,21 +1628,18 @@ function assembleProgram() {
         emit("STM --SP,R7,LR");
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001ac80]");
-        // Only reached when a tuning has actually been supplied.  With every
-        // slot on the factory temperament the applier would copy that table
-        // over itself each scan, but it also asserts the rem-en and trn LEDs
-        // and permanently zeroes the old transpose-mode byte — so leaving it
-        // out is what hands those back to the factory.
-        if (feature("alternate_tunings")) {
-            emit("MCALL PC[0x8001a340]");      // tuning applier
-        }
+        // The applier, when a tuning is in use: with every slot on the
+        // factory temperament it would copy that table over itself each
+        // scan, but it also asserts the rem-en and trn LEDs and permanently
+        // zeroes the old transpose-mode byte - so with cell 27 off the word
+        // above returns at once, which is what hands those back to the
+        // factory.
+        emit("MCALL PC[0x8001a340]");          // tuning_apply_dispatch
         // Preset pickup must own this scan's knob before vibrato reads it.
         // Otherwise the first movement changes vibrato, then the editor
         // freezes that already-changed value for the rest of the hold.
         emit("MCALL PC[0x8001a348]");          // per-scan housekeeping
-        if (feature("knob4_vibrato")) {
-            emit("MCALL PC[0x8001a344]");      // vibrato engine
-        }
+        emit("MCALL PC[0x8001a344]");          // the vibrato engine, when knob 4's live byte says vibrato
         if (feature("pressure_ab_switch")) {
             emit("MCALL PC[0x8001a34c]");      // octave-switch shadow sync
         }
@@ -1463,23 +1647,19 @@ function assembleProgram() {
         padTo(0x8001a338);
         word(0x00003560); // global state base
         word(0x80005a50); // original note-off
-        word(0x80019a40); // tuning applier
-        word(0x8001a350); // vibrato engine
+        word(taEntry);     // tuning_apply_dispatch: the applier, or a return, by cell 27's live byte
+        word(kbVib);       // knob4_vibrato_dispatch: the engine, or a return
         // With the jack transposing, the housekeeping is reached through
         // the transposer's cave, which calls it first and shifts the key
         // table after - the applier has run by then.
-        // With a filter built, the chain enters there and it tail jumps into
-        // the transposer; without one it enters the transposer directly.
-        // "Built" has to be the emit guard's own question, cv_jack and all:
-        // cv_transpose is given by presets.quantize as well as by the jack,
-        // so quantized presets with the jack left on portamento pointed this
-        // word at 0x8001eb20 with nothing assembled there - unprogrammed
-        // flash, MCALLed every 5 ms scan (audit 2026-09-13).
-        word(feature("cv_transpose")
-             ? (feature("cv_jack")
-                && number("transpose_cv_filter_shift", 2, 0, 4) > 0
-                ? 0x8001eb20 : 0x8001e7c0)
-             : 0x8001a480); // latch watch + poly-MIDI boot force + common-mode
+        // The transposer is in every image (stage 2 phase E), so the chain
+        // always enters it, and it calls the housekeeping first.  With the
+        // filter pole built - the emit guard's own question, since a word
+        // naming a cave that was not assembled is unprogrammed flash MCALLed
+        // every 5 ms scan (audit 2026-09-13) - the chain enters
+        // cv_chain_dispatch, which puts the filter in front only while the
+        // jack's live byte says transpose.
+        word(number("transpose_cv_filter_shift", 2, 0, 4) > 0 ? cdEntry : 0x8001e7c0);
         word(0x8001a750); // octave-switch shadow sync
         finish("latch_v2", 0x8001a350);
 
@@ -1555,9 +1735,10 @@ function assembleProgram() {
         word(0x01000000); // window length in cycles (~280 ms at 60 MHz)
         finish("scan_profiler", 0x8001a5e8);
 
-        // Main-loop dispatcher pointer -> profiler wrapper.
+        // Main-loop dispatcher pointer -> the boot guard's confirmation,
+        // which carries on into the profiler wrapper or the clock scan.
         begin(0x80007dc0);
-        word(block("clock_scan") ? 0x8001b980 : 0x8001a540);
+        word(block("boot_guard_confirm") ? bgConfEntry : block("clock_scan") ? 0x8001b980 : 0x8001a540);
         finish("profiler_pool", 0x80007dc4);
 
         // Pressure output interpolation.  The scan writes a target at RAM
@@ -1584,10 +1765,14 @@ function assembleProgram() {
         emit("BR{ge} 0x8001a612");
         emit("MOV R11,0x0");
         padTo(0x8001a612);
-        emit("MOV R9,0xfff");
-        emit("CP.W R11,R9");
-        emit("BR{ls} 0x8001a61e");
-        emit("MOV R11,R9");             // clamped to the 12-bit DAC range
+        // The high clamp went out to interpolate_gate (phase F), which also
+        // answers R9 = the live byte: zero means the fix is off and the gate
+        // has just copied the target to the DAC slot itself, so this hands
+        // straight on to the flush - the scan's store reaches the DAC on
+        // the same millisecond flush it always did.
+        emit("MCALL PC[0x8001a68c]");   // interpolate_gate: R11 clamped, R9 the live byte
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001a684");
         padTo(0x8001a61e);
         emit("LDDPC R12,0x8001a690");
         emit("LD.SH R8,R12[0x356]");    // where the output is now
@@ -1643,6 +1828,8 @@ function assembleProgram() {
         padTo(0x8001a688);
         emit("LDDPC R12,0x8001a694");
         emit("MOV PC,R12");             // on into the factory flush handler
+        padTo(0x8001a68c);
+        word(ipEntry);     // interpolate_gate
         padTo(0x8001a690);
         word(0x00003560); // global state base
         word(0x80004f66); // factory event-17 case
@@ -1948,7 +2135,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001a8e0]");
             emit("RJMP 0x8001a8e4");    // over the pool word, never through it
             padTo(0x8001a8e0);
-            word(0x8001e520);          // latch_hold
+            word(ltHold);               // latch_hold_dispatch: latch_hold, or the pitch back as it came
         }
         padTo(0x8001a8e4);
         emit("MCALL PC[0x8001a8ec]");
@@ -1992,9 +2179,12 @@ function assembleProgram() {
         emit("ADD R8,R11");
         emit("ST.H R9[0x2],R8");
         emit("ADD R12,R8");
-        emit("CP.W R12,0x0");
+        // The scan's floor, entry 0 of the pitch table, so a bend under the
+        // bottom key comes through the blend.
+        emit(StringFormat("MOV R8,-0x%x", remapOffset));
+        emit("CP.W R12,R8");
         emit("BR{ge} 0x8001a924");
-        emit("MOV R12,0x0");
+        emit("MOV R12,R8");
         padTo(0x8001a924);
         emit("MCALL PC[0x8001a92c]");
         emit("LDM SP++,R7,PC");
@@ -2532,14 +2722,23 @@ function assembleProgram() {
         emit("LD.SH R10,R8[0x0]");
         emit("ST.H R8[0x0],R11");
         emit("CP.W R10,0x0");
-        emit("BR{lt} 0x8001ad58");
+        emit("BR{lt} 0x8001ad5e");
         emit("CP.W R10,R11");
-        emit("BR{eq} 0x8001ad58");
+        emit("BR{eq} 0x8001ad5e");
         // The cave's own engagement gate, mirrored: with the knob in the
         // deadzone the blend is off and notes snap by design.
         emit("LD.SH R9,R9[0x306]");
         emit("CP.W R9,0x30");
-        emit("BR{lt} 0x8001ad58");
+        emit("BR{lt} 0x8001ad5e");
+        // And only while the blend IS the portamento.  With its byte off
+        // the apply shim never runs, so nothing slews the offset back out,
+        // and the clock's fast stage adds it under every staged pitch: a
+        // knob raised while notes changed, then parked, left -200 there
+        // until the next boot (audit 2026-09-24).
+        emit("MOV R8,0x6d30");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit("BR{eq} 0x8001ad5e");
         // The step itself is applied one cave along, where the sequencer
         // mode can veto it: during PLAY the base moves because the FACTORY
         // GLIDE is walking between steps, not because a note handed over,
@@ -2547,10 +2746,10 @@ function assembleProgram() {
         // backwards.  The base history above updates every scan regardless,
         // so returning to live playing measures from the current base.
         emit("SUB R10,R10,R11 << 0x0");
-        emit("RJMP 0x8001ad5a");
-        padTo(0x8001ad58);
+        emit("RJMP 0x8001ad60");
+        padTo(0x8001ad5e);
         emit("MOV R10,0x0");
-        padTo(0x8001ad5a);
+        padTo(0x8001ad60);
         emit("MCALL PC[0x8001ad6c]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001ad6c);
@@ -2745,12 +2944,10 @@ function assembleProgram() {
         emit("SUB R2,-0x2");
         emit("CP.W R0,0x4");
         emit("BR{lt} 0x8001ae30");
-        if (number("knob4_octaves", 0, 0, 1) == 1) {
-            emit("MCALL PC[0x8001aeb8]");
-        }
+        emit("MCALL PC[0x8001aeb8]");   // knob 4 as an octave switch, when its live byte says trn
         emit("LDM SP++,R0,R1,R2,R7,PC");
         padTo(0x8001aeb8);
-        word(0x8001b010); // knob 4 as an octave switch
+        word(kbLate);      // knob4_late_dispatch: the octave switch, or a return
         padTo(0x8001aebc);
         word(0x00003560); // global state base
         finish("preset_editor", 0x8001aec0);
@@ -2774,10 +2971,22 @@ function assembleProgram() {
         // 5-limit slot.  Only the offset was ever checked against the table,
         // and only from the bottom key, so the suite agreed with it.
         //
-        // R12 in: the scaled float.  R12 out: zero.
+        // R12 in: the scaled float.  R12 out: zero - or, with the option
+        // off (live byte 0x6d31 zero, phase E), the float goes on to the
+        // factory's own float-to-int and the voltage adds as it is.  R9 is
+        // spent; the factory helper clobbers R10 and R11 itself.
         begin(0x8001e140);
+        emit("MOV R9,0x6d31");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit("BR{eq} 0x8001e150");      // presets added as they are: the factory's conversion
         emit("MOV R12,0x0");
         emit("MOV PC,LR");
+        padTo(0x8001e150);
+        emit("LDDPC R9,0x8001e158");
+        emit("MOV PC,R9");
+        padTo(0x8001e158);
+        word(0x80013434); // the factory's float-to-int
         finish("preset_quantize", 0x8001e1c0);
 
         // The preset voltage as a DEGREE COUNT, for the key-table rotation.
@@ -2843,7 +3052,8 @@ function assembleProgram() {
         emit("MOV R10,0x64");
         emit("DIVU R2,R1,R10");                      // R2 units, R3 remainder
         emit("MOV R1,R2");
-        emit(StringFormat("MOV R0,0x%x", number("octave_units", 484, 1, 2000)));
+        emit("MOV R0,0x6814");                       // the period: number cell 10
+        emit("LD.UH R0,R0[0x0]");
         emit("DIVU R2,R1,R0");                       // R2 whole periods, R3 within one
         // Seed the search with the whole period above: degree `keys`, which
         // the sentinel below stands for, at distance period - remainder.
@@ -2929,13 +3139,15 @@ function assembleProgram() {
         // Handed back in the quantiser's own units - one period of CV per
         // period of the tuning - so cv_transpose adds it to the jack's
         // position with nothing but an ADD, which is all the room it has.
-        emit(StringFormat("MOV R9,0x%x", number("transpose_cv_period", 123, 1, 1023)));
+        emit("LDDPC R9,0x8001e2c8");     // the settings mirror
+        emit("LD.UH R9,R9[0xa]");       // transpose_cv_period, settings cell 5
         emit("MUL R12,R12,R9");
         padTo(pdDone);
         emit("LDM SP++,R0,R1,R2,R3,R4,R7,R8,R9,R10,R11,PC");
         padTo(pdPool);
-        word(0x8001e2d0);                           // the keys-per-period table
-        word(0x80019af8);                           // the three slot tables, in flash
+        word(0x000069a0);                           // the keys-per-period table, in the settings mirror
+        word(0x000068e0);                           // the three slot tables, in the settings mirror
+        word(0x00006800);                           // the settings mirror itself
         finish("preset_degrees", pdEnd);
 
         // tuning_period_keys, moved out of cv_transpose so its pool can carry
@@ -2970,7 +3182,9 @@ function assembleProgram() {
         var cvFilter = 0x8001eb20;
         var cvFilterPool = 0x8001eb40;
         var cvShift = number("transpose_cv_filter_shift", 2, 0, 4);
-        if (feature("cv_jack") && cvShift > 0) {
+        // Built by the filter shift alone since phase E; whether the chain
+        // enters through it is cv_chain_dispatch's question, by the live byte.
+        if (cvShift > 0) {
             begin(cvFilter);
             emit(StringFormat("LDDPC R9,0x%x", cvFilterPool));   // global state base
             emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
@@ -3051,19 +3265,19 @@ function assembleProgram() {
         // entry, with the blend's base history alongside so the move is a
         // jump, as the octave pads' is, not a folded glide.
         var cvEntry = 0x8001e7c0;
-        var cvClamp = 0x8001e7da;
-        var cvSlot = 0x8001e7e8;
+        var cvClamp = 0x8001e7dc;
+        var cvSlot = 0x8001e7ea;
         // Eight bytes further along than they were: the preset's own shift
         // is folded into the jack's before the quantiser, so that one
         // hysteresis band and one cache word cover both inputs.
-        var cvRecalc = 0x8001e82e;
-        var cvHaveN = 0x8001e838;
-        var cvCapped = 0x8001e844;
-        var cvBuild = 0x8001e860;
-        var cvLoop = 0x8001e878;
-        var cvWrap = 0x8001e87e;
-        var cvNoWrap = 0x8001e88a;
-        var cvDone = 0x8001e8a8;
+        var cvRecalc = 0x8001e834;
+        var cvHaveN = 0x8001e83e;
+        var cvCapped = 0x8001e84a;
+        var cvBuild = 0x8001e866;
+        var cvLoop = 0x8001e87e;
+        var cvWrap = 0x8001e884;
+        var cvNoWrap = 0x8001e890;
+        var cvDone = 0x8001e8aa;
         var cvPool = 0x8001e8b0;
         // Relocated out of 0x8001e8e0 (2026-09-13): the ownership decision
         // below needed thirty bytes the old extent did not have, and both
@@ -3076,22 +3290,13 @@ function assembleProgram() {
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
         emit("MOV R7,SP");
         emit(StringFormat("MCALL PC[0x%x]", cvPool));            // the housekeeping this stands in front of
-        // Only when the jack is the transposer.  With it left on portamento
-        // the factory still reads its own glide-rate addend off state+0x2f0
-        // (glide_cv_addend is not patched in that build), so this must not
-        // read a shift out of it either: the rotation is then the preset
-        // voltage's alone.
-        if (feature("cv_jack")) {
-            emit(StringFormat("LDDPC R9,0x%x", cvPool + 4));     // global state base
-            emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
-            emit(StringFormat("LDDPC R10,0x%x", cvPool + 12));   // its zero
-            emit("SUB R8,R10");
-            emit("CP.W R8,0x0");
-            emit(StringFormat("BR{ge} 0x%x", cvClamp));
-            emit("MOV R8,0x0");
-        } else {
-            emit("MOV R8,0x0");
-        }
+        // The jack's reading less its zero, clamped at zero - or zero, by
+        // the live byte (phase E): with the jack on portamento the factory
+        // reads its own glide-rate addend off state+0x2f0 again, so the
+        // rotation must not read a shift out of it, and is then the preset
+        // voltage's alone.  jack_read spends R8-R10, which this cave
+        // reloads before it reads them.
+        emit(StringFormat("MCALL PC[0x%x]", cvPool + 12));       // jack_read -> R8
         padTo(cvClamp);
         emit("MOV R10,0x6090");                                   // tuning slot
         emit("LD.UB R10,R10[0x0]");
@@ -3102,14 +3307,13 @@ function assembleProgram() {
         emit(StringFormat("LDDPC R11,0x%x", cvPool + 20));       // the keys-per-period table
         emit("LD.UH R0,R11[R10 << 0x1]");
         emit("MUL R1,R8,R0");                                     // v * size
-        emit(StringFormat("LDDPC R2,0x%x", cvPool + 8));         // one period, in CV counts
+        emit(StringFormat("LDDPC R2,0x%x", cvPool + 8));         // the settings mirror
+        emit("LD.UH R2,R2[0xa]");                                 // one period, in CV counts: settings cell 5
         // The preset voltage's own shift, already scaled to these units, so
         // the hysteresis and the cache word below see one combined position
         // rather than two that could disagree about which N is current.
-        if (feature("preset_rotate")) {
-            emit(StringFormat("MCALL PC[0x%x]", cvPool + 40));
-            emit("ADD R1,R12");
-        }
+        emit(StringFormat("MCALL PC[0x%x]", cvPool + 40));       // preset_degrees_gate -> R12, zero with the option off
+        emit("ADD R1,R12");
         emit("MOV R3,0x60fa");
         emit("LD.UH R4,R3[0x0]");
         emit("LSR R8,R4,0xc");
@@ -3121,7 +3325,8 @@ function assembleProgram() {
         emit("SUB R11,R1,R11 << 0x0");                            // distance from its centre
         emit("ABS R11");
         emit("LSR R12,R2,0x1");
-        emit(StringFormat("LDDPC R9,0x%x", cvPool + 16));        // hysteresis, raw counts
+        emit(StringFormat("LDDPC R9,0x%x", cvPool + 8));         // the settings mirror
+        emit("LD.UH R9,R9[0xe]");                                 // hysteresis, raw counts: settings cell 7
         emit("MUL R9,R9,R0");                                     // in v*size units
         emit("ADD R12,R9");
         emit("CP.W R11,R12");
@@ -3150,7 +3355,8 @@ function assembleProgram() {
         padTo(cvBuild);
         emit("ST.H R3[0x0],R11");
         emit(StringFormat("MCALL PC[0x%x]", cvPool + 32));       // stamps: against the keys, not the slots
-        emit(StringFormat("LDDPC R2,0x%x", cvPool + 28));        // one period, in pitch units
+        emit(StringFormat("LDDPC R2,0x%x", cvPool + 28));        // the period cell's address
+        emit("LD.UH R2,R2[0x0]");                                 // one period, in pitch units
         emit(StringFormat("LDDPC R12,0x%x", cvPool + 24));       // the three slot tables
         emit("LSL R9,R10,0x6");
         emit("ADD R12,R9");                                       // this slot's, 64 bytes each
@@ -3180,15 +3386,15 @@ function assembleProgram() {
         padTo(cvPool);
         word(0x8001a480); // per-scan housekeeping: latch watch + poly-MIDI boot force + common-mode
         word(0x00003560); // global state base
-        word(number("transpose_cv_period", 123, 1, 1023));
-        word(number("transpose_cv_zero", 0, 0, 1023));
-        word(number("transpose_cv_hysteresis", 2, 0, 64));
-        word(0x8001e2d0); // the keys-per-period table, relocated out of this cave
-        word(0x80019af8); // the three tuning tables
-        word(number("octave_units", 484, 1, 2000));
+        word(0x00006800); // the settings mirror: the period, its zero and the hysteresis are cells 5, 6 and 7
+        word(jkEntry);     // jack_read: the reading less its zero, clamped, or zero by the live byte
+        word(0x00000000); // retired: the hysteresis, read from the mirror now
+        word(0x000069a0); // the keys-per-period table, in the settings mirror
+        word(0x000068e0); // the three tuning tables, in the settings mirror
+        word(0x00006814); // the period: number cell 10 of the settings mirror
         word(cvStampsPre);
         word(cvStampsPost);
-        word(0x8001e1c0); // preset_degrees
+        word(pgEntry);     // preset_degrees_gate -> preset_degrees, or zero degrees published
         finish("cv_transpose", 0x8001e8e0);
 
         // latch_preset_pin: the preset's half of the latch's hold state.
@@ -3231,6 +3437,13 @@ function assembleProgram() {
         emit("CP.W R3,R2");
         emit(StringFormat("BR{eq} 0x%x", lppDone));              // the preset did not move
         emit("MOV R0,0x62e2");
+        // With the latch off nothing is latched to hold, and a hold state
+        // restored from a session with it on would pin every held key:
+        // 176 units of blend target until the next boot (audit 2026-09-24).
+        // The count is still kept, as it is in transpose.
+        emit("LD.UB R8,R0[0xa46]");                               // 0x6d28, the latch's byte
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", lppSave));
         emit("LD.UB R0,R0[0x0]");
         emit("CP.W R0,0x0");
         emit(StringFormat("BR{ne} 0x%x", lppSave));              // transpose: the set follows
@@ -3547,16 +3760,27 @@ function assembleProgram() {
         // its note-off, with the shift it was sent under - and used to
         // inherit that note's shift, so its MIDI note disagreed with its
         // pitch CV by however far the jack had moved.  The routine's 0xff
-        // for a bad key is left alone, and the result is capped at 127.
+        // for a bad key is left alone, and the result is held to 0..127.
+        //
+        // A sounding step's shift, N + e - X, is negative when the step was
+        // recorded under a lower pad than the take's reference: -127 at the
+        // least, X being bounded at 0x7f.  So the note is floored at zero as
+        // well as capped - a take sent note -5, a status byte on the wire -
+        // and the frozen byte is read back signed, which needs the shift
+        // capped at 127 before it is frozen: that changes no note, since a
+        // key's own note is at least zero.  Read back unsigned, -7 came back
+        // as 249 and the lift named note 127 (audit 2026-09-24).
         var mtLive = 0x8001e740;
         var mtHeld = 0x8001e744;
         var mtPress = 0x8001e748;
         var mtCommon = 0x8001e74a;
-        var mtFreeze = 0x8001e788;
-        var mtLatched = 0x8001e78c;
-        var mtAdd = 0x8001e78e;
-        var mtDone = 0x8001e79a;
-        var mtPool = 0x8001e7a0;
+        var mtCapped = 0x8001e77e;
+        var mtFreeze = 0x8001e792;
+        var mtLatched = 0x8001e796;
+        var mtAdd = 0x8001e79e;
+        var mtFloor = 0x8001e7a6;
+        var mtDone = 0x8001e7b0;
+        var mtPool = 0x8001e7b4;
         begin(mtLive);
         emit("MOV R11,0x1");                                      // live
         emit(StringFormat("RJMP 0x%x", mtCommon));
@@ -3584,6 +3808,10 @@ function assembleProgram() {
         // back - which is what keeps a note-off naming the note its note-on
         // named, after 0x6503 has already moved to the next step.
         emit(StringFormat("MCALL PC[0x%x]", mtPool + 8));
+        emit("CP.W R9,0x7f");
+        emit(StringFormat("BR{le} 0x%x", mtCapped));
+        emit("MOV R9,0x7f");
+        padTo(mtCapped);
         emit("CP.W R0,0x1");
         emit(StringFormat("BR{eq} 0x%x", mtAdd));                // live: as it stands
         emit("CP.W R0,0x2");
@@ -3597,11 +3825,17 @@ function assembleProgram() {
         emit(StringFormat("RJMP 0x%x", mtAdd));
         padTo(mtLatched);
         emit("LD.UB R9,R8[0x4]");
+        emit("LSL R9,0x18");                                      // signed: -127..127 went in
+        emit("ASR R9,0x18");
         // A sounding SEQUENCER step carries the preset count it was
         // recorded under; the shift so far says nothing about it.  The
         // helper adds (e - d_ref), the same term the CV shift applies.
         padTo(mtAdd);
         emit("ADD R12,R9");
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ge} 0x%x", mtFloor));
+        emit("MOV R12,0x0");
+        padTo(mtFloor);
         emit("CP.W R12,0x7f");
         emit(StringFormat("BR{le} 0x%x", mtDone));
         emit("MOV R12,0x7f");
@@ -3753,6 +3987,12 @@ function assembleProgram() {
         // The entry this key would have if ONLY the preset had rotated the
         // table: slot[key + preset degrees], wrapping by the map's size and
         // adding one period per wrap, exactly as cv_transpose's rebuild does.
+        // Playback's index, key + N - X + e, goes under zero as well as past
+        // the top - a step recorded under a lower pad than the take's
+        // reference, played with the pad low - so it wraps both ways: below
+        // zero it is up a period of keys and down a period of pitch.  Read
+        // from under the tables, a step due at 258 sounded at 2979 (audit
+        // 2026-09-24).
         //
         // The recorder stores a step against the tuning's own entry for its
         // key so the live shift is normalised out and re-applied on playback.
@@ -3772,8 +4012,8 @@ function assembleProgram() {
         // reference.  Reading the live count on both sides cancels the
         // preset exactly and a playing take stops transposing at all.
         // Out: R12 the pitch.  R8-R11 saved.
-        var peEntry = 0x8001e420, peSlot = 0x8001e43c, peWrap = 0x8001e458;
-        var peNoWrap = 0x8001e46a, pePool = 0x8001e478;
+        var peEntry = 0x8001e420, peSlot = 0x8001e43c, peWrap = 0x8001e454;
+        var peDown = 0x8001e460, peNoWrap = 0x8001e46a, pePool = 0x8001e478;
         begin(peEntry);
         emit("STM --SP,R8,R9,R10,R11,LR");
         emit("LD.UB R11,R9[0x0]");                            // the count the caller chose
@@ -3790,19 +4030,27 @@ function assembleProgram() {
         emit("LD.UH R9,R8[R9 << 0x1]");
         emit("ADD R12,R11");                                  // key + those degrees
         emit("MOV R8,0x0");
+        emit("MOV R11,0x6814");                               // one period of pitch: number cell 10 (R11 is saved above)
+        emit("LD.UH R11,R11[0x0]");
         padTo(peWrap);
         emit("CP.W R12,0x1f");
-        emit(StringFormat("BR{le} 0x%x", peNoWrap));
+        emit(StringFormat("BR{le} 0x%x", peDown));
         emit("SUB R12,R9");                                   // back one period of keys
-        emit(StringFormat("SUB R8,-0x%x", number("octave_units", 484, 1, 2000)));
+        emit("ADD R8,R11");                                   // and up one of pitch
         emit(StringFormat("RJMP 0x%x", peWrap));
+        padTo(peDown);
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ge} 0x%x", peNoWrap));
+        emit("ADD R12,R9");                                   // on one period of keys
+        emit("SUB R8,R11");                                   // and down one of pitch
+        emit(StringFormat("RJMP 0x%x", peDown));
         padTo(peNoWrap);
         emit("LD.SH R12,R10[R12 << 0x1]");
         emit("ADD R12,R8");
         emit("LDM SP++,R8,R9,R10,R11,PC");
         padTo(pePool);
-        word(0x80019af8); // the three slot tables
-        word(0x8001e2d0); // the keys-per-period table
+        word(0x000068e0); // the three slot tables, in the settings mirror
+        word(0x000069a0); // the keys-per-period table, in the settings mirror
         finish("preset_entry", 0x8001e488);
 
         // R9 = the MIDI shift so far.  While a recorded step is the thing
@@ -3951,11 +4199,9 @@ function assembleProgram() {
         word(0x8001d960);
         finish("knob4_octave_switch", 0x8001b050);
 
-        if (block("knob4_octave_switch")) {
-            begin(0x800051f0);
-            word(0x8001d920);
-            finish("knob4_early_pool", 0x800051f4);
-        }
+        begin(0x800051f0);
+        word(kbEarly);     // knob4_early_dispatch: knob4_early, or the factory's ADC event handler
+        finish("knob4_early_pool", 0x800051f4);
 
         // Knob 2 as a bank of step patterns.  A pattern says whether a step
         // sounds, which is not a question about how long the step is, so this
@@ -3969,12 +4215,15 @@ function assembleProgram() {
         // through it.
         //
         // Knob 2 picks the pattern; RAM 0x6150 is the step, wrapped at that
-        // pattern's own length.
+        // pattern's own length.  The bank is the mirror's, so knob 2 spreads
+        // over as many patterns as it holds - up to its first zero length -
+        // and not the count the image was built with: a bank that came over
+        // MIDI is reached whole, and a shorter one leaves no silent positions.
         begin(0x8001b050);
         emit("STM --SP,R0,R1,R7,LR");
         emit("MOV R7,SP");
         emit("MOV R0,R12");             // hold the caller's argument
-        emit("LDDPC R1,0x8001b0f0");    // state base
+        emit("MCALL PC[0x8001b0f0]");   // pattern_count_of: R9, R8 kept
         // Which pattern: knob 2's latch across the bank.
         emit("MOV R8,0x60e6");
         emit("LD.SH R8,R8[0x0]");
@@ -3982,7 +4231,6 @@ function assembleProgram() {
         emit("BR{ge} 0x8001b06c");
         emit("MOV R8,0x0");
         padTo(0x8001b06c);
-        emit(StringFormat("MOV R9,0x%x", number("pattern_count", 1, 1, 32)));
         emit("MUL R8,R8,R9");
         emit("LSR R8,0xa");
         emit("CP.W R8,R9");
@@ -3997,6 +4245,7 @@ function assembleProgram() {
         emit("LD.UH R12,R10[0x2]");
         emit("LSL R12,0x10");
         emit("OR R11,R12");             // the 32 steps
+        emit("MOV R1,R11");             // kept whole: an empty mask plays every step
         emit("LDDPC R10,0x8001b0f8");   // lengths
         emit("ADD R10,R10,R8 << 0x1");
         emit("LD.UH R9,R10[0x0]");
@@ -4031,14 +4280,19 @@ function assembleProgram() {
         emit("MCALL PC[0x8001b0fc]");
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001b0d8);
+        // A pattern with no steps at all is no pattern: every step sounds.
+        // The bank of an image built without patterns is one such, and an
+        // NRPN sender can turn knob 2 to patterns without sending a bank.
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001b0c4");
         emit("MOV R12,0x0");
         emit("SUB R12,0x1");            // a rest
         emit("LDM SP++,R0,R1,R7,PC");
         padTo(0x8001b0f0);
-        word(0x00003560); // global state base
-        word(0x80019f20); // pattern bank
-        word(0x80019fa0); // pattern lengths
-        word(number("knob1_orders", 0, 0, 1) == 1 ? 0x8001aec0 : 0x8001a0a0);
+        word(pcEntry);     // pattern_count_of
+        word(0x000069a8); // pattern bank, in the settings mirror
+        word(0x00006a28); // pattern lengths, in the settings mirror
+        word(kbK1);        // knob1_dispatch: the blend, the zones, or the factory selector
         finish("arp_pattern_gate", 0x8001b100);
 
         // Knob 2 as swing.  The randomiser it replaces answers the same
@@ -4294,22 +4548,25 @@ function assembleProgram() {
         // Held.  Count towards the arm, saturating rather than wrapping -
         // wrapping would disarm a long hold when the count passed zero.
         emit("LD.UH R8,R1[0x0]");
-        emit(StringFormat("MOV R9,0x%x",
-             number("chord_hold_scans", 300, 20, 2000)));
+        emit("MOV R9,0x6810");          // settings cell 8: a compact load reaches 14 bytes, not 16
+        emit("LD.UH R9,R9[0x0]");       // chord_hold_scans
         emit("CP.W R8,R9");
-        emit("BR{ge} 0x8001b1ae");
+        emit("BR{ge} 0x8001b1b0");
         emit("SUB R8,-0x1");
         emit("ST.H R1[0x0],R8");
-        padTo(0x8001b1ae);
+        padTo(0x8001b1b0);
         emit("LD.UB R10,R1[0x2]");      // armed?
         emit("CP.W R10,0x0");
-        emit("BR{ne} 0x8001b1cc");
+        emit("BR{ne} 0x8001b1ce");
         emit("CP.W R8,R9");
         emit("BR{lt} 0x8001b200");      // not long enough yet
         // A hold whose knob has moved is a preset edit, not a chord.  The
-        // editor flags that pad as following at 0x614a + pad.
-        emit("MOV R10,0x614d");
-        emit("LD.UB R10,R10[0x0]");
+        // editor flags that pad as following at 0x614a + pad.  And a hold
+        // with the sequencer off is nothing at all: seq_arm_gate reads that
+        // flag and then the live option byte, and answers zero only when
+        // both allow (stage 2 phase D).  The chord's own pool is full, so
+        // the helper's word rides in the slack before write_channel.
+        emit("MCALL PC[0x8001b29c]");   // seq_arm_gate -> R10 zero to arm
         emit("CP.W R10,0x0");
         emit("BR{ne} 0x8001b200");
         emit("MOV R10,0x1");
@@ -4321,7 +4578,7 @@ function assembleProgram() {
         emit("LD.UB R10,R1[0x9]");
         emit("ST.B R1[0x5],R10");
 
-        padTo(0x8001b1cc);
+        padTo(0x8001b1ce);
         // The selecting press must not also pick a preset, so the active pad
         // is frozen for as long as the arm lasts.  Freezing beats undoing
         // each press: it cannot race the factory's own pad handler.
@@ -4440,6 +4697,8 @@ function assembleProgram() {
         padTo(0x8001b28a);
         emit("MCALL PC[0x8001b310]");   // led_flush: free when nothing changed
         emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001b29c);
+        word(sqArm);                    // seq_arm_gate: the hold flag, then the live option byte
 
         padTo(0x8001b2a0);
         // write_channel(R11 = channel, R9 = lit or not).
@@ -4740,8 +4999,8 @@ function assembleProgram() {
         emit("CP.W R9,0x40");
         emit("BR{ge} 0x8001b5fa");      // 64 steps and no more
         emit("LD.SH R12,R11[0x1fe]");   // where the finger left
-        emit(StringFormat("MOV R8,0x%x",
-             number("strip_halfway_units", 2048, 128, 3968)));
+        emit("LDDPC R8,0x8001b60c");     // the settings mirror
+        emit("LD.UH R8,R8[0x2]");       // strip_halfway_units, settings cell 1
         emit("MOV R11,0x2");            // above halfway: a tie
         emit("CP.W R12,R8");
         emit("BR{ge} 0x8001b5e0");
@@ -4764,6 +5023,7 @@ function assembleProgram() {
         word(0x80002e30); // bend(position)
         word(0x00003560); // global state base
         word(0x8001b550); // the take's reference, adopted on the first step
+        word(0x00006800); // the settings mirror
         finish("seq_strip", 0x8001b610);
 
         // The glide rate, stored.  Normally whatever the clamp worked out -
@@ -4793,8 +5053,8 @@ function assembleProgram() {
         emit("BR{eq} 0x8001b63c");
         // A tie in hand, and the knob up: the slide is the tie's, 303
         // fashion, rather than the knob's own time.
-        emit(StringFormat("MOV R8,0x%x",
-             number("tie_glide_rate", 60, 1, 1024)));
+        emit("LDDPC R8,0x8001b658");     // the settings mirror
+        emit("LD.UH R8,R8[0x0]");       // tie_glide_rate, settings cell 0
         emit("RJMP 0x8001b648");
         padTo(0x8001b63c);
         // Playing, no tie in hand: the portamento knob means TIME here, the
@@ -4815,7 +5075,8 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x8001b654);
         word(0x80015150); // the factory glide-rate table
-        finish("seq_glide", 0x8001b658);
+        word(0x00006800); // the settings mirror
+        finish("seq_glide", 0x8001b660);
 
         // Scheduled diagnostic counter and long-low banking. Short low phases
         // and input intervals are measured with COUNT in the GPIO ISR.
@@ -5126,7 +5387,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001b9c8]");   // and the gate, the pass it expires
             emit("LDM SP++,R7,PC");
             padTo(0x8001b9c0);
-            word(0x8001c400); // clock_service
+            word(block("clock_thresholds") ? 0x8001c3c0 : 0x8001c400); // clock_thresholds, then clock_service
             word(feature("scan_profiler") ? 0x8001a540 : 0x80004c64);
             word(0x8001c100); // pending-output service: the fast trigger
             finish("clock_scan", 0x8001b9cc);
@@ -5137,7 +5398,7 @@ function assembleProgram() {
             emit("MCALL PC[0x8001b9c0]");
             emit("LDM SP++,R7,PC");
             padTo(0x8001b9bc);
-            word(0x8001c400); // clock_service
+            word(block("clock_thresholds") ? 0x8001c3c0 : 0x8001c400); // clock_thresholds, then clock_service
             word(feature("scan_profiler") ? 0x8001a540 : 0x80004c64);
             finish("clock_scan", 0x8001b9c4);
         }
@@ -5178,8 +5439,9 @@ function assembleProgram() {
         emit("CP.W R11,R9");
         emit("BR{gt} 0x8001c878");
         emit("LD.UB R11,R10[0x6]");
-        emit(StringFormat("CP.W R11,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
+        emit("MOV R9,0x6800");
+        emit("LD.UH R9,R9[0x8]");       // clock_lock_pulses, settings cell 4
+        emit("CP.W R11,R9");
         emit("BR{ge} 0x8001c87c");
         emit("SUB R11,-0x1");
         emit("RJMP 0x8001c87c");
@@ -5200,8 +5462,13 @@ function assembleProgram() {
         emit("ST.H R10[0x2],R8");       // diagnostic dispatch time only
         emit("MOV R9,0x6233");
         emit("LD.UB R11,R10[0x6]");
-        emit(StringFormat("CP.W R11,0x%x",
-             number("clock_lock_pulses", 5, 2, 32)));
+        // The cell the count above stops at, not the build's number: with
+        // fewer pulses in the record than in the build the count would
+        // stop short of the lock and the clock would never lock.  R12 is
+        // set again below before anything reads it.
+        emit("MOV R12,0x6800");
+        emit("LD.UH R12,R12[0x8]");     // clock_lock_pulses, settings cell 4
+        emit("CP.W R11,R12");
         emit("BR{lt} 0x8001c8ac");
         emit("MOV R11,0x1");
         emit("ST.B R9[0x0],R11");       // once acquired, latched until timeout
@@ -6674,17 +6941,36 @@ function assembleProgram() {
         emit("MOV R11,0x46f3");
         emit("LD.UB R11,R11[0x0]");
         emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001d9b0");
+        emit("BR{ne} 0x8001d9a0");
         emit("LD.SH R11,R10[0x58]");   // last unheld snapshot: 0x6148
         emit("SUB R11,R8,R11 << 0x0");
         emit("CP.W R11,0x8");
         emit("BR{gt} 0x8001d9d0");
         emit("CP.W R11,-0x8");
         emit("BR{lt} 0x8001d9d0");
-        padTo(0x8001d9b0);
-        emit(StringFormat("MOV R11,0x%x", number("knob4_zones", 9, 3, 16)));
-        emit("MUL R8,R8,R11");
+        padTo(0x8001d9a0);
+        // How many zones the knob has: three that mean no transpose, then
+        // one per period up to six octaves' reach, thirteen at most - nine
+        // at the octave, as the factory has it, and six for a tritave.
+        // Worked out here from number cell 10 rather than baked in, so a
+        // record with another period fits this image and the knob follows
+        // it.  The cell's bounds, 1..2000, keep the quotient at one or more;
+        // the unsigned clamp holds the top whatever the cell says.  DIVU
+        // wants an even destination and takes the next register for the
+        // remainder, so R10 and R11 go, and R10 is 0x60f0 again below.
+        emit("MOV R11,0x6814");         // the period: number cell 10
+        emit("LD.UH R11,R11[0x0]");
+        emit(StringFormat("MOV R10,0x%x",
+             number("knob4_reach_units", 2904, 1, 0x7fff)));
+        emit("DIVU R10,R10,R11");       // periods in reach; R11 the remainder
+        emit("CP.W R10,0xd");
+        emit("BR{ls} 0x8001d9b6");
+        emit("MOV R10,0xd");
+        padTo(0x8001d9b6);
+        emit("SUB R10,-0x3");           // the three silent zones
+        emit("MUL R8,R8,R10");
         emit("LSR R8,0xa");
+        emit("MOV R10,0x60f0");
         emit("ST.H R10[0x0],R8");
         padTo(0x8001d9d0);
         emit("LD.UH R8,R10[0x0]");
@@ -6819,6 +7105,13 @@ function assembleProgram() {
         emit("MOV R8,0x854");
         emit("LD.UH R9,R8[R12 << 0x1]");
         if (feature("arp_latch")) {
+            // And only while the latch is live: a stamp left in RAM by a
+            // session with the latch on must not reorder the regular arp
+            // after a restart with it off.
+            emit("MOV R8,0x6d28");
+            emit("LD.UB R8,R8[0x0]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8001dc30");
             emit("MOV R8,0x3560");
             emit("LD.UB R8,R8[0x340]");
             emit("CP.W R8,0x1");
@@ -7278,8 +7571,10 @@ function assembleProgram() {
         emit("ST.H R10[0x4e4],R9");     // 0x6584: the transpose shadow
         padTo(0x8001e634);
         if (feature("arp_latch")) {
-            emit("LD.UB R9,R8[0x1]");
-            emit("CP.W R9,0x2");
+            // Pad 2's level against "held", through latch_pad_test, which
+            // answers "not held" while the latch is off so this chord never
+            // counts and the factory's own latch chord has the pads.
+            emit(StringFormat("MCALL PC[0x%x]", ltPool + 20));
             emit("BR{ne} 0x8001e698");
             emit("LD.UB R9,R8[0x2]");
             emit("CP.W R9,0x2");
@@ -7303,8 +7598,8 @@ function assembleProgram() {
             emit("BR{ne} 0x8001e6b0");
             emit("MOV R10,0x6582");
             emit("LD.UH R9,R10[0x0]");
-            emit(StringFormat("MOV R11,0x%x",
-                 number("latch_state_hold_scans", 200, 20, 2000)));
+            emit("MOV R11,0x6812");     // settings cell 9, as a base for the compact load
+            emit("LD.UH R11,R11[0x0]"); // latch_state_hold_scans
             emit("CP.W R9,R11");
             emit("BR{gt} 0x8001e6b0");  // fired already: wait for the release
             emit("SUB R9,-0x1");
@@ -7573,9 +7868,11 @@ function assembleProgram() {
         emit("MOV R8,0x0");
         emit("MOV R9,0x6502");
         emit("ST.B R9[0x0],R8");
+        emit("MCALL PC[0x8001dfa4]");   // seq_restart_clear: the sequencer's runtime, so no restart resumes a take
         emit("LDM SP++,R7,PC");
         padTo(0x8001dfa0);
         word(0x8001ab60);
+        word(sqcEntry);
         finish("seq_restart_init", 0x8001dfa8);
 
         begin(0x8001dfa8);
@@ -7644,15 +7941,17 @@ function assembleProgram() {
         emit("MOV R9,0x3e8");
         emit("DIVU R8,R8,R9");
         emit("ST.W R10[0x0],R8");       // cycles/ms
-        emit(StringFormat("MOV R9,0x%x", number("clock_min_ms", 4, 1, 4)));
+        // One base for both cells: the every-block build has two bytes to
+        // spare here, not six.
+        emit("MOV R11,0x6800");         // the settings mirror
+        emit("LD.UH R9,R11[0x4]");      // clock_min_ms, settings cell 2
         emit("MUL R9,R8,R9");
         emit("ST.W R10[0x8],R9");
         emit(StringFormat("MOV R9,0x%x",
              number("clock_release_ms", 2600, 100, 32000)));
         emit("MUL R9,R8,R9");
         emit("ST.W R10[0xc],R9");
-        emit(StringFormat("MOV R9,0x%x",
-             number("clock_rearm_us", 250, 1, 1000)));
+        emit("LD.UH R9,R11[0x6]");      // clock_rearm_us, settings cell 3
         emit("MUL R8,R8,R9");
         emit("MOV R9,0x3e8");
         emit("DIVU R8,R8,R9");
@@ -7675,6 +7974,32 @@ function assembleProgram() {
         padTo(0x8001c3b8);
         word(0x80007340);
         finish("clock_init", 0x8001c3c0);
+
+        // clock_min_ms and clock_rearm_us as the capture ISR compares them:
+        // COUNT cycles, from settings cells 2 and 3.  clock_init works them
+        // out once at boot; this works them out again on every pass of the
+        // main-loop wrapper, in front of clock_service, so a record or an
+        // NRPN write that changes either cell reaches the thresholds without
+        // a restart.  One reader covers every writer of the cells - a
+        // receive, a reload, the defaults, a boot - where a refresh per
+        // writer would miss the next one added.  Each threshold is a single
+        // word store, which the ISR reads whole.  Spends R8-R11:
+        // clock_service takes no arguments, and the wrapper keeps nothing
+        // live across the call.
+        begin(0x8001c3c0);
+        emit("MOV R10,0x6244");
+        emit("LD.W R8,R10[0x0]");       // cycles/ms
+        emit("MOV R11,0x6800");         // the settings mirror
+        emit("LD.UH R9,R11[0x4]");      // clock_min_ms, settings cell 2
+        emit("MUL R9,R8,R9");
+        emit("ST.W R10[0x8],R9");
+        emit("LD.UH R9,R11[0x6]");      // clock_rearm_us, settings cell 3
+        emit("MUL R8,R8,R9");
+        emit("MOV R9,0x3e8");
+        emit("DIVU R8,R8,R9");
+        emit("ST.W R10[0x4],R8");
+        emit("RJMP 0x8001c400");        // clock_service, returning to the wrapper
+        finish("clock_thresholds", 0x8001c400);
 
         // One bounded main-loop dequeue. The short critical section covers
         // timeout and tail publication; SR is restored EXACTLY, including
@@ -8099,7 +8424,7 @@ function assembleProgram() {
         emit("LDDPC R8,0x8001c0ec");
         emit("MOV PC,R8");
         padTo(0x8001c0ec);
-        word(0x8001998e); // pitch_remap_calibration, minus its chain
+        word(calBareEntry); // cal_bare: pitch_remap_calibration minus its chain, or the calibration entry
         finish("clock_remap_bare", 0x8001c0f0);
 
         // The trigger's rise, moved off the 5 ms pitch scan and onto the 1 kHz
@@ -8290,10 +8615,12 @@ function assembleProgram() {
         emit("LD.SH R11,R10[0x216]");
         emit("ADD R12,R11");
         // and the scan's own clamp, both ends, so what is staged here cannot
-        // leave the range 0x3210 is held to.
-        emit("CP.W R12,0x0");
+        // leave the range 0x3210 is held to: -remapOffset, entry 0 of the
+        // pitch table, up to 0xfff.
+        emit(StringFormat("MOV R11,-0x%x", remapOffset));
+        emit("CP.W R12,R11");
         emit(StringFormat("BR{ge} 0x%x", fastClampLow));
-        emit("MOV R12,0x0");
+        emit("MOV R12,R11");
         padTo(fastClampLow);
         emit("MOV R11,0xfff");
         emit("CP.W R12,R11");
@@ -8307,9 +8634,10 @@ function assembleProgram() {
             emit("MOV R11,0x60e2");
             emit("LD.SH R11,R11[0x0]");
             emit("ADD R12,R11");
-            emit("CP.W R12,0x0");
+            emit(StringFormat("MOV R11,-0x%x", remapOffset));
+            emit("CP.W R12,R11");
             emit(StringFormat("BR{ge} 0x%x", fastStage));
-            emit("MOV R12,0x0");
+            emit("MOV R12,R11");
         }
         padTo(fastStage);
         emit(StringFormat("MCALL PC[0x%x]", fastPool + 4));  // pitch, slot 2
@@ -8778,8 +9106,11 @@ function assembleProgram() {
         emit("CP.W R8,0x40");
         emit("BR{ge} 0x8001e088");      // 64 steps: the release will refuse it
         emit("LD.SH R12,R9[0x1fe]");    // where the finger is
-        emit(StringFormat("MOV R8,0x%x",
-             number("strip_halfway_units", 2048, 128, 3968)));
+        // Halfway is settings cell 1, the one seq_strip_release decides the
+        // tie by, so the lamp cannot disagree with what is recorded.  R11
+        // is 0x657a here, which reaches 0x6802 in the four bytes the build's
+        // number took.
+        emit("LD.UH R8,R11[0x288]");    // strip_halfway_units, settings cell 1
         emit("CP.W R12,R8");
         emit("BR{ge} 0x8001e09c");      // above halfway: the tie's lamp
         padTo(0x8001e080);
@@ -9173,9 +9504,9 @@ function assembleProgram() {
         begin(0x8001baa0);
         emit("STM --SP,R0,R1,R2,R7,R10,R11,LR");
         emit("MOV R7,SP");
-        if (number("knob1_orders", 0, 0, 1) == 0) {
-            emit("MOV R8,0x60f2");
-            emit("LD.UB R8,R8[0x0]");   // knob 1, 0..127
+        {
+            emit("MOV R8,0x6d38");
+            emit("LD.UB R8,R8[0x0]");   // knob 1's blend latch, 0..127, zero unless knob 1 blends
             emit("CP.W R8,0x0");
             emit("BR{eq} 0x8001bad4");  // at zero the draw is not even taken
             // Everything still needed after the draw goes into R0..R2, which
@@ -9821,7 +10152,7 @@ function assembleProgram() {
         emit("MOV R7,SP");
         emit("MCALL PC[0x8001ac80]");
         emit("LDDPC R10,0x8001a534");
-        padTo(0x8001a4dc);
+        padTo(0x8001a4d0);
         if (feature("arp_latch")) {
             // Leaving the latch switch position releases the keys the latch
             // was holding - and ONLY those.  A key still under a finger is
@@ -9845,6 +10176,18 @@ function assembleProgram() {
             // flag is already clear, so a count that disagrees with its own
             // flags can never walk back down.
             emit("LD.UB R8,R10[0x340]");
+            // With the latch off the switch has no latch position: the
+            // factory's own latch (pads 2 & 3) holds released keys in the
+            // note flags, and the copy below handed them back to the touch
+            // flags on the way out of a latch that was never engaged.  The
+            // blend, this mirror's only reader, weighted held keys at stamps
+            // a restored hold state had written (audit 2026-09-24).
+            emit("MOV R9,0x6d28");
+            emit("LD.UB R9,R9[0x0]");
+            emit("CP.W R9,0x0");
+            emit("BR{ne} 0x8001a4e0");
+            emit("MOV R8,0x0");
+            padTo(0x8001a4e0);
             // Mirror the latch position where the blend can read it cheaply.
             emit("MOV R9,0x608e");
             emit("ST.B R9[0x0],R8");
@@ -9885,7 +10228,7 @@ function assembleProgram() {
         // With persistence on, the preset editor is reached through a shim
         // that runs editor, sequencer controls and persistence in that order,
         // so a completed gesture is committed in the same control scan.
-        word(block("persist") ? 0x8001d520 : 0x8001ae1c);
+        word(scEntry);                  // settings_scan, in front of the shim or the editor
         word(0x8001b180);              // the sequencer chord
         word(0x8001b980);              // the external clock, per scan
         padTo(0x8001a52c);
@@ -9894,12 +10237,13 @@ function assembleProgram() {
         word(0x00003560); // global state base
         finish("scan_housekeeping", 0x8001a53c);
 
-        // Note-off pointer pools -> latch-gated wrapper.
+        // Note-off pointer pools -> the latch dispatcher: the latch's wrapper
+        // while the latch is live, else the factory's own note-off.
         begin(0x80005b18);
-        word(0x8001a280);
+        word(ltOff);
         finish("noteoff_pool_1", 0x80005b1c);
         begin(0x80006278);
-        word(0x8001a280);
+        word(ltOff);
         finish("noteoff_pool_2", 0x8000627c);
 
         // Guard the touch-scan release bookkeeping, in place.
@@ -9934,18 +10278,20 @@ function assembleProgram() {
         emit("ST.B R10[0x238],R8");
         finish("release_count_guard", 0x80005f14);
 
-        // Repointed pulse-caller pools (arp advance + three key-scan sites).
+        // Repointed pulse-caller pools (arp advance + three key-scan sites):
+        // pulse_dispatch, which names the clock's settle-and-flush path or
+        // pulse_defer_set by the divider's live byte (stage 2 phase G).
         begin(0x8000243c);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_arp", 0x80002440);
         begin(0x80005ed8);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_key1", 0x80005edc);
         begin(0x800063fc);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_key2", 0x80006400);
         begin(0x800065a4);
-        word(block("clock_scan") ? 0x8001c700 : 0x8001a26c);
+        word(puEntry);
         finish("pulse_pool_key3", 0x800065a8);
 
         // Hook: the factory rate-table lookup and store routed through the
@@ -9986,24 +10332,36 @@ function assembleProgram() {
             finish("clock_gate_hook", 0x800021ee);
         }
 
-        // Clock builds never post event 10. A stale/synthetic event must not
-        // bypass the capture FIFO and advance a note without a physical edge.
-        if (block("clock_pulse")) {
-            begin(0x80004e72);
-            emit("RJMP 0x800051b0");
-            finish("clock_hook", 0x80004e7a);
-        }
+        // Event 10, the factory's physical-clock event: `MOV R12,0xffff;
+        // MCALL arp step`, eight bytes.  With the divider live the ISR never
+        // posts it, and a stale or synthetic one must not bypass the capture
+        // FIFO and advance a note without a physical edge, so the event is
+        // skipped; with the divider off the factory ISR posts it again and
+        // the step is made.  clock_event_dispatch decides (phase G), by the
+        // live byte, with the site's own LR.
+        begin(0x80004e72);
+        emit(StringFormat("MCALL PC[0x%x]", cePool + 4));   // clock_event_dispatch
+        emit("NOP");
+        emit("NOP");
+        finish("clock_hook", 0x80004e7a);
 
-        if (block("clock_capture")) {
-            // Keep the factory ISR prologue/epilogue and RETE. Replace ALL
-            // raw gate-low/post-event work, including the late IFR clear.
-            begin(0x800072ee);
-            emit("MCALL PC[0x80007334]");
-            emit("RJMP 0x80007322");
-            finish("clock_irq_hook", 0x80007322);
-            begin(0x80007334);
-            word(0x8001c200);
-            finish("clock_irq_pool", 0x80007338);
+        // Keep the factory ISR prologue/epilogue and RETE.  The hook covers
+        // the first six bytes of the body - the flag getter's call and the
+        // MOV that follows - and the rest of the factory body stays in
+        // flash: with the divider live clock_irq_dispatch runs the capture
+        // cave and comes back to the RJMP, which skips the factory body;
+        // with it off the dispatch replays those two instructions and
+        // continues at 0x800072f4, and the factory body reads the level,
+        // steps the arp, posts event 10 and clears the flag as it always
+        // did - a falling edge, which mode 0 now also delivers, reads low
+        // and only clears the flag.  The factory's own word at 0x80007334
+        // is left as the factory wrote it, since that body calls through
+        // it; the hook's word is the dispatch's own.
+        begin(0x800072ee);
+        emit(StringFormat("MCALL PC[0x%x]", ciPool + 8));   // clock_irq_dispatch
+        emit("RJMP 0x80007322");
+        finish("clock_irq_hook", 0x800072f4);
+        {
             singlePatch("clock_edge_mode", 0x8000737e, "MOV R11,0x0");
             // The trigger spike's own length.  The factory schedules the
             // drop with 3 at 0x80007888 and the owner measured that spike at
@@ -10017,12 +10375,2426 @@ function assembleProgram() {
                  "MOV R10,0x%x", number("trigger_spike_units", 5, 1, 5)));
         }
 
-        if (block("clock_capture") || block("persist") || block("seq_boot")) {
-            begin(0x80007d8c);
-            word(block("persist") ? 0x8001d540
-                 : block("clock_capture") ? 0x8001c300 : 0x8001dfa8);
-            finish("clock_init_pool", 0x80007d90);
+        // ---------------------------------------------------------------
+        // Settings: a RAM mirror the readers point at.  docs/PLAN-SETTINGS.md
+        // has the layout; tools/settings.py and web/buildlib.js write the
+        // record it loads.  Mirror at 0x6800: 32 numbers, the pitch curve,
+        // the three tuning tables, the keys-per-period table, the pattern
+        // bank and its lengths - the record's own bytes from offset 0x20 -
+        // then the loader's state at 0x6a70.  Every table reader above
+        // that used to name a flash table names a mirror address now, and
+        // the ten numbers that used to be immediates are LD.UH off a cell.
+        // ---------------------------------------------------------------
+
+        // Copy R10 halfwords from R11 to R12.  A leaf: nothing here calls.
+        begin(0x8001f000);
+        emit("LD.UH R8,R11[0x0]");
+        emit("ST.H R12[0x0],R8");
+        emit("SUB R11,-0x2");
+        emit("SUB R12,-0x2");
+        emit("SUB R10,0x1");
+        emit("BR{ne} 0x8001f000");
+        emit("MOV PC,LR");
+        finish("settings_copy", 0x8001f010);
+
+        function settingsCaves() {        // Validate a slot: R12 = its address, returns the generation, or
+        // zero.  Marker, version, length, generation, CRC, then the image
+        // marker and the period the record was made for, then every value's
+        // bounds - a halfword off flash is untrusted input, and a number
+        // past its range is a wrong immediate.  The bounds are the same ones
+        // number() enforces at each site, so a build that would refuse a
+        // value is a record that refuses it too.  Layout 2: 32 cells, the
+        // options among them, and one pair rule - pressure_portamento needs
+        // pressure_fix, as the page and the build refuse it.
+        begin(vdEntry);
+        emit("STM --SP,R0,R1,R2,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("LD.W R8,R0[0x0]");
+        emit(StringFormat("LDDPC R9,0x%x", vdPool));
+        emit("CP.W R8,R9");
+        emit(StringFormat("BR{ne} 0x%x", vdBad));
+        emit("LD.UH R8,R0[0x4]");
+        emit("CP.W R8,0x2");
+        emit(StringFormat("BR{ne} 0x%x", vdBad));
+        emit("LD.UH R8,R0[0x6]");
+        emit("CP.W R8,0x298");
+        emit(StringFormat("BR{ne} 0x%x", vdBad));
+        emit("LD.W R8,R0[0x8]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", vdBad));
+        // CRC-32 over bytes 4..11 then 0x10..0x2a7, one stream, as the
+        // musical record's: persist_crc takes the running value in R12.
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x4");
+        emit("MOV R10,0x8");
+        emit("MOV R12,-0x1");
+        emit(StringFormat("MCALL PC[0x%x]", vdPool + 4));
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x10");
+        emit("MOV R10,0x298");
+        emit(StringFormat("MCALL PC[0x%x]", vdPool + 4));
+        emit("MOV R8,-0x1");
+        emit("EOR R12,R8");
+        emit("LD.W R8,R0[0xc]");
+        emit("CP.W R12,R8");
+        emit(StringFormat("BR{ne} 0x%x", vdBad));
+        // A record is for one image: the marker every build derives from
+        // everything that shapes it.  The period at 0x012 is informational
+        // since 2026-09-23: cell 10 carries it and is bounded below.
+        emit("LD.UH R8,R0[0x10]");
+        emit(StringFormat("MOV R9,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("CASTU.H R9");             // a marker past 0x7fff would sign-extend
+        emit("CP.W R8,R9");
+        emit(StringFormat("BR{ne} 0x%x", vdBad));
+        // The 32 cells against the bounds table in settings_bounds.
+        emit("MOV R1,0x0");
+        emit(StringFormat("LDDPC R2,0x%x", vdPool + 8));   // the bounds table's address, off the pool
+        padTo(vdNum);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x20]");
+        emit("ADD R9,R2,R1 << 0x2");
+        emit("LD.UH R10,R9[0x0]");
+        emit("CP.W R8,R10");
+        emit(StringFormat("BR{lt} 0x%x", vdBad));
+        emit("LD.UH R10,R9[0x2]");
+        emit("CP.W R8,R10");
+        emit(StringFormat("BR{gt} 0x%x", vdBad));
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x20");
+        emit(StringFormat("BR{lt} 0x%x", vdNum));
+        // The pitch curve, its pad and the three tuning tables are one run
+        // of 176 halfwords.  The curve and its pad, the first 0x50, stay
+        // inside the 12-bit DAC; a tuning entry may sit above it, as the
+        // image's own tables always could - the pitch path clamps - up to
+        // the fourteen bits an NRPN value carries.  One test for both: the
+        // curve's entries go up two bits first, so anything at bit 14 or
+        // above is the refusal.
+        emit("MOV R1,0x0");
+        padTo(vdTab);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x60]");
+        emit("CP.W R1,0x50");
+        emit(StringFormat("BR{ge} 0x%x", vdTab + 0x10));
+        emit("LSL R8,0x2");
+        padTo(vdTab + 0x10);
+        emit("LSR R8,0xe");
+        emit(StringFormat("BR{ne} 0x%x", vdBad));
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0xb0");
+        emit(StringFormat("BR{lt} 0x%x", vdTab));
+        // Keys per period: one below is the unsigned wrap the HI branch
+        // catches.  Up to 32 where the key-table rotation is built, since
+        // its wrap loop walks a period of the 32-entry table; up to a
+        // .kbm's 127 positions otherwise, as the build allows.
+        emit("MOV R1,0x0");
+        padTo(vdKeys);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x1c0]");
+        emit("SUB R8,0x1");
+        emit(StringFormat("CP.W R8,0x%x", block("preset_entry") ? 0x1f : 0x7e));
+        emit(StringFormat("BR{hi} 0x%x", vdBad));
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x3");
+        emit(StringFormat("BR{lt} 0x%x", vdKeys));
+        // Pattern lengths, 0..32: zero is an unused pattern.
+        emit("MOV R1,0x0");
+        padTo(vdLen);
+        emit("ADD R8,R0,R1 << 0x1");
+        emit("LD.UH R8,R8[0x248]");
+        emit("CP.W R8,0x20");
+        emit(StringFormat("BR{hi} 0x%x", vdBad));
+        emit("SUB R1,-0x1");
+        emit("CP.W R1,0x20");
+        emit(StringFormat("BR{lt} 0x%x", vdLen));
+        // The pair: cell 24 (pressure_portamento) on needs cell 23
+        // (pressure_fix) on.  Record offsets 0x20 + 2 * cell.
+        emit("LD.UH R8,R0[0x50]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", vdGood));
+        emit("LD.UH R8,R0[0x4e]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", vdBad));
+        padTo(vdGood);
+        emit("LD.W R12,R0[0x8]");
+        emit(StringFormat("RJMP 0x%x", vdExit));
+        padTo(vdBad);
+        emit("MOV R12,0x0");
+        padTo(vdExit);
+        emit("LDM SP++,R0,R1,R2,R7,PC");
+        padTo(vdPool);
+        word(0x32313853); // "218S", the commit marker
+        word(0x8001cc00); // persist_crc
+        word(bdTable);     // settings_bounds: low and high for every cell
+        finish("settings_valid", vdEnd);
+
+        // The newer valid slot of the two: R12 = its address (zero if
+        // neither), R11 = its index (-1), R10 = its generation.  Serial
+        // arithmetic on the generation, as persist_newest does it.
+        begin(0x8001f150);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,0x0");
+        emit("MOV R1,0x0");
+        emit("MOV R2,0x0");
+        emit("MOV R3,-0x1");
+        padTo(0x8001f160);
+        emit("CP.W R0,0x2");
+        emit("BR{ge} 0x8001f1a0");
+        emit("MOV R8,R0");
+        emit("LSL R8,0xb");
+        emit("LDDPC R9,0x8001f1b0");
+        emit("ADD R8,R9");
+        emit("MOV R12,R8");
+        emit("ST.W --SP,R8");
+        emit("MCALL PC[0x8001f1b4]");
+        emit("LD.W R8,SP++");
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001f198");
+        emit("CP.W R1,0x0");
+        emit("BR{eq} 0x8001f190");
+        emit("SUB R9,R12,R2 << 0x0");
+        emit("CP.W R9,0x0");
+        emit("BR{le} 0x8001f198");
+        padTo(0x8001f190);
+        emit("MOV R2,R12");
+        emit("MOV R1,R8");
+        emit("MOV R3,R0");
+        padTo(0x8001f198);
+        emit("SUB R0,-0x1");
+        emit("RJMP 0x8001f160");
+        padTo(0x8001f1a0);
+        emit("MOV R12,R1");
+        emit("MOV R11,R3");
+        emit("MOV R10,R2");
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(0x8001f1b0);
+        word(0x8003d000); // the first slot; the second is 0x800 above it
+        word(0x8001f010); // settings_valid
+        finish("settings_newest", 0x8001f1c0);
+
+        // How many patterns the mirror's bank holds: pattern 0 always, then
+        // each one after it up to the first zero length, 32 at most.  A leaf
+        // for the pattern gate: answers R9, spends R10 and R11, keeps R8.
+        begin(pcEntry);
+        emit("MOV R10,0x6a2a");         // pattern 1's length
+        emit("MOV R9,0x1");
+        padTo(pcLoop);
+        emit("LD.UH R11,R10[0x0]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", pcDone));
+        emit("SUB R10,-0x2");
+        emit("SUB R9,-0x1");
+        emit("CP.W R9,0x20");
+        emit(StringFormat("BR{lt} 0x%x", pcLoop));
+        padTo(pcDone);
+        emit("MOV PC,LR");
+        finish("pattern_count_of", pcEnd);
+
+        // Boot.  The factory's startup pool word names this, and this
+        // continues into whatever that word used to name, so it runs before
+        // persist_boot restores the tuning slot and before the first scan
+        // copies that slot's table out of the mirror.  The image's own
+        // tables and numbers always go in first: a record can only lose
+        // edits, never the instrument's own tuning.
+        begin(0x8001f1c0);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001f1f0]");   // settings_defaults
+        emit("MCALL PC[0x8001f1f4]");   // settings_reload
+        emit("MCALL PC[0x8001f1fc]");   // option_boot: the option bytes, as booted
+        // The NRPN state: no parameter or data byte in hand, the dump
+        // cursor idle.  0x4000 is idle because it is past every parameter
+        // and a MOV of it is the same positive value a LD.UH reads back.
+        // The byte beside the data byte, 0x6a6b, is calibration mode's, so
+        // the same store turns the mode off: SRAM survives the 0x3f04
+        // restart, and no boot comes up in it.
+        emit("MOV R8,0x6a68");
+        emit("MOV R9,0x7f7f");          // parameter 0x3fff in hand: it names nothing
+        emit("ST.H R8[0x0],R9");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x2],R9");        // no data byte in hand, calibration mode off
+        emit("MOV R9,0x4000");
+        emit("ST.H R8[0x4],R9");
+        emit("ST.H R8[0x6],R9");
+        emit("MCALL PC[0x8001f1f8]");   // what the startup word used to name
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001f1f0);
+        word(0x8001f200); // settings_defaults
+        word(0x8001f300); // settings_reload
+        word(block("persist") ? 0x8001d540
+             : block("clock_capture") ? 0x8001c300
+             : block("seq_boot") ? 0x8001dfa8 : 0x80007340);
+        word(obEntry);     // option_boot: the live option bytes, as booted
+        finish("settings_boot", 0x8001f200);
+
+        // The image's own settings into the mirror: zero it, then the 32
+        // cells out of their table - the sites that used to carry the ten
+        // numbers as immediates load the cells - then the tables from where
+        // the image keeps them.  Also what NRPN 0x3f02 asks for.
+        begin(0x8001f200);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x0");
+        emit("MOV R10,0x6800");
+        emit("MOV R9,0x99");            // 0x9a words: the mirror, 0x6800..0x6a67
+        padTo(0x8001f210);
+        emit("ST.W R10[0x0],R8");
+        emit("SUB R10,-0x4");
+        emit("SUB R9,0x1");
+        emit("BR{ge} 0x8001f210");
+        // The tuning applier's guard, so the next scan copies the selected
+        // slot out of the tables put back here: NRPN 0x3f02 changes them
+        // under a slot that has not changed, which the guard alone would
+        // skip, leaving the previous table in play at RAM 0x854.
+        emit("MOV R9,0x60e4");
+        emit("ST.H R9[0x0],R8");
+        // The 32 cells - the ten numbers and the twelve options the config
+        // chose - as one copy out of settings_numbers.
+        emit("MOV R12,0x6800");
+        emit("LDDPC R11,0x8001f2f8");   // settings_numbers
+        emit("MOV R10,0x20");
+        emit("MCALL PC[0x8001f2f4]");
+        emit("MOV R12,0x6840");
+        emit("LDDPC R11,0x8001f2e0");   // the pitch curve
+        emit("MOV R10,0x4f");
+        emit("MCALL PC[0x8001f2f4]");
+        emit("MOV R12,0x68e0");
+        emit("LDDPC R11,0x8001f2e4");   // the three tuning tables
+        emit("MOV R10,0x60");
+        emit("MCALL PC[0x8001f2f4]");
+        emit("MOV R12,0x69a0");
+        emit("LDDPC R11,0x8001f2e8");   // keys per period
+        emit("MOV R10,0x3");
+        emit("MCALL PC[0x8001f2f4]");
+        // The bank only exists in the image when knob 2 plays patterns; any
+        // other build boots a zero bank, which the record carries too.
+        if (block("arp_pattern_tables")) {
+            var patterns = number("pattern_count", 1, 1, 32);
+            emit("MOV R12,0x69a8");
+            emit("LDDPC R11,0x8001f2ec");   // the masks, two halfwords each
+            emit(StringFormat("MOV R10,0x%x", 2 * patterns));
+            emit("MCALL PC[0x8001f2f4]");
+            emit("MOV R12,0x6a28");
+            emit("LDDPC R11,0x8001f2f0");   // the lengths
+            emit(StringFormat("MOV R10,0x%x", patterns));
+            emit("MCALL PC[0x8001f2f4]");
         }
+        padTo(0x8001f2d8);
+        emit("LDM SP++,R7,PC");
+        padTo(0x8001f2e0);
+        word(0x80019bc0); // the pitch curve, as emitted
+        word(0x80019af8); // the three tuning tables, as emitted
+        word(0x8001e2d0); // keys per period, as emitted
+        word(0x80019f20); // the pattern bank, when emitted
+        word(0x80019fa0); // its lengths, when emitted
+        word(0x8001f000); // settings_copy
+        word(nmTable);     // settings_numbers: the 32 cells as built
+        finish("settings_defaults", 0x8001f300);
+
+        // The newer valid record over the mirror, if there is one, and the
+        // loader's state either way: commit state clean, the slot loaded
+        // (0xff for none) and its generation, and the tuning applier's guard
+        // clear so the tables loaded here reach RAM 0x854 on the next scan.
+        // Boot, and NRPN 0x3f01.
+        begin(0x8001f300);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MCALL PC[0x8001f338]");   // settings_newest
+        emit("MOV R0,0x6a70");
+        emit("ST.B R0[0x1],R11");
+        emit("ST.W R0[0x4],R10");
+        emit("MOV R8,0x0");
+        emit("ST.B R0[0x0],R8");
+        emit("MOV R9,0x60e4");
+        emit("ST.H R9[0x0],R8");        // the applier re-copies the slot, as for 0x3f02
+        emit("CP.W R12,0x0");
+        emit("BR{eq} 0x8001f330");
+        emit("MOV R11,R12");
+        emit("SUB R11,-0x20");
+        emit("MOV R12,0x6800");
+        emit("MOV R10,0x134");
+        emit("MCALL PC[0x8001f33c]");   // settings_copy
+        padTo(0x8001f330);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(0x8001f338);
+        word(0x8001f150); // settings_newest
+        word(0x8001f000); // settings_copy
+        finish("settings_reload", 0x8001f340);
+
+        // Where a parameter lives.  R12 = the 14-bit NRPN parameter number;
+        // returns R12 = its mirror address (zero for a number that names
+        // nothing), R11 = kind (0 a halfword, 1 a third of a pattern mask,
+        // 2 a live option byte, which a dump reads and a receive ignores),
+        // R10 and R9 = the value's bounds, and for a mask R8 = which third.
+        // A leaf: the receive and the dump both ask it, so the map is in one
+        // place.  docs/PLAN-SETTINGS.md has the map, PLAN-SETTINGS-2.md the
+        // cells and the live section.
+        begin(tgEntry);
+        emit("CP.W R12,0x20");
+        emit(StringFormat("BR{ge} 0x%x", tgLive));
+        // 0x0000..0x001f: the 32 cells, bounded by settings_bounds.
+        emit(StringFormat("LDDPC R9,0x%x", tgPool));
+        emit("ADD R9,R9,R12 << 0x2");
+        emit("LD.UH R10,R9[0x0]");
+        emit("LD.UH R9,R9[0x2]");
+        emit("MOV R11,0x0");
+        emit("MOV R8,0x6800");
+        emit("ADD R12,R8,R12 << 0x1");
+        emit("MOV PC,LR");
+        padTo(tgLive);
+        // 0x0020..0x002f: the live option bytes, read-only.
+        emit("CP.W R12,0x30");
+        emit(StringFormat("BR{ge} 0x%x", tgPitch));
+        emit("MOV R11,0x2");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0xff");
+        emit("MOV R8,0x6d28");
+        emit("SUB R12,0x20");
+        emit("ADD R12,R8");
+        emit("MOV PC,LR");
+        padTo(tgPitch);
+        // 0x0080..0x00ce: the pitch curve.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x80");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{lt} 0x%x", tgNone));
+        emit("CP.W R8,0x4f");
+        emit(StringFormat("BR{ge} 0x%x", tgTune));
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0xfff");
+        emit("MOV R12,0x6840");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(tgTune);
+        // 0x0100..0x015f: the three tuning tables, one run.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x100");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{lt} 0x%x", tgNone));
+        emit("CP.W R8,0x60");
+        emit(StringFormat("BR{ge} 0x%x", tgKeys));
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0x3fff");        // a tuning entry: fourteen bits, as the loader
+        emit("MOV R12,0x68e0");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(tgKeys);
+        // 0x0160..0x0162: keys per period, the bound settings_valid has.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x160");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{lt} 0x%x", tgNone));
+        emit("CP.W R8,0x3");
+        emit(StringFormat("BR{ge} 0x%x", tgMask));
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x1");
+        emit(StringFormat("MOV R9,0x%x", block("preset_entry") ? 0x20 : 0x7f));
+        emit("MOV R12,0x69a0");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(tgMask);
+        // 0x0180..0x01df: three parameters per pattern mask - bits 0..13,
+        // 14..27 and 28..31 - so 32 bits ride on 14-bit values.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x180");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{lt} 0x%x", tgNone));
+        emit("CP.W R8,0x60");
+        emit(StringFormat("BR{ge} 0x%x", tgLen));
+        emit("MOV R10,0x3");
+        emit("DIVU R8,R8,R10");         // R8 = pattern, R9 = third
+        emit("MOV R12,0x69a8");
+        emit("ADD R12,R12,R8 << 0x2");
+        emit("MOV R8,R9");
+        emit("MOV R11,0x1");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0x3fff");
+        emit("MOV PC,LR");
+        padTo(tgLen);
+        // 0x01e0..0x01ff: pattern lengths; zero is an unused pattern.
+        emit("MOV R8,R12");
+        emit("SUB R8,0x1e0");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{lt} 0x%x", tgNone));
+        emit("CP.W R8,0x20");
+        emit(StringFormat("BR{ge} 0x%x", tgNone));
+        emit("MOV R11,0x0");
+        emit("MOV R10,0x0");
+        emit("MOV R9,0x20");
+        emit("MOV R12,0x6a28");
+        emit("ADD R12,R12,R8 << 0x1");
+        emit("MOV PC,LR");
+        padTo(tgNone);
+        emit("MOV R12,0x0");
+        emit("MOV PC,LR");
+        padTo(tgPool);
+        word(bdTable);     // settings_bounds
+        finish("settings_target", tgEnd);
+
+        // Apply one received value.  R12 = parameter, R11 = 14-bit value.
+        // Parameters from 0x3f00 are commands: 0x3f00 with 0x2a2a asks for
+        // a commit on the next scan, 0x3f01 reloads the mirror from flash
+        // (the image's own settings where no record is valid),
+        // 0x3f02 puts the image's own settings back, 0x3f03 starts a dump,
+        // 0x3f7f asks for the identity block.  Anything else names a cell:
+        // out of range is ignored, not clamped - the page is expected to
+        // know the bounds, and a wrong value is better left unapplied than
+        // applied as some other value.  A tuning write clears the applier's
+        // guard so the next scan re-copies the slot on show.  0x3f04 with
+        // the commit's key restarts the instrument through the watchdog,
+        // which is how a changed option cell takes effect; a live option
+        // byte (0x20..0x2f) is read-only and a write to one is ignored.
+        // 0x3f05 is calibration mode, in cal_command: on with the key, off
+        // with any other value.
+        // Every label in these caves is a constant, so a cave that grows
+        // moves as one edit rather than a chain of them.
+        begin(apEntry);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R1,R11");
+        emit("CP.W R0,0x3f00");
+        emit(StringFormat("BR{lt} 0x%x", apData));
+        emit(StringFormat("BR{ne} 0x%x", apC1));
+        emit("CP.W R1,0x2a2a");
+        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit("MOV R8,0x6a70");
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x0],R9");        // commit requested
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC1);
+        emit("CP.W R0,0x3f01");
+        emit(StringFormat("BR{ne} 0x%x", apC2));
+        // As at boot: the image's own settings, then the newer valid record
+        // over them.  The reload alone copies nothing when neither slot is
+        // valid, which left the edits in place on a keyboard that has never
+        // committed; the next boot would have dropped them.
+        emit(StringFormat("MCALL PC[0x%x]", apPool + 8));   // settings_defaults
+        emit(StringFormat("MCALL PC[0x%x]", apPool + 4));   // settings_reload
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC2);
+        emit("CP.W R0,0x3f02");
+        emit(StringFormat("BR{ne} 0x%x", apC3));
+        emit(StringFormat("MCALL PC[0x%x]", apPool + 8));   // settings_defaults
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC3);
+        emit("CP.W R0,0x3f03");
+        emit(StringFormat("BR{ne} 0x%x", apC4));
+        emit("MOV R8,0x6a68");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x4],R9");        // the dump cursor, from the first parameter
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC4);
+        emit("CP.W R0,0x3f04");
+        emit(StringFormat("BR{ne} 0x%x", apC5));
+        emit("CP.W R1,0x2a2a");
+        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit(StringFormat("MCALL PC[0x%x]", apPool + 12));  // settings_restart: never returns
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apC5);
+        emit("CP.W R0,0x3f7f");
+        emit(StringFormat("BR{ne} 0x%x", calCmdEntry));    // cal_command: 0x3f05, or nothing
+        emit("MOV R8,0x6a68");
+        emit("MOV R9,0x3f76");
+        emit("ST.H R8[0x4],R9");        // the cursor at the identity block alone
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apData);
+        emit("MOV R12,R0");
+        emit(StringFormat("MCALL PC[0x%x]", apPool));       // settings_target
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", apDone));
+        emit("CP.W R11,0x1");
+        emit(StringFormat("BR{eq} 0x%x", apMask));
+        emit("CP.W R11,0x2");
+        emit(StringFormat("BR{eq} 0x%x", apDone));          // a live byte: read-only
+        emit("CP.W R1,R10");
+        emit(StringFormat("BR{lt} 0x%x", apDone));
+        emit("CP.W R1,R9");
+        emit(StringFormat("BR{gt} 0x%x", apDone));
+        // The pair, on receive as on load: pressure_portamento (cell 24,
+        // 0x6830) on is ignored while pressure_fix (cell 23, 0x682e) is
+        // off, and pressure_fix going off takes pressure_portamento with
+        // it, so the mirror never holds a pair the loader would refuse.
+        emit("MOV R8,0x6830");
+        emit("CP.W R12,R8");
+        emit(StringFormat("BR{ne} 0x%x", apStore));
+        emit("CP.W R1,0x0");
+        emit(StringFormat("BR{eq} 0x%x", apStore));
+        emit("LD.UH R9,R12[-0x2]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", apDone));
+        padTo(apStore);
+        emit("ST.H R12[0x0],R1");
+        emit("MOV R8,0x682e");
+        emit("CP.W R12,R8");
+        emit(StringFormat("BR{ne} 0x%x", apTuning));
+        emit("CP.W R1,0x0");
+        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit("MOV R9,0x0");
+        emit("ST.H R12[0x2],R9");
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apTuning);
+        // The slot tables, the keys per period behind them and number cell
+        // 10 all shape the table the jack's rotation builds at RAM 0x854,
+        // which it rebuilds only when its own state word or the table's
+        // first entry changes: a write to any of them clears the applier's
+        // guard, so the slot is copied again and the rotation follows.
+        emit("CP.W R12,0x6814");
+        emit(StringFormat("BR{eq} 0x%x", apTuning + 0x12));
+        emit("CP.W R12,0x68e0");
+        emit(StringFormat("BR{lt} 0x%x", apDone));
+        emit("CP.W R12,0x69a6");
+        emit(StringFormat("BR{ge} 0x%x", apDone));
+        padTo(apTuning + 0x12);
+        emit("MOV R8,0x60e4");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x0],R9");        // the applier re-copies the slot on show
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apMask);
+        // A third of a mask: the low halfword holds bits 0..15, the high
+        // one 16..31, and the middle third straddles them.
+        emit("LD.UH R10,R12[0x0]");
+        emit("LD.UH R9,R12[0x2]");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{eq} 0x%x", apMid));
+        emit(StringFormat("BR{gt} 0x%x", apTop));
+        emit("ANDL R10,0xc000");
+        emit("OR R10,R1");
+        emit("ST.H R12[0x0],R10");
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apMid);
+        emit("ANDL R10,0x3fff");
+        emit("MOV R11,R1");
+        emit("ANDL R11,0x3");
+        emit("LSL R11,0xe");
+        emit("OR R10,R11");
+        emit("ST.H R12[0x0],R10");
+        emit("ANDL R9,0xf000");
+        emit("MOV R11,R1");
+        emit("LSR R11,0x2");
+        emit("OR R9,R11");
+        emit("ST.H R12[0x2],R9");
+        emit(StringFormat("RJMP 0x%x", apDone));
+        padTo(apTop);
+        emit("ANDL R9,0xfff");
+        emit("MOV R11,R1");
+        emit("ANDL R11,0xf");
+        emit("LSL R11,0xc");
+        emit("OR R9,R11");
+        emit("ST.H R12[0x2],R9");
+        padTo(apDone);
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(apPool);
+        word(tgEntry);     // settings_target
+        word(0x8001f300); // settings_reload
+        word(0x8001f200); // settings_defaults
+        word(rsEntry);     // settings_restart
+        finish("settings_apply", apEnd);
+
+        // The hook.  The factory's Control Change branch at 0x8000838e used
+        // to open by loading the instrument's own MIDI channel into R8 for
+        // the compare that follows; it opens with a call here instead, and
+        // this returns with that same load done.  A channel-16 NRPN
+        // controller - 99, 98, 6, 38 - is taken here, and R8 comes back as
+        // a channel no message can carry, so the factory's own compare
+        // discards what has already been handled.  Everything else falls
+        // through untouched, on the instrument's channel or not.  The
+        // controller and value are read out of the receive ring the way
+        // the factory reads them two instructions later.
+        begin(nrEntry);
+        emit("STM --SP,R0,LR");
+        emit("LD.UB R9,R7[-0xa]");      // the message's channel
+        emit("CP.W R9,0xf");
+        emit(StringFormat("BR{ne} 0x%x", nrPass));
+        emit(StringFormat("LDDPC R10,0x%x", nrPool));       // the USB block: its ring at +4
+        emit("LD.W R8,R10[0x88]");
+        emit("ADD R8,R10");
+        emit("LD.UB R11,R8[0x5]");      // the controller
+        emit("LD.UB R12,R8[0x6]");      // its value
+        emit("MOV R0,0x6a68");
+        // An RPN select, CC 101 or 100, parks the parameter in hand at
+        // 0x3fff, which names nothing, as the boot does: a host's RPN data
+        // entry on this channel - the pitch-bend range an MPE upper zone
+        // sends on 16 - then lands nowhere rather than on the last NRPN, or
+        // on cell 0 after a power-up.
+        emit("CP.W R11,0x63");
+        emit(StringFormat("BR{eq} 0x%x", nrPar));
+        emit("CP.W R11,0x62");
+        emit(StringFormat("BR{eq} 0x%x", nrLsb));
+        emit("CP.W R11,0x6");
+        emit(StringFormat("BR{eq} 0x%x", nrMsb));
+        emit("CP.W R11,0x26");
+        emit(StringFormat("BR{eq} 0x%x", nrDat));
+        emit("CP.W R11,0x64");
+        emit(StringFormat("BR{eq} 0x%x", nrRpn));
+        emit("CP.W R11,0x65");
+        emit(StringFormat("BR{ne} 0x%x", nrPass));
+        padTo(nrRpn);
+        emit("MOV R12,0x7f");           // 0x7f in both bytes: parameter 0x3fff
+        emit("ST.B R0[0x1],R12");
+        padTo(nrPar);
+        emit("ST.B R0[0x0],R12");       // parameter MSB
+        emit(StringFormat("RJMP 0x%x", nrDone));
+        padTo(nrLsb);
+        emit("ST.B R0[0x1],R12");       // parameter LSB
+        emit(StringFormat("RJMP 0x%x", nrDone));
+        padTo(nrMsb);
+        emit("ST.B R0[0x2],R12");       // data MSB
+        emit(StringFormat("RJMP 0x%x", nrDone));
+        padTo(nrDat);
+        // Data LSB completes a value: apply it to the parameter in hand.
+        emit("LD.UB R11,R0[0x2]");
+        emit("LSL R11,0x7");
+        emit("OR R11,R12");
+        emit("LD.UB R12,R0[0x0]");
+        emit("LSL R12,0x7");
+        emit("LD.UB R8,R0[0x1]");
+        emit("OR R12,R8");
+        emit(StringFormat("MCALL PC[0x%x]", nrPool + 8));   // settings_apply
+        padTo(nrDone);
+        emit("MOV R8,0xff");            // handled: no channel reads as this
+        emit("LDM SP++,R0,PC");
+        padTo(nrPass);
+        emit(StringFormat("LDDPC R8,0x%x", nrPool + 4));    // the factory's own first instruction
+        emit("LD.UB R8,R8[0x2e7]");
+        emit("LDM SP++,R0,PC");
+        padTo(nrPool);
+        word(0x000034b0); // the USB block
+        word(0x00003560); // global state base
+        word(apEntry);     // settings_apply
+        finish("settings_nrpn", nrEnd);
+
+        // One parameter out, as the four Control Changes the page sends
+        // in: 99 and 98 for the parameter, 6 and 38 for the value, all on
+        // channel 16, through the factory's own USB-MIDI sender.  R12 =
+        // parameter, R11 = value.
+        begin(sdEntry);
+        emit("STM --SP,R0,R1,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("MOV R1,R11");
+        emit("MOV R12,0x63");
+        emit("MOV R11,R0");
+        emit("LSR R11,0x7");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        emit("MOV R12,0x62");
+        emit("MOV R11,R0");
+        emit("ANDL R11,0x7f");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        emit("MOV R12,0x6");
+        emit("MOV R11,R1");
+        emit("LSR R11,0x7");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        emit("MOV R12,0x6");
+        emit("SUB R12,-0x20");          // controller 38, spelt so the key-walk audit does not read it as a walk
+        emit("MOV R11,R1");
+        emit("ANDL R11,0x7f");
+        emit("MOV R10,0xf");
+        emit(StringFormat("MCALL PC[0x%x]", sdPool));
+        // R12: whether the host took them.  The factory's endpoint wait
+        // (0x8000d9c4) sets this byte when it times out and clears it when
+        // a wait succeeds, and the sender reports only the flush of its own
+        // packet - a packet refused by the stream write before it is not
+        // said anywhere else.
+        emit("MOV R12,0x4718");
+        emit("LD.UB R12,R12[0x0]");
+        emit("LDM SP++,R0,R1,R7,PC");
+        padTo(sdPool);
+        word(0x80008034); // the factory's USB-MIDI CC sender
+        finish("settings_send", sdEnd);
+
+        // A parameter's current value, for the dump.  R12 = parameter;
+        // returns R12 = the value and R11 = 1, or R11 = 0 for a number that
+        // names nothing.  0x3f76..0x3f7f is the identity block: the firmware
+        // version, the image marker's top two bits, the period, the slot
+        // loaded, the commit state, the generation in three parts, the
+        // marker's low fourteen bits, and the layout version - the last one
+        // sent, so it is also the page's end-of-dump marker.
+        begin(vaEntry);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,R12");
+        emit("CP.W R0,0x3f76");
+        emit(StringFormat("BR{lt} 0x%x", vaData));
+        emit("MOV R11,0x1");
+        emit("MOV R10,0x6a70");
+        emit("CP.W R0,0x3f76");
+        emit(StringFormat("BR{ne} 0x%x", vaHi));
+        // 0x3f76: the firmware version, major.minor.patch packed as 6, 4
+        // and 4 bits, the number both serializers derive from the config's
+        // version string.  The identity block's parameter numbers are
+        // frozen from here on, so a keyboard can always say what it runs to
+        // any page, whatever the layout version says about the map.
+        emit(StringFormat("MOV R12,0x%x", number("firmware_version_code", 0x300, 0, 0x3fff)));
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaHi);
+        emit("CP.W R0,0x3f77");
+        emit(StringFormat("BR{ne} 0x%x", vaPeriod));
+        // The marker is sixteen bits and a value fourteen: its top two ride
+        // here, its low fourteen at 0x3f7e.
+        emit(StringFormat("MOV R12,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("CASTU.H R12");
+        emit("LSR R12,0xe");
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaPeriod);
+        emit("CP.W R0,0x3f78");
+        emit(StringFormat("BR{ne} 0x%x", vaSlot));
+        emit("MOV R12,0x6814");         // the period as it stands: number cell 10
+        emit("LD.UH R12,R12[0x0]");
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaSlot);
+        emit("CP.W R0,0x3f79");
+        emit(StringFormat("BR{ne} 0x%x", vaState));
+        emit("LD.UB R12,R10[0x1]");     // the slot loaded
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaState);
+        emit("CP.W R0,0x3f7a");
+        emit(StringFormat("BR{ne} 0x%x", vaGenHi));
+        emit("LD.UB R12,R10[0x0]");     // the commit state
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaGenHi);
+        emit("CP.W R0,0x3f7b");
+        emit(StringFormat("BR{ne} 0x%x", vaGenMid));
+        emit("LD.W R12,R10[0x4]");
+        emit("LSR R12,0x1c");           // generation bits 28..31
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaGenMid);
+        emit("CP.W R0,0x3f7c");
+        emit(StringFormat("BR{ne} 0x%x", vaGenLo));
+        emit("LD.W R12,R10[0x4]");
+        emit("LSR R12,0xe");
+        emit("LSL R12,0x12");
+        emit("LSR R12,0x12");           // generation bits 14..27
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaGenLo);
+        emit("CP.W R0,0x3f7d");
+        emit(StringFormat("BR{ne} 0x%x", vaMarker));
+        emit("LD.W R12,R10[0x4]");
+        emit("LSL R12,0x12");
+        emit("LSR R12,0x12");           // generation bits 0..13
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaMarker);
+        emit("CP.W R0,0x3f7e");
+        emit(StringFormat("BR{ne} 0x%x", vaVersion));
+        emit(StringFormat("MOV R12,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("CASTU.H R12");            // a marker past 0x7fff would sign-extend
+        emit("ANDL R12,0x3fff");        // the low fourteen bits; 0x3f77 has the rest
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaVersion);
+        emit("MOV R12,0x2");            // 0x3f7f: the layout version
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaData);
+        emit(StringFormat("MCALL PC[0x%x]", vaPool));       // settings_target
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", vaNone));
+        emit("CP.W R11,0x1");
+        emit(StringFormat("BR{eq} 0x%x", vaMask));
+        emit("CP.W R11,0x2");
+        emit(StringFormat("BR{eq} 0x%x", vaLive));
+        emit("LD.UH R12,R12[0x0]");
+        emit("MOV R11,0x1");
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaMask);
+        emit("LD.UH R10,R12[0x0]");     // the mask's low halfword
+        emit("LD.UH R9,R12[0x2]");      // and its high
+        emit("MOV R11,0x1");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{eq} 0x%x", vaMid));
+        emit(StringFormat("BR{gt} 0x%x", vaTop));
+        emit("MOV R12,R10");
+        emit("ANDL R12,0x3fff");        // bits 0..13
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaMid);
+        emit("LSR R10,0xe");
+        emit("LSL R9,0x2");
+        emit("OR R10,R9");
+        emit("MOV R12,R10");
+        emit("LSL R12,0x12");
+        emit("LSR R12,0x12");           // bits 14..27
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaTop);
+        emit("MOV R12,R9");
+        emit("LSR R12,0xc");            // bits 28..31
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaLive);
+        emit("LD.UB R12,R12[0x0]");     // a live option byte
+        emit("MOV R11,0x1");
+        emit(StringFormat("RJMP 0x%x", vaDone));
+        padTo(vaNone);
+        emit("MOV R11,0x0");
+        padTo(vaDone);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(vaPool);
+        word(tgEntry);     // settings_target
+        finish("settings_value", vaEnd);
+
+        // Per scan, in front of what the housekeeping's pool word used to
+        // name: a requested commit, then up to two parameters of a dump -
+        // eight packets, half the telemetry's proven rate.  The cursor
+        // walks the parameter numbers and skips the gaps between sections
+        // without spending the budget on them; past the last cell it takes
+        // the identity block, then idles at 0x4000.
+        begin(scEntry);
+        emit("STM --SP,R0,R7,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("MCALL PC[0x%x]", scPool));       // the shim, or the editor
+        emit("MOV R8,0x6a70");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x1");
+        emit(StringFormat("BR{ne} 0x%x", scDump));
+        emit(StringFormat("MCALL PC[0x%x]", scPool + 4));   // settings_commit
+        padTo(scDump);
+        emit("MOV R0,0x2");             // parameters this scan
+        padTo(scLoop);
+        emit("MOV R8,0x6a68");
+        emit("LD.UH R9,R8[0x4]");       // the cursor
+        emit("CP.W R9,0x4000");
+        emit(StringFormat("BR{ge} 0x%x", scOut));
+        // Advance first, over the gaps: 0x30 -> 0x80 (the 32 cells and the
+        // 16 live bytes are one run), 0xcf -> 0x100, 0x163 -> 0x180,
+        // 0x200 -> 0x3f76, 0x3f80 -> idle.
+        emit("MOV R10,R9");
+        emit("SUB R10,-0x1");
+        emit("CP.W R10,0x30");
+        emit(StringFormat("BR{ne} 0x%x", scG1));
+        emit("MOV R10,0x80");
+        padTo(scG1);
+        emit("CP.W R10,0xcf");
+        emit(StringFormat("BR{ne} 0x%x", scG2));
+        emit("MOV R10,0x100");
+        padTo(scG2);
+        emit("CP.W R10,0x163");
+        emit(StringFormat("BR{ne} 0x%x", scG3));
+        emit("MOV R10,0x180");
+        padTo(scG3);
+        emit("CP.W R10,0x200");
+        emit(StringFormat("BR{ne} 0x%x", scG4));
+        emit("MOV R10,0x3f76");
+        padTo(scG4);
+        emit("CP.W R10,0x3f80");
+        emit(StringFormat("BR{ne} 0x%x", scStore));
+        emit("MOV R10,0x4000");
+        padTo(scStore);
+        emit("ST.H R8[0x4],R10");
+        emit("MOV R12,R9");
+        emit("ST.W --SP,R9");
+        emit(StringFormat("MCALL PC[0x%x]", scPool + 8));   // settings_value
+        emit("LD.W R9,SP++");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", scLoop));          // a gap: costs nothing
+        emit("MOV R11,R12");
+        emit("MOV R12,R9");
+        emit(StringFormat("MCALL PC[0x%x]", scPool + 12));  // settings_send
+        // A host that stopped reading: the wait took 100 frames the first
+        // time and takes a frame a packet after that, eight packets a scan
+        // for as long as the cursor runs - so the dump ends here (audit
+        // 2026-09-24).  The page reads a dump that stops short as refused.
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ne} 0x%x", scStop));
+        emit("SUB R0,0x1");
+        emit(StringFormat("BR{ne} 0x%x", scLoop));
+        emit(StringFormat("RJMP 0x%x", scOut));
+        padTo(scStop);
+        emit("MOV R8,0x6a68");
+        emit("MOV R10,0x4000");
+        emit("ST.H R8[0x4],R10");       // the cursor idle
+        padTo(scOut);
+        emit("LDM SP++,R0,R7,PC");
+        padTo(scPool);
+        word(block("persist") ? 0x8001d520 : 0x8001ae1c); // what the pool word used to name
+        word(cmEntry);     // settings_commit
+        word(vaEntry);     // settings_value
+        word(sdEntry);     // settings_send
+        finish("settings_scan", scEnd);
+
+        // Commit the mirror to the slot the loaded record is NOT in, the way
+        // persistence commits a page: stage the record with its marker
+        // erased, erase-and-write both pages of the body, read every byte
+        // back, then write the marker alone with erase off and read back
+        // again, and only a record settings_valid accepts is the one loaded.
+        // State 2 on success, 3 on any mismatch; a failure leaves the
+        // previous record where it was, and the next request tries again.
+        begin(cmEntry);
+        emit("STM --SP,R0,R1,R2,R3,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R0,0x6a80");          // staging
+        emit("MOV R8,-0x1");
+        emit("ST.W R0[0x0],R8");        // marker erased
+        emit("MOV R8,0x2");             // layout 2
+        emit("ST.H R0[0x4],R8");
+        emit("MOV R8,0x298");
+        emit("ST.H R0[0x6],R8");
+        emit("MOV R9,0x6a70");
+        emit("LD.W R2,R9[0x4]");
+        emit("SUB R2,-0x1");            // the generation after the one loaded
+        emit("CP.W R2,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmGen));
+        emit("MOV R2,0x1");             // never zero
+        padTo(cmGen);
+        emit("ST.W R0[0x8],R2");
+        emit(StringFormat("MOV R8,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("ST.H R0[0x10],R8");
+        emit("MOV R8,0x6814");          // the period as it stands: number cell 10
+        emit("LD.UH R8,R8[0x0]");
+        emit("ST.H R0[0x12],R8");
+        emit("MOV R8,0x0");
+        emit("ST.W R0[0x14],R8");
+        emit("ST.W R0[0x18],R8");
+        emit("ST.W R0[0x1c],R8");
+        emit("MOV R9,0x6d08");          // the reserved tail, 0x288..0x2a7
+        emit("MOV R10,0x7");
+        padTo(cmTail);
+        emit("ST.W R9[0x0],R8");
+        emit("SUB R9,-0x4");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ge} 0x%x", cmTail));
+        emit("MOV R12,0x6aa0");
+        emit("MOV R11,0x6800");
+        emit("MOV R10,0x134");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool));       // settings_copy: the mirror into staging
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x4");
+        emit("MOV R10,0x8");
+        emit("MOV R12,-0x1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 4));   // persist_crc
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x10");
+        emit("MOV R10,0x298");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 4));
+        emit("MOV R8,-0x1");
+        emit("EOR R12,R8");
+        emit("ST.W R0[0xc],R12");
+        // The other slot: slot 1 when slot 0 is the one loaded, else slot 0.
+        emit("MOV R9,0x6a70");
+        emit("LD.UB R8,R9[0x1]");
+        emit(StringFormat("LDDPC R1,0x%x", cmPool + 8));    // slot 0
+        emit("MOV R3,0x0");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmSlot));
+        emit("SUB R1,-0x800");
+        emit("MOV R3,0x1");
+        padTo(cmSlot);
+        emit("MOV R12,R1");
+        emit("MOV R11,R0");
+        emit("MOV R10,0x200");
+        emit("MOV R9,0x1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 12));  // the factory flash writer: first page, erased
+        emit("MOV R12,R1");
+        emit("SUB R12,-0x200");
+        emit("MOV R11,R0");
+        emit("SUB R11,-0x200");
+        emit("MOV R10,0xa8");
+        emit("MOV R9,0x1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 12));  // second page, erased
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 16));  // settings_verify: R1 against R0
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmFail));
+        emit(StringFormat("LDDPC R8,0x%x", cmPool + 20));
+        emit("ST.W R0[0x0],R8");        // the marker, into staging
+        emit("MOV R12,R1");
+        emit("MOV R11,R0");
+        emit("MOV R10,0x8");
+        emit("MOV R9,0x0");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 12));  // the marker alone, no erase
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 16));
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ne} 0x%x", cmFail));
+        emit("MOV R12,R1");
+        emit(StringFormat("MCALL PC[0x%x]", cmPool + 24));  // settings_valid
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", cmFail));
+        emit("MOV R8,0x6a70");
+        emit("MOV R9,0x2");
+        emit("ST.B R8[0x0],R9");        // written
+        emit("ST.B R8[0x1],R3");
+        emit("ST.W R8[0x4],R2");
+        emit(StringFormat("RJMP 0x%x", cmDone));
+        padTo(cmFail);
+        emit("MOV R8,0x6a70");
+        emit("MOV R9,0x3");
+        emit("ST.B R8[0x0],R9");        // failed; the old record stands
+        padTo(cmDone);
+        emit("LDM SP++,R0,R1,R2,R3,R7,PC");
+        padTo(cmPool);
+        word(0x8001f000); // settings_copy
+        word(0x8001cc00); // persist_crc
+        word(0x8003d000); // slot 0
+        word(0x800108fc); // the factory flash writer
+        word(vfEntry);     // settings_verify
+        word(0x32313853); // the commit marker
+        word(vdEntry);     // settings_valid
+        finish("settings_commit", cmEnd);
+
+        // Every byte of the slot at R1 against the staging at R0; returns
+        // R12 = zero when they agree.  A leaf.
+        begin(vfEntry);
+        emit("MOV R8,0x0");
+        padTo(vfLoop);
+        emit("LD.UB R9,R1[R8 << 0x0]");
+        emit("LD.UB R10,R0[R8 << 0x0]");
+        emit("CP.W R9,R10");
+        emit(StringFormat("BR{ne} 0x%x", vfBad));
+        emit("SUB R8,-0x1");
+        emit("CP.W R8,0x2a8");
+        emit(StringFormat("BR{lt} 0x%x", vfLoop));
+        emit("MOV R12,0x0");
+        emit("MOV PC,LR");
+        padTo(vfBad);
+        emit("MOV R12,0x1");
+        emit("MOV PC,LR");
+        finish("settings_verify", vfEnd);
+
+        // The Control Change branch's first two instructions, replaced by
+        // the call into settings_nrpn, which does their work on the way
+        // back.  0x8000838e is the only entry into this range.
+        begin(0x8000838e);
+        emit(StringFormat("MCALL PC[0x%x]", ccPool));
+        padTo(0x80008396);
+        finish("settings_cc_hook", 0x80008396);
+
+        // Its pool word, in our own flash: the MCALL reaches it from the
+        // factory's code, and there is no free word nearer.
+        begin(ccPool);
+        word(nrEntry);     // settings_nrpn
+        finish("settings_cc_pool", ccEnd);
+
+        // Low and high for every cell, in cell order: what settings_valid
+        // holds a record to and settings_target answers for a receive.
+        // Out of settings_valid's own extent since layout 2 made it 32
+        // pairs.  Cells 11..15 and 28..31 are reserved and must be zero.
+        begin(bdTable);
+        halfword(1);    halfword(1024);   // 0 tie_glide_rate
+        halfword(128);  halfword(3968);   // 1 strip_halfway_units
+        halfword(1);    halfword(4);      // 2 clock_min_ms
+        halfword(1);    halfword(1000);   // 3 clock_rearm_us
+        halfword(2);    halfword(32);     // 4 clock_lock_pulses
+        halfword(1);    halfword(1023);   // 5 transpose_cv_period
+        halfword(0);    halfword(1023);   // 6 transpose_cv_zero
+        halfword(0);    halfword(64);     // 7 transpose_cv_hysteresis
+        halfword(20);   halfword(2000);   // 8 chord_hold_scans
+        halfword(20);   halfword(2000);   // 9 latch_state_hold_scans
+        halfword(100);  halfword(2000);   // 10 octave_units: the period, in DAC units, 248 cents up
+        halfword(0);    halfword(0);      // 11
+        halfword(0);    halfword(0);      // 12
+        halfword(0);    halfword(0);      // 13
+        halfword(0);    halfword(0);      // 14
+        halfword(0);    halfword(0);      // 15
+        halfword(0);    halfword(1);      // 16 latching_arp: off, on
+        halfword(0);    halfword(2);      // 17 knob1: order, orders, factory
+        halfword(0);    halfword(4);      // 18 knob2: spacing, quantized, swing, patterns, factory
+        halfword(0);    halfword(1);      // 19 knob3: octaves, factory
+        halfword(0);    halfword(2);      // 20 knob4: vibrato, trn, factory
+        halfword(0);    halfword(1);      // 21 sequencer
+        halfword(0);    halfword(1);      // 22 clock_divide
+        halfword(0);    halfword(1);      // 23 pressure_fix
+        halfword(0);    halfword(1);      // 24 pressure_portamento (needs 23)
+        halfword(0);    halfword(1);      // 25 quantize_presets
+        halfword(0);    halfword(1);      // 26 portamento_in: portamento, transpose
+        halfword(0);    halfword(1);      // 27 alternate_tunings: off, on
+        halfword(0);    halfword(0);      // 28
+        halfword(0);    halfword(0);      // 29
+        halfword(0);    halfword(0);      // 30
+        halfword(0);    halfword(0);      // 31
+        finish("settings_bounds", bdEnd);
+
+        // The image's own value for every cell - the ten numbers and the
+        // twelve options the config chose, which are the baked defaults the
+        // way a table is - copied into the mirror whole by settings_defaults.
+        // The record the build serializes carries the same 32 halfwords,
+        // which is the first thing the regression checks.
+        begin(nmTable);
+        halfword(number("tie_glide_rate", 60, 1, 1024));
+        halfword(number("strip_halfway_units", 2048, 128, 3968));
+        halfword(number("clock_min_ms", 4, 1, 4));
+        halfword(number("clock_rearm_us", 250, 1, 1000));
+        halfword(number("clock_lock_pulses", 5, 2, 32));
+        halfword(number("transpose_cv_period", 123, 1, 1023));
+        halfword(number("transpose_cv_zero", 0, 0, 1023));
+        halfword(number("transpose_cv_hysteresis", 2, 0, 64));
+        halfword(number("chord_hold_scans", 300, 20, 2000));
+        halfword(number("latch_state_hold_scans", 200, 20, 2000));
+        halfword(number("octave_units", 484, 100, 2000));   // 10: the period the octave controls step
+        halfword(0); halfword(0); halfword(0); halfword(0); halfword(0);
+        halfword(number("latching_arp", 1, 0, 1));
+        halfword(number("knob1", 0, 0, 2));
+        halfword(number("knob2", 0, 0, 4));
+        halfword(number("knob3", 0, 0, 1));
+        halfword(number("knob4", 0, 0, 2));
+        halfword(number("sequencer", 1, 0, 1));
+        halfword(number("clock_divide", 1, 0, 1));
+        halfword(number("pressure_fix", 1, 0, 1));
+        halfword(number("pressure_portamento", 1, 0, 1));
+        halfword(number("quantize_presets", 1, 0, 1));
+        halfword(number("portamento_in", 1, 0, 1));
+        halfword(number("alternate_tunings", 0, 0, 1));
+        halfword(0); halfword(0); halfword(0); halfword(0);
+        finish("settings_numbers", nmEnd);
+
+        // Restart, for NRPN 0x3f04 with the key: the watchdog, enabled with
+        // its two-key write and then left to fire - a power cycle by other
+        // means, which is what makes a changed option take effect.  Never
+        // returns.  The UC3B's WDT is at 0xffff0d30; CTRL has EN in bit 0,
+        // PSEL in bits 8..12 (a timeout of 2^(PSEL+1) cycles of the 115 kHz
+        // RC oscillator, so 7 is about 2 ms) and the key in bits 24..31,
+        // written as 0x55 and then 0xaa.  A watchdog reset leaves CTRL as it
+        // was (UC3B datasheet, Table 9-4), and after one the DFU bootloader
+        // starts the application with the watchdog still running, unless
+        // its ISP RAM key - "ISPK" in the first word of SRAM - says the
+        // bootloader itself was running (AVR32784, 6.3 and Figure 6-2).
+        // Without the key every boot after this one would be cut off 2 ms
+        // in, until a power cycle (audit, 2026-09-26).  So the key goes in
+        // first, before the watchdog is armed, and the bootloader then
+        // stops the watchdog, clears the key and jumps to the application,
+        // as its own START does after every flash.  Word 0 is outside
+        // everything the image uses: the factory's data starts at 0x8.  Not
+        // run under emulation past the three stores: the reset itself is the
+        // bench's to confirm.
+        begin(rsEntry);
+        emit("MOV R8,0x0");
+        emit(StringFormat("LDDPC R9,0x%x", rsPool));
+        emit("ST.W R8[0x0],R9");        // the bootloader's ISP RAM key, first
+        emit("MOV R8,-0xf2d0");         // WDT CTRL, 0xffff0d30
+        emit(StringFormat("LDDPC R9,0x%x", rsPool + 4));
+        emit("ST.W R8[0x0],R9");
+        emit(StringFormat("LDDPC R9,0x%x", rsPool + 8));
+        emit("ST.W R8[0x0],R9");
+        padTo(rsSpin);
+        emit(StringFormat("RJMP 0x%x", rsSpin));
+        padTo(rsPool);
+        word(0x4953504b); // "ISPK", the ISP RAM key
+        word(0x55000701); // KEY 0x55, PSEL 7, EN
+        word(0xaa000701); // KEY 0xaa, PSEL 7, EN
+        finish("settings_restart", rsEnd);
+        }        settingsCaves();
+
+        function knobCaves() {        // The arp's key selector, for the factory's pool word and the
+        // sequencer's: knob 2 on patterns puts the pattern gate in front,
+        // and the gate reaches the selector itself through knob1_dispatch.
+        begin(kbSel);
+        emit("MOV R8,0x6d2a");            // knob 2's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x3");
+        emit(StringFormat("BR{ne} 0x%x", kbK1));
+        emit(StringFormat("LDDPC R8,0x%x", kbPool));       // the pattern gate
+        emit("MOV PC,R8");
+        finish("knob_selector_dispatch", kbK1);
+        // Knob 1: the blend, the six zones, or the factory's own selector.
+        begin(kbK1);
+        emit("MOV R8,0x6d29");            // knob 1's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{eq} 0x%x", kbK1 + 0x14));
+        emit(StringFormat("BR{gt} 0x%x", kbK1 + 0x18));
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 4));   // the blend
+        emit("MOV PC,R8");
+        padTo(kbK1 + 0x14);
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 8));   // the six zones
+        emit("MOV PC,R8");
+        padTo(kbK1 + 0x18);
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 12));  // the factory selector
+        emit("MOV PC,R8");
+        finish("knob1_dispatch", kbRhythm);
+        // Knob 2: the rhythm hook's reload.  R12 = the tempo.  Patterns and
+        // factory get the factory's own reload, leaving what the randomiser's
+        // deadzone leaves: the tempo stored, R8 the state base, R9 the tempo.
+        begin(kbRhythm);
+        emit("MOV R8,0x6d2a");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{eq} 0x%x", kbRhythm + 0x24));   // quantized
+        emit(StringFormat("BR{lt} 0x%x", kbRhythm + 0x1c));   // spacing: the randomiser
+        emit("CP.W R8,0x2");
+        emit(StringFormat("BR{eq} 0x%x", kbRhythm + 0x2c));   // swing
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 16));  // global state base
+        emit("ST.H R8[0x38e],R12");
+        emit("MOV R9,R12");
+        emit("MOV PC,LR");
+        padTo(kbRhythm + 0x1c);
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 20));  // the randomiser
+        emit("MOV PC,R8");
+        padTo(kbRhythm + 0x24);
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 24));  // quantized
+        emit("MOV PC,R8");
+        padTo(kbRhythm + 0x2c);
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 28));  // swing
+        emit("MOV PC,R8");
+        finish("knob2_rhythm_dispatch", kbVib);
+        // Knob 4 as vibrato: the engine, from the per-scan chain.
+        begin(kbVib);
+        emit("MOV R8,0x6d2c");            // knob 4's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", kbVib + 0x10));
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 32));  // the vibrato engine
+        emit("MOV PC,R8");
+        padTo(kbVib + 0x10);
+        emit("MOV PC,LR");
+        finish("knob4_vibrato_dispatch", kbEarly);
+        // Knob 4 as the octave switch, the early pass on the ADC event's
+        // pool word: knob4_early, or the factory handler it wraps.
+        begin(kbEarly);
+        emit("MOV R8,0x6d2c");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{ne} 0x%x", kbEarly + 0x10));
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 36));  // knob4_early
+        emit("MOV PC,R8");
+        padTo(kbEarly + 0x10);
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 40));  // the factory ADC event handler
+        emit("MOV PC,R8");
+        finish("knob4_early_dispatch", kbLate);
+        // And the late pass, from the preset editor after the applier.
+        begin(kbLate);
+        emit("MOV R8,0x6d2c");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{ne} 0x%x", kbLate + 0x10));
+        emit(StringFormat("LDDPC R8,0x%x", kbPool + 44));  // knob 4 as an octave switch
+        emit("MOV PC,R8");
+        padTo(kbLate + 0x10);
+        emit("MOV PC,LR");
+        finish("knob4_late_dispatch", kbLatch1);
+        // Knob 1's latch, from the housekeeping: R8 = the knob, 0..127.
+        // 0x60f2 always, for the blend selector and the zones; the blend
+        // latch at 0x6d38 only while knob 1 blends, so the sequencer's
+        // shuffle keeps a recorded order under the zones or a factory knob.
+        begin(kbLatch1);
+        emit("MOV R11,0x60f2");
+        emit("ST.B R11[0x0],R8");
+        emit("MOV R11,0x6d29");
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{ne} 0x%x", kbLatch1 + 0x18));
+        emit("MOV R11,0x6d38");
+        emit("ST.B R11[0x0],R8");
+        emit("MOV PC,LR");
+        padTo(kbLatch1 + 0x18);
+        emit("MOV R11,0x6d38");
+        emit("MOV R9,0x0");
+        emit("ST.B R11[0x0],R9");
+        emit("MOV PC,LR");
+        finish("knob1_blend_latch", kbLatch3);
+        // Knob 3's latch: R8 = the knob.  Zero when knob 3 is factory, which
+        // is the octave randomiser's own deadzone, so it returns the note as
+        // it came.
+        begin(kbLatch3);
+        emit("MOV R11,0x6d2b");           // knob 3's live byte
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", kbLatch3 + 0xc));
+        emit("MOV R8,0x0");
+        padTo(kbLatch3 + 0xc);
+        emit("MOV R11,0x60ea");
+        emit("ST.H R11[0x0],R8");
+        emit("MOV PC,LR");
+        finish("knob3_latch", kbPool);
+        begin(kbPool);
+        word(0x8001b050); // the pattern gate
+        word(0x8001a0a0); // knob 1's blend selector
+        word(0x8001aec0); // knob 1's six zones
+        word(0x800029a8); // the factory selector
+        word(0x00003560); // global state base
+        word(0x80019df8); // knob 2's randomiser
+        word(0x8001ea00); // quantized
+        word(0x8001b100); // swing
+        word(0x8001a350); // the vibrato engine
+        word(0x8001d920); // knob4_early
+        word(0x80004a00); // the factory ADC event handler
+        word(0x8001b010); // knob 4 as an octave switch, the late pass
+        word(kbLatch1);    // knob1_blend_latch
+        word(kbLatch3);    // knob3_latch
+        finish("knob_dispatch_pool", kbEnd);
+        }        knobCaves();
+
+        function latchCaves() {        // Note-on: latch_owner and the pitch-aware toggle while the latch is
+        // live; otherwise the identity ownership a non-latch position keeps
+        // (current[key] = key + 1, owner[key] = key + 1), so the blend's
+        // slot map is the raw cache by key, and the key back unchanged.
+        begin(ltOn);
+        emit("MOV R8,0x6d28");            // the latch's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltOn + 0xe));
+        emit(StringFormat("LDDPC R8,0x%x", ltPool));       // latch_owner
+        emit("MOV PC,R8");
+        padTo(ltOn + 0xe);
+        emit("CP.W R12,0x1c");
+        emit(StringFormat("BR{hi} 0x%x", ltOn + 0x28));
+        emit("MOV R9,0x6521");
+        emit("MOV R8,R12");
+        emit("SUB R8,-0x1");
+        emit("ST.B R9[R12 << 0x0],R8");   // current[key] = key + 1
+        emit("SUB R9,0x1d");              // 0x6504: owner[]
+        emit("ST.B R9[R12 << 0x0],R8");   // owner[key] = key + 1
+        padTo(ltOn + 0x28);
+        emit("MOV PC,LR");
+        finish("latch_noteon_dispatch", ltOff);
+        // Note-off: the latch's wrapper while live; otherwise clear the
+        // key's ownership as that wrapper does in every position, and the
+        // factory's own note-off.
+        begin(ltOff);
+        emit("MOV R8,0x6d28");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltOff + 0xe));
+        emit(StringFormat("LDDPC R8,0x%x", ltPool + 4));   // the latch's note-off wrapper
+        emit("MOV PC,R8");
+        padTo(ltOff + 0xe);
+        emit("CP.W R12,0x1d");
+        emit(StringFormat("BR{ge} 0x%x", ltOff + 0x1c));
+        emit("MOV R9,0x6521");
+        emit("MOV R8,0x0");
+        emit("ST.B R9[R12 << 0x0],R8");   // current[key] = none
+        padTo(ltOff + 0x1c);
+        emit(StringFormat("LDDPC R8,0x%x", ltPool + 8));   // the factory note-off
+        emit("MOV PC,R8");
+        finish("latch_noteoff_dispatch", ltHold);
+        // latch_hold, from transpose_capture, while live; otherwise the
+        // pitch in hand goes back as it came.  latch_hold takes R8 (0x60a0)
+        // and R9 (the transpose just published) as arguments and spends
+        // R10 and R11, so those two are the only scratch this dispatcher may
+        // use - the interposition trap in practices/embedded.md, met here on
+        // 2026-09-23 when R8 was spent and the clock regression saw the pitch
+        // move between notes.
+        begin(ltHold);
+        emit("MOV R11,0x6d28");
+        emit("LD.UB R11,R11[0x0]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltHold + 0x10));
+        emit(StringFormat("LDDPC R10,0x%x", ltPool + 12));  // latch_hold
+        emit("MOV PC,R10");
+        padTo(ltHold + 0x10);
+        emit("MOV PC,LR");
+        finish("latch_hold_dispatch", ltPad);
+        // latch_state's pads 2 & 3 test: R8 = the pad array; R9 comes back
+        // as pad 2's level compared with 2, held - or as zero, compared the
+        // same way, while the latch is off, so the chord never counts and
+        // the factory's own latch chord, which the shim below gives back,
+        // has the pads to itself.  The flags travel back with the compare.
+        begin(ltPad);
+        emit("MOV R9,0x6d28");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ltPad + 0x10));
+        emit("LD.UB R9,R8[0x1]");
+        emit("CP.W R9,0x2");
+        emit("MOV PC,LR");
+        padTo(ltPad + 0x10);
+        emit("MOV R9,0x0");
+        emit("CP.W R9,0x2");
+        emit("MOV PC,LR");
+        finish("latch_pad_test", ltShim);
+        // The factory's pads 2 & 3 latch chord: its dispatcher calls the
+        // three-second hold timer here.  With the latch live the call is
+        // swallowed, as the NOP that stood at 0x8000491e used to do;
+        // otherwise the timer runs and the factory latch is back.
+        begin(ltShim);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x6d28");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", ltShim + 0x14));
+        emit(StringFormat("MCALL PC[0x%x]", ltPool + 16));  // the factory latch timer
+        padTo(ltShim + 0x14);
+        emit("LDM SP++,R7,PC");
+        finish("latch_pad_shim", ltPool);
+        begin(ltPool);
+        word(0x8001dde0); // latch_owner
+        word(0x8001a280); // the latch's note-off wrapper
+        word(0x80005a50); // the factory note-off
+        word(0x8001e520); // latch_hold
+        word(0x800045e8); // the factory pads 2 & 3 latch timer
+        word(ltPad);       // latch_pad_test
+        word(ltShim);      // latch_pad_shim
+        finish("latch_dispatch_pool", ltEnd);
+        // The live option bytes: the low byte of cells 16..31, copied once
+        // at boot after the record load.  Every dispatcher, shim and gate
+        // reads these and never the mirror, so a value that arrives over
+        // MIDI changes no code path until the next power-up - or the
+        // restart the page sends after a commit that changed one.  Then
+        // the latch's runtime: SRAM survives that restart and the first-use
+        // initialiser does not run again, so its stamps, its transpose term
+        // and its ownership maps are zeroed here at every boot - a stamp
+        // left by a session would otherwise weight the blend and rank the
+        // regular arp, and identity ownership left by a session with the
+        // latch off would meet the first press with it on.  A leaf.
+        begin(obEntry);
+        emit("MOV R8,0x6820");
+        emit("MOV R9,0x6d28");
+        emit("MOV R10,0x10");
+        padTo(obLoop);
+        emit("LD.UH R11,R8[0x0]");
+        emit("ST.B R9[0x0],R11");
+        emit("SUB R8,-0x2");
+        emit("SUB R9,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", obLoop));
+        emit("MOV R8,0x6d38");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // knob 1's blend latch, until the first scan writes it
+        // At every boot, whichever way the latch's byte points: nothing is
+        // held or latched when the chip comes up, so the stamps, the term
+        // and the maps are runtime, and a session with the latch off leaves
+        // identity ownership in the maps that a boot with it on would
+        // otherwise inherit (the residue test's off -> on run, 2026-09-23).
+        padTo(obLive);
+        emit("MOV R8,0x60a2");          // the 29 latch stamps, key 28 down
+        emit("MOV R10,0x1c");
+        padTo(obStamps);
+        emit("ST.H R8[R10 << 0x1],R9");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ge} 0x%x", obStamps));
+        emit("MOV R8,0x609e");
+        emit("ST.H R8[0x0],R9");        // the toggle's transpose term
+        emit("MOV R8,0x6504");          // owner[] and current[], 58 bytes
+        emit("MOV R10,0x3a");
+        padTo(obOwn);
+        emit("ST.B R8[0x0],R9");
+        emit("SUB R8,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", obOwn));
+        padTo(obDone);
+        emit(StringFormat("LDDPC R8,0x%x", obDone + 4));
+        emit("MOV PC,R8");              // on to option_boot_state, then option_boot_blend, which returns for all
+        padTo(obDone + 4);
+        word(obsEntry);
+        finish("option_boot", obEnd);
+
+        // option_boot_state: what the residue test found still read after
+        // the restart (ControlRegression.residue, 2026-09-23), at every boot
+        // whichever way the bytes point - each is the state of something
+        // that is not happening when the chip comes up.  The vibrato
+        // engine's output offset at 0x6028 is added by the pitch remap
+        // every scan whichever role knob 4 has, and only the engine writes
+        // it; its phase and depth go with it so the engine starts clean.
+        // The jack transposer's state word at 0x60fa carries a validity
+        // tag that midi_transpose, seq_cv_shift and the pin honour whether
+        // or not the jack transposes; unseeded, the first scan recomputes
+        // it from the live jack, as a first boot does.  The blend's
+        // re-base history at 0x60f4 is read by blend_rebase from
+        // transpose_capture in every configuration, and a base from the
+        // last session would fold (old - new) into the offset on the first
+        // octave pad; -1 is "nothing has sounded under the blend", the
+        // first-use seed.  R9 is zero from option_boot.  Chains on to
+        // option_boot_blend.  A leaf, R8..R10 spent.
+        begin(obsEntry);
+        emit("MOV R9,0x0");
+        emit("MOV R8,0x6024");
+        emit("ST.H R8[0x0],R9");        // LFO phase
+        emit("ST.H R8[0x2],R9");        // smoothed depth
+        emit("ST.H R8[0x4],R9");        // the output offset the remap adds
+        padTo(obsJack);
+        emit("MOV R8,0x60fa");
+        emit("ST.H R8[0x0],R9");        // the transposer's state word: unseeded
+        padTo(obsBlend);
+        emit("MOV R10,-0x1");
+        emit("MOV R8,0x60f4");
+        emit("ST.H R8[0x0],R10");       // the re-base history: nothing has sounded under the blend
+        padTo(obsDone);
+        emit(StringFormat("LDDPC R8,0x%x", obsPool));
+        emit("MOV PC,R8");
+        padTo(obsPool);
+        word(obcEntry);
+        finish("option_boot_state", obsEnd);
+
+        // octave_period: what the factory's octave-switch block and its
+        // stored-octave scaling used to carry as immediates - -484, 484,
+        // 968 and the two-octave bias - read out of number cell 10, the
+        // period the tuning repeats at.  Four entries, one per shape of
+        // answer; each site is a 4-byte MCALL onto the matching pool word
+        // where the 4-byte immediate stood.  The block sits in one routine
+        // whose prologue saves LR (0x80003590), and at every site but the
+        // multiply R9 is dead - there R9 is the octave index the MUL takes
+        // next, so that entry spends R8 alone.  Leaves.
+        begin(opEntry);
+        emit("MOV R9,0x6814");
+        emit("LD.UH R9,R9[0x0]");
+        emit("MOV R8,0x0");
+        emit("SUB R8,R9");              // -period: the panel's octave down
+        emit("MOV PC,LR");
+        padTo(opUp);
+        emit("MOV R8,0x6814");
+        emit("LD.UH R8,R8[0x0]");       // +period: octave up, and the stored octave's multiplier
+        emit("MOV PC,LR");
+        padTo(opUp2);
+        emit("MOV R8,0x6814");
+        emit("LD.UH R8,R8[0x0]");
+        emit("LSL R8,0x1");             // two periods: the top position
+        emit("MOV PC,LR");
+        padTo(opBias);
+        emit("MOV R9,0x6814");
+        emit("LD.UH R9,R9[0x0]");
+        emit("SUB R8,R8,R9 << 0x1");    // R8 less two periods: the stored octave's bias
+        emit("MOV PC,LR");
+        padTo(opPool);
+        word(opEntry);
+        word(opUp);
+        word(opUp2);
+        word(opBias);
+        finish("octave_period", opEnd);
+
+        // seq_restart_clear: what persist_boot zeroes and persist_load does
+        // not put back - the sequencer's runtime - cleared at every boot in
+        // every image, from seq_restart_init.  A volatile build used to keep
+        // the mode, the cursor and the chord across a warm restart, so a
+        // take resumed playing after the settings restart, and with the
+        // sequencer turned off the mode stayed 2 for pulse_guard,
+        // pressure_blend and midi_step_degree to read (the residue test,
+        // 2026-09-23).  The musical cells - the presets, the steps and their
+        // count, the keys, the latch's state, the tuning slot, the per-step
+        // degrees and the take's preset reference - are left alone: a
+        // volatile build keeps them in SRAM, and persist_load puts the
+        // reference back after persist_boot's own clear, which this runs
+        // after too, from clock_init.  A leaf; R8..R10 spent.
+        begin(sqcEntry);
+        emit("MOV R8,0x0");
+        emit("MOV R9,0x6142");          // the preset snapshot, the following flags, the arp's step cells, the chord and mode
+        emit("MOV R10,0xf");            // fifteen halfwords, not thirty bytes: a bare 0x1e reads to test.py as a key walk
+        padTo(sqcLoop1);
+        emit("ST.H R9[0x0],R8");
+        emit("SUB R9,-0x2");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", sqcLoop1));
+        emit("MOV R9,0x61e1");          // the cursor and the audition's history, after the count
+        emit("MOV R10,0x5");
+        padTo(sqcLoop2);
+        emit("ST.B R9[0x0],R8");
+        emit("SUB R9,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", sqcLoop2));
+        emit("MOV R9,0x622e");          // the borrowed strip mode and the key yet to sound
+        emit("ST.H R9[0x0],R8");        // a halfword each: 0x622e is not word-aligned, and a
+        emit("ST.H R9[0x2],R8");        // word store there faults on the chip (2026-09-26)
+        emit("MOV R9,0x62e3");          // the pads 2 & 3 acknowledgment countdown
+        emit("ST.B R9[0x0],R8");
+        emit("MOV R9,0x62e8");          // the pickup stamps, the claim stamp, the take's reference, the edge stamp, the logical mode, the edited flags
+        emit("MOV R10,0x15");           // up to 0x62fd, the restored-this-power-up flag: persist_boot's own, set before clock_init calls here again
+        padTo(sqcLoop3);
+        emit("ST.B R9[0x0],R8");
+        emit("SUB R9,-0x1");
+        emit("SUB R10,0x1");
+        emit(StringFormat("BR{ne} 0x%x", sqcLoop3));
+        emit("MOV R9,0x62fe");          // the preview and the CLEAR event
+        emit("ST.H R9[0x0],R8");
+        emit("MOV R9,0x6500");          // the audition's pinned pitch, the delete flash, the step sounding now
+        emit("ST.W R9[0x0],R8");
+        emit("MOV R9,0x657c");          // the lamp countdown, which lamp, last scan's step count
+        emit("ST.B R9[0x0],R8");
+        emit("ST.B R9[0x1],R8");
+        emit("ST.B R9[0x2],R8");
+        emit("MOV R9,0x6580");          // the latch's transpose reference, the pads 2 & 3 hold count, the transpose shadow
+        emit("ST.W R9[0x0],R8");
+        emit("ST.H R9[0x4],R8");
+        emit("MOV R9,0x6092");          // the preset count the last rebuild saw; 0x6091 beside it is the take's reference, musical, which persist_load restores
+        emit("ST.B R9[0x0],R8");
+        emit("MOV PC,LR");
+        finish("seq_restart_clear", sqcEnd);
+        }        latchCaves();
+
+        // Phase D: the sequencer's one gate (docs/PLAN-SETTINGS-2.md).
+        function seqCaves() {        // seq_arm_gate: whether the pad-4 hold may arm.  Called from
+        // seq_chord where it used to read the preset editor's hold flag
+        // itself; answers R10 = 0 to arm and nonzero to refuse - the flag
+        // first (a hold whose knob has moved is a preset edit, not a
+        // chord), then the live option byte at 0x6d2d.  With the sequencer
+        // off the hold never arms, so the mode at 0x6158 stays 0, which is
+        // the state every other sequencer cave already answers the factory
+        // way in: the clock hooks ask seq_clock_enabled, the note-on and
+        // note-off wrappers, the selector, the gate, the strip, the lamps,
+        // the recorder and the edit holds all test the mode first, and
+        // persist_boot zeroes it at every boot, so a take restored from the
+        // record is kept but cannot be played.  Spends R10 only, which the
+        // caller loads fresh after the test.  A leaf.
+        begin(sqArm);
+        emit("MOV R10,0x614d");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{ne} 0x%x", sqDone));    // the editor follows pad 4: refuse
+        emit("MOV R10,0x6d2d");
+        emit("LD.UB R10,R10[0x0]");
+        emit("SUB R10,0x1");            // 1: zero, arm; 0: nonzero, refuse
+        padTo(sqDone);
+        emit("MOV PC,LR");
+        finish("seq_arm_gate", sqEnd);
+        }        seqCaves();
+
+        // Phase E: the jack and the presets (docs/PLAN-SETTINGS-2.md).
+        function jackCaves() {        // jack_read: cv_transpose's reading of the jack.  R8 = the raw
+        // count at state+0x2f0 less the zero in settings cell 6, clamped at
+        // zero - the jack has no negative range - or zero while the live
+        // byte says portamento, so the rotation is then the preset's alone
+        // and the factory's glide-rate addend owns the cell again.  Spends
+        // R8-R10.  A leaf.
+        begin(jkEntry);
+        emit("MOV R8,0x6d32");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", jkOff));
+        emit(StringFormat("LDDPC R9,0x%x", jkPool));         // global state base
+        emit("LD.SH R8,R9[0x2f0]");                           // the jack, raw
+        emit(StringFormat("LDDPC R10,0x%x", jkPool + 4));    // the settings mirror
+        emit("LD.UH R10,R10[0xc]");                           // its zero, settings cell 6
+        emit("SUB R8,R10");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ge} 0x%x", jkDone));
+        padTo(jkOff);
+        emit("MOV R8,0x0");
+        padTo(jkDone);
+        emit("MOV PC,LR");
+        padTo(jkPool);
+        word(0x00003560); // global state base
+        word(0x00006800); // the settings mirror
+        finish("jack_read", jkEnd);
+
+        // preset_degrees_gate: cv_transpose's word for preset_degrees.  With
+        // the option on it hands over, LR and all, so preset_degrees returns
+        // to the transposer as before; with it off it answers zero degrees
+        // and publishes them at 0x60f3, which preset_degrees does on its
+        // own no-add path and the recorder and playback read every scan.
+        // Spends R9 and R12; R0, R2, R8 and R10 are live in the caller.
+        begin(pgEntry);
+        emit("MOV R12,0x6d31");
+        emit("LD.UB R12,R12[0x0]");
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", pgOff));
+        emit(StringFormat("LDDPC R9,0x%x", pgPool));
+        emit("MOV PC,R9");
+        padTo(pgOff);
+        emit("MOV R9,0x60f3");
+        emit("ST.B R9[0x0],R12");       // zero degrees, published
+        emit("MOV PC,LR");
+        padTo(pgPool);
+        word(0x8001e1c0); // preset_degrees
+        finish("preset_degrees_gate", pgEnd);
+
+        // glide_cv_shim: the factory's glide-rate addend at 0x8000313e.
+        // R8 in: the state base.  R8 out: 0x28 while the jack transposes -
+        // the halve-and-subtract-twenty after the call turns it into
+        // exactly zero, as glide_cv_addend's constant did - or the
+        // factory's own load of the jack while it is on portamento.
+        // Spends R9, dead at the site.  Its own word is what the site's
+        // MCALL reads.
+        begin(gaEntry);
+        emit("MOV R9,0x6d32");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", gaLoad));
+        emit("MOV R8,0x28");
+        emit("MOV PC,LR");
+        padTo(gaLoad);
+        emit("LD.SH R8,R8[0x2f0]");     // the factory's own instruction
+        emit("MOV PC,LR");
+        padTo(gaPool);
+        word(gaEntry);
+        finish("glide_cv_shim", gaEnd);
+
+        // cv_chain_dispatch: the per-scan chain's entry when the filter
+        // pole is built.  Through the filter while the jack transposes, so
+        // the filtered count is what the transposer reads; straight into
+        // the transposer otherwise, so the factory's addend sees the raw
+        // cell it expects.  Spends R8, which both targets overwrite before
+        // reading it.
+        if (cvShift > 0) {
+            begin(cdEntry);
+            emit("MOV R8,0x6d32");
+            emit("LD.UB R8,R8[0x0]");
+            emit("CP.W R8,0x0");
+            emit(StringFormat("BR{eq} 0x%x", cdPlain));
+            emit(StringFormat("LDDPC R8,0x%x", cdPool));
+            emit("MOV PC,R8");
+            padTo(cdPlain);
+            emit(StringFormat("LDDPC R8,0x%x", cdPool + 4));
+            emit("MOV PC,R8");
+            padTo(cdPool);
+            word(cvFilter);
+            word(cvEntry);
+            finish("cv_chain_dispatch", cdEnd);
+        }
+        }        jackCaves();
+
+        // Phase F: the pressure path (docs/PLAN-SETTINGS-2.md).
+        function pressureCaves() {        // Three dispatchers on the factory's own pool words, by the fix's
+        // live byte.  Each spends R8, which every target overwrites before
+        // reading it; the argument is R12 throughout.
+        // pressure_fn_dispatch: the calibrated curve, or the factory's int-to-float.
+        begin(pfEntry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", pfOff));
+        emit(StringFormat("LDDPC R8,0x%x", pfPool));
+        emit("MOV PC,R8");
+        padTo(pfOff);
+        emit(StringFormat("LDDPC R8,0x%x", pfPool + 4));
+        emit("MOV PC,R8");
+        padTo(pfPool);
+        word(0x80019580); // the calibrated pressure curve
+        word(0x80013350); // the factory's int-to-float
+        finish("pressure_fn_dispatch", pfEnd);
+        // knob1_pressure_dispatch: the pressure ceiling, or the factory's knob 1.
+        begin(k1Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", k1Off));
+        emit(StringFormat("LDDPC R8,0x%x", k1Pool));
+        emit("MOV PC,R8");
+        padTo(k1Off);
+        emit(StringFormat("LDDPC R8,0x%x", k1Pool + 4));
+        emit("MOV PC,R8");
+        padTo(k1Pool);
+        word(0x800194c0); // knob1_pressure_ceiling
+        word(0x80004188); // the factory knob-1 handler
+        finish("knob1_pressure_dispatch", k1End);
+        // knob4_dispatch: knob4_curve, or the factory's knob 4.
+        begin(k4Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", k4Off));
+        emit(StringFormat("LDDPC R8,0x%x", k4Pool));
+        emit("MOV PC,R8");
+        padTo(k4Off);
+        emit(StringFormat("LDDPC R8,0x%x", k4Pool + 4));
+        emit("MOV PC,R8");
+        padTo(k4Pool);
+        word(0x80014380); // knob4_curve
+        word(0x80004070); // the factory knob-4 handler
+        finish("knob4_dispatch", k4End);
+
+        // pitch_clamp_2 and pitch_clamp_1: the pairs the skips stood over.
+        // Off: the pair replayed - the literal the LDDPC loaded, then the
+        // load - and back to the instruction after the pair.  On: the skip's
+        // own target, LR and all.  Each spends R8, the load's destination.
+        // The second word of each pool is the cave's own entry, for the
+        // site's MCALL.
+        begin(c2Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", c2Skip));
+        emit("MOV R8,0x3560");          // LDDPC R8,0x80003570: the state base
+        emit("LD.W R8,R8[0x33c]");      // the factory gain
+        emit("MOV PC,LR");
+        padTo(c2Skip);
+        emit(StringFormat("LDDPC R8,0x%x", c2Pool));
+        emit("MOV PC,R8");
+        padTo(c2Pool);
+        word(0x800033d6);              // over the gain multiply
+        word(c2Entry);
+        finish("pitch_clamp_2", c2End);
+        begin(c1Entry);
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", c1Skip));
+        emit("MOV R8,0x3216");          // LDDPC R8,0x80003580: the factory pressure history
+        emit("LD.SH R8,R8[0x1c]");      // the 16-tap filter's first shift
+        emit("MOV PC,LR");
+        padTo(c1Skip);
+        emit(StringFormat("LDDPC R8,0x%x", c1Pool));
+        emit("MOV PC,R8");
+        padTo(c1Pool);
+        word(0x80003506);              // over the filter
+        word(c1Entry);
+        finish("pitch_clamp_1", c1End);
+
+        // pressure_gain: the knob-4 call the factory makes only in internal
+        // mode 4 and the fix makes on every sweep.  The site's CP.W R8,0x4
+        // still stands, so the branch comes first; only when the factory
+        // would skip is the live byte asked.  The call goes through
+        // knob4_dispatch with the site's own LR, which is the return the
+        // factory's MCALL had.  Spends R8, reloaded at the return.
+        begin(gnEntry);
+        emit(StringFormat("BR{eq} 0x%x", gnCall));
+        emit("MOV R8,0x6d2f");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", gnDone));
+        padTo(gnCall);
+        emit("MOV R12,0x5");
+        emit(StringFormat("LDDPC R8,0x%x", gnPool));
+        emit("MOV PC,R8");
+        padTo(gnDone);
+        emit("MOV PC,LR");
+        padTo(gnPool);
+        word(k4Entry);
+        word(gnEntry);
+        finish("pressure_gain", gnEnd);
+
+        // interpolate_gate: the interpolator's high clamp on R11, then the
+        // live byte in R9.  With the fix off the target is copied to the DAC
+        // slot here and the interpolator hands on; the snapshot and counter
+        // are left alone, as a build without smoothing left them.  Spends
+        // R9 and R12, which the interpolator reloads.
+        begin(ipEntry);
+        emit("MOV R9,0xfff");
+        emit("CP.W R11,R9");
+        emit(StringFormat("BR{ls} 0x%x", ipByte));
+        emit("MOV R11,R9");             // clamped to the 12-bit DAC range
+        padTo(ipByte);
+        emit("MOV R9,0x6d2f");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{ne} 0x%x", ipDone));
+        emit(StringFormat("LDDPC R12,0x%x", ipPool));
+        emit("ST.H R12[0x356],R11");    // the pressure DAC slot, straight through
+        padTo(ipDone);
+        emit("MOV PC,LR");
+        padTo(ipPool);
+        word(0x00003560); // global state base
+        finish("interpolate_gate", ipEnd);
+
+        // pitch_hook_dispatch: the remap's entry word.  Through the target
+        // conditioner, the blend-offset shim and on to the remap while the
+        // blend is the portamento; straight to the remap otherwise.  R12 is
+        // the pitch and comes through; R8 is spent, which both overwrite.
+        begin(pbEntry);
+        emit("MOV R8,0x6d30");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", pbOff));
+        emit(StringFormat("LDDPC R8,0x%x", pbPool));
+        emit("MOV PC,R8");
+        padTo(pbOff);
+        emit(StringFormat("LDDPC R8,0x%x", pbPool + 4));
+        emit("MOV PC,R8");
+        padTo(pbPool);
+        word(0x8001ad78); // target conditioner -> blend-offset shim -> remap
+        word(0x80019980); // the remap
+        finish("pitch_hook_dispatch", pbEnd);
+
+        // glide_rate_value: R8 = the glide rate VALUE for glide_rate_clamp.
+        // Zero while the blend is the portamento; otherwise the zero-snap -
+        // the fastest entry whenever the knob sits in its deadzone - and the
+        // factory table at R9, the rate index, which comes through.
+        begin(grEntry);
+        emit("MOV R8,0x6d30");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", grClassic));
+        emit("MOV R8,0x0");             // the blend: notes snap
+        emit("MOV PC,LR");
+        padTo(grClassic);
+        emit("MOV R8,0x3866");          // the portamento knob
+        emit("LD.SH R8,R8[0x0]");
+        emit("CP.W R8,0x30");
+        emit(StringFormat("BR{ge} 0x%x", grTable));
+        emit("MOV R8,0x0");             // the deadzone: the fastest entry
+        emit("MOV PC,LR");
+        padTo(grTable);
+        emit(StringFormat("LDDPC R8,0x%x", grPool));
+        emit("LD.SH R8,R8[R9 << 0x1]");
+        emit("CASTS.H R8");
+        emit("MOV PC,LR");
+        padTo(grPool);
+        word(0x80015150); // the factory glide-rate table
+        finish("glide_rate_value", grEnd);
+
+        // option_boot_blend: option_boot's tail.  The offset the blend's
+        // conditioner last applied (0x60e2) is read by the clock's fast
+        // pitch stage every beat, and only the blend writes it - the apply
+        // shim, and blend_rebase's fold, which is gated on the blend's byte
+        // too - so it is zeroed here at every boot, or a session would
+        // leave its last offset under every staged pitch after the restart;
+        // nothing sounds when the chip comes up, so there is no offset to
+        // keep.
+        begin(obcEntry);
+        emit("MOV R8,0x60e2");
+        emit("MOV R9,0x0");
+        emit("ST.H R8[0x0],R9");
+        padTo(obcDone);
+        emit("MOV PC,LR");
+        finish("option_boot_blend", obcEnd);
+        }        pressureCaves();
+
+        // Phase G: the clock divider (docs/PLAN-SETTINGS-2.md).
+        function clockCaves() {        // clock_irq_dispatch: inside the factory ISR's frame, from the hook
+        // at 0x800072ee.  Live: the capture cave, which returns to the hook's
+        // RJMP over the factory body.  Off: the two instructions the hook
+        // displaced - `MCALL` the flag getter with R12 = 5, `MOV R8,R12` -
+        // and on into the factory body at 0x800072f4, which the ISR's own
+        // frame returns from.  Spends R8 and R9; the capture cave spends
+        // both, and the factory body's next act is a compare of R8.
+        begin(ciEntry);
+        emit("MOV R8,0x6d2e");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ciOff));
+        emit(StringFormat("LDDPC R8,0x%x", ciPool));
+        emit("MOV PC,R8");
+        padTo(ciOff);
+        emit("MOV R12,0x5");
+        emit("MCALL PC[0x8000732c]");   // the factory's flag getter, through the factory's own word
+        emit("MOV R8,R12");
+        emit(StringFormat("LDDPC R9,0x%x", ciPool + 4));
+        emit("MOV PC,R9");
+        padTo(ciPool);
+        word(0x8001c200); // the capture cave
+        word(0x800072f4); // the factory body, after the displaced pair
+        word(ciEntry);
+        finish("clock_irq_dispatch", ciEnd);
+
+        // clock_event_dispatch: event 10's handler, from the hook at
+        // 0x80004e72.  Live: over the step to 0x800051b0, as the hook
+        // jumped.  Off: `MOV R12,0xffff` and the factory's arp step, with
+        // the site's own LR, which returns to the branch after the hook.
+        // Spends R8.
+        begin(ceEntry);
+        emit("MOV R8,0x6d2e");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", ceOff));
+        emit(StringFormat("LDDPC R8,0x%x", cePool));
+        emit("MOV PC,R8");
+        padTo(ceOff);
+        emit("MOV R12,0xffff");
+        emit(StringFormat("LDDPC R8,0x%x", cePool + 8));
+        emit("MOV PC,R8");
+        padTo(cePool);
+        word(0x800051b0); // past the step
+        word(ceEntry);
+        word(0x8000210c); // the factory's arp step
+        finish("clock_event_dispatch", ceEnd);
+
+        // pulse_dispatch: the four pulse pools.  Live: the clock's
+        // settle-and-flush path, which owns gate-low for a selected note.
+        // Off: pulse_defer_set, the scan-grid pulse a build without the
+        // divider had.  Spends R8, which both overwrite first.
+        begin(puEntry);
+        emit("MOV R8,0x6d2e");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", puOff));
+        emit(StringFormat("LDDPC R8,0x%x", puPool));
+        emit("MOV PC,R8");
+        padTo(puOff);
+        emit(StringFormat("LDDPC R8,0x%x", puPool + 4));
+        emit("MOV PC,R8");
+        padTo(puPool);
+        word(0x8001c700); // the clock's pulse: settle, then the flush
+        word(0x8001a26c); // pulse_defer_set
+        finish("pulse_dispatch", puEnd);
+        }        clockCaves();
+
+        // Cell 27: the alternate tunings, decided at boot.
+        function tuningCaves() {        // tuning_key27: edit key 27.  On: slot 1 <-> slot 2, the old
+        // transpose-mode byte zeroed, the dirty flag set, back to the hook's
+        // RJMP to 0x80003e10.  Off: the factory's own key - the two displaced
+        // instructions replayed (its pool word is the state base) and on
+        // into the factory at 0x80003d88, which toggles transpose mode.
+        // Spends R8-R10, as the factory key does.
+        begin(tk27Entry);
+        emit("MOV R8,0x6d33");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", tk27Off));
+        emit("MOV R9,0x6090");
+        emit("LD.UB R8,R9[0x0]");
+        emit("MOV R10,0x1");
+        emit("CP.W R8,0x1");
+        emit(StringFormat("BR{ne} 0x%x", tk27Two));
+        emit("MOV R10,0x2");
+        padTo(tk27Two);
+        emit("ST.B R9[0x0],R10");
+        emit("MOV R8,0x3560");          // global state base
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x6a],R9");       // transpose mode off, for good
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x3a],R9");       // the dirty flag
+        emit("MOV PC,LR");
+        padTo(tk27Off);
+        emit("MOV R8,0x3560");          // LDDPC R8,0x80003e24
+        emit("LD.UB R8,R8[0x6a]");      // the transpose-mode byte
+        emit(StringFormat("LDDPC R9,0x%x", tk27Pool));
+        emit("MOV PC,R9");
+        padTo(tk27Pool);
+        word(0x80003d88);              // the factory key, after the displaced pair
+        word(tk27Entry);
+        finish("tuning_key27", tk27End);
+
+        // tuning_key28: edit key 28.  On: slot 0 <-> slot 2 and the dirty
+        // flag.  Off: the factory's remote-enable toggle - three displaced
+        // instructions replayed, then on into the factory at 0x80003dc0.
+        begin(tk28Entry);
+        emit("MOV R8,0x6d33");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", tk28Off));
+        emit("MOV R9,0x6090");
+        emit("LD.UB R8,R9[0x0]");
+        emit("MOV R10,0x0");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", tk28Two));
+        emit("MOV R10,0x2");
+        padTo(tk28Two);
+        emit("ST.B R9[0x0],R10");
+        emit("MOV R8,0x3560");
+        emit("MOV R9,0x1");
+        emit("ST.B R8[0x3a],R9");       // the dirty flag
+        emit("MOV PC,LR");
+        padTo(tk28Off);
+        emit("MOV R8,0x3560");          // LDDPC R8,0x80003e24
+        emit("LD.UB R8,R8[0x2]");       // the remote-enable flag
+        emit("SUB R8,-0x1");            // toggled: the factory's EORL R8,0x1, which the JS
+        emit("ANDL R8,0x1");            // encoder has no form for, on a flag that is 0 or 1
+        emit(StringFormat("LDDPC R9,0x%x", tk28Pool));
+        emit("MOV PC,R9");
+        padTo(tk28Pool);
+        word(0x80003dc0);              // the factory key, after the displaced three
+        word(tk28Entry);
+        finish("tuning_key28", tk28End);
+
+        // remote_guard: the three remote-enable reads.  R8 in: the state
+        // base.  Out: R8 and the flags of `CP.W R8,0x0` - zero with a tuning
+        // in use, the flag itself without.  Spends R9, reloaded at all three
+        // sites.
+        begin(rgEntry);
+        emit("MOV R9,0x6d33");
+        emit("LD.UB R9,R9[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", rgOff));
+        emit("MOV R8,0x0");
+        emit("CP.W R8,0x0");
+        emit("MOV PC,LR");
+        padTo(rgOff);
+        emit("LD.UB R8,R8[0x2]");       // the factory's own read
+        emit("CP.W R8,0x0");
+        emit("MOV PC,LR");
+        padTo(rgPool);
+        word(rgEntry);
+        finish("remote_guard", rgEnd);
+
+        // tuning_apply_dispatch: the per-scan chain's applier word.  The
+        // applier with a tuning in use; a return without, so the LEDs and
+        // the transpose-mode byte stay the factory's.  Without, the slot is
+        // put back to 0 as well: a record or the last session can leave 1
+        // or 2 there - SRAM outlives the restart that turns the cell off -
+        // and the transposer's rebuild, the preset rotation and the
+        // recorder read the slot tables by it, all after this word in the
+        // scan (audit 2026-09-24).  Spends R8 and R9, as the applier does.
+        begin(taEntry);
+        emit("MOV R8,0x6d33");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", taOff));
+        emit(StringFormat("LDDPC R8,0x%x", taPool));
+        emit("MOV PC,R8");
+        padTo(taOff);
+        emit("MOV R9,0x6090");
+        emit("ST.B R9[0x0],R8");        // R8 is the cell's byte: zero
+        emit("MOV PC,LR");
+        padTo(taPool);
+        word(0x80019a40); // the tuning applier
+        finish("tuning_apply_dispatch", taEnd);
+        }        tuningCaves();
+
+        // The boot guard (2026-09-26).  The bootloader enters DFU at power-up
+        // only while GP fuse bit 31, ISP_FORCE, is set, and the factory's own
+        // board init clears it at every boot (0x8000b404, from the pool word
+        // at 0x8000b4b4), so an image that faults or hangs before it can take
+        // the DFU SysEx is out of reach of every flasher.  boot_guard_arm
+        // takes that pool word: it runs the factory's clear, then leaves
+        // ISP_FORCE set while the guard word does not hold this image's
+        // marker.  boot_guard_confirm, on the main loop's hook word, clears
+        // ISP_FORCE and writes the marker once the factory's millisecond
+        // count reaches 1.5 s.  A DFU flash erases the guard word, so only the
+        // first boot of a newly flashed image is armed, with the flasher still
+        // connected, and a boot that never gets to 1.5 s comes back in DFU at
+        // the next power-up.  Nothing else arms it, settings sends included: a
+        // reset or a power cut during an armed boot lands in DFU, and that must
+        // never happen away from the computer.
+        function guardCaves() {        begin(bgArmEntry);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("MCALL PC[0x%x]", bgArmPool));        // the factory's clear: both ISP bits end 0
+        emit(StringFormat("MOV R9,0x%x", number("init_marker", 0xb007, 0x1000, 0xeffe)));
+        emit("MOV R10,0x6d3c");
+        emit("ST.W R10[0x0],R9");       // this image's marker, for the confirmation to write
+        emit(StringFormat("LDDPC R8,0x%x", bgArmPool + 4));     // the guard word
+        emit("LD.W R8,R8[0x0]");
+        emit("MOV R11,0x0");
+        emit("CP.W R8,R9");
+        emit(StringFormat("BR{eq} 0x%x", bgArmKeep));
+        emit("MOV R11,0x1");
+        padTo(bgArmKeep);
+        emit("MOV R10,0x6d3a");
+        emit("ST.B R10[0x0],R11");      // a confirmation owed, or none
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", bgArmDone));
+        emit("MOV R11,0x0");            // no read-back
+        emit("MOV R12,0x1f");           // ISP_FORCE
+        emit(StringFormat("MCALL PC[0x%x]", bgArmPool + 8));    // erased is 1: DFU until confirmed
+        padTo(bgArmDone);
+        emit("LDM SP++,R7,PC");
+        padTo(bgArmPool);
+        word(0x8000b404); // the factory's ISP-bit clear
+        word(bgGuardWord);
+        word(0x8001071c); // flashc_erase_gp_fuse_bit
+        finish("boot_guard_arm", bgArmEnd);
+
+        // Per main-loop pass: nothing owed, straight on to the hook this word
+        // used to name.  Owed and 1.5 s gone: once, whatever the flash
+        // answers, clear ISP_FORCE, write the guard word, then the hook.
+        begin(bgConfEntry);
+        emit("MOV R8,0x6d3a");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{ne} 0x%x", bgConfDue));
+        padTo(bgConfNext);
+        emit(StringFormat("LDDPC R8,0x%x", bgConfPool));
+        emit("MOV PC,R8");
+        padTo(bgConfDue);
+        emit("MOV R9,0x2efc");          // the factory's millisecond count
+        emit("LD.W R9,R9[0x0]");
+        emit("CP.W R9,0x5dc");
+        emit(StringFormat("BR{lt} 0x%x", bgConfNext));
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // one attempt a boot
+        emit("MOV R11,0x0");
+        emit("MOV R12,0x1f");
+        emit(StringFormat("MCALL PC[0x%x]", bgConfPool + 4));   // flashc_write_gp_fuse_bit(31, 0)
+        emit(StringFormat("LDDPC R12,0x%x", bgConfPool + 8));   // the guard word
+        emit("MOV R11,0x6d3c");
+        emit("MOV R10,0x4");
+        emit("MOV R9,0x1");             // its page erased first
+        emit(StringFormat("MCALL PC[0x%x]", bgConfPool + 12));  // the factory flash writer
+        emit(StringFormat("MCALL PC[0x%x]", bgConfPool));      // then the hook, as every pass
+        emit("LDM SP++,R7,PC");
+        padTo(bgConfPool);
+        word(block("clock_scan") ? 0x8001b980 : 0x8001a540);
+        word(0x80010768); // flashc_write_gp_fuse_bit
+        word(bgGuardWord);
+        word(0x800108fc); // flashc_memcpy
+        finish("boot_guard_confirm", bgConfEnd);
+
+        begin(0x8000b4b4);
+        word(block("boot_guard_arm") ? bgArmEntry : 0x8000b404);
+        finish("boot_guard_arm_pool", 0x8000b4b8);
+        }        guardCaves();
+
+        // Calibration mode (NRPN 0x3f05): the constants beside the boot
+        // guard's say what it is for.  Every gate below asks the mode byte at
+        // 0x6a6b and, with it off, hands its target exactly what it was
+        // given; each spends only registers its target overwrites before it
+        // reads them.
+        function calibrationCaves() {        // cal_command, from settings_apply where the 0x3f7f compare misses:
+        // R0 the parameter, R1 the value, settings_apply's frame to return
+        // through.  The key turns the mode on and restarts its five seconds;
+        // an entry is chosen only on the way in, so the key sent again keeps
+        // the note the sweep is on.  Anything else turns it off.
+        begin(calCmdEntry);
+        emit("CP.W R0,0x3f05");
+        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit("MOV R8,0x6a6b");
+        emit("MOV R9,0x0");
+        emit("CP.W R1,0x2a2a");
+        emit(StringFormat("BR{ne} 0x%x", calCmdStore));
+        emit("MOV R10,0x2efc");         // the factory's millisecond count
+        emit("LD.W R10,R10[0x0]");
+        emit("MOV R11,0x6d40");
+        emit("ST.W R11[0x0],R10");      // the five seconds count from now
+        emit("LD.UB R10,R8[0x0]");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calCmdOn));
+        emit("MOV R10,0x3");
+        emit("ST.B R11[0x4],R10");      // entry 3, the bottom key, until a note arrives
+        padTo(calCmdOn);
+        emit("MOV R9,0x1");
+        padTo(calCmdStore);
+        emit("ST.B R8[0x0],R9");
+        emit(StringFormat("LDDPC R8,0x%x", calCmdPool));
+        emit("MOV PC,R8");
+        padTo(calCmdPool);
+        word(apDone);      // settings_apply's exit
+        finish("cal_command", calCmdEnd);
+
+        // cal_note_on, on the dispatcher's note-on word (events 7 and 32):
+        // R12..R9 are the factory note-on's arguments - R11 the note, R9 the
+        // channel - and go through to it untouched, so the note still sounds
+        // its gate as it always does.  In the mode, any note-on restarts the
+        // five seconds, and one on the instrument's channel chooses the
+        // entry: note 21, the 208's 0 V A, is entry 0, clamped to 0..78.
+        // Spends R8, which the factory note-on overwrites first.
+        begin(calNoteEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", calNoteGo));
+        emit("STM --SP,R10,R12");
+        emit("MOV R8,0x2efc");
+        emit("LD.W R10,R8[0x0]");
+        emit("MOV R8,0x6d40");
+        emit("ST.W R8[0x0],R10");
+        emit(StringFormat("LDDPC R12,0x%x", calNotePool + 4));  // global state base
+        emit("LD.UB R12,R12[0x2e7]");   // the instrument's channel
+        emit("CP.W R9,R12");
+        emit(StringFormat("BR{ne} 0x%x", calNoteDone));
+        emit("MOV R10,R11");
+        emit("SUB R10,0x15");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{ge} 0x%x", calNoteLow));
+        emit("MOV R10,0x0");
+        padTo(calNoteLow);
+        emit("CP.W R10,0x4f");
+        emit(StringFormat("BR{lt} 0x%x", calNoteHigh));
+        emit("MOV R10,0x4e");
+        padTo(calNoteHigh);
+        emit("ST.B R8[0x4],R10");       // 0x6d44, the entry
+        padTo(calNoteDone);
+        emit("LDM SP++,R10,R12");
+        padTo(calNoteGo);
+        emit(StringFormat("LDDPC R8,0x%x", calNotePool));
+        emit("MOV PC,R8");
+        padTo(calNotePool);
+        word(0x80006400); // the factory note-on
+        word(0x00003560); // global state base
+        finish("cal_note_on", calNoteEnd);
+
+        // cal_pitch, on the pitch store hook's word: R12 the scan's pitch.
+        // Off, straight on to pitch_hook_dispatch with R12 and LR as given.
+        // On, five seconds without a note-on end the mode, and that scan is
+        // an ordinary one; otherwise the scan's own pitch is computed as ever
+        // - the chain, the glide and blend state all move as they would - and
+        // cal_store puts the entry over what the remap stored.  The deferred
+        // trigger the hook fires next then goes out on the entry too.
+        // Spends R8..R11, which the route overwrites before reading.
+        begin(calPitchEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calPitchOn));
+        padTo(calPitchOff);
+        emit(StringFormat("LDDPC R8,0x%x", calPitchPool));
+        emit("MOV PC,R8");
+        padTo(calPitchOn);
+        emit("MOV R10,0x2efc");
+        emit("LD.W R10,R10[0x0]");
+        emit("MOV R11,0x6d40");
+        emit("LD.W R11,R11[0x0]");
+        emit("SUB R10,R11");            // milliseconds since the last note-on, unsigned
+        emit("MOV R11,0x1387");
+        emit("CP.W R10,R11");
+        emit(StringFormat("BR{ls} 0x%x", calPitchKeep));
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // five seconds: the mode ends
+        emit(StringFormat("RJMP 0x%x", calPitchOff));
+        padTo(calPitchKeep);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("MCALL PC[0x%x]", calPitchPool));      // the scan's own pitch
+        emit(StringFormat("MCALL PC[0x%x]", calPitchPool + 4));  // and the entry over it
+        emit("LDM SP++,R7,PC");
+        padTo(calPitchPool);
+        word(pbEntry);     // pitch_hook_dispatch
+        word(calStoreEntry);
+        finish("cal_pitch", calPitchEnd);
+
+        // cal_store: the entry the last note chose, exactly as the mirror
+        // holds it, into DAC slot 2 and the last-sent mirror - and into the
+        // pitch a claimed beat puts back, so a beat claimed before the mode
+        // began cannot restore anything else over it.  A leaf; spends R8, R9.
+        begin(calStoreEntry);
+        emit("MOV R8,0x6d44");
+        emit("LD.UB R8,R8[0x0]");
+        emit("MOV R9,0x6840");
+        emit("LD.UH R9,R9[R8 << 0x1]");
+        emit(StringFormat("LDDPC R8,0x%x", calStorePool));
+        emit("ST.H R8[0x358],R9");
+        emit("MOV R8,0x3212");
+        emit("ST.H R8[0x0],R9");
+        emit("MOV R8,0x609c");
+        emit("ST.H R8[0x0],R9");
+        emit("MOV PC,LR");
+        padTo(calStorePool);
+        word(0x00003560); // global state base
+        finish("cal_store", calStoreEnd);
+
+        // cal_bare, on clock_remap_bare's word: the frame is built and R12 is
+        // the fast trigger's pitch.  Off, on into the remap past its chain;
+        // on, the entry, and back through clock_remap_bare's frame.
+        begin(calBareEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calBareOn));
+        emit(StringFormat("LDDPC R8,0x%x", calBarePool));
+        emit("MOV PC,R8");
+        padTo(calBareOn);
+        emit(StringFormat("MCALL PC[0x%x]", calBarePool + 4));   // cal_store
+        emit("LDM SP++,R7,PC");
+        padTo(calBarePool);
+        word(0x8001998e); // pitch_remap_calibration, minus its chain
+        word(calStoreEntry);
+        finish("cal_bare", calBareEnd);
+
+        // cal_arp, called from inside the factory arp step (cal_arp_hook),
+        // its frame in R7, every caller's - the internal and external
+        // clocks, event 10, a take playing, the recording audition, the
+        // first key.  Off, the four instructions the hook displaced and back.
+        // On, out through the step's own exit, having done nothing.
+        begin(calArpEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calArpOn));
+        emit("MOV R8,R12");
+        emit("ST.H R7[-0x10],R8");
+        emit("MOV R8,-0x1");
+        emit("ST.B R7[-0x5],R8");
+        emit("MOV PC,LR");
+        padTo(calArpOn);
+        emit(StringFormat("LDDPC R8,0x%x", calArpPool));
+        emit("MOV PC,R8");
+        padTo(calArpPool);
+        word(0x800023ea); // the arp step's exit: its frame dropped, back to its caller
+        finish("cal_arp", calArpEnd);
+
+        // cal_key, on the touch scan's word for a key's contact: a press ends
+        // the mode, then the factory's contact handler plays it as ever, with
+        // R12 the key.  Spends R8, R9, which the handler overwrites first.
+        begin(calKeyEntry);
+        emit("MOV R8,0x6a6b");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");
+        emit(StringFormat("LDDPC R8,0x%x", calKeyPool));
+        emit("MOV PC,R8");
+        padTo(calKeyPool);
+        word(0x80005b6c); // the factory contact handler
+        finish("cal_key", calKeyEnd);
+
+        // The arp step's hook, past its prologue: MOV R8,R12; ST.H
+        // R7[-0x10],R8; MOV R8,-0x1; ST.B R7[-0x5],R8, which cal_arp replays.
+        begin(0x80002114);
+        emit("MCALL PC[0x8000211c]");
+        emit("RJMP 0x80002120");
+        padTo(0x8000211c);
+        word(calArpEntry);
+        finish("cal_arp_hook", 0x80002120);
+
+        wordPatch("cal_note_on_pool", 0x80005238, calNoteEntry,
+            "MIDI note-on -> calibration mode's entry, then the factory note-on");
+        wordPatch("cal_key_pool", 0x80005650, calKeyEntry,
+            "key contact -> calibration mode ends, then the contact handler");
+        }        calibrationCaves();
+
+        // The factory's startup pool word names settings_boot now, in every
+        // image: the mirror has to be filled before the first scan reads a
+        // table out of it, whatever else is built.  settings_boot's last
+        // pool word carries on into what this used to name - persist_boot,
+        // the clock's init, the sequencer's, or the factory's own GPIO setup.
+        begin(0x80007d8c);
+        word(0x8001f1c0);
+        finish("clock_init_pool", 0x80007d90);
 
         if (block("seq_clock_enabled")) {
             // Tempo conditioning must run with arp OFF too; otherwise RATE
@@ -10053,16 +12825,17 @@ function assembleProgram() {
             emit("BR{eq} 0x80004fae");
             emit("RJMP 0x80004f9e");
             finish("seq_clock_tick_hook", 0x80004f9e);
-            // Clock-divider builds consume GPIO only through their FIFO.
-            // Without it, retain the factory's physical-clock event path.
-            if (!block("clock_capture")) {
-                begin(0x80004e58);
-                emit("MCALL PC[0x8001d63c]");
-                emit("CP.W R8,0x0");
-                emit("BR{eq} 0x8000518a");
-                emit("RJMP 0x80004e72");
-                finish("seq_clock_input_hook", 0x80004e72);
-            }
+            // The factory's physical-clock event path.  With the divider
+            // live the ISR consumes edges through its FIFO and never posts
+            // this event; with it off (stage 2 phase G) the factory ISR
+            // posts it again, so the sequencer's gate stands in every image
+            // and the event goes on to clock_event_dispatch at 0x80004e72.
+            begin(0x80004e58);
+            emit("MCALL PC[0x8001d63c]");
+            emit("CP.W R8,0x0");
+            emit("BR{eq} 0x8000518a");
+            emit("RJMP 0x80004e72");
+            finish("seq_clock_input_hook", 0x80004e72);
             begin(0x80004efc);
             emit("MCALL PC[0x8001d63c]");
             emit("CP.W R8,0x0");
@@ -10149,6 +12922,49 @@ function assembleProgram() {
         padTo(0x800038c6);
         finish("pitch_target_blend_hook", 0x800038c6);
 
+        // Normal play on the pitch table's entries (3.0.2).  Calibration mode
+        // (NRPN 0x3f05) plays the table entry a note names; normal play has
+        // to land on the same DAC for the same entry, or the page tunes one
+        // pitch and the keyboard plays another.  Three factory details kept
+        // it a count off, about 2.5 cents.
+        function exactPitch() {            // The +-1 target fix-ups at 0x80003800..0x800038b8.  They move
+            // the target a unit when the base (state+0x350) and the target
+            // sit on opposite sides of 0x1e0/0x1e1 or of 0x789/0x78a, which
+            // put keys 0..11 and notes 24..35 a count flat under octave pad 0
+            // and stacked a count on the table's own error under pads 2 and
+            // 3.  The span holds nothing else: every branch into it but the
+            // entry at 0x80003800 comes from inside it
+            // (tools/factory_control_flow.txt), and the stores it makes are
+            // to the target at R7[-0x6] alone.  So the entry jumps to the
+            // blend hook's load of that target and the rest is dead.  The
+            // clock's fast stage runs the same preparation (clock_pitch_target)
+            // and loses them with it.
+            fixedPatch("pitch_fixups_skip", 0x80003800, 2, "RJMP 0x800038bc");
+            // The floor at 0x800038c6 zeroed every target up to 9: note 24's
+            // target of 1 with add-to-pitch off became 0, a count under entry
+            // 3.  Only a negative target floors now.
+            fixedPatch("pitch_floor_negative", 0x800038cc, 2, "MOV R8,-0x1");
+            // The factory key table, 132 halfwords the .data copy puts at RAM
+            // 0x854.  The tuning applier overwrites the first 32 with the
+            // selected slot; a MIDI note reads index note-24 (after reading
+            // index note, which it overwrites), so indices up to 127 are
+            // read, and every one past 31 comes from here.  The factory's
+            // entries run up to two counts over 485 + 484k/12, and the
+            // remap's rounding (+242, DIVS 484) turned every key with
+            // k = 1 (mod 3) from key 4 up into a count sharp.  These are
+            // 485 + round(484k/12), the same numbers a build puts in a tuning
+            // slot left at the factory temperament (tools/build.py
+            // EXACT_KEY_TABLE, BUILDLIB.FACTORY_KEY_TABLE).
+            begin(0x80016574);
+            // One line: the transpiler takes an array literal only whole.
+            var exactKeys = [485, 525, 566, 606, 646, 687, 727, 767, 808, 848, 888, 929, 969, 1009, 1050, 1090, 1130, 1171, 1211, 1251, 1292, 1332, 1372, 1413, 1453, 1493, 1534, 1574, 1614, 1655, 1695, 1735, 1776, 1816, 1856, 1897, 1937, 1977, 2018, 2058, 2098, 2139, 2179, 2219, 2260, 2300, 2340, 2381, 2421, 2461, 2502, 2542, 2582, 2623, 2663, 2703, 2744, 2784, 2824, 2865, 2905, 2945, 2986, 3026, 3066, 3107, 3147, 3187, 3228, 3268, 3308, 3349, 3389, 3429, 3470, 3510, 3550, 3591, 3631, 3671, 3712, 3752, 3792, 3833, 3873, 3913, 3954, 3994, 4034, 4075, 4115, 4155, 4196, 4236, 4276, 4317, 4357, 4397, 4438, 4478, 4518, 4559, 4599, 4639, 4680, 4720, 4760, 4801, 4841, 4881, 4922, 4962, 5002, 5043, 5083, 5123, 5164, 5204, 5244, 5285, 5325, 5365, 5406, 5446, 5486, 5527, 5567, 5607, 5648, 5688, 5728, 5769];
+            for (var __i1 = 0; __i1 < exactKeys.length; __i1++) {
+                var v = exactKeys[__i1];
+                halfword(v);
+            }
+            finish("key_table_exact", 0x8001667c);
+        }        exactPitch();
+
         // Tuning applier and tables.  Selector lives at RAM 0x6090 - see the
         // edit-key blocks below for why it is not state+2 - and is carried in
         // the persistence record's byte 0x1a, so the slot a player left
@@ -10219,7 +13035,7 @@ function assembleProgram() {
         emit("LDM SP++,R7,PC");
         padTo(0x80019ae8);
         word(0x00003560); // global state base
-        word(0x80019af8); // the three tuning tables
+        word(0x000068e0); // the three tuning tables, in the settings mirror
         word(0x80006808); // LED bit set
         word(0x800068cc); // LED bit clear
         emitTable("tuning_slot0");
@@ -10234,43 +13050,28 @@ function assembleProgram() {
         // it directly.  Sharing the byte meant selecting a tuning other than
         // slot 0 silently switched remote control on, and a remote-enable
         // message silently retuned the instrument.
+        // Since cell 27 the slot work lives in tuning_key27 and the hook
+        // covers only the factory key's first six bytes (its LDDPC and the
+        // load of the transpose-mode byte); the rest of the factory key
+        // stays in flash for the cave's off path.
         begin(0x80003d82);
-        emit("MOV R9,0x6090");
-        emit("LD.UB R8,R9[0x0]");
-        emit("MOV R10,0x1");
-        emit("CP.W R8,0x1");
-        emit("BR{ne} 0x80003d92");
-        emit("MOV R10,0x2");
-        padTo(0x80003d92);
-        emit("ST.B R9[0x0],R10");
-        emit("LDDPC R8,0x80003e24");
-        emit("MOV R9,0x0");
-        emit("ST.B R8[0x6a],R9");
-        emit("MOV R9,0x1");
-        emit("ST.B R8[0x3a],R9");
+        emit(StringFormat("MCALL PC[0x%x]", tk27Pool + 4));   // tuning_key27
         emit("RJMP 0x80003e10");
-        padTo(0x80003db8);
-        finish("edit_key27_tuning_slot1", 0x80003db8);
+        finish("edit_key27_tuning_slot1", 0x80003d88);
 
-        // Edit key 28 (was remote-enable toggle): slot 0 <-> slot 2.
+        // Edit key 28 (was remote-enable toggle): slot 0 <-> slot 2.  The
+        // factory's first three instructions here are eight bytes, so the
+        // hook is too.
         begin(0x80003db8);
-        emit("MOV R9,0x6090");
-        emit("LD.UB R8,R9[0x0]");
-        emit("MOV R10,0x0");
-        emit("CP.W R8,0x0");
-        emit("BR{ne} 0x80003dc8");
-        emit("MOV R10,0x2");
-        padTo(0x80003dc8);
-        emit("ST.B R9[0x0],R10");
-        emit("LDDPC R8,0x80003e24");
-        emit("MOV R9,0x1");
-        emit("ST.B R8[0x3a],R9");
+        emit(StringFormat("MCALL PC[0x%x]", tk28Pool + 4));   // tuning_key28
         emit("RJMP 0x80003e10");
-        padTo(0x80003de8);
-        finish("edit_key28_tuning_slot0", 0x80003de8);
+        emit("NOP");
+        finish("edit_key28_tuning_slot0", 0x80003dc0);
 
         // Hook: replace the factory pitch-DAC store and last-sent mirror with
-        // a call into the remap.  The 0..0xfff clamp still runs just before.
+        // a call into the remap.  The factory's clamp still runs just before,
+        // its floor moved to entry 0 of the pitch table (pitch_floor_compare,
+        // below).
         // After the remap stores the fresh pitch to DAC slot 2, fire any
         // pulse deferred by the flag at RAM 0x60ee — the trigger then always
         // rises with the correct pitch already in the DAC buffer (the arp
@@ -10312,6 +13113,22 @@ function assembleProgram() {
         }
         finish("pitch_store_hook", 0x80003256);
 
+        // The scan's floor.  The factory adds the strip's bend (state+0x216)
+        // to the glided pitch and clamps the sum into 0x3210 at 0..0xfff,
+        // just ahead of the hook above.  0 was the floor of a factory whose
+        // pitch was the DAC word; here the remap adds remapOffset before it
+        // reads the table, so the table's first entries - the 208's 0 V
+        // pitch and the two semitones over it - lay under the bottom key
+        // where only the vibrato reached them, and a bend on the lowest keys
+        // stopped at the bottom key.  The floor moves to entry 0: both of the
+        // clamp's immediates, the compare's and the store's.  The CP.H
+        // between them compares signed halfwords, and the store hook reads
+        // 0x3210 back with LD.SH.
+        fixedPatch("pitch_floor_compare", 0x8000320e, 2,
+            StringFormat("MOV R8,-0x%x", remapOffset));
+        fixedPatch("pitch_floor_store", 0x80003218, 2,
+            StringFormat("MOV R8,-0x%x", remapOffset));
+
         // The 1 ms task maintains diagnostics and banks long low intervals.
         // Input timestamps come directly from COUNT in the GPIO ISR.
         if (block("clock_scan")) {
@@ -10340,11 +13157,7 @@ function assembleProgram() {
         // Repurposed pool word: was the last-sent mirror address (0x3212),
         // now the remap entry point read by the MCALL above.
         begin(0x8000336c);
-        if (feature("pressure_blend")) {
-            word(0x8001ad78); // target conditioner -> blend-offset shim -> remap
-        } else {
-            word(0x80019980);
-        }
+        word(calPitchEntry); // cal_pitch, then pitch_hook_dispatch: the target conditioner's route, or the remap, by the blend's live byte
         finish("pitch_hook_pool", 0x80003370);
 
         // Scan period, in milliseconds.  The main loop registers a periodic
@@ -10369,11 +13182,14 @@ function assembleProgram() {
         // timer is the factory latch: it sets the sustain gate at state+0x2ea
         // and sends MIDI CC 64, and nothing else ever sets that gate.  With
         // the latching arp the same two pads toggle the latch's transpose
-        // state instead, so the call is taken out and the factory latch is
-        // gone completely - not shadowed, not conditional.  The dispatcher's
-        // own bookkeeping before the call (the pad code, the timer reset)
-        // and the edit-mode meaning of the chord are untouched.
-        fixedPatch("factory_pad_latch_off", 0x8000491e, 4, "NOP");
+        // state instead, so the call goes through latch_pad_shim, which
+        // swallows it while the latch is live - as the NOP that stood here
+        // did - and lets the timer run otherwise.  The dispatcher's own
+        // bookkeeping before the call (the pad code, the timer reset) and
+        // the edit-mode meaning of the chord are untouched.
+        begin(0x8000491e);
+        emit(StringFormat("MCALL PC[0x%x]", ltPool + 24));   // latch_pad_shim
+        finish("factory_pad_latch_off", 0x80004922);
         wordPatch("poly_settings_loader_pool", 0x80007da8, 0x8001aca4,
             "settings loader -> one-time poly-MIDI migration wrapper");
 
@@ -10389,13 +13205,37 @@ function assembleProgram() {
         fixedPatch("octsw_redirect_8", 0x80003a14, 4, "ST.B R9[0x2ae7],R8");
         fixedPatch("octsw_redirect_9", 0x80003a1c, 4, "ST.W R8[0x2ae8],R9");
 
-        singlePatch("pressure_gain_nop", 0x800043a4, "NOP");
+        // The factory's gain branch: BR{ne} over `MOV R12,0x5; MCALL
+        // knob4_pool` unless internal mode 4.  The fix NOPped the branch so
+        // knob 4 is read on every sweep; now the eight bytes are a call to
+        // pressure_gain (phase F), which keeps the branch's own condition -
+        // the CP.W before it still stands, MCALL leaves the flags - and asks
+        // the live byte only when the factory would have skipped.  Its
+        // return address is the factory call's own, so the knob-4 dispatch
+        // returns straight there.
+        begin(0x800043a4);
+        emit(StringFormat("MCALL PC[0x%x]", gnPool + 4));   // pressure_gain
+        emit("NOP");
+        emit("NOP");
+        finish("pressure_gain_nop", 0x800043ac);
         fixedPatch("transpose_force_1", 0x80005466, 4, "MOV R8,0x1");
         fixedPatch("transpose_force_2", 0x800062f8, 4, "MOV R8,0x1");
-        fixedPatch("pitch_clamp_skip_1", 0x800033f8, 2, "RJMP 0x80003506");
-        fixedPatch("pitch_clamp_skip_2", 0x800033c0, 2, "RJMP 0x800033d6");
-        wordPatch("pressure_fn_pool", 0x80003574, 0x80019580,
-            "int-to-float pointer -> calibrated pressure curve");
+        // The two clamp skips: each RJMP stood over the LDDPC that begins a
+        // 4-byte load nothing else lands on, so each pair is a 6-byte call
+        // to a cave (phase F) that replays the pair - the literal as a MOV,
+        // then the load - and returns while the fix is off, or jumps to the
+        // skip's target while it is on.  The routine saves LR: it calls
+        // through 0x80003574 a few bytes earlier.
+        begin(0x800033f8);
+        emit(StringFormat("MCALL PC[0x%x]", c1Pool + 4));   // pitch_clamp_1: over the 16-tap filter, or into it
+        emit("NOP");
+        finish("pitch_clamp_skip_1", 0x800033fe);
+        begin(0x800033c0);
+        emit(StringFormat("MCALL PC[0x%x]", c2Pool + 4));   // pitch_clamp_2: over the gain, or the gain's load
+        emit("NOP");
+        finish("pitch_clamp_skip_2", 0x800033c6);
+        wordPatch("pressure_fn_pool", 0x80003574, pfEntry,
+            "int-to-float pointer -> pressure_fn_dispatch: the calibrated curve, or the factory's conversion");
         fixedPatch("transpose_force_3", 0x80005392, 2, "MOV R8,0x1");
         wordPatch("pressure_float_helper_pool", 0x8000357c, 0x80013434,
             "restore original post-gain float-to-int helper");
@@ -10434,48 +13274,67 @@ function assembleProgram() {
         // -484, 0, +484 or +968 DAC units by position, and the stored octave
         // setting multiplies by 484 with a two-octave bias.  With a scale that
         // repeats somewhere else those move the keyboard off its own scale, so
-        // each constant becomes one period.  All are plain immediates of the
-        // same width, so nothing after them moves; at 484 the patches are not
-        // emitted at all.
-        fixedPatch("octave_step_down", 0x80003776, 4,
-            StringFormat("MOV R8,-0x%x", number("octave_units", 484, 1, 2000)));
-        fixedPatch("octave_step_up", 0x80003788, 4,
-            StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
-        fixedPatch("octave_step_up2", 0x80003792, 4,
-            StringFormat("MOV R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
-        fixedPatch("octave_scale_mul", 0x800035e4, 4,
-            StringFormat("MOV R8,0x%x", number("octave_units", 484, 1, 2000)));
-        // The factory writes this one as the three-operand SUB R8,R8,0x3c8;
-        // the two-operand form is the same operation and the same width.
-        fixedPatch("octave_scale_bias", 0x800035fa, 4,
-            StringFormat("SUB R8,0x%x", 2 * number("octave_units", 484, 1, 2000)));
+        // each constant is one period - and since 2026-09-23 the period is
+        // number cell 10 of the settings record, read by octave_period, so
+        // the five 4-byte immediates are 4-byte calls onto its pool words in
+        // every image and a tuning with another period travels over MIDI.
+        // Hooks, as the phase F sites are, so the listing counts their calls.
+        // The sixth 484 in the block, the add-to-pitch octave at 0x800035c0,
+        // joined them the same day; a non-octave build had left it at 484.
+        begin(0x80003776);
+        emit(StringFormat("MCALL PC[0x%x]", opPool));       // -period: the panel's octave down
+        finish("octave_step_down", 0x8000377a);
+        begin(0x80003788);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 4));   // +period: octave up
+        finish("octave_step_up", 0x8000378c);
+        begin(0x80003792);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 8));   // two periods: the top position
+        finish("octave_step_up2", 0x80003796);
+        begin(0x800035e4);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 4));   // the stored octave's multiplier
+        finish("octave_scale_mul", 0x800035e8);
+        begin(0x800035fa);
+        emit(StringFormat("MCALL PC[0x%x]", opPool + 12));  // its two-octave bias
+        finish("octave_scale_bias", 0x800035fe);
+        // The sixth, the add-to-pitch octave: with quantize_presets the
+        // preset adds whole degrees, so the base shift has to be a whole
+        // period too or the sum leaves a non-octave scale.  R9 is dead
+        // here as at the panel sites (2026-09-23).
+        begin(0x800035c0);
+        emit(StringFormat("MCALL PC[0x%x]", opPool));       // -period: the keyboard an octave down under add-to-pitch
+        finish("octave_pitch_add", 0x800035c4);
 
         // With the jack transposing, the factory must stop adding it to the
-        // glide-rate index: the load at 0x8000313e becomes a constant that
-        // the halve-and-subtract-twenty below it turns into exactly zero.
-        fixedPatch("glide_cv_addend", 0x8000313e, 4, "MOV R8,0x28");
+        // glide-rate index: the load at 0x8000313e becomes a call to
+        // glide_cv_shim, which answers a constant that the
+        // halve-and-subtract-twenty below it turns into exactly zero, or
+        // does the factory's own load while the jack is on portamento
+        // (phase E).  The routine saves LR - it calls the strip at
+        // 0x8000312a - and R9 is dead here, reloaded at 0x80003150.
+        begin(0x8000313e);
+        emit(StringFormat("MCALL PC[0x%x]", gaPool));   // glide_cv_shim -> R8
+        finish("glide_cv_addend", 0x80003142);
 
-        wordPatch("knob1_pool", 0x800043c4, 0x800194c0,
-            "knob-1 pointer -> pressure-ceiling wrapper");
+        wordPatch("knob1_pool", 0x800043c4, k1Entry,
+            "knob-1 pointer -> knob1_pressure_dispatch: the pressure-ceiling wrapper, or the factory handler");
         wordPatch("knob3_pool", 0x800043cc, 0x80014300,
             "knob-3 pointer -> pressure-floor wrapper");
-        wordPatch("knob4_pool", 0x800043d0, 0x80014380,
-            "knob-4 pointer -> knob4_curve");
-        // Remote-enable guards read constant zero.  Only emitted with a
-        // tuning installed: the selector moved out of state+0x2 to RAM
-        // 0x6090, so nothing shares the flag and a build without tunings
-        // leaves the factory feature alone.
+        wordPatch("knob4_pool", 0x800043d0, k4Entry,
+            "knob-4 pointer -> knob4_dispatch: knob4_curve, or the factory handler");
+        // Remote-enable guards: with a tuning in use they read constant
+        // zero (key 28 is a slot selector then, so remote could not be
+        // turned off again by hand); with cell 27 off they read the flag as
+        // the factory does.  Each site was `LD.UB R8,R8[0x2]; CP.W R8,0x0`,
+        // four bytes, R8 the state base; the call leaves the compare's
+        // flags for the branch after it.
         begin(0x80006528);
-        emit("MOV R8,0x0");
-        emit("CP.W R8,0x0");
+        emit(StringFormat("MCALL PC[0x%x]", rgPool));   // remote_guard
         finish("remote_guard_1", 0x8000652c);
         begin(0x800066ae);
-        emit("MOV R8,0x0");
-        emit("CP.W R8,0x0");
+        emit(StringFormat("MCALL PC[0x%x]", rgPool));
         finish("remote_guard_2", 0x800066b2);
         begin(0x800085da);
-        emit("MOV R8,0x0");
-        emit("CP.W R8,0x0");
+        emit(StringFormat("MCALL PC[0x%x]", rgPool));
         finish("remote_guard_3", 0x800085de);
         wordPatch("note_on_pool", 0x80005e8c,
             block("seq_pitch") ? 0x8001b330 : 0x80018d00,

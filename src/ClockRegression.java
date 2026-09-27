@@ -146,7 +146,7 @@ public class ClockRegression extends GhidraScript {
     }
     void fresh(int divisor, int hz) throws Exception {
         if (e != null) e.dispose();
-        e = new EmulatorHelper(currentProgram);
+        e = AlignGuard.install(new EmulatorHelper(currentProgram));
         e.writeMemory(toAddr(0),new byte[0x8000]);
         e.writeMemory(toAddr(8),e.readMemory(toAddr(0x80015d28L),0x2ecc));
         w(0x2ed4,4,0xffffffffL);
@@ -539,17 +539,24 @@ public class ClockRegression extends GhidraScript {
     // DAC word, or every trigger drops a wrong pitch under the gate until the
     // scan overwrites it - which is the bleed the instrument showed when the
     // fast path staged state+0x352 without the bend strip's offset. The
-    // centred case is the control; the pushed cases carry the defect, and the
-    // last two drive the sum past each end of the scan's clamp.
+    // centred case is the control; the pushed cases carry the defect, 4000
+    // drives the sum past the top of the scan's clamp and -1200 past its
+    // floor. -600 does not reach the floor: this fixture's note sits near 850
+    // raw, so the floor needs the larger bend, and the case asserts it
+    // arrived there - entry 0 of the pitch table - or it would compare two
+    // pitches the floor never touched.
     void bendAgreesWithTheScan() throws Exception {
-        for (int bend : new int[]{0, 60, -240, 4000, -600}) {
+        for (int bend : new int[]{0, 60, -240, 4000, -600, -1200}) {
             int[] r = fastVersusScan(bend);
             println("bend "+bend+": fast trigger staged "+r[0]
                     +", the scan reached "+r[1]);
             check("the fast trigger and the scan stage the same DAC word at "
                   +"bend "+bend+": "+r[0]+" vs "+r[1], r[0]==r[1]);
+            if (bend == -1200)
+                check("bend -1200 reaches the floor, entry 0 of the pitch table: "
+                      +r[1]+" vs "+r(0x6840,2), r[1]==r(0x6840,2));
         }
-        println("PASS fast trigger and scan agree across the bend range");
+        println("PASS fast trigger and scan agree across the bend range, both clamps included");
     }
     // The pitch scan and the 1 kHz DAC flush are separate dispatcher events
     // and nothing orders them within a millisecond. Run a whole clock both
@@ -745,6 +752,66 @@ public class ClockRegression extends GhidraScript {
                   outputTimes.size()+" outputs for a "+second+" ms interval");
         }
         println("PASS the "+window+" ms refractory rejects the close edge and passes the next");
+    }
+    // The refractory and the rearm follow settings cells 2 and 3 without a
+    // restart.  A received write changes the mirror and nothing else; the
+    // next pass of the main-loop wrapper works the COUNT thresholds out
+    // again, and the capture ISR compares against those.  Each case is a
+    // rise, a low and a rise that the cells as booted - 4 ms, 250 us -
+    // would decide the other way; the last case is the control, the same
+    // pair at the booted cells.  (Audit 2026-09-24, finding 5: clock_init
+    // worked the thresholds out once, at boot, and an NRPN write reached
+    // the dump but not the clock.)
+    void thresholdsFollowTheCells() throws Exception {
+        // clock_min_ms, clock_rearm_us, the fall, the second rise, taken
+        long[][] cases={{1,250,10500,12000,1},{4,1000,15500,16000,0},{4,250,15500,16000,1}};
+        for (long[] c : cases) {
+            fresh(1,25000000);
+            long perMs=r(0x6244,4);
+            check("at boot the image's own cells, 4 ms and 250 us, as COUNT thresholds",
+                  r(0x6804,2)==4 && r(0x6806,2)==250 && r(0x624c,4)==perMs*4 && r(0x6248,4)==perMs*250/1000,
+                  "cells "+r(0x6804,2)+","+r(0x6806,2)+" thresholds "+r(0x624c,4)+","+r(0x6248,4));
+            w(0x6804,2,c[0]); w(0x6806,2,c[1]);
+            service(9000);
+            check("one pass of the wrapper later the thresholds are "+c[0]+" ms and "+c[1]+" us",
+                  r(0x624c,4)==perMs*c[0] && r(0x6248,4)==perMs*c[1]/1000,
+                  "min="+r(0x624c,4)+" rearm="+r(0x6248,4));
+            irq(10000,true);
+            check("the first rise is taken", r(0x6236,1)==1 && r(0x6234,1)==1,
+                  "presence="+r(0x6236,1)+" head="+r(0x6234,1));
+            irq(c[2],false);
+            long head=r(0x6234,1);
+            irq(c[3],true);
+            check("a rise "+(c[3]-10000)/1000.0+" ms after the first, "+(c[3]-c[2])+" us after the low, "
+                  +(c[4]==1?"is taken":"is refused")+" at "+c[0]+" ms and "+c[1]+" us",
+                  r(0x6234,1)==head+c[4], "head "+r(0x6234,1)+" was "+head);
+        }
+        println("PASS the refractory and the rearm follow cells 2 and 3 on the next pass, without a restart");
+    }
+    // The lock follows settings cell 4, clock_lock_pulses.  The count of
+    // agreeing intervals starts at one on the first edge, starts again at
+    // one on the second (there is no earlier interval to agree with), goes
+    // up by one per agreeing interval and stops at the cell; the lock is
+    // taken when the count reaches the cell.  So a steady clock locks on
+    // edge N+1 for a cell of N.  (2026-09-24, beside the audit's finding 5:
+    // the lock compared the count with the build's number while the count
+    // stopped at the cell, so a cell below the build's number never locked.)
+    void lockFollowsTheCell() throws Exception {
+        for (int pulses : new int[]{2,8}) {
+            fresh(1,25000000);
+            w(0x6808,2,pulses);
+            long t=10000; int locked=0;
+            for (int i=1;i<=12 && locked==0;i++) {
+                irq(t,true); service(t); scan(t+5000);
+                settleStep(t+5000,t+15000);
+                irq(t+50000,false);
+                if (r(0x6233,1)==1) locked=i;
+                t+=100000;
+            }
+            check("with cell 4 at "+pulses+" a steady clock locks on edge "+(pulses+1)+": it locked on "
+                  +(locked==0?"none of twelve":"edge "+locked), locked==pulses+1);
+        }
+        println("PASS the clock locks where cell 4 says, below the build's number and above it");
     }
     void overflowAndWrap() throws Exception {
         fresh(1,25000000);
@@ -2448,7 +2515,7 @@ public class ClockRegression extends GhidraScript {
             if (jitterOnly) {
                 millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
             } else {
-            millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); overflowAndWrap(); longLowAndTies(); warmRestart();
+            millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); thresholdsFollowTheCells(); lockFollowsTheCell(); overflowAndWrap(); longLowAndTies(); warmRestart();
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
             for (int hz : new int[]{10,150,180,199,200})

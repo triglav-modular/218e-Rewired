@@ -451,6 +451,19 @@ def test_tables(cfg: dict) -> None:
         table[k + 12] - table[k] == tuning["units_per_octave"] for k in range(20)))
     check("tuning table ascends", table == sorted(table))
 
+    # The factory temperament since 3.0.2: the slot a build makes for it,
+    # and the table the assembler writes over the factory's at 0x80016574
+    # (key_table_exact), are one rule, 485 + round(484k/12).
+    exact = B.EXACT_KEY_TABLE
+    check("the factory temperament is 485 + round(484k/12), 132 entries",
+          exact == [485 + round(484 * k / 12) for k in range(132)]
+          and B.factory_tuning() == exact[:32])
+    check("and octave-exact", all(exact[k + 12] - exact[k] == 484 for k in range(120)))
+    literal = re.search(r"int\[\] exactKeys = \{([^}]*)\};",
+                        (REPO / "src" / "AssemblePressureFix.java").read_text())
+    check("the assembler writes the same numbers into the image's key table",
+          literal is not None and [int(v) for v in literal.group(1).split(",")] == exact)
+
     # The anchor's whole point is that the reference key holds still across
     # slots, so check the shipped scales agree there rather than checking the
     # offsets one at a time.
@@ -722,11 +735,37 @@ def test_blend(cfg: dict) -> None:
         text = re.sub(
             r'emit\("MOV R12,0x1f"\);\s*emit\("MCALL PC\[0x8001d5bc\]"\);',
             "", text)
+        # The boot guard hands GP fuse bit 31, ISP_FORCE, to the factory's
+        # flashc routines.  Exempt only those argument/call pairs, never a
+        # loop using 31 keys.
+        text = re.sub(
+            r'emit\("MOV R12,0x1f"\);[^\n]*\n\s*emit\(String\.format\("MCALL PC\[0x%x\]", '
+            r'bg(?:ArmPool \+ 8|ConfPool \+ 4)\)\);',
+            "", text)
         # The persistence scan asks for the latch state with mask bit 5.
         # Exempt only that load/or pair - the JS encoder has no ORL - never a
         # loop using 32 keys.
         text = re.sub(
             r'emit\("MOV R8,0x20"\);[^\n]*\n\s*emit\("OR R2,R8"\);',
+            "", text)
+        # settings_target's bound for a pattern length is 32, handed back in
+        # R9 beside the lengths' mirror base.  Exempt only that pair - never
+        # a loop using 32 keys.
+        text = re.sub(
+            r'emit\("MOV R9,0x20"\);\s*emit\("MOV R12,0x6a28"\);',
+            "", text)
+        # settings_defaults copies the 32 cells out of settings_numbers in
+        # one settings_copy call: a count over the mirror's cells, not the
+        # keys.  Exempt only that count/call pair.
+        text = re.sub(
+            r'emit\("MOV R10,0x20"\);\s*emit\("MCALL PC\[0x8001f2f4\]"\);',
+            "", text)
+        # glide_cv_shim answers the factory's glide-rate addend as 0x28,
+        # which the halve-and-subtract-twenty after the call turns into
+        # exactly zero - the constant the old in-place patch held.  Exempt
+        # only that answer/return pair, never a loop using 40 keys.
+        text = re.sub(
+            r'emit\("MOV R8,0x28"\);\s*emit\("MOV PC,LR"\);',
             "", text)
         return sorted(re.findall(r'emit\("MOV R\d+,0x(1[c-f]|2[0-9a-f])"\);', text))
     # The property, not a headcount: adding a legitimate walk should not
@@ -811,7 +850,7 @@ def pool_guard(flash: dict[int, int], factory: dict[int, int]):
     """
     ours = {a for a, v in flash.items() if factory.get(a) != v}
     calls = []
-    for pc in range(0x80002000, 0x80020000, 2):
+    for pc in range(0x80002000, B.CODE_END, 2):
         if flash.get(pc) != 0xF0 or flash.get(pc + 1) != 0x1F:
             continue
         d = (flash.get(pc + 2, 0) << 8) | flash.get(pc + 3, 0)
@@ -830,8 +869,8 @@ def pool_guard(flash: dict[int, int], factory: dict[int, int]):
                 bad.append(f"{pc:#x} calls through {pool:#x}, outside the image")
                 continue
             value = word(pool)
-            # A code address in this part is 0x8000xxxx..0x8002xxxx and even.
-            if not (0x80000000 <= value < 0x80020000 and value % 2 == 0):
+            # A code address in this part is even and below the data pages.
+            if not (0x80000000 <= value < B.CODE_END and value % 2 == 0):
                 bad.append(f"{pc:#x} -> {pool:#x} holds {value:#010x}")
                 continue
             # The address must land on emitted code, not erased flash: a cave
@@ -904,6 +943,14 @@ def test_call_pools(cfg: dict) -> None:
     for offset, byte in enumerate((0xEB, 0xCD, 0x40, 0x80)):
         planted[mine[0][1] + offset] = byte
     check("a pool holding instruction bytes is still caught", bool(faults(planted)))
+    # And a pool word of zero: what the transpiled assembler emits for a
+    # label used before its `long` is declared - Java refuses to compile
+    # that, JavaScript hoists it as undefined - which sent settings_scan's
+    # commit call to address 0 (2026-09-22).
+    planted = dict(flash)
+    for offset in range(4):
+        planted[mine[0][1] + offset] = 0
+    check("a pool word of zero is still caught", bool(faults(planted)))
 
 
 # Configurations that turn a shipped block off, as substitutions on
@@ -924,7 +971,9 @@ def test_call_pools_feature_off(cfg: dict) -> None:
     """The pool and reachability guards, over images with blocks turned off.
 
     test_call_pools reads exactly one file - [firmware].output_hex - while
-    docs/BUILD.md states that a disabled feature is never reachable and
+    docs/BUILD.md states that a disabled feature is never reachable (for
+    what stays build-time; the options are cells since stage 2, and these
+    configurations now differ from the default only in their cells) and
     docs/HANDOFF.md says to trust the guard.  web/test_matrix.js passes all
     1,536 combinations without touching this, because it compares two
     toolchains that were told the same thing.
@@ -989,7 +1038,7 @@ def test_call_pools_feature_off(cfg: dict) -> None:
             # And the reachability half on its own, planted: a pool word
             # pointing into erased flash is what a disabled block leaves.
             erased = next((a for a in sorted(flash)
-                           if 0x80002000 <= a < 0x80020000
+                           if 0x80002000 <= a < B.CODE_END
                            and a % 2 == 0 and flash[a] == 0xFF), None)
             if erased is None:
                 check(f"{name}: the image has erased flash to point into", False, "")
@@ -1335,13 +1384,18 @@ def test_migration_and_empty_hand() -> None:
     # handler and two commands write it.  The tuning slot must not share it,
     # or picking a tuning enables remote control and a remote-enable message
     # retunes the instrument.
-    for start, name in (("0x80003d82L", "edit_key27_tuning_slot1"),
-                        ("0x80003db8L", "edit_key28_tuning_slot0"),
-                        ("0x80019a40L", "tuning_applier_tables")):
+    # Since cell 27 the slot work lives in tuning_key27 and tuning_key28;
+    # each cave's OFF path replays the factory's own key, and key 28's factory
+    # job is the remote-enable toggle, so that path reads state+0x2 by design.
+    # The slot work - everything before the off label - must not.
+    for start, name, off in (("tk27Entry", "tuning_key27", "padTo(tk27Off)"),
+                             ("tk28Entry", "tuning_key28", "padTo(tk28Off)"),
+                             ("0x80019a40L", "tuning_applier_tables", None)):
         body = cave(start, name)
+        slot_work = body[:body.index(off)] if off else body
         check(f"{name} keeps the tuning slot off state+0x2",
-              'emit("MOV R9,0x6090");' in body
-              and not re.search(r'emit\("(LD|ST)\.\w+ R\d+,?R?\d*\[0x2\]', body))
+              'emit("MOV R9,0x6090");' in slot_work
+              and not re.search(r'emit\("(LD|ST)\.\w+ R\d+,?R?\d*\[0x2\]', slot_work))
 
     # Knob 4 sets the pressure curve level, and it does so from wherever the
     # knob physically is - mode 0 is "no pads held".  Removing this once made
@@ -1384,8 +1438,10 @@ def test_migration_and_empty_hand() -> None:
     check("knob 4 reaches the configured default level",
           0 <= curve.get("default_level", 31) <= curve.get("knob_max_level", 31),
           f"default {curve.get('default_level')}")
+    # Through knob4_dispatch since stage 2 phase F, whose first word is the curve.
     check("the knob-4 pool word reaches it",
-          'wordPatch("knob4_pool", 0x800043d0L, 0x80014380L' in source)
+          'wordPatch("knob4_pool", 0x800043d0L, k4Entry' in source
+          and 'word(0x80014380L); // knob4_curve' in source)
     check("the bootstrap does not force the curve level back to 0",
           'emit("ST.B R10[0x2db],R11");' not in source)
 
@@ -1783,9 +1839,12 @@ def test_option_messages() -> None:
           _options.expand({})["presets"]["quantize"] is True)
     on, _, _ = B.resolve_flags(_options.expand({"quantize_presets": True}))
     off, _, _ = B.resolve_flags(_options.expand({"quantize_presets": False}))
-    check("the quantiser's cave and pool word are gated together",
-          on["preset_quantize"] and on["preset_quantize_pool"]
-          and not off["preset_quantize"] and not off["preset_quantize_pool"])
+    # Stage 2 phase E: the quantiser's cave and pool word are in every image
+    # and the option cell decides at boot, so neither setting names them any
+    # more; the cell carries the choice, which the record tests pin.
+    check("the quantiser's cave and pool word are no longer a build-time gate",
+          all(k not in flags for flags in (on, off)
+              for k in ("preset_quantize", "preset_quantize_pool")))
     check("arp_patterns = true is the default bank",
           _options.expand({"arp_patterns": True})["knob2"] == _options.expand({})["knob2"])
     check("knob2 = quantized asks for the quantized randomiser",
@@ -2044,6 +2103,130 @@ def test_divu_destinations() -> None:
           f"odd destinations: {odd}")
 
 
+def test_settings_record() -> None:
+    """The settings record: layout, checksum, bounds, and its RAM shape.
+
+    The firmware copies the record's bytes from 0x20 straight into its
+    mirror at 0x6800 and reads each number as LD.UH off a fixed cell, so
+    the offsets here are the firmware's addresses, not a convention; a
+    field that moved would be read as a different setting.  The bounds are
+    refused at serialization time for the same reason the loader refuses
+    them off flash: a value past its range is a wrong immediate.
+    """
+    print("settings record")
+    import settings as S
+    numbers = {"chord_hold_scans": 200, "transpose_cv_period": 819,
+               "transpose_cv_hysteresis": 12}
+    tables = {
+        "pitch_remap": [485 + 40 * i for i in range(79)],
+        "tuning_slot0": [500 + 40 * k for k in range(32)],
+        "tuning_slot1": [510 + 40 * k for k in range(32)],
+        "tuning_slot2": [520 + 40 * k for k in range(32)],
+        "tuning_period_keys": [12, 12, 7],
+        "arp_pattern_bank": [0x1234, 0xabcd, 0x0001, 0x8000],
+        "arp_pattern_len": [16, 32],
+    }
+    rec = S.record(numbers, tables, True, 0xb007, 484, generation=7)
+    check("record is 0x2a8 bytes", len(rec) == S.LENGTH, str(len(rec)))
+    check("marker, layout 2, length, generation in the header",
+          rec[:12] == bytes.fromhex("32313853 0002 0298 00000007".replace(" ", "")),
+          rec[:12].hex())
+    back = S.parse(rec)
+    check("parse reads the generation back", back["generation"] == 7)
+    check("the image marker and period ride at 0x10 and 0x12",
+          rec[0x10:0x14] == bytes.fromhex("b00701e4"), rec[0x10:0x14].hex())
+    got = back["numbers"]
+    check("numbers take the build's value where it has one, the fallback elsewhere",
+          got["chord_hold_scans"] == 200 and got["tie_glide_rate"] == 60
+          and got["transpose_cv_period"] == 819 and got["transpose_cv_hysteresis"] == 12,
+          str(got))
+    check("the ten numbers sit in cell order at 0x20",
+          rec[0x20:0x34] == bytes.fromhex("003c 0800 0004 00fa 0005 0333 0000 000c 00c8 00c8".replace(" ", "")),
+          rec[0x20:0x34].hex())
+    check("cell 10 is the period", rec[0x34:0x36] == (484).to_bytes(2, "big"))
+    check("cells 11..15 are zero", rec[0x36:0x40] == bytes(10))
+    # The option cells, 16..27, at 0x40: what the page's option values
+    # index to, in the page's order; every option left out is its default.
+    check("the option cells default to the config's defaults",
+          rec[0x40:0x58] == bytes.fromhex("0001 0000 0000 0000 0000 0001 0001 0001 0001 0001 0001 0000".replace(" ", "")),
+          rec[0x40:0x58].hex())
+    check("cells 27..31 are zero", rec[0x58:0x60] == bytes(8))
+    chosen = S.option_cells({"latching_arp": False, "knob1": "orders", "knob2": "patterns",
+                             "knob3": "factory", "knob4": "trn", "sequencer": False,
+                             "clock_divide": False, "pressure_fix": True,
+                             "pressure_portamento": False, "quantize_presets": False,
+                             "portamento_in": "portamento"})
+    rec2 = S.record(dict(numbers, **chosen), tables, True, 0xb007, 484)
+    check("option cells carry the page's choices as indices",
+          rec2[0x40:0x58] == bytes.fromhex("0000 0001 0003 0001 0001 0000 0000 0001 0000 0000 0000 0000".replace(" ", "")),
+          rec2[0x40:0x58].hex())
+    check("and parse names them again", S.parse(rec2)["options"] == {
+        "latching_arp": False, "knob1": "orders", "knob2": "patterns", "knob3": "factory",
+        "knob4": "trn", "sequencer": False, "clock_divide": False, "pressure_fix": True,
+        "pressure_portamento": False, "quantize_presets": False, "portamento_in": "portamento",
+        "alternate_tunings": False},
+        str(S.parse(rec2)["options"]))
+    raises("an option outside its choices is refused",
+           lambda: S.option_cells({"knob2": "random"}), "knob2")
+    raises("an option cell past its range is refused",
+           lambda: S.record(dict(numbers, knob2=5), tables, True, 0, 484), "0..4")
+    raises("pressure_portamento without pressure_fix is refused",
+           lambda: S.record(dict(numbers, pressure_fix=0, pressure_portamento=1), tables, True, 0, 484),
+           "pressure_portamento needs pressure_fix")
+    bad = bytearray(rec); bad[0x4f] = 0; bad[0x51] = 1
+    import struct as _st
+    _st.pack_into(">I", bad, 12, S.crc(bytes(bad)))
+    raises("parse refuses the pair too", lambda: S.parse(bytes(bad)), "pressure_portamento needs pressure_fix")
+    bad = bytearray(rec); bad[5] = 1
+    _st.pack_into(">I", bad, 12, S.crc(bytes(bad)))
+    raises("parse refuses layout 1", lambda: S.parse(bytes(bad)), "version 1")
+    check("pitch, tuning and period keys land at their offsets",
+          back["pitch_remap"] == tables["pitch_remap"]
+          and back["tuning_slot2"] == tables["tuning_slot2"]
+          and back["tuning_period_keys"] == [12, 12, 7])
+    check("the pad after the 79 pitch entries is zero", rec[0xfe:0x100] == b"\0\0")
+    check("pattern masks keep the table's low-first halfword pairs",
+          rec[0x1c8:0x1d0] == bytes.fromhex("1234abcd00018000") and rec[0x1d0:0x248] == bytes(0x78),
+          rec[0x1c8:0x1d0].hex())
+    check("pattern lengths follow, zero past the bank",
+          rec[0x248:0x24c] == bytes.fromhex("00100020") and rec[0x24c:0x288] == bytes(0x3c))
+    check("the reserved tail is zero", rec[0x288:0x2a8] == bytes(0x20))
+    # zlib's CRC over the two covered ranges, as one stream.
+    import zlib
+    check("CRC covers header bytes 4..11 then the payload",
+          int.from_bytes(rec[12:16], "big") == zlib.crc32(rec[4:12] + rec[16:]))
+    # The bank is zero, not [0, 0]/[32], when knob 2 is not on patterns: the
+    # firmware mirrors the bank only when the tables were emitted.
+    plain = S.record(numbers, tables, False, 0xb007, 484)
+    check("no pattern tables means a zero bank and zero lengths",
+          plain[0x1c8:0x288] == bytes(0xc0))
+    check("the same payload otherwise", plain[0x10:0x1c8] == rec[0x10:0x1c8])
+
+    raises("a number past its range is refused",
+           lambda: S.record({"tie_glide_rate": 1025}, tables, True, 0, 484), "1..1024")
+    raises("a pitch entry past the DAC is refused",
+           lambda: S.record(numbers, dict(tables, pitch_remap=[0x1000] * 79), True, 0, 484),
+           "pitch_remap[0]")
+    raises("a short pitch table is refused",
+           lambda: S.record(numbers, dict(tables, pitch_remap=[1] * 78), True, 0, 484),
+           "79 entries")
+    raises("a period of zero keys is refused",
+           lambda: S.record(numbers, dict(tables, tuning_period_keys=[0, 12, 12]), True, 0, 484),
+           "1..127")
+    check("a 36-position map serializes: the rotation's 32 is the build's rule, not the record's",
+          S.parse(S.record(numbers, dict(tables, tuning_period_keys=[36, 12, 12]), True, 0, 484))
+          ["tuning_period_keys"] == [36, 12, 12])
+    raises("a pattern length past 32 is refused",
+           lambda: S.record(numbers, dict(tables, arp_pattern_len=[33, 32]), True, 0, 484),
+           "1..32")
+    raises("generation zero is refused",
+           lambda: S.record(numbers, tables, True, 0, 484, generation=0), "generation")
+    bad = bytearray(rec); bad[0x61] ^= 1
+    raises("parse refuses a flipped payload bit", lambda: S.parse(bytes(bad)), "CRC")
+    bad = bytearray(rec); bad[0] = 0xff
+    raises("parse refuses an uncommitted marker", lambda: S.parse(bytes(bad)), "marker")
+
+
 def test_rotation_hysteresis() -> None:
     """One degree of the rotation must cross the hysteresis band.
 
@@ -2089,6 +2272,7 @@ def main() -> None:
     test_latch_spacing()
     test_table_range()
     test_rotation_hysteresis()
+    test_settings_record()
     test_divu_destinations()
     test_tables(cfg)
     test_resolution(cfg)

@@ -12,7 +12,7 @@ var WEBBUILD = (function () {
     // is the only place they exist.  Reset per build, never accumulated.
     var spacingSlots = [];
 
-    function tablesFor(cfg, factoryMemory) {
+    function tablesFor(cfg) {
         var tables = {};
         spacingSlots = [];
         // How many keys each slot repeats over, for the jack transposer's
@@ -33,7 +33,7 @@ var WEBBUILD = (function () {
         // the rule inside slot_scale(), which its own probe goes through, so
         // the two refuse the same input the same way whichever slot it is in.
         cfg._tunings.forEach(function (slot) {
-            if (slot === 'factory') return;
+            if (slot === 'factory' || BUILDLIB.isTableSlot(slot)) return;
             var probe = BUILDLIB.slotScale(slot);
             if (!probe.degrees && probe.cents.length - 1 !== 12) {
                 throw new Error(slot.name + ': ' + (probe.cents.length - 1) +
@@ -43,8 +43,15 @@ var WEBBUILD = (function () {
         });
         cfg._tunings.forEach(function (slot, index) {
             if (slot === 'factory') {
-                tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
+                tables['tuning_slot' + index] = BUILDLIB.factoryTuningDefault();
                 tables.tuning_period_keys.push(12);
+            } else if (BUILDLIB.isTableSlot(slot)) {
+                // Read back from a keyboard: its table and its keys per period
+                // as they came, and nothing for the latch-spacing check, which
+                // needs the scale's ideal pitches and a table has none.  The
+                // keyboard's loader bounded every entry when it took them.
+                tables['tuning_slot' + index] = slot.table.slice();
+                tables.tuning_period_keys.push(slot.periodKeys);
             } else {
                 var scale = BUILDLIB.slotScale(slot);
                 var period = scale.cents[scale.formal];
@@ -60,7 +67,13 @@ var WEBBUILD = (function () {
                     offset, scale.degrees, period);
                 var periodUnits = BUILDLIB.floorHalf(period * perOctave / 1200);
                 BUILDLIB.checkTableRange(slot.name, table, periodUnits);
-                tables['tuning_slot' + index] = table;
+                // Same rule as tools/build.py: a settings record carries
+                // fourteen bits, so the table stops at 0x3fff - an entry up
+                // there, or one no key reaches, is far past the DAC's 0xfff,
+                // where the pitch path clamps it anyway.
+                tables['tuning_slot' + index] = table.map(function (v) {
+                    return Math.max(0, Math.min(v, 0x3FFF));
+                });
                 tables.tuning_period_keys.push(scale.degrees ? scale.degrees.length : 12);
                 spacingSlots.push({
                     ideal: BUILDLIB.idealKeyPitches(
@@ -71,23 +84,23 @@ var WEBBUILD = (function () {
                 });
             }
         });
-        // Same rule as tools/build.py, word for word: the rotation shifts a
-        // 32-entry table and wraps by the map's size, so a wider map cannot
-        // be shifted and is refused with either input to it on.
+        // The wider-than-32 map is refused in build() below, after the latch
+        // spacing check, as tools/build.py orders them.
         var widest = Math.max.apply(null, tables.tuning_period_keys);
-        if ((cfg.portamento_in.transpose || cfg.presets.quantize) && widest > 32) {
-            throw new Error('alternate_tunings: a keyboard map of ' + widest +
-                ' positions cannot be shifted by the key-table rotation, ' +
-                'whose table holds 32 entries - use a map of up to 32, or ' +
-                'turn off both the jack transposer and preset quantisation');
-        }
         // Same rule as tools/build.py, word for word: one degree has to be
         // able to cross the rotation's hysteresis band or the shift never
-        // changes.
-        if (cfg.portamento_in.transpose || cfg.presets.quantize) {
-            var cvPeriod = Math.floor(cfg.portamento_in.cv_counts_per_volt
-                                      * cfg.portamento_in.cv_volts_per_period + 0.5);
-            var hyst = cfg.portamento_in.cv_hysteresis;
+        // changes.  Every image, for the same reason; a map wider than 32
+        // is refused in build() whatever its hysteresis, so not measured here.
+        if (widest <= 32) {
+            // With the numbers the record will carry: timing numbers read
+            // off a keyboard go in over the config's, and a hysteresis the
+            // map cannot live with is refused whichever way it came.
+            var timing = cfg._timing_numbers || {};
+            var cvPeriod = timing.transpose_cv_period !== undefined ? timing.transpose_cv_period
+                : Math.floor(cfg.portamento_in.cv_counts_per_volt
+                             * cfg.portamento_in.cv_volts_per_period + 0.5);
+            var hyst = timing.transpose_cv_hysteresis !== undefined ? timing.transpose_cv_hysteresis
+                : cfg.portamento_in.cv_hysteresis;
             var headroom = cvPeriod - Math.floor(cvPeriod / 2);
             if (hyst * widest >= headroom) {
                 throw new Error('portamento_in.cv_hysteresis: ' + hyst +
@@ -118,78 +131,69 @@ var WEBBUILD = (function () {
     function flagsFor(cfg) {
         var flags = BUILDLIB.resolveFlags(cfg);
         var blocks = flags.blocks, features = flags.features;
-        // Same rule as tools/build.py: the arp gate hook latches knobs 1-3
-        // for the replacement behaviours, so with all three factory it goes.
-        blocks.arp_gate_hook = ['knob1', 'knob2', 'knob3'].some(function (k) {
-            return cfg.knobs[k] !== 'factory';
-        });
-        if (cfg._pressure_factory) {
-            ['pressure_fn_pool', 'pressure_float_helper_pool', 'knob1_pool',
-             // Same rule as tools/build.py: the edit-mode curve knob is
-             // pressure work, so it reverts with the rest.
-             'knob4_pool',
-             'pressure_gain_nop',
-             // The clamp skips jump the factory's own pressure filter; the
-             // cells that made them load-bearing have moved out of its array.
-             'pitch_clamp_skip_1', 'pitch_clamp_skip_2']
-                .forEach(function (n) { blocks[n] = false; });
-        }
+        // Same rule as tools/build.py: the knob roles are option cells
+        // decided at boot (stage 2 phase B), so every knob cave is in every
+        // image and the hooks that reach them always stand.
+        blocks.arp_gate_hook = true;
+        ['arp_selector_pool', 'arp_rhythm_hook', 'arp_octave_hook',
+         'vibrato_engine', 'vibrato_sine', 'pressure_vibrato_scale',
+         'pressure_vibrato_pool', 'knob4_early_pool',
+         // Phase C: the latch, likewise.
+         'noteoff_pool_1', 'noteoff_pool_2', 'latch_pitch_toggle',
+         'release_count_guard', 'latch_owner', 'latch_hold',
+         'latch_state_toggle', 'factory_pad_latch_off']
+            .forEach(function (n) { blocks[n] = true; });
+        features.knob4_vibrato = true;
+        features.arp_latch = true;
+        // Phase E: the jack transposer and the quantised preset voltage.
+        // The key-table rotation and everything that follows it are in
+        // every image and idle at zero degrees; the live bytes decide.
+        ['preset_quantize', 'preset_quantize_pool', 'glide_cv_addend',
+         'cv_transpose', 'midi_transpose', 'preset_entry', 'latch_preset_pin',
+         'midi_transpose_arp_pool', 'midi_transpose_poly_pool',
+         'midi_transpose_lift_pool', 'midi_transpose_compare_pool',
+         'seq_record_pitch_cv', 'seq_cv_shift', 'cv_stamps']
+            .forEach(function (n) { blocks[n] = true; });
+        features.cv_transpose = true;
+        features.cv_jack = true;
+        features.preset_rotate = true;
+        // Phase F, same rule as tools/build.py: the pressure path is decided
+        // at boot from its two option cells, so every pressure cave is in
+        // every image, the blend hook and the zero-snap hook included.
+        ['glide_rate_hook', 'pitch_target_blend_hook', 'blend_offset_apply',
+         'blend_target_conditioner'].forEach(function (n) { blocks[n] = true; });
+        features.pressure_blend = true;
         // Same rule as tools/build.py: with no Scala file the edit keys and
         // their LEDs stay factory, which means the applier goes too — it
         // asserts those LEDs and zeroes the old transpose-mode byte.
-        var anyTuning = cfg._tunings.some(function (t) { return t !== 'factory'; });
-        features.alternate_tunings = anyTuning;
-        if (!anyTuning) {
-            blocks.edit_key27_tuning_slot1 = false;
-            blocks.edit_key28_tuning_slot0 = false;
-            // Remote enable goes back with them: its guards were added when
-            // the tuning selector shared state+0x2, which it no longer does.
-            ['remote_guard_1', 'remote_guard_2', 'remote_guard_3']
-                .forEach(function (n) { blocks[n] = false; });
-        }
-        // Same rule as tools/build.py: transpose mode survives only when
-        // neither the tuning applier nor the knob remap has taken what it
-        // needs, so with both off these three forcing patches stay out.
-        var factoryKnobs = Object.keys(cfg.knobs).every(function (k) {
-            return cfg.knobs[k] === 'factory';
-        });
-        if (!anyTuning && factoryKnobs) {
-            ['transpose_force_1', 'transpose_force_2', 'transpose_force_3']
-                .forEach(function (n) { blocks[n] = false; });
-        }
+        // Since 2026-09-23 that is option cell 27, decided at boot: the keys,
+        // the applier and the remote-enable guards are in every image.
+        features.alternate_tunings = true;
+        // Same rule as tools/build.py: with the knob roles decided at
+        // runtime the build cannot know whether the knobs are all factory,
+        // so the three transpose forcing patches stay in every image.
 
-        if (BUILDLIB.get(cfg, 'arp.switch') === 'latch') {
-            blocks.pitch_target_blend_hook = true;
-            blocks.blend_offset_apply = true;
-            // The conditioner calls the apply shim; they exist together.
-            blocks.blend_target_conditioner = true;
-        } else {
-            // Same rule as tools/build.py: the factory long-hold on the arp
-            // switch comes back when the factory switch does.
-            blocks.poly_arp_independence = false;
-        }
+        // Same rule as tools/build.py: the latch may be live in any image,
+        // so the blend caves are in every image, and poly_arp_independence
+        // stays whatever the latch does.
+        blocks.pitch_target_blend_hook = true;
+        blocks.blend_offset_apply = true;
+        blocks.blend_target_conditioner = true;
         features.pressure_trim_scale = cfg.pressure.calibration.trim_mode === 'scale';
         if (features.pressure_trim_scale) {
             blocks.knob3_pressure_floor = false;
             blocks.knob3_pool = false;
         }
-        // Same rule as tools/build.py: the factory's octave arithmetic is only
-        // rewritten when an octave has stopped being a 2/1.
-        var octave = BUILDLIB.computeNumbers(cfg).octave_units;
-        ['octave_step_down', 'octave_step_up', 'octave_step_up2',
-         'octave_scale_mul', 'octave_scale_bias'].forEach(function (n) {
-            blocks[n] = octave !== cfg.tuning.units_per_octave;
-        });
-        blocks.arp_order_zones = cfg.arp_order.knob1_orders === 1;
-        blocks.arp_pattern_gate = cfg.knob2.mode === 'patterns';
-        blocks.arp_pattern_tables = blocks.arp_pattern_gate;
-        // Same rule as tools/build.py: the rhythm randomiser reads the same
-        // knob, and even spacing is what makes a pattern legible.
-        if (blocks.arp_pattern_gate) blocks.arp_rhythm_hook = false;
-        blocks.arp_swing = cfg.knob2.mode === 'swing';
-        blocks.arp_quantized = cfg.knob2.mode === 'quantized';
-        var seq = !!(cfg.sequencer && cfg.sequencer.on);
-        ['seq_chord', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
+        // Same rule as tools/build.py: the factory's octave arithmetic reads
+        // the period out of number cell 10 in every image (2026-09-23), so
+        // its five sites are hooks, not blocks.
+        // Every knob-2 and knob-1 cave, in every image (stage 2 phase B).
+        ['arp_order_zones', 'arp_pattern_gate', 'arp_pattern_tables', 'arp_swing', 'arp_quantized']
+            .forEach(function (n) { blocks[n] = true; });
+        // Stage 2 phase D, same rule as tools/build.py: the sequencer is
+        // decided at boot from its option cell, so every sequencer cave is
+        // in every image; the pad-4 chord's arm reads the live byte.
+        ['seq_chord', 'seq_arm_gate', 'seq_enter', 'seq_record', 'seq_select', 'seq_pitch',
          'seq_clock_enabled', 'seq_transport', 'seq_clock_rate_hook',
          'seq_clock_change_hook', 'seq_clock_setup_hook', 'seq_clock_tick_hook',
          'seq_clock_input_hook', 'seq_clock_midi_hook',
@@ -203,49 +207,58 @@ var WEBBUILD = (function () {
          'seq_preview_next', 'seq_preview_start', 'seq_preview_transport',
          'seq_record_pitch', 'seq_preview_pin', 'seq_hold', 'seq_flash',
          'seq_restart_init', 'seq_boot']
-            .forEach(function (n) { blocks[n] = seq; });
+            .forEach(function (n) { blocks[n] = true; });
         var keep = !!(cfg.persist && cfg.persist.on);
         ['persist_crc', 'persist_record_crc', 'persist_pack',
          'persist_valid', 'persist_newest', 'persist_load',
          'persist_same', 'persist_verify', 'persist_save', 'persist_tick',
          'persist_capture', 'persist_boot', 'persist_scan_shim', 'persist']
             .forEach(function (n) { blocks[n] = keep; });
-        var div = !!(cfg.clock && cfg.clock.divide);
-        blocks.seq_clock_input_hook = seq && !div;
+        // Since phase G the factory ISR posts the clock event whenever the
+        // divider's byte is off, so the sequencer's gate on it always stands.
+        blocks.seq_clock_input_hook = true;
         // Same rule as tools/build.py: transpose_capture lives inside the
         // blend hook and is what keeps 0x60a0 current, which the sequencer
         // reads as the take's reference.  The hook exists whenever the
-        // sequencer does; the pressure following inside it stays independent.
-        if (seq) {
-            blocks.pitch_target_blend_hook = true;
-            blocks.blend_offset_apply = true;
-            blocks.blend_target_conditioner = true;
-        }
+        // sequencer does, which since phase D is every image; the pressure
+        // following inside it stays independent.
+        blocks.pitch_target_blend_hook = true;
+        blocks.blend_offset_apply = true;
+        blocks.blend_target_conditioner = true;
+        // Stage 2 phase G, same rule as tools/build.py: the divider is
+        // decided at boot from its option cell, so every clock cave is in
+        // every image.
         ['clock_scan', 'clock_pulse', 'clock_hook',
          'clock_tempo', 'clock_tempo_hook',
          'clock_ms_tick', 'clock_ms_pool',
          'clock_gate', 'clock_gate_hook', 'clock_settle',
-         'clock_capture', 'clock_irq_hook', 'clock_irq_pool',
-         'clock_edge_mode', 'clock_init', 'clock_init_pool',
+         'clock_capture', 'clock_irq_hook',
+         'clock_edge_mode', 'clock_init', 'clock_init_pool', 'clock_thresholds',
          'clock_service', 'clock_output', 'clock_low_age', 'clock_attack_guard',
          'clock_spike_units', 'clock_fast_trigger', 'clock_remap_bare',
          'clock_deadline', 'clock_pitch_target']
-            .forEach(function (n) { blocks[n] = div; });
-        blocks.clock_init_pool = div || keep || seq;
-        blocks.profiler_pool = div || !!features.scan_profiler;
-        blocks.knob4_octave_switch =
-            cfg.knob4.octaves === 1 && BUILDLIB.get(cfg, 'knobs.knob4') === 'vibrato';
-        if (blocks.knob4_octave_switch) {
-            features.knob4_vibrato = false;
-            ['vibrato_engine', 'vibrato_sine', 'pressure_vibrato_scale',
-             'pressure_vibrato_pool'].forEach(function (n) { blocks[n] = false; });
-        }
+            .forEach(function (n) { blocks[n] = true; });
+        // The settings mirror is in every image, as tools/build.py has it:
+        // the boot chain starts at settings_boot and its validator shares
+        // persist_crc, so both stay on with persistence off.
+        ['settings_copy', 'settings_valid', 'settings_newest',
+         'settings_boot', 'settings_defaults', 'settings_reload',
+         'settings_target', 'settings_apply', 'settings_nrpn',
+         'settings_send', 'settings_value', 'settings_scan',
+         'settings_commit', 'settings_verify', 'settings_cc_hook',
+         'settings_cc_pool', 'clock_init_pool', 'persist_crc']
+            .forEach(function (n) { blocks[n] = true; });
+        // The boot guard is in every image, as tools/build.py has it.
+        ['boot_guard_arm', 'boot_guard_arm_pool', 'boot_guard_confirm']
+            .forEach(function (n) { blocks[n] = true; });
+        blocks.profiler_pool = true;
+        blocks.knob4_octave_switch = true;
         var smoothing = cfg.pressure.output_smoothing;
         // The event-17 wrapper is shared between pressure smoothing and the
         // clock's trigger rise, so it exists for either; dac_interpolate is
         // the pressure half alone.  Mirrors tools/build.py.
         ['dac_interpolator', 'dac_flush_pool']
-            .forEach(function (n) { blocks[n] = !!smoothing || div; });
+            .forEach(function (n) { blocks[n] = !!smoothing || true; });   // the divider is in every image since phase G
         ['dac_interpolate', 'pressure_target_redirect']
             .forEach(function (n) { blocks[n] = !!smoothing; });
         return { blocks: blocks, features: features };
@@ -350,6 +363,48 @@ var WEBBUILD = (function () {
         return { changed: changed, added: added, claimed: claimed };
     }
 
+    // What a settings record is made of - the tables, the flags and the
+    // numbers with the image marker they give - and the refusals that go
+    // with them.  Nothing in it comes from the factory image: a tuning slot
+    // left at the factory temperament is BUILDLIB's 485 + round(484k/12),
+    // which the image's own key table carries too since 3.0.2.
+    function recordInputs(cfg) {
+        var tables = tablesFor(cfg);
+        // Same refusal tools/build.py makes, and it has to happen here rather
+        // than in the editor: a fine keyboard mapping can put two notes closer
+        // together than the latch can tell apart, and the image that comes out
+        // is valid in every other way - nothing downstream would catch it.
+        BUILDLIB.checkLatchSpacing(cfg, spacingSlots);
+        // Same rule as tools/build.py, word for word, and in the same order:
+        // the rotation shifts a 32-entry table and wraps by the map's size,
+        // so a wider map cannot be shifted.  Since stage 2 phase E the
+        // rotation is in every image - either input can be turned on over
+        // MIDI - so the map is refused outright.
+        var widest = Math.max.apply(null, tables.tuning_period_keys);
+        if (widest > 32) {
+            throw new Error('alternate_tunings: a keyboard map of ' + widest +
+                ' positions cannot be shifted by the key-table rotation, ' +
+                'whose table holds 32 entries - use a map of up to 32');
+        }
+        var flags = flagsFor(cfg);
+        var numbers = BUILDLIB.computeNumbers(cfg);
+        numbers.init_marker = BUILDLIB.initMarker(flags.blocks, flags.features, numbers, tables);
+        return { tables: tables, flags: flags, numbers: numbers };
+    }
+
+    // The settings record alone, as build() returns it, for Send settings:
+    // a keyboard already running Rewired is sent its settings without the
+    // factory image, since nothing in the record needs one (recordInputs).
+    function settings(options) {
+        var inputs = recordInputs(BUILDLIB.expand(options));
+        var numbers = inputs.numbers;
+        return {
+            settings: BUILDLIB.settingsRecord(numbers, inputs.tables, inputs.flags.blocks.arp_pattern_tables,
+                                              numbers.init_marker, numbers.octave_units, 1)
+                .map(function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join('')
+        };
+    }
+
     /**
      * options: the seven switches.  factoryHexText: the user's own image.
      * Returns { hex, sha256, patches, changed, added, skipped, properties }.
@@ -364,15 +419,8 @@ var WEBBUILD = (function () {
         }
 
         var cfg = BUILDLIB.expand(options);
-        var tables = tablesFor(cfg, factory.memory);
-        // Same refusal tools/build.py makes, and it has to happen here rather
-        // than in the editor: a fine keyboard mapping can put two notes closer
-        // together than the latch can tell apart, and the image that comes out
-        // is valid in every other way - nothing downstream would catch it.
-        BUILDLIB.checkLatchSpacing(cfg, spacingSlots);
-        var flags = flagsFor(cfg);
-        var numbers = BUILDLIB.computeNumbers(cfg);
-        numbers.init_marker = BUILDLIB.initMarker(flags.blocks, flags.features, numbers, tables);
+        var inputs = recordInputs(cfg);
+        var tables = inputs.tables, flags = inputs.flags, numbers = inputs.numbers;
 
         // The assembler takes the same flat key -> string map the properties
         // file holds, so build that shape directly.
@@ -453,6 +501,11 @@ var WEBBUILD = (function () {
             })(),
             properties: BUILDLIB.writeProperties('config/218e.toml', flags.blocks,
                                                  flags.features, numbers, tables),
+            // The settings record this image's tables make, as hex, for the
+            // parity matrix against tools/build.py's build/settings.bin.
+            settings: BUILDLIB.settingsRecord(numbers, tables, flags.blocks.arp_pattern_tables,
+                                              numbers.init_marker, numbers.octave_units, 1)
+                .map(function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join(''),
             patches: records.patches.length,
             skipped: records.skipped,
             changed: applied.changed,
@@ -460,6 +513,6 @@ var WEBBUILD = (function () {
         };
     }
 
-    return { build: build };
+    return { build: build, settings: settings };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = WEBBUILD;

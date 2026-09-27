@@ -687,14 +687,14 @@ def expand(options: dict) -> dict:
     cfg["portamento_in"]["transpose"] = jack == "transpose"
 
     # 6. Pressure response fix ----------------------------------------------
-    # One switch over the whole reworked pressure path.  Off returns every
-    # activation pool to the factory pointer, so the original curve, filter and
-    # single-key sourcing all run untouched.
+    # One switch over the whole reworked pressure path.  Since stage 2 phase
+    # F it is an option cell: the whole path is in every image, and with the
+    # cell off the live byte routes every activation pool back to the
+    # factory pointer at boot, so the original curve, filter and single-key
+    # sourcing all run untouched.  The build therefore keeps the multi-key,
+    # common-mode, diffusion and smoothing settings whatever the switch says,
+    # so turning it on over MIDI gives the full path.
     if not want("pressure_fix", True):
-        cfg["pressure"]["multi_key"] = "factory"
-        cfg["pressure"]["common_mode"] = False
-        cfg["pressure"]["error_diffusion"] = False
-        cfg["pressure"]["output_smoothing"] = 0
         cfg["_pressure_factory"] = True
 
     # 7. Pressure-based portamento ------------------------------------------
