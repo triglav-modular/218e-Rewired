@@ -1509,7 +1509,16 @@
     // send is not a press of anything.
     function sendRecord(ports, record, params) {
         var name = ports.output.name, counted = !params;
-        return SETTINGSMIDI.install(ports.output, ports.input, record, params ? { params: params } : {})
+        // Bursts of four parameters, sixteen packets, fit the keyboard's USB
+        // receive ring of thirty-two.  Chrome delivers each burst as it is
+        // sent; Safari's Web MIDI extension sends whatever queued while its
+        // last request was in flight as one batch, back to back - runs of up
+        // to eighty packets with the 3 ms gaps (its session measured this,
+        // 2026-09-27) - and a whole-record Send read back short there while
+        // Read worked.  60 ms gives each burst a request of its own.
+        var how = { gap: typeof IS_SAFARI !== 'undefined' && IS_SAFARI ? 60 : 3 };
+        if (params) how.params = params;
+        return SETTINGSMIDI.install(ports.output, ports.input, record, how)
             .then(function (id) {
                 showFirmware(id);
                 if (!id.restarted) {
