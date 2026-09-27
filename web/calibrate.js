@@ -432,6 +432,17 @@
     // reading included, and the top of the 12-bit DAC.
     var ADJUST_TRIES = 3;
     var DAC_TOP = 0xFFF;
+    // Tuning (mode and adjust together).  An entry still further out than
+    // this after its tries is not kept: it is filled in from the entries
+    // around it that did tune (fillGaps).  Three notes in a row not heard at
+    // all is the top of what the 208 plays, and the sweep stops there.  The
+    // 0 V reference is read at the start and at every drift check, and
+    // readings of it further apart than REFERENCE_SPREAD_CENTS are named:
+    // near 0 V a 208 was erratic in one run, and every note is tuned
+    // against it.  3 cents is the warm-up's own bar for a steady drone.
+    var FILL_CENTS = 10;
+    var TOP_SILENT = 3;
+    var REFERENCE_SPREAD_CENTS = 3;
 
     function constraints(deviceId, want) {
         return {
@@ -537,14 +548,30 @@
     // the run ends, however it ends - done, failed, stopped, or the page
     // going away - and only if on() ever did.
     //
-    // `opts.adjust`, { table, write(entry, value) -> Promise, countsPerCent }:
-    // converge each entry instead of only reading it.  `table` is the 79
-    // entries the instrument is playing, `write` puts one into its live
-    // mirror, and countsPerCent is the DAC counts that move the ramp a cent
-    // (BUILDLIB.pitchCountsPerCent).  A note more than half a count out is
-    // moved by its reading and played again, up to ADJUST_TRIES times, and
-    // the closest value is the one kept.  The result carries `table`, and
-    // each reading its `value`, `original`, `tries` and `residual`.
+    // `opts.adjust`, { table, write(entry, value) -> Promise, countsPerCent,
+    // reference }: converge each entry instead of only reading it.  `table`
+    // is the 79 entries the instrument is playing, `write` puts one into its
+    // live mirror, and countsPerCent is the DAC counts that move the ramp a
+    // cent (BUILDLIB.pitchCountsPerCent).  A note more than half a count out
+    // is moved by its reading and played again, up to ADJUST_TRIES times,
+    // and the closest value is the one kept.  The result carries `table`,
+    // and each reading its `value`, `original`, `tries` and `residual`.
+    //
+    // With both, the run tunes the table to the 208's 0 V pitch, which is
+    // where its owner tunes it (with the keyboard off).  `reference` is the
+    // table's 0 V entry: 0 with the pitch offset, 3 without (the entries
+    // under it are held at 0 and never touched).  It is written to 0 counts
+    // before anything is measured and kept there; it is the anchor, read
+    // until it repeats, and it is what the drift checks read.  Every entry
+    // above it is tuned to it times 2^((e - reference)/12), the bottom C
+    // included.  An entry not heard, or still more than FILL_CENTS out after
+    // its tries, is filled in after the run from the tuned entries around it
+    // (fillGaps), and TOP_SILENT entries in a row not heard end the sweep,
+    // the rest filled the same way.  Each reading carries its `source`:
+    // 'reference', 'measured', or what fillGaps made of it - 'interpolated',
+    // 'extrapolated', or null where there was nothing to fill it from and it
+    // keeps the value it came with.  The result adds `anchorEntry` and
+    // `filled`, entry -> source for every entry filled in.
     function Sweep(opts) {
         this.opts = opts;
         this.stopped = false;
@@ -555,8 +582,15 @@
     Sweep.prototype.run = async function () {
         var o = this.opts, self = this;
         var mode = o.mode || null, adjust = o.adjust || null;
+        var tuning = !!(mode && adjust);
+        // The 0 V entry, when tuning; nothing under it is swept.
+        var zero = tuning ? adjust.reference : null;
+        if (tuning && !(zero >= 0 && zero < MODE_ENTRIES && zero === Math.floor(zero))) {
+            throw new Error('The table’s 0 V entry is not known.');
+        }
         var entryOf = mode ? modeEntryFor : function (note) { return entryFor(note, o.octaveTerm); };
-        var steps = mode ? modePlan(o.low, o.high) : plan(o.low, o.high, o.octaveTerm);
+        var steps = mode ? modePlan(tuning ? Math.max(o.low, zero) : o.low, o.high)
+                         : plan(o.low, o.high, o.octaveTerm);
         if (!steps.length) throw new Error('Nothing to sweep.');
 
         var stream;
@@ -743,10 +777,15 @@
             if (o.onReading) o.onReading(row);
         }
 
-        // In the mode the anchor is the bottom C, entry 3, and not the first
-        // entry swept: a sweep from entry 0 starts three semitones under it,
-        // at the 0 V pitch, which is the note least able to be a reference.
-        var anchor = mode ? modeEntryFor(MODE_FIRST_NOTE + BOTTOM_KEY_ENTRY) : steps[0];
+        // The probe's low note is the bottom C in the mode, entry 3, and the
+        // first note swept otherwise; its high note is two octaves above.
+        // The anchor is that same note, except when tuning: then it is the
+        // 0 V entry, because that is the pitch the owner tunes the 208 to
+        // and expects every key to be in tune with.  The bottom C used to be
+        // the reference here, which left a 208 whose 0 V pitch sits off its
+        // curve out of tune with its own trimmer by however far that was.
+        var probeAt = mode ? modeEntryFor(MODE_FIRST_NOTE + BOTTOM_KEY_ENTRY) : steps[0];
+        var anchor = tuning ? modeEntryFor(MODE_FIRST_NOTE + zero) : probeAt;
         var results = [], marks = [], warnings = [];
         var log = [], t0 = Date.now();
         var previous = null;
@@ -813,8 +852,14 @@
 
         // --- converging (opts.adjust) --------------------------------------
         // The instrument's table as it is being played: the caller's, with
-        // every write made since.
+        // every write made since; and the caller's, as it came.
         var table = adjust ? adjust.table.slice() : null;
+        var start = adjust ? adjust.table.slice() : null;
+        // Tuning: the warnings that end with what became of their entry,
+        // which is known only once the run is over ({ at, entry }), and how
+        // many entries in a row have not been heard at all.
+        // `topAt` is the first step not played once the top is found.
+        var fates = [], silentRun = 0, heardAbove = false, topAt = null;
         // Half a DAC count, in cents: nearer than this, the next count over
         // is no nearer, so the note is as right as the table can make it.
         var HALF_COUNT = adjust ? 0.5 / adjust.countsPerCent : 0;
@@ -844,10 +889,15 @@
         // one played.  A note not heard, or not believed, keeps the value it
         // came with; so does the anchor, which is the reference every other
         // reading is taken against: moving it would move them all.
+        //
+        // Tuning, a note not heard or not believed, or one still more than
+        // FILL_CENTS out after its tries, is filled in after the run
+        // instead (fillGaps): its warning waits for what that made of it.
+        // The value played until then is the one it would have kept.
         async function converge(step, i) {
-            var e = step.index, original = table[e], value = original;
-            var tried = [], best = null, played = 0, reading = null;
-            var fixed = e === anchor.index;
+            var e = step.index, original = start[e], value = table[e], was = value;
+            var tried = [], best = null, played = 0, reading = null, silent = false;
+            var fixed = e === anchor.index, at = warnings.length;
             while (played < ADJUST_TRIES) {
                 if (played > 0 && self.stopped) throw new Error('Stopped.');
                 var wantHz = anchorAt(marks, Date.now()) *
@@ -856,10 +906,11 @@
                 var got = await hear(step.note, wantHz, undefined, played ? 'retry' : 'sweep');
                 trying = null;
                 played++; sinceAnchor++;
+                if (played === 1) silent = !heard(got);
                 // Only the first reading warns, the way a sweep always has.
                 // After it, the one thing worth saying is a note that did not
                 // come within half a count, and that is said below.
-                var j = judge(step, got, Date.now(), ', left unchanged', played > 1);
+                var j = judge(step, got, Date.now(), tuning ? '' : ', left unchanged', played > 1);
                 if (played === 1) reading = j;
                 if (!j || j.cents === null) break;
                 tried.push({ value: value, cents: j.cents, hz: j.hz });
@@ -887,7 +938,7 @@
                 await adjust.write(e, next);
                 table[e] = value = next;
             }
-            var keep = best ? best.value : original;
+            var keep = best ? best.value : was;
             if (table[e] !== keep) {
                 await adjust.write(e, keep);
                 table[e] = keep;
@@ -897,14 +948,34 @@
                       first: tried.length ? tried[0].cents : null,
                       original: original, value: keep, tries: played };
             if (best) r.hz = best.hz;
+            // Null until fillGaps says what it is.
+            var fill = tuning && !fixed && (!best || Math.abs(best.cents) > FILL_CENTS);
+            if (tuning) r.source = fixed ? 'reference' : fill ? null : 'measured';
             results.push(r);
             if (best && !fixed && Math.abs(best.cents) > HALF_COUNT) {
                 warnings.push(noteLabel(e) + ': ' + best.cents.toFixed(1) + ' cents out after ' +
                               played + (played === 1 ? ' try' : ' tries'));
+                if (fill) fates.push({ at: warnings.length - 1, entry: e });
+            } else if (fill && warnings.length > at) {
+                fates.push({ at: at, entry: e });
             }
             // What the next note is held to: the pitch this one was left at.
             if (reading) previous = { hz: best ? best.hz : reading.hz, index: e };
             if (o.onNote) o.onNote(step, best ? r : null, i, steps.length);
+            return { silent: silent };
+        }
+
+        // An entry filled in after the run, in the log beside the notes: no
+        // pitch was taken for it, and `why` says how it was made.
+        function fill_log(e, how) {
+            var row = {
+                t: Date.now() - t0, what: 'fill', note: e + MODE_FIRST_NOTE,
+                name: noteLabel(e), entry: e, channel: o.channel, expectHz: null,
+                hz: null, firstHalfHz: null, secondHalfHz: null, halfDrift: null,
+                clarity: null, rms: null, why: how, value: table[e]
+            };
+            log.push(row);
+            if (o.onReading) o.onReading(row);
         }
 
         try {
@@ -966,10 +1037,10 @@
             // unplugged after the port list was built sails straight past.
             // Searching costs up to sixteen of these; confirming costs one.
             async function probe(ch) {
-                var hiNote = anchor.note + 24;
+                var hiNote = probeAt.note + 24;
                 var hiEntry = entryOf(hiNote);
                 if (!hiEntry) return false;
-                var apart = 100 * (hiEntry.index - anchor.index);
+                var apart = 100 * (hiEntry.index - probeAt.index);
                 // Both measurements search the whole range.  Handing the second
                 // one the answer as its expected pitch narrows YIN to a band
                 // +/-300 cents around exactly the interval being tested - the
@@ -979,7 +1050,7 @@
                 // the wrong way round.  And both have to be heard clearly, not
                 // merely found: the point of the probe is to establish that
                 // something is listening.
-                var lo = await hear(anchor.note, null, ch, 'probe');
+                var lo = await hear(probeAt.note, null, ch, 'probe');
                 var hi = await hear(hiNote, null, ch, 'probe');
                 var yes = heard(lo) && heard(hi) &&
                           Math.abs(cents(hi.hz, lo.hz) - apart) < 300;
@@ -993,14 +1064,20 @@
                 return heard(r) && r.drift !== null && Math.abs(r.drift) <= MOVED_CENTS &&
                        (!near || Math.abs(cents(r.hz, near)) <= ANCHOR_NEAR_CENTS);
             }
-            async function steadyAnchor(expectHz, near) {
-                var r = null;
-                for (var tries = 0; tries < ANCHOR_TRIES; tries++) {
+            // With `repeat`, settled is not enough: two readings have to
+            // agree, and it gets one more try to show that.  The last
+            // reading comes back as `r`, and the steady ones as `heardHz`.
+            async function steadyAnchor(expectHz, near, repeat) {
+                var r = null, before = null, heardHz = [];
+                for (var tries = 0; tries < ANCHOR_TRIES + (repeat ? 1 : 0); tries++) {
                     if (self.stopped) throw new Error('Stopped.');
                     r = await hear(anchor.note, expectHz, undefined, 'anchor');
-                    if (steady(r, near)) break;
+                    if (!steady(r, near)) continue;
+                    heardHz.push(r.hz);
+                    if (!repeat || (before && steady(r, before.hz))) return { r: r, ok: true, heardHz: heardHz };
+                    before = r;
                 }
-                return r;
+                return { r: r, ok: false, heardHz: heardHz };
             }
 
             if (o.channel === null || o.channel === undefined) {
@@ -1033,20 +1110,38 @@
                 }
             }
 
+            // Tuning, the 0 V entry goes to 0 counts before it is heard, and
+            // stays there: it is the pitch the 208's own trimmer sets.
+            if (tuning) {
+                await adjust.write(zero, 0);
+                table[zero] = 0;
+            }
+
             // Searched over the whole range, like the probe: a band around
             // the probe's reading would find a C2 still sounding there too,
-            // as its fourth subharmonic.
-            var first = await steadyAnchor(null, probeLo && probeLo.hz);
-            if (!steady(first, probeLo && probeLo.hz)) {
+            // as its fourth subharmonic.  Held to the probe's reading where
+            // the probe played this same note at this same value; tuning, it
+            // has to repeat as well, and that is what catches a stale window
+            // at a note the probe never played.
+            var near = !tuning ? probeLo && probeLo.hz
+                : zero === probeAt.index && start[zero] === 0 && probeLo ? probeLo.hz : null;
+            var settled = await steadyAnchor(null, near, tuning);
+            var first = settled.r;
+            if (!settled.ok) {
                 var why = !first.ok ? first.why
                     : !heard(first) ? 'clarity ' + first.clarity.toFixed(2) + ', level ' +
                                       first.rms.toFixed(4)
                     : first.drift === null || Math.abs(first.drift) > MOVED_CENTS
                         ? 'it moved ' + (first.drift === null ? '?' : Math.abs(first.drift).toFixed(0)) +
                           ' cents while being measured'
-                        : first.hz.toFixed(2) + ' Hz, where the probe heard ' +
-                          probeLo.hz.toFixed(2) + ' Hz';
-                throw new Error('The bottom C did not come back as a steady tone' +
+                        : near && !steady(first, near)
+                            ? first.hz.toFixed(2) + ' Hz, where the probe heard ' +
+                              near.toFixed(2) + ' Hz'
+                            : 'it did not repeat: ' + settled.heardHz.map(function (h) {
+                                  return h.toFixed(2);
+                              }).join(', ') + ' Hz';
+                throw new Error((tuning ? 'The 0 V note' : 'The bottom C') +
+                    ' did not come back as a steady tone' +
                     ' (' + why + ')' +
                     '. Every reading is measured against it, so the sweep stops ' +
                     'here rather than anchoring on noise. Check the 208 is droning ' +
@@ -1060,13 +1155,28 @@
                 if (adjust ? sinceAnchor >= ANCHOR_EVERY : (i > 0 && i % ANCHOR_EVERY === 0)) {
                     var last = marks[marks.length - 1].hz;
                     var re = await steadyAnchor(last, last);
-                    if (steady(re, last)) marks.push({ t: Date.now(), hz: re.hz });
+                    if (re.ok) marks.push({ t: Date.now(), hz: re.r.hz });
                     else warnings.push('the drift check before ' +
                         noteLabel(step.index) + ' was not heard clearly and was ' +
                         'skipped - readings after it lean on the check before it');
                     sinceAnchor = 0;
                 }
-                if (adjust) { await converge(step, i); continue; }
+                if (adjust) {
+                    var c = await converge(step, i);
+                    if (!tuning) continue;
+                    // The top of what the 208 plays: TOP_SILENT entries in a
+                    // row not heard at all, once something above the 0 V
+                    // entry has been.  Not before - a 208 erratic near 0 V
+                    // must not end the run at its bottom.  What was not
+                    // played is filled in with the rest.
+                    if (c.silent) silentRun++;
+                    else { silentRun = 0; if (step.index !== zero) heardAbove = true; }
+                    if (silentRun >= TOP_SILENT && heardAbove && i < steps.length - 1) {
+                        topAt = i + 1;
+                        break;
+                    }
+                    continue;
+                }
                 // What this note should come back as: the drift-corrected
                 // anchor, times the ideal interval from the anchor's entry to
                 // this one.  Derived rather than carried forward from the last
@@ -1107,13 +1217,97 @@
             try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
             try { await ctx.close(); } catch (e) {}
         }
+        var filled = null;
+        if (tuning) {
+            // What was not played once the top was found, then every entry
+            // that did not tune, filled in from the ones that did.
+            var skipped = topAt === null ? [] : steps.slice(topAt);
+            skipped.forEach(function (s) {
+                results.push({ index: s.index, note: s.note, cents: null, residual: null,
+                               first: null, original: start[s.index], value: table[s.index],
+                               tries: 0, source: null });
+            });
+            var gaps = results.filter(function (r) { return r.source === null; })
+                              .map(function (r) { return r.index; });
+            var made = fillGaps(table, gaps, zero);
+            filled = {};
+            results.forEach(function (r) {
+                if (r.source !== null) return;
+                r.source = made.sources[r.index] || null;
+                // Nothing tuned to fill it from: the value it came with.
+                table[r.index] = r.source ? made.table[r.index] : start[r.index];
+                r.value = table[r.index];
+                r.cents = null;
+                if (r.source) filled[r.index] = r.source;
+            });
+            var fate = function (e) { return filled[e] || 'left unchanged'; };
+            fates.forEach(function (f) { warnings[f.at] += ', ' + fate(f.entry); });
+            if (skipped.length) {
+                var a = skipped[0].index, b = skipped[skipped.length - 1].index;
+                warnings.push('three notes in a row were not heard, so the sweep stopped: ' +
+                              noteLabel(a) + (a === b ? '' : ' to ' + noteLabel(b)) + ' ' + fate(a));
+            }
+            gaps.forEach(function (e) { if (filled[e]) fill_log(e, filled[e]); });
+            // First, because every note is tuned against it, so it
+            // qualifies every reading under it.
+            var refHz = marks.map(function (m) { return m.hz; });
+            var spread = cents(Math.max.apply(null, refHz), Math.min.apply(null, refHz));
+            if (spread > REFERENCE_SPREAD_CENTS) {
+                warnings.unshift('the 0 V note moved ' + spread.toFixed(1) + ' cents over the run');
+            }
+        }
         var out = { readings: results, warnings: warnings, anchorHz: first.hz,
                     channel: o.channel, log: log,
                     drift: marks.length > 1 ?
                         cents(marks[marks.length - 1].hz, marks[0].hz) : 0 };
         if (adjust) out.table = table;
+        // The plain sweep's result is pinned (test_sweep.js), so only the
+        // mode says which entry it anchored on.
+        if (mode) out.anchorEntry = anchor.index;
+        if (tuning) out.filled = filled;
         return out;
     };
+
+    // The entries of `table` listed in `gaps`, filled in from the entries
+    // around them that stand, never below `floor` (the 0 V entry, which
+    // stands).  Between two that stand, linearly in counts; above the last
+    // that stands, at the slope of its last octave - counts a semitone over
+    // the twelve entries under it, or over as many as there are above the
+    // floor.  Only a filled entry moves, and it is kept strictly between its
+    // neighbours and inside the DAC.  Returns the table and `sources`, entry
+    // -> 'interpolated' or 'extrapolated'.  With nothing standing above the
+    // floor there is nothing to fill from: those entries are not filled, and
+    // have no source.
+    function fillGaps(table, gaps, floor) {
+        var t = table.slice(), gap = {}, sources = {}, top = t.length - 1, e, k;
+        gaps.forEach(function (g) { if (g > floor && g <= top) gap[g] = true; });
+        for (e = floor + 1; e <= top; e++) {
+            if (!gap[e]) continue;
+            var a = e - 1, b = e;                   // a stands: runs are filled whole
+            while (b <= top && gap[b]) b++;
+            if (b <= top) {
+                for (k = e; k < b; k++) {
+                    t[k] = Math.round(t[a] + (t[b] - t[a]) * (k - a) / (b - a));
+                    sources[k] = 'interpolated';
+                }
+            } else if (a > floor) {
+                var base = Math.max(floor, a - 12);
+                var slope = (t[a] - t[base]) / (a - base);
+                for (k = e; k < b; k++) {
+                    t[k] = Math.round(t[a] + slope * (k - a));
+                    sources[k] = 'extrapolated';
+                }
+            }
+            e = b;
+        }
+        for (e = floor + 1; e <= top; e++) {
+            if (sources[e]) t[e] = Math.max(t[e], t[e - 1] + 1, 0);
+        }
+        for (e = top; e > floor; e--) {
+            if (sources[e]) t[e] = Math.min(t[e], e === top ? DAC_TOP : t[e + 1] - 1);
+        }
+        return { table: t, sources: sources };
+    }
 
     // Where the anchor sat at time t, interpolated between the times it was
     // actually measured.
@@ -1141,6 +1335,7 @@
         semitoneFor: semitoneFor, entryForSemitone: entryForSemitone,
         entryFor: entryFor, plan: plan, noteLabel: noteLabel,
         MODE_FIRST_NOTE: MODE_FIRST_NOTE, modeEntryFor: modeEntryFor, modePlan: modePlan,
+        fillGaps: fillGaps, FILL_CENTS: FILL_CENTS,
         measure: measure, cents: cents, yin: yin, refine: refine,
         audioTrouble: audioTrouble, channelCount: channelCount,
         onMidiChange: onMidiChange, portGone: portGone,

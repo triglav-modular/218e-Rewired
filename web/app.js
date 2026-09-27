@@ -1089,6 +1089,9 @@
                    r.what.padEnd(6) + ' n' + String(r.note).padStart(3) + ' ' +
                    r.name.padEnd(4) + ' e' + String(r.entry === null ? '--' : r.entry).padStart(2) +
                    ' ch' + String(r.channel + 1).padStart(3) + '  ';
+        // An entry the run filled in after it (calibrate.js): no note, and
+        // `why` is how it was made.
+        if (r.what === 'fill') return head + '<i>' + r.why + '</i>';
         if (r.hz === null) {
             return head + '<i>no pitch (' + r.why + ')  rms ' + f(r.rms, 4) + '</i>';
         }
@@ -1138,9 +1141,11 @@
         var out = [
             '# 218e calibration sweep log.',
             '# One row per note sent: what came back for it, as measured.',
-            '# what: probe = finding the MIDI channel, anchor = the bottom note',
-            '#       re-measured to cancel drift, sweep = a note of the table,',
-            '#       retry = the same note again after its table entry was moved.',
+            '# what: probe = finding the MIDI channel, anchor = the 0 V note',
+            '#       every note is tuned against, re-measured to cancel drift,',
+            '#       sweep = a note of the table, retry = the same note again',
+            '#       after its table entry was moved, fill = an entry that did',
+            '#       not tune, filled in after the run (why says how).',
             '# A sweep row whose detected_hz is below the sweep row before it is',
             '# a note that did not take - the firmware cannot play a higher note lower.',
             cols.join(',')
@@ -1823,13 +1828,18 @@
     // `was` is the scaling and the offset the table was built with
     // (BUILDLIB.pitchTableSettings).  The same steps as loadFromKeyboard's
     // tail rather than a call from it, because web/test_readback.js runs
-    // loadFromKeyboard out of this file on its own.
-    function loadPitchTable(table, was, name) {
+    // loadFromKeyboard out of this file on its own.  `sources`, semitone ->
+    // 'measured', 'interpolated' or 'extrapolated', is what the run made of
+    // each row, and the saved table's Source column says it.
+    function loadPitchTable(table, was, name, sources) {
         press('vpo', was.volts_per_octave === 1.2 ? '1.2' : '1.0');
         press('offset', was.pitch_offset ? '1' : '0');
         var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
                                     pitch_offset: was.pitch_offset });
         baseline = {}; baselineSources = {};
+        for (var s in sources || {}) {
+            if (sources.hasOwnProperty(s)) baselineSources[s] = sources[s];
+        }
         BUILDLIB.pitchCents(cfg, table).forEach(function (row) {
             baseline[row.semitone] = row.cents;
         });
@@ -2056,37 +2066,54 @@
         }, function () { return null; });
     }
 
+    // What a tuning run made of each row it reached, by semitone, the way
+    // loadPitchTable takes it.  The 0 V row is left to the saved table's
+    // own default, and so is a row the run could not fill.
+    function runSources(readings, bottom) {
+        var sources = {};
+        readings.forEach(function (x) {
+            if (x.source === 'measured' || x.source === 'interpolated' || x.source === 'extrapolated') {
+                sources[CALIBRATE.semitoneFor(x.index, bottom)] = x.source;
+            }
+        });
+        return sources;
+    }
+
     // The sweep that converges (calibrate.js, opts.mode and opts.adjust).  It
     // starts from the table the keyboard holds and moves each entry live
-    // until it plays in tune; then the keyboard gets its own table back, the
-    // mode off and the mirror reloaded from flash, however the run ends.
-    // What it found comes into the page the way a read's table does - the
-    // table on the instrument, nothing measured on top - so the next send or
-    // flash carries it.
+    // until it plays in tune with the 208's 0 V pitch, the one its trimmer
+    // sets; then the keyboard gets its own table back, the mode off and the
+    // mirror reloaded from flash, however the run ends.  What it found comes
+    // into the page the way a read's table does - the table on the
+    // instrument, nothing measured on top - so the next send or flash
+    // carries it, and the rows it filled in rather than tuned say so.
     function sweepInMode(chosen, r) {
         var start = r.fields.pitch_remap.slice();
         var was = BUILDLIB.pitchTableSettings(start);
         var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
                                     pitch_offset: was.pitch_offset });
+        var bottom = cfg.pitch.bottom_key_semitone;
         var o = sweepOptions(chosen);
         // Every entry that holds an offset: all 79 with the pitch offset.
         // Without it the three under the bottom key sit at 0 V and are not
         // offsets (BUILDLIB.pitchTable), so they are left as they are.
-        o.low = CALIBRATE.entryForSemitone(0, cfg.pitch.bottom_key_semitone);
+        // `low` is the 0 V entry, semitone 0, which the run holds at 0
+        // counts and tunes everything else against.
+        o.low = CALIBRATE.entryForSemitone(0, bottom);
         o.high = TABLE_ENTRIES - 1;
         o.mode = {
             on: function () { SETTINGSMIDI.calibrationMode(chosen, true); },
             off: function () { SETTINGSMIDI.endCalibration(chosen); }
         };
         o.adjust = {
-            table: start, countsPerCent: BUILDLIB.pitchCountsPerCent(cfg),
+            table: start, countsPerCent: BUILDLIB.pitchCountsPerCent(cfg), reference: o.low,
             write: function (entry, value) { return SETTINGSMIDI.writePitch(chosen, entry, value); }
         };
         o.onNote = noteProgress;
         autoNote('Listening for the bottom C\u2026', 0);
         sweep = new CALIBRATE.Sweep(o);
         return sweep.run().then(function (out) {
-            loadPitchTable(out.table, was, 'the tuned table');
+            loadPitchTable(out.table, was, 'the tuned table', runSources(out.readings, bottom));
             var heard = out.readings.filter(function (x) { return x.cents !== null; });
             autoNote('');
             var note = 'Tuned ' + heard.length + ' of ' + out.readings.length +
