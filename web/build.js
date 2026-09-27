@@ -43,7 +43,8 @@ var WEBBUILD = (function () {
         });
         cfg._tunings.forEach(function (slot, index) {
             if (slot === 'factory') {
-                tables['tuning_slot' + index] = BUILDLIB.factoryTuning(factoryMemory);
+                tables['tuning_slot' + index] = factoryMemory ? BUILDLIB.factoryTuning(factoryMemory)
+                                                              : BUILDLIB.factoryTuningDefault();
                 tables.tuning_period_keys.push(12);
             } else if (BUILDLIB.isTableSlot(slot)) {
                 // Read back from a keyboard: its table and its keys per period
@@ -363,21 +364,14 @@ var WEBBUILD = (function () {
         return { changed: changed, added: added, claimed: claimed };
     }
 
-    /**
-     * options: the seven switches.  factoryHexText: the user's own image.
-     * Returns { hex, sha256, patches, changed, added, skipped, properties }.
-     */
-    function build(options, factoryHexText) {
-        var factory = BUILDLIB.parseHexText(factoryHexText, 'factory image');
-        var factorySha = SHA256.hashString(factoryHexText);
-        if (factorySha !== GEN.factorySha256) {
-            throw new Error('That is not the expected factory image.\n' +
-                            '  expected SHA-256 ' + GEN.factorySha256 + '\n' +
-                            '  this file      ' + factorySha);
-        }
-
-        var cfg = BUILDLIB.expand(options);
-        var tables = tablesFor(cfg, factory.memory);
+    // What a settings record is made of - the tables, the flags and the
+    // numbers with the image marker they give - and the refusals that go
+    // with them.  `memory` is the factory image's, or null: then a tuning
+    // slot left at the factory temperament takes BUILDLIB's written-out copy
+    // of the factory key table, which is the only thing the record took from
+    // the image.
+    function recordInputs(cfg, memory) {
+        var tables = tablesFor(cfg, memory);
         // Same refusal tools/build.py makes, and it has to happen here rather
         // than in the editor: a fine keyboard mapping can put two notes closer
         // together than the latch can tell apart, and the image that comes out
@@ -397,6 +391,38 @@ var WEBBUILD = (function () {
         var flags = flagsFor(cfg);
         var numbers = BUILDLIB.computeNumbers(cfg);
         numbers.init_marker = BUILDLIB.initMarker(flags.blocks, flags.features, numbers, tables);
+        return { tables: tables, flags: flags, numbers: numbers };
+    }
+
+    // The settings record alone, as build() returns it, for Send settings:
+    // a keyboard already running Rewired is sent its settings without the
+    // factory image, since nothing in the record needs one (recordInputs).
+    function settings(options) {
+        var inputs = recordInputs(BUILDLIB.expand(options), null);
+        var numbers = inputs.numbers;
+        return {
+            settings: BUILDLIB.settingsRecord(numbers, inputs.tables, inputs.flags.blocks.arp_pattern_tables,
+                                              numbers.init_marker, numbers.octave_units, 1)
+                .map(function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join('')
+        };
+    }
+
+    /**
+     * options: the seven switches.  factoryHexText: the user's own image.
+     * Returns { hex, sha256, patches, changed, added, skipped, properties }.
+     */
+    function build(options, factoryHexText) {
+        var factory = BUILDLIB.parseHexText(factoryHexText, 'factory image');
+        var factorySha = SHA256.hashString(factoryHexText);
+        if (factorySha !== GEN.factorySha256) {
+            throw new Error('That is not the expected factory image.\n' +
+                            '  expected SHA-256 ' + GEN.factorySha256 + '\n' +
+                            '  this file      ' + factorySha);
+        }
+
+        var cfg = BUILDLIB.expand(options);
+        var inputs = recordInputs(cfg, factory.memory);
+        var tables = inputs.tables, flags = inputs.flags, numbers = inputs.numbers;
 
         // The assembler takes the same flat key -> string map the properties
         // file holds, so build that shape directly.
@@ -489,6 +515,6 @@ var WEBBUILD = (function () {
         };
     }
 
-    return { build: build };
+    return { build: build, settings: settings };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = WEBBUILD;

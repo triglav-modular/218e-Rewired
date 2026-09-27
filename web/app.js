@@ -1500,7 +1500,7 @@
     }
     if ($('kbdSend')) {
         $('kbdSend').addEventListener('click', function () {
-            if (state.factoryText) withKeyboard(sendTo);
+            withKeyboard(sendTo);
         });
         var sendTo = function (ports) {
             kbd.busy = true;
@@ -1515,7 +1515,11 @@
             var record, name = ports.output.name;
             new Promise(function (painted) { setTimeout(painted, 30); })
                 .then(function () {
-                    try { record = recordBytes(built().settings); }
+                    // With the factory image here the send shares the build
+                    // a download would make; without it, the record alone,
+                    // which needs no image (WEBBUILD.settings).
+                    try { record = recordBytes(state.factoryText ? built().settings
+                                                                 : WEBBUILD.settings(options()).settings); }
                     catch (e) { e.unbuilt = true; throw e; }
                     return SETTINGSMIDI.install(ports.output, ports.input, record, {});
                 })
@@ -2056,8 +2060,8 @@
     }
 
     function refresh() {
-        // Both ways out of step 3 build first, and a build needs the
-        // factory image.
+        // The downloads build an image, which needs the factory image; a
+        // send needs only the settings record, which does not.
         $('dlMac').disabled = !state.factoryText;
         $('dlWin').disabled = !state.factoryText;
         // Not while a read or a send is under way: a port coming and going
@@ -2067,7 +2071,7 @@
         // A port picked, or no list yet: a press before the list is opened
         // makes one (withKeyboard).
         var portReady = !kbd.listed || !!keyboardPort();
-        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !(state.factoryText && portReady);
+        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !portReady;
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
         if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !portReady;

@@ -238,6 +238,27 @@ reloaded = vm.runInContext('goodSlots(saved)', kept);
 check('and one past the record’s 0x3FFF does not', reloaded && reloaded[0] === null,
       JSON.stringify(reloaded && reloaded[0]));
 
+
+// --- Send settings without the factory image ------------------------------
+// The record takes one thing from the image, its 12-TET key table, for a
+// tuning slot left at the factory temperament; BUILDLIB writes it out so
+// WEBBUILD.settings can make the record with no image at all.  The two have
+// to agree with the real table and with a full build, byte for byte, or a
+// send without the image would put different settings on the keyboard than
+// the same page with it.
+var realKeys = B.factoryTuning(B.parseHexText(factory, 'factory image').memory);
+check('the written-out factory key table is the factory image\u2019s',
+      JSON.stringify(B.factoryTuningDefault()) === JSON.stringify(realKeys),
+      JSON.stringify(B.factoryTuningDefault()) + ' vs ' + JSON.stringify(realKeys));
+[{}, { alternate_tunings: [T[0], 'factory', T[1]] }, { alternate_tunings: ['factory', 'factory', T[0]] },
+ { sequencer: true, knob2: 'patterns' }, { latching_arp: true, knob4: 'trn' }].forEach(function (o, n) {
+    var full = null, alone = null, err = '';
+    try { full = WEBBUILD.build(o, factory).settings; alone = WEBBUILD.settings(o).settings; }
+    catch (e) { err = e.message; }
+    check('a settings record without the image is the full build\u2019s, options set ' + (n + 1),
+          !!full && full === alone, err || (full && alone ? 'records differ' : 'no record'));
+});
+
 if (failures) { console.log(failures + ' failure(s)'); process.exit(1); }
 process.exitCode = 0;
 console.log('ALL READ-BACK TESTS PASSED');
