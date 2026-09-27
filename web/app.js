@@ -1826,10 +1826,12 @@
     // Without it the page cannot tell "not installed" from "turned off" or
     // "not allowed on this site", so the note under each MIDI picker says
     // all three, from the start rather than after a click fails.
-    (function () {
+    var IS_SAFARI = (function () {
         var ua = navigator.userAgent || '';
-        var safari = /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|OPR\/|Android/.test(ua);
-        if (!safari || 'requestMIDIAccess' in navigator) return;
+        return /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|OPR\/|Android/.test(ua);
+    })();
+    (function () {
+        if (!IS_SAFARI || 'requestMIDIAccess' in navigator) return;
         Array.prototype.forEach.call(document.querySelectorAll('.safari-midi'), function (el) {
             el.hidden = false;
         });
@@ -1843,6 +1845,10 @@
     function sweepOptions(chosen) {
         return {
             output: chosen,
+            // Safari's audio input reads about 90 cents sharp for seconds
+            // after it opens (calibrate.js, the warm-up), so the sweep watches
+            // the drone there before the first note.
+            warmupMs: IS_SAFARI ? 12000 : 0,
             // Empty means Auto: the sweep finds the channel by playing on
             // each in turn and watching for the pitch to move.
             channel: $('calMidiChan').value === '' ? null

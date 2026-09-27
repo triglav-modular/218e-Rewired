@@ -60,6 +60,11 @@ function makeWorld(opts) {
         // instead.  The Safari runs of 2026-09-26 had the anchor after the
         // probe late by half a window, every time.
         late: opts.late || {},
+        // Safari's input as it opens (the owner's runs, 2026-09-26/27):
+        // `gapReads` reads that start with `gapSamples` exact zeros, and
+        // reads `sharpFrom` to `sharpTo` (counted from 1) about 90 cents sharp.
+        gapReads: opts.gapReads || 0, gapSamples: opts.gapSamples || 0,
+        sharpFrom: opts.sharpFrom || 0, sharpTo: opts.sharpTo || 0, reads: 0,
         heardOn: 0, pending: null,
         hz: 130.81, quiet: false, sent: [], notesOn: 0,
         opened: [], splitFrom: null
@@ -158,8 +163,12 @@ function load(w) {
                     if (w.onRead) w.onRead();
                     var was = w.pending, now = w.hz;
                     w.pending = null;
+                    w.reads++;
+                    var gap = w.reads <= w.gapReads ? w.gapSamples : 0;
+                    var sharp = w.reads >= w.sharpFrom && w.reads <= w.sharpTo ? Math.pow(2, 90 / 1200) : 1;
                     for (var i = 0; i < buf.length; i++) {
-                        w.hz = was && (was.whole || i < buf.length / 2) ? was.hz : now;
+                        w.hz = (was && (was.whole || i < buf.length / 2) ? was.hz : now) * sharp;
+                        if (i < gap) { buf[i] = 0; continue; }
                         buf[i] = w.noiseOnly
                             // A wandering hum plus hiss: periodic enough to be
                             // found, nowhere near steady enough to be a tone.
@@ -578,6 +587,36 @@ function signature(w, out) {
        heard.every(function (r) { return Math.abs(r.cents) < 2; }) &&
        !out.warnings.some(function (x) { return /drift check/.test(x); }),
        heard.length + '/' + out.readings.length + ' ' + out.warnings.join(' | '));
+
+    // --- Safari's input as it opens ---------------------------------------
+    // Every Safari run began with silence (zeros the estimator read as about
+    // 5.3 kHz at clarity 1.00) and then read about 90 cents sharp from roughly
+    // 3 to 10 s in.  The probe met both and failed, or anchored on the sharp
+    // stretch.  With the warm-up the drone is watched until it has settled.
+    var C = load(makeWorld({ listening: 0 }));
+    var zeros = new Float32Array(4096), mixed = new Float32Array(32768);
+    for (var z = 0; z < mixed.length; z++) mixed[z] = z < 12000 ? 0 : 0.25 * Math.sin(2 * Math.PI * 65.3 * z / RATE);
+    ok('a window that starts with silence is no audio, not a 5 kHz tone',
+       C.measure(mixed, RATE, 18, 6000).why === 'no audio' && C.measure(zeros, RATE, 18, 6000).why === 'no audio',
+       JSON.stringify(C.measure(mixed, RATE, 18, 6000)));
+    // Reads 1-2 start silent; reads 10 to 33 are sharp: with the 300 ms warm-up
+    // steps that is 3 to 10 s in, as Safari did.
+    function safari() { return makeWorld({ listening: 2, gapReads: 2, gapSamples: 12000, sharpFrom: 10, sharpTo: 33 }); }
+    w = safari(); err = null;
+    try { out = await sweep(w, { channel: 2, high: 20, warmupMs: 12000 }); } catch (e) { err = e; }
+    heard = err ? [] : out.readings.filter(function (r) { return r.cents !== null; });
+    ok('with the warm-up, a Safari-like input sweeps clean',
+       !err && heard.length === out.readings.length && heard.every(function (r) { return Math.abs(r.cents) < 2; }) &&
+       Math.abs(1200 * Math.log2(out.anchorHz / 32.703)) < 2,
+       err ? err.message : heard.length + '/' + out.readings.length + ' anchored ' + out.anchorHz.toFixed(2));
+    ok('and no note went out before the input had settled',
+       w.sent.length > 0 && w.reads > 33, 'reads ' + w.reads);
+    w = safari(); err = null;
+    try { out = await sweep(w, { channel: 2, high: 20 }); } catch (e) { err = e; }
+    heard = err ? [] : out.readings.filter(function (r) { return r.cents !== null && Math.abs(r.cents) < 2; });
+    ok('without it, the same input does not (the fixture can fail)',
+       !!err || heard.length < out.readings.length,
+       err ? err.message.slice(0, 60) : heard.length + '/' + out.readings.length);
 
     // --- a note that did not take is blank, not a -100 cent reading ------
     // The instrument ignores one note-on, so the drone holds the note before

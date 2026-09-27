@@ -229,7 +229,22 @@
         return f;
     }
 
+    // A stretch of exact zeros is no audio, not a quiet tone: Safari's
+    // input delivers silence for a few hundred milliseconds after it opens,
+    // and the estimator reads a window that starts that way as about 5.3 kHz
+    // at clarity 1.00 (the owner's Safari run, 2026-09-27).  A real input,
+    // even a quiet one, does not hold exactly zero for 256 samples.
+    var SILENT_RUN = 256;
+    function hasGap(samples) {
+        var run = 0;
+        for (var i = 0; i < samples.length; i++) {
+            if (samples[i] === 0) { if (++run >= SILENT_RUN) return true; }
+            else run = 0;
+        }
+        return false;
+    }
     function measure(samples, rate, fMin, fMax) {
+        if (hasGap(samples)) return { ok: false, why: 'no audio', rms: 0 };
         var x = detrend(samples), i, rms = 0;
         for (i = 0; i < x.length; i++) rms += x[i] * x[i];
         rms = Math.sqrt(rms / x.length);
@@ -901,9 +916,36 @@
             // channel 1 of a desk with the 208 on channel 2 heard bleed at
             // level 0.0013, under the 0.002 a note needs, and reported that
             // no MIDI channel moved the pitch.
-            await sleep(fill);
-            analyser.getFloatTimeDomainData(buf);
-            var idle = measure(buf, rate, 18, 6000);
+            // Safari's input also settles for seconds after it opens: past
+            // the silence at the start, every Safari run read a steady tone
+            // about 90 cents sharp from roughly 3 to 10 s in (2026-09-26/27,
+            // logs 4 to 8, before calibration mode as well as with it; never
+            // in Chrome).  So with `o.warmupMs` the drone is watched before
+            // any note goes out: at least that long, and until its last two
+            // seconds agree to 3 cents, or at most ten seconds more.  Counted
+            // in the sleeps it waits, so a fake clock runs it at once.
+            var warm = o.warmupMs || 0, waited = 0, heardHz = [], STEP = 300;
+            while (warm > 0) {
+                if (self.stopped) throw new Error('Stopped.');
+                await sleep(STEP);
+                waited += STEP;
+                analyser.getFloatTimeDomainData(buf);
+                var w0 = measure(buf, rate, 18, 6000);
+                heardHz.push(heard(w0) ? w0.hz : null);
+                var last = heardHz.slice(-Math.ceil(2000 / STEP));
+                var still = last.length * STEP >= 2000 &&
+                    last.every(function (h) { return h !== null; }) &&
+                    cents(Math.max.apply(null, last), Math.min.apply(null, last)) <= 3;
+                if ((waited >= warm && still) || waited >= warm + 10000) break;
+            }
+            // An input that has not started yet is silence, not a level:
+            // wait for it a few windows before judging what comes in.
+            var idle = null;
+            for (var tries = 0; tries < 5 && (!idle || idle.why === 'no audio'); tries++) {
+                await sleep(fill);
+                analyser.getFloatTimeDomainData(buf);
+                idle = measure(buf, rate, 18, 6000);
+            }
             if (idle.rms < MIN_RMS) {
                 throw new Error('Nothing usable is coming in on audio channel ' +
                     (want + 1) + ' of the chosen input: level ' + idle.rms.toFixed(4) +
