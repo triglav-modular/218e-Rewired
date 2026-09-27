@@ -1460,8 +1460,12 @@ reachable literal, no leaf with a call, no push/pop disagreement, no branch
 off an instruction, no unbounded index.  The audit's conclusions are not
 about one image.
 
-**Budget.**  SP starts at 0x8000 and .bss ends at 0x4748, so the stack has
-about 14 KB.  The deepest chain through our code is the 5 ms scan at 300
+**Budget.**  SP starts at 0x8000 and .bss ends at 0x4748, but the space
+between them is not all stack. The factory's newlib heap starts at 0x4748
+and may grow to 0x7000, and it links 4 KB of stack above that. Our cells
+start at 0x6100. (Corrected 2026-09-27: this said "about 14 KB". The
+whole-image worst case, measured on 3.0.2, is 996 bytes; see PLAN-SETTINGS.md,
+"RAM".)  The deepest chain through our code is the 5 ms scan at 300
 bytes; the pitch-store hook is 224.  The GPIO ISR is 75 instructions
 (measured by the clock regression) - about 3 us at 25 MHz, or 0.2% of the CPU
 at a 200 Hz input - and the 1 ms task's whole chain is 88.  Nothing is close

@@ -162,8 +162,29 @@ baked tables, and edited live by the NRPN handler:
 | `0x6a70` | 8 | loader state: commit state byte (`0` clean, `1` requested, `2` written, `3` failed), the slot loaded (`0xff` none), a pad, the generation word at `+4` |
 | `0x6a80` | 0x2a8 | reserved for a commit's staging, marker erased, as persistence stages at `0x6300` |
 
-Everything ends below `0x6d30`; the stack keeps over 12 KB. The mirror is
-declared in `RAM_REGIONS` in `tools/build.py`.
+Everything ends below `0x6d30`. Stage 2's live bytes, boot guard and
+calibration cells take it to `0x6d45`. SP starts at `0x8000`, and the
+factory links 4 KB of stack below it: `_sbrk`'s heap limit, `0x7000`, is
+the literal at `0x80012a60`. Measured on 3.0.2 (`9c2e5db1`, 2026-09-27),
+the stack's worst case is 996 bytes:
+- 628 on the deepest main-loop chain;
+- 188 for a level-1 interrupt on top (32 bytes of automatic stacking plus
+  a handler of at most 156);
+- 180 for a level-2 interrupt on top of that (32 plus at most 148).
+
+The two TWI handlers are the only level-2 ones, and nothing uses levels 0
+or 3. That leaves about 3.8 KB between our highest cell and the deepest the
+stack goes.
+
+The measurement is a static pass over the whole image's call graph, with
+every indirect call resolved to its registered targets:
+- the flash controller's wait hook;
+- the nine software-timer callbacks;
+- the three TWI callbacks;
+- the seven registered interrupt handlers.
+
+It counts paths that may never run together, so it is an upper bound. The
+mirror is declared in `RAM_REGIONS` in `tools/build.py`.
 
 Every reader reaches its table through a pool word today, so repointing is a
 word change, not a code change:
