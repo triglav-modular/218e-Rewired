@@ -253,7 +253,7 @@ var SETTINGSMIDI = (function () {
     // is the same.  The verifying dump is still compared with the whole
     // record, so a keyboard that did not hold what the page thought is a
     // mismatch rather than a record saved half one and half the other.
-    var VERIFY_TIMEOUT = 20000, COMMIT_TIMEOUT = 5000;
+    var VERIFY_TIMEOUT = 20000, COMMIT_TIMEOUT = 5000, REPAIR_ROUNDS = 2;
     function install(output, input, record, opts) {
         opts = opts || {};
         // `before`, the identity the send started from: a commit is only
@@ -263,6 +263,49 @@ var SETTINGSMIDI = (function () {
         // send that fails from here on reloads, so the keyboard does not play
         // half a record nobody saved.
         var live = null, before = null, pushed = false;
+        // The dump request goes out behind the whole push.  Where MIDI is
+        // paced - Safari's Web MIDI extension, about twenty requests a second
+        // - that can be seconds after the push returns, and a send that Read
+        // settings could not fault ended in "no reply" (the owner,
+        // 2026-09-27); so the verify waits longer than a read does.  Every
+        // value has to read back equal and the dump be whole: without all
+        // sixteen live bytes there is no telling whether a restart is owed.
+        // A verify short of that sends again just the values that came back
+        // wrong or not at all, and reads back again, up to REPAIR_ROUNDS
+        // times: Safari lost some of a whole-record send where Chrome lost
+        // none (the owner, 2026-09-27), and the dump says exactly which.
+        // Only what this send pushed is repaired: with `opts.params`, a value
+        // the send did not carry that reads back otherwise means the keyboard
+        // holds something the page did not know of, and that stays a
+        // mismatch.  Nothing is committed until a verify comes back clean.
+        var carried = null;
+        if (opts.params) {
+            carried = {};
+            opts.params.forEach(function (x) { carried[x[0]] = true; });
+        }
+        function verify(round) {
+            return dump(output, input, opts.timeout || VERIFY_TIMEOUT, opts.timers).catch(function () {
+                return fail('no reply');
+            }).then(function (d) {
+                var diff = differences(record, d.pairs);
+                if (!diff.length && !d.missing.length) return d;
+                var foreign = carried && diff.some(function (x) { return !carried[x[0]]; });
+                if (foreign || round >= (opts.repairs === undefined ? REPAIR_ROUNDS : opts.repairs)) {
+                    return fail('mismatch', { differences: diff, missing: d.missing });
+                }
+                var again = {}, redo = [];
+                diff.forEach(function (x) { again[x[0]] = x[1]; });
+                d.missing.forEach(function (q) {
+                    var v = B.nrpnValueOf(record, q);
+                    // A live byte, the identity, or a value this send did not
+                    // carry: read again only.
+                    if (v !== null && (!carried || carried[q])) again[q] = v;
+                });
+                Object.keys(again).forEach(function (q) { redo.push([Number(q), again[q]]); });
+                if (opts.onStage) opts.onStage('repair');
+                return pushParams(output, redo, opts).then(function () { return verify(round + 1); });
+            });
+        }
         return identity(output, input, opts.timeout, opts.timers).catch(function () {
             return fail('no reply');
         }).then(function (id) {
@@ -274,20 +317,8 @@ var SETTINGSMIDI = (function () {
             return opts.params ? pushParams(output, opts.params, opts) : push(output, record, opts);
         }).then(function () {
             if (opts.onStage) opts.onStage('verify');
-            // The dump request goes out behind the whole push.  Where MIDI is
-            // paced - Safari's Web MIDI extension, about twenty requests a
-            // second - that can be seconds after this line, and a send that
-            // Read settings could not fault ended in "no reply" (the owner,
-            // 2026-09-27).  So the verify waits longer than a read does.
-            return dump(output, input, opts.timeout || VERIFY_TIMEOUT, opts.timers).catch(function () {
-                return fail('no reply');
-            });
+            return verify(0);
         }).then(function (d) {
-            // Every value read back equal, and the dump whole: without all
-            // sixteen live bytes there is no telling whether a restart is
-            // owed, so a dump short of one is not good enough to commit on.
-            var diff = differences(record, d.pairs);
-            if (diff.length || d.missing.length) return fail('mismatch', { differences: diff, missing: d.missing });
             live = B.nrpnLiveOf(d.pairs);
             if (opts.onStage) opts.onStage('commit');
             commit(output);

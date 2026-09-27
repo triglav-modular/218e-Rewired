@@ -80,12 +80,15 @@ function fakeInstrument(options) {
         layout: options.layout === undefined ? 2 : options.layout, version: options.version,
         state: 0, slot: 0xff, generation: 0, received: [], sent: [], scans: 0, restarts: 0,
         drop: options.drop || null,     // a parameter number to lose on the wire
+        dropOnce: options.dropOnce || null, dropped: false,   // lost the first time only
+        loseOnce: options.loseOnce || [], lost: {},           // lost from the first dump only
         lose: options.lose || [],       // parameter numbers lost on the way back
         refuseCommit: !!options.refuseCommit
     };
     var input = { onmidimessage: null };
     function reply(param, value) {
         if (inst.lose.indexOf(param) >= 0) return;
+        if (inst.loseOnce.indexOf(param) >= 0 && !inst.lost[param]) { inst.lost[param] = true; return; }
         B.nrpnMessages(param, value).forEach(function (m) {
             inst.sent.push(m);
             if (input.onmidimessage) input.onmidimessage({ data: m });
@@ -105,6 +108,7 @@ function fakeInstrument(options) {
             if (!got) return;
             inst.received.push([got.param, got.value]);
             if (got.param === inst.drop) return;
+            if (got.param === inst.dropOnce && !inst.dropped) { inst.dropped = true; return; }
             if (got.param === 0x3f00) { if (got.value === 0x2a2a) inst.state = 1; return; }
             if (got.param === 0x3f03) {
                 var params = B.nrpnParamsOf(inst.mirror);
@@ -289,6 +293,23 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     e = await refusal(fakeInstrument({ drop: 0x83 }));
     check('a parameter lost on the wire is a mismatch, and nothing is committed',
           e && e.reason === 'mismatch' && e.differences.length === 1 && e.differences[0][0] === 0x83 && e.differences[0][1] === 485 + 120);
+    // Safari lost some of a whole-record send where Chrome lost none (the
+    // owner, 2026-09-27).  A value lost once on the way is sent again after
+    // the verify names it; one lost once on the way back is read again; a
+    // loss that keeps happening is still a mismatch after the rounds.
+    var once = fakeInstrument({ dropOnce: 0x83 });
+    e = await refusal(once);
+    check('a parameter lost once on the wire is sent again and the send lands',
+          e === null && once.dropped && same(once.mirror, record) &&
+          once.received.filter(function (p) { return p[0] === 0x83; }).length === 2,
+          e ? e.reason : '');
+    var backOnce = fakeInstrument({ loseOnce: [0x90, 0x21] });
+    e = await refusal(backOnce);
+    check('values lost once from the verifying dump are read again and the send lands',
+          e === null && backOnce.received.filter(function (p) { return p[0] === 0x3f03; }).length === 2,
+          e ? e.reason : '');
+    e = await refusal(fakeInstrument({ drop: 0x83 }), { repairs: 0 });
+    check('with no repair rounds a lost value is a mismatch at once', e && e.reason === 'mismatch');
     // The dump that verifies a push lost one of the live bytes: without it
     // there is no telling whether the options changed, so nothing is
     // committed and no restart is skipped.
