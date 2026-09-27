@@ -1538,6 +1538,19 @@
                     .then(function () { return ok; });
             }, function (err) {
                 firmwareFrom(err);
+                // Which values did not come back, for whoever opens the
+                // console: the message names the kind of failure, not the
+                // parameters, and a mismatch has to be told apart - values
+                // lost on the way against values the keyboard keeps its own
+                // way.  Parameters as the NRPN numbers settings.js uses.
+                if (err && (err.differences || err.missing) && typeof console !== 'undefined') {
+                    try {
+                        console.warn('218e send: ' + (err.reason || 'failed'),
+                            { differences: (err.differences || []).slice(0, 40),
+                              missing: (err.missing || []).slice(0, 40),
+                              total: (err.differences || []).length + (err.missing || []).length });
+                    } catch (e) { /* never let the report stop the page */ }
+                }
                 msg($('kbdMsg'), 'bad', sendRefusal(err));
                 if (counted) reportSettings('send', outcomeOf(err), err && err.identity);
                 return false;
