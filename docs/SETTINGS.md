@@ -346,14 +346,21 @@ passed. Every harness now traps misaligned accesses (`src/AlignGuard.java`),
 and the build refuses a misaligned constant-address access
 (`check_alignment` in `tools/build.py`).
 
-Not yet done on an instrument: the boot guard's arm and confirmation, and
-its DFU fallback; the send and read from the page against a real keyboard;
-that the watchdog reset comes back through the bootloader into the
-application; and that a falling edge on the clock jack, which the GPIO
-interrupt now also receives with the divider off, costs nothing audible.
+Seen on the instrument, 3.0.2 (9c2e5db1), per the owner on 2026-09-27:
+- the boot guard's confirmation: a power-up after the first boot came up
+  normally, not in DFU;
+- sending and reading settings from the page, with the restart after a
+  settings change coming back into the application.
+
 The first stage 2 image that boots, 3.0.0 (8024dd3f), was flashed on
 2026-09-26 and came back as a MIDI device a second after the flasher's
 START.
+
+Not yet done on an instrument:
+- the boot guard's DFU fallback, a power cut in the first 1.5 s after a
+  flash;
+- that a falling edge on the clock jack, which the GPIO interrupt now also
+  receives with the divider off, costs nothing audible.
 
 The watchdog reset needs the bootloader's key (audit, 2026-09-26, from
 the documents). A watchdog reset leaves the watchdog's control register as
@@ -371,5 +378,5 @@ it after a watchdog reset, its boot path stops the watchdog, clears the
 key and jumps to the application (AVR32784, Figure 6-2). Since e5955fc3
 the restart writes that key before it arms the watchdog. Word 0 is outside
 everything the image uses, because the factory's data starts at `0x8`.
-That the reset now comes back into the application is still the bench's to
-see. Keep the power switch at hand for the first one.
+On 3.0.2 the owner has seen the restart come back into the application
+(2026-09-27).
