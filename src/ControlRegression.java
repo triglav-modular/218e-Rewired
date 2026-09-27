@@ -22,6 +22,7 @@ public class ControlRegression extends SequenceEditRegression {
     @Override void command(int pad) throws Exception { if(seq)super.command(pad); }
     @Override void step() throws Exception {
         steps++;
+        if(pc()==0x80019980L) remapIn=(int)reg("R12");   // what the scan hands the remap
         // These helpers only update LED RAM. Execute them too, so a changed
         // call chain cannot accidentally rely on the peripheral stub's ABI.
         if(pc()==0x80006808L||pc()==0x800068ccL) {
@@ -2012,6 +2013,243 @@ public class ControlRegression extends SequenceEditRegression {
         println("RESIDUE "+dir+": "+n+" byte(s) in "+runs+" run(s) differ after the warm restart (warm/cold), "+allowed+" allowlisted, "+residue+" residue:"+diff);
         check("a warm restart "+dir+" leaves the same custom RAM as a cold boot with the same record, bar the allowlist: "+residue+" byte(s) of residue",residue==0);
     }
+    // ---- Calibration mode (NRPN 0x3f05) ---------------------------------
+    // The page's pitch sweep turns it on and plays MIDI notes; the pitch
+    // output is then the settings mirror's pitch-table entry for the last
+    // note, exactly, with nothing the instrument would add.  Driven through
+    // the parser (the NRPN), the dispatcher's own note-on case and its pool
+    // word (the notes), the real scan (musicalScan) and the touch scan's
+    // contact word (a key press).  remapIn is what the remap was handed on
+    // the scan just run, so normal() is the pitch the scan itself computed:
+    // what the instrument plays with the mode off.
+    static final long CAL=0x6a6b, CAL_STAMP=0x6d40, CAL_ENTRY=0x6d44, CAL_MS=0x2efc;
+    long remapIn=Long.MIN_VALUE;
+    // One USB-MIDI packet into the receive ring, then the factory parser
+    // over it, as SettingsRegression feeds them.
+    void usb(int status,int d1,int d2) throws Exception {
+        long idx=r(0x34b0+0x84,4);
+        w(0x34b0+4+idx,1,status); w(0x34b0+5+idx,1,d1); w(0x34b0+6+idx,1,d2); w(0x34b0+7+idx,1,0);
+        w(0x34b0+0x84,4,idx+4>0x7f?0:idx+4);
+        call(0x8000831cL);
+    }
+    void nrpn(int param,int value) throws Exception {
+        usb(0xbf,99,param>>7); usb(0xbf,98,param&0x7f); usb(0xbf,6,value>>7); usb(0xbf,38,value&0x7f);
+    }
+    int channel() { return (int)r(S+0x2e7,1); }
+    // Event 7's case in the dispatcher, the event where the case reads it
+    // (R7-0x20: note, velocity, channel), through its MCALL on 0x80005238.
+    void noteOn(int note) throws Exception { noteOn(note,channel()); }
+    void noteOn(int note,int ch) throws Exception {
+        w(0x7600-0x20,1,note); w(0x7600-0x1f,1,100); w(0x7600-0x1e,1,ch);
+        call(0x80004e7eL,0x80004eb8L);
+    }
+    // A key's contact as the touch scan reports it (0x8000550e): the key in
+    // R12, through the pool word.  touchOn() calls the handler directly.
+    void contact(int key) throws Exception { e.writeRegister("R12",key); call(r(0x80005650L,4)); }
+    long mirror(int entry) { return r(0x6840+2*entry,2); }
+    long dac() throws Exception { remapIn=Long.MIN_VALUE; musicalScan(); return r(S+0x358,2); }
+    long normal() throws Exception {
+        check("the scan ran the remap",remapIn!=Long.MIN_VALUE);
+        return remapModel(remapIn+(short)r(0x6028,2));
+    }
+    void calibrate() throws Exception { w(CAL_MS,4,1000); nrpn(0x3f05,0x2a2a); check("calibration mode on",r(CAL,1)==1); }
+    // One scan in the mode: the DAC and the last-sent mirror are the entry.
+    void plays(String what,int entry) throws Exception {
+        long d=dac();
+        check(what+": DAC "+d+", last sent "+r(0x3212,2)+", entry "+entry+" is "+mirror(entry),
+            d==mirror(entry)&&r(0x3212,2)==mirror(entry));
+    }
+    void calibrationCommand() throws Exception {
+        setup(0,false,0); command(2);
+        check("calibration mode is off after a boot",r(CAL,1)==0);
+        nrpn(0x3f05,0x1111); nrpn(0x3f05,0x2a2b); nrpn(0x3f05,0);
+        check("0x3f05 without the commit's key leaves it off",r(CAL,1)==0);
+        w(CAL_MS,4,20000); nrpn(0x3f05,0x2a2a);
+        check("0x3f05 with the key turns it on, at entry 3, its five seconds counted from now",
+            r(CAL,1)==1&&r(CAL_ENTRY,1)==3&&r(CAL_STAMP,4)==20000);
+        plays("before any note, entry 3",3);
+        noteOn(40); plays("note 40",19);
+        w(CAL_MS,4,20100); nrpn(0x3f05,0x2a2a);
+        check("the key again keeps the mode and the note's entry, and restarts the five seconds",
+            r(CAL,1)==1&&r(CAL_ENTRY,1)==19&&r(CAL_STAMP,4)==20100);
+        nrpn(0x3f06,0x2a2a);
+        check("another command leaves the mode alone",r(CAL,1)==1);
+        nrpn(0x3f05,0x2a2b);
+        check("any other value turns it off",r(CAL,1)==0);
+        long d=dac();
+        check("and the next scan plays its own pitch again: DAC "+d+", the remap's "+normal(),d==normal());
+        println("PASS calibration mode: 0x3f05 with the key turns it on at entry 3, the key again keeps the note, any other value turns it off");
+    }
+    void calibrationPitch() throws Exception {
+        setup(0,false,0); command(2); calibrate();
+        int[][] ends={{21,0},{99,78},{0,0},{20,0},{100,78},{127,78}};
+        for(int[] n:ends) { noteOn(n[0]); plays("note "+n[0]+" is entry "+n[1],n[1]); }
+        int wrong=0;
+        for(int i=0;i<=78;i++) { noteOn(21+i); if(dac()!=mirror(i)||r(CAL_ENTRY,1)!=i) wrong++; }
+        check("notes 21..99 play entries 0..78, every one exactly: "+wrong+" wrong",wrong==0);
+        noteOn(40); noteOn(50,(channel()+1)&15);
+        plays("a note on another channel leaves the entry",19);
+        // What the instrument would add, one thing at a time, on a key the
+        // keyboard has - note 40 is key 16 - so the scan's own pitch comes
+        // off the key table.  Each moves the scan's own pitch (normal()) and
+        // leaves the DAC on the entry.
+        int n=40, entry=19;
+        w(S+0x342,1,1); w(S+0x343,1,0); octavePad(0); noteOn(n); dac(); long own=normal();
+        octavePad(1); noteOn(n); long d=dac(), with=normal();
+        check("pad 2 with the add-to-pitch switch on the octaves moves the scan's own pitch: "+own+" -> "+with,with!=own);
+        check("and the DAC plays the entry exactly: "+d+" = "+mirror(entry),d==mirror(entry)&&r(0x3212,2)==mirror(entry));
+        octavePad(0);
+        // The preset rotates the key table on the scan, so it has one before
+        // the note reads the table.
+        w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0); w(0x613a,2,0); dac(); noteOn(n); dac(); own=normal();
+        w(0x613a,2,900); dac(); dac(); noteOn(n); d=dac(); with=normal();
+        check("the preset up, the switch in the middle, moves the scan's own pitch: "+own+" -> "+with,with!=own);
+        check("and the DAC plays the entry exactly: "+d,d==mirror(entry));
+        w(0x613a,2,0); w(S+0x342,1,1); w(S+0x343,1,0);
+        noteOn(n); dac(); own=normal();
+        w(S+0x216,2,(-200)&0xffff); noteOn(n); d=dac(); with=normal();
+        check("the strip bent down moves the scan's own pitch: "+own+" -> "+with,with!=own);
+        check("and the DAC plays the entry exactly: "+d,d==mirror(entry));
+        w(S+0x216,2,0);
+        if(r(0x6d32,1)!=0) {
+            // The jack one degree up: N=1.
+            cv(0); noteOn(n); dac(); own=normal();
+            int degree=((int)r(0x680a,2)+6)/12;
+            cv(degree);
+            check("the jack stands one degree up: "+(r(0x60fa,2)&255),(r(0x60fa,2)&255)==1);
+            noteOn(n); d=dac(); with=normal();
+            check("the jack transposing one degree moves the scan's own pitch: "+own+" -> "+with,with!=own);
+            check("and the DAC plays the entry exactly: "+d,d==mirror(entry));
+            cv(0);
+        }
+        if(r(0x6d33,1)!=0) {
+            // Each tuning slot, applied by the per-scan applier.  A slot that
+            // puts key 16 somewhere else must move the scan's own pitch.
+            int moved=0;
+            w(0x6090,1,0); w(0x60e4,2,0); controlScan(); noteOn(n); dac(); own=normal();
+            long key0=r(0x854+2*16,2);
+            for(int s=0;s<3;s++) {
+                w(0x6090,1,s); w(0x60e4,2,0); controlScan();
+                noteOn(n); d=dac(); with=normal();
+                if(r(0x854+2*16,2)!=key0) {
+                    moved++;
+                    check("tuning slot "+s+" moves the scan's own pitch: "+own+" -> "+with,with!=own);
+                }
+                check("tuning slot "+s+": the DAC plays the entry exactly, "+d,d==mirror(entry));
+            }
+            w(0x6090,1,0); w(0x60e4,2,0); controlScan();
+            println("CALIBRATION tuning slots: "+moved+" of 3 put key 16 elsewhere");
+        }
+        println("PASS calibration mode: entries 0..78, both ends clamped, exact over the octave pads, the preset, the strip"
+            +(r(0x6d32,1)!=0?", the jack":"")+(r(0x6d33,1)!=0?", the tuning slots":""));
+    }
+    void calibrationSilence() throws Exception {
+        // The arp on the external clock, three keys held.
+        orderFixture(0,0,4,14,9);
+        externalBeat(); externalBeat();
+        check("the arp steps before the mode: "+outputs+" pulses",outputs>0);
+        calibrate();
+        long key=r(S+0x34d,1); int outs=outputs, wrong=0;
+        for(int i=0;i<8;i++) { externalBeat(); if(r(S+0x358,2)!=mirror(3)) wrong++; }
+        check("in the mode the arp makes no step on the clock: key "+r(S+0x34d,1)+" was "+key+", "+(outputs-outs)+" pulses",
+            r(S+0x34d,1)==key&&outputs==outs);
+        check("and every beat's scan plays the entry: "+wrong+" did not",wrong==0);
+        nrpn(0x3f05,0);
+        for(int i=0;i<3;i++) externalBeat();
+        check("the arp steps again once the mode ends",outputs>outs);
+        // And on its own tempo, through the DAC flush's step.
+        setup(0,true,1); command(1); command(1); w(S+0x308,2,1000);
+        w(S+0x21a,1,3);
+        for(int k:new int[]{4,14,9}) { w(S+0x21b+k,1,1); e.writeRegister("R12",k); call(0x8001a020L); }
+        w(S+0x34d,1,4);
+        internalTicks(300);
+        int before=outputs;
+        check("the internal arp steps before the mode: "+before+" pulses",before>0);
+        calibrate();
+        internalTicks(300);
+        check("and not in it: "+(outputs-before)+" pulses",outputs==before&&r(S+0x358,2)==mirror(3));
+        if(seq) {
+            // A take playing.
+            setup(4,false,0); command(1);
+            externalBeat(); externalBeat();
+            int steps=selected.size();
+            check("the take plays before the mode: mode "+r(0x6158,1)+", "+steps+" steps",r(0x6158,1)==2&&steps>0);
+            calibrate();
+            outs=outputs; wrong=0;
+            for(int i=0;i<8;i++) { externalBeat(); if(r(S+0x358,2)!=mirror(3)) wrong++; }
+            check("in the mode the take makes no step: "+(selected.size()-steps)+" steps, "+(outputs-outs)+" pulses",
+                selected.size()==steps&&outputs==outs);
+            check("it is still playing, and every scan plays the entry: "+wrong+" did not",r(0x6158,1)==2&&wrong==0);
+            nrpn(0x3f05,0);
+            for(int i=0;i<3;i++) externalBeat();
+            check("the take steps again once the mode ends",selected.size()>steps);
+            // Recording: a MIDI note records nothing; a key press ends the
+            // mode first and then records as ever.
+            setup(0,false,0);
+            calibrate(); noteOn(40); sound(); sound();
+            check("in WRITE a MIDI note in the mode records nothing",r(0x61e0,1)==0);
+            contact(5); sound();
+            check("a key press ends the mode and records its note",r(CAL,1)==0&&r(0x61e0,1)==1);
+        }
+        println("PASS calibration mode: the arp on either clock"+(seq?", a playing take and recording":"")+" silent while it is on, and back after");
+    }
+    void calibrationExits() throws Exception {
+        // A key press.
+        setup(0,false,0); command(2); calibrate();
+        noteOn(40); plays("before the press",19);
+        contact(9);
+        check("a key press ends the mode",r(CAL,1)==0);
+        check("and the handler has the press as ever: key 9 down",r(S+0x239+9,1)==1);
+        long d=dac();
+        check("the next scan plays its own pitch: "+d+" = "+normal(),d==normal());
+        // Five seconds without a note-on, on the factory's millisecond count.
+        setup(0,false,0); command(2);
+        w(CAL_MS,4,100000); nrpn(0x3f05,0x2a2a);
+        w(CAL_MS,4,104999); plays("4999 ms after the command",3);
+        noteOn(40);
+        w(CAL_MS,4,109998); plays("4999 ms after the last note-on",19);
+        w(CAL_MS,4,109999); d=dac();
+        check("5000 ms after it the scan ends the mode",r(CAL,1)==0);
+        check("and plays its own pitch: "+d+" = "+normal(),d==normal());
+        w(CAL_MS,4,200000); nrpn(0x3f05,0x2a2a);
+        w(CAL_MS,4,204000); noteOn(50,(channel()+1)&15);
+        w(CAL_MS,4,208999); plays("a note-on on another channel restarts the five seconds",3);
+        w(CAL_MS,4,209000); dac();
+        check("and they run out from it",r(CAL,1)==0);
+        w(CAL_MS,4,0xfffff000L); nrpn(0x3f05,0x2a2a); noteOn(40);
+        w(CAL_MS,4,0x387); plays("across the count's wrap, 4999 ms",19);
+        w(CAL_MS,4,0x388); dac();
+        check("and 5000 ms across it end the mode",r(CAL,1)==0);
+        // A boot: the watchdog's restart, custom SRAM kept.
+        setup(0,false,0); command(2); calibrate(); noteOn(40);
+        warmRestart();
+        check("the restart comes up with the mode off, the cells beside it kept",r(CAL,1)==0&&r(CAL_ENTRY,1)==19);
+        d=dac();
+        check("and plays its own pitch: "+d+" = "+normal(),d==normal());
+        println("PASS calibration mode ends on a key press, five seconds without a note-on, and a restart; the next scan is the instrument's own");
+    }
+    void calibrationLiveEdit() throws Exception {
+        setup(0,false,0); command(2); calibrate();
+        int n=40, entry=19;
+        long flash=r(0x80019bc0L+2*entry,2);
+        check("the mirror holds the image's own entry "+entry+": "+mirror(entry)+" = "+flash,mirror(entry)==flash);
+        noteOn(n); plays("note "+n,entry);
+        long state=r(0x6a70,1), guard=r(0x60e4,2);
+        int edit=(int)(flash>=0x800?flash-37:flash+37);
+        nrpn(0x80+entry,edit);
+        check("an NRPN write to parameter 0x"+Integer.toHexString(0x80+entry)+" lands in entry "+entry+" of the mirror itself: "+mirror(entry),
+            mirror(entry)==edit);
+        check("and moves nothing else: its neighbours, the commit state, the applier's guard",
+            mirror(entry-1)==r(0x80019bc0L+2*(entry-1),2)&&mirror(entry+1)==r(0x80019bc0L+2*(entry+1),2)
+            &&r(0x6a70,1)==state&&r(0x60e4,2)==guard);
+        long d=dac();
+        check("the next scan plays the new value: "+d+" = "+edit,d==edit);
+        nrpn(0x3f01,0);
+        check("0x3f01 puts the flash value back and leaves the mode on",mirror(entry)==flash&&r(CAL,1)==1);
+        d=dac();
+        check("and the next scan plays it: "+d+" = "+flash,d==flash);
+        println("PASS calibration mode: a pitch-table write lands in the mirror and plays on the next scan; 0x3f01 puts the flash value back");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         transpose=args.length>0&&args[0].equals("trn");
@@ -2067,6 +2305,11 @@ public class ControlRegression extends SequenceEditRegression {
             // runtime whether or not persistence is built.
             if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { periodCell(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { residue(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationCommand(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationPitch(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationSilence(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationExits(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { calibrationLiveEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }

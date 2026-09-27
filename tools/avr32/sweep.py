@@ -283,9 +283,12 @@ def audit_call_pools(image_path) -> list[str]:
 # walk keeps its index across the two calls that destroy it.
 # And again when the pitch floor moved to the table's entry 0, so a bend
 # reaches the three semitones under the bottom key.
+# And again for calibration mode, NRPN 0x3f05: seven caves past the boot
+# guard, a hook inside the arp step, and the note-on, contact, pitch-hook and
+# bare-remap words through them, in every image.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "4f7918076451bb3e795d581985fa128c8717890f6ecb033558d84cb9e617b1e2",
+    "historical_config": "83e6325c01fba87a1327406e36211a6d5906de10de483875eb6e3d6224a64afc",
 }
 
 

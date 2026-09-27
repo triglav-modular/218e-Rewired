@@ -228,7 +228,23 @@ the last NRPN or on cell 0.
 | `0x3f02` | the image's own settings back in the mirror, the tuning slot copied again likewise; flash untouched until a commit | |
 | `0x3f03` | dump: every parameter, then the identity block | |
 | `0x3f04` | restart through the watchdog | data `0x2a2a` |
+| `0x3f05` | calibration mode on with data `0x2a2a`, off with any other value | data `0x2a2a` |
 | `0x3f7f` | the identity block alone | |
+
+**Calibration mode.** `0x3f05` with data `0x2a2a` turns it on, for the
+page's pitch sweep; any other value turns it off. While it is on, the
+pitch output on every scan is the mirror's pitch-table entry for the last
+MIDI note, `0x6840 + 2e` with e = note - 21 clamped to 0..78, and entry 3
+before a note arrives. Nothing is added to it: not the add-to-pitch
+switch, the preset, trn, the jack's transposition, the tuning slot, glide,
+vibrato or either bend. A pitch-table write (`0x0080 + e`) lands in the
+mirror itself, so the next scan plays it; `0x3f01` afterwards drops the
+edits again. The arp step does nothing, so neither the arpeggiator nor the
+sequencer steps, sounds or records; a MIDI note on the instrument's
+channel still sounds its gate. Any key press, five seconds with no MIDI
+note-on on any channel (the factory's millisecond count at `0x2efc`), a
+boot, or `0x3f05` with another value ends it, and the next scan plays as
+usual. It lives in RAM (`0x6a6b`, `0x6d40`, `0x6d44`) and is never saved.
 
 Table and cell writes go live in the mirror at once; an option cell's
 write takes effect at the next restart. The clock's two cells,

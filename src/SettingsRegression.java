@@ -69,6 +69,12 @@ public class SettingsRegression extends PersistenceRegression {
     // Cell 27: the two tuning keys' caves, the remote-enable guard, the applier's dispatch, and what they choose.
     static final long TK27=0x8001e8e0L, TK28=0x8001e930L, RG=0x8001e980L, TA=0x8001e9a0L, APPLIERCAVE=0x80019a40L;
     static final long K27FACTORY=0x80003d88L, K28FACTORY=0x80003dc0L;
+    // Calibration mode (NRPN 0x3f05): the mode byte, its two cells, and its
+    // caves - the command, the note-on word's, the pitch hook's, the entry's
+    // store, the bare remap's, the arp step's and the contact word's.
+    static final long CAL=0x6a6b, CALSTAMP=0x6d40, CALENTRY=0x6d44;
+    static final long CALCMD=0x80020200L, CALNOTE=0x80020240L, CALPITCH=0x80020290L, CALSTORE=0x800202e0L;
+    static final long CALBARE=0x80020310L, CALARP=0x80020330L, CALKEY=0x80020350L;
     long wdtFirst=-1, wdtSecond=-1, keyAtArm=-1, keyAtSpin=-1; int restarts;
     Properties props=new Properties();
     byte[] record;
@@ -752,7 +758,7 @@ public class SettingsRegression extends PersistenceRegression {
         check("blend off, knob up: the factory table at the index",p==0x100&&reg("R8")==(short)r(GLIDETABLE+6,2)&&reg("R9")==3);
         long c1=(C1+0x1c-(0x800033f8L&~3L))>>2, c2=(C2+0x1c-(0x800033c0L&~3L))>>2, gn=(GN+0x1c-(0x800043a4L&~3L))>>2;
         check("the words: the three pools, the route word, the glide word, the interpolator's, and the three hooks' MCALLs onto their own words",
-            r(0x80003574L,4)==PF&&r(0x800043c4L,4)==K1&&r(0x800043d0L,4)==K4&&r(0x8000336cL,4)==PB&&r(0x8001a260L,4)==GR&&r(0x8001a68cL,4)==IP
+            r(0x80003574L,4)==PF&&r(0x800043c4L,4)==K1&&r(0x800043d0L,4)==K4&&r(0x8000336cL,4)==CALPITCH&&r(CALPITCH+0x40,4)==PB&&r(0x8001a260L,4)==GR&&r(0x8001a68cL,4)==IP
             &&r(0x800033f8L,4)==(0xf01f0000L|(c1&0xffffL))&&r(C1+0x1c,4)==C1
             &&r(0x800033c0L,4)==(0xf01f0000L|(c2&0xffffL))&&r(C2+0x1c,4)==C2
             &&r(0x800043a4L,4)==(0xf01f0000L|(gn&0xffffL))&&r(GN+0x1c,4)==GN);
@@ -1174,13 +1180,80 @@ public class SettingsRegression extends PersistenceRegression {
         check("and is confirmed the same way",!ispForce()&&guardWrites==2&&r(GUARD,4)==marker());
         println("PASS boot guard: only the first boot of a newly flashed image is armed, through the board init's own call; confirmed once at 1.5 s through the main loop's");
     }
+    // Calibration mode's gates: each hands its target what it was given,
+    // with the mode off and with it on (ControlRegression plays the mode
+    // through the scan).  The words first, then every gate both ways.
+    void calibration() throws Exception {
+        fresh();
+        long hook=(0x8000211cL-(0x80002114L&~3L))>>2;
+        check("the words: the note-on, the contact, the pitch hook, the bare remap and the arp step's hook onto its own, each onto a cave naming the old target",
+            r(0x80005238L,4)==CALNOTE&&r(0x80005650L,4)==CALKEY&&r(0x8000336cL,4)==CALPITCH&&r(0x8001c0ecL,4)==CALBARE
+            &&r(0x80002114L,4)==(0xf01f0000L|(hook&0xffffL))&&r(0x8000211cL,4)==CALARP
+            &&r(CALNOTE+0x40,4)==0x80006400L&&r(CALKEY+0xc,4)==0x80005b6cL&&r(CALPITCH+0x40,4)==PB
+            &&r(CALBARE+0x18,4)==0x8001998eL&&r(CALARP+0x1c,4)==0x800023eaL);
+        check("a boot leaves the mode off",r(CAL,1)==0);
+        int ch=(int)r(S+0x2e7,1);
+        for(int on=0;on<2;on++) {
+            String m=on==1?"on":"off";
+            // The note-on: R9..R12 the factory note-on's arguments.
+            w(CAL,1,on); w(CALENTRY,1,7); w(MS,4,5000); w(CALSTAMP,4,4000);
+            e.writeRegister("R12",0xbc); e.writeRegister("R11",60); e.writeRegister("R10",100); e.writeRegister("R9",ch);
+            long p=resolve(CALNOTE);
+            check("mode "+m+": the note-on word reaches the factory note-on with R9..R12 and LR kept",
+                p==0x80006400L&&reg("R12")==0xbc&&reg("R11")==60&&reg("R10")==100&&reg("R9")==ch&&reg("LR")==0x100);
+            check("mode "+m+": "+(on==1?"the note chose entry 39 and restarted the five seconds":"nothing of the mode's is touched"),
+                on==1?r(CALENTRY,1)==39&&r(CALSTAMP,4)==5000:r(CALENTRY,1)==7&&r(CALSTAMP,4)==4000);
+            w(CALENTRY,1,7); w(MS,4,6000); e.writeRegister("R9",(ch+1)&15); e.writeRegister("R11",60);
+            p=resolve(CALNOTE);
+            check("mode "+m+": a note on another channel reaches the factory with R9 kept, "+(on==1?"restarting the five seconds and keeping the entry":"touching nothing"),
+                p==0x80006400L&&reg("R9")==((ch+1)&15)&&r(CALENTRY,1)==7&&r(CALSTAMP,4)==(on==1?6000:4000));
+            // The pitch hook: R12 the scan's pitch.
+            w(MS,4,5000); w(CALSTAMP,4,4000); e.writeRegister("R12",0x3e8);
+            p=resolve(CALPITCH);
+            check("mode "+m+": the pitch hook's word reaches pitch_hook_dispatch with R12 kept, "+(on==1?"called, to store the entry over it":"tail-jumped with LR kept"),
+                p==PB&&reg("R12")==0x3e8&&reg("LR")==(on==1?CALPITCH+0x36:0x100));
+            // The bare remap: R12 the fast trigger's pitch.
+            e.writeRegister("R12",0x55); p=resolve(CALBARE);
+            check("mode "+m+": the bare remap reaches "+(on==1?"cal_store":"the remap past its chain")+" with R12 kept",
+                p==(on==1?CALSTORE:0x8001998eL)&&reg("R12")==0x55);
+            // The arp step: its frame in R7, the interval in R12.
+            e.writeRegister("R7",0x7700); e.writeRegister("R12",0x1234); w(0x7700-0x10,2,0); w(0x7700-5,1,0);
+            p=resolve(CALARP);
+            check("mode "+m+": the arp step's hook "+(on==1?"leaves through the step's own exit, its frame untouched":"replays the four instructions it displaced and returns"),
+                on==1?p==0x800023eaL&&r(0x7700-0x10,2)==0&&reg("R12")==0x1234&&reg("R7")==0x7700
+                     :p==0x100&&r(0x7700-0x10,2)==0x1234&&r(0x7700-5,1)==0xff&&reg("R8")==0xffffffffL&&reg("R12")==0x1234&&reg("R7")==0x7700);
+            // The contact: R12 the key.
+            w(CAL,1,on); e.writeRegister("R12",9); p=resolve(CALKEY);
+            check("mode "+m+": the contact word reaches the handler with R12 and LR kept, the mode off",
+                p==0x80005b6cL&&reg("R12")==9&&reg("LR")==0x100&&r(CAL,1)==0);
+        }
+        // The expiry: five seconds since the last note-on, the route as with the mode off.
+        w(CAL,1,1); w(MS,4,9000); w(CALSTAMP,4,4000); e.writeRegister("R12",0x3e8);
+        long p=resolve(CALPITCH);
+        check("five seconds on: the pitch hook ends the mode and tail-jumps with R12 and LR kept",
+            p==PB&&reg("R12")==0x3e8&&reg("LR")==0x100&&r(CAL,1)==0);
+        w(CAL,1,1); w(MS,4,8999); w(CALSTAMP,4,4000); resolve(CALPITCH);
+        check("4999 ms on it stays",r(CAL,1)==1);
+        // The command, through the parser.
+        w(CAL,1,0); sent.clear();
+        nrpn(0x3f05,0x1111); nrpn(0x3f05,0);
+        check("0x3f05 without the key leaves the mode off",r(CAL,1)==0);
+        w(MS,4,7777); nrpn(0x3f05,0x2a2a);
+        check("with it the mode is on, at entry 3, its five seconds from now",r(CAL,1)==1&&r(CALENTRY,1)==3&&r(CALSTAMP,4)==7777);
+        w(CALENTRY,1,19); w(MS,4,8888); nrpn(0x3f05,0x2a2a);
+        check("the key again keeps the entry and restarts the five seconds",r(CAL,1)==1&&r(CALENTRY,1)==19&&r(CALSTAMP,4)==8888);
+        nrpn(0x3f05,0x2a2b);
+        check("any other value turns it off",r(CAL,1)==0);
+        check("nothing was sent",sent.isEmpty());
+        println("PASS calibration mode: the words, every gate's arguments both ways, the expiry and the command");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         String mode=args[0]; seq=mode.contains("seq"); clock=mode.contains("clock");
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings(); bootGuard();
+            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings(); bootGuard(); calibration();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

@@ -1400,7 +1400,12 @@ RAM_REGIONS = [
     (0x69A0, 0x69A8, "settings mirror: keys per period"),
     (0x69A8, 0x6A28, "settings mirror: pattern masks, two halfwords each"),
     (0x6A28, 0x6A68, "settings mirror: pattern lengths"),
-    (0x6A68, 0x6A70, "settings NRPN state: parameter MSB/LSB, data MSB, a pad, the dump cursor"),
+    (0x6A68, 0x6A6B, "settings NRPN state: parameter MSB/LSB, data MSB"),
+    # Calibration mode (NRPN 0x3f05), 1 while it is on.  The byte that was
+    # the pad after the data MSB, so the boot's store that clears the data
+    # byte clears it too: SRAM survives the 0x3f04 restart.
+    (0x6A6B, 0x6A6C, "calibration mode: on while 1, cleared at every boot"),
+    (0x6A6C, 0x6A70, "settings NRPN state: the dump cursor"),
     (0x6A70, 0x6A78, "settings loader state: commit state, slot loaded, generation"),
     (0x6A80, 0x6D28, "settings record staged for a commit, marker erased"),
     # The low byte of option cells 16..31, copied by settings_boot after the
@@ -1420,6 +1425,10 @@ RAM_REGIONS = [
     # reads them.
     (0x6D3A, 0x6D3B, "boot guard: confirmation owed"),
     (0x6D3C, 0x6D40, "boot guard: the image marker to confirm"),
+    # Calibration mode's two cells, both written by the 0x3f05 that turns it
+    # on before anything reads them, so neither needs clearing at boot.
+    (0x6D40, 0x6D44, "calibration mode: the millisecond count at the last note-on"),
+    (0x6D44, 0x6D45, "calibration mode: the pitch-table entry it plays, 0..78"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to

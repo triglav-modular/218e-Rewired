@@ -165,6 +165,30 @@ function assembleProgram() {
         var bgArmPool = bgArmEntry + 0x60, bgArmEnd = bgArmEntry + 0x70;
         var bgConfEntry = bgArmEnd, bgConfNext = bgConfEntry + 0xc, bgConfDue = bgConfEntry + 0x10, bgConfPool = bgConfEntry + 0x50, bgConfEnd = bgConfEntry + 0x60;
         var bgGuardWord = 0x8003ce00;
+        // Calibration mode (2026-09-27), for the page's pitch sweep.  NRPN
+        // 0x3f05 with the commit's key, 0x2a2a, turns it on; any other value
+        // turns it off.  While it is on, every scan's pitch is the settings
+        // mirror's pitch-table entry for the last MIDI note - RAM 0x6840, as
+        // the remap reads it - with nothing added: the scan computes its own
+        // pitch as ever, and cal_store puts the entry over it before the DAC
+        // can send it.  The arp step does nothing, so neither the
+        // arpeggiator nor the sequencer writes a pitch, fires a gate or
+        // records.  A key press, five seconds without a MIDI note-on, or a
+        // boot ends it; it is never saved.  RAM 0x6a6b is the mode, 0x6d40
+        // the millisecond count at the last note-on, 0x6d44 the entry.  In
+        // the erased flash past the boot guard, clear of 0x80020186, which a
+        // factory branch at 0x8001832a names.
+        var calCmdEntry = 0x80020200, calCmdOn = calCmdEntry + 0x2a, calCmdStore = calCmdEntry + 0x2c;
+        var calCmdPool = calCmdEntry + 0x34, calCmdEnd = calCmdEntry + 0x40;
+        var calNoteEntry = calCmdEnd, calNoteLow = calNoteEntry + 0x2e, calNoteHigh = calNoteEntry + 0x36;
+        var calNoteDone = calNoteEntry + 0x38, calNoteGo = calNoteEntry + 0x3c;
+        var calNotePool = calNoteEntry + 0x40, calNoteEnd = calNoteEntry + 0x50;
+        var calPitchEntry = calNoteEnd, calPitchOff = calPitchEntry + 0xa, calPitchOn = calPitchEntry + 0xe;
+        var calPitchKeep = calPitchEntry + 0x2c, calPitchPool = calPitchEntry + 0x40, calPitchEnd = calPitchEntry + 0x50;
+        var calStoreEntry = calPitchEnd, calStorePool = calStoreEntry + 0x24, calStoreEnd = calStoreEntry + 0x30;
+        var calBareEntry = calStoreEnd, calBareOn = calBareEntry + 0xe, calBarePool = calBareEntry + 0x18, calBareEnd = calBareEntry + 0x20;
+        var calArpEntry = calBareEnd, calArpOn = calArpEntry + 0x18, calArpPool = calArpEntry + 0x1c, calArpEnd = calArpEntry + 0x20;
+        var calKeyEntry = calArpEnd, calKeyPool = calKeyEntry + 0xc, calKeyEnd = calKeyEntry + 0x10;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -8400,7 +8424,7 @@ function assembleProgram() {
         emit("LDDPC R8,0x8001c0ec");
         emit("MOV PC,R8");
         padTo(0x8001c0ec);
-        word(0x8001998e); // pitch_remap_calibration, minus its chain
+        word(calBareEntry); // cal_bare: pitch_remap_calibration minus its chain, or the calibration entry
         finish("clock_remap_bare", 0x8001c0f0);
 
         // The trigger's rise, moved off the 5 ms pitch scan and onto the 1 kHz
@@ -10582,11 +10606,14 @@ function assembleProgram() {
         // The NRPN state: no parameter or data byte in hand, the dump
         // cursor idle.  0x4000 is idle because it is past every parameter
         // and a MOV of it is the same positive value a LD.UH reads back.
+        // The byte beside the data byte, 0x6a6b, is calibration mode's, so
+        // the same store turns the mode off: SRAM survives the 0x3f04
+        // restart, and no boot comes up in it.
         emit("MOV R8,0x6a68");
         emit("MOV R9,0x7f7f");          // parameter 0x3fff in hand: it names nothing
         emit("ST.H R8[0x0],R9");
         emit("MOV R9,0x0");
-        emit("ST.H R8[0x2],R9");
+        emit("ST.H R8[0x2],R9");        // no data byte in hand, calibration mode off
         emit("MOV R9,0x4000");
         emit("ST.H R8[0x4],R9");
         emit("ST.H R8[0x6],R9");
@@ -10820,6 +10847,8 @@ function assembleProgram() {
         // the commit's key restarts the instrument through the watchdog,
         // which is how a changed option cell takes effect; a live option
         // byte (0x20..0x2f) is read-only and a write to one is ignored.
+        // 0x3f05 is calibration mode, in cal_command: on with the key, off
+        // with any other value.
         // Every label in these caves is a constant, so a cave that grows
         // moves as one edit rather than a chain of them.
         begin(apEntry);
@@ -10867,7 +10896,7 @@ function assembleProgram() {
         emit(StringFormat("RJMP 0x%x", apDone));
         padTo(apC5);
         emit("CP.W R0,0x3f7f");
-        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit(StringFormat("BR{ne} 0x%x", calCmdEntry));    // cal_command: 0x3f05, or nothing
         emit("MOV R8,0x6a68");
         emit("MOV R9,0x3f76");
         emit("ST.H R8[0x4],R9");        // the cursor at the identity block alone
@@ -12553,6 +12582,211 @@ function assembleProgram() {
         finish("boot_guard_arm_pool", 0x8000b4b8);
         }        guardCaves();
 
+        // Calibration mode (NRPN 0x3f05): the constants beside the boot
+        // guard's say what it is for.  Every gate below asks the mode byte at
+        // 0x6a6b and, with it off, hands its target exactly what it was
+        // given; each spends only registers its target overwrites before it
+        // reads them.
+        function calibrationCaves() {        // cal_command, from settings_apply where the 0x3f7f compare misses:
+        // R0 the parameter, R1 the value, settings_apply's frame to return
+        // through.  The key turns the mode on and restarts its five seconds;
+        // an entry is chosen only on the way in, so the key sent again keeps
+        // the note the sweep is on.  Anything else turns it off.
+        begin(calCmdEntry);
+        emit("CP.W R0,0x3f05");
+        emit(StringFormat("BR{ne} 0x%x", apDone));
+        emit("MOV R8,0x6a6b");
+        emit("MOV R9,0x0");
+        emit("CP.W R1,0x2a2a");
+        emit(StringFormat("BR{ne} 0x%x", calCmdStore));
+        emit("MOV R10,0x2efc");         // the factory's millisecond count
+        emit("LD.W R10,R10[0x0]");
+        emit("MOV R11,0x6d40");
+        emit("ST.W R11[0x0],R10");      // the five seconds count from now
+        emit("LD.UB R10,R8[0x0]");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calCmdOn));
+        emit("MOV R10,0x3");
+        emit("ST.B R11[0x4],R10");      // entry 3, the bottom key, until a note arrives
+        padTo(calCmdOn);
+        emit("MOV R9,0x1");
+        padTo(calCmdStore);
+        emit("ST.B R8[0x0],R9");
+        emit(StringFormat("LDDPC R8,0x%x", calCmdPool));
+        emit("MOV PC,R8");
+        padTo(calCmdPool);
+        word(apDone);      // settings_apply's exit
+        finish("cal_command", calCmdEnd);
+
+        // cal_note_on, on the dispatcher's note-on word (events 7 and 32):
+        // R12..R9 are the factory note-on's arguments - R11 the note, R9 the
+        // channel - and go through to it untouched, so the note still sounds
+        // its gate as it always does.  In the mode, any note-on restarts the
+        // five seconds, and one on the instrument's channel chooses the
+        // entry: note 21, the 208's 0 V A, is entry 0, clamped to 0..78.
+        // Spends R8, which the factory note-on overwrites first.
+        begin(calNoteEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", calNoteGo));
+        emit("STM --SP,R10,R12");
+        emit("MOV R8,0x2efc");
+        emit("LD.W R10,R8[0x0]");
+        emit("MOV R8,0x6d40");
+        emit("ST.W R8[0x0],R10");
+        emit(StringFormat("LDDPC R12,0x%x", calNotePool + 4));  // global state base
+        emit("LD.UB R12,R12[0x2e7]");   // the instrument's channel
+        emit("CP.W R9,R12");
+        emit(StringFormat("BR{ne} 0x%x", calNoteDone));
+        emit("MOV R10,R11");
+        emit("SUB R10,0x15");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{ge} 0x%x", calNoteLow));
+        emit("MOV R10,0x0");
+        padTo(calNoteLow);
+        emit("CP.W R10,0x4f");
+        emit(StringFormat("BR{lt} 0x%x", calNoteHigh));
+        emit("MOV R10,0x4e");
+        padTo(calNoteHigh);
+        emit("ST.B R8[0x4],R10");       // 0x6d44, the entry
+        padTo(calNoteDone);
+        emit("LDM SP++,R10,R12");
+        padTo(calNoteGo);
+        emit(StringFormat("LDDPC R8,0x%x", calNotePool));
+        emit("MOV PC,R8");
+        padTo(calNotePool);
+        word(0x80006400); // the factory note-on
+        word(0x00003560); // global state base
+        finish("cal_note_on", calNoteEnd);
+
+        // cal_pitch, on the pitch store hook's word: R12 the scan's pitch.
+        // Off, straight on to pitch_hook_dispatch with R12 and LR as given.
+        // On, five seconds without a note-on end the mode, and that scan is
+        // an ordinary one; otherwise the scan's own pitch is computed as ever
+        // - the chain, the glide and blend state all move as they would - and
+        // cal_store puts the entry over what the remap stored.  The deferred
+        // trigger the hook fires next then goes out on the entry too.
+        // Spends R8..R11, which the route overwrites before reading.
+        begin(calPitchEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R9,R8[0x0]");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calPitchOn));
+        padTo(calPitchOff);
+        emit(StringFormat("LDDPC R8,0x%x", calPitchPool));
+        emit("MOV PC,R8");
+        padTo(calPitchOn);
+        emit("MOV R10,0x2efc");
+        emit("LD.W R10,R10[0x0]");
+        emit("MOV R11,0x6d40");
+        emit("LD.W R11,R11[0x0]");
+        emit("SUB R10,R11");            // milliseconds since the last note-on, unsigned
+        emit("MOV R11,0x1387");
+        emit("CP.W R10,R11");
+        emit(StringFormat("BR{ls} 0x%x", calPitchKeep));
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");        // five seconds: the mode ends
+        emit(StringFormat("RJMP 0x%x", calPitchOff));
+        padTo(calPitchKeep);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit(StringFormat("MCALL PC[0x%x]", calPitchPool));      // the scan's own pitch
+        emit(StringFormat("MCALL PC[0x%x]", calPitchPool + 4));  // and the entry over it
+        emit("LDM SP++,R7,PC");
+        padTo(calPitchPool);
+        word(pbEntry);     // pitch_hook_dispatch
+        word(calStoreEntry);
+        finish("cal_pitch", calPitchEnd);
+
+        // cal_store: the entry the last note chose, exactly as the mirror
+        // holds it, into DAC slot 2 and the last-sent mirror - and into the
+        // pitch a claimed beat puts back, so a beat claimed before the mode
+        // began cannot restore anything else over it.  A leaf; spends R8, R9.
+        begin(calStoreEntry);
+        emit("MOV R8,0x6d44");
+        emit("LD.UB R8,R8[0x0]");
+        emit("MOV R9,0x6840");
+        emit("LD.UH R9,R9[R8 << 0x1]");
+        emit(StringFormat("LDDPC R8,0x%x", calStorePool));
+        emit("ST.H R8[0x358],R9");
+        emit("MOV R8,0x3212");
+        emit("ST.H R8[0x0],R9");
+        emit("MOV R8,0x609c");
+        emit("ST.H R8[0x0],R9");
+        emit("MOV PC,LR");
+        padTo(calStorePool);
+        word(0x00003560); // global state base
+        finish("cal_store", calStoreEnd);
+
+        // cal_bare, on clock_remap_bare's word: the frame is built and R12 is
+        // the fast trigger's pitch.  Off, on into the remap past its chain;
+        // on, the entry, and back through clock_remap_bare's frame.
+        begin(calBareEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calBareOn));
+        emit(StringFormat("LDDPC R8,0x%x", calBarePool));
+        emit("MOV PC,R8");
+        padTo(calBareOn);
+        emit(StringFormat("MCALL PC[0x%x]", calBarePool + 4));   // cal_store
+        emit("LDM SP++,R7,PC");
+        padTo(calBarePool);
+        word(0x8001998e); // pitch_remap_calibration, minus its chain
+        word(calStoreEntry);
+        finish("cal_bare", calBareEnd);
+
+        // cal_arp, called from inside the factory arp step (cal_arp_hook),
+        // its frame in R7, every caller's - the internal and external
+        // clocks, event 10, a take playing, the recording audition, the
+        // first key.  Off, the four instructions the hook displaced and back.
+        // On, out through the step's own exit, having done nothing.
+        begin(calArpEntry);
+        emit("MOV R8,0x6a6b");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", calArpOn));
+        emit("MOV R8,R12");
+        emit("ST.H R7[-0x10],R8");
+        emit("MOV R8,-0x1");
+        emit("ST.B R7[-0x5],R8");
+        emit("MOV PC,LR");
+        padTo(calArpOn);
+        emit(StringFormat("LDDPC R8,0x%x", calArpPool));
+        emit("MOV PC,R8");
+        padTo(calArpPool);
+        word(0x800023ea); // the arp step's exit: its frame dropped, back to its caller
+        finish("cal_arp", calArpEnd);
+
+        // cal_key, on the touch scan's word for a key's contact: a press ends
+        // the mode, then the factory's contact handler plays it as ever, with
+        // R12 the key.  Spends R8, R9, which the handler overwrites first.
+        begin(calKeyEntry);
+        emit("MOV R8,0x6a6b");
+        emit("MOV R9,0x0");
+        emit("ST.B R8[0x0],R9");
+        emit(StringFormat("LDDPC R8,0x%x", calKeyPool));
+        emit("MOV PC,R8");
+        padTo(calKeyPool);
+        word(0x80005b6c); // the factory contact handler
+        finish("cal_key", calKeyEnd);
+
+        // The arp step's hook, past its prologue: MOV R8,R12; ST.H
+        // R7[-0x10],R8; MOV R8,-0x1; ST.B R7[-0x5],R8, which cal_arp replays.
+        begin(0x80002114);
+        emit("MCALL PC[0x8000211c]");
+        emit("RJMP 0x80002120");
+        padTo(0x8000211c);
+        word(calArpEntry);
+        finish("cal_arp_hook", 0x80002120);
+
+        wordPatch("cal_note_on_pool", 0x80005238, calNoteEntry,
+            "MIDI note-on -> calibration mode's entry, then the factory note-on");
+        wordPatch("cal_key_pool", 0x80005650, calKeyEntry,
+            "key contact -> calibration mode ends, then the contact handler");
+        }        calibrationCaves();
+
         // The factory's startup pool word names settings_boot now, in every
         // image: the mirror has to be filled before the first scan reads a
         // table out of it, whatever else is built.  settings_boot's last
@@ -12880,7 +13114,7 @@ function assembleProgram() {
         // Repurposed pool word: was the last-sent mirror address (0x3212),
         // now the remap entry point read by the MCALL above.
         begin(0x8000336c);
-        word(pbEntry);     // pitch_hook_dispatch: the target conditioner's route, or the remap, by the blend's live byte
+        word(calPitchEntry); // cal_pitch, then pitch_hook_dispatch: the target conditioner's route, or the remap, by the blend's live byte
         finish("pitch_hook_pool", 0x80003370);
 
         // Scan period, in milliseconds.  The main loop registers a periodic
