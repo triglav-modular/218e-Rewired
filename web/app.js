@@ -1201,6 +1201,7 @@
         if (listed.midi) return Promise.resolve();
         return CALIBRATE.midiOutputs().then(function (ports) {
             listed.midi = true;
+            safariNotes(false);             // MIDI works: whatever Safari needed, it has
             var items = ports.map(function (p) {
                 return { value: p.id, label: p.name || p.id, port: p };
             });
@@ -1355,6 +1356,7 @@
         if (!kbdSelects().length) return Promise.resolve();
         return Promise.all([CALIBRATE.midiOutputs(), CALIBRATE.midiInputs()]).then(function (r) {
             kbd.outputs = r[0]; kbd.inputs = r[1]; kbd.listed = true;
+            safariNotes(false);
             var items = kbd.outputs.map(function (p) {
                 return { value: p.id, label: p.name || p.id };
             });
@@ -1830,12 +1832,22 @@
         var ua = navigator.userAgent || '';
         return /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|OPR\/|Android/.test(ua);
     })();
-    (function () {
-        if (!IS_SAFARI || 'requestMIDIAccess' in navigator) return;
+    // The extension can land after this script: the owner saw the note with
+    // it running and on (2026-09-27).  So the note is decided once the page
+    // has loaded and a moment after, and hidden again the moment MIDI access
+    // works, whenever that is.
+    function safariNotes(show) {
         Array.prototype.forEach.call(document.querySelectorAll('.safari-midi'), function (el) {
-            el.hidden = false;
+            el.hidden = !show;
         });
-    })();
+    }
+    if (IS_SAFARI) {
+        var decideSafariNotes = function () {
+            setTimeout(function () { safariNotes(!('requestMIDIAccess' in navigator)); }, 1500);
+        };
+        if (document.readyState === 'complete') decideSafariNotes();
+        else window.addEventListener('load', decideSafariNotes);
+    }
     function calibrationModeSupported(identity) {
         return !!(CALIBRATION_MODE_FIRMWARE && identity && identity.firmwareVersion &&
                   BUILDLIB.compareVersions(identity.firmwareVersion, CALIBRATION_MODE_FIRMWARE) >= 0);
