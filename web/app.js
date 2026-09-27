@@ -1491,6 +1491,7 @@
                 midiPick = picked && picked.value ? picked.text : null;
                 midiSelects().forEach(function (other) { if (other !== sel) applyMidiPick(other); });
                 showFirmware(null);
+                livePicked();
                 refresh();
             });
         });
@@ -1500,6 +1501,121 @@
             }, function () {});
         } catch (e) { /* no Permissions API, or no 'midi' in it: the first click lists */ }
     }
+    // A send from install on, the button's and a live one's alike: the line
+    // in the Send card, and the restart and the wait for it when an option
+    // changed.  `params` are what a live send pushes (SETTINGSMIDI.changes);
+    // without them every parameter goes.  Resolves with whether the keyboard
+    // now holds and runs `record`.  Only the button's is counted: a live
+    // send is not a press of anything.
+    function sendRecord(ports, record, params) {
+        var name = ports.output.name, counted = !params;
+        return SETTINGSMIDI.install(ports.output, ports.input, record, params ? { params: params } : {})
+            .then(function (id) {
+                showFirmware(id);
+                if (!id.restarted) {
+                    msg($('kbdMsg'), 'ok', 'Sent and saved.');
+                    if (counted) reportSettings('send', 'ok', id, false);
+                    return true;
+                }
+                // An option changed: the keyboard is restarting to run
+                // it, and its ports go away and come back meanwhile.
+                msg($('kbdMsg'), 'warn', 'Sent and saved. The keyboard is restarting to apply ' +
+                    optionWords(id.pending) + '…');
+                var ok = false;
+                return SETTINGSMIDI.awaitLive(function () { return freshPorts(name); }, record, {})
+                    .then(function () {
+                        msg($('kbdMsg'), 'ok', 'Sent and saved. The keyboard has restarted and now runs ' +
+                            optionWords(id.pending) + ' as set here.');
+                        if (counted) reportSettings('send', 'ok', id, true);
+                        ok = true;
+                    }, function (err) {
+                        var reason = err && err.reason === 'no reply' ? 'gone' : err && err.reason;
+                        msg($('kbdMsg'), 'bad', KBD_REASONS[reason]
+                            || String(err && err.message || err));
+                        if (counted) reportSettings('send', outcomeOf({ reason: reason }), id, true);
+                    })
+                    .then(function () { kbd.listed = false; return listKeyboard(); })
+                    .then(function () { return ok; });
+            }, function (err) {
+                firmwareFrom(err);
+                msg($('kbdMsg'), 'bad', sendRefusal(err));
+                if (counted) reportSettings('send', outcomeOf(err), err && err.identity);
+                return false;
+            });
+    }
+
+    // --- live send: each change to the keyboard as it is made -------------
+    // Once Read settings has loaded what the keyboard holds, a change on the
+    // page goes to it without a press of Send (the owner, 2026-09-27): only
+    // the parameters that differ from what the keyboard is known to hold,
+    // then the same verify, commit and restart a Send does, so it ends where
+    // a Send of the whole record would.  `known` is that record - the read's,
+    // then each send's once it has landed - and null is off: before the first
+    // read, and after anything that leaves the page unsure what the keyboard
+    // holds (a failed read or send, or another port picked), until the next
+    // read.  A change marks the record `due`; the send goes LIVE_DELAY ms
+    // after the last one, so a burst of edits is one send, and not while a
+    // read, a send or a calibration run has the port - each of those ends in
+    // refresh(), which starts the wait again.  `name` is the port the read
+    // was from.
+    var LIVE_DELAY = 400;
+    var live = { known: null, name: null, due: false, timer: null };
+    function liveArm(record, name) {
+        liveOff();
+        if (!$('kbdMsg')) return;
+        live.known = record.slice();
+        live.name = name;
+    }
+    function liveOff() {
+        if (live.timer) clearTimeout(live.timer);
+        live.known = null; live.name = null; live.due = false; live.timer = null;
+    }
+    function liveSoon() {
+        if (live.timer) clearTimeout(live.timer);
+        live.timer = setTimeout(liveSend, LIVE_DELAY);
+    }
+    // invalidate()'s: the record may have changed.
+    function liveChanged() {
+        if (!live.known) return;
+        live.due = true;
+        liveSoon();
+    }
+    // A pick in the port lists: another port is not the keyboard that was read.
+    function livePicked() {
+        if (!live.known) return;
+        var ports = keyboardPorts();
+        if (!ports || ports.output.name !== live.name) liveOff();
+    }
+    function liveSend() {
+        live.timer = null;
+        if (!live.known || !live.due) return;
+        if (kbd.busy || sweep) return;
+        var ports = keyboardPorts();
+        if (!ports) return;
+        if (ports.output.name !== live.name) { liveOff(); return; }
+        var record;
+        try { record = recordBytes(WEBBUILD.settings(options()).settings); }
+        catch (e) {
+            // Nothing reached the keyboard, so what it holds is still known;
+            // the next change that builds carries this one with it.
+            live.due = false;
+            msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + e.message);
+            return;
+        }
+        live.due = false;
+        var params = SETTINGSMIDI.changes(live.known, record);
+        if (!params.length) return;
+        kbd.busy = true;
+        refresh();
+        msg($('kbdMsg'), 'warn', 'Sending…');
+        sendRecord(ports, record, params)
+            .then(function (ok) {
+                if (ok && live.known) live.known = record;
+                else liveOff();
+            })
+            .then(function () { kbd.busy = false; refresh(); });
+    }
+
     if ($('kbdSend')) {
         $('kbdSend').addEventListener('click', function () {
             withKeyboard(sendTo);
@@ -1514,7 +1630,7 @@
             // pressed first failed for a reason the step never showed.  A
             // build is a few hundred milliseconds of script, so it runs once
             // the message has painted.
-            var record, name = ports.output.name;
+            var record;
             new Promise(function (painted) { setTimeout(painted, 30); })
                 .then(function () {
                     // With the factory image here the send shares the build
@@ -1522,42 +1638,19 @@
                     // which needs no image (WEBBUILD.settings).
                     try { record = recordBytes(state.factoryText ? built().settings
                                                                  : WEBBUILD.settings(options()).settings); }
-                    catch (e) { e.unbuilt = true; throw e; }
-                    return SETTINGSMIDI.install(ports.output, ports.input, record, {});
-                })
-                .then(function (id) {
-                    showFirmware(id);
-                    if (!id.restarted) {
-                        msg($('kbdMsg'), 'ok', 'Sent and saved.');
-                        reportSettings('send', 'ok', id, false);
+                    catch (e) {
+                        // A build that failed never reached the keyboard: not
+                        // a send, and not counted as one.
+                        msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + e.message);
                         return;
                     }
-                    // An option changed: the keyboard is restarting to run
-                    // it, and its ports go away and come back meanwhile.
-                    msg($('kbdMsg'), 'warn', 'Sent and saved. The keyboard is restarting to apply ' +
-                        optionWords(id.pending) + '…');
-                    return SETTINGSMIDI.awaitLive(function () { return freshPorts(name); }, record, {})
-                        .then(function () {
-                            msg($('kbdMsg'), 'ok', 'Sent and saved. The keyboard has restarted and now runs ' +
-                                optionWords(id.pending) + ' as set here.');
-                            reportSettings('send', 'ok', id, true);
-                        }, function (err) {
-                            var reason = err && err.reason === 'no reply' ? 'gone' : err && err.reason;
-                            msg($('kbdMsg'), 'bad', KBD_REASONS[reason]
-                                || String(err && err.message || err));
-                            reportSettings('send', outcomeOf({ reason: reason }), id, true);
-                        })
-                        .then(function () { kbd.listed = false; return listKeyboard(); });
-                }, function (err) {
-                    // A build that failed never reached the keyboard: not a
-                    // send, and not counted as one.
-                    if (err && err.unbuilt) {
-                        msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + err.message);
-                        return;
-                    }
-                    firmwareFrom(err);
-                    msg($('kbdMsg'), 'bad', sendRefusal(err));
-                    reportSettings('send', outcomeOf(err), err && err.identity);
+                    return sendRecord(ports, record, null).then(function (ok) {
+                        // With live send on, what the keyboard holds is now
+                        // this record; after a failure it is not known.
+                        if (!live.known) return;
+                        if (ok && ports.output.name === live.name) live.known = record;
+                        else liveOff();
+                    });
                 })
                 .then(function () { kbd.busy = false; refresh(); });
         };
@@ -1738,11 +1831,16 @@
                     // invalidates it.
                     showFirmware(r.identity);
                     var verdict = readVerdict(r), cleared = loadFromKeyboard(r);
+                    // From here each change goes to the keyboard (liveSend),
+                    // diffed against what it was just read to hold.  After
+                    // the load, whose own invalidate() is not a change.
+                    liveArm(r.record, ports.output.name);
                     msg($('kbdLoadMsg'), verdict ? 'warn' : 'ok',
                         ['Keyboard settings loaded successfully.', verdict, cleared].filter(Boolean).join(' '));
                     reportSettings('read', 'ok', r.identity);
                 })
                 .catch(function (err) {
+                    liveOff();
                     firmwareFrom(err);
                     msg($('kbdLoadMsg'), 'bad', readRefusal(err));
                     reportSettings('read', outcomeOf(err), err && err.identity);
@@ -2008,7 +2106,11 @@
         }).catch(function (err) {
             autoNote('');
             msg($('calMsg'), 'bad', err.message || String(err));
-        }).then(function () { sweep = null; setRunning(false); });
+        }).then(function () {
+            sweep = null; setRunning(false);
+            // A live send that waited for the run goes now (liveSend).
+            refresh();
+        });
     });
 
     // --- build ------------------------------------------------------------
@@ -2074,6 +2176,7 @@
         state.options = null;
         saveSoon();
         syncReset();
+        liveChanged();
         refresh();
     }
 
@@ -2093,6 +2196,8 @@
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
         if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !portReady;
+        // A live send that waited for the port, now perhaps free.
+        if (live.due && !live.timer) liveSoon();
     bindDashes(document.body);
     }
 

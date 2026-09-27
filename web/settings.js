@@ -41,9 +41,12 @@ var SETTINGSMIDI = (function () {
     // burst (default 4, sixteen packets) and `opts.gap` milliseconds between
     // bursts (default 3).  `opts.onProgress(sent, total)` if given.
     function push(output, record, opts) {
+        return pushParams(output, B.nrpnParamsOf(record), opts);
+    }
+    // The same for a list of [param, value] pairs: what `changes` gives.
+    function pushParams(output, params, opts) {
         opts = opts || {};
         var burst = opts.burst || 4, gap = opts.gap === undefined ? 3 : opts.gap;
-        var params = B.nrpnParamsOf(record);
         var i = 0;
         function next() {
             if (i >= params.length) return Promise.resolve(params.length);
@@ -164,6 +167,15 @@ var SETTINGSMIDI = (function () {
         return out;
     }
 
+    // The parameters of `record` that differ from `from`, [param, value]
+    // each, in the dump order: what a keyboard known to hold `from` has to
+    // be sent to hold `record`.  The header is not among them - no
+    // parameter reaches it - so a read's record, whose header is zero,
+    // compares with a built one on the payload alone.
+    function changes(from, record) {
+        return B.nrpnParamsOf(record).filter(function (p) { return B.nrpnValueOf(from, p[0]) !== p[1]; });
+    }
+
     // The image marker a record was made for, out of its bytes.
     function markerOf(record) { return ((record[0x10] & 0xFF) << 8) | (record[0x11] & 0xFF); }
 
@@ -234,6 +246,13 @@ var SETTINGSMIDI = (function () {
     // reply - the verifying dump or an identity block - that lost
     // parameters, which a retry answers either way), or 'not written' (with
     // `state`), so the page can say which - they have different fixes.
+    //
+    // `opts.params`, [param, value] pairs, pushes those alone rather than
+    // every parameter: a live send's, the parameters that differ from what
+    // the keyboard is known to hold (`changes`).  Everything after the push
+    // is the same.  The verifying dump is still compared with the whole
+    // record, so a keyboard that did not hold what the page thought is a
+    // mismatch rather than a record saved half one and half the other.
     function install(output, input, record, opts) {
         opts = opts || {};
         // `before`, the identity the send started from: a commit is only
@@ -251,7 +270,7 @@ var SETTINGSMIDI = (function () {
             if (id.imageMarker !== markerOf(record)) return fail('wrong image', { identity: id });
             if (opts.onStage) opts.onStage('push');
             before = id; pushed = true;
-            return push(output, record, opts);
+            return opts.params ? pushParams(output, opts.params, opts) : push(output, record, opts);
         }).then(function () {
             if (opts.onStage) opts.onStage('verify');
             return dump(output, input, opts.timeout, opts.timers).catch(function () {
@@ -294,8 +313,9 @@ var SETTINGSMIDI = (function () {
     }
 
     return {
-        push: push, dump: dump, read: read, identity: identity, commit: commit, reload: reload,
-        defaults: defaults, differences: differences, install: install, restart: restart,
+        push: push, pushParams: pushParams, dump: dump, read: read, identity: identity, commit: commit,
+        reload: reload, defaults: defaults, differences: differences, changes: changes,
+        install: install, restart: restart,
         awaitLive: awaitLive, markerOf: markerOf, sendParam: sendParam, LAYOUT: LAYOUT,
         calibrationMode: calibrationMode, endCalibration: endCalibration, writePitch: writePitch
     };

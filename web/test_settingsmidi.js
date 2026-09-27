@@ -344,6 +344,56 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     try { e = await refusal(gone); } catch (x) { threw = true; }
     check('and a send through it is no reply too', !threw && e && e.reason === 'no reply');
 
+    // A live send (web/app.js, test_livesend.js): only the parameters that
+    // differ from what the keyboard is known to hold, then the same verify,
+    // commit and restart.  The keyboard here holds `quietRecord`, committed
+    // and booted, so its live bytes are that record's cells.
+    function holding(rec) {
+        var inst = fakeInstrument();
+        for (var o = 0; o < 0x2a8; o++) inst.mirror[o] = rec[o];
+        inst.state = 2; inst.generation = 7;
+        return inst;
+    }
+    var retuned = quietRecord.slice();
+    B.nrpnApply(retuned, 0x80 + 40, 2222);
+    var delta = M.changes(quietRecord, retuned);
+    check('changes names the parameters that differ, with their new values',
+          delta.length === 1 && delta[0][0] === 0x80 + 40 && delta[0][1] === 2222 && M.changes(record, record).length === 0,
+          JSON.stringify(delta));
+    var only = holding(quietRecord); timers = fakeTimers(); stages = [];
+    installP = M.install(only.output, only.input, retuned,
+                         { timers: timers, params: delta, onStage: function (s) { stages.push(s); } });
+    settle = timers.setTimeout; timers.setTimeout = function (fn, ms) { return settle(function () { only.scan(); fn(); }, ms); };
+    await timers.run(installP); result = await installP;
+    var pushedOnly = only.received.filter(function (p) { return p[0] < 0x3f00; });
+    check('install with params pushes those alone, then verifies and commits the whole record',
+          JSON.stringify(pushedOnly) === JSON.stringify(delta) && result.commitState === 2 && result.generation === 8
+          && same(only.mirror, retuned) && stages.join(',') === 'push,verify,commit' && only.restarts === 0,
+          JSON.stringify(pushedOnly));
+    // An option cell among them restarts, as a whole send's would.
+    var optioned = quietRecord.slice();
+    B.nrpnApply(optioned, 16, 1);
+    only = holding(quietRecord); timers = fakeTimers();
+    installP = M.install(only.output, only.input, optioned, { timers: timers, params: M.changes(quietRecord, optioned) });
+    settle = timers.setTimeout; timers.setTimeout = function (fn, ms) { return settle(function () { only.scan(); fn(); }, ms); };
+    await timers.run(installP); result = await installP;
+    check('and restarts when an option cell it carried differs from the live byte',
+          result.restarted === true && result.pending.join(',') === 'latching_arp' && only.restarts === 1
+          && only.received.filter(function (p) { return p[0] < 0x3f00; }).length === 1);
+    // A keyboard that does not hold what the page thought: the verifying
+    // dump is compared with the whole record, so the difference the push
+    // did not carry is a mismatch, and nothing is saved.
+    var drifted = quietRecord.slice();
+    B.nrpnApply(drifted, 0x80 + 41, 1234);
+    only = holding(drifted); timers = fakeTimers();
+    var wrong = M.install(only.output, only.input, retuned, { timers: timers, params: delta })
+        .then(function () { return null; }, function (x) { return x; });
+    settle = timers.setTimeout; timers.setTimeout = function (fn, ms) { return settle(function () { only.scan(); fn(); }, ms); };
+    await timers.run(wrong); e = await wrong;
+    check('a keyboard holding other than the page thought is a mismatch, and nothing is committed',
+          e && e.reason === 'mismatch' && e.differences.length === 1 && e.differences[0][0] === 0x80 + 41
+          && only.generation === 7 && lastSent(only) === 0x3f01, JSON.stringify(e && e.differences));
+
     check('markerOf reads the record\'s image marker', M.markerOf(record) === 0xB007);
 
     if (failures) { console.log(failures + ' failure(s)'); process.exit(1); }
