@@ -136,6 +136,46 @@ async function bodyOf(request) {
   }
 }
 
+// The options a download was built with, or a send carried, each held to
+// what the page can say.  One function for both so a send's options land
+// exactly as a build's do and the dashboard can count them side by side.
+function optionsOf(body) {
+  return {
+    volts: VOLTS.includes(String(body.volts_per_octave))
+      ? String(body.volts_per_octave) : 'other',
+    arp: flag(body.latching_arp),
+    // Once a checkbox; the page now derives it - 1 when any knob does
+    // something other than its preset voltage - so the column keeps counting
+    // the same thing across the change.
+    knobs: flag(body.remap_knobs),
+    pressure: flag(body.pressure_fix),
+    portamento: flag(body.pressure_portamento),
+    tunings: Number.isInteger(body.alternate_tunings)
+      && body.alternate_tunings >= 0 && body.alternate_tunings <= 3
+      ? body.alternate_tunings : -1,
+    calibration: flag(body.pitch_correction),
+    // Added with firmware 2.x; every field from here on can be unreported.
+    sequencer: tri(body.sequencer),
+    clock_divide: tri(body.clock_divide),
+    pitch_offset: tri(body.pitch_offset),
+    knob1: role('knob1', body.knob1),
+    knob2: role('knob2', body.knob2),
+    knob3: role('knob3', body.knob3),
+    knob4: role('knob4', body.knob4),
+    // The size of the pattern bank, never its contents.  Absent from a page
+    // older than the bank, so like the flags it has a "not reported".
+    patterns: Number.isInteger(body.arp_patterns)
+      && body.arp_patterns >= 0 && body.arp_patterns <= MAX_PATTERNS
+      ? body.arp_patterns : -1,
+    // Added with 2.3: the preset-voltage quantisation and what the portamento
+    // banana jack does.  Both were on the page before they were counted, so
+    // 'unreported' here means an older page and not a build that turned the
+    // option down.
+    quantize_presets: tri(body.quantize_presets),
+    portamento_in: oneOf(PORTAMENTO_IN, body.portamento_in),
+  };
+}
+
 async function record(request, env, context) {
   // No IP, no user-agent, no header of any kind: what is not written cannot
   // later turn an option set into a person.
@@ -156,17 +196,7 @@ async function record(request, env, context) {
   if (!body) return new Response(null, { status: 204 });
 
   const platform = PLATFORMS.includes(body.platform) ? body.platform : 'other';
-  const volts = VOLTS.includes(String(body.volts_per_octave))
-    ? String(body.volts_per_octave) : 'other';
   const version = VERSION.test(String(body.version)) ? String(body.version) : 'other';
-  const tunings = Number.isInteger(body.alternate_tunings)
-    && body.alternate_tunings >= 0 && body.alternate_tunings <= 3
-    ? body.alternate_tunings : -1;
-  // The size of the pattern bank, never its contents.  Absent from a page
-  // older than the bank, so like the flags it has a "not reported".
-  const patterns = Number.isInteger(body.arp_patterns)
-    && body.arp_patterns >= 0 && body.arp_patterns <= MAX_PATTERNS
-    ? body.arp_patterns : -1;
 
   // Which download of the day this is, counted by the page in its own
   // storage.  Deliberately not an identifier: it is 1..10, millions of
@@ -181,31 +211,8 @@ async function record(request, env, context) {
   const nth_today = ordinal(body.nth_today);
 
   const point = {
-    platform, version, volts,
-    arp: flag(body.latching_arp),
-    // Once a checkbox; the page now derives it - 1 when any knob does
-    // something other than its preset voltage - so the column keeps counting
-    // the same thing across the change.
-    knobs: flag(body.remap_knobs),
-    pressure: flag(body.pressure_fix),
-    portamento: flag(body.pressure_portamento),
-    tunings,
-    calibration: flag(body.pitch_correction),
-    // Added with firmware 2.x; every field from here on can be unreported.
-    sequencer: tri(body.sequencer),
-    clock_divide: tri(body.clock_divide),
-    pitch_offset: tri(body.pitch_offset),
-    knob1: role('knob1', body.knob1),
-    knob2: role('knob2', body.knob2),
-    knob3: role('knob3', body.knob3),
-    knob4: role('knob4', body.knob4),
-    patterns,
-    // Added with 2.3: the preset-voltage quantisation and what the portamento
-    // banana jack does.  Both were on the page before they were counted, so
-    // 'unreported' here means an older page and not a build that turned the
-    // option down.
-    quantize_presets: tri(body.quantize_presets),
-    portamento_in: oneOf(PORTAMENTO_IN, body.portamento_in),
+    platform, version,
+    ...optionsOf(body),
     // Added with 2.5.
     nth_today,
   };
@@ -215,12 +222,12 @@ async function record(request, env, context) {
     indexes: [platform],
     // Positional, and read back by position: the newer columns follow the
     // older ones so a row written before they existed still reads right.
-    blobs: [platform, version, volts,
+    blobs: [platform, version, point.volts,
             point.knob1, point.knob2, point.knob3, point.knob4,
             point.portamento_in],
     doubles: [point.arp, point.knobs, point.pressure, point.portamento,
-              tunings, point.calibration,
-              point.sequencer, point.clock_divide, point.pitch_offset, patterns,
+              point.tunings, point.calibration,
+              point.sequencer, point.clock_divide, point.pitch_offset, point.patterns,
               point.quantize_presets, nth_today],
   });
 
@@ -264,6 +271,15 @@ async function recordSettings(request, env, context) {
     // The page keeps a count of its own for these, apart from the downloads'.
     nth_today: ordinal(body.nth_today),
   };
+  // A send also carries the options it sent, summarised as a download's are
+  // and held to the same lists, so the dashboard's option counts cover a
+  // keyboard set over MIDI as well as one flashed.  Never on a read: what a
+  // keyboard already holds was counted when somebody chose it.  Absent from
+  // a page older than this, which is not a send with every option off.
+  if (point.action === 'send' && body.options && typeof body.options === 'object'
+      && !Array.isArray(body.options)) {
+    Object.assign(point, optionsOf(body.options));
+  }
 
   // Prefixed apart from the downloads, so a reader listing 'b:' sees only
   // builds, exactly as it did before these existed.

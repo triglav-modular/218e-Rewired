@@ -1458,13 +1458,15 @@
     };
     // A read or a send, reported the way a download is (see report() below):
     // which button, how it ended, this page's version and the firmware the
-    // keyboard said it runs - never the settings themselves, which are one
-    // person's instrument, and no identifier.  How it ended is a reason's
+    // keyboard said it runs, and for a send the options it carried in the
+    // download's summary - never the patterns, the tunings or the pitch
+    // table themselves, which are one person's instrument, and no
+    // identifier.  How it ended is a reason's
     // name from the list above, 'ok', or 'error' for anything the list does
     // not name, so no message text ever leaves.  Its own route rather than
     // the download's, so a worker that predates it cannot count one as a
     // build, and its own daily ordinal, so a morning of reads is one person.
-    function reportSettings(action, outcome, id, restarted) {
+    function reportSettings(action, outcome, id, restarted, sent) {
         try {
             if (!navigator.sendBeacon) return;
             var event = JSON.stringify({
@@ -1476,6 +1478,10 @@
                 // A send only: whether an option changed and the keyboard
                 // had to restart to run it.
                 restarted: restarted,
+                // A send only: the options it carried, summarised exactly
+                // as a download's are, so the option counts cover keyboards
+                // set over MIDI as well as flashed ones.
+                options: sent ? optionSummary(sent) : undefined,
                 nth_today: countToday(K_MIDI_TODAY)
             });
             navigator.sendBeacon('settings-beacon', new Blob([event], { type: 'text/plain' }));
@@ -1553,8 +1559,9 @@
     }
     // A send from install on: the line in the unsent card, and the restart
     // and the wait for it when an option changed.  Resolves with whether the
-    // keyboard now holds and runs `record`.
-    function sendRecord(ports, record) {
+    // keyboard now holds and runs `record`.  `sent` is the options it was
+    // built from, for the count.
+    function sendRecord(ports, record, sent) {
         var name = ports.output.name;
         // Bursts of four parameters, sixteen packets, fit the keyboard's USB
         // receive ring of thirty-two.  Chrome delivers each burst as it is
@@ -1569,7 +1576,7 @@
                 showFirmware(id);
                 if (!id.restarted) {
                     msg($('kbdMsg'), 'ok', 'Sent and saved.');
-                    reportSettings('send', 'ok', id, false);
+                    reportSettings('send', 'ok', id, false, sent);
                     return true;
                 }
                 // An option changed: the keyboard is restarting to run
@@ -1581,13 +1588,13 @@
                     .then(function () {
                         msg($('kbdMsg'), 'ok', 'Sent and saved. The keyboard has restarted and now runs ' +
                             optionWords(id.pending) + ' as set here.');
-                        reportSettings('send', 'ok', id, true);
+                        reportSettings('send', 'ok', id, true, sent);
                         ok = true;
                     }, function (err) {
                         var reason = err && err.reason === 'no reply' ? 'gone' : err && err.reason;
                         msg($('kbdMsg'), 'bad', KBD_REASONS[reason]
                             || String(err && err.message || err));
-                        reportSettings('send', outcomeOf({ reason: reason }), id, true);
+                        reportSettings('send', outcomeOf({ reason: reason }), id, true, sent);
                     })
                     .then(function () { kbd.listed = false; return listKeyboard(); })
                     .then(function () { return ok; });
@@ -1607,7 +1614,7 @@
                     } catch (e) { /* never let the report stop the page */ }
                 }
                 msg($('kbdMsg'), 'bad', sendRefusal(err));
-                reportSettings('send', outcomeOf(err), err && err.identity);
+                reportSettings('send', outcomeOf(err), err && err.identity, undefined, sent);
                 return false;
             });
     }
@@ -1711,21 +1718,24 @@
             // pressed first failed for a reason the step never showed.  A
             // build is a few hundred milliseconds of script, so it runs once
             // the message has painted.
-            var record;
+            var record, sent;
             new Promise(function (painted) { setTimeout(painted, 30); })
                 .then(function () {
                     // With the factory image here the send shares the build
                     // a download would make; without it, the record alone,
                     // which needs no image (WEBBUILD.settings).
-                    try { record = recordBytes(state.factoryText ? built().settings
-                                                                 : WEBBUILD.settings(options()).settings); }
+                    try {
+                        var r = state.factoryText ? built() : null;
+                        sent = r ? r.options : options();
+                        record = recordBytes(r ? r.settings : WEBBUILD.settings(sent).settings);
+                    }
                     catch (e) {
                         // A build that failed never reached the keyboard: not
                         // a send, and not counted as one.
                         msg($('kbdMsg'), 'bad', 'Build failed.\n\n' + e.message);
                         return;
                     }
-                    return sendRecord(ports, record).then(function (ok) {
+                    return sendRecord(ports, record, sent).then(function (ok) {
                         unsent.sending = false;
                         unsentLanded(ok, record, ports.output.name);
                     });
@@ -2533,57 +2543,66 @@
     // The URL is relative on purpose.  Only the deployment behind the worker
     // has anywhere to put this; a clone served from somewhere else, or the
     // page opened from a file, reports nowhere rather than reporting to us.
+    // Which options a build or a send carried, summarised the one way both
+    // beacons report them: choices and sizes, never contents.
+    function optionSummary(o) {
+        return {
+            volts_per_octave: o.volts_per_octave,
+            pitch_offset: o.pitch_offset !== false,
+            latching_arp: !!o.latching_arp,
+            // The remap checkbox this column counted is gone; it now
+            // means "any knob doing something other than its preset
+            // voltage", which is what the checkbox meant when it was on.
+            remap_knobs: ['knob1', 'knob2', 'knob3', 'knob4'].some(function (k) {
+                return o[k] !== 'factory';
+            }),
+            pressure_fix: !!o.pressure_fix,
+            pressure_portamento: !!o.pressure_portamento,
+            sequencer: !!o.sequencer,
+            clock_divide: !!o.clock_divide,
+            // Which role each knob took - a name from the page's own
+            // picker, 'factory' for the None row.
+            knob1: o.knob1, knob2: o.knob2, knob3: o.knob3, knob4: o.knob4,
+            // How many patterns the bank holds, not what they are: the
+            // page's own CLIX bank and a bank someone typed both count
+            // the same way, as a size.
+            arp_patterns: (o.arp_patterns || []).length,
+            // How many slots were filled, not which.  A slot can hold a
+            // Scala file someone wrote themselves, and its name is
+            // theirs, not ours to collect.
+            alternate_tunings: (o.alternate_tunings || [])
+                .filter(function (t) { return t !== 'factory'; }).length,
+            // Whether a calibration was supplied - never the numbers,
+            // which are measurements of one person's instrument.
+            pitch_correction: !!o.pitch_correction,
+            // Whether a preset voltage is snapped to the tuning when it
+            // is added to pitch, and what the portamento banana jack was
+            // set to do.  Both were on the page for a while before they
+            // were counted, so a build using either was invisible here.
+            quantize_presets: !!o.quantize_presets,
+            portamento_in: o.portamento_in
+        };
+    }
     function report(id, r) {
         try {
             if (!navigator.sendBeacon) return;
             // The build's own options, so the count describes the download
             // even if the controls have moved since.
             var o = (r && r.options) || state.options || {};
-            var body = JSON.stringify({
+            var fields = {
                 platform: id === 'dlMac' ? 'mac' : 'win',
-                version: GEN.version,
-                volts_per_octave: o.volts_per_octave,
-                pitch_offset: o.pitch_offset !== false,
-                latching_arp: !!o.latching_arp,
-                // The remap checkbox this column counted is gone; it now
-                // means "any knob doing something other than its preset
-                // voltage", which is what the checkbox meant when it was on.
-                remap_knobs: ['knob1', 'knob2', 'knob3', 'knob4'].some(function (k) {
-                    return o[k] !== 'factory';
-                }),
-                pressure_fix: !!o.pressure_fix,
-                pressure_portamento: !!o.pressure_portamento,
-                sequencer: !!o.sequencer,
-                clock_divide: !!o.clock_divide,
-                // Which role each knob took - a name from the page's own
-                // picker, 'factory' for the None row.
-                knob1: o.knob1, knob2: o.knob2, knob3: o.knob3, knob4: o.knob4,
-                // How many patterns the bank holds, not what they are: the
-                // page's own CLIX bank and a bank someone typed both count
-                // the same way, as a size.
-                arp_patterns: (o.arp_patterns || []).length,
-                // How many slots were filled, not which.  A slot can hold a
-                // Scala file someone wrote themselves, and its name is
-                // theirs, not ours to collect.
-                alternate_tunings: (o.alternate_tunings || [])
-                    .filter(function (t) { return t !== 'factory'; }).length,
-                // Whether a calibration was supplied - never the numbers,
-                // which are measurements of one person's instrument.
-                pitch_correction: !!o.pitch_correction,
-                // Whether a preset voltage is snapped to the tuning when it
-                // is added to pitch, and what the portamento banana jack was
-                // set to do.  Both were on the page for a while before they
-                // were counted, so a build using either was invisible here.
-                quantize_presets: !!o.quantize_presets,
-                portamento_in: o.portamento_in,
-                // Which download of the day this is from this browser, so a
-                // count of people is not a count of afternoons: one person
-                // trying twelve option sets otherwise reads as twelve.  An
-                // ordinal 1..10, never an identifier - every value is shared
-                // by millions of downloads and there is no key to join two
-                // rows on.  -1 when the browser cannot count.
-                nth_today: countToday()
-            });
+                version: GEN.version
+            };
+            var summary = optionSummary(o);
+            for (var k in summary) fields[k] = summary[k];
+            // Which download of the day this is from this browser, so a
+            // count of people is not a count of afternoons: one person
+            // trying twelve option sets otherwise reads as twelve.  An
+            // ordinal 1..10, never an identifier - every value is shared
+            // by millions of downloads and there is no key to join two
+            // rows on.  -1 when the browser cannot count.
+            fields.nth_today = countToday();
+            var body = JSON.stringify(fields);
             // text/plain keeps this a simple request, so it needs no
             // preflight and no CORS reply to be delivered.
             navigator.sendBeacon('beacon', new Blob([body], { type: 'text/plain' }));

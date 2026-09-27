@@ -878,8 +878,14 @@ route of their own: `settings-beacon`, posted when Read settings (between steps
 `error` for a failure the page has no name for), the page's version, the
 firmware version the keyboard reported (absent when it never answered),
 whether a send restarted the keyboard to run a changed option, and a daily
-ordinal kept apart from the downloads'. Never the settings, the patterns, the
-tunings or the pitch table: those are one person's instrument.
+ordinal kept apart from the downloads'. A send also carries the options it
+sent, under `options`, in exactly the summary a download reports:
+`optionSummary` in `web/app.js` builds both, and the worker reads both
+through `optionsOf`. So a keyboard set over MIDI counts in the dashboard's
+option panels beside a flashed one, from sends that ended `ok`. A read carries
+none, because what a keyboard already holds was counted when somebody chose
+it. Never the patterns, the tunings or the pitch table themselves: those are
+one person's instrument.
 
 A route of its own rather than a field on the download's, because a worker
 from before it would have counted every read as a build from platform

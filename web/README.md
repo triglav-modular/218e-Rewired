@@ -17,9 +17,10 @@ system sans; the build is identical either way.
 Two things leave. On a download: which options were chosen, which platform,
 and which version, POSTed to `beacon` beside the page. And when a read or a
 send of the settings over MIDI ends: which button, how it ended, the page's
-version and the firmware the keyboard reported, POSTed to `settings-beacon`.
-No identifier, no header kept, and never the image, the calibration or the
-settings themselves. The URLs are relative, so they report only where
+version and the firmware the keyboard reported, and for a send which options
+it carried, summarised as a download's are, POSTed to `settings-beacon`.
+No identifier, no header kept, and never the image, the calibration, the
+patterns, the tunings or the pitch table themselves. The URLs are relative, so they report only where
 something is listening — a clone served anywhere else, or the page opened
 from a file, reports nowhere. See "Counting builds" in
 [../docs/BUILD.md](../docs/BUILD.md).

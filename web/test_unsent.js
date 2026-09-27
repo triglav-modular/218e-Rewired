@@ -78,14 +78,14 @@ function appSource(open, close) {
 }
 function appFunction(name) { return appSource('\n    function ' + name + '(', '\n    }\n'); }
 vm.runInContext([
-    'var nodes = {}, messages = [], reports = [], opts = {}, nextLoad = null, sweep = null;',
+    'var nodes = {}, messages = [], reports = [], reportedOptions = [], opts = {}, nextLoad = null, sweep = null;',
     'var state = { factoryText: null, result: null, options: null };',
     'var document = { body: { style: {} } };',
     'function classes() { var on = {}; return { contains: function (c) { return !!on[c]; }, toggle: function (c, v) { on[c] = v === undefined ? !on[c] : !!v; } }; }',
     'function $(id) { return nodes[id] || (nodes[id] = { id: id, value: "", disabled: false, hidden: false, textContent: "", classList: classes() }); }',
     'function msg(el, kind, text) { el.kind = kind; el.text = text; messages.push([el.id, kind, text]); }',
     'function bindDashes() {} function saveSoon() {} function syncReset() {}',
-    'function reportSettings(action, outcome) { reports.push([action, outcome]); }',
+    'function reportSettings(action, outcome, id, restarted, sent) { reports.push([action, outcome]); reportedOptions.push(sent); }',
     // The page's options, as the test sets them; a read loads what the
     // keyboard holds into them, as loadFromKeyboard does, and invalidates.
     'function options() { return JSON.parse(JSON.stringify(opts)); }',
@@ -274,6 +274,9 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
           kbdMsg().text);
     check('and it is counted as a send', page.reports.length === reportsBefore + 1
           && JSON.stringify(page.reports.slice(-1)) === '[["send","ok"]]', JSON.stringify(page.reports));
+    check('with the options it sent, for the dashboard’s option counts',
+          JSON.stringify(page.reportedOptions.slice(-1)[0]) === JSON.stringify(page.opts),
+          JSON.stringify(page.reportedOptions.slice(-1)[0]));
     await T.run();
     check('a few seconds later the card goes', !up() && !padded() && !page.unsent.sending);
     held = clone(page.opts);
@@ -428,6 +431,38 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     check('a read that fails takes the card down and disarms it', !up() && !armed()
           && page.nodes.kbdLoadMsg.text === page.KBD_REASONS['no reply'], page.nodes.kbdLoadMsg.text);
     kb.mute = false;
+
+    // The beacon itself: the real reportSettings and optionSummary, with the
+    // browser's sendBeacon caught.  A send carries its options in the same
+    // summary a download does; a read carries none.
+    var beacon = vm.createContext({ GEN: { version: '3.0.2' }, Blob: function (parts) { this.text = parts[0]; },
+                                    navigator: { sendBeacon: function (url, blob) { beacon.posted.push([url, JSON.parse(blob.text)]); return true; } },
+                                    posted: [] });
+    vm.runInContext([
+        'var K_MIDI_TODAY = "k"; function countToday() { return 1; }',
+        appFunction('optionSummary'), appFunction('reportSettings')
+    ].join('\n'), beacon, { filename: 'web/app.js (extracted)' });
+    // Every option a real page's options() sets, so the summary is whole.
+    var sentOpts = Object.assign({ volts_per_octave: 1.2, knob1: 'order', knob2: 'spacing',
+                                   knob3: 'octaves', knob4: 'vibrato', portamento_in: 'transpose',
+                                   arp_patterns: [], alternate_tunings: ['factory', 'factory', 'factory'] },
+                                 clone(page.opts));
+    vm.runInContext('reportSettings', beacon)('send', 'ok', { firmwareVersion: '3.0.2' }, true, sentOpts);
+    vm.runInContext('reportSettings', beacon)('read', 'ok', { firmwareVersion: '3.0.2' });
+    var sendBody = beacon.posted[0] && beacon.posted[0][1], readBody = beacon.posted[1] && beacon.posted[1][1];
+    var summary = vm.runInContext('optionSummary', beacon)(sentOpts);
+    check('the send beacon carries the download’s option summary under options',
+          beacon.posted.length === 2 && beacon.posted[0][0] === 'settings-beacon'
+          && JSON.stringify(sendBody.options) === JSON.stringify(JSON.parse(JSON.stringify(summary)))
+          && Object.keys(sendBody.options).length === 17,
+          JSON.stringify(sendBody));
+    check('and never a pattern, a tuning or a table, only their counts',
+          typeof sendBody.options.arp_patterns === 'number'
+          && typeof sendBody.options.alternate_tunings === 'number'
+          && typeof sendBody.options.pitch_correction === 'boolean'
+          && !/pitch_table|pitch_remap|tunings":\[|patterns":\[/.test(JSON.stringify(sendBody)),
+          JSON.stringify(sendBody.options));
+    check('while a read carries no options', readBody && !('options' in readBody), JSON.stringify(readBody));
 
     if (failures) { console.log(failures + ' failure(s)'); process.exit(1); }
     process.exitCode = 0;
