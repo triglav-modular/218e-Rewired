@@ -1760,16 +1760,15 @@
     // build" means other code: the options, the tables, the period and the
     // timing numbers are not in the marker, so it is a different page or a
     // build with other build-time settings).  The other is loadFromKeyboard's:
-    // readings entered before the read were cleared.  Without the factory
-    // image there is no build to compare against, and nothing is added.
+    // readings entered before the read were cleared.  The comparison needs
+    // no factory image: the settings record alone carries the marker
+    // (pageRecord, WEBBUILD.settings, the bytes a full build's are).
     // The listing of every setting a read used to print is gone; the page's
     // controls show them once they are loaded.
     function readVerdict(r) {
-        var ver = r.identity.firmwareVersion, mine;
-        if (!state.factoryText || ver === null) return null;
-        try { mine = built(); } catch (e) { return null; }
-        return r.identity.imageMarker === SETTINGSMIDI.markerOf(recordBytes(mine.settings))
-            ? null : otherImage(ver);
+        var ver = r.identity.firmwareVersion, mine = pageRecord();
+        if (ver === null || !mine) return null;
+        return r.identity.imageMarker === SETTINGSMIDI.markerOf(mine) ? null : otherImage(ver);
     }
     // A version as the page shows one: major.minor, as the masthead's is.
     // Comparisons still use all three numbers.

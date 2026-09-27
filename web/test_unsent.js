@@ -90,13 +90,12 @@ vm.runInContext([
     // keyboard holds into them, as loadFromKeyboard does, and invalidates.
     'function options() { return JSON.parse(JSON.stringify(opts)); }',
     'function loadFromKeyboard() { if (nextLoad) opts = JSON.parse(JSON.stringify(nextLoad)); invalidate(); return ""; }',
-    'function readVerdict() { return null; }',
     'function listKeyboard() { kbd.listed = true; refresh(); return Promise.resolve(); }',
     appSource('\n    var kbd = {', ';\n'), appSource('\n    var KBD_REASONS = {', '\n    };\n'),
     appFunction('kbdSelects'), appFunction('keyboardPort'), appFunction('keyboardPorts'),
     appFunction('recordBytes'), appFunction('outcomeOf'), appFunction('freshPorts'),
     appFunction('showFirmware'), appFunction('firmwareFrom'), appFunction('optionWords'),
-    appSource('\n    function shown(', '}\n'), appFunction('otherImage'), appFunction('readRefusal'), appFunction('sendRefusal'),
+    appSource('\n    function shown(', '}\n'), appFunction('otherImage'), appFunction('readVerdict'), appFunction('readRefusal'), appFunction('sendRefusal'),
     appFunction('sendRecord'),
     appSource('\n    var UNSENT_CHECK_MS', ';\n'), appSource('\n    var unsent = {', ';\n'),
     appFunction('pageRecord'), appFunction('unsentArm'), appFunction('unsentOff'), appFunction('unsentSoon'),
@@ -240,6 +239,8 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     await read();
     check('a read arms the card for the port it read, and leaves it down',
           armed() && page.unsent.name === '218e Rewired' && !up() && !padded());
+    check('saying only that the settings loaded', page.nodes.kbdLoadMsg.text === 'Keyboard settings loaded successfully.'
+          && page.state.factoryText === null, page.nodes.kbdLoadMsg.text);
     check('and the read’s own load sends nothing', key(kb.received.slice(at)) === '[[16131,0]]',
           key(kb.received.slice(at)));
 
@@ -389,7 +390,11 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     page.nextLoad = clone(held);
     run('readFrom(keyboardPorts())');
     await T.run();
-    check('(the read itself goes through)', page.nodes.kbdLoadMsg.kind !== 'bad', page.nodes.kbdLoadMsg.text);
+    check('the read goes through, and says a flash comes first, with no factory image here',
+          page.nodes.kbdLoadMsg.kind === 'warn' && page.state.factoryText === null &&
+          page.nodes.kbdLoadMsg.text === 'Keyboard settings loaded successfully. This keyboard runs Rewired ' +
+          run('shown(GEN.version)') + ' from another build. Flash the latest firmware to change settings.',
+          page.nodes.kbdLoadMsg.text);
     at = elsewhere.received.length;
     change({ pitch_correction: correction({ 20: 5, 30: -4, 40: 7, 50: 3, 65: 9 }) });
     await T.run();
