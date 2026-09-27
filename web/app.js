@@ -1939,9 +1939,21 @@
             el.hidden = !show;
         });
     }
+    // Watched for five seconds after load, every quarter second: the note
+    // goes the moment Web MIDI appears, and shows only if it is still
+    // missing 1.5 s in.  Safari injects an extension late into a tab that
+    // was already open when it started or updated.  The buttons ask for the
+    // API when pressed, not from this, so a late one still works.
     if (IS_SAFARI) {
         var decideSafariNotes = function () {
-            setTimeout(function () { safariNotes(!('requestMIDIAccess' in navigator)); }, 1500);
+            var ticks = 0;
+            var tick = setInterval(function () {
+                ticks++;
+                var there = 'requestMIDIAccess' in navigator;
+                if (there) safariNotes(false);
+                else if (ticks === 6) safariNotes(true);
+                if (there || ticks >= 20) clearInterval(tick);
+            }, 250);
         };
         if (document.readyState === 'complete') decideSafariNotes();
         else window.addEventListener('load', decideSafariNotes);
