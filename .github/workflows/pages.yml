@@ -129,9 +129,9 @@ jobs:
         # just generated - but then the repository does not hold what is
         # published, and a warning here was scrolled past.  It fails now.
         run: |
-          if ! git diff --quiet -- web/generated.js web/assembler.js; then
-            echo "::error::web/generated.js or web/assembler.js is stale in git; run python3 web/generate.py and commit"
-            git diff --stat -- web/generated.js web/assembler.js
+          if ! git diff --quiet -- web/generated.js web/assembler.js web/feed.xml; then
+            echo "::error::web/generated.js, web/assembler.js or web/feed.xml is stale in git; run python3 web/generate.py and commit"
+            git diff --stat -- web/generated.js web/assembler.js web/feed.xml
             exit 1
           else
             echo "committed bundle is up to date"
@@ -298,6 +298,14 @@ jobs:
               sys.exit(f"nothing in the page references {root}")
           page.write_text(text.replace(root, root + "dev/"), encoding="utf-8")
           print(f"dev build: {n} absolute reference(s) moved to {root}dev/")
+          # The feed names the page absolutely too, and it is the file a
+          # reader keeps: left alone, the dev feed would send its readers to
+          # the released page with the dev changelog.
+          feed = Path("_site/feed.xml")
+          if feed.exists():
+              text = feed.read_text(encoding="utf-8")
+              feed.write_text(text.replace(root, root + "dev/"), encoding="utf-8")
+              print(f"dev build: {text.count(root)} feed reference(s) moved as well")
           DEVURL
           # Every asset URL carries a hash of the file it points at, so an
           # update cannot be served from a cache that still holds the old one.
@@ -454,6 +462,44 @@ jobs:
                       missing.append(r)
           print(f"checked {total} references across {len(sources)} files, {len(missing)} missing")
           sys.exit(1 if missing else 0)
+          CHECK
+
+      - name: The page's feed is there and names this site
+        run: |
+          python3 - <<'CHECK'
+          import re, sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          # The page links its feed absolutely, so the asset sweep above steps
+          # over it the way it steps over every other absolute URL.  A feed
+          # that went missing, or a dev feed still pointing its readers at the
+          # released page, would deploy green; this is where that is caught.
+          site = Path("_site")
+          page = (site / "index.html").read_text(encoding="utf-8")
+          link = re.search(r'<link\b[^>]*\brel="alternate"[^>]*\bhref="([^"]+)"', page)
+          if not link:
+              print("the page links no feed - nothing to check")
+              sys.exit(0)
+          root = re.search(r'rel="canonical"\s+href="([^"]+)"', page).group(1).rstrip("/") + "/"
+          href = link.group(1)
+          if href != root + "feed.xml":
+              sys.exit(f"the page links its feed at {href}, not at {root}feed.xml")
+          # And the RSS pill, which is an ordinary <a> and would be stamped
+          # like any other if it were ever made relative.
+          for other in re.findall(r'href="([^"]*feed\.xml[^"]*)"', page):
+              if other != href:
+                  sys.exit(f"the page also links the feed as {other}, not {href}")
+          feed = site / "feed.xml"
+          if not feed.exists():
+              sys.exit("the page links feed.xml, which is not in _site")
+          channel = ET.parse(feed).getroot().find("channel")
+          self_link = channel.find("{http://www.w3.org/2005/Atom}link").get("href")
+          if self_link != href or channel.findtext("link") != root:
+              sys.exit(f"feed.xml describes {channel.findtext('link')}, not {root}")
+          items = channel.findall("item")
+          if not items:
+              sys.exit("feed.xml has no releases in it")
+          print(f"feed.xml: {len(items)} releases, newest {items[0].findtext('title')}, at {href}")
           CHECK
 
       - uses: actions/upload-artifact@v7

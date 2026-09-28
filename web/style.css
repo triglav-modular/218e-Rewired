@@ -394,6 +394,8 @@ h1 {
   color: var(--muted);
 }
 .chlog-pill[aria-expanded="true"], .chlog-pill:hover { color: var(--accent); }
+/* The feed's pill is a link dressed as the changelog's button. */
+a.chlog-pill { text-decoration: none; }
 /* The panel holds every release, so it is sized to be read rather than
    glanced at: wide enough for an entry to take two lines at most, and capped
    against the viewport so a long entry cannot push the page sideways on a
@@ -476,9 +478,20 @@ h1 {
   background: var(--accent);
 }
 /* A break the phone takes and the wide column does not, where the sentence
-   and both pills fit on one line.  The pills carry a wrapper rather than a
-   second break: a line made by <br> has nowhere to hang a margin. */
+   fits on one line. */
 .subbr { display: none; }
+/* The pills get a line of their own at every width, set down off the
+   sentence so the two do not read as one block.  A wrapper rather than a
+   <br>: a line made by <br> has nowhere to hang a margin.  The 10px was the
+   gap after the sentence; at the start of a line it would read as an indent,
+   so only the first pill loses it. */
+.subpills {
+  display: block;
+  margin-top: 12px;
+}
+#ver {
+  margin-left: 0;
+}
 .ver {
   display: inline-block;
   margin-left: 10px;
@@ -2499,22 +2512,10 @@ section,
   h1 {
     font-size: clamp(56px, 20vw, 80px);
   }
-  /* The sentence wraps mid-phrase at this width and leaves the version pill
-     stranded at the end of a short line.  Broken by hand instead: the two
-     halves of the phrase get a line each, and the pills a line of their own,
-     set down off the sentence so the three do not read as one block.  The
-     10px was the gap after the sentence; at the start of a line it would read
-     as an indent, so only the first pill loses it - the one between the
-     version and the changelog is still a gap. */
+  /* The sentence wraps mid-phrase at this width.  Broken by hand instead:
+     the two halves of the phrase get a line each. */
   .subbr {
     display: inline;
-  }
-  .subpills {
-    display: block;
-    margin-top: 12px;
-  }
-  #ver {
-    margin-left: 0;
   }
   .banana {
     position: static;

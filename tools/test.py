@@ -1919,7 +1919,10 @@ def test_generated_is_current() -> None:
     # Both outputs: generate.py rewrites generated.js AND assembler.js, and
     # only the first was compared - so an encoder or runtime edit left a
     # stale assembler.js shipping while this check stayed green.
-    outputs = [REPO / "web" / "generated.js", REPO / "web" / "assembler.js"]
+    # And feed.xml, the changelog for feed readers, which comes from the same
+    # run and goes stale on the same edit.
+    outputs = [REPO / "web" / "generated.js", REPO / "web" / "assembler.js",
+               REPO / "web" / "feed.xml"]
     if not all(p.exists() for p in outputs):
         print("  skip  web bundle is not built")
         return

@@ -52,6 +52,13 @@
     <!-- summary_large_image is the wide card; the default is a thumbnail
          beside the text, which is the 1200x630 squeezed into a square. -->
     <meta name="twitter:card" content="summary_large_image">
+    <!-- The changelog as a feed, written by web/generate.py.  Absolute, like
+         the card: a subscription stores this URL for good, and a relative one
+         would be stamped with ?v= by tools/version-assets.py, which the
+         worker then serves as immutable for a year - a feed that could never
+         show another release. -->
+    <link rel="alternate" type="application/rss+xml" title="218e Rewired"
+          href="https://triglavmodular.hu/mods/218e-Rewired/feed.xml">
 
     <link rel="stylesheet" href="style.css">
   </head>
@@ -88,7 +95,9 @@
         <span class="ver" id="ver"></span>
         <span class="chlog"><button class="ver chlog-pill" id="chlogBtn" type="button"
             aria-expanded="false" aria-controls="chlogBody">Changelog</button><span
-            class="chlog-body hidden" id="chlogBody"></span></span></span></p>
+            class="chlog-body hidden" id="chlogBody"></span></span>
+        <!-- Absolute for the reason the feed's <link> in the head is. -->
+        <a class="ver chlog-pill" href="https://triglavmodular.hu/mods/218e-Rewired/feed.xml">RSS</a></span></p>
 
       <div class="danger">
         <h2>⚠ READ THIS BEFORE YOU FLASH ANYTHING</h2>

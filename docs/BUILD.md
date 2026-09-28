@@ -583,6 +583,26 @@ the one search finds. And its beacon is answered but written nowhere: the
 download counts describe the released page, and a build of whatever the
 development branch held that afternoon is not one of those.
 
+### The release feed
+
+`web/feed.xml` is `CHANGELOG.txt` as RSS 2.0, one item per release, written by
+`web/generate.py` in the same run as `generated.js` and checked for staleness
+the same way. A changelog edit already meant running the generator; the feed
+now comes along with it.
+
+The page names it twice, in a `<link rel="alternate">` for feed readers and on
+the RSS pill beside the changelog, both absolutely. A relative link would be
+stamped with `?v=` like every other asset and then served immutable
+for a year, and a subscription keeps the URL it was given: it would never see
+another release. Unstamped, it gets the origin's ten minutes.
+
+Its URLs come from the page's canonical, so the development build's feed moves
+under `/dev/` with the page; the workflow checks that the page's link, the
+feed's self link and its channel all name the site being built. Each item's
+guid is its version, so correcting a line later does not announce the release
+again. Dates are noon UTC, because the changelog records a day, and noon is
+that same day for a reader anywhere from UTC-11 to UTC+11.
+
 ### The remaining ten minutes
 
 `index.html` cannot be versioned - it is the URL people type - and GitHub Pages
