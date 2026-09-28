@@ -607,6 +607,21 @@ def check_table_range(name: str, table: list[int], period_units: int) -> None:
             f"{period_units} units, so the keyboard runs out of pitch before "
             f"it runs out of keys: use a mapping with more degrees to the "
             f"period, or a smaller period.")
+    # And the table as emitted stops at 0x3fff, the fourteen bits a record
+    # carries, so every key past it is stored as that one value.  Two or more
+    # of them are one pitch to the latch, which matches the table as emitted.
+    # Judged on the table before the clamp this passed, and the latch spacing
+    # check that caught it gave advice for a scale too fine.  The owner's
+    # words (2026-09-28); web/buildlib.js says the same.
+    past = [k for k, v in enumerate(table) if v > 0x3FFF]
+    if len(past) > 1:
+        raise ValueError(
+            f"{name}: keys {past[0]} to {past[-1]} sit past 16383, the most a "
+            f"table entry carries, and would all be stored there, one pitch the "
+            f"latch cannot tell apart. This scale’s period spans "
+            f"{period_units} units, so the keyboard runs out of table before it "
+            f"runs out of keys: use a mapping with more degrees to the period, "
+            f"or a smaller period.")
 
 
 def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
@@ -623,12 +638,16 @@ def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
     exponent = -onset_db / 20.0
     for x in range(span + 1):
         if x == 0:
-            value = 0
+            value = 0.0
         else:
-            value = math.floor(span * 10.0 ** ((x / span - 1.0) * exponent) + 0.5)
+            value = span * 10.0 ** ((x / span - 1.0) * exponent)
+        # The fade scales the curve itself, and the result is rounded once.
+        # Rounded to a count first and the scaled count floored, 38 of the
+        # 59 faded entries came out a count low.  web/buildlib.js does the
+        # same arithmetic in the same order.
         if fade and 0 < x < fade:
-            value = min(value, value * x // fade)
-        value = max(previous, min(span, value))
+            value = value * x / fade
+        value = max(previous, min(span, math.floor(value + 0.5)))
         out.append(value)
         previous = value
     return out
@@ -1455,7 +1474,7 @@ RAM_REGIONS = [
     # validated before it is trusted, so none of this needs the first-use
     # fill.  The flash countdown is also cleared by the startup wrapper,
     # because SRAM survives a same-image warm restart.
-    (0x6500, 0x6502, "the audition's pinned pitch, plus one"),
+    (0x6500, 0x6502, "the audition's pinned pitch, biased by 0x8000; zero for none"),
     (0x6502, 0x6503, "delete-pad flash countdown, in scans"),
     # Written by seq_select as it fires a step, read by seq_gate_length for
     # the length of that step; the cursor is already on the next one.
@@ -2079,12 +2098,20 @@ def main() -> None:
         # A settings record carries fourteen bits, so the table stops at
         # 0x3fff - an entry up there, or one no key reaches, is far past the
         # DAC's 0xfff, where the pitch path clamps it anyway.
-        tables[f"tuning_slot{index}"] = [max(0, min(v, 0x3FFF)) for v in table]
+        emitted = [max(0, min(v, 0x3FFF)) for v in table]
+        tables[f"tuning_slot{index}"] = emitted
         period_keys.append(12 if degrees is None else len(degrees))
         periods.add(period_units)
+        # The latch compares the table as emitted, so the spacing is judged
+        # on that: keys the clamp stacks at 0x3fff are one note to it.
+        # Judged on the table before the clamp, a scale whose top keys ran
+        # past 0x3fff a period apart was passed, and pressing one of them
+        # released another.  The range check above stays on the table as
+        # computed: an entry under zero is 0 once clamped, and it is still a
+        # key the scale puts below the instrument's lowest pitch.
         spacing_slots.append((
             ideal_key_pitches(cents, degrees, period or 1200.0, offset),
-            table, period or 1200.0, period_units))
+            emitted, period or 1200.0, period_units))
         anchor = (NOTE_NAMES[reference_key] if abs((period or 1200.0) - 1200.0) <= 0.001
                   else "bottom key")
         shape = ("" if degrees is None else
@@ -2113,8 +2140,13 @@ def main() -> None:
     # round(scale*256)-256 for black ones.  A table makes the correction
     # branchless at every use site and lets the same numbers serve the
     # pressure aggregate and the portamento weighting.
+    #
+    # Rounded half up, here and at black_key_scale_32 and trim_min below,
+    # because the page rounds that way (floorHalf, Math.round) and Python's
+    # round() takes a tie to the even neighbour: at a scale of 1.197265625,
+    # 306.5 in 1/256ths, the two builders emitted 50 and 51.
     black_mask = 0x0A54A54A
-    excess = round(cfg["pressure"]["black_key_scale"] * 256) - 256
+    excess = math.floor(cfg["pressure"]["black_key_scale"] * 256 + 0.5) - 256
     if not 0 <= excess <= 0x400:
         raise SystemExit("[pressure].black_key_scale must be between 1.0 and 5.0")
     tables["black_key_excess"] = [excess if (black_mask >> k) & 1 else 0 for k in range(32)]
@@ -2141,7 +2173,7 @@ def main() -> None:
         # fallbacks here used to disagree (1.0 vs 1.35), which would have
         # split one correction across its two consumers had the key ever
         # gone missing from the frozen defaults.
-        "black_key_scale_32": round(cfg["pressure"]["black_key_scale"] * 32),
+        "black_key_scale_32": math.floor(cfg["pressure"]["black_key_scale"] * 32 + 0.5),
         "smoothing_taps": cfg["pressure"].get("smoothing_taps", 8),
         "curve_default_level": cfg["pressure"]["curve"].get("default_level", 31),
         # One more than the top level, because the knob maps adc*steps>>10.
@@ -2402,7 +2434,7 @@ def main() -> None:
     # setting rather than a constant because it decides what the knob can still
     # reach: capacitive coupling falls by about a third when the player's feet
     # leave the floor, and a range that starts above that cannot get back to it.
-    k_min = int(round(calib.get("trim_min", 0.70) * 256))
+    k_min = math.floor(calib.get("trim_min", 0.70) * 256 + 0.5)
     k_max = min(0x180, (0x3FF * 256) // calib["ceiling"])
     if mode == "scale" and k_max <= k_min:
         raise SystemExit(

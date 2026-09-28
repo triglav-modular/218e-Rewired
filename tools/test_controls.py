@@ -75,6 +75,71 @@ def bohlen_pierce(base: str, work: Path) -> str:
     return f"bp:{keys}:{period.group(1)}:" + ",".join(str(v) for v in entries)
 
 
+def slot_table(base: str, work: Path, slot: str, name: str) -> tuple[int, int, list[int]]:
+    """One tuning slot's key table, keys per period and period, as
+    tools/build.py makes them: a build with the slot in all three places,
+    read back off build/tables.txt and build.properties."""
+    text, count = re.subn(r'^alternate_tunings = false$',
+                          f"alternate_tunings = [{slot}, {slot}, {slot}]", base, flags=re.M)
+    if count != 1:
+        raise SystemExit(f"Cannot set the {name} tuning in regression config")
+    text, count = re.subn(r'^output_hex\s*=\s*"[^"]*"',
+                          f'output_hex = "{work / (name + ".hex")}"', text, flags=re.M)
+    if count != 1:
+        raise SystemExit(f"Cannot redirect the {name} image")
+    text, count = re.subn(r'^updaters?\s*=\s*(?:"[^"]*"|\[[^\]]*\])\n', "", text, flags=re.M)
+    if count != 1 or any(k in tomllib.loads(text)["firmware"] for k in ("updater", "updaters")):
+        raise SystemExit("Refusing a regression build that could rewrite flashers")
+    config = work / f"{name}.toml"
+    config.write_text(text)
+    result = subprocess.run([sys.executable, "tools/build.py", "--no-ghidra", "--config", str(config)],
+                            cwd=REPO, capture_output=True, text=True)
+    (work / f"{name}-build.log").write_text(result.stdout + result.stderr)
+    if result.returncode:
+        raise SystemExit(result.stdout + result.stderr)
+    tables = (REPO / "build/tables.txt").read_text()
+    def table(key: str) -> list[int]:
+        match = re.search(rf"^{key} \(\d+\):\n\s*(.*)$", tables, flags=re.M)
+        if not match:
+            raise SystemExit(f"No {key} in the {name} build's tables")
+        return [int(v) for v in match.group(1).split(",")]
+    keys, entries = table("tuning_period_keys")[0], table("tuning_slot0")
+    period = re.search(r"^number\.octave_units=(\d+)$",
+                       (REPO / "build/build.properties").read_text(), flags=re.M)
+    if not period or len(entries) != 32:
+        raise SystemExit(f"The {name} build did not give 32 entries and a period")
+    return keys, int(period.group(1)), entries
+
+
+def preset_tables(base: str, work: Path) -> str:
+    """ControlRegression.presetDegreesRounded's tables (the clamp-chain scan,
+    2026-09-28, host finding 2).  Two twelve-step scales whose period is not
+    a whole number of units - 1201.5 and 1199 cents, the host scan's probe
+    scales, written here - which preset_degrees read a period low at 30 of
+    the knob's 1024 positions, and every bundled tuning, whose answers must
+    not move.  Each table is tools/build.py's own."""
+    probes = []
+    for name, period in (("stretched", 1201.5), ("compressed", 1199.0)):
+        lines = [f"! 12 equal steps of a {period}-cent period", name, " 12"]
+        lines += [f" {period * k / 12:.10f}" for k in range(1, 13)]
+        scale = work / f"_{name}.scl"
+        scale.write_text("\n".join(lines) + "\n")
+        probes.append((name, f'"{scale.relative_to(REPO)}"', 1))
+    bundled = [("12TET", '"tunings/12TET.scl"', 0),
+               ("SabatII-C", '"tunings/Sabat II (C-rooted).scl"', 0),
+               ("SabatII", '"tunings/Sabat II.scl"', 0),
+               ("5-limit", '"tunings/5-Limit JI with Septimal 7th.scl"', 0),
+               ("24TET-full", '["tunings/24TET.scl", "tunings/24TET-full.kbm"]', 0),
+               ("24TET-neutral", '["tunings/24TET.scl", "tunings/24TET-neutral.kbm"]', 0),
+               ("diatonic7", '["tunings/diatonic7.scl", "tunings/diatonic7.kbm"]', 0),
+               ("BohlenPierce", '["tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm"]', 0)]
+    out = []
+    for name, slot, probe in probes + bundled:
+        keys, period, entries = slot_table(base, work, slot, f"preset-{name}")
+        out.append(f"{name}|{keys}|{period}|{probe}|" + ",".join(str(v) for v in entries))
+    return "pd:" + ";".join(out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant",
@@ -118,6 +183,7 @@ def main() -> None:
     planned: list[tuple[str, list[str]]] = []
     try:
         bp = bohlen_pierce(base, work)
+        pd = preset_tables(base, work)
         for variant in variants:
             # Knob 2's other two roles. They are shipped in every image
             # built with them and were executed by nothing: the pattern
@@ -247,7 +313,7 @@ def main() -> None:
                     {"roles": "quantized", "swing": "swing",
                      "patterns": "patterns"}.get(variant, "spacing"),
                     "jack" if variant == "jack" else "knob", bp,
-                    "kbm" if variant == "kbm" else "full"]))
+                    "kbm" if variant == "kbm" else "full", pd]))
 
         def emulate(name: str, command: list[str]) -> str:
             result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)

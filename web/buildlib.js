@@ -183,18 +183,21 @@ var BUILDLIB = (function () {
                         throw new Error('arp_patterns[' + i + '] has ' + steps.length
                                         + ' steps; it must have 1 to 32');
                     }
+                    if (length === null) length = steps.length;
+                    if (!(length >= 1 && length <= 32 && length === Math.floor(length))) {
+                        throw new Error('arp_patterns[' + i
+                                        + '] length must be a whole number 1..32');
+                    }
+                    // Only the steps inside the length ever play, as
+                    // tools/options.py says: a hit past it made a pattern
+                    // that rests on every step it plays look like one.
                     var mask = 0;
-                    for (var k = 0; k < steps.length; k++) {
+                    for (var k = 0; k < Math.min(steps.length, length); k++) {
                         if (steps[k] !== '.') mask += Math.pow(2, k);
                     }
                     if (mask === 0) {
                         throw new Error('arp_patterns[' + i + '] is all rests — '
                                         + 'it would never sound');
-                    }
-                    if (length === null) length = steps.length;
-                    if (!(length >= 1 && length <= 32 && length === Math.floor(length))) {
-                        throw new Error('arp_patterns[' + i
-                                        + '] length must be a whole number 1..32');
                     }
                     masks.push(mask); lengths.push(length);
                 });
@@ -480,6 +483,19 @@ var BUILDLIB = (function () {
                 'the keyboard runs out of pitch before it runs out of keys: use ' +
                 'a mapping with more degrees to the period, or a smaller period.');
         }
+        // And the table as emitted stops at 0x3fff, so every key past it is
+        // stored as that one value: two or more are one pitch to the latch.
+        // The same words as tools/build.py, character for character.
+        var past = [];
+        table.forEach(function (v, k) { if (v > 0x3FFF) past.push(k); });
+        if (past.length > 1) {
+            throw new Error(name + ': keys ' + past[0] + ' to ' + past[past.length - 1] +
+                ' sit past 16383, the most a table entry carries, and would all be ' +
+                'stored there, one pitch the latch cannot tell apart. This scale’s ' +
+                'period spans ' + periodUnits + ' units, so the keyboard runs out of ' +
+                'table before it runs out of keys: use a mapping with more degrees to ' +
+                'the period, or a smaller period.');
+        }
     }
 
     // Python's round() is banker's rounding, but every call site here adds 0.5
@@ -657,9 +673,11 @@ var BUILDLIB = (function () {
         for (var x = 0; x <= span; x++) {
             var value;
             if (x === 0) value = 0;
-            else value = floorHalf(span * Math.pow(10.0, (x / span - 1.0) * exponent));
-            if (fade && x > 0 && x < fade) value = Math.min(value, Math.floor(value * x / fade));
-            value = Math.max(previous, Math.min(span, value));
+            else value = span * Math.pow(10.0, (x / span - 1.0) * exponent);
+            // The fade scales the curve itself, and the result is rounded
+            // once, as tools/build.py does.
+            if (fade && x > 0 && x < fade) value = value * x / fade;
+            value = Math.max(previous, Math.min(span, floorHalf(value)));
             out.push(value);
             previous = value;
         }
@@ -1841,7 +1859,8 @@ var BUILDLIB = (function () {
     //   renumbers every semitone, so setPitchOffset DROPS a loaded table by
     //   design.  Restore them the other way round and the table that was just
     //   restored is thrown away, with a red message on a page the visitor has
-    //   only just opened.
+    //   only just opened.  volts_per_octave too: a table belongs to the
+    //   scaling it was taken at, and switching it drops a loaded one as well.
     //
     //   patterns before knob2.  Setting knob 2 to patterns seeds the bank
     //   with the CLIX default when the bank is empty, so a saved bank has to

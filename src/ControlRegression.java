@@ -32,6 +32,9 @@ public class ControlRegression extends SequenceEditRegression {
     @Override void command(int pad) throws Exception { if(seq)super.command(pad); }
     @Override void step() throws Exception {
         steps++;
+        // The factory PRNG answered with a chosen value while forcePrng is
+        // set, and every call counted either way (randomOctaveFloor).
+        if(pc()==0x80013e04L) { prngCalls++; if(forcePrng) { e.writeRegister("R12",prngValue); ret(); return; } }
         if(pc()==0x80019980L) remapIn=(int)reg("R12");   // what the scan hands the remap
         // The MIDI note-on's two reads of the key table by the note itself,
         // each just after it lands in R8: a base and a target the routine
@@ -467,7 +470,7 @@ public class ControlRegression extends SequenceEditRegression {
         // whatever pad stands now.
         long pinned=lastNote("the preview's first step");
         check("a preview's MIDI note is the one recorded, not the live pad's: "+pinned+" with pad "+r(S+0x2ef,1)+" down",
-            r(S+0x2ef,1)==1&&pinned==withJack(noteAt(0,notePeriods()+2)));
+            r(S+0x2ef,1)==1&&pinned==jackNote(0,notePeriods()+2));
         // And the pin itself, driven at both flag positions with no fixture
         // timing in play: playback hands the step up untouched, a preview
         // hands it up carrying its reference and minus the live transpose,
@@ -642,12 +645,21 @@ public class ControlRegression extends SequenceEditRegression {
         if(r(S+0x342,1)!=0) m+=(int)r(S+0x2ef,1)-(r(S+0x6a,1)!=0?0:1);
         return m;
     }
+    // A MIDI note is named in one sum and held to 0..127 once (the
+    // clamp-chain scan, 2026-09-28): key + 36, m periods of this image's map
+    // in keys, and the degrees on top.  These oracles held the key's note
+    // first and added the jack after, the defect the scan found in the
+    // firmware, so they agreed with it.
+    long clampNote(long v) { return Math.max(0,Math.min(127,v)); }
+    long rawNote(int key,int m) { return key+36+(long)keysPerPeriod()*m; }
     // A key's note at m periods of this image's map, before the jack.
-    long noteAt(int key,int m) { return Math.max(0,Math.min(127,key+36+(long)keysPerPeriod()*m)); }
+    long noteAt(int key,int m) { return clampNote(rawNote(key,m)); }
     // The jack's degrees as midi_transpose adds them: only once the
     // transposer has run.
     int jackN() { long v=r(0x60fa,2); return (v>>12)==0xa?(int)(v&0xff):0; }
-    long withJack(long note) { return Math.max(0,Math.min(127,note+jackN())); }
+    // The same key with the jack's N and a step's term, in the one sum.
+    long jackNote(int key,int m) { return jackNote(key,m,0); }
+    long jackNote(int key,int m,long term) { return clampNote(rawNote(key,m)+jackN()+term); }
     // Whole periods in a pitch offset, halves away from zero.
     long periodsIn(long units) {
         long p=periodUnits();
@@ -723,7 +735,7 @@ public class ControlRegression extends SequenceEditRegression {
     long latchedNote(int slot,long cv) {
         int owner=(int)r(0x6504+slot,1), key=owner>0&&owner<=29?owner-1:slot;
         long off=cv-(short)r(0x854+2*key,2)-livePad();
-        return withJack(noteAt(key,notePeriods()+(int)periodsIn(off)));
+        return jackNote(key,notePeriods()+(int)periodsIn(off));
     }
     // Four sounded steps.  A step pattern answers a rest with no note at
     // all, and moves the arp on only on the beats that sound, so a beat
@@ -783,7 +795,7 @@ public class ControlRegression extends SequenceEditRegression {
             presetSwitch(1,700);
             key(key); sound();
             Map<Integer,long[]> middle=latchedRound("HOLD, under a preset voltage");
-            e.writeRegister("R12",key); long live=withJack(call(0x800057a8L));
+            long live=jackNote(key,notePeriods());
             check("a note latched under a preset voltage names the note a live key names: "
                 +middle.get(key)[0]+" and "+live,middle.get(key)[0]==live);
         }
@@ -803,7 +815,7 @@ public class ControlRegression extends SequenceEditRegression {
         check("the latch is in AFTER, its reference pad 2's",r(0x62e2,1)==1);
         octavePad(3); sound();
         Map<Integer,long[]> after=latchedRound("AFTER, two periods of the pad later");
-        long want=withJack(noteAt(key,notePeriods()+1));
+        long want=jackNote(key,notePeriods()+1);
         check("in AFTER the pad moves the set on MIDI too: "+after.get(key)[0]+", want "+want,
             after.get(key)[0]==want);
         println("PASS latched MIDI, AFTER: the set follows the pad on MIDI from the octave each note had");
@@ -890,7 +902,7 @@ public class ControlRegression extends SequenceEditRegression {
         Map<Integer,long[]> in=latchedRound("HOLD, the quantiser off, under a preset voltage");
         presetSwitch(2,152);
         Map<Integer,long[]> out=latchedRound("HOLD, the quantiser off, the voltage moved");
-        long named=withJack(noteAt(key,notePeriods()));
+        long named=jackNote(key,notePeriods());
         check("with the quantiser off a held note keeps the note a live key names: "+in.get(key)[0]+" -> "
             +out.get(key)[0]+", want "+named,in.get(key)[0]==named&&out.get(key)[0]==named);
         w(0x6d31,1,quantizer);
@@ -950,7 +962,7 @@ public class ControlRegression extends SequenceEditRegression {
             unitVelocity();
             w(0x6d2f,1,1);
             touch(4,210); touch(4,210); touch(9,210); touch(9,210);
-            long four=withJack(noteAt(4,notePeriods())), nine=withJack(noteAt(9,notePeriods()));
+            long four=jackNote(4,notePeriods()), nine=jackNote(9,notePeriods());
             check(tag+": key 9 took the note from key 4 at velocity 1: note "+r(S+0x2e1,1)+", want "+nine,
                 r(S+0x2e1,1)==nine&&r(S+0x2e2,1)==1);
             w(0x6d2f,1,c[0]); w(S+0x2db,1,c[1]);
@@ -996,12 +1008,350 @@ public class ControlRegression extends SequenceEditRegression {
         check("a step of the take sounds, played two degrees over its reference",
             r(0x6158,1)==2&&r(0x6503,1)<2&&r(0x2eed,1)!=0);
         midiOn.clear(); touchOn(4); sound();
-        long want=withJack(noteAt(4,notePeriods())), held=r(S+0x2e1,1), sent=lastNote("the key over the take");
+        long want=jackNote(4,notePeriods()), held=r(S+0x2e1,1), sent=lastNote("the key over the take");
         check("a key pressed over a take sends its own note: sent "+sent+", held "+held+", want "+want,
             sent==want&&held==want);
         touchOff(4);
         check("and its lift ends it",r(S+0x2e1,1)==0xff);
         println("PASS a key played over a take names its own note, not the sounding step's degrees");
+    }
+    // ---- A MIDI note named in one sum (the clamp-chain scan, 2026-09-28) --
+    // F1 and F2.  Each helper that named a note held part of it to 0..127
+    // and added the rest after: midi_period_note held key + 36 and the
+    // periods before midi_period_live put the jack's N and a step's term on,
+    // the two capped at 127 first, and midi_transpose held the routine's
+    // note before N.  A note whose first part went under 0 or over 127 came
+    // back from the wrong place.  So every entry is swept here over the key,
+    // the periods, N and the term, on the image's own map, a 24-key record
+    // and Bohlen-Pierce, against the one sum held once.  Where no hold was in
+    // play that is the note the firmware always named.
+    static final long MT_LIVE=0x8001e740L, MT_HELD=0x8001e744L, MT_PRESS=0x8001e748L, MP_LIVE=0x80020520L;
+    // The rotation's state word at N degrees of the selected slot, as the
+    // transposer leaves it, without a rebuild: the helpers read N off it.
+    void stateN(int n) { int slot=(int)r(0x6090,1); if(slot>2) slot=0; w(0x60fa,2,0xa000|(slot<<8)|(n&0xff)); }
+    // 32 entries of a map of `keys` equal steps to a period of 484, from 485.
+    int[] equalTable(int keys) {
+        int[] t=new int[32];
+        for(int k=0;k<32;k++) t[k]=485+(484*k+keys/2)/keys;
+        return t;
+    }
+    int oneSumCalls, oneSumReached, oneSumMisses;
+    List<String> oneSumFailed=new ArrayList<>();
+    void oneSumMiss(String what,long got,long want) {
+        oneSumMisses++;
+        if(oneSumFailed.size()<12) oneSumFailed.add(what+": sent "+got+", want "+want);
+        else if(oneSumFailed.size()==12) oneSumFailed.add("...");
+    }
+    void oneSumSweep(String map) throws Exception {
+        int k=keysPerPeriod(), before=oneSumMisses, calls=0, reached=0;
+        int[] ns={0,1,10,30,127,130,200,255};
+        // midi_transpose: every key and one past it, at every switch, pad and
+        // trn zone the factory's count reads, through all three entries with
+        // no note sounding.  N runs past a signed byte: it is the state
+        // word's low byte, 0..255.
+        for(int trn=0;trn<2;trn++)for(int zone:trn==0?new int[]{0}:new int[]{0,1,2,3,8})
+        for(int oct=0;oct<2;oct++)for(int pad=0;pad<4;pad++)for(int n:ns) {
+            w(S+0x6a,1,trn); w(S+0x6b,1,zone); w(S+0x342,1,oct); w(S+0x2ef,1,pad); stateN(n);
+            int m=notePeriods();
+            for(int key=0;key<30;key++) {
+                long part=rawNote(key,m), want=key>28?0xff:clampNote(part+n);
+                if(key<=28&&(part<0||part>127)&&want!=clampNote(clampNote(part)+Math.min(n,127))) reached++;
+                for(long entry:new long[]{MT_LIVE,MT_HELD,MT_PRESS}) {
+                    w(S+0x2e1,1,0xff);
+                    e.writeRegister("R12",key); long got=call(entry); calls++;
+                    if(got!=want) oneSumMiss(map+" midi_transpose "+Long.toHexString(entry)+" key "+key+" trn "+trn
+                        +" zone "+zone+" octaves "+oct+" pad "+pad+" N "+n,got,want);
+                }
+            }
+        }
+        // The shift a press froze, read back for the note still sounding.
+        w(S+0x6a,1,1); w(S+0x6b,1,0); w(S+0x342,1,0); w(S+0x2ef,1,1);
+        int m0=notePeriods();
+        for(int f:ns)for(int key=0;key<29;key++) {
+            stateN(0); w(S+0x2e1,1,60); w(0x60fe,1,f);
+            e.writeRegister("R12",key); long got=call(MT_HELD); calls++;
+            long want=clampNote(rawNote(key,m0)+f);
+            if(got!=want) oneSumMiss(map+" midi_transpose's lift, frozen "+f+", key "+key+" at "+m0+" periods",got,want);
+        }
+        // midi_period_live: a key at any count of periods, N and a step's
+        // term on top, the term either side of zero.
+        w(S+0x6a,1,0); w(S+0x6b,1,0); w(S+0x342,1,1); w(S+0x2ef,1,1);
+        for(int n:new int[]{0,10,30,130})for(int d:new int[]{-40,-10,-1,0,1,10,40})for(int m=-6;m<=10;m++)
+        for(int key=0;key<30;key++) {
+            stateN(n);
+            e.writeRegister("R12",key); e.writeRegister("R10",m&0xffffffffL); e.writeRegister("R11",d&0xffffffffL);
+            long got=call(MP_LIVE); calls++;
+            long part=rawNote(key,m), want=key>28?0xff:clampNote(part+n+d);
+            if(key<=28&&want!=clampNote(clampNote(part)+Math.min(n+d,127))) reached++;
+            if(got!=want) oneSumMiss(map+" midi_period_live key "+key+" at "+m+" periods, N "+n+", term "+d,got,want);
+        }
+        // Before the transposer has run, neither N nor the term goes on.
+        w(0x60fa,2,0);
+        int m1=notePeriods();
+        for(int d:new int[]{-10,0,10})for(int m=-4;m<=8;m+=4)for(int key=0;key<29;key+=7) {
+            e.writeRegister("R12",key); e.writeRegister("R10",m&0xffffffffL); e.writeRegister("R11",d&0xffffffffL);
+            long got=call(MP_LIVE); calls++;
+            if(got!=noteAt(key,m)) oneSumMiss(map+" midi_period_live before the transposer, key "+key+" at "+m,got,noteAt(key,m));
+        }
+        for(int key=0;key<29;key+=7) {
+            w(S+0x2e1,1,0xff); e.writeRegister("R12",key); long got=call(MT_LIVE); calls++;
+            if(got!=noteAt(key,m1)) oneSumMiss(map+" midi_transpose before the transposer, key "+key,got,noteAt(key,m1));
+        }
+        oneSumCalls+=calls; oneSumReached+=reached;
+        println("ONE SUM "+map+": "+keysPerPeriod()+" keys a period, "+calls+" notes, "+reached
+            +" where a held part came back, "+(oneSumMisses-before)+" off");
+        check(map+": the one sum reaches a hold in "+reached+" notes",reached>0);
+    }
+    void midiOneSum() throws Exception {
+        oneSumFailed.clear(); oneSumCalls=0; oneSumReached=0; oneSumMisses=0;
+        setup(0,false,0); command(0);
+        String own=keysPerPeriod()+"-key image map";
+        oneSumSweep(own);
+        if(keysPerPeriod()!=24) {
+            setup(0,false,0); command(0); tunedRecord(24,484,equalTable(24));
+            oneSumSweep("24-key record");
+        }
+        if(bpTable!=null) {
+            setup(0,false,0); command(0); tunedRecord(bpKeys,bpPeriod,bpTable);
+            oneSumSweep("Bohlen-Pierce record");
+        } else println("SKIP Bohlen-Pierce in the one sum: no table was handed over");
+        check("MIDI notes are named in one sum, held to 0..127 once: "
+            +(oneSumMisses==0?"all":oneSumMisses+" off, "+oneSumFailed),oneSumMisses==0);
+        println("PASS MIDI notes named in one sum: "+oneSumCalls+" notes through midi_transpose and midi_period_live, "
+            +oneSumReached+" of them where a part held first came back from the wrong place");
+    }
+    // The same end to end, through the paths the scan named, each with a part
+    // of its note under 0 or over 127 before the rest goes on: a latched note
+    // in AFTER and in HOLD with the quantiser off, a take's playback on both
+    // sides, a preview, and the keyboard in a trn zone.  Each note-on is held
+    // to the one sum, and to the note its CV plays where that CV is inside
+    // the pitch range, off both its holds: the degree of the slot's table nearest the CV less
+    // the live transpose, named at the factory's count (cvNote, unheld).
+    long cvNoteRaw(long cv) {
+        long want=cv-livePad(), best=Long.MAX_VALUE;
+        int at=0;
+        for(int j=-128;j<320;j++) {
+            long d=Math.abs(wrappedEntry(j)-want);
+            if(d<best) { best=d; at=j; }
+        }
+        return at+36+(long)keysPerPeriod()*notePeriods();
+    }
+    void heardIs(String what,long sent,long sum,long cv) throws Exception {
+        long want=clampNote(sum);
+        check(what+": sends "+sent+", the one sum "+sum+" held once is "+want,sent==want);
+        if(cv>-0x78&&cv<0xfff&&sum>=0&&sum<=127)
+            check(what+": its CV "+cv+" plays note "+cvNoteRaw(cv)+", the note it sends",cvNoteRaw(cv)==sum);
+    }
+    // Knob 4 off the transpose whatever role the image was built with, so
+    // the octave pads alone count; or on it at a raw knob position.
+    void noTrn() { w(0x6d2c,1,0); w(S+0x6a,1,0); w(S+0x6b,1,0); }
+    void trnAt(int raw) throws Exception { w(0x6d2c,1,1); w(S+0x310,2,raw); controlScan(); }
+    // A 24-key map: the image's own where it has one, a record of 24 equal
+    // steps where it does not.
+    void map24() throws Exception { if(keysPerPeriod()!=24) tunedRecord(24,484,equalTable(24)); }
+    // The notes a round of arp steps sends, by the slot each sounds.
+    Map<Integer,long[]> latchHeard(int want) throws Exception {
+        Map<Integer,long[]> heard=new TreeMap<>();
+        for(int i=0;i<16&&heard.size()<want;i++) {
+            midiOn.clear(); externalBeat(); sound();
+            if(midiOn.isEmpty()) continue;
+            heard.put((int)r(S+0x34d,1),new long[]{midiOn.get(midiOn.size()-1),(short)r(S+0x352,2)});
+        }
+        return heard;
+    }
+    // The notes a take's steps send, by the key each was recorded on.
+    Map<Long,long[]> takeHeard(int want) throws Exception {
+        Map<Long,long[]> heard=new TreeMap<>();
+        for(int i=0;i<12&&heard.size()<want;i++) {
+            midiOn.clear(); externalBeat(); sound();
+            if(midiOn.isEmpty()) continue;
+            int st=(int)r(0x6503,1);
+            heard.put(st<0x40?r(0x61ee+st,1):-1L,new long[]{midiOn.get(midiOn.size()-1),(short)r(S+0x352,2)});
+        }
+        return heard;
+    }
+    // A take of `keys` steps laid directly: each recorded `periods` periods
+    // off the take's reference `ref`, at its degrees `e`, the take born under
+    // `born` preset degrees.
+    void layTake(int[] keys,long ref,int periods,int e,int born) throws Exception {
+        long p=r(0x6814,2);
+        for(int i=0;i<keys.length;i++) {
+            w(0x61ee+i,1,keys[i]); w(0x6600+i,1,e);
+            w(0x6160+2*i,2,(periods*p+wrappedEntry(keys[i]+e))&0xffff);
+        }
+        w(0x62f4,2,ref&0xffff); w(0x6091,1,born);
+    }
+    // Each path on its own, so one that sends the wrong note leaves the
+    // others to be heard.
+    interface Scenario { void run() throws Exception; }
+    List<String> pathsRan=new ArrayList<>(), pathsFailed=new ArrayList<>();
+    void scenario(String name,boolean applies,String why,Scenario body) {
+        if(!applies) { println("SKIP "+name+": "+why); return; }
+        try { body.run(); pathsRan.add(name); println("PATH "+name); }
+        catch(Exception ex) { pathsFailed.add(name+": "+ex.getMessage()); println("PATH FAIL "+name+": "+ex.getMessage()); }
+    }
+    void midiClampPaths() throws Exception {
+        pathsRan.clear(); pathsFailed.clear();
+        boolean latch=r(0x6d28,1)!=0, jackOn=r(0x6d32,1)!=0, seqOn=r(0x6d2d,1)!=0;
+        String noJack="the jack is on portamento in this image";
+        // AFTER on a twelve-key map: two keys entered on octave pad 0, the
+        // set's reference taken at pad 3, played back at pad 0 - four periods
+        // under key + 36 - with the jack 30 degrees up.  Key 5 is 7 under
+        // note 0 before N, and was sent as note 30 for a CV playing note 23.
+        scenario("AFTER four periods under its key, twelve keys, the jack 30 up",latch&&jackOn,
+            latch?noJack:"no latching arp in this image",() -> {
+            int[] keys={5,9};
+            setup(0,false,1); command(0); tunedRecord(12,484,equalTable(12)); noTrn(); latchFixture(); w(S+0x2fc,2,0);
+            cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
+            octavePad(0); for(int key:keys) { key(key); sound(); }
+            octavePad(3); sound();
+            controlScan(); call(0x8001e580L);
+            check("the latch is in AFTER, its reference pad 3's",r(0x62e2,1)==1);
+            octavePad(0); sound();
+            tunedJack(30); sound();
+            Map<Integer,long[]> heard=latchHeard(keys.length);
+            for(int key:keys) {
+                check("key "+key+" sounds",heard.containsKey(key));
+                heardIs("key "+key,heard.get(key)[0],rawNote(key,notePeriods()-3)+jackN(),heard.get(key)[1]);
+            }
+        });
+        // The 24-key known case: AFTER, entered on pad 0, the reference at
+        // pad 2, played on the middle position under a quantised preset of
+        // ten degrees.  Key 9 is 3 under note 0 before N: it was sent as note
+        // 10 for a CV playing note 7.
+        scenario("AFTER two periods under its key, 24 keys, a preset of ten degrees",latch,
+            "no latching arp in this image",() -> {
+            setup(0,false,1); command(0); map24(); noTrn(); latchFixture(); w(S+0x2fc,2,0);
+            cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
+            w(0x6d31,1,1);
+            octavePad(0); key(9); sound();
+            octavePad(2); sound();
+            controlScan(); call(0x8001e580L);
+            check("the latch is in AFTER",r(0x62e2,1)==1);
+            w(0x613a+2*1,2,153);
+            presetSwitch(1,153);
+            check("the preset stands ten degrees up: N="+jackN(),jackN()==10);
+            Map<Integer,long[]> heard=latchHeard(1);
+            check("key 9 sounds",heard.containsKey(9));
+            heardIs("key 9",heard.get(9)[0],rawNote(9,notePeriods()-2)+jackN(),heard.get(9)[1]);
+        });
+        // HOLD with the quantiser off: the note is named in whole periods off
+        // its stamp less what the pad adds now, and the preset's voltage
+        // stays off MIDI.  Entered on pad 0 and played on the middle position
+        // under a store of 200 with the jack 10 up: key 9 two periods under
+        // its key was sent as note 10 for 7.
+        scenario("HOLD with the quantiser off, 24 keys, the jack 10 up",latch&&jackOn,
+            latch?noJack:"no latching arp in this image",() -> {
+            setup(0,false,1); command(0); map24(); noTrn(); latchFixture(); w(S+0x2fc,2,0);
+            cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
+            w(0x6d31,1,0);
+            octavePad(0); key(9); sound();
+            presetSwitch(1,200);
+            tunedJack(10); sound();
+            check("the latch holds, N="+jackN(),r(0x62e2,1)==0&&jackN()==10);
+            Map<Integer,long[]> heard=latchHeard(1);
+            check("key 9 sounds",heard.containsKey(9));
+            long adds=200*0x84/0x64, off=(short)r(0x60a2+2*9,2)-adds;
+            long sum=rawNote(9,notePeriods()+(int)periodsIn(off))+jackN();
+            check("key 9, "+periodsIn(off)+" periods off its key, sends "+heard.get(9)[0]+", the one sum "+sum+" held once",
+                heard.get(9)[0]==clampNote(sum));
+        });
+        // A take's playback under the floor: born at pad 3, the steps played
+        // at pad 0, played back at pad 0 with the jack 30 up, four periods
+        // under key + 36 on a twelve-key map; and born at pad 2, played at
+        // pad 0, back at pad 1 with the jack 10 up on a 24-key one.
+        int[][] floors={{12,30,3,0,0},{24,10,2,0,1}};
+        for(int[] f:floors)
+            scenario("playback under the floor, "+f[0]+" keys, born at pad "+f[2]+", played at pad "+f[3]+", back at pad "+f[4]
+                +", the jack "+f[1]+" up",seqOn&&jackOn,seqOn?noJack:"no sequencer in this image",() -> {
+            int[] keys={5,9};
+            setup(keys.length,false,0);
+            if(f[0]==12) tunedRecord(12,484,equalTable(12)); else map24();
+            noTrn();
+            long p=r(0x6814,2);
+            layTake(keys,(f[2]-1)*p,f[3]-f[2],0,0);
+            command(1);
+            w(S+0x342,1,1); w(S+0x343,1,0); octavePad(f[4]);
+            cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
+            tunedJack(f[1]);
+            w(S+0x2fc,2,0);
+            Map<Long,long[]> heard=takeHeard(keys.length);
+            check("PLAY",r(0x6158,1)==2);
+            for(int key:keys) {
+                check("the step on key "+key+" sounds",heard.containsKey((long)key));
+                heardIs("key "+key,heard.get((long)key)[0],rawNote(key,notePeriods()+f[3]-f[2])+jackN(),heard.get((long)key)[1]);
+            }
+        });
+        // Over the cap: trn zone 8 on octave pad 3, the take born under a
+        // preset of ten degrees and its steps played under none, so the
+        // step's term is -10 on a note of 122 and more before it: it was
+        // sent as 117.
+        scenario("playback over the cap, trn zone 8 on pad 3, the step's term -10",seqOn,
+            "no sequencer in this image",() -> {
+            int[] keys={0,2};
+            setup(keys.length,false,0); tunedRecord(12,484,equalTable(12));
+            layTake(keys,0,0,0,10);
+            command(1);
+            trnAt(1023);
+            w(S+0x342,1,1); w(S+0x343,1,0); octavePad(3); controlScan(); sound();
+            check("trn zone 8 on pad 3, the preset at none, N="+jackN(),
+                r(S+0x6a,1)==1&&r(S+0x6b,1)==8&&r(S+0x2ef,1)==3&&r(0x60f3,1)==0&&jackN()==0);
+            w(S+0x2fc,2,0);
+            Map<Long,long[]> heard=takeHeard(keys.length);
+            for(int key:keys) {
+                check("the step on key "+key+" sounds",heard.containsKey((long)key));
+                heardIs("key "+key+", "+notePeriods()+" periods over it",heard.get((long)key)[0],
+                    rawNote(key,notePeriods())+jackN()-10,heard.get((long)key)[1]);
+            }
+        });
+        // A preview, through the arp's word with its state laid: a
+        // Bohlen-Pierce record in trn zone 0 off the octaves, three periods
+        // under key + 36, a step recorded there on key 0..2.  Sent as N.
+        scenario("a preview under Bohlen-Pierce in trn zone 0",bpTable!=null&&r(0x80002428L,4)==ARP_NOTE,
+            "no Bohlen-Pierce table was handed over",() -> {
+            setup(1,false,0); tunedRecord(bpKeys,bpPeriod,bpTable);
+            w(S+0x342,1,0); w(S+0x343,1,0); w(S+0x6a,1,1); w(S+0x6b,1,0);
+            for(int n:new int[]{0,10,30}) for(int key:new int[]{0,1,2}) {
+                stateN(n);
+                long p=r(0x6814,2);
+                w(0x61ee,1,key); w(0x6600,1,0); w(0x62f4,2,0); w(0x60f3,1,0); w(0x6091,1,0);
+                w(0x6160,2,(-p+wrappedEntry(key))&0xffff);
+                w(0x6158,1,2); w(0x33c5,1,0); w(0x6503,1,0); w(0x62fe,1,1);
+                e.writeRegister("R12",key); long got=call(ARP_NOTE);
+                long sum=rawNote(key,notePeriods())+n;
+                check("N "+n+": key "+key+" sends "+got+", the one sum "+sum+" held once",got==clampNote(sum));
+            }
+        });
+        // The keyboard in trn zone 1 on a 24-key map, the switch off the
+        // octaves and the jack 10 up: key 9 is two periods under key + 36, 3
+        // under note 0 before N, and was sent as note 10, mono and poly.  The
+        // mono lift then ends the note it sent.
+        for(int poly=0;poly<2;poly++) {
+            int mode=poly;
+            scenario("the keyboard in trn zone 1, 24 keys, the jack 10 up, "+(mode==1?"poly":"mono"),jackOn,noJack,() -> {
+                setup(0,false,0); command(0); map24();
+                cvFiltered=r(0x8001a348L,4)==0x8001eb20L;
+                trnAt(150);
+                w(S+0x342,1,0); w(S+0x343,1,0); controlScan(); sound();
+                tunedJack(10); sound();
+                check("trn zone 1: "+r(S+0x6a,1)+" "+r(S+0x6b,1),r(S+0x6a,1)==1&&r(S+0x6b,1)==1);
+                w(S+0x84,1,mode);
+                unitVelocity();
+                midiOn.clear();
+                touch(9,210); touch(9,210); sound();
+                check("key 9 sends a note",!midiOn.isEmpty());
+                heardIs("key 9",midiOn.get(midiOn.size()-1),rawNote(9,notePeriods())+jackN(),(short)r(S+0x352,2));
+                if(mode==0) {
+                    check("the mono keyboard holds the note it sent",r(S+0x2e1,1)==midiOn.get(midiOn.size()-1));
+                    touch(9,0);
+                    check("and its lift ends it",r(S+0x2e1,1)==0xff);
+                }
+            });
+        }
+        check("every path the scan named sends the note in one sum: "
+            +(pathsFailed.isEmpty()?pathsRan.size()+" ran":pathsFailed.toString()),pathsFailed.isEmpty());
+        println("PASS MIDI notes named in one sum through "+pathsRan.size()+" of the paths the scan named: "
+            +"the latch in AFTER and HOLD, a take's playback under 0 and over 127, a preview, the keyboard in a trn zone");
     }
     // The jack transposer, driven from the raw CV cell the factory's second
     // ADC pass fills.  The variant carries the 5-limit JI scale, whose
@@ -1339,13 +1689,13 @@ public class ControlRegression extends SequenceEditRegression {
             check("playback opens on the recorded octave",(short)r(S+0x352,2)==dac(step(0)+livePad()));
             long opens=lastNote("the opening step");
             check("and its MIDI note is the key at the live pad: "+opens,
-                r(0x6503,1)==0&&opens==withJack(noteAt(0,notePeriods()+played[0])));
+                r(0x6503,1)==0&&opens==jackNote(0,notePeriods()+played[0]));
             midiOn.clear(); externalBeat(); sound();
             check("and a step under the rail plays clamped, not wrapped",
                 (short)r(S+0x352,2)==dac(step(1)+livePad()));
             long under=lastNote("the step under the rail");
             check("its MIDI note is the two periods under the first that were played: "+opens+" then "+under,
-                r(0x6503,1)==1&&under==withJack(noteAt(0,notePeriods()+played[1])));
+                r(0x6503,1)==1&&under==jackNote(0,notePeriods()+played[1]));
             // The pad transposes PLAY, and only play: a preview is pinned.
             octavePad(3); midiOn.clear(); externalBeat(); sound();
             check("the pad transposes playback",
@@ -1353,7 +1703,7 @@ public class ControlRegression extends SequenceEditRegression {
             long moved=lastNote("the step after the pad");
             int sounding=(int)r(0x6503,1);
             check("and moves its MIDI note by the pad: step "+sounding+" sends "+moved,
-                sounding<2&&moved==withJack(noteAt(0,notePeriods()+played[sounding])));
+                sounding<2&&moved==jackNote(0,notePeriods()+played[sounding]));
             // A preview armed here is armed mid-PLAY, on a two-step take that
             // reaches its end sentinel on the next beat: the note sounding is
             // still the one PLAY staged, chosen before the flag went up, so
@@ -1584,19 +1934,23 @@ public class ControlRegression extends SequenceEditRegression {
     int slotEntry(int j) { return (int)r(0x80019af8L+2L*j,2); }
     // A transcription of preset_degrees, in the cave's own order: entries from
     // the bottom up, first strictly nearer candidate wins, the whole period
-    // seeded ahead of them all.
+    // seeded ahead of them all.  The winner's degree moves with its interval:
+    // a period of keys for every period the reduction added or took away
+    // (preset_degree_count, the clamp-chain scan 2026-09-28), which is the
+    // index modulo the map's size for every table whose entries sit in their
+    // own period, the factory temperament's among them.
     int presetDegrees(int store,int keys) {
         int units=store*132/100;
         int whole=units/PERIOD, rem=units%PERIOD;
-        int bestK=-1, bestD=PERIOD-rem, t0=slotEntry(0);
+        int bestK=-1, bestD=PERIOD-rem, bestG=keys, t0=slotEntry(0);
         for(int k=0;k<32;k++) {
-            int c=slotEntry(k)-t0;
-            while(c<0)c+=PERIOD;
-            while(c>=PERIOD)c-=PERIOD;
+            int c=slotEntry(k)-t0, g=k;
+            while(c<0) { c+=PERIOD; g+=keys; }
+            while(c>=PERIOD) { c-=PERIOD; g-=keys; }
             int d=Math.abs(c-rem);
-            if(d<bestD) { bestD=d; bestK=k; }
+            if(d<bestD) { bestD=d; bestK=k; bestG=g; }
         }
-        return whole*keys+(bestK<0?keys:bestK%keys);
+        return whole*keys+bestG;
     }
     // The add-to-pitch switch in its middle position, a pad made active and
     // its store set: the same fixture the 2026-09-13 audit drove.
@@ -2395,8 +2749,11 @@ public class ControlRegression extends SequenceEditRegression {
             long dac=bent(c[0],c[1]);
             long raw=Math.max(-0x78,c[0]+c[1]);
             check("vibrato at rest under the bend fixture",r(0x6028,2)==0);
-            check("target "+c[0]+" bent "+c[1]+": the scan holds "+raw+", read "+(short)r(0x3210,2),
-                (short)r(0x3210,2)==raw);
+            // The scan carries glide plus bend unclamped, and the one clamp
+            // holds it after the blend's offset (the clamp-chain scan,
+            // 2026-09-28): the DAC below is the remap of the clamped sum.
+            check("target "+c[0]+" bent "+c[1]+": the scan carries "+(c[0]+c[1])+" unclamped, read "+(short)r(0x3210,2),
+                (short)r(0x3210,2)==c[0]+c[1]);
             check("target "+c[0]+" bent "+c[1]+": DAC "+dac+", the remap's "+remapModel(raw),
                 dac==remapModel(raw));
         }
@@ -3066,15 +3423,17 @@ public class ControlRegression extends SequenceEditRegression {
     // p-1 periods on the octave position.  Off and the middle position add
     // none, less one period where the factory's transpose mode is forced
     // (state+0x6a: the -period at 0x800035c0).  A MIDI note plays key
-    // note-24, the index floored at 0, and the note-on drops it a further
-    // period (number cell 10, 484 here) with the switch off the octaves
-    // (0x800064f8).  Past entry 78 the remap holds the last entry.  Under
+    // note-24, under zero too since the clamp-chain scan (2026-09-28, F3),
+    // where the note-on floored the index at 0 and notes 0..23 all played
+    // note 24; and the note-on drops it a further period (number cell 10,
+    // 484 here) with the switch off the octaves (0x800064f8).  Past entry
+    // 78 the remap holds the last entry.  Under
     // entry 3 the target is negative, and since audit 038711a (F4) it plays
     // entries 0..2 as a bend does; under entry 0 it holds at entry 0, the
-    // pitch floor: those are counted and held to that entry.  Notes run to
-    // 127: the note-on reads the key table as far as entry 103, and the
-    // byte-for-byte check below holds every one of them to what it read
-    // before it read the tuning.
+    // pitch floor: those are counted and held to that entry.  Notes run from
+    // 0 to 127: the note-on reads the key table as far as entry 103, and the
+    // byte-for-byte check below holds every one from note 24 up to what it
+    // read before it read the tuning.
     void noteOff(int note) throws Exception {
         w(0x7600-0x20,1,note); w(0x7600-0x1f,1,0); w(0x7600-0x1e,1,channel());
         call(0x80004ebcL,0x80004ef8L);
@@ -3137,18 +3496,23 @@ public class ControlRegression extends SequenceEditRegression {
                 touchOff(k); pressureFor(-1,0); dac();
                 played++;
             }
-            for(int n=21;n<=127;n++) {
-                int entry=15+Math.max(0,n-24)+12*(periods-(octave?0:1));
+            for(int n=0;n<=127;n++) {
+                int entry=15+(n-24)+12*(periods-(octave?0:1));
                 rawBase=Long.MIN_VALUE; rawTarget=Long.MIN_VALUE;
                 noteOn(n);
                 // The note-on's own answer, before a scan: with the factory
                 // temperament and nothing rotating it is the table the image
                 // carries in flash, entry note-24, less 484 off the octaves -
-                // what the note-on read before it read the tuning, unchanged.
-                // The two reads by the note itself are the flash table's entry
-                // note, as they always were.
+                // what the note-on read before it read the tuning, unchanged
+                // from note 24 up.  Under 24 the entry is note-24 itself,
+                // twelve keys and 484 down a wrap, where the note-on used to
+                // floor it at entry 0 and play note 24 (the clamp-chain scan,
+                // 2026-09-28, F3).  The two reads by the note itself are the
+                // flash table's entry note, as they always were.
                 long base=(short)r(S+0x350,2);
-                long today=r(0x80016574L+2L*Math.max(0,n-24),2)-(octave?0:484);
+                int at=n-24, wraps=0;
+                while(at<0) { at+=12; wraps++; }
+                long today=r(0x80016574L+2L*at,2)-484L*wraps-(octave?0:484);
                 long raw=r(0x80016574L+2L*n,2);
                 if(base!=today||(short)r(S+0x352,2)!=today||rawBase!=raw||rawTarget!=raw) {
                     baseWrong++; bases.append(String.format(" %d:%+d/%+d",n,base-today,rawBase-raw));
@@ -3166,20 +3530,19 @@ public class ControlRegression extends SequenceEditRegression {
                 played++;
             }
             println("EXACT "+names[p]+", slot "+slot+", "+periods+" period(s): keys 0..24 "+keyWrong+" off"
-                +(keyWrong>0?" (key:DAC-entry)"+keys:"")+"; notes 21..99 "+noteWrong+" off"
-                +(noteWrong>0?" (note:DAC-entry)"+notes:"")+"; note-on for 21..127 "+baseWrong+" changed"
+                +(keyWrong>0?" (key:DAC-entry)"+keys:"")+"; notes 0..99 "+noteWrong+" off"
+                +(noteWrong>0?" (note:DAC-entry)"+notes:"")+"; note-on for 0..127 "+baseWrong+" changed"
                 +(baseWrong>0?" (note:pitch/by-the-note, against before)"+bases:""));
             if(keyWrong>0) failed.add(names[p]+": "+keyWrong+" key(s)");
             if(noteWrong>0) failed.add(names[p]+": "+noteWrong+" note(s)");
             if(baseWrong>0) failed.add(names[p]+": "+baseWrong+" note-on base(s) changed");
         }
         check("normal play gives each key and MIDI note its entry's DAC, as calibration mode does, and the note-on "
-            +"reads what it read before for the factory temperament: "
+            +"reads what it read before for the factory temperament from note 24 up, and each note's own entry under it: "
             +(failed.isEmpty()?"all":failed.toString()),failed.isEmpty());
         println("PASS normal play lands on the pitch table entry: "+played+" keys and notes in six add-to-pitch positions, "
             +clamped+" past entry 78 held on it, "+floored+" under entry 0 held on it; "
-            +"the note-on's three reads byte for byte as before for notes 21..127");
-        tunedNotes();
+            +"the note-on's three reads byte for byte as before for notes 24..127, and under 24 each note's own entry");
     }
     // ---- MIDI notes past the tuning slot (audit 038711a) ----------------
     // The note-on reads the key table at note-24, as far as entry 103, and
@@ -3187,17 +3550,31 @@ public class ControlRegression extends SequenceEditRegression {
     // 55 used to play the factory's 12-TET entries whatever the tuning, the
     // jack or the quantised preset said.  So the pitch a note should get is
     // worked out here from the SLOT tables in the mirror, not from RAM 0x854:
-    // degree note-24 (floored at 0) plus the rotation's N, wrapped by the
-    // slot's keys per period with one period of pitch per wrap - preset_entry's
-    // arithmetic, which the rotation shares (wrappedEntry) - held at 0x3fff
-    // past the table, and one period (number cell 10) less with the
-    // add-to-pitch switch off OCTAVE.  The factory slot with nothing rotating
-    // is the one state where the old and the new agree, and exactPitch above
-    // is all in it.
+    // degree note-24 plus the rotation's N, wrapped by the slot's keys per
+    // period with one period of pitch per wrap - preset_entry's arithmetic,
+    // which the rotation shares (wrappedEntry) - held at 0x3fff past the
+    // table, and one period (number cell 10) less with the add-to-pitch
+    // switch off OCTAVE.  The factory slot with nothing rotating is the one
+    // state where the old and the new agree from note 24 up, and exactPitch
+    // above is all in it.
+    //
+    // A note under 24 plays its own pitch (the clamp-chain scan, 2026-09-28,
+    // F3): the note-on floored note-24 at zero before N went on, so with the
+    // jack or a preset up notes 15..23 all played note 24's.  This model
+    // floored it too, and agreed.  Under zero the index wraps in the live
+    // table, rotated: entry i is entry i + K less a period, K the slot's keys
+    // per period, the entry of the key K up rotated as that key is.  On a
+    // scale whose period is not a whole number of units that can be a unit
+    // off the slot's own entry at i + N less a period, where its rounding
+    // carried.  Held at -0x7000, the room the note-on's halfword has.
+
     long midiBase(int note) {
-        int i=Math.max(0,note-24);
-        long v=wrappedEntry(i+liveN());
+        int i=note-24, slot=(int)r(0x6090,1); if(slot>2) slot=0;
+        int kpp=(int)r(0x69a0+2*slot,2), wraps=0;
+        while(i+kpp*wraps<0) wraps++;
+        long v=wrappedEntry(i+kpp*wraps+liveN())-wraps*r(0x6814,2);
         if(i>31) v=Math.min(v,0x3fff);
+        if(i<0) v=Math.max(v,-0x7000);
         return v-(r(S+0x342,1)!=1?r(0x6814,2):0);
     }
     // The DAC once the glide has landed: the octave pad or the forced
@@ -3217,16 +3594,16 @@ public class ControlRegression extends SequenceEditRegression {
         long v=wrappedEntry(note+liveN());
         return note>31?Math.min(v,0x3fff):v;
     }
-    // Notes 24..127 under what the fixture set: the note-on's three reads for
+    // Notes 0..127 under what the fixture set: the note-on's three reads for
     // every one, and the settled DAC as well for every dacStride-th note from
-    // 24, notes 55 and 56 either side of where the slot used to end, and 127;
+    // 0, notes 55 and 56 either side of where the slot used to end, and 127;
     // for none with dacStride 0.
     int tunedPass, tunedNotesPlayed;
     List<String> tunedFailed=new ArrayList<>();
     void midiNotes(String what,int p,int dacStride) throws Exception {
         int baseWrong=0, dacWrong=0, above=0;
         StringBuilder b=new StringBuilder(), d=new StringBuilder();
-        for(int n=24;n<=127;n++) {
+        for(int n=0;n<=127;n++) {
             long want=midiBase(n), raw=midiRaw(n);
             rawBase=Long.MIN_VALUE; rawTarget=Long.MIN_VALUE;
             noteOn(n);
@@ -3235,7 +3612,7 @@ public class ControlRegression extends SequenceEditRegression {
                 baseWrong++;
                 if(baseWrong<=6) b.append(String.format(" %d:%d/%d,%d/%d",n,base,want,rawBase,raw));
             }
-            boolean dacToo=dacStride>0&&((n-24)%dacStride==0||n==55||n==56||n==127);
+            boolean dacToo=dacStride>0&&(n%dacStride==0||n==55||n==56||n==127);
             if(dacToo) {
                 long got=settled(what+" note "+n), exp=midiDac(n,p);
                 if(exp==remapModel(0xfff)) above++;
@@ -3248,13 +3625,127 @@ public class ControlRegression extends SequenceEditRegression {
             tunedNotesPlayed++;
         }
         println("TUNED "+what+": N="+liveN()+", "+r(0x69a0+2*Math.min(2,(int)r(0x6090,1)),2)+" keys a period of "
-            +r(0x6814,2)+"; notes 24..127: note-on "+baseWrong+" off"
+            +r(0x6814,2)+"; notes 0..127: note-on "+baseWrong+" off"
             +(baseWrong>0?" (note:got/want, by-the-note got/want)"+b:"")
             +(dacStride>0?", DAC every "+dacStride+" and the seam "+dacWrong+" off"
                 +(dacWrong>0?" (note:got/want)"+d:"")+", "+above+" at the top":""));
         if(baseWrong>0) tunedFailed.add(what+": "+baseWrong+" note-on pitch(es)");
         if(dacWrong>0) tunedFailed.add(what+": "+dacWrong+" DAC value(s)");
         tunedPass++;
+    }
+    // ---- MIDI note-offs under 24 (2026-09-28) ------------------------------
+    // The factory note-off works out note - 24 in an unsigned byte where the
+    // note-on floors it at zero, so a note-off under 24 cleared
+    // state+0x341+note, past the held-note flags - the add-to-pitch switch
+    // for note 1, the pitch base and target for notes 15 to 18, the gate for
+    // 19 and 20 - and never let the gate go.  Driven here through the real
+    // dispatcher in orders under and across 24, against a model that knows
+    // notes and not indices: a note-on counts one more and is the last note,
+    // a note-off counts one less, if any, and ends the gate when it lets go
+    // of the last note.  That is the factory's rule for notes 24 and up.
+    // After every note-off nothing in RAM under 0x7000 (the emulated stack is
+    // above it) changes but the count at state+0x258, the 127 flags from
+    // state+0x259 and the gate, the base stays the last note's and so does
+    // the settled DAC, and with every note up the gate is down.
+    boolean offMayWrite(long a) {
+        return a==S+0x258||(a>=S+0x259&&a<S+0x259+127)||a==S+0x354||a==S+0x355;
+    }
+    int offEvents, offSequences;
+    List<String> offFailed=new ArrayList<>();
+    // Each order on its own, so one that goes wrong leaves the rest to be seen.
+    void offOrder(String name,int[] events,boolean settle) {
+        try { offSequence(name,events,settle); }
+        catch(Exception ex) { offFailed.add(ex.getMessage()); println("OFF FAIL "+ex.getMessage()); }
+    }
+    // Events: n >= 0 a note-on of n, n < 0 a note-off of -n-1.
+    void offSequence(String name,int[] events,boolean settle) throws Exception {
+        setup(0,false,0); command(2);
+        exactPosition(2);                 // octave pad 1: the switch on OCTAVE, where note 1 cleared it
+        dac();
+        int count=0, last=-1;
+        boolean gate=false;
+        long base=(short)r(S+0x350,2), d=settle?settled(name+" at rest"):0;
+        for(int v:events) {
+            if(v>=0) {
+                noteOn(v); count++; last=v; gate=true;
+                base=(short)r(S+0x350,2);
+                check(name+": note "+v+" on plays its own pitch: base "+base+", want "+midiBase(v),base==midiBase(v));
+                if(settle) d=settled(name+" note "+v); else dac();
+                check(name+": note "+v+" on raises the gate",r(S+0x354,2)!=0);
+            } else {
+                int n=-v-1;
+                byte[] before=e.readMemory(toAddr(0),0x7000);
+                noteOff(n);
+                byte[] after=e.readMemory(toAddr(0),0x7000);
+                StringBuilder moved=new StringBuilder();
+                for(int a=0;a<before.length;a++)
+                    if(before[a]!=after[a]&&!offMayWrite(a))
+                        moved.append(String.format(" S+0x%x:%d->%d",a-S,before[a]&255,after[a]&255));
+                check(name+": note "+n+" off writes nothing past the flags, the count and the gate"+moved,moved.length()==0);
+                if(count>0) count--;
+                if(n==last) gate=false;
+                check(name+": note "+n+" off: count "+r(S+0x258,1)+", want "+count,r(S+0x258,1)==count);
+                check(name+": note "+n+" off: the gate "+(gate?"stays up":"goes down")+" ("+r(S+0x354,2)+")",
+                    (r(S+0x354,2)!=0)==gate);
+                check(name+": note "+n+" off leaves the pitch base at the last note's: "+(short)r(S+0x350,2)+", want "+base,
+                    (short)r(S+0x350,2)==base);
+                if(settle) {
+                    long now=settled(name+" after note "+n+" off");
+                    check(name+": and the pitch where the last note put it: DAC "+now+", want "+d,now==d);
+                    check(name+": and the gate still "+(gate?"up":"down"),(r(S+0x354,2)!=0)==gate);
+                }
+            }
+            offEvents++;
+        }
+        check(name+": every note up, the gate is down and nothing is counted",
+            r(S+0x354,2)==0&&r(S+0x258,1)==0&&count==0);
+        offSequences++;
+    }
+    void midiNoteOffs() throws Exception {
+        offEvents=0; offSequences=0; offFailed.clear();
+        // Two notes in each of the six orders: each on once and off once.
+        int[][] pairs={{12,5},{5,24},{23,24},{1,17},{0,30},{20,127}};
+        int[][] orders={{0,1,-1,-2},{0,1,-2,-1},{0,-1,1,-2},{1,0,-1,-2},{1,0,-2,-1},{1,-2,0,-1}};
+        for(int[] pr:pairs)for(int[] o:orders) {
+            int[] ev=new int[4];
+            StringBuilder name=new StringBuilder();
+            for(int i=0;i<4;i++) {
+                int note=pr[Math.abs(o[i])-(o[i]<0?1:0)];
+                ev[i]=o[i]>=0?note:-note-1;
+                name.append(o[i]>=0?" +":" -").append(note);
+            }
+            offOrder("notes"+name,ev,true);
+        }
+        // A note-off with nothing pressed, and one of a note never pressed.
+        offOrder("stray note-offs",new int[]{-6,-31,12,-4,-13},true);
+        // Every note from 0 to 127 pressed, then let go in a shuffled order.
+        int[] all=new int[256];
+        List<Integer> ups=new ArrayList<>();
+        for(int n=0;n<128;n++) { all[n]=n; ups.add(n); }
+        Collections.shuffle(ups,new Random(24));
+        for(int i=0;i<128;i++) all[128+i]=-ups.get(i)-1;
+        offOrder("notes 0..127 down, then up shuffled",all,false);
+        // Low notes and their neighbours toggled at random, then all let go.
+        Random rnd=new Random(218);
+        int[] pool={0,1,2,3,5,12,15,16,17,18,19,20,21,22,23,24,25,30,127};
+        for(int round=0;round<3;round++) {
+            List<Integer> ev=new ArrayList<>();
+            Set<Integer> held=new HashSet<>();
+            for(int i=0;i<40;i++) {
+                int n=pool[rnd.nextInt(pool.length)];
+                if(held.contains(n)) { ev.add(-n-1); held.remove(n); } else { ev.add(n); held.add(n); }
+            }
+            List<Integer> rest=new ArrayList<>(held);
+            Collections.shuffle(rest,rnd);
+            for(int n:rest) ev.add(-n-1);
+            int[] arr=new int[ev.size()];
+            for(int i=0;i<arr.length;i++) arr[i]=ev.get(i);
+            offOrder("random round "+round,arr,false);
+        }
+        check("every order of note-ons and note-offs lets each note go: "
+            +(offFailed.isEmpty()?"all":offFailed.size()+" wrong, "+offFailed),offFailed.isEmpty());
+        println("PASS MIDI note-offs under and across 24: "+offEvents+" events in "+offSequences
+            +" orders; each lets go of its own note, writes nothing past the flags, and the gate ends with the last note");
     }
     // A record's tables laid in the mirror as the page's NRPN writes lay
     // them, all three slots, then the boot's view of it: the applier's
@@ -3351,11 +3842,489 @@ public class ControlRegression extends SequenceEditRegression {
         tunedRecord(1,484,octaves);
         exactPosition(0); if(jackOn) tunedJack(0); dac();
         midiNotes("one key a period",0,8);
-        check("MIDI notes 24..127 play the tuning in use, rotated, off the octaves by its period, held at the top: "
+        check("MIDI notes 0..127 play the tuning in use, rotated, off the octaves by its period, held at the top, "
+            +"and those under 24 their own pitches: "
             +(tunedFailed.isEmpty()?"all":tunedFailed.toString()),tunedFailed.isEmpty());
         println("PASS MIDI notes past the slot follow the tuning: "+tunedNotesPlayed+" notes in "+tunedPass+" runs"
             +(jackOn?", the jack":"")+(presetOn?", the preset":"")+(otherSlot>=0?", the image's own tuning":"")
             +(bpTable!=null?", Bohlen-Pierce":"")+", one key a period");
+    }
+    // ---- The clamp-chain scan (2026-09-28) --------------------------------
+    // Every place the pitch chain held an intermediate value at a floor or
+    // a cap, or read a signed one unsigned, before a later term could bring
+    // it back into range - so what sounded was not the finished sum held
+    // once.  Each check below works its expectation out from the unclamped
+    // sum and holds it once, never through the order the firmware used.
+    boolean forcePrng; long prngValue; int prngCalls;
+    long clampPitch(long v) { return Math.max(-0x78,Math.min(0xfff,v)); }
+    // Knob 3's random octave, drawn down, is heard a period down where the
+    // finished target still sounds there, and a period up where the adder's
+    // floor would take it (pitch finding 1).  The adder adds a term to the
+    // arp's pitch and holds the sum at -0x78: the transpose it publishes at
+    // 0x60a0 for a note the arp steps on, and for a latched slot
+    // latch_hold's re-base - the slot's stamp in the hold state, and the
+    // stamp plus the live transpose's distance from the set's reference in
+    // the transpose state.  The draw was tested on the pitch alone against
+    // 1: a note the pad takes under the floor collapsed onto it, and one
+    // under 1 that would have sounded was sent up a period.
+    long octaveDown(long table,long term) {
+        long period=r(0x6814,2), down=table-period+term;
+        return clampPitch(down<-0x78?table+period+term:down);
+    }
+    // One arp step with the factory PRNG forced.  Zero draws a shift, down;
+    // bits 10..19 at their top draw none with the knob at its top.  The
+    // count is every PRNG call the step made.
+    int drawStep(long value) throws Exception {
+        // Step 0 of every pattern in the patterns variant's bank is a hit,
+        // so the gate lets the step sound; nothing else reads 0x6150.
+        w(0x6150,2,0);
+        forcePrng=true; prngValue=value; prngCalls=0;
+        try { externalBeat(); } finally { forcePrng=false; }
+        return prngCalls;
+    }
+    void knob3Octaves() throws Exception {
+        w(S+0x30a,2,0); w(S+0x30c,2,0); w(S+0x30e,2,1023); w(0x60ea,2,1023);
+        w(S+0x306,2,0); w(S+0x216,2,0);
+    }
+    void randomOctaveFloor() throws Exception {
+        int[][] tables={null,anchored(483),anchored(465),anchored(300)};
+        String[] names={"the image's table","key 0 at 483","key 0 at 465","key 0 at 300"};
+        int cases=0, wrong=0, reflected=0, below=0, callsOff=0;
+        StringBuilder why=new StringBuilder();
+        for(int t=0;t<tables.length;t++) {
+            setup(0,false,2); command(2); latchFixture();
+            if(tables[t]!=null) liveTable(tables[t]);
+            knob3Octaves();
+            for(int pad=0;pad<4;pad++) {
+                octavePad(pad);
+                for(int k:new int[]{0,3,8,9,12,20,28}) {
+                    touchOn(k); pressureFor(k,600); dac();
+                    int plainCalls=drawStep(0x3ffL<<10);
+                    for(int i=0;i<3;i++) dac();
+                    long table=r(0x854+2*k,2), term=(short)r(0x60a0,2), period=r(0x6814,2);
+                    int downCalls=drawStep(0);
+                    long d=0; for(int i=0;i<4;i++) d=dac();
+                    long target=(short)r(S+0x352,2), want=octaveDown(table,term);
+                    cases++;
+                    if(table-period+term<-0x78) reflected++;
+                    else if(table-period<1) below++;
+                    if(target!=want||d!=remapModel(want)) {
+                        wrong++;
+                        if(wrong<=6) why.append(String.format(" [%s, pad %d, key %d: table %d, term %d: target %d DAC %d, want %d DAC %d]",
+                            names[t],pad,k,table,term,target,d,want,remapModel(want)));
+                    }
+                    if(plainCalls!=downCalls||plainCalls==0) callsOff++;
+                    touchOff(k); pressureFor(-1,0);
+                }
+            }
+        }
+        check("knob 3's octave down, on the arp: "+wrong+" of "+cases+" steps off the finished target held once ("
+            +reflected+" under the floor down, so up; "+below+" under 1 down that still sound)"+why,
+            wrong==0&&reflected>0&&below>0);
+        check("the draw costs the PRNG what an undrawn step does: "+callsOff+" of "+cases+" steps differ",callsOff==0);
+        if(!lean) {
+            // Latched slots: the term is latch_hold's.  {press pad, pad then,
+            // state}: key 0 under octave pad 0 carries a period off; with the
+            // pad at 2 the live term is a period on, and down on the stamp is
+            // under the floor.  Under pad 2 with the pad at 0 it is the other
+            // way round, and down sounds.  In the transpose state, entered
+            // at pad 1, the pad then at 0 takes the set a period down with it.
+            int[][] runs={{0,2,0},{2,0,0},{1,0,1}};
+            int lwrong=0; StringBuilder lwhy=new StringBuilder();
+            for(int[] run:runs) {
+                setup(0,false,1); command(2); latchFixture(); knob3Octaves();
+                octavePad(run[0]); sound();
+                long pressed=livePad();
+                key(0); aim(0); sound();
+                long stamp=(short)r(0x60a2,2);
+                check("key 0 latched under octave pad "+run[0]+" carries the transpose it was pressed at, or this proves nothing: "+stamp,
+                    r(S+0x21b,1)==1&&Math.abs(stamp-pressed)<=1);
+                long ref=pressed;
+                if(run[2]==1) { w(0x62e2,1,1); w(0x6580,2,ref&0xffff); }
+                octavePad(run[1]); sound();
+                w(S+0x2fc,2,0);
+                drawStep(0);
+                long d=0; for(int i=0;i<4;i++) d=dac();
+                long term=run[2]==1?stamp+livePad()-ref:stamp;
+                long target=(short)r(S+0x352,2), want=octaveDown(r(0x854,2),term);
+                check("the latched step is slot 0's, or this proves nothing: "+r(S+0x34d,1),r(S+0x34d,1)==0);
+                if(target!=want||d!=remapModel(want)) {
+                    lwrong++;
+                    lwhy.append(String.format(" [%s, pressed at pad %d, pad now %d: stamp %d, live %d: target %d DAC %d, want %d DAC %d]",
+                        run[2]==1?"transpose":"hold",run[0],run[1],stamp,livePad(),target,d,want,remapModel(want)));
+                }
+                if(run[2]==1) { w(0x62e2,1,0); w(0x6580,2,0); }
+            }
+            check("knob 3's octave down on a latched slot is tested on latch_hold's term: "+lwrong+" of "+runs.length+" off"+lwhy,lwrong==0);
+        }
+        println("PASS knob 3's octave down plays where the finished target sounds and goes up a period where the floor would take it, on the arp"
+            +(lean?"":" and on latched slots in both states"));
+    }
+    // The pressure blend's offset and the scan's clamp (pitch findings 2
+    // and 6).  The scan held glide plus bend at -0x78..0xfff and the apply
+    // shim added the blend's offset to what was left: a bend under the floor
+    // lost what it reached below and the offset then lifted the rest, and a
+    // sum over the cap - far above the table's last entry - lost what an
+    // offset down brought back into range.  The clock's fast stage did the
+    // same.  Now the three are summed and held once, so the DAC must be the
+    // remap of the target, the bend and the applied offset, clamped once;
+    // with nothing clamped anywhere that is exactly what 3ca37de played.
+    void leanOn(int low,int high,int lowRaw,int highRaw,int bend,int knob) throws Exception {
+        // high first, then low: the mono path sounds the last key pressed.
+        touchOn(high); touchOn(low);
+        for(int j=0;j<29;j++) { w(0x3490+j,1,(j==low||j==high)?2:0); w(0x3686+2*j,2,j==low?lowRaw:j==high?highRaw:110); }
+        call(0x8001aa10L);
+        w(S+0x306,2,knob); w(S+0x216,2,bend&0xffff);
+        for(int i=0;i<40;i++) { call(0x8001aa10L); dac(); }
+    }
+    // The clock's fast stage for the step now standing: a claim, the
+    // attack guard clear and the glide snapping, then the flush's pass.
+    long fastStage() throws Exception {
+        w(0x625b,1,1); w(0x625a,1,0); w(0x2eee,2,0); w(0x60ee,1,0);
+        call(0x8001c100L);
+        return r(S+0x358,2);
+    }
+    void blendClampOnce() throws Exception {
+        if(lean) { println("SKIP the blend's clamp: the blend is off in this image"); return; }
+        // {octave position, sounding key, leaned key, sounding raw, leaned
+        // raw, bend, knob, table}: the audit's cases under octave pad 0, the
+        // same with nothing clamped, and one over the cap.
+        // Key 12 at 3900: over the cap once bent, and still inside the glide's
+        // own domain, which the scan offsets by 0x78 and holds to 0xfff.
+        int[] high=new int[32];
+        for(int k=0;k<32;k++) high[k]=k==0?1500:k==12?3900:485+(484*k+6)/12;
+        Object[][] cases={
+            {1,0,12,300,1300,-480,0xff,null},   // bend to -479 held at -120, then lifted 442 (the audit's)
+            {1,0,12,300,1100,-480,0xff,null},   // the same, lifted less
+            {1,0,12,300,1300,-200,0xff,null},
+            {1,0,12,300,1300,0,0xff,null},      // nothing clamped: as 3ca37de played it
+            {1,0,12,300,1300,-80,0xff,null},
+            {2,0,12,300,1300,-480,0xff,null},
+            {2,12,0,300,1300,480,0x3ff,high},   // 3900 bent to 4380, capped at 0xfff, then an offset down
+        };
+        int changed=0, same=0, engaged=0; StringBuilder why=new StringBuilder(); int wrong=0;
+        for(Object[] c:cases) {
+            setup(0,false,0); command(2);
+            if(c[7]!=null) liveTable((int[])c[7]);
+            exactPosition((Integer)c[0]);
+            dac();
+            int bend=(Integer)c[5];
+            leanOn((Integer)c[1],(Integer)c[2],(Integer)c[3],(Integer)c[4],bend,(Integer)c[6]);
+            long d=dac();
+            long target=(short)r(S+0x352,2), off=(short)r(0x60e2,2);
+            long want=clampPitch(target+bend+off);
+            long old=Math.max(-0x78,clampPitch(target+bend)+off);
+            long fast=fastStage();
+            boolean clamped=want!=target+bend+off||target+bend!=clampPitch(target+bend);
+            if(clamped) changed++; else same++;
+            String what=String.format("key %d at %d under %s, key %d leaned on, bend %d: target %d, offset %d",
+                (Integer)c[1],r(0x854+2*(Integer)c[1],2),(Integer)c[0]==1?"octave pad 0":"octave pad 1",(Integer)c[2],bend,target,off);
+            if(d!=remapModel(want)||fast!=remapModel(want)) {
+                wrong++;
+                why.append(" ["+what+": scan DAC "+d+", fast stage "+fast+", once "+want+" DAC "+remapModel(want)
+                    +"; the old order "+old+" DAC "+remapModel(old)+"]");
+            }
+            // A target the adder holds at the floor can take the whole
+            // offset into its deficit (blend_goal), so engagement is asked
+            // of the cases whose target stands in range.
+            if(target>-0x78&&target<0xfff) check(what+": the blend is engaged, or this proves nothing",off!=0);
+            if(off!=0) engaged++;
+            touchOff((Integer)c[1]); touchOff((Integer)c[2]); pressureFor(-1,0); w(S+0x216,2,0);
+        }
+        check("glide, bend and the blend's offset are held once, on the scan and in the clock's fast stage: "+wrong+" of "+cases.length
+            +" off ("+changed+" with a clamp in play, "+same+" without, "+engaged+" engaged)"+why,
+            wrong==0&&changed>=2&&same>=1&&engaged>=4);
+        println("PASS glide, bend and the blend's offset are summed and held once, on the scan and in the clock's fast stage");
+    }
+    void blendCarriedOffset() throws Exception {
+        if(lean) { println("SKIP the blend's offset at the adder: the blend is off in this image"); return; }
+        setup(0,false,0); command(2);
+        // The adder's route: the blend cave publishes the offset the apply
+        // shim will add to the target's glide, and the adder clamps the
+        // target as the cave returns.  The pitch the blend asks for is the
+        // unclamped target plus its offset, held once, so what it publishes
+        // must take the held target there; with the target in range that
+        // is the offset itself, as 3ca37de published it.  An offset that
+        // does not reach past what the clamp took off, or points further
+        // into it, leaves the pitch where the clamp holds it.  Random hands,
+        // none latched, against blendModel's offset.
+        Random rnd=new Random(0x28092026L);
+        int inRange=0, clampedHands=0, rangeWrong=0, clampWrong=0; StringBuilder hw=new StringBuilder();
+        for(int t=0;t<300;t++) {
+            int n=1+rnd.nextInt(4);
+            List<Integer> slots=new ArrayList<>(); while(slots.size()<n){ int s=rnd.nextInt(29); if(!slots.contains(s)) slots.add(s); }
+            int[][] cc=new int[n][];
+            for(int i=0;i<n;i++) cc[i]=new int[]{slots.get(i),rnd.nextInt(3000),0,rnd.nextInt(1024)};
+            int base=rnd.nextBoolean()?cc[rnd.nextInt(n)][1]:rnd.nextInt(3000);
+            int[] terms={-1936,-1452,-968,-484,0,484,968,1452,2420};
+            int target=base+terms[rnd.nextInt(terms.length)];
+            int knob=0x30+rnd.nextInt(0x3d0);
+            long o=blendModel(base,knob,cc,true);
+            long want=carriedOffset(target,o);
+            long got=blendPublish(base,target,knob,cc);
+            if(target<-0x78||target>0xfff) { clampedHands++; if(got!=want) { clampWrong++; if(clampWrong<=4) hw.append(" clamped:").append(target).append("+").append(o).append("->").append(got).append("/").append(want); } }
+            else { inRange++; if(got!=want) { rangeWrong++; if(rangeWrong<=4) hw.append(" in range:").append(target).append("+").append(o).append("->").append(got).append("/").append(want); } }
+        }
+        check("the blend publishes its offset carried from the target the adder clamps: "+clampWrong+" of "+clampedHands
+            +" hands with the target clamped off, "+rangeWrong+" of "+inRange+" in range"+hw,
+            clampWrong==0&&rangeWrong==0&&clampedHands>40&&inRange>40);
+        // And from a base under the floor.  A MIDI note under the table's
+        // bottom plays its own degree a period down per period of keys, so
+        // the base the blend measures from - no held key is it - can sit far
+        // under the pitch floor, held at -0x7000.  The offset is measured
+        // from that base as it stands and carried from the target the same
+        // way; blend_goal used to take a base under zero for an anchor held
+        // at the blend's own floor, and published the offset whole, so the
+        // floor plus the whole offset sounded (clamp-chain scan, round 3:
+        // note 12 over a held key 12, DAC 1435 where once is 1075).
+        Random low=new Random(0x12092026L);
+        int lowClamped=0, lowRange=0, lowWrong=0, lowRangeWrong=0; StringBuilder lw=new StringBuilder();
+        for(int t=0;t<160;t++) {
+            int n=1+low.nextInt(4);
+            List<Integer> slots=new ArrayList<>(); while(slots.size()<n){ int s=low.nextInt(29); if(!slots.contains(s)) slots.add(s); }
+            int[][] cc=new int[n][];
+            for(int i=0;i<n;i++) cc[i]=new int[]{slots.get(i),low.nextInt(3000),0,low.nextInt(1024)};
+            int base=t%2==0?-0x79-low.nextInt(2400):-0x79-low.nextInt(0x7000-0x79+1);
+            int[] terms={-968,-484,0,484,968,1452,2420};
+            int target=base+terms[low.nextInt(terms.length)];
+            int knob=0x30+low.nextInt(0x3d0);
+            long o=blendModel(base,knob,cc,true);
+            long want=carriedOffset(target,o);
+            long got=blendPublish(base,target,knob,cc);
+            if(target<-0x78||target>0xfff) lowClamped++; else { lowRange++; if(got!=want) lowRangeWrong++; }
+            if(got!=want) { lowWrong++; if(lowWrong<=4) lw.append(" ").append(base).append(":").append(target).append("+").append(o).append("->").append(got).append("/").append(want); }
+        }
+        check("and from a base under the floor, as a MIDI note under the table's bottom leaves it: "+lowWrong+" of "+(lowClamped+lowRange)
+            +" hands off ("+lowClamped+" with the target clamped, "+lowRange+" in range, "+lowRangeWrong+" of those off)"+lw,
+            lowWrong==0&&lowClamped>40&&lowRange>10);
+        // But not from an anchor the blend itself holds at its floor: a note
+        // latched under the floor in the hold state sounds on the floor, the
+        // blend weighs it there, and the offset it measures from there is
+        // already the one the held target needs (the floored-contributor
+        // mean, pitch scan: defensible, kept).  Carrying the target's deficit
+        // as well would take it twice.  Random latched hands, the anchor's
+        // stamp taking it under the floor, the target its own pitch.
+        Random held=new Random(0x0c092026L);
+        int heldWrong=0, heldPulled=0; StringBuilder hl=new StringBuilder();
+        for(int t=0;t<60;t++) {
+            int n=2+held.nextInt(3);
+            List<Integer> slots=new ArrayList<>(); while(slots.size()<n){ int s=held.nextInt(29); if(!slots.contains(s)) slots.add(s); }
+            int[][] cc=new int[n][];
+            int anchor=held.nextInt(300);
+            cc[0]=new int[]{slots.get(0),anchor,-484,held.nextInt(1024)};
+            for(int i=1;i<n;i++) cc[i]=new int[]{slots.get(i),400+held.nextInt(2600),new int[]{-484,0,484}[held.nextInt(3)],held.nextInt(1024)};
+            int knob=0x30+held.nextInt(0x3d0);
+            long o=blendModel(anchor,knob,cc,true);
+            if(o>0) heldPulled++;
+            long got=blendPublish(anchor,anchor-484,knob,cc,true);
+            if(got!=o) { heldWrong++; if(heldWrong<=4) hl.append(" ").append(anchor-484).append("+").append(o).append("->").append(got); }
+        }
+        check("and an anchor latched under the floor keeps the offset measured from the blend's own floor: "+heldWrong+" of 60 hands off ("
+            +heldPulled+" pulled up)"+hl,heldWrong==0&&heldPulled>10);
+        println("PASS the blend's offset is carried from the target the adder clamps, from a base under the floor too, and is 3ca37de's wherever the target is in range");
+    }
+    // What the blend must publish for a target the adder is about to clamp
+    // and the offset o measured from its base: what takes the held target
+    // to target + o, the sum the pitch chain holds once at its end.  An
+    // offset pointing further into the clamp, or one that does not climb
+    // out of it, leaves the pitch where the clamp holds it.  Nothing is
+    // capped here: the one clamp after the glide, the bend and the offset
+    // does that.
+    long carriedOffset(long target,long o) {
+        if(target<-0x78&&o>0) return Math.max(0,target+o+0x78);
+        if(target>0xfff&&o<0) return Math.min(0,target+o-0xfff);
+        return o;
+    }
+    // The blend cave as blend_slotmap enters it, with the target apart from
+    // the base: R10 the base the offset is measured from, R12 the target
+    // the adder has summed.  No slot latched, so no stamp counts.
+    long blendPublish(int base,int target,int knob,int[][] c) throws Exception { return blendPublish(base,target,knob,c,false); }
+    long blendPublish(int base,int target,int knob,int[][] c,boolean latched) throws Exception {
+        w(0x6158,1,0); w(S+0x306,2,knob); w(0x608e,1,latched?1:0);
+        for(int k=0;k<29;k++) { w(S+0x21b+k,1,0); w(0x6540+2*k,2,0); w(0x6100+2*k,2,0); w(0x60a2+2*k,2,0); }
+        for(int[] x:c) {
+            w(S+0x21b+x[0],1,1); w(0x854+2*x[0],2,x[1]); w(0x60a2+2*x[0],2,x[2]&0xffff);
+            w(0x6540+2*x[0],2,x[3]); w(0x6100+2*x[0],2,x[3]);
+        }
+        e.writeRegister("R10",base&0xffffffffL); e.writeRegister("R12",target&0xffffffffL);
+        call(BLEND_CAVE);
+        return (short)r(0x60e0,2);
+    }
+    // The blend's re-base history (pitch finding 4).  "Nothing has sounded
+    // under the blend yet" was a history of -1, tested as any negative
+    // base, and a base is negative whenever key 0 sits under the period
+    // the note-on drops: MIDI note 24 off the octaves publishes -1 on
+    // Sabat II's 483 and -19 on 24TET-neutral's 465.  The next note then
+    // skipped the fold and jumped.  The fold keeps what is sounding across
+    // the step, so the scan after the base moves must sound what the scan
+    // before it did; key 0 at 485, whose base is +1, is the control.  And
+    // the step it folds is the target's as the adder holds it: key 0 at 300
+    // under octave pad 0 is a target the floor holds, and the handover to
+    // note 31, key 7, lands in range with the blend still pulling toward
+    // key 12, so folding the base's own step moved the pitch by what the
+    // floor had taken (the clamp-chain scan, finding 2's re-base).  A
+    // handover onto the leaned key itself would zero the offset, which the
+    // conditioner snaps to rest by design.
+    void rebaseSentinel() throws Exception {
+        if(lean) { println("SKIP the re-base history: the blend is off in this image"); return; }
+        StringBuilder seen=new StringBuilder(); int jumped=0;
+        for(int key0:new int[]{485,483,465,300}) {
+            setup(0,false,0); command(2);
+            liveTable(anchored(key0));
+            exactPosition(key0==300?1:0);
+            w(S+0x306,2,0xff);
+            touchOn(12);
+            for(int j=0;j<29;j++) { w(0x3490+j,1,j==12?2:0); w(0x3686+2*j,2,j==12?1300:110); }
+            call(0x8001aa10L);
+            noteOn(24);
+            long before=0; for(int i=0;i<30;i++) { call(0x8001aa10L); before=dac(); }
+            long base=(short)r(S+0x350,2);
+            if(key0==300) check("note 24 under octave pad 0 bases key 0 on its entry, its target held at the floor, or this proves nothing: "+base+", target "+(short)r(S+0x352,2),
+                base==key0&&(short)r(S+0x352,2)==-0x78&&(short)r(0x60e2,2)!=0);
+            else check("note 24 off the octaves bases key 0 a period down, or this proves nothing: "+base,
+                base==key0-r(0x6814,2)&&(short)r(0x60f4,2)==base&&(short)r(0x60e2,2)!=0);
+            noteOn(key0==300?31:36);
+            call(0x8001aa10L); long after=dac();
+            seen.append(String.format(" key 0 at %d: base %d, DAC %d then %d;",key0,base,before,after));
+            if(Math.abs(after-before)>1) jumped++;
+            touchOff(12); pressureFor(-1,0);
+        }
+        check("a base under zero is folded like any other, and the fold is the held target's step: the pitch holds across it,"+seen,jumped==0);
+        println("PASS the blend folds a base step from under zero, and folds the step the held target takes; only the seed 0x7fff means nothing has sounded");
+    }
+    // A MIDI note under the table's bottom over a held key the blend pulls
+    // toward (clamp-chain scan, round 3).  The note plays its own degree a
+    // period down per period of keys, so its base sits under the pitch
+    // floor and the adder holds its target there; the blend's offset is
+    // measured from the base, so it has to be carried from the held target
+    // or the floor plus the whole offset sounds.  Key 12 is the only key
+    // with a finger on it, so whatever the note, the blend pulls the pitch
+    // onto key 12: note 24, whose base is in range, is the reference, and
+    // notes 12 and 0 must sound exactly what it does, near key 12's own
+    // pitch, and hold it flat across the handover to note 36.
+    void midiUnderTheFloor() throws Exception {
+        if(lean) { println("SKIP a MIDI note under the floor under the blend: the blend is off in this image"); return; }
+        long ref=-1, want=-1; StringBuilder seen=new StringBuilder(); int off=0;
+        for(int note:new int[]{24,12,0}) {
+            setup(0,false,0); command(2);
+            liveTable(anchored(485));
+            exactPosition(0);
+            w(S+0x306,2,0xff);
+            touchOn(12);
+            for(int j=0;j<29;j++) { w(0x3490+j,1,j==12?2:0); w(0x3686+2*j,2,j==12?1300:110); }
+            call(0x8001aa10L);
+            noteOn(note);
+            long before=0; for(int i=0;i<30;i++) { call(0x8001aa10L); before=dac(); }
+            long base=(short)r(S+0x350,2), target=(short)r(S+0x352,2);
+            if(note==24) {
+                ref=before; want=remapModel(clampPitch(livePad()+r(0x854+24,2)));
+                check("note 24 over held key 12 sounds near key 12's pitch, or the reference proves nothing: DAC "+ref+", key 12 alone "+want,
+                    Math.abs(ref-want)<=12&&(short)r(0x60e2,2)!=0);
+            } else check("note "+note+" bases under the floor and the adder holds its target there, or this proves nothing: base "+base+", target "+target,
+                base<-0x78&&target==-0x78);
+            noteOn(36);
+            StringBuilder h=new StringBuilder(); int moved=0;
+            for(int i=0;i<8;i++) { call(0x8001aa10L); long d=dac(); h.append(" ").append(d); if(Math.abs(d-ref)>1) moved++; }
+            seen.append(String.format(" note %d: base %d, DAC %d, then note 36:%s;",note,base,before,h));
+            if(before!=ref||moved>0) off++;
+            touchOff(12); pressureFor(-1,0);
+        }
+        check("a MIDI note under the floor over a held key sounds and holds what note 24 does, DAC "+ref+":"+seen,off==0);
+        println("PASS a MIDI note under the table's bottom, its target on the floor, sounds the blend's pull as note 24 does and holds it across the handover");
+    }
+    // The recording audition's pinned pitch (pitch finding 5).  It went in
+    // as the relative pitch plus one, zero meaning none, so a press one unit
+    // under the take's reference stored zero and was never pinned: Sabat
+    // II's key 0 at 483, recorded under octave pad 0 into a take born under
+    // pad 1, auditioned the note latched in its slot instead.  The audition
+    // must sound the press: its table entry plus the transpose it was
+    // played under.
+    void auditionPin() throws Exception {
+        if(lean||!seq) { println("SKIP the audition pin: no latch recording in this image"); return; }
+        StringBuilder seen=new StringBuilder(); int off=0;
+        for(int key0:new int[]{485,483,465}) {
+            setup(0,false,1); latchFixture();
+            liveTable(anchored(key0));
+            octavePad(1); key(0); sound(); noteUp(0);
+            check("the first press opens the take, or this proves nothing",r(0x61e0,1)==1);
+            octavePad(0); key(0); sound();
+            long heard=r(0x854,2)+livePad();
+            long target=(short)r(S+0x352,2), d=dac();
+            check("the second press is recorded one period down, or this proves nothing: step "+step(1),
+                r(0x61e0,1)==2&&sounds(1)==heard);
+            seen.append(String.format(" key 0 at %d: heard %d, relative %d: target %d DAC %d;",key0,heard,step(1),target,d));
+            if(target!=heard||d!=remapModel(clampPitch(heard))) off++;
+            noteUp(0);
+        }
+        check("the audition sounds the press it recorded, whatever its relative pitch:"+seen,off==0);
+        println("PASS the recording audition pins every relative pitch, one unit under the reference included");
+    }
+    // preset_degrees under a period that is not a whole number of units
+    // (host finding 2).  The search reduces each entry's interval above
+    // entry 0 into one period and read the winner's degree as its index
+    // modulo the map's size: a period low wherever rounding left an entry a
+    // unit under the whole periods its index stands for.  The tables are
+    // tools/build.py's own, built by tools/test_controls.py: the host scan's
+    // twelve-step scales with periods of 1201.5 and 1199 cents, which must
+    // come right, and every bundled tuning, which must not move.  Every
+    // store 0..1023 is asked of the cave; the degrees it publishes must
+    // rotate key 0 by the table's nearest shift to the store's units -
+    // preset_entry's wrap on the table's own entries, to within rounding.
+    final List<String> pdNames=new ArrayList<>(); final List<int[]> pdTables=new ArrayList<>();
+    final List<int[]> pdShape=new ArrayList<>();   // {keys, period, 1 for a probe scale}
+    long wrapped(int[] t,int keys,int period,int i) {
+        long wrap=0;
+        while(i>31) { i-=keys; wrap+=period; }
+        while(i<0) { i+=keys; wrap-=period; }
+        return t[i]+wrap;
+    }
+    // 3ca37de's search, transcribed: the winner's index modulo the map.
+    int degrees3ca37de(int[] t,int keys,int period,int store) {
+        int units=store*132/100, whole=units/period, rem=units%period;
+        int bestK=-1, bestD=period-rem;
+        for(int k=0;k<32;k++) {
+            int c=t[k]-t[0];
+            while(c<0)c+=period;
+            while(c>=period)c-=period;
+            int d=Math.abs(c-rem);
+            if(d<bestD) { bestD=d; bestK=k; }
+        }
+        return whole*keys+(bestK<0?keys:bestK%keys);
+    }
+    void presetDegreesRounded() throws Exception {
+        if(pdTables.isEmpty()) { println("SKIP preset degrees under a rounded period: no tables were handed over (tools/test_controls.py passes them)"); return; }
+        setup(0,false,0); command(2);
+        // The three slot tables and their keys per period, the period and the
+        // slot, put back afterwards: the kbm variant reads its map's size off
+        // them for its own summary.
+        byte[] keepTables=e.readMemory(toAddr(0x68e0),0xc8);
+        long keepPeriod=r(0x6814,2), keepSlot=r(0x6090,1);
+        StringBuilder why=new StringBuilder(); int probeWrong=0, bundledMoved=0, bundledOff=0, probes=0;
+        for(int s=0;s<pdTables.size();s++) {
+            int[] t=pdTables.get(s); int keys=pdShape.get(s)[0], period=pdShape.get(s)[1];
+            boolean probe=pdShape.get(s)[2]==1;
+            for(int k=0;k<32;k++) w(0x68e0+2*k,2,t[k]);
+            w(0x69a0,2,keys); w(0x6090,1,0); w(0x6814,2,period);
+            w(S+0x342,1,0); w(S+0x343,1,1); w(S+0x2ef,1,0);
+            int wrong=0, moved=0, maxN=(1352/period+2)*keys; StringBuilder first=new StringBuilder();
+            for(int store=0;store<1024;store++) {
+                w(0x613a,2,store);
+                call(0x8001e1c0L);
+                int n=(int)r(0x60f3,1), units=store*132/100;
+                long err=Math.abs(wrapped(t,keys,period,n)-t[0]-units), best=Long.MAX_VALUE;
+                for(int m=0;m<=maxN;m++) best=Math.min(best,Math.abs(wrapped(t,keys,period,m)-t[0]-units));
+                if(err>best+4) { wrong++; if(first.length()<200) first.append(String.format(" store %d: %d degrees, %d off where %d is",store,n,err,best)); }
+                if(!probe&&n!=degrees3ca37de(t,keys,period,store)) moved++;
+            }
+            if(probe) { probes++; if(wrong>0) { probeWrong+=wrong; why.append(" ["+pdNames.get(s)+": "+wrong+" stores"+first+"]"); } }
+            else { bundledMoved+=moved; bundledOff+=wrong; if(moved>0||wrong>0) why.append(" ["+pdNames.get(s)+": "+moved+" moved, "+wrong+" off"+first+"]"); }
+        }
+        e.writeMemory(toAddr(0x68e0),keepTables); w(0x6814,2,keepPeriod); w(0x6090,1,keepSlot);
+        w(0x60e4,2,0); controlScan();
+        check("preset degrees under a period that is not whole: every store rotates to the nearest shift:"+why,probeWrong==0&&probes>=2);
+        check("and every bundled tuning answers every store as 3ca37de did:"+why,bundledMoved==0&&bundledOff==0);
+        println("PASS preset degrees keep the degree with the period each interval was reduced by: "+probes+" rounded periods right, "
+            +(pdTables.size()-probes)+" bundled tunings unchanged, 1024 stores each");
     }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
@@ -3381,6 +4350,17 @@ public class ControlRegression extends SequenceEditRegression {
         // key played over a take alone: the rest of the suite reads its
         // intervals off the twelve-key maps the other variants carry.
         kbm=args.length>9&&args[9].equals("kbm");        // args[9], after the Bohlen-Pierce table
+        // args[10]: pd:<name>|<keys>|<period>|<1 probe, 0 bundled>|<32 entries>;...
+        // tools/build.py's key tables for presetDegreesRounded.
+        if(args.length>10&&args[10].startsWith("pd:")) {
+            for(String one:args[10].substring(3).split(";")) {
+                String[] part=one.split("\\|");
+                int[] t=new int[32]; String[] v=part[4].split(",");
+                for(int k=0;k<32;k++) t[k]=Integer.parseInt(v[k].trim());
+                pdNames.add(part[0]); pdTables.add(t);
+                pdShape.add(new int[]{Integer.parseInt(part[1]),Integer.parseInt(part[2]),Integer.parseInt(part[3])});
+            }
+        }
         seq=!lean; clock=!lean; persistent=args.length>2&&args[2].equals("persist");
         List<String> failures=new ArrayList<>();
         try {
@@ -3391,9 +4371,18 @@ public class ControlRegression extends SequenceEditRegression {
                 try { latchAfterMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 try { latchPresetMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 try { keyOverTakeMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                try { midiOneSum(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                try { midiClampPaths(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                try { midiNoteOffs(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 // Not the map's, but MIDI the keyboard sends, and cheap: so
                 // every variant runs it.
                 try { velocityFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                // The clamp-chain scan's checks that read no MIDI: the same
+                // code in every image, so the 24-key map runs them too.
+                try { randomOctaveFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                try { blendClampOnce(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                try { blendCarriedOffset(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                try { presetDegreesRounded(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
                 println("CONTROL REGRESSION PASS: "+checks+" assertions; the "+keysPerPeriod()+"-key map, octave pad, latch and keyboard MIDI checks, persist="+persistent);
                 return;
@@ -3426,6 +4415,8 @@ public class ControlRegression extends SequenceEditRegression {
             if(!lean)try { latchPresetMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { velocityFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { keyOverTakeMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { midiOneSum(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { midiClampPaths(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(jack)try { jackTransposer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
@@ -3452,12 +4443,23 @@ public class ControlRegression extends SequenceEditRegression {
             try { calibrationExits(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { calibrationLiveEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { exactPitch(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            // On its own, so a note-on exactPitch refuses leaves these to be heard.
+            try { tunedNotes(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { midiNoteOffs(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { blendSign(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchedUnderThePeriod(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { anchoredBottomKey(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { glideUnderZero(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { reloadedRotation(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             try { gainPairOff(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            // The clamp-chain scan (2026-09-28).
+            try { randomOctaveFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { blendClampOnce(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { blendCarriedOffset(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { rebaseSentinel(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { midiUnderTheFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { auditionPin(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { presetDegreesRounded(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
             println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }

@@ -191,11 +191,28 @@
     var vpo = 1.2;
     Array.prototype.forEach.call($('vpo').children, function (b) {
         b.addEventListener('click', function () {
+            var was = vpo;
             vpo = parseFloat(b.dataset.v);
+            // A loaded table belongs to the scaling it was taken at.  A
+            // keyboard's comes as offsets read off counts already rounded at
+            // that scaling, so built again at the other one it was rounded
+            // twice: on the owner's two calibrations 13 to 21 entries came
+            // out a count off the table the calibration itself makes there.
+            // Dropped rather than rescaled, as changing the offset drops one
+            // (setPitchOffset).
+            var dropped = vpo !== was && haveBaseline();
+            if (dropped) {
+                clearBaseline();
+                syncBaseline(); buildTable(); drawPlot();
+            }
             updateOffsetNote();
             // The DAC-range check depends on the scaling, so a green verdict
             // given at 1 V/oct must not survive a switch to 1.2 unexamined.
-            validateCal();
+            // It writes the calibration line, so a drop is said through it:
+            // said before it, the line was cleared or replaced at once.
+            validateCal(dropped ? 'The loaded table was dropped: changing the volts per ' +
+                'octave rescales every entry, so it no longer describes this build. ' +
+                'Load it again if it was measured at this setting.' : null);
             invalidate();
             Array.prototype.forEach.call($('vpo').children, function (o) {
                 o.setAttribute('aria-pressed', String(o === b));
@@ -841,16 +858,23 @@
         return $('useCal').checked && !calibrationBlank();
     }
 
-    function validateCal() {
-        if (!$('useCal').checked || calibrationBlank()) {
-            msg($('calMsg'), '', '');
-            return true;
-        }
+    // `note` is something the page has just done that this line has to
+    // say, such as dropping a loaded table: it stands in for the verdict
+    // when the table builds, and goes ahead of the reason when it does not.
+    // The blank check is inside the try because it builds the table too: a
+    // table past the DAC threw from it, out of whatever called this, before
+    // the reason below could be said.
+    function validateCal(note) {
         try {
+            if (!$('useCal').checked || calibrationBlank()) {
+                msg($('calMsg'), note ? 'bad' : '', note || '');
+                return true;
+            }
             var cfg = BUILDLIB.expand({ volts_per_octave: vpo, pitch_offset: pitchOffset,
                                         pitch_correction: rows() });
             BUILDLIB.pitchTable(cfg, rows());
-            msg($('calMsg'), 'ok', 'Correction is monotonic and inside the 12-bit DAC.');
+            msg($('calMsg'), note ? 'bad' : 'ok',
+                note || 'Correction is monotonic and inside the 12-bit DAC.');
             return true;
         } catch (e) {
             var hint = '';
@@ -863,7 +887,7 @@
                        'lower than the one below it. Check for a reading with the wrong ' +
                        'sign, or one entered against the wrong note.';
             }
-            msg($('calMsg'), 'bad', e.message + hint);
+            msg($('calMsg'), 'bad', (note ? note + '\n\n' : '') + e.message + hint);
             return false;
         }
     }

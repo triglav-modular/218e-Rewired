@@ -619,16 +619,21 @@ def expand(options: dict) -> dict:
                 raise SystemExit(
                     f"arp_patterns[{i}] has {len(steps)} steps; "
                     "it must have 1 to 32")
-            mask = sum(1 << k for k, c in enumerate(steps) if c != ".")
-            if mask == 0:
-                raise SystemExit(
-                    f"arp_patterns[{i}] is all rests — it would never sound")
             if length is None:
                 length = len(steps)
             if not isinstance(length, int) or isinstance(length, bool) \
                     or not 1 <= length <= 32:
                 raise SystemExit(
                     f"arp_patterns[{i}] length must be a whole number 1..32")
+            # Only the steps inside the length ever play: the firmware wraps
+            # the step at the length, and a clear bit under it rests unless
+            # the whole mask is zero.  A hit past the length made the mask
+            # look like a pattern, so one that rests on every step it plays
+            # was built.  web/buildlib.js does the same.
+            mask = sum(1 << k for k, c in enumerate(steps[:length]) if c != ".")
+            if mask == 0:
+                raise SystemExit(
+                    f"arp_patterns[{i}] is all rests — it would never sound")
             masks.append(mask)
             lengths.append(length)
         cfg["knob2"]["patterns"] = masks

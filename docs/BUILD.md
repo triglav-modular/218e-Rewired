@@ -298,7 +298,7 @@ the options into the full internal settings the build has always used.
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 | `knob1`, `knob2`, `knob3`, `knob4` | per knob | What each preset knob does outside edit mode. Left out, a knob takes the first role listed: `knob1` `order`/`orders`, `knob2` `spacing`/`quantized`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back to its preset voltage. Edit-mode knobs 1 and 4 are unaffected. |
-| `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
+| `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Only the steps up to the length play, so a pattern that rests on all of them is refused. Left out, the bank is the 22 CLIX fills. |
 | `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The hold puts the octave back where it was before pad 4 was pressed. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
 | `persist` | `true`, required | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). `false` is refused: it is a diagnostic shape, built only by the harnesses that characterise it. |
 | `clock_divide` | `true` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
@@ -325,6 +325,8 @@ measuring itself: it plays C0 to E5 into the keyboard over MIDI, listens to the
 208 on an audio input, and folds the readings onto whatever table the
 instrument is already running. Load that table there first, and save the new
 one it produces &mdash; the file it writes is the same format this reads.
+Switching the page's volts per octave or its pitch offset drops a loaded
+table. It belongs to the scaling and the layout it was taken at.
 
 By hand, measure each key against 12-TET with a tuner and fold the readings
 in:
@@ -469,12 +471,28 @@ that each MIDI note names the note its pitch CV plays: a latched note at
 the octave it was entered at, and in HOLD at the degree of a quantised
 preset it was entered under, a recorded step at the octave it was played
 at, a preview pinned as its CV is, and a key played over a take at its own
-note. It checks the keyboard's velocity floors and the peak hold with
-`pressure_fix` on and off. One more image carries a 24-key map,
+note. Each note is named in one sum and held to 0..127 once. The helpers
+that name one are swept over the key, the periods, the jack's degrees and
+a step's degrees, and the paths are driven where part of a note falls under
+0 or over 127 before the rest goes on. MIDI notes 0..127 are played in, and
+those under 24 play their own pitches. Their note-ons and note-offs are
+driven in orders under and across 24: each note-off lets its own note go,
+writes nothing past the held-note flags, and ends the gate when it lets go
+of the note pressed last. It checks the keyboard's velocity
+floors and the peak hold with `pressure_fix` on and off. It checks the
+pitch chain wherever a value was held at a floor or a cap before a later
+term was added. Knob 3's random octave is tested on the finished target.
+The glide, the bend and the blend's offset are summed and held once, on the
+scan and in the clock's fast stage. The blend's re-base history folds a
+base under zero. A MIDI note under the table's bottom, its base under the
+pitch floor, sounds the blend's pull over a held key as note 24 does. The
+recording audition pins a pitch one unit under the
+take's reference. The preset quantiser keeps its degree under a period that
+is not a whole number of units. One more image carries a 24-key map,
 `tunings/24TET.scl` with `tunings/24TET-full.kbm`, and runs only the MIDI
-checks of the octave pads, the latch, a key played over a take and the
-velocity floors. There an octave pad steps the MIDI note 24, as the jack
-does for a period.
+checks of the octave pads, the latch, a key played over a take, the one sum
+and the velocity floors. There an octave pad steps the MIDI note 24, as the
+jack does for a period.
 Like `test_persistence.py`, it requires Ghidra, models
 peripherals without flashing hardware, and restores shared build metadata.
 

@@ -125,7 +125,7 @@ sees the state it sees today when the gesture is not made:
 | `sequencer` | The pad-4 chord never arms, so the mode byte stays 0 and every sequencer cave answers the factory way; a take restored from the persistence record is kept but cannot be played. `seq_restart_clear` zeroes the sequencer's runtime (the mode, the cursor, the chord, the audition) at every boot in every image, so no restart resumes a take, in a build without persistence too |
 | `clock_divide` | The GPIO interrupt runs the factory's own body instead of the capture cave, event 10 reaches the factory's arp step again, and the four pulse pools go back to the scan-grid pulse; the divider never sees an edge, so it never acquires. The 4 ms trigger spike stays either way |
 | `pressure_fix` | The curve, knob 1 and knob 4 pool words go back to the factory's routines; the two clamp skips and the gain branch replay the factory's own instructions; the pressure store passes straight through the interpolator to the DAC slot. The factory's gain shares its cell with the fix's floor and ceiling, and the factory saves and reloads that cell, so a floor and ceiling left there read as the factory's default gain, 12.0, until edit-mode knob 1 sets a gain. The keyboard's note-on velocity floor is configuration knob 3's minimum again, the byte at `state+0x2db`, where the fix's edit-mode knob 4 keeps its curve level; a level left there reads as a floor of 1. The peak hold takes a falling sensor reading every tenth scan, as the factory's does, where the fix takes one every scan |
-| `pressure_portamento` | The pitch hook goes straight to the remap around the blend's conditioner; the glide clamp keeps the classic portamento with its zero-snap. The conditioner's last offset and the re-base history, which `transpose_capture` consults in every configuration, are reset at every boot: nothing sounds when the keyboard comes up |
+| `pressure_portamento` | The pitch hook goes to the scan's one clamp and the remap around the blend's conditioner; the glide clamp keeps the classic portamento with its zero-snap. The conditioner's last offset and the re-base history, which `transpose_capture` consults in every configuration, are reset at every boot: nothing sounds when the keyboard comes up |
 | `quantize_presets` | The preset adder's float-to-int is the factory's own again, so the voltage adds as it is, and the rotation is asked for zero degrees from the preset |
 | `portamento_in` = portamento | The transposer reads no jack (zero degrees from it) and the factory's glide-rate addend reads the jack again. The transposer's state word, whose shift the MIDI note conversion honours, is unseeded at every boot and recomputed by the first scan |
 | `alternate_tunings` | The per-scan applier word returns at once, so the slot LEDs and the transpose-mode byte stay the factory's; edit keys 27 and 28 replay the factory's transpose-mode and remote-enable toggles instead of selecting slots; the three remote-enable reads read the flag instead of zero |
@@ -150,11 +150,14 @@ reads the key table at RAM `0x854` at note - 24, as far as entry 103, and
 the applier and the rotation fill entries 0..31. Past entry 31 the note-on
 reads the table the way the rotation wraps it: down one period of keys and
 up one period of pitch at a time, the keys per period being the selected
-slot's and the period number cell 10. So a note on the instrument's
+slot's and the period number cell 10. Under entry 0 it wraps the other
+way, up one period of keys and down one period of pitch at a time, so a
+note under 24 plays its own pitch. The factory floored the index at 0, and
+notes 0..23 all played note 24's pitch. So a note on the instrument's
 channel plays the selected slot over its whole range, rotated by the jack
 and the quantised preset like the keys, and a note past the pitch output
-holds at the top. With the add-to-pitch switch off OCTAVE the note-on
-drops one period of cell 10, not 484.
+holds at the top and one under it at the bottom. With the add-to-pitch
+switch off OCTAVE the note-on drops one period of cell 10, not 484.
 
 ## The record
 
@@ -195,7 +198,10 @@ Load validates the marker, version, length, generation, CRC and image
 marker, then every field's bounds: pitch table entries inside the 12-bit
 DAC range, tuning table entries up to `0x3fff` (the fourteen bits an NRPN
 value carries; the builders clamp there, far above the DAC, where the pitch
-path clamps anyway), keys per period `1..32`, lengths `0..32`, numbers and option
+path clamps anyway; a tuning with two or more keys past it is refused,
+since the clamp would store them as one value, and the latch spacing is
+judged on the clamped table), keys per period
+`1..32`, lengths `0..32`, numbers and option
 cells inside their ranges, and `pressure_portamento` only with
 `pressure_fix`. Any failure means the record is ignored and the image's
 own settings are used; a bad record is never repaired in place. A DFU
@@ -337,9 +343,14 @@ settings loads one and arms the unsent card, so the table the run tunes
 comes up there to send. The page keeps its own volts per octave through
 that load. The run tunes at that scaling: where the keyboard's table is at
 the other one, the run writes the flat table at the page's scaling into the
-mirror before its first note and tunes from that. The keyboard's port is
-held by one of a read, a send and a run at a time, and only the one that
-took it gives it back.
+mirror before its first note and tunes from that. Keeping its own scaling
+drops the keyboard's table from the page's calibration, as any switch of
+the volts per octave drops a loaded table, and a run that completes loads
+the table it tuned. The run sweeps upward. An entry that has to rise past
+the one above first raises every entry above it that the run still
+reaches, from the top down, so the table the keyboard plays never runs
+backwards. The keyboard's port is held by one of a read, a send and a run
+at a time, and only the one that took it gives it back.
 
 A reply is believed only whole. A dump or an identity block that lost a
 parameter on the way still ends with the layout version, so it looks

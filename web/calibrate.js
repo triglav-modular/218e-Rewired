@@ -960,6 +960,31 @@
             return Math.max(lo, Math.min(hi, v));
         }
 
+        // The run sweeps upward, so every entry above the one being tuned is
+        // still to come and holds the value it started from.  Bounded by
+        // that, an entry that had to rise by more than the gap to it stopped
+        // short, flat, and nothing came back for it.  So when an entry has to
+        // rise past the one above, the entries above it rise first by what it
+        // lacks, from the top down, and the table never runs backwards, not
+        // even between two writes.  Only the entries this run still reaches
+        // move, each kept under the ones above it and under the first entry
+        // the run does not reach, or the top of the DAC; each is tuned in its
+        // turn from where it is left.  The entry below is tuned already, so
+        // it stays the bound under the entry.
+        var runTop = steps[steps.length - 1].index;
+        async function lift(e, v) {
+            if (e >= runTop || v <= table[e + 1] - 1) return;
+            var need = v - (table[e + 1] - 1);
+            var roof = runTop + 1 < table.length ? table[runTop + 1] : DAC_TOP + 1;
+            for (var k = runTop; k > e; k--) {
+                var up = Math.min(roof - (runTop + 1 - k), table[k] + need);
+                if (up > table[k]) {
+                    await adjust.write(k, up);
+                    table[k] = up;
+                }
+            }
+        }
+
         // One entry, brought as close to its pitch as the table allows.  It
         // is read as the plain sweep reads it; more than half a count out,
         // it is moved by that reading - the ramp's counts per cent, which a
@@ -1010,7 +1035,9 @@
                     var ramp = 1 / adjust.countsPerCent;
                     if (slope >= ramp / 2 && slope <= ramp * 2) rate = 1 / slope;
                 }
-                var next = room(e, value - Math.round(j.cents * rate));
+                var want = value - Math.round(j.cents * rate);
+                await lift(e, want);
+                var next = room(e, want);
                 // Nowhere to go, or somewhere already heard: another try
                 // would only say again what one has said.
                 if (next === null || next === value ||

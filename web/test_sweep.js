@@ -261,7 +261,16 @@ function modeWorld(opts) {
     // Near 0 V a 208 need not sit on the curve the rest of it follows:
     // `bend` cents at 0 counts, dying away over `bendSpan` counts.
     var bend = opts.bend || 0, bendSpan = opts.bendSpan || 100;
+    // Or a 208 that was measured rather than modelled: `profile` is a table
+    // it is in tune on, entry for entry, and it plays a semitone between two
+    // of its entries and past its ends at the slope of the step beside them.
+    var profile = opts.profile || null;
     function octaves(v) {
+        if (profile) {
+            var k = w.shift + 1;
+            while (k < profile.length - 1 && v > profile[k]) k++;
+            return (k - 1 + (v - profile[k - 1]) / (profile[k] - profile[k - 1])) / 12;
+        }
         return (v * (1 + slope) + amp * Math.sin(2 * Math.PI * v / P + 0.4)) / cpo +
                bend * Math.exp(-Math.max(0, v) / bendSpan) / 1200;
     }
@@ -1300,32 +1309,68 @@ function signature(w, out) {
        out.warnings.some(function (x) { return /^\S+: \d+\.\d cents out after 3 tries$/.test(x); }),
        out.warnings.join(' | '));
 
-    // Never past a neighbour.  Entry 30 here is a semitone flat and entry
-    // 31 sits six counts above 29, so 30 has five counts of room: it moves
-    // as far as the room allows and no further, and 31 - with room above
-    // it - converges.  Still tens of cents out, 30 is then filled in
-    // between 29 and the 31 it could not pass.
+    // Squeezed.  Entries 30, 31 and 32 here sit three counts apart above
+    // 29, each a semitone or more flat, so under 31 as it stands 30 has five
+    // counts of room where it needs about forty.  The entries above it are
+    // still to be tuned, so they rise first, from the top of the run down,
+    // and 30 goes where it has to.  Raised from the bottom up, 31 would pass
+    // 32 before 32 had moved.  What matters is the table the keyboard plays:
+    // it never runs backwards, not even between two writes.  Every entry the
+    // run reaches is tuned, and the entries above the run are not its to
+    // move.
     var squeezed = B.pitchTable(B.expand({}), B.expand({})._calibration);
-    squeezed[30] = squeezed[29] + 3; squeezed[31] = squeezed[29] + 6;
+    squeezed[30] = squeezed[29] + 3; squeezed[31] = squeezed[29] + 6; squeezed[32] = squeezed[29] + 9;
     w = modeWorld({ listening: 2, table: squeezed });
     out = await modeSweep(w, { low: 26, high: 34 });
     var at30 = out.readings.filter(function (r) { return r.index === 30; })[0] || {};
     var to30 = w.writes.filter(function (p) { return p[0] === 30; }).map(function (p) { return p[1]; });
-    ok('an entry never passes the neighbour above it, not even for a note',
+    ok('the table the keyboard plays never runs backwards, not even between two writes',
        w.backwards.length === 0 && !!out.table && increasing(out.table, 0), JSON.stringify(w.backwards.slice(0, 2)));
-    ok('it goes as far as the room allows', Math.max.apply(null, to30) === squeezed[31] - 1,
-       'played at ' + to30.join(','));
-    ok('and is named as not converged, and filled in', out.warnings.some(function (x) {
-           return x.indexOf(PLAIN.noteLabel(30) + ': ') === 0 && /cents out after \d tries, interpolated$/.test(x);
-       }),
-       out.warnings.join(' | '));
-    ok('between 29 and the 31 it could not pass',
-       at30.source === 'interpolated' && !!out.table &&
-       out.table[30] === Math.round((out.table[29] + out.table[31]) / 2) && increasing(out.table, 0),
-       out.table ? out.table.slice(29, 32).join(',') : '-');
-    ok('while the neighbour with room converges',
-       !!out.table && Math.abs(out.table[31] - w.ideal(31)) <= tolerance(w, out).counts,
-       out.table ? (out.table[31] - w.ideal(31)).toFixed(2) + ' counts' : '-');
+    ok('an entry with too little room under the one above still converges, past where that one started',
+       at30.source === 'measured' && !!out.table && out.table[30] > squeezed[31] - 1 &&
+       Math.abs(out.table[30] - w.ideal(30)) <= tolerance(w, out).counts,
+       'played at ' + to30.join(',') + '; kept ' + (out.table ? out.table[30] : '-') + ', in tune at ' +
+       w.ideal(30).toFixed(2) + ', ' + at30.source);
+    var above30 = [31, 32, 33, 34].filter(function (e) {
+        var r = out.readings.filter(function (x) { return x.index === e; })[0] || {};
+        return r.source !== 'measured' || !out.table || Math.abs(out.table[e] - w.ideal(e)) > tolerance(w, out).counts;
+    });
+    ok('and so does every entry above it that the run reaches', !above30.length && !!out.table,
+       'not tuned: ' + above30.join(','));
+    ok('while the entries above the run are never written, and keep their values',
+       !w.writes.some(function (p) { return p[0] > 34; }) && !!out.table && same(out.table.slice(35), squeezed.slice(35)));
+
+    // A 208 that needs large upward moves: the owner's, whose measured table
+    // (calibration/218e-pitch-calibration.csv) sits up to 93 counts above
+    // the flat table at 1 V/oct, near three of its steps.  A first
+    // calibration, from the flat table, at each scaling: every entry has to
+    // be heard and tuned in one run, the ones that rise furthest included.
+    var ownerCsv = B.parseCalibration(fs.readFileSync(path.join(__dirname, '..', 'calibration',
+                                                               '218e-pitch-calibration.csv'), 'utf8'), 79);
+    var ownerRows = [];
+    for (var os = 0; os < 79; os++) ownerRows.push({ semitone: os, cents: ownerCsv.rows[os] });
+    var OWNER_VPO = [1.0, 1.2];
+    for (var ov = 0; ov < OWNER_VPO.length; ov++) {
+        var ownerTable = B.pitchTable(B.expand({ volts_per_octave: OWNER_VPO[ov] }), ownerRows);
+        w = modeWorld({ listening: 2, vpo: OWNER_VPO[ov], profile: ownerTable });
+        var rise = 0, riseAt = null;
+        for (var oe = 0; oe < 79; oe++) {
+            if (ownerTable[oe] - w.flash[oe] > rise) { rise = ownerTable[oe] - w.flash[oe]; riseAt = oe; }
+        }
+        out = await modeSweep(w, {});
+        near = closeness(w, out); tol = tolerance(w, out);
+        var owned = 'the owner’s 208 at ' + OWNER_VPO[ov].toFixed(1) + ' V/oct, from the flat table';
+        ok(owned + ': one run hears and tunes all 79 entries, none filled in',
+           near.heard === 79 && !!out.filled && Object.keys(out.filled).length === 0,
+           near.heard + ' tuned, filled ' + JSON.stringify(out.filled));
+        ok('  every one within half a count (' + tol.counts.toFixed(3) + ' of its counts), entry ' + riseAt +
+           ', which rises ' + rise + ' counts, included',
+           near.heard === 79 && near.counts <= tol.counts && !!out.table &&
+           Math.abs(out.table[riseAt] - w.ideal(riseAt)) <= tol.counts,
+           'worst ' + near.counts.toFixed(3) + ' counts, at entry ' + near.at);
+        ok('  and the table it plays never runs backwards', w.backwards.length === 0 && increasing(out.table, w.shift),
+           JSON.stringify(w.backwards.slice(0, 2)));
+    }
 
     // The 0 V entry is the reference, so it is never moved - even when
     // drift makes its own sweep reading come back several cents off.

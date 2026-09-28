@@ -203,8 +203,10 @@ remap **entered past the per-scan chain at its head** — the tuning applier,
 the housekeeping and the vibrato engine all advance once per scan and must not
 be run at 1 kHz — and then raises the gate, so pitch and trigger reach the DAC
 in the same flush. The staged word is the step's target plus the bend strip's
-offset at `state+0x216`, clamped to 0..0xfff — the same two terms the scan
-adds and the same clamp it applies, so the two paths reach the same DAC word.
+offset at `state+0x216` and the pressure blend's applied offset at `0x60e2`,
+held once between entry 0 of the pitch table and 0xfff. Those are the three
+terms the scan adds and the one clamp it applies, so the two paths reach the
+same DAC word.
 Omitting the bend was a pitch defect on the instrument: the flush drove slot 2
 to a bend-less note under every trigger and the scan only corrected it up to
 5 ms later, which is heard as the clock bleeding into the pitch output.
@@ -1063,7 +1065,7 @@ a changed preset held. Separate tests save on release and check clock
 continuation after a modeled pause, not physical flash timing.
 
 The clock, persistence and sequence-edit harnesses run the actual factory
-pitch pass: glide-rate lookup, floating-point slew, bend, clamp, remap,
+pitch pass: glide-rate lookup, floating-point slew, bend, blend offset, clamp, remap,
 DAC-slot write and output hook. The held-transpose clock regression also
 runs the preceding factory target preparation; omitting that producer hid
 the bare-note/transposed-note alternation above. Ghidra 12.1.3's AVR32 SLEIGH

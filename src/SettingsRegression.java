@@ -77,6 +77,8 @@ public class SettingsRegression extends PersistenceRegression {
     static final long SQC=0x8001ed60L;
     static final long CURVE=0x80019580L, I2F=0x80013350L, KNOB1=0x800194c0L, FKNOB1=0x80004188L, KNOB4=0x80014380L, FKNOB4=0x80004070L;
     static final long COND=0x8001ad78L, REMAPCAVE=0x80019980L, INTERP=0x8001a600L, INTERPOUT=0x8001a688L, GLIDETABLE=0x80015150L;
+    // pitch_clamp (the clamp-chain scan, 2026-09-28): the scan's one clamp, on both of the pitch hook's routes.
+    static final long PITCHCLAMP=0x80023cd0L;
     // Phase G: the ISR dispatch, the event-10 dispatch, the pulse dispatch, and what they choose.
     static final long CI=0x8001ef60L, CE=0x8001ef90L, PU=0x8001efc0L, CAPTURE=0x8001c200L, FBODY=0x800072f4L;
     static final long SKIP10=0x800051b0L, ARPSTEP=0x8000210cL, CLOCKPULSE=0x8001c700L, DEFER=0x8001a26cL, ISR=0x800072e4L, ISREND=0x80007328L;
@@ -889,7 +891,17 @@ public class SettingsRegression extends PersistenceRegression {
         w(LIVE+8,1,1); e.writeRegister("R12",0x3e8); p=resolve(PB);
         check("blend on: the pitch hook routes through the conditioner with the pitch kept",p==COND&&reg("R12")==0x3e8);
         w(LIVE+8,1,0); e.writeRegister("R12",0x3e8); p=resolve(PB);
-        check("blend off: the pitch hook goes straight to the remap",p==REMAPCAVE&&reg("R12")==0x3e8);
+        check("blend off: the pitch hook goes to the scan's one clamp, the pitch kept",p==PITCHCLAMP&&reg("R12")==0x3e8);
+        // And the clamp holds it at both ends and goes on to the remap:
+        // the scan carries glide plus bend unclamped since the clamp-chain
+        // scan (2026-09-28), so this is the only clamp on the blend-off
+        // route, as blend_offset_apply's call is on the blend's.
+        for(long[] c:new long[][]{{0x3e8,0x3e8},{-0x78,-0x78},{-0x79,-0x78},{-0x1e4,-0x78},{0xfff,0xfff},{0x1000,0xfff},{0x2000,0xfff}}) {
+            e.writeRegister("R12",c[0]&0xffffffffL); p=resolve(PITCHCLAMP);
+            check("the scan's one clamp takes "+c[0]+" to "+c[1]+" and on to the remap: R12="+(int)reg("R12"),
+                p==REMAPCAVE&&(int)reg("R12")==c[1]);
+        }
+        check("and the blend's apply shim reaches the remap through the same clamp",r(0x8001a92cL,4)==PITCHCLAMP);
         w(LIVE+8,1,1); e.writeRegister("R9",3); p=resolve(GR);
         check("blend on: the glide rate value is zero, the index kept",p==0x100&&reg("R8")==0&&reg("R9")==3);
         w(LIVE+8,1,0); w(S+0x306,2,0x10); p=resolve(GR);
@@ -908,7 +920,7 @@ public class SettingsRegression extends PersistenceRegression {
         // raised while notes changed, then parked, left -200 there until the
         // next boot (audit 2026-09-24).
         for(int on=1;on>=0;on--) {
-            w(LIVE+8,1,on); w(0x6158,1,0); w(0x60e2,2,0); w(0x60f4,2,0xffff);
+            w(LIVE+8,1,on); w(0x6158,1,0); w(0x60e2,2,0); w(0x60f4,2,0x7fff);
             for(long b:new long[]{1000,1500,1200}) {
                 w(S+0x350,2,b); w(S+0x306,2,0x200); e.writeRegister("R12",b); call(REBASE);
             }
@@ -990,7 +1002,7 @@ public class SettingsRegression extends PersistenceRegression {
             +" live="+r(LIVE+4,1)+","+r(LIVE+10,1)+","+r(LIVE+8,1)+" vib="+Long.toHexString(r(0x6024,2))+","+Long.toHexString(r(0x6026,2))+","+Long.toHexString(r(0x6028,2))
             +" jack="+Long.toHexString(r(0x60fa,2))+" base="+Long.toHexString(r(0x60f4,2)),
             r(LIVE+4,1)==2&&r(LIVE+10,1)==0&&r(LIVE+8,1)==0
-            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0xffff);
+            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0x7fff);
         byte[] trn=edited(); setHalf(trn,0x20+2*20,1); setHalf(trn,0x20+2*26,0); setHalf(trn,0x20+2*24,0); setGen(trn,4); stamp(trn); plant(SLOT0,trn);
         cold(); w(0x6028,2,0x3333); boot();
         check("knob 4 as trn clears the vibrato too",r(LIVE+4,1)==1&&r(0x6028,2)==0);
@@ -999,7 +1011,7 @@ public class SettingsRegression extends PersistenceRegression {
         check("knob 4 vibrato, jack transposing, blend on at boot: cleared just the same, none of them is happening when the chip comes up"
             +" live="+r(LIVE+4,1)+","+r(LIVE+10,1)+","+r(LIVE+8,1),
             r(LIVE+4,1)==0&&r(LIVE+10,1)==1&&r(LIVE+8,1)==1
-            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0xffff);
+            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0x7fff);
         keepSlots=false;
         println("PASS option state: the vibrato's cells, the transposer's word and the re-base history are cleared at every boot; the six octave sites, the MIDI note-on's drop and the sequencer's clear");
     }

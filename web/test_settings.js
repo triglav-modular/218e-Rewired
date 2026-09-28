@@ -73,6 +73,9 @@ function before(a, b, why) {
 // renumbers every semitone, so the table no longer describes this build.
 // Restore the calibration first and it is thrown away on load.
 before('pitch_offset', 'calibration', 'the offset renumbers the table');
+// The volts per octave drops one too: a table belongs to the scaling it was
+// taken at (below, the page's own buttons).
+before('volts_per_octave', 'calibration', 'the scaling drops a loaded table as well');
 // Setting knob 2 to patterns seeds the bank with CLIX when the bank is empty.
 before('patterns', 'knob2', 'an empty bank is seeded by the knob');
 // syncPortamento force-clears portamento while the pressure fix is off.
@@ -123,6 +126,140 @@ if (!app) {
         ok('every key in the order list has an applier', !unapplied.length,
            'no applier: ' + unapplied.join(','));
     }
+}
+
+// --- switching the volts per octave drops a loaded table ------------------
+// As switching the offset does.  A keyboard's table comes into the page as
+// offsets read off counts already rounded at its own scaling, so built again
+// at the other one it was rounded twice: the owner's calibration, read at
+// 1 V/oct and built at 1.2, came out a count off on 21 entries of the table
+// it makes at 1.2 itself.  The page's own buttons and its own load, out of
+// app.js, with the DOM stubbed.  Node only: it needs vm.
+//
+// And it says so on the calibration line, in the owner's words (2026-09-28).
+// That line is validateCal()'s, which the switch runs last, so a message put
+// there before it was cleared or replaced at once: the offset's own is never
+// seen.  So what is read here is the line as the page leaves it, written by
+// the page's own msg() and validateCal().
+if (app && typeof require === 'function') {
+    var vm = require('vm'), fs = require('fs'), path = require('path');
+    var appSource = function (open, close) {
+        var start = app.indexOf(open);
+        if (start < 0) throw new Error('app.js has no ' + open.trim());
+        return app.slice(start, app.indexOf(close, start) + close.length);
+    };
+    var appFunction = function (name) { return appSource('\n    function ' + name + '(', '\n    }\n'); };
+    var page = vm.createContext({ console: console });
+    ['generated.js', 'buildlib.js'].forEach(function (f) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), page, { filename: 'web/' + f });
+    });
+    vm.runInContext([
+        'var nodes = {};',
+        'function button(v) { return { dataset: { v: v }, attrs: {}, on: {},',
+        '    setAttribute: function (k, x) { this.attrs[k] = x; }, getAttribute: function (k) { return this.attrs[k]; },',
+        '    addEventListener: function (t, f) { this.on[t] = f; }, click: function () { this.on.click(); } }; }',
+        'function element(id) { return { id: id, checked: false, textContent: "", disabled: false, kids: [],',
+        '    set innerHTML(v) { this.kids = []; }, appendChild: function (c) { this.kids.push(c); },',
+        '    children: [], classList: { toggle: function () {} } }; }',
+        'var document = { createElement: function () { return element(null); } };',
+        'function $(id) { return nodes[id] || (nodes[id] = element(id)); }',
+        'function shown(id) { return $(id).kids.map(function (k) { return { kind: k.className, text: k.textContent }; }); }',
+        '$("vpo").children = [button("1.0"), button("1.2")]; $("vpo").children[1].setAttribute("aria-pressed", "true");',
+        '$("offset").children = [button("0"), button("1")]; $("offset").children[1].setAttribute("aria-pressed", "true");',
+        'function bindDashes() {} function buildTable() {} function drawPlot() {}',
+        'function invalidate() {} function updateOffsetNote() {} function syncCalBody() {}',
+        'var pitchOffset = true, PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
+        'var measured = [], interpolated = {};',
+        'for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);',
+        appSource('\n    var baseline = {}', ';\n'),
+        appFunction('clearBaseline'), appFunction('haveBaseline'), appFunction('rows'),
+        appFunction('syncBaseline'), appFunction('press'), appFunction('loadPitchTable'),
+        appFunction('msg'), appFunction('calibrationBlank'), appFunction('validateCal'),
+        appSource('\n    var vpo = 1.2;', '\n    });\n'),
+        'clearBaseline();',
+        'function built() { return BUILDLIB.pitchTable(BUILDLIB.expand({ volts_per_octave: vpo,',
+        '    pitch_offset: pitchOffset }), rows()); }'
+    ].join('\n'), page, { filename: 'web/app.js (extracted)' });
+    var PB = page.BUILDLIB;
+    var owner = PB.parseCalibration(fs.readFileSync(path.join(__dirname, '..', 'calibration',
+                                                             '218e-pitch-calibration.csv'), 'utf8'), 79);
+    var ownerRows = [];
+    for (var s = 0; s < 79; s++) ownerRows.push({ semitone: s, cents: owner.rows[s] });
+    var at10 = PB.expand({ volts_per_octave: 1.0 }), at12 = PB.expand({ volts_per_octave: 1.2 });
+    var held = PB.pitchTable(at10, ownerRows);
+    var twice = PB.pitchTable(at12, PB.pitchCents(at10, held)), once = PB.pitchTable(at12, ownerRows);
+    var off = twice.filter(function (v, e) { return v !== once[e]; }).length;
+    page.held = held;
+    vm.runInContext('loadPitchTable(held, { volts_per_octave: 1.0, pitch_offset: true }, ' +
+                    '"the keyboard\\u2019s table", {});', page);
+    var loaded = vm.runInContext('({ vpo: vpo, have: haveBaseline(), built: built() })', page);
+    ok('a keyboard’s table at 1 V/oct loads at its own scaling and builds back exactly',
+       loaded.vpo === 1.0 && loaded.have && JSON.stringify(loaded.built) === JSON.stringify(held),
+       JSON.stringify({ vpo: loaded.vpo, have: loaded.have }));
+    vm.runInContext('$("vpo").children[1].click();', page);
+    var switched = vm.runInContext('({ vpo: vpo, have: haveBaseline(), built: built(), ' +
+                                   'line: $("calBase").textContent })', page);
+    var flat = PB.pitchTable(at12, at12._calibration);
+    ok('switching to 1.2 V/oct drops it, as switching the offset does, rather than build it ' +
+       'rounded twice (' + off + ' entries a count off)',
+       switched.vpo === 1.2 && !switched.have && JSON.stringify(switched.built) === JSON.stringify(flat) &&
+       /^No table loaded/.test(switched.line),
+       JSON.stringify({ vpo: switched.vpo, have: switched.have,
+                        rescaled: JSON.stringify(switched.built) === JSON.stringify(twice) }));
+    page.held12 = once;
+    vm.runInContext('loadPitchTable(held12, { volts_per_octave: 1.2, pitch_offset: true }, ' +
+                    '"the tuned table", {}); $("vpo").children[1].click();', page);
+    var again = vm.runInContext('({ vpo: vpo, have: haveBaseline(), built: built() })', page);
+    ok('and pressing the scaling it is already at keeps it',
+       again.vpo === 1.2 && again.have && JSON.stringify(again.built) === JSON.stringify(once),
+       JSON.stringify({ vpo: again.vpo, have: again.have }));
+
+    var DROPPED = 'The loaded table was dropped: changing the volts per octave rescales every ' +
+        'entry, so it no longer describes this build. Load it again if it was measured at this setting.';
+    function line() { return vm.runInContext('shown("calMsg")', page); }
+    function says(got, kind, text) {
+        return got.length === 1 && got[0].kind === 'msg ' + kind && got[0].text === text;
+    }
+    // Loaded, the line says the table builds; switched, it says the table
+    // went, and that is what it still says once the switch is done.
+    vm.runInContext('loadPitchTable(held, { volts_per_octave: 1.0, pitch_offset: true }, ' +
+                    '"the keyboard\\u2019s table", {});', page);
+    var before = line();
+    vm.runInContext('$("vpo").children[1].click();', page);
+    var after = line();
+    ok('the drop is said on the calibration line, in the owner’s words, and stays there',
+       says(before, 'ok', 'Correction is monotonic and inside the 12-bit DAC.') && says(after, 'bad', DROPPED),
+       JSON.stringify({ before: before, after: after }));
+    // With readings on the page the table still builds, and the drop stands
+    // in for the verdict.  With readings that run past the DAC it goes ahead
+    // of the reason, which still has to be read.
+    vm.runInContext('$("vpo").children[0].click(); loadPitchTable(held, { volts_per_octave: 1.0, ' +
+                    'pitch_offset: true }, "the keyboard\\u2019s table", {}); measured[30] = 4.5;', page);
+    vm.runInContext('$("vpo").children[1].click();', page);
+    var readings = line();
+    vm.runInContext('$("vpo").children[0].click(); loadPitchTable(held, { volts_per_octave: 1.0, ' +
+                    'pitch_offset: true }, "the keyboard\\u2019s table", {});' +
+                    'for (var e = 40; e <= 67; e++) measured[e] = -6000;', page);
+    var threw = vm.runInContext('(function () { try { $("vpo").children[1].click(); return null; } ' +
+                                'catch (e) { return e.message; } })()', page);
+    var failing = line();
+    ok('beside readings too, and ahead of a reading that runs past the DAC',
+       says(readings, 'bad', DROPPED) && threw === null && failing.length === 1 &&
+       failing[0].kind === 'msg bad' && failing[0].text.indexOf(DROPPED + '\n\n') === 0 &&
+       /DAC range/.test(failing[0].text),
+       JSON.stringify({ readings: readings, threw: threw, failing: failing.map(function (m) {
+           return { kind: m.kind, text: m.text.slice(0, 200) }; }) }));
+    // Nothing loaded, or the scaling pressed that it is at: nothing dropped,
+    // nothing said about it.
+    vm.runInContext('for (var e = 0; e < TABLE_ENTRIES; e++) measured[e] = 0; clearBaseline();' +
+                    '$("vpo").children[0].click();', page);
+    var plain = line();
+    vm.runInContext('loadPitchTable(held, { volts_per_octave: 1.0, pitch_offset: true }, ' +
+                    '"the keyboard\\u2019s table", {}); $("vpo").children[0].click();', page);
+    var same = line();
+    ok('and nothing is said when nothing was dropped',
+       plain.length === 0 && says(same, 'ok', 'Correction is monotonic and inside the 12-bit DAC.'),
+       JSON.stringify({ plain: plain, same: same }));
 }
 
 print_(failures ? ('FAILED ' + failures) : 'ALL SETTINGS TESTS PASSED');

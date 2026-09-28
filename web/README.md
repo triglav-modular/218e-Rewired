@@ -36,10 +36,12 @@ released page remembered.
 
 The feature is deliberately invisible: nothing on the page explains it, and the
 only control is a small **Reset** beside the step 2 heading, which is hidden
-until something has actually moved off its default. Reset puts the choices back
-and nothing else — it walks the same ordered appliers a restore does, and the
-Scala files, the pattern bank, the measured calibration and the dropped factory
-image are not among the defaults, so none of them is touched. Re-ticking a box
+until something has actually moved off its default. Reset puts the choices back.
+It walks the same ordered appliers a restore does. The Scala files, the
+pattern bank, the measured calibration and the dropped factory image are not
+among the defaults, so none of them is reset. A loaded table still goes when
+Reset moves the volts per octave or the pitch offset: those switches drop it,
+as they do when pressed. Re-ticking a box
 brings what was loaded back with it. The deviations being empty afterwards is
 what empties the save.
 
@@ -50,8 +52,12 @@ returning visitor on whichever version they first saw, and an option added
 default-on later would come back off. `BUILDLIB.SETTINGS_ORDER` fixes the order
 a restore applies things in, which is a dependency rather than a preference:
 the pitch offset renumbers every semitone and drops a loaded calibration by
-design, so it has to go back first. `web/test_settings.js` asserts on that
-array and reads `app.js` to catch an applier that was never added to it.
+design, so it has to go back first. The volts per octave drops one too,
+because a table belongs to the scaling it was taken at, and goes back first
+as well.
+`web/test_settings.js` asserts on that array, runs the page's own volts per
+octave buttons against a loaded table and reads the calibration line they
+leave, and reads `app.js` to catch an applier that was never added to it.
 
 ## How it fits together
 
@@ -95,10 +101,12 @@ is checked against Ghidra instruction by instruction. On top of that:
 python3 web/test_configs.py
 ```
 
-builds thirty-one configurations with `tools/build.py` and again with this
+builds thirty-five configurations with `tools/build.py` and again with this
 pipeline, and compares **both** the generated `build.properties` and the final
 image SHA-256; no two of them may build the same image, except one slot
-written two ways, which must. Eleven more are option sets both toolchains
+written two ways, which must. Three of them change an internal setting as
+well, through `REWIRED_INTERNAL_OVERRIDE` for the CLI and the same setting in
+the page's defaults. Sixteen more are option sets both toolchains
 have to refuse, and refuse for the same reason. A clean run reports every configuration matching,
 `historical` included — the most complex one, with measured calibration and
 three tunings. It is an anchor for that combination rather than a reproduction
