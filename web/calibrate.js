@@ -549,13 +549,18 @@
     // going away - and only if on() ever did.
     //
     // `opts.adjust`, { table, write(entry, value) -> Promise, countsPerCent,
-    // reference }: converge each entry instead of only reading it.  `table`
-    // is the 79 entries the instrument is playing, `write` puts one into its
-    // live mirror, and countsPerCent is the DAC counts that move the ramp a
-    // cent (BUILDLIB.pitchCountsPerCent).  A note more than half a count out
-    // is moved by its reading and played again, up to ADJUST_TRIES times,
-    // and the closest value is the one kept.  The result carries `table`,
-    // and each reading its `value`, `original`, `tries` and `residual`.
+    // reference, playing }: converge each entry instead of only reading it.
+    // `table` is the 79 entries the run starts from, `write` puts one into
+    // the instrument's live mirror, and countsPerCent is the DAC counts that
+    // move the ramp a cent (BUILDLIB.pitchCountsPerCent).  A note more than
+    // half a count out is moved by its reading and played again, up to
+    // ADJUST_TRIES times, and the closest value is the one kept.  The result
+    // carries `table`, and each reading its `value`, `original`, `tries` and
+    // `residual`.  `table` is what the instrument is playing, unless
+    // `playing` is given: then that is, and tuning, the run writes `table`
+    // over it before the channel probe plays anything.  The page gives it
+    // where the keyboard's table is at the other volts per octave from the
+    // page's, and `table` is the flat table at the page's (app.js runStart).
     //
     // With both, the run tunes the table to the 208's 0 V pitch, which is
     // where its owner tunes it (with the keyboard off).  `reference` is the
@@ -1104,6 +1109,25 @@
                     ', where a note needs ' + MIN_RMS.toFixed(4) + '. The 208 should ' +
                     'be droning into that channel before the sweep starts. Check the ' +
                     'cable and the channel\u2019s level.');
+            }
+
+            // Tuning from a table the instrument does not hold yet (it holds
+            // `playing`), the table goes into the mirror before the probe
+            // plays anything: two octaves at the other scaling came out 2000
+            // or 2880 cents apart, and the probe blamed the MIDI channel.  In
+            // the mode, so the run's end reloads the mirror however it ends.
+            // Entries that move down are written from the bottom up and
+            // entries that move up from the top down, so the table being
+            // played never runs backwards, not even between two writes.
+            if (tuning && adjust.playing) {
+                modeUp();
+                var lower = [], higher = [];
+                for (var k = 0; k < table.length; k++) {
+                    if (table[k] < adjust.playing[k]) lower.push(k);
+                    else if (table[k] > adjust.playing[k]) higher.push(k);
+                }
+                for (k = 0; k < lower.length; k++) await adjust.write(lower[k], table[lower[k]]);
+                for (k = higher.length - 1; k >= 0; k--) await adjust.write(higher[k], table[higher[k]]);
             }
 
             // Which channel the instrument is listening on.  There is no way

@@ -1008,6 +1008,13 @@
             }
 
             if (isCorrection) {
+                // A semitone named twice is refused as tools/build.py refuses
+                // it, and in its words.  Counted as a row, it used to report a
+                // whole table as one row short.
+                if (parsed.twice !== null) {
+                    msg($('calMsg'), 'bad', BUILDLIB.calibrationTwice(f.name, parsed.twice));
+                    return;
+                }
                 // A table is a baseline only if it is a whole one.  A partial
                 // file would leave the rest of the instrument's correction at
                 // zero, which is not "unknown" - it is "no correction", and
@@ -1395,7 +1402,13 @@
     // Reading is its own box between steps 1 and 2, so the options are
     // loaded before they are changed; sending stays with the flash.  Each
     // has its own port list, linked with the calibration's (midiPick).
-    var kbd = { outputs: [], inputs: [], listed: false, busy: false };
+    //
+    // `busy` is who has the keyboard's port: null, or the token of the read,
+    // the send or the calibration run that took it.  One at a time, since
+    // each pushes, dumps or plays on it, and only the one that took it gives
+    // it back: a send ending mid-run used to free the run's hold with its
+    // own, and Send and Read came back while the run was moving entries.
+    var kbd = { outputs: [], inputs: [], listed: false, busy: null };
     function kbdSelects() {
         return ['kbdLoadPort', 'kbdPort'].map(function (id) { return $(id); }).filter(Boolean);
     }
@@ -1707,9 +1720,13 @@
             withKeyboard(sendTo);
         });
         var sendTo = function (ports) {
-            kbd.busy = true;
+            // Not while a read or a run has the port: a press lists the
+            // ports first (withKeyboard), and one may have started meanwhile.
+            if (kbd.busy) return;
+            var mine = kbd.busy = { what: 'send' };
             $('kbdSend').disabled = true;
             if ($('kbdRead')) $('kbdRead').disabled = true;
+            if ($('calRun')) $('calRun').disabled = true;
             msg($('kbdMsg'), 'warn', 'Sending…');
             unsent.sending = true;
             unsentShow();
@@ -1740,7 +1757,10 @@
                         unsentLanded(ok, record, ports.output.name);
                     });
                 })
-                .then(function () { kbd.busy = false; unsent.sending = false; refresh(); });
+                .then(function () {
+                    if (kbd.busy === mine) kbd.busy = null;
+                    unsent.sending = false; refresh();
+                });
         };
     }
 
@@ -1910,9 +1930,12 @@
     if ($('kbdRead')) {
         $('kbdRead').addEventListener('click', function () { withKeyboard(readFrom); });
         var readFrom = function (ports) {
-            kbd.busy = true;
+            // Not while a send or a run has the port (sendTo).
+            if (kbd.busy) return;
+            var mine = kbd.busy = { what: 'read' };
             $('kbdRead').disabled = true;
             if ($('kbdSend')) $('kbdSend').disabled = true;
+            if ($('calRun')) $('calRun').disabled = true;
             msg($('kbdLoadMsg'), 'warn', 'Reading…');
             SETTINGSMIDI.read(ports.output, ports.input, {})
                 .then(function (r) {
@@ -1933,7 +1956,10 @@
                     msg($('kbdLoadMsg'), 'bad', readRefusal(err));
                     reportSettings('read', outcomeOf(err), err && err.identity);
                 })
-                .then(function () { kbd.busy = false; refresh(); });
+                .then(function () {
+                    if (kbd.busy === mine) kbd.busy = null;
+                    refresh();
+                });
         };
     }
     // A keyboard whose settings map this page does not know still says
@@ -1981,7 +2007,9 @@
     if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
         navigator.mediaDevices.addEventListener('devicechange', function () {
             listed.audio = false;
-            if (!$('calRun').disabled) listAudio();
+            // Not under a run, which has the input open.  Start measuring is
+            // held during a read or a send too, and the list may move then.
+            if (!sweep) listAudio();
         });
     }
 
@@ -2142,17 +2170,45 @@
         return sources;
     }
 
+    // The table a tuning run starts from, and the scaling and the offset it
+    // is built with (`was`, as BUILDLIB.pitchTableSettings gives them): the
+    // keyboard's own, `held`, when it is at the page's volts per octave, and
+    // otherwise the flat table at the page's, laid out with the keyboard's
+    // offset.  The guide has the page's set to the scaling the 208 is
+    // trimmed to, and from a table at the other one the channel probe heard
+    // its two octaves 2000 or 2880 cents apart and blamed the MIDI channel.
+    function runStart(held, pageVpo) {
+        var was = BUILDLIB.pitchTableSettings(held);
+        if (was.volts_per_octave === pageVpo) return { table: held, was: was };
+        was = { volts_per_octave: pageVpo, pitch_offset: was.pitch_offset };
+        var cfg = BUILDLIB.expand(was);
+        return { table: BUILDLIB.pitchTable(cfg, cfg._calibration), was: was };
+    }
+
     // The sweep that converges (calibrate.js, opts.mode and opts.adjust).  It
-    // starts from the table the keyboard holds and moves each entry live
-    // until it plays in tune with the 208's 0 V pitch, the one its trimmer
-    // sets; then the keyboard gets its own table back, the mode off and the
-    // mirror reloaded from flash, however the run ends.  What it found comes
-    // into the page the way a read's table does - the table on the
-    // instrument, nothing measured on top - so the next send or flash
-    // carries it, and the rows it filled in rather than tuned say so.
+    // starts from the table the keyboard holds, or from the flat table at the
+    // page's volts per octave where the keyboard's is at the other (runStart),
+    // and moves each entry live until it plays in tune with the 208's 0 V
+    // pitch, the one its trimmer sets; then the keyboard gets its own table
+    // back, the mode off and the mirror reloaded from flash, however the run
+    // ends.  What it found comes into the page the way a read's table does -
+    // the table on the instrument, nothing measured on top - so the next send
+    // or flash carries it, and the rows it filled in rather than tuned say so.
+    //
+    // The run's read is a read.  With nothing read from this keyboard, what
+    // it holds goes into the page as Read settings puts it there, and the
+    // card is armed from it, so the tuned table is a change a Send can land
+    // and a later read cannot drop unseen.  The page keeps its volts per
+    // octave, which the load would set to the keyboard's table's.
     function sweepInMode(chosen, r) {
-        var start = r.fields.pitch_remap.slice();
-        var was = BUILDLIB.pitchTableSettings(start);
+        var pageVpo = vpo;
+        if (!unsent.armed || unsent.name !== chosen.name) {
+            loadFromKeyboard(r);
+            unsentArm(chosen.name, r.identity && r.identity.imageMarker);
+            press('vpo', pageVpo === 1.2 ? '1.2' : '1.0');
+        }
+        var held = r.fields.pitch_remap.slice();
+        var begin = runStart(held, pageVpo), start = begin.table, was = begin.was;
         var cfg = BUILDLIB.expand({ volts_per_octave: was.volts_per_octave,
                                     pitch_offset: was.pitch_offset });
         var bottom = cfg.pitch.bottom_key_semitone;
@@ -2172,6 +2228,7 @@
             table: start, countsPerCent: BUILDLIB.pitchCountsPerCent(cfg), reference: o.low,
             write: function (entry, value) { return SETTINGSMIDI.writePitch(chosen, entry, value); }
         };
+        if (start !== held) o.adjust.playing = held;
         o.onNote = noteProgress;
         sweep = new CALIBRATE.Sweep(o);
         return sweep.run().then(function (out) {
@@ -2187,6 +2244,17 @@
     }
 
     $('calRun').addEventListener('click', function () {
+        // What the keyboard runs says which sweep, and its table is the one
+        // a converging run starts from, so it is read first.  The port is
+        // the run's from the click to its end: a read or a send started
+        // while the lists are made again would dump or push under the run's
+        // read, and one in the middle of a converging run would push over
+        // the entries it is moving, and its commit could save one of their
+        // tries.  Start measuring is held while either has it (refresh), so
+        // the port is free here.
+        if (kbd.busy) return;
+        var mine = kbd.busy = { what: 'calibration' };
+        refresh();
         msg($('calMsg'), '', '');
         Promise.resolve().then(listMidi).then(listAudio).then(listChannels).then(function () {
             var ports = window.__calPorts || [];
@@ -2202,19 +2270,9 @@
                     'Rescan inputs to pick another.');
                 return;
             }
-            // What the keyboard runs says which sweep, and its table is the
-            // one a converging run starts from, so it is read first.  Read
-            // and Send wait for the read, and for a converging run after it:
-            // a send in the middle of one would push over the entries it is
-            // moving, and its commit could save one of their tries.
-            var cancelled = false, held = false;
-            function hold(on) {
-                if (on && !kbd.busy) { kbd.busy = held = true; refresh(); }
-                else if (!on && held) { kbd.busy = held = false; refresh(); }
-            }
+            var cancelled = false;
             setRunning(true);
             autoNote('Reading\u2026', 0);
-            hold(true);
             sweep = { stop: function () { cancelled = true; } };
             return readForCalibration(chosen).then(function (r) {
                 if (cancelled) throw new Error('Stopped.');
@@ -2225,12 +2283,13 @@
                 throw new Error(!r ? KBD_REASONS['no reply']
                     : ver ? 'This keyboard runs Rewired ' + shown(ver) + '. Flash the latest firmware, then measure.'
                           : 'Flash the latest firmware, then measure.');
-            }).then(function () { hold(false); }, function (err) { hold(false); throw err; });
+            });
         }).catch(function (err) {
             autoNote('');
             msg($('calMsg'), 'bad', err.message || String(err));
         }).then(function () {
             sweep = null; setRunning(false);
+            if (kbd.busy === mine) kbd.busy = null;
             if (warmed) keepWarm();
             // Send settings was held while the run had the port.
             refresh();
@@ -2316,10 +2375,13 @@
         // A port picked, or no list yet: a press before the list is opened
         // makes one (withKeyboard).
         var portReady = !kbd.listed || !!keyboardPort();
-        if ($('kbdSend')) $('kbdSend').disabled = kbd.busy || !portReady;
+        if ($('kbdSend')) $('kbdSend').disabled = !!kbd.busy || !portReady;
         // Reading needs only the port: what the keyboard holds is worth
         // seeing before anything is built.
-        if ($('kbdRead')) $('kbdRead').disabled = kbd.busy || !portReady;
+        if ($('kbdRead')) $('kbdRead').disabled = !!kbd.busy || !portReady;
+        // Start measuring the same way: a run reads the keyboard and plays
+        // on its port, so it waits for a read or a send as they wait for it.
+        if ($('calRun')) $('calRun').disabled = !!kbd.busy || !!sweep;
         unsentShow();
     bindDashes(document.body);
     }

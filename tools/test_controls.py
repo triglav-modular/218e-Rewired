@@ -6,7 +6,10 @@
     python3 tools/test_controls.py --variant default --persist off --image build/218eV3_v369_Rewired_DFU.hex
 
 The default, six-order/transpose, tuned transpose, and lean (factory arp,
-no sequencer/divider) builds run with and without persistence.
+no sequencer/divider) builds run with and without persistence.  The kbm
+build carries a 24-key map (24TET.scl with 24TET-full.kbm) and runs only the
+MIDI checks of the octave pads, the latch and a key played over a take, with
+persistence.
 --image checks an existing image without rebuilding it;
 its variant and persistence settings must be specified correctly by the caller.
 The images are built one at a time and then emulated together; --jobs sets how
@@ -30,11 +33,53 @@ from test_persistence import METADATA, REPO
 import options  # noqa: E402
 
 
+def bohlen_pierce(base: str, work: Path) -> str:
+    """The Bohlen-Pierce slot as tools/build.py makes it, for ControlRegression.
+
+    Every variant's MIDI-note checks lay a record with this table in the
+    settings mirror, as a record sent over MIDI lays it, so a scale that
+    repeats at the 3/1 is played through each image.  Built once here, not
+    emulated: the table, its keys per period and its period are the
+    builder's own, read back off build/tables.txt and build.properties.
+    """
+    slot = '["tunings/BohlenPierce.scl", "tunings/BohlenPierce.kbm"]'
+    text, count = re.subn(r'^alternate_tunings = false$',
+                          f"alternate_tunings = [{slot}, {slot}, {slot}]", base, flags=re.M)
+    if count != 1:
+        raise SystemExit("Cannot set the Bohlen-Pierce tuning in regression config")
+    text, count = re.subn(r'^output_hex\s*=\s*"[^"]*"',
+                          f'output_hex = "{work / "bohlen-pierce.hex"}"', text, flags=re.M)
+    if count != 1:
+        raise SystemExit("Cannot redirect the Bohlen-Pierce image")
+    text, count = re.subn(r'^updaters?\s*=\s*(?:"[^"]*"|\[[^\]]*\])\n', "", text, flags=re.M)
+    if count != 1 or any(k in tomllib.loads(text)["firmware"] for k in ("updater", "updaters")):
+        raise SystemExit("Refusing a regression build that could rewrite flashers")
+    config = work / "bohlen-pierce.toml"
+    config.write_text(text)
+    result = subprocess.run([sys.executable, "tools/build.py", "--no-ghidra", "--config", str(config)],
+                            cwd=REPO, capture_output=True, text=True)
+    (work / "bohlen-pierce-build.log").write_text(result.stdout + result.stderr)
+    if result.returncode:
+        raise SystemExit(result.stdout + result.stderr)
+    tables = (REPO / "build/tables.txt").read_text()
+    def table(name: str) -> list[int]:
+        match = re.search(rf"^{name} \(\d+\):\n\s*(.*)$", tables, flags=re.M)
+        if not match:
+            raise SystemExit(f"No {name} in the Bohlen-Pierce build's tables")
+        return [int(v) for v in match.group(1).split(",")]
+    keys, entries = table("tuning_period_keys")[0], table("tuning_slot0")
+    period = re.search(r"^number\.octave_units=(\d+)$",
+                       (REPO / "build/build.properties").read_text(), flags=re.M)
+    if not period or len(entries) != 32 or keys != 13:
+        raise SystemExit("The Bohlen-Pierce build did not give 32 entries, 13 keys and a period")
+    return f"bp:{keys}:{period.group(1)}:" + ",".join(str(v) for v in entries)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant",
                         choices=("default", "roles", "tuned", "lean", "jack",
-                                 "swing", "patterns", "all"),
+                                 "swing", "patterns", "kbm", "all"),
                         default="all")
     parser.add_argument("--persist", choices=("on", "off", "both"), default="both")
     parser.add_argument("--image", type=Path)
@@ -57,11 +102,12 @@ def main() -> None:
     build.mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="control-regression-", dir=build))
     print(f"Artifacts: {work}", flush=True)
-    saved = {} if args.image else {
+    # Saved with --image too: the Bohlen-Pierce table is built either way.
+    saved = {
         name: (REPO / "build" / name).read_bytes() if (REPO / "build" / name).exists() else None
         for name in METADATA
     }
-    variants = (("default", "roles", "tuned", "lean", "jack", "swing", "patterns")
+    variants = (("default", "roles", "tuned", "lean", "jack", "swing", "patterns", "kbm")
                 if args.variant == "all" else (args.variant,))
     persists = (False, True) if args.persist == "both" else (args.persist == "on",)
     failures = []
@@ -71,13 +117,15 @@ def main() -> None:
     jobs = args.jobs or min(len(variants) * len(persists), 8)
     planned: list[tuple[str, list[str]]] = []
     try:
+        bp = bohlen_pierce(base, work)
         for variant in variants:
             # Knob 2's other two roles. They are shipped in every image
             # built with them and were executed by nothing: the pattern
             # gate's mask walk and its wrap, and swing's alternating pair,
             # had no emulation at all. Neither has anything to do with
-            # persistence, so they build once rather than twice.
-            for persist in ((True,) if variant in ("swing", "patterns") else persists):
+            # persistence, so they build once rather than twice, and nor
+            # does the 24-key map's MIDI.
+            for persist in ((True,) if variant in ("swing", "patterns", "kbm") else persists):
                 name = f"{variant}-{'persist' if persist else 'volatile'}"
                 image = args.image.resolve() if args.image else work / f"{name}.hex"
                 if not args.image:
@@ -90,7 +138,7 @@ def main() -> None:
                     # add it replaced.  The jack variant also puts BOTH inputs
                     # to the rotation in one image, which nothing else does.
                     # lean and roles prove the free add is untouched.
-                    quantize = variant in ("default", "tuned", "jack")
+                    quantize = variant in ("default", "tuned", "jack", "kbm")
                     # Lean also runs the pressure path off (stage 2 phase F):
                     # the dispatchers back to the factory's curve and knobs,
                     # the interpolator's pass-through and the blend's route
@@ -108,7 +156,7 @@ def main() -> None:
                     text = re.sub(r'^knob[124]\s*=.*\n', "", text, flags=re.M)
                     # The roles variant also puts knob 2 on quantized randomness,
                     # so its cave is exercised against the other roles.
-                    role = ('knob1 = "order"\nknob2 = "spacing"\nknob4 = "vibrato"\n' if variant == "default"
+                    role = ('knob1 = "order"\nknob2 = "spacing"\nknob4 = "vibrato"\n' if variant in ("default", "kbm")
                             else 'knob1 = "orders"\nknob2 = "quantized"\nknob4 = "trn"\n' if variant == "roles"
                             else 'knob1 = "orders"\nknob2 = "swing"\nknob4 = "trn"\n' if variant == "swing"
                             # Three patterns of different lengths, so the
@@ -148,6 +196,16 @@ def main() -> None:
                             text, flags=re.M)
                         if count != 1:
                             raise SystemExit("Cannot enable tuning in regression config")
+                    if variant == "kbm":
+                        # A map whose period is not twelve keys: 24 quarter
+                        # tones to the octave, one per key, so a pad and the
+                        # jack each move the MIDI note 24 per period (audit
+                        # 038711a, F13).
+                        text, count = re.subn(r'^alternate_tunings = false$',
+                            'alternate_tunings = [["tunings/24TET.scl", "tunings/24TET-full.kbm"]]',
+                            text, flags=re.M)
+                        if count != 1:
+                            raise SystemExit("Cannot enable the 24-key map in regression config")
                     if variant == "tuned":
                         text, count = re.subn(r'^alternate_tunings = false$',
                             'alternate_tunings = ["tunings/12TET.scl"]', text, flags=re.M)
@@ -188,7 +246,8 @@ def main() -> None:
                     "quantized" if variant in ("default", "tuned", "jack") else "free",
                     {"roles": "quantized", "swing": "swing",
                      "patterns": "patterns"}.get(variant, "spacing"),
-                    "jack" if variant == "jack" else "knob"]))
+                    "jack" if variant == "jack" else "knob", bp,
+                    "kbm" if variant == "kbm" else "full"]))
 
         def emulate(name: str, command: list[str]) -> str:
             result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)

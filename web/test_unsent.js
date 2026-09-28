@@ -13,6 +13,9 @@
 // real record builder (WEBBUILD.settings), against a fake instrument that
 // behaves as web/test_settingsmidi.js's does - with a flash behind the mirror,
 // so a reload puts back what the last commit saved.  The clock is the test's.
+// Start measuring too: its own handler, the read it takes and the tuning it
+// starts, with the run itself the test's, since what is checked here is who
+// has the port and what comes of a run's table, not the tuning.
 //
 //   node web/test_unsent.js
 'use strict';
@@ -70,6 +73,7 @@ var page = vm.createContext({
     vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), page, { filename: 'web/' + f });
 });
 var B = page.BUILDLIB, M = page.SETTINGSMIDI;
+var CAL = require('./calibrate.js').CALIBRATE;
 var APP = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
 function appSource(open, close) {
     var start = APP.indexOf(open);
@@ -82,7 +86,7 @@ vm.runInContext([
     'var state = { factoryText: null, result: null, options: null };',
     'var document = { body: { style: {} } };',
     'function classes() { var on = {}; return { contains: function (c) { return !!on[c]; }, toggle: function (c, v) { on[c] = v === undefined ? !on[c] : !!v; } }; }',
-    'function $(id) { return nodes[id] || (nodes[id] = { id: id, value: "", disabled: false, hidden: false, textContent: "", classList: classes() }); }',
+    'function $(id) { return nodes[id] || (nodes[id] = { id: id, value: "", disabled: false, hidden: false, textContent: "", classList: classes(), on: {}, addEventListener: function (t, f) { this.on[t] = f; } }); }',
     'function msg(el, kind, text) { el.kind = kind; el.text = text; messages.push([el.id, kind, text]); }',
     'function bindDashes() {} function saveSoon() {} function syncReset() {}',
     'function reportSettings(action, outcome, id, restarted, sent) { reports.push([action, outcome]); reportedOptions.push(sent); }',
@@ -102,7 +106,21 @@ vm.runInContext([
     appFunction('unsentCheck'), appFunction('unsentPicked'), appFunction('unsentLanded'), appFunction('unsentShow'),
     appFunction('invalidate'), appFunction('refresh'),
     appSource('\n        var sendTo = function (ports) {', '\n        };\n'),
-    appSource('\n        var readFrom = function (ports) {', '\n        };\n')
+    appSource('\n        var readFrom = function (ports) {', '\n        };\n'),
+    // Start measuring: the lists, the audio input and the progress line
+    // stubbed, the run the test's (CALIBRATE.Sweep below).  What a run tuned
+    // goes into the page as loadPitchTable puts it there: a calibration that
+    // builds that table, which the page's options then carry.
+    'var vpo = 1.2, TABLE_ENTRIES = 79, warmed = null, chanFor = {};',
+    'function listMidi() {} function listAudio() {} function listChannels() {}',
+    'function applyMidiPick() {} function keepWarm() {} function autoNote() {} function noteProgress() {}',
+    'function sweepOptions(chosen) { return { output: chosen, channel: 2 }; }',
+    'function press(id, v) { if (id === "vpo") vpo = Number(v); }',
+    'function loadPitchTable(table, was) { opts.pitch_correction = BUILDLIB.pitchCents(BUILDLIB.expand(was), table); invalidate(); }',
+    appSource('\n    var CALIBRATION_MODE_FIRMWARE', ';\n'), appFunction('calibrationModeSupported'),
+    appFunction('readForCalibration'), appFunction('runSources'), appFunction('withWarnings'),
+    appFunction('runStart'), appFunction('sweepInMode'), appFunction('setRunning'),
+    appSource("\n    $('calRun').addEventListener('click', function () {", '\n    });\n')
 ].join('\n'), page, { filename: 'web/app.js (extracted)' });
 function run(code) { return vm.runInContext(code, page); }
 
@@ -203,11 +221,23 @@ var other = fakeInstrument(bytesOf({ knob1: 'factory' }), 'other', 'Another synt
 page.kbd.outputs = [kb.output, other.output];
 page.kbd.inputs = [kb.input, other.input];
 page.kbd.listed = true;
+// A run is the test's: it waits until the test ends it with a table, and
+// it moves nothing on the keyboard meanwhile.
+var runs = [];
+function Sweep(o) { this.o = o; }
+Sweep.prototype.stop = function () {};
+Sweep.prototype.run = function () {
+    var o = this.o;
+    return new Promise(function (done, fail) { runs.push({ o: o, done: done, fail: fail }); });
+};
 page.CALIBRATE = {
     midiOutputs: function () { return Promise.resolve(page.kbd.outputs.slice()); },
-    midiInputs: function () { return Promise.resolve(page.kbd.inputs.slice()); }
+    midiInputs: function () { return Promise.resolve(page.kbd.inputs.slice()); },
+    entryForSemitone: CAL.entryForSemitone, semitoneFor: CAL.semitoneFor, portGone: CAL.portGone,
+    Sweep: Sweep
 };
-run('$("kbdLoadPort").value = "kbd"; $("kbdPort").value = "kbd";');
+page.window.__calPorts = page.kbd.outputs;
+run('$("kbdLoadPort").value = "kbd"; $("kbdPort").value = "kbd"; $("calMidi").value = "kbd";');
 
 function kbdMsg() { return page.nodes.kbdMsg || {}; }
 function change(o) {
@@ -220,6 +250,20 @@ function up() { return page.nodes.unsent.classList.contains('up'); }
 function headShown() { return !page.nodes.unsentHead.hidden; }
 function padded() { return !!page.document.body.style.paddingBottom; }
 function send() { run('sendTo(keyboardPorts())'); }
+// Start measuring pressed, and a run ended with `table`.
+function measure() { run('nodes.calRun.on.click()'); }
+function tuned(moves) {
+    var t = B.settingsFields(kb.flash).pitch_remap.slice();
+    Object.keys(moves).forEach(function (e) { t[e] += moves[e]; });
+    return t;
+}
+function ends(table) { runs[runs.length - 1].done({ table: table, readings: [], warnings: [], channel: 2 }); }
+function pageTable() { return B.settingsFields(bytesOf(page.opts)).pitch_remap; }
+function sameTable(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function heldBy() { return page.kbd.busy && page.kbd.busy.what; }
+function buttons() {
+    return ['kbdSend', 'kbdRead', 'calRun'].map(function (id) { return page.nodes[id].disabled; }).join(',');
+}
 
 var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
 
@@ -334,20 +378,39 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     check('(put back)', !up());
 
     // --- a calibration run has the port -----------------------------------------------------
-    page.sweep = { stop: function () {} };
-    page.kbd.busy = true;
-    at = kb.received.length;
-    change({ pitch_correction: correction({ 20: 5, 30: -4, 40: 7, 50: 3 }) });   // as the run's tuned table loads
+    // Start measuring takes the port from the press to the run's end, and
+    // only the run gives it back.  This keyboard was read, so the run loads
+    // nothing over the page: a change made since rides with the tuned table.
+    change({ quantize_presets: false });
     await T.run();
-    run('refresh()');
-    check('a table a calibration run loads brings the card up, with Send held while the run has the port',
-          up() && page.nodes.kbdSend.disabled === true && kb.received.length === at);
-    run('sweep = null; kbd.busy = false; refresh();');
-    check('and Send is free once it ends, still sending nothing by itself',
-          up() && page.nodes.kbdSend.disabled === false && kb.received.length === at);
+    check('(up)', up());
+    at = kb.received.length;
+    var before = runs.length;
+    measure();
+    check('Start measuring takes the port at once, holding Send and Read',
+          heldBy() === 'calibration' && buttons() === 'true,true,true', heldBy() + ' ' + buttons());
+    await T.run();
+    check('the run reads the keyboard and loads nothing over the page',
+          runs.length === before + 1 && key(kb.received.slice(at)) === '[[16131,0]]' &&
+          page.opts.quantize_presets === false && armed(), key(kb.received.slice(at)));
+    at = kb.received.length;
+    send();                    // a press that got past the button, as withKeyboard's listing allows
+    await T.run();
+    check('a send that finds the port taken sends nothing, and the run keeps the port',
+          kb.received.length === at && heldBy() === 'calibration' && buttons() === 'true,true,true',
+          heldBy() + ' ' + buttons() + ', ' + (kb.received.length - at) + ' sent');
+    var table = tuned({ 20: 2, 30: -1 });
+    ends(table);
+    await T.run();
+    check('the run’s table brings the card up, and the port is free once the run ends',
+          up() && headShown() && sameTable(pageTable(), table) && heldBy() === null &&
+          buttons() === 'false,false,false' && kb.received.length === at, heldBy() + ' ' + buttons());
     send();
     await T.run();
-    check('then goes like any other', !up() && same(kb.flash, bytesOf(page.opts)));
+    check('then Send lands the table and the change together, like any other',
+          !up() && same(kb.flash, bytesOf(page.opts)) &&
+          sameTable(B.settingsFields(kb.flash).pitch_remap, table) &&
+          B.settingsFields(kb.flash).options.quantize_presets === false, kbdMsg().text);
     held = clone(page.opts);
 
     // --- a read that loads other than the keyboard holds --------------------------------------
@@ -431,6 +494,71 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     check('a read that fails takes the card down and disarms it', !up() && !armed()
           && page.nodes.kbdLoadMsg.text === page.KBD_REASONS['no reply'], page.nodes.kbdLoadMsg.text);
     kb.mute = false;
+
+    // --- a calibration run with nothing read ---------------------------------------------------
+    // The run reads the keyboard itself, and that read is a read: what the
+    // keyboard holds goes into the page and arms the card, so the table the
+    // run tunes is a change the card offers and its Send lands.  The run
+    // used to end saying to send the settings with no Send anywhere, and a
+    // Read after it put the keyboard's old table over the tuned one.
+    check('(nothing armed, and the page is not what the keyboard holds)', !armed() && differs());
+    page.nextLoad = clone(held);
+    at = kb.received.length;
+    measure();
+    await T.run();
+    check('a run with nothing read loads what the keyboard holds and arms the card from it',
+          armed() && page.unsent.name === '218e Rewired' && !differs() && !up() &&
+          key(kb.received.slice(at)) === '[[16131,0]]', key(kb.received.slice(at)));
+    table = tuned({ 25: 2, 45: -2 });
+    ends(table);
+    await T.run();
+    check('so the tuned table brings the card up, unsent', up() && headShown() && differs() &&
+          sameTable(pageTable(), table) && kb.received.length === at + 1);
+    send();
+    await T.run();
+    check('and Send lands it on the keyboard', !up() && same(kb.flash, bytesOf(page.opts)) &&
+          sameTable(B.settingsFields(kb.flash).pitch_remap, table), kbdMsg().text);
+    held = clone(page.opts);
+    // A read after a run loads what the keyboard holds, as any read does,
+    // and the card has offered the run's table by then.
+    run('unsentOff()');
+    page.nextLoad = clone(held);
+    measure();
+    await T.run();
+    table = tuned({ 26: 2, 46: -2 });
+    ends(table);
+    await T.run();
+    check('a run’s table is offered on the card before a read can load over it',
+          up() && headShown() && sameTable(pageTable(), table));
+    await read();
+    check('and a read then loads what the keyboard holds, as it always does', !up() && !differs() && armed());
+
+    // --- Start measuring while a send or a read has the port --------------------------------------
+    change({ clock_divide: false });
+    await T.run();
+    at = kb.received.length;
+    before = runs.length;
+    send();
+    await T.run(60);                               // past the paint wait: the push is under way
+    check('while a send has the port, Start measuring is held',
+          heldBy() === 'send' && buttons() === 'true,true,true' && pushedSince(kb, at).length > 0 &&
+          pushedSince(kb, at).length < 338, heldBy() + ' ' + buttons() + ', ' + pushedSince(kb, at).length + ' pushed');
+    measure();                                     // a press that got past the button
+    await T.run();
+    check('and a press starts no run: the send lands, and gives the port back',
+          runs.length === before && page.sweep === null && heldBy() === null &&
+          buttons() === 'false,false,false' && same(kb.flash, bytesOf(page.opts)),
+          heldBy() + ' ' + buttons() + ', ' + (runs.length - before) + ' run(s)');
+    held = clone(page.opts);
+    page.nextLoad = clone(held);
+    run('readFrom(keyboardPorts())');
+    check('while a read has the port, Start measuring is held',
+          heldBy() === 'read' && buttons() === 'true,true,true', heldBy() + ' ' + buttons());
+    measure();
+    await T.run();
+    check('and a press starts no run: the read lands, and gives the port back',
+          runs.length === before && page.sweep === null && heldBy() === null &&
+          buttons() === 'false,false,false', heldBy() + ' ' + buttons());
 
     // The beacon itself: the real reportSettings and optionSummary, with the
     // browser's sendBeacon caught.  A send carries its options in the same

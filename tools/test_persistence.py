@@ -27,6 +27,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 import options  # noqa: E402
+import test_clock  # noqa: E402
 
 METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt", "settings.bin")
 # Ghidra ends every run with the JVM banner and its Unsafe warnings on stderr,
@@ -120,6 +121,9 @@ def main() -> None:
                 command += ["-postScript", "PersistenceClockRegression.java", "seq" if "seq" in mode else "arp"]
                 if args.quick:
                     command.append("quick")
+                # What this configuration builds, which the clock suite holds
+                # the image to: see test_clock.expectations.
+                command += test_clock.expectations(text)
             if "seq" in mode:
                 command += ["-postScript", "SequenceTransportRegression.java", mode]
                 if args.quick:

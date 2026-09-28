@@ -464,6 +464,69 @@ function sourcesOf(out, w) {
     return page.runSources(out.readings, w.cfg.pitch.bottom_key_semitone);
 }
 
+// The page's own run, out of app.js: sweepInMode, handed the keyboard's read
+// the way Start measuring hands it one, against this world's keyboard and
+// 208, with the mode and the writes going out through SETTINGSMIDI.  The DOM,
+// the page's load of a read and its card are stubbed, and what the run hands
+// loadPitchTable is caught.  `pageVpo` is the page's volts per octave;
+// `read`, whether Read settings has armed the card for this keyboard; and
+// `channel`, the MIDI channel picked, null for Auto.  A load puts the
+// keyboard's scaling on the page, as loadFromKeyboard's press does.
+function pageRun(w, opts) {
+    var vm = require('vm'), C = load(w), got = { out: null, err: null, playing: null };
+    var timers = { setTimeout: function (fn, ms) { w.clock += ms || 0; return setTimeout(fn, 0); } };
+    var page = vm.createContext({
+        BUILDLIB: B, GEN: GEN, console: console,
+        CALIBRATE: Object.assign({}, C, { Sweep: function (o) {
+            got.playing = o.adjust && o.adjust.playing ? o.adjust.playing.slice() : null;
+            var run = new C.Sweep(o), go = run.run.bind(run);
+            run.run = function () { return go().then(function (out) { got.out = out; return out; }); };
+            return run;
+        } }),
+        SETTINGSMIDI: { calibrationMode: M.calibrationMode, endCalibration: M.endCalibration,
+                        writePitch: function (output, e, v) {
+                            return M.writePitch(output, e, v, { timers: timers });
+                        } }
+    });
+    vm.runInContext([
+        'var vpo = ' + opts.pageVpo + ', sweep = null, TABLE_ENTRIES = 79, loaded = null, loads = 0;',
+        'var unsent = { armed: ' + !!opts.read + ', name: ' +
+            JSON.stringify(opts.read ? w.output.name : null) + ' };',
+        'function $() { return {}; } function msg() {} function autoNote() {} function noteProgress() {}',
+        'function withWarnings(note) { return note; }',
+        'function press(id, v) { if (id === "vpo") vpo = Number(v); }',
+        'function loadFromKeyboard(r) { loads++; press("vpo", BUILDLIB.pitchTableSettings(' +
+            'r.fields.pitch_remap).volts_per_octave === 1.2 ? "1.2" : "1.0"); return ""; }',
+        'function unsentArm(name) { unsent.armed = true; unsent.name = name; }',
+        'function sweepOptions(chosen) { return { output: chosen, channel: ' +
+            JSON.stringify(opts.channel === undefined ? w.listening : opts.channel) +
+            ', deviceId: null, audioChannel: 0, velocity: 100 }; }',
+        // As the page's: the scaling the table was built at onto the page.
+        'function loadPitchTable(table, was, name, sources) {',
+        '    press("vpo", was.volts_per_octave === 1.2 ? "1.2" : "1.0");',
+        '    loaded = { table: table.slice(), was: was, name: name, sources: sources }; }',
+        appFunction('runSources'), appFunction('runStart'), appFunction('sweepInMode')
+    ].join('\n'), page, { filename: 'web/app.js (extracted)' });
+    page.chosen = w.output;
+    page.r = { fields: { pitch_remap: w.flash.slice() },
+               identity: { firmwareVersion: GEN.version, imageMarker: 0 } };
+    var ran;
+    try { ran = Promise.resolve(vm.runInContext('sweepInMode(chosen, r)', page)); }
+    catch (e) { ran = Promise.reject(e); }
+    return ran.then(function () {}, function (e) { got.err = e; }).then(function () {
+        got.loaded = page.loaded; got.loads = page.loads; got.vpo = page.vpo;
+        return got;
+    });
+}
+// Every pitch write that went out before the first note-on.
+function writesBeforeFirstNote(w) {
+    var n = 0;
+    for (var k = 0; k < w.events.length && w.events[k][0] !== 'on'; k++) {
+        if (w.events[k][0] === 'nrpn' && w.events[k][1] >= 0x80 && w.events[k][1] < 0x80 + 79) n++;
+    }
+    return n;
+}
+
 // A sweep's whole outward behaviour, minus the clock: every MIDI message,
 // every reading, warning and log row, and which keys the result has.
 function signature(w, out) {
@@ -1070,6 +1133,78 @@ function signature(w, out) {
     ok('once one is, that version and later are, and earlier or silent ones are not',
        !!allowed && allowed('3.1.0') && allowed('3.2.0') && allowed('4.0.0') && !allowed('3.0.9') &&
        !allowed(null) && !gate.calibrationModeSupported(null));
+
+    // --- the keyboard's table at the other volts per octave -----------------
+    // The guide has the page's volts per octave set to the 208's trim, and a
+    // run tuned from the keyboard's table whatever its scaling: one at the
+    // other scaling played the probe's two octaves 2000 or 2880 cents apart,
+    // and the run said no MIDI channel was listening.  The page's own run,
+    // against a keyboard at one scaling and a 208 at the other: both ways
+    // round, without the offset, on Auto, and with nothing read, where the
+    // run's read is loaded into the page first.
+    var MISMATCH = [
+        { trim: 1.0, table: 1.2, offset: true, channel: 2, read: true },
+        { trim: 1.2, table: 1.0, offset: true, channel: 2, read: true },
+        { trim: 1.0, table: 1.2, offset: false, channel: 2, read: true },
+        { trim: 1.0, table: 1.2, offset: true, channel: null, read: true },
+        { trim: 1.2, table: 1.0, offset: true, channel: 2, read: false }
+    ];
+    for (var mi = 0; mi < MISMATCH.length; mi++) {
+        var mc = MISMATCH[mi];
+        var what = 'a 208 at ' + mc.trim.toFixed(1) + ' V/oct, the keyboard’s table at ' +
+            mc.table.toFixed(1) + (mc.offset ? '' : ', no offset') +
+            (mc.channel === null ? ', on Auto' : '') + (mc.read ? '' : ', nothing read');
+        w = modeWorld({ listening: 2, vpo: mc.trim, offset: mc.offset });
+        var kcfg = B.expand({ volts_per_octave: mc.table, pitch_offset: mc.offset });
+        var heldTable = B.pitchTable(kcfg, kcfg._calibration);
+        startFrom(w, heldTable);
+        var atFirstNote = null, sendOn = w.output.send;
+        w.output.send = function (m) {
+            if ((m[0] & 0xf0) === 0x90 && !atFirstNote) atFirstNote = w.mirror.slice();
+            return sendOn(m);
+        };
+        var pr = await pageRun(w, { pageVpo: mc.trim, channel: mc.channel, read: mc.read });
+        ok(what + ': the run tunes', !pr.err && !!pr.out, pr.err ? pr.err.message.slice(0, 100) : '');
+        ok('  the flat table at the 208’s scaling is in the mirror before the probe’s first note',
+           !!atFirstNote && same(atFirstNote, B.pitchTable(w.cfg, w.cfg._calibration)),
+           atFirstNote ? 'entry 27 plays ' + atFirstNote[27] + ', the keyboard’s holds ' + heldTable[27] : 'no note');
+        ok('  written without the table the keyboard plays ever running backwards',
+           w.backwards.length === 0 && writesBeforeFirstNote(w) > 70, w.backwards.length +
+           ' backwards, ' + writesBeforeFirstNote(w) + ' written before the first note');
+        near = closeness(w, pr.out); tol = tolerance(w, pr.out);
+        ok('  every tuned entry within half a count (' + tol.counts.toFixed(3) + ')',
+           !!pr.out && near.heard >= 70 && near.counts <= tol.counts,
+           'worst ' + near.counts.toFixed(3) + ' counts at entry ' + near.at + ', ' + near.heard + ' heard');
+        ok('  the mode off and the keyboard’s own table back in the mirror at the end',
+           lastPairs(w, 2) === ENDED && !w.mode && same(w.mirror, heldTable), lastPairs(w, 2));
+        ok('  and the page takes the tuned table at the 208’s scaling',
+           !!pr.loaded && pr.loaded.was.volts_per_octave === mc.trim &&
+           pr.loaded.was.pitch_offset === mc.offset && !!pr.out && same(pr.loaded.table, pr.out.table) &&
+           B.pitchTableSettings(pr.loaded.table).volts_per_octave === mc.trim,
+           pr.loaded ? JSON.stringify(pr.loaded.was) : 'nothing loaded');
+        if (!mc.read) {
+            ok('  the run’s read is loaded as a read, and the page keeps its volts per octave',
+               pr.loads === 1 && pr.vpo === mc.trim, pr.loads + ' load(s), the page at ' + pr.vpo);
+        }
+    }
+    // At the same scaling the keyboard's table is the start, and nothing is
+    // written before the probe.
+    w = modeWorld({ listening: 2 });
+    var pm = await pageRun(w, { pageVpo: 1.2, read: true });
+    ok('a keyboard at the page’s scaling is tuned from its own table, nothing written before the probe',
+       !pm.err && pm.playing === null && writesBeforeFirstNote(w) === 0 &&
+       !!pm.loaded && pm.loaded.was.volts_per_octave === 1.2, pm.err ? pm.err.message.slice(0, 100) : '');
+    // A run that stops before its first note, with nothing read: the page
+    // holds what the keyboard does, at the volts per octave it was set to,
+    // and nothing went to the keyboard.
+    w = modeWorld({ listening: 2, vpo: 1.0 });
+    startFrom(w, B.pitchTable(B.expand({ volts_per_octave: 1.2 }), B.expand({})._calibration));
+    w.silent = true;
+    var pf = await pageRun(w, { pageVpo: 1.0, read: false });
+    ok('a run that stops before its first note leaves the read loaded and the page’s volts per octave',
+       !!pf.err && /Nothing usable/.test(pf.err.message) && pf.loads === 1 && pf.vpo === 1.0 &&
+       w.writes.length === 0 && !w.mode, (pf.err ? pf.err.message.slice(0, 60) : 'ran') + ', ' +
+       pf.loads + ' load(s), the page at ' + pf.vpo + ', ' + w.writes.length + ' written');
 
     // --- what is filled in, and what is left alone ---------------------------
     // A note that is not heard is not written at all, and is not kept at the

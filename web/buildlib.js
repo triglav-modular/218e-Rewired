@@ -852,14 +852,21 @@ var BUILDLIB = (function () {
         return out;
     }
 
-    // A calibration or measurement file, as the page loads one.  Rows are
-    // read by position - Semitone first, the cents fourth, Source fifth -
-    // which is what the page always did; the two record columns are read by
-    // name from the header, since a table written before they existed has
-    // no header for them and loads as it did.
+    // A calibration or measurement file, as the page loads one.  Semitone
+    // is the first column.  The rest are read by name from the header, as
+    // tools/build.py reads them: the cents from Offset_Cents, or from
+    // Measured_Cents in a measurement, then Source and the two record
+    // columns.  A file with no header, or a header that does not name the
+    // cents or Source, has them read by position - the cents fourth, Source
+    // fifth - which is what the page always did; a table written before the
+    // record columns existed has no header for them and loads as it did.
+    // `found` counts semitones, not lines, and `twice` is the first
+    // semitone a second row named, or null: tools/build.py refuses such a
+    // table, because a stale row from a hand edit would silently win.
     function parseCalibration(text, entries) {
         var rows = {}, sources = {}, history = { read: {}, against: {} };
-        var found = 0, readCol = -1, againstCol = -1;
+        var found = 0, twice = null, readCol = -1, againstCol = -1;
+        var centsCol = 3, sourceCol = 4;
         // Split on any line ending: CRLF from Windows, and CR alone, which
         // Excel can still write.
         text.split(/\r\n|\r|\n/).forEach(function (line) {
@@ -867,6 +874,11 @@ var BUILDLIB = (function () {
             var semi = line.indexOf(';') >= 0;
             var q = line.split(semi ? ';' : ',');
             if (/^Semitone/i.test(line)) {
+                var names = q.map(function (name) { return name.trim(); });
+                var cents = names.indexOf('Offset_Cents');
+                if (cents < 0) cents = names.indexOf('Measured_Cents');
+                centsCol = cents >= 0 ? cents : 3;
+                sourceCol = names.indexOf('Source') >= 0 ? names.indexOf('Source') : 4;
                 q.forEach(function (name, i) {
                     if (name.trim() === 'Read_Cents') readCol = i;
                     if (name.trim() === 'Read_Against') againstCol = i;
@@ -881,17 +893,25 @@ var BUILDLIB = (function () {
                 if (semi && /^\s*-?\d+,\d+\s*$/.test(raw)) raw = raw.replace(',', '.');
                 return parseFloat(raw);
             }
-            var n = parseInt(q[0], 10), c = num(q[3]);
+            var n = parseInt(q[0], 10), c = num(q[centsCol]);
             if (isNaN(n) || isNaN(c) || n < 0 || n >= entries) return;
+            if (rows.hasOwnProperty(n)) { if (twice === null) twice = n; }
+            else found++;
             rows[n] = c;
-            sources[n] = (q[4] || '').trim();
+            sources[n] = (q[sourceCol] || '').trim();
             if (readCol >= 0 && againstCol >= 0) {
                 var rd = num(q[readCol]), ag = num(q[againstCol]);
                 if (!isNaN(rd) && !isNaN(ag)) { history.read[n] = rd; history.against[n] = ag; }
             }
-            found++;
         });
-        return { rows: rows, sources: sources, history: history, found: found };
+        return { rows: rows, sources: sources, history: history, found: found, twice: twice };
+    }
+
+    // tools/build.py read_calibration's refusal of a table that names a
+    // semitone twice, in its words, so the two builders say the same thing.
+    function calibrationTwice(name, semitone) {
+        return name + ': semitone ' + semitone +
+               ' appears twice - a stale row from a hand edit would silently win';
     }
 
     function pitchTable(cfg, rows) {
@@ -1871,6 +1891,7 @@ var BUILDLIB = (function () {
         octaveWidth: octaveWidth, measuredGain: measuredGain, keyDelta: keyDelta,
         foldOffsets: foldOffsets, calibrationRows: calibrationRows,
         historyToSave: historyToSave, parseCalibration: parseCalibration,
+        calibrationTwice: calibrationTwice,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
         baseUnits: baseUnits, patternBank: patternBank,

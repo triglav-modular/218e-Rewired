@@ -191,9 +191,14 @@ CONFIGS = [
     ("no_offset_corrected", [(r"^pitch_offset = true", "pitch_offset = false"),
                              (r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
                             {"pitch_offset": False, "pitch_correction": calibration_rows()}),
-    # The preset quantiser: one cave and one pool word, gated together.
-    ("quantize_presets",  [(r"^quantize_presets = .*", "quantize_presets = true")],
-                          {"quantize_presets": True}),
+    # The preset quantiser and the jack are option cells: every cave is in
+    # every image and the record's cell picks the path, so the value worth
+    # comparing is the one the defaults do not build.  A row that set the
+    # default built the defaults again and compared nothing new.
+    ("quantize_presets_off", [(r"^quantize_presets = .*", "quantize_presets = false")],
+                             {"quantize_presets": False}),
+    ("portamento_factory", [(r'^portamento_in = .*', 'portamento_in = "portamento"')],
+                           {"portamento_in": "portamento"}),
     ("tunings_one",       [(r"^alternate_tunings = false",
                             'alternate_tunings = ["tunings/12TET.scl"]')],
                           {"alternate_tunings": scala(["tunings/12TET.scl"])}),
@@ -294,6 +299,14 @@ CONFIGS = [
                           {"pitch_correction": calibration_rows(),
                            "alternate_tunings": scala(SCALES)}),
 ]
+
+# Every row above has to build an image no other row builds, as sweep.py
+# requires of its variants: a row whose edit no longer changes anything - one
+# that sets an option to the value the config already holds - builds another
+# row's image, and the two builders agreeing about it compares nothing new.
+# These rows spell another row's configuration a second way on purpose, and
+# have to build that row's image exactly.
+SAME_IMAGE = {"slot_without_map": "tunings_one"}
 
 
 # Configurations BOTH builders must refuse, and the reason each must give.
@@ -517,7 +530,7 @@ def main() -> None:
     rows: list[tuple[str, str, str, bool]] = []
     refused: list[tuple[str, str, str, bool]] = []
     try:
-        run(base, rows)
+        apart = run(base, rows)
         run_refusals(base, refused)
     finally:
         restore(saved)
@@ -532,11 +545,18 @@ def main() -> None:
     failures = sum(1 for r in rows + refused if r[3])
     total = len(rows) + len(refused)
     print(f"\n{total - failures}/{total} match")
+    print(apart)
     if failures:
         raise SystemExit(1)
 
 
-def run(base: str, rows: list) -> None:
+def run(base: str, rows: list) -> str:
+    """Build every row both ways, then require each to build its own image.
+
+    Returns the line that says whether they did; a row that did not is
+    marked failed where it stands in `rows`.
+    """
+    images: dict[str, str] = {}
     for name, edits, options in CONFIGS:
         cfg_path = prepare(base, name, edits)
         try:
@@ -552,6 +572,7 @@ def run(base: str, rows: list) -> None:
             if built.returncode != 0:
                 rows.append((name, "build.py failed", "-", True)); continue
             sha = re.search(r"SHA-256 ([0-9a-f]{64})", built.stdout).group(1)
+            images[name] = sha
 
             (TMP / "_opts.json").write_text(json.dumps(options))
             # The settings record as hex text: jsc's readFile is for text,
@@ -589,6 +610,34 @@ def run(base: str, rows: list) -> None:
         finally:
             cfg_path.unlink(missing_ok=True)
             (REPO / "build" / "_web.hex").unlink(missing_ok=True)
+    return distinct(rows, images)
+
+
+def distinct(rows: list, images: dict[str, str]) -> str:
+    """Mark failed every row that builds another row's image, and every
+    SAME_IMAGE row that does not build the one it names."""
+    first: dict[str, str] = {}
+    repeated = 0
+    for i, (name, result, image, failed) in enumerate(rows):
+        sha = images.get(name)
+        if sha is None:
+            continue
+        twin = SAME_IMAGE.get(name)
+        if twin is not None:
+            if images.get(twin) != sha:
+                rows[i] = (name, result, f"{image}, NOT THE IMAGE {twin} BUILDS", True)
+                repeated += 1
+            continue
+        if sha in first:
+            rows[i] = (name, result, f"SAME IMAGE AS {first[sha]}", True)
+            repeated += 1
+        else:
+            first[sha] = name
+    if repeated:
+        return (f"{repeated} row(s) failed the one-image-per-row check: "
+                f"an edit may not be taking effect")
+    return (f"all {len(first)} images distinct, and "
+            + ", ".join(f"{a} builds {b}'s" for a, b in SAME_IMAGE.items()))
 
 
 if __name__ == "__main__":

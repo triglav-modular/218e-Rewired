@@ -33,7 +33,7 @@ scale repeats at the tritave (`web/test_readback.js`).
 | Any option in step 2 (the eleven below), and whether tunings are in use | Send settings; the keyboard restarts itself to run it |
 | The arpeggiator's pattern bank, the three tuning tables, the pitch table (calibration, volts per octave, pitch offset) | Send settings; tables go live in the mirror at once |
 | The ten timing numbers | Carried in the record and editable by any NRPN sender; the page has no controls for them, and a read keeps the ones that differ from its own for the next build |
-| A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read, the add-to-pitch octave included; knob 4's octave switch divides its six octaves by it, three silent zones and then one per period, thirteen at most |
+| A scale that repeats at something other than the octave | Send settings: the period travels as number cell 10, `octave_units`, which the octave controls read, the add-to-pitch octave included, and so does a received MIDI note's drop with the switch off OCTAVE; knob 4's octave switch divides its six octaves by it, three silent zones and then one per period, thirteen at most |
 
 `Read settings` works against any 3.0 keyboard: it loads the patterns, the
 options and the tunings into the page, and the pitch table into the
@@ -94,15 +94,25 @@ divider - ever has to be unwound live. The dump carries both the cells and
 the live bytes (`0x0020..0x002f`), so the page can say which options are
 saved but not yet running.
 
-**The restart.** `0x3f04` with data `0x2a2a` writes the DFU bootloader's
-ISP RAM key, `ISPK`, to the first word of SRAM, then enables the watchdog
-with a short timeout and spins. The key is what makes the bootloader stop
-the watchdog before it starts the application again (see "what the bench
-still owes" below); the boot then treats the reset like power-up. The
-page's send restarts the keyboard only when the committed option cells
-differ from the live bytes, waits for the port to re-enumerate, and asks
-for the identity block again to confirm the live bytes now match. A send
-that changes only tables or patterns does not restart.
+**The restart.** `0x3f04` with data `0x2a2a` first ends every MIDI note
+the keyboard is sounding, because a receiver gets no note-off from a
+reset and none comes at boot. The factory panic sends a note-off for
+every note in the factory's active-note table, each on the channel it
+went out on, then CC 121 and CC 123 on the instrument's channel. Each
+goes to port one, and to port two while its USB link is up. The panic's
+walk stops at note 126, so note 127 gets its own note-off, and so does a
+held key's note the table no longer holds. Port two sends as it goes.
+Port one's messages wait in a ring the USART empties at about a
+millisecond each, so the restart waits for the ring to empty, for up to
+about 40 ms. Then it writes the DFU bootloader's ISP RAM key, `ISPK`, to
+the first word of SRAM, enables the watchdog with a short timeout and
+spins. The key is what makes the bootloader stop the watchdog before it
+starts the application again (see "what the bench still owes" below);
+the boot then treats the reset like power-up. The page's send restarts
+the keyboard only when the committed option cells differ from the live
+bytes, waits for the port to re-enumerate, and asks for the identity
+block again to confirm the live bytes now match. A send that changes
+only tables or patterns does not restart.
 
 **What "off" is, per option.** Every cave is in every image; the byte
 decides at the point where the option engages, and everything downstream
@@ -114,18 +124,37 @@ sees the state it sees today when the gesture is not made:
 | `knob1..knob4` | Dispatchers on the pool words the knob caves stand behind name the blend, the six orders, the factory selector, the randomiser, the grid, swing, the pattern gate, the vibrato engine, the octave switch or the factory handler; a knob left factory latches into RAM nothing else reads. `option_boot_state` zeroes the vibrato engine's phase, depth and output offset at every boot, since the pitch remap adds that offset every scan whatever knob 4's role |
 | `sequencer` | The pad-4 chord never arms, so the mode byte stays 0 and every sequencer cave answers the factory way; a take restored from the persistence record is kept but cannot be played. `seq_restart_clear` zeroes the sequencer's runtime (the mode, the cursor, the chord, the audition) at every boot in every image, so no restart resumes a take, in a build without persistence too |
 | `clock_divide` | The GPIO interrupt runs the factory's own body instead of the capture cave, event 10 reaches the factory's arp step again, and the four pulse pools go back to the scan-grid pulse; the divider never sees an edge, so it never acquires. The 4 ms trigger spike stays either way |
-| `pressure_fix` | The curve, knob 1 and knob 4 pool words go back to the factory's routines; the two clamp skips and the gain branch replay the factory's own instructions; the pressure store passes straight through the interpolator to the DAC slot |
+| `pressure_fix` | The curve, knob 1 and knob 4 pool words go back to the factory's routines; the two clamp skips and the gain branch replay the factory's own instructions; the pressure store passes straight through the interpolator to the DAC slot. The factory's gain shares its cell with the fix's floor and ceiling, and the factory saves and reloads that cell, so a floor and ceiling left there read as the factory's default gain, 12.0, until edit-mode knob 1 sets a gain |
 | `pressure_portamento` | The pitch hook goes straight to the remap around the blend's conditioner; the glide clamp keeps the classic portamento with its zero-snap. The conditioner's last offset and the re-base history, which `transpose_capture` consults in every configuration, are reset at every boot: nothing sounds when the keyboard comes up |
 | `quantize_presets` | The preset adder's float-to-int is the factory's own again, so the voltage adds as it is, and the rotation is asked for zero degrees from the preset |
 | `portamento_in` = portamento | The transposer reads no jack (zero degrees from it) and the factory's glide-rate addend reads the jack again. The transposer's state word, whose shift the MIDI note conversion honours, is unseeded at every boot and recomputed by the first scan |
 | `alternate_tunings` | The per-scan applier word returns at once, so the slot LEDs and the transpose-mode byte stay the factory's; edit keys 27 and 28 replay the factory's transpose-mode and remote-enable toggles instead of selecting slots; the three remote-enable reads read the flag instead of zero |
 
-Two things differ from a build that never had the option: the factory's
-long hold on the arp switch no longer toggles polyphonic MIDI in any image
-(edit mode is its single owner), and `release_count_guard`, a factory
-fix, stays in. A keyboard map wider than 32 positions is refused in every
-build, since either input to the key-table rotation can be turned on over
-MIDI.
+These differ from a build that never had the option. The factory's long
+hold on the arp switch no longer toggles polyphonic MIDI in any image (edit
+mode is its single owner), and `release_count_guard`, a factory fix, stays
+in. The three `transpose_force_*` patches stand in every image: the
+keyboard's note-on velocity floor is 1 rather than configuration knob 3's
+minimum, and the factory's peak hold takes a falling sensor reading on
+every scan rather than every tenth. They have nothing to do with transpose
+mode, which with cell 27 off works as shipped whatever the knob roles (see
+[BUILD.md](BUILD.md)). Knob 2 on `patterns` plays its patterns with knob 1
+on `factory` too, since the pattern gate stands in front of whichever
+selector knob 1 names; a build made before the roles went runtime left the
+gate unreachable in that pairing. A keyboard map wider than 32 positions is
+refused in every build, since either input to the key-table rotation can
+be turned on over MIDI.
+
+**A received MIDI note plays the tuning in use.** The factory note-on
+reads the key table at RAM `0x854` at note - 24, as far as entry 103, and
+the applier and the rotation fill entries 0..31. Past entry 31 the note-on
+reads the table the way the rotation wraps it: down one period of keys and
+up one period of pitch at a time, the keys per period being the selected
+slot's and the period number cell 10. So a note on the instrument's
+channel plays the selected slot over its whole range, rotated by the jack
+and the quantised preset like the keys, and a note past the pitch output
+holds at the top. With the add-to-pitch switch off OCTAVE the note-on
+drops one period of cell 10, not 484.
 
 ## The record
 
@@ -228,7 +257,7 @@ the last NRPN or on cell 0.
 | `0x3f01` | reload the mirror from flash, dropping live edits: the image's own settings, then the newer valid record over them, as at boot, so with no valid record it is the image's settings; the next scan copies the selected tuning slot again | |
 | `0x3f02` | the image's own settings back in the mirror, the tuning slot copied again likewise; flash untouched until a commit | |
 | `0x3f03` | dump: every parameter, then the identity block | |
-| `0x3f04` | restart through the watchdog | data `0x2a2a` |
+| `0x3f04` | end every sounding MIDI note, then restart through the watchdog | data `0x2a2a` |
 | `0x3f05` | calibration mode on with data `0x2a2a`, off with any other value | data `0x2a2a` |
 | `0x3f7f` | the identity block alone | |
 
@@ -302,6 +331,16 @@ then the patterns, the options and the tunings loaded into their
 controls, the timing numbers kept for the next build, and the pitch table
 into the calibration.
 
+**Start measuring** reads the keyboard before it plays a note. With
+nothing read from that keyboard yet, the run's read is loaded the way Read
+settings loads one and arms the unsent card, so the table the run tunes
+comes up there to send. The page keeps its own volts per octave through
+that load. The run tunes at that scaling: where the keyboard's table is at
+the other one, the run writes the flat table at the page's scaling into the
+mirror before its first note and tunes from that. The keyboard's port is
+held by one of a read, a send and a run at a time, and only the one that
+took it gives it back.
+
 A reply is believed only whole. A dump or an identity block that lost a
 parameter on the way still ends with the layout version, so it looks
 finished; decoded, the lost values would read as zeros, and a dump without
@@ -327,7 +366,14 @@ the registers its callers keep; the controls and clock suites run the
 options both ways through the real scans. The restart command is checked
 to put the bootloader's key in SRAM word 0 before it arms the watchdog, and
 to write the watchdog's control register in its two-key sequence and
-nothing else.
+nothing else. With a key held and two notes in the active-note table, one
+of them 127, it is checked to send a note-off for each on both ports, on
+the channel each went out on, and CC 121 and CC 123 on both, all before
+the watchdog. It is checked again with the key's note gone from the table
+and with the instrument's channel changed since the notes went out. It
+arms the watchdog once port one's ring is empty and its interrupt between
+packets, after the 40 ms bound, or after `0x400000` cycles of COUNT when
+the millisecond count stands still (`SettingsRegression.restartQuiet`).
 
 The boot guard (docs/BUILD.md) does not cover a settings send. Only a
 flash arms it, because the boot after a send may happen anywhere, and a
@@ -359,6 +405,9 @@ START.
 Not yet done on an instrument:
 - the boot guard's DFU fallback, a power cut in the first 1.5 s after a
   flash;
+- that a synth following the keyboard on DIN and on USB ends its notes
+  when a settings send restarts the keyboard mid-note (the emulation
+  counts the messages; the USART and the reset are the bench's);
 - that a falling edge on the clock jack, which the GPIO interrupt now also
   receives with the divider off, costs nothing audible.
 

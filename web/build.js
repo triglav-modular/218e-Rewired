@@ -212,7 +212,8 @@ var WEBBUILD = (function () {
         ['persist_crc', 'persist_record_crc', 'persist_pack',
          'persist_valid', 'persist_newest', 'persist_load',
          'persist_same', 'persist_verify', 'persist_save', 'persist_tick',
-         'persist_capture', 'persist_boot', 'persist_scan_shim', 'persist']
+         'persist_capture', 'persist_capture_ref', 'persist_boot',
+         'persist_scan_shim', 'persist']
             .forEach(function (n) { blocks[n] = keep; });
         // Since phase G the factory ISR posts the clock event whenever the
         // divider's byte is off, so the sequencer's gate on it always stands.

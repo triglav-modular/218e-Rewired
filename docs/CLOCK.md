@@ -544,12 +544,13 @@ The assertion in **What changed** holds; this is not a defect in the
 two-phase claim.
 
 The glide decline is ruled out too, for this build specifically. A decline
-would hand the beat back to the 5 ms scan and cost up to a scan period, but
-`declinedGlideJitter()` shows that in a blend build the scan derives
-`0x2eee = 0` from every portamento source, so the branch is unreachable — and
+would hand the beat back to the 5 ms scan and cost up to a scan period, but in
+a blend build with no take playing the scan derives `0x2eee = 0` at every
+position of the portamento knob, so the branch is unreachable there.
+`declinedGlideJitter()` moves the knob across its range and asserts it.
 `pressure_portamento = true` is the shipped default and the owner's
-configuration. The sequencer's own glide (`seq_glide`) can write a nonzero
-rate, but the capture was the arp.
+configuration. The sequencer's own glide (`seq_glide`) writes a nonzero rate
+once the knob is past its deadzone, but the capture was the arp.
 
 #### What the model does not explain
 
@@ -1014,8 +1015,8 @@ rests/ties. Startup, main-loop and 1 ms callback pointers are exercised too,
 as is the 1 kHz DAC flush through the dispatcher's own jump-table entry.
 It also measures edge-to-rise jitter across a locked clock walked over the
 scan grid and beat-to-rise jitter across an internal tempo walked over the
-same grid, asks the firmware what settle it was built with rather than
-assuming it, proves in `settleStartsAtTheTransfer()` that the RC wait is
+same grid, holds the settle each image carries to the one its configuration
+asks for, proves in `settleStartsAtTheTransfer()` that the RC wait is
 spent from the DAC transfer and cannot begin before the pitch has gone out,
 proves in `pendingGatesWithoutADispatch()` that a claimed beat gates at
 edge + deadline through the bare main-loop wrapper with every dispatch
@@ -1028,6 +1029,30 @@ checks the flush leaves the per-scan vibrato chain alone, and runs a whole
 clock with the scan before the flush and again with it after.
 Missing completion markers and emulator instruction-budget exhaustion fail
 the run, even if Ghidra itself exits zero.
+
+The driver works out what each mode builds and passes it to the script.
+`internal_settle_ms` is `gate_settle_scans` times `scan_period_ms`,
+`external_settle_ms` is `clock_settle_scans` times the same, and
+`pressure_portamento` says whether the blend owns the portamento. All three
+come from `tools/options.py`, the mode's override included, and the
+persistence runner passes the same three. The suite used to ask the image what
+settle it carried and hold it to that answer, so a 2 ms settle passed and a
+lost one turned its tests into SKIPs. The internal settle is read off the COUNT
+target phase A stores and must equal the configured one. The external settle
+is read off a session's first edge, whose target is the transfer plus the
+settle alone, and must equal it too. A settle test SKIPs only where the
+configuration asked for no settle.
+
+`declinedGlideJitter()` covers the glide decline. It writes the portamento knob
+(`state+0x306`) and enters the scan at `0x8000313a`, where the factory turns
+the knob into the glide-rate index; `scan()` starts past that block. It asserts
+that `0x2eee` is the factory table entry exactly when the knob is at 0x30 or
+above and either the blend is off or a take is playing, and zero otherwise.
+Where the build declines, it runs twenty edges with the knob at 0x200 over
+moving notes and asserts that each edge gates once, on the scan rather than
+the flush, on the scan's own glide position while the glide is still moving,
+and within one scan period of its edge. Under the 1 ms fixture that spread is
+4.2 ms, over the 1-2 ms target, which is not asserted for a declined beat.
 
 The persistence runner additionally executes `SequenceTransportRegression.java`
 for both sequencer variants: real pad PLAY/STOP/CLEAR, all three physical
@@ -1121,12 +1146,14 @@ claim that work leads to.
 A second blind spot turned up alongside the first. The fast path declines
 when `0x2eee != 0` -- a real portamento time -- and sends the beat back to
 the 5 ms scan, but no jitter test ever set that cell, so every figure here
-is for a snapping glide. `declinedGlideJitter()` now states the glide's
-condition alongside the jitter. In a `pressure_blend` build the scan derives
-`0x2eee = 0` from every source tried and zeroes a written value on the next
-pass, so the decline is unreachable there and the portamento knob does not
-enter the external jitter. That is what makes the scan-rate experiment below
-interpretable: only one mechanism is left to scale with the scan.
+is for a snapping glide. In a `pressure_blend` build with no take playing
+the scan derives `0x2eee = 0` at every position of the portamento knob, so the
+decline is unreachable there and the knob does not enter the external jitter.
+That is what makes the scan-rate experiment below interpretable: only one
+mechanism is left to scale with the scan. The probe written to show this could
+not. It drove two arp tempo cells that no glide code reads, and it reported the
+decline unreachable on the `pressure_portamento = false` build too. See
+**Repeatable checks** for what `declinedGlideJitter()` asserts now.
 
 ### The scan-rate experiment, and what it refuted
 

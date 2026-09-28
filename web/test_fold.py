@@ -11,6 +11,9 @@ The baseline is the repository's own calibration file, which is corrected
 enough to matter - it reaches +280 cents at the top, where the octave width is
 furthest from 1.000 and a wrong scaling shows up first.
 
+The two read a table file alike as well: its columns by name, and a semitone
+named twice refused, in the CLI's words.
+
     python3 web/test_fold.py
 """
 import json
@@ -483,6 +486,37 @@ def main():
         print("FAIL  the page read a record out of a table that has none")
         return 1
     print("ok    a table without the record columns loads as before")
+
+    # The same table file through both readers.  A semitone named twice is
+    # refused by both, and in the CLI's words; a table with its columns in
+    # another order reads the same in both, since both read them by name.
+    text = BASELINE.read_text()
+    twice = text.replace("\n41;", "\n40;", 1)
+    rows = [ln.split(";") for ln in text.splitlines() if ln and not ln.startswith("#")]
+    cents, source = rows[0].index("Offset_Cents"), rows[0].index("Source")
+    moved = "".join(";".join([r[0], r[cents], r[1], r[2], r[source]]) + "\n" for r in rows)
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "twice.csv"
+        f.write_text(twice)
+        try:
+            B.read_calibration(f)
+            cli = None
+        except ValueError as e:
+            cli = str(e)
+        m = Path(tmp) / "moved.csv"
+        m.write_text(moved)
+        cli_moved = B.read_calibration(m)
+    page = js("B.calibrationTwice(a.name, B.parseCalibration(a.text, 79).twice)",
+              name="twice.csv", text=twice)
+    if cli is None or page != cli:
+        print(f"FAIL  a semitone named twice: cli {cli!r}, page {page!r}")
+        return 1
+    print("ok    a semitone named twice is refused by both, in the same words")
+    page_moved = keyed(js("B.parseCalibration(a.text, 79).rows", text=moved))
+    if page_moved != cli_moved or page_moved != base:
+        print("FAIL  a table with its columns in another order reads differently in the two")
+        return 1
+    print("ok    a table with its columns in another order reads the same in both")
 
     print("ALL FOLD TESTS PASSED")
     return 0

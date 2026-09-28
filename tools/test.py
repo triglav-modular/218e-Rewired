@@ -681,6 +681,9 @@ def test_blend(cfg: dict) -> None:
             anchor = pitch == base
             if latch:
                 pitch += stamp.get(k, 0)
+            # Held at the pitch floor, entry 0 of the pitch table, as the
+            # firmware holds every contributor since audit 038711a (F2).
+            pitch = max(pitch, -0x78)
             if anchor:
                 measured_from = pitch
             z = press.get(k, 0) - (0 if anchor else thresh)
@@ -706,9 +709,20 @@ def test_blend(cfg: dict) -> None:
           swept[0] == 0 and swept[1] > 100 and swept[2] > 270, str(swept))
 
     # 32-bit accumulators with every key contributing at maximum weight.
+    # The firmware divides unsigned, so every contributor is carried 0x78 up
+    # from the pitch floor (-0x78) and the top of the range is 4095 + 0x78.
     weight = (63 ** 3) >> 3
+    top = 4095 + 0x78
     check("accumulators cannot overflow with 29 contributors",
-          29 * weight * 4095 < 2 ** 32, f"{29 * weight * 4095:,}")
+          29 * weight * top < 2 ** 32, f"{29 * weight * top:,}")
+
+    # A note latched under octave pad 0 on a slot whose key 0 is under one
+    # period (483, both bundled Sabat II scales) sounds at -1, and alone it
+    # is its own anchor: no offset, whatever the pressure.
+    saved, table[0] = table[0], 483
+    under = [blend({0}, 0, True, {0: -484}, {0: p}) for p in (100, 500, 900)]
+    table[0] = saved
+    check("a lone latched key under zero publishes no offset", under == [0, 0, 0], str(under))
 
     # Shifting only as far as overflow safety requires preserves the cubic
     # ratio at light pressure.  The old >>6 quantised z=4 and z=5 to the same

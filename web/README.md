@@ -60,7 +60,7 @@ array and reads `app.js` to catch an applier that was never added to it.
 | `index.html`, `app.js` | the interface |
 | `build.js` | the whole build: options + factory image → flashable image; `test_readback.js` builds, reads the record back into table slots as the page's read does, and builds again (local only: it needs the factory image) |
 | `calibrate.js` | the automatic measurement: drives the keyboard over MIDI, measures the 208 on an audio input, fills in the calibration offsets |
-| `settings.js` | the settings transport: pushes a build's record to the keyboard as NRPN, reads it back, commits it; `test_settingsmidi.js` runs it against a fake instrument, `test_nrpn.js` the codec in `buildlib.js`, and `test_unsent.js` the page's unsent card (a change after a read, sent by its Send) |
+| `settings.js` | the settings transport: pushes a build's record to the keyboard as NRPN, reads it back, commits it; `test_settingsmidi.js` runs it against a fake instrument, `test_nrpn.js` the codec in `buildlib.js`, and `test_unsent.js` the page's unsent card (a change after a read, a calibration run's own read included, sent by its Send) and who holds the keyboard's port |
 | `buildlib.js` | ported from `tools/build.py` — tables, hex, flags, properties, and the fold that accumulates readings onto a flashed table |
 | `sha256.js` | synchronous SHA-256 (SubtleCrypto is async and absent from jsc) |
 | `generated.js` | **generated** — frozen defaults, feature map, control flow, assembler source |
@@ -95,10 +95,11 @@ is checked against Ghidra instruction by instruction. On top of that:
 python3 web/test_configs.py
 ```
 
-builds thirty configurations with `tools/build.py` and again with this
+builds thirty-one configurations with `tools/build.py` and again with this
 pipeline, and compares **both** the generated `build.properties` and the final
-image SHA-256; eleven more are option sets both toolchains have to refuse, and
-refuse for the same reason. A clean run reports every configuration matching,
+image SHA-256; no two of them may build the same image, except one slot
+written two ways, which must. Eleven more are option sets both toolchains
+have to refuse, and refuse for the same reason. A clean run reports every configuration matching,
 `historical` included — the most complex one, with measured calibration and
 three tunings. It is an anchor for that combination rather than a reproduction
 of any older image: the power-up marker hashes the assembler source, so no

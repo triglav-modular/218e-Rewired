@@ -54,6 +54,25 @@ def internal_override(**settings):
             os.environ[options.OVERRIDE_ENV] = previous
 
 
+def expectations(text: str) -> list[str]:
+    """What a configuration builds, as ClockRegression's setting=value arguments.
+
+    The internal beat's settle is gate_settle_scans scans of scan_period_ms and
+    the external beat's is clock_settle_scans of them; pressure_portamento says
+    whether the blend owns the portamento, which decides whether the glide can
+    make the trigger decline.  All three come from tools/options.py's expansion
+    of the configuration, with REWIRED_INTERNAL_OVERRIDE applied, so call this
+    where the build sees the same override.  The suite used to ask the image
+    under test what settle it carried and hold it to that answer: a settle cut
+    short stayed green, and a lost one turned its tests into SKIPs.
+    """
+    cfg = options.expand(tomllib.loads(text).get("options", {}))
+    period = cfg["timing"]["scan_period_ms"]
+    return [f"internal_settle_ms={cfg['timing']['gate_settle_scans'] * period}",
+            f"external_settle_ms={cfg['sequencer']['clock_settle_scans'] * period}",
+            f"pressure_portamento={int(cfg['portamento']['pressure_blend'])}"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode",
@@ -93,7 +112,7 @@ def main() -> None:
     # together, and the suite takes as long as its slowest mode instead of the
     # sum of all six.
     jobs = args.jobs or min(len(modes), 8)
-    images: list[tuple[str, Path]] = []
+    images: list[tuple[str, Path, list[str]]] = []
     for mode in modes:
         text = base
         # pressure-off is the same clock as arp, built the way `pressure_fix
@@ -139,12 +158,13 @@ def main() -> None:
             result = subprocess.run([sys.executable, "tools/build.py", "--no-ghidra",
                                      "--config", str(config)],
                                     cwd=REPO, text=True, capture_output=True)
+            expect = expectations(text)
         (work / f"{mode}-build.log").write_text(result.stdout + result.stderr)
         if result.returncode:
             raise SystemExit(result.stdout + result.stderr)
-        images.append((mode, image))
+        images.append((mode, image, expect))
 
-    def emulate(mode: str, image: Path) -> str:
+    def emulate(mode: str, image: Path, expect: list[str]) -> str:
         # Its own Ghidra project per mode.  One shared project would serialise
         # the modes again on the project lock, and it also kept every earlier
         # mode's image around in the project the next one opened.
@@ -156,6 +176,7 @@ def main() -> None:
             command.append("quick")
         if mode in ("settle-scans", "no-gate-settle", "latency"):
             command.append("jitter")
+        command += expect
         result = subprocess.run(command, cwd=REPO, text=True, capture_output=True)
         output = result.stdout + result.stderr
         (work / f"{mode}-emulation.log").write_text(output)
@@ -168,7 +189,8 @@ def main() -> None:
     print(f"Emulating {len(images)} firmware image(s), {jobs} at a time...", flush=True)
     failures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        pending = [(mode, pool.submit(emulate, mode, image)) for mode, image in images]
+        pending = [(mode, pool.submit(emulate, mode, image, expect))
+                   for mode, image, expect in images]
         # Reported in the order the modes were asked for, not the order they
         # finish, so the run reads the same however the work was scheduled.
         for mode, future in pending:

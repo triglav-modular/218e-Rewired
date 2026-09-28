@@ -379,12 +379,23 @@ remote-enable toggle — and the rem-en and trn LEDs are left alone, because the
 applier that drives them is not called. There is nothing to switch between, so
 nothing is taken over.
 
-Transpose *mode* needs one more thing to survive: the knobs. It is driven from
-the knobs the roles take over, so any knob not set to `factory` retires it as
-surely as a tuning does. With no tuning and all four knobs `factory`, the three
-`transpose_force_*` patches are skipped and transpose works as it shipped; with
-either a tuning or a remapped knob, they are applied and it does not. That is
-the only place two options combine to decide a third thing.
+Transpose *mode*, the factory's knob 4 transposition (key 27 in edit mode, the
+trn LED, knob 4 choosing the octave), survives without a tuning whatever the
+knob roles are. Under `vibrato` knob 4's factory octave zones keep running
+beside the vibrato, so with the trn LED lit knob 4 transposes as well. Under
+`trn` the role sets the same octave from its own zones and keeps the mode on.
+A tuning retires the factory mode: the applier clears the transpose-mode byte
+on every scan, and key 27 selects slots instead. The `trn` role sets the byte
+again after the applier, so knob 4 on `trn` transposes with a tuning too.
+
+The three patches named `transpose_force_*` have no part in this, and they
+are in every image. Two hold the lowest keyboard note-on velocity at 1. The
+factory reads that floor from `state+0x2db`, the minimum configuration knob 3
+sets, which is also the byte `pressure_fix`'s edit-mode knob 4 writes the
+curve level into; so the knob 3 minimum is not used, while the arpeggiator's
+own minimum, pad 3 and knob 3, still is. The third reloads the factory's peak
+hold with 1 instead of 10, so a falling sensor reading is taken on every scan
+rather than every tenth.
 
 **Anchoring.** Each scale is shifted so that **A** lands on the 12-TET grid,
 which keeps the note you tuned the 208 to in the same place in every slot;
@@ -450,7 +461,14 @@ because neither role touches persistence. It checks all six note orders, preset-
 isolation through the actual ADC-event pitch target and DAC path from the
 first knob movement, release-triggered saves, released/unlatched press
 history, and pitch ordering with octave-stacked notes and equal pitches.
-It also checks strip touches across preview and RECORD boundaries.
+It also checks strip touches across preview and RECORD boundaries, and
+that each MIDI note names the note its pitch CV plays: a latched note at
+the octave it was entered at, a recorded step at the octave it was played
+at, a preview pinned as its CV is, and a key played over a take at its own
+note. One more image carries a 24-key map, `tunings/24TET.scl` with
+`tunings/24TET-full.kbm`, and runs only the MIDI checks of the octave pads,
+the latch and a key played over a take. There an octave pad steps the MIDI
+note 24, as the jack does for a period.
 Like `test_persistence.py`, it requires Ghidra, models
 peripherals without flashing hardware, and restores shared build metadata.
 

@@ -6,7 +6,14 @@
     <atom:link href="https://triglavmodular.hu/mods/218e-Rewired/feed.xml" rel="self" type="application/rss+xml"/>
     <description>Firmware releases for the Buchla 218e V3.</description>
     <language>en</language>
-    <pubDate>Sun, 27 Sep 2026 12:00:00 +0000</pubDate>
+    <pubDate>Mon, 28 Sep 2026 12:00:00 +0000</pubDate>
+    <item>
+      <title>Rewired 3.1</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#3.1</guid>
+      <pubDate>Mon, 28 Sep 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Fixed several pitch and MIDI bugs: received MIDI notes now follow the tuning across their whole range, and poly MIDI plays over a running sequence.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
     <item>
       <title>Rewired 3.0</title>
       <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
