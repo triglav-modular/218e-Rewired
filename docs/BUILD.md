@@ -388,14 +388,17 @@ A tuning retires the factory mode: the applier clears the transpose-mode byte
 on every scan, and key 27 selects slots instead. The `trn` role sets the byte
 again after the applier, so knob 4 on `trn` transposes with a tuning too.
 
-The three patches named `transpose_force_*` have no part in this, and they
-are in every image. Two hold the lowest keyboard note-on velocity at 1. The
-factory reads that floor from `state+0x2db`, the minimum configuration knob 3
-sets, which is also the byte `pressure_fix`'s edit-mode knob 4 writes the
-curve level into; so the knob 3 minimum is not used, while the arpeggiator's
-own minimum, pad 3 and knob 3, still is. The third reloads the factory's peak
-hold with 1 instead of 10, so a falling sensor reading is taken on every scan
-rather than every tenth.
+Three patches once named for transpose mode have no part in it. They follow
+`pressure_fix`. With it on, `velocity_floor_contact` and
+`velocity_floor_handback` hold the lowest keyboard note-on velocity at 1, and
+`peak_hold_reload` reloads the factory's peak hold with 1 instead of 10, so a
+falling sensor reading is taken on every scan rather than every tenth. The
+factory reads the velocity floor from `state+0x2db`, the minimum
+configuration knob 3 sets, which is also the byte the fix's edit-mode knob 4
+writes its curve level into. So with the fix on the knob 3 minimum is not
+used, while the arpeggiator's own minimum, pad 3 and knob 3, still is. With
+the fix off both are the factory's, and a curve level left in that byte
+reads as a floor of 1.
 
 **Anchoring.** Each scale is shifted so that **A** lands on the 12-TET grid,
 which keeps the note you tuned the 208 to in the same place in every slot;
@@ -463,12 +466,15 @@ first knob movement, release-triggered saves, released/unlatched press
 history, and pitch ordering with octave-stacked notes and equal pitches.
 It also checks strip touches across preview and RECORD boundaries, and
 that each MIDI note names the note its pitch CV plays: a latched note at
-the octave it was entered at, a recorded step at the octave it was played
+the octave it was entered at, and in HOLD at the degree of a quantised
+preset it was entered under, a recorded step at the octave it was played
 at, a preview pinned as its CV is, and a key played over a take at its own
-note. One more image carries a 24-key map, `tunings/24TET.scl` with
-`tunings/24TET-full.kbm`, and runs only the MIDI checks of the octave pads,
-the latch and a key played over a take. There an octave pad steps the MIDI
-note 24, as the jack does for a period.
+note. It checks the keyboard's velocity floors and the peak hold with
+`pressure_fix` on and off. One more image carries a 24-key map,
+`tunings/24TET.scl` with `tunings/24TET-full.kbm`, and runs only the MIDI
+checks of the octave pads, the latch, a key played over a take and the
+velocity floors. There an octave pad steps the MIDI note 24, as the jack
+does for a period.
 Like `test_persistence.py`, it requires Ghidra, models
 peripherals without flashing hardware, and restores shared build metadata.
 

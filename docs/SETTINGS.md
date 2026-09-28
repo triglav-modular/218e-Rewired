@@ -124,7 +124,7 @@ sees the state it sees today when the gesture is not made:
 | `knob1..knob4` | Dispatchers on the pool words the knob caves stand behind name the blend, the six orders, the factory selector, the randomiser, the grid, swing, the pattern gate, the vibrato engine, the octave switch or the factory handler; a knob left factory latches into RAM nothing else reads. `option_boot_state` zeroes the vibrato engine's phase, depth and output offset at every boot, since the pitch remap adds that offset every scan whatever knob 4's role |
 | `sequencer` | The pad-4 chord never arms, so the mode byte stays 0 and every sequencer cave answers the factory way; a take restored from the persistence record is kept but cannot be played. `seq_restart_clear` zeroes the sequencer's runtime (the mode, the cursor, the chord, the audition) at every boot in every image, so no restart resumes a take, in a build without persistence too |
 | `clock_divide` | The GPIO interrupt runs the factory's own body instead of the capture cave, event 10 reaches the factory's arp step again, and the four pulse pools go back to the scan-grid pulse; the divider never sees an edge, so it never acquires. The 4 ms trigger spike stays either way |
-| `pressure_fix` | The curve, knob 1 and knob 4 pool words go back to the factory's routines; the two clamp skips and the gain branch replay the factory's own instructions; the pressure store passes straight through the interpolator to the DAC slot. The factory's gain shares its cell with the fix's floor and ceiling, and the factory saves and reloads that cell, so a floor and ceiling left there read as the factory's default gain, 12.0, until edit-mode knob 1 sets a gain |
+| `pressure_fix` | The curve, knob 1 and knob 4 pool words go back to the factory's routines; the two clamp skips and the gain branch replay the factory's own instructions; the pressure store passes straight through the interpolator to the DAC slot. The factory's gain shares its cell with the fix's floor and ceiling, and the factory saves and reloads that cell, so a floor and ceiling left there read as the factory's default gain, 12.0, until edit-mode knob 1 sets a gain. The keyboard's note-on velocity floor is configuration knob 3's minimum again, the byte at `state+0x2db`, where the fix's edit-mode knob 4 keeps its curve level; a level left there reads as a floor of 1. The peak hold takes a falling sensor reading every tenth scan, as the factory's does, where the fix takes one every scan |
 | `pressure_portamento` | The pitch hook goes straight to the remap around the blend's conditioner; the glide clamp keeps the classic portamento with its zero-snap. The conditioner's last offset and the re-base history, which `transpose_capture` consults in every configuration, are reset at every boot: nothing sounds when the keyboard comes up |
 | `quantize_presets` | The preset adder's float-to-int is the factory's own again, so the voltage adds as it is, and the rotation is asked for zero degrees from the preset |
 | `portamento_in` = portamento | The transposer reads no jack (zero degrees from it) and the factory's glide-rate addend reads the jack again. The transposer's state word, whose shift the MIDI note conversion honours, is unseeded at every boot and recomputed by the first scan |
@@ -133,17 +133,17 @@ sees the state it sees today when the gesture is not made:
 These differ from a build that never had the option. The factory's long
 hold on the arp switch no longer toggles polyphonic MIDI in any image (edit
 mode is its single owner), and `release_count_guard`, a factory fix, stays
-in. The three `transpose_force_*` patches stand in every image: the
-keyboard's note-on velocity floor is 1 rather than configuration knob 3's
-minimum, and the factory's peak hold takes a falling sensor reading on
-every scan rather than every tenth. They have nothing to do with transpose
-mode, which with cell 27 off works as shipped whatever the knob roles (see
-[BUILD.md](BUILD.md)). Knob 2 on `patterns` plays its patterns with knob 1
-on `factory` too, since the pattern gate stands in front of whichever
-selector knob 1 names; a build made before the roles went runtime left the
-gate unreachable in that pairing. A keyboard map wider than 32 positions is
-refused in every build, since either input to the key-table rotation can
-be turned on over MIDI.
+in. The keyboard's velocity floors and the peak hold follow `pressure_fix`
+(`velocity_floor_contact`, `velocity_floor_handback` and
+`peak_hold_reload`), so with it off they are the factory's, but for a curve
+level the fix's edit-mode knob 4 left in the floor's byte, which reads as a
+floor of 1. None of the three is transpose mode's, which with cell 27 off
+works as shipped whatever the knob roles (see [BUILD.md](BUILD.md)). Knob 2
+on `patterns` plays its patterns with knob 1 on `factory` too, since the
+pattern gate stands in front of whichever selector knob 1 names; a build
+made before the roles went runtime left the gate unreachable in that
+pairing. A keyboard map wider than 32 positions is refused in every build,
+since either input to the key-table rotation can be turned on over MIDI.
 
 **A received MIDI note plays the tuning in use.** The factory note-on
 reads the key table at RAM `0x854` at note - 24, as far as entry 103, and

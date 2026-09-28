@@ -1500,6 +1500,12 @@ FACTORY_CELLS = [
     # The factory's pressure gain, which pitch_clamp_2 replays from the
     # factory's own pair while the fix is off (stage 2 phase F).
     (0x389C, 0x38A0, "state+0x33c: the factory pressure gain"),
+    # The two cells pressure_fix's floors read and write by address
+    # (2026-09-28): the note-on velocity floor configuration knob 3 sets,
+    # which knob4_curve also writes its curve level into, and the
+    # conditioner's peak-hold countdown, which peak_hold reloads.
+    (0x383B, 0x383C, "state+0x2db: the note-on velocity floor, or knob4_curve's level"),
+    (0x3726, 0x3727, "state+0x1c6: the conditioner's peak-hold countdown"),
     # The two cells the edit keys' caves address by the state base since
     # cell 27 (2026-09-23): the remote-enable flag the factory's key 28
     # toggles and the guards read, and the dirty flag both keys set.
@@ -2296,11 +2302,13 @@ def main() -> None:
     # Transpose mode survives whenever cell 27 is off: the tuning applier
     # zeroes its byte, and nothing else touches it.  Knob 4's roles leave it
     # working (knob4_early_dispatch hands vibrato and factory the factory's
-    # zones; trn writes the same two bytes).  The three transpose_force_*
-    # patches, in every image, are not transpose mode's (audit 038711a, F14):
-    # two are the keyboard's note-on velocity floors over state+0x2db, the
-    # byte pressure_fix's edit knob 4 writes its curve level into, and one is
-    # the peak hold's reload.  See docs/BUILD.md.
+    # zones; trn writes the same two bytes).  The three patches once named
+    # transpose_force_* were never transpose mode's (audit 038711a, F14):
+    # velocity_floor_contact and velocity_floor_handback are the keyboard's
+    # note-on velocity floors over state+0x2db, the byte pressure_fix's edit
+    # knob 4 writes its curve level into, and peak_hold_reload is the peak
+    # hold's reload.  All three follow pressure_fix's live byte since
+    # 2026-09-28, in every image.  See docs/BUILD.md.
 
     # Arp latch reads the live octave offset through the blend hook, so the
     # blend *caves* have to exist whenever latch is on — but the pressure

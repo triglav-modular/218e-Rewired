@@ -111,6 +111,14 @@ there is nothing here to put on a knob's byte. Restoring the factory load
 while the curve level can sit in that byte would read 160 or more as the
 velocity floor.
 
+*Done 2026-09-28, on `pressure_fix`'s byte instead:* the three are named
+for what they feed, `velocity_floor_contact`, `velocity_floor_handback` and
+`peak_hold_reload`, and are hooks onto `velocity_floor` and `peak_hold`.
+With the fix on they are 1 as before; with it off they are the factory's,
+and a byte whose top three bits are 101, the curve level, reads as a floor
+of 1. LR was live at the contact's load: the factory parks the maximum
+velocity there across it, so that hook moves the park past its call.
+
 ## The sites, by class
 
 The 99 sites in factory code, from the union of extents across the golden,
@@ -158,7 +166,8 @@ reads/outs, the octave-switch redirects, the `octave_*` arithmetic and the
 remote-enable guards, all build-time or unconditional already, and
 `poly_persistence_marker` is internal. The seven that carry an option:
 `factory_pad_latch_off` (over the factory's own `MCALL`, so LR is already
-spent), `transpose_force_1/2` (over `LD.UB R8,R9[0x2db]`), `glide_cv_addend`
+spent), `velocity_floor_contact`/`velocity_floor_handback`, once
+`transpose_force_1/2` (over `LD.UB R8,R8[0x2db]`), `glide_cv_addend`
 (over `LD.UH R8,R8[0x2f0]`), `clock_tempo_hook` (already an `MCALL` into
 `clock_tempo`, which grows the test), `pressure_target_redirect` and
 `strip_dac_redirect` (stores redirected into our cells, which stay redirected
@@ -173,7 +182,8 @@ as they are (`scan_period`, the two `poly_*` defaults); two become always-on
 dropping the falling one when the divider is off). The four that carry an
 option and have no room: `pressure_gain_nop` (over a `BR{eq}` that
 skips the factory gain), `pitch_clamp_skip_1/2` (over the `LDDPC R8` that
-begins the factory 16-tap filter), `transpose_force_3` (over `MOV R8,0xa`),
+begins the factory 16-tap filter), `peak_hold_reload`, once `transpose_force_3`
+(over `MOV R8,0xa`).
 Each of the four is
 followed by a 4-byte instruction and the control-flow table shows nothing
 landing between them, so each becomes a 6-byte hook: `MCALL` plus `NOP`, the

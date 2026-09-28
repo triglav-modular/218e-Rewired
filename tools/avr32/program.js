@@ -234,6 +234,17 @@ function assembleProgram() {
         var maLatch = maEntry + 0xa8, maOwner = maEntry + 0xe8, maAfter = maEntry + 0x118, maRound = maEntry + 0x124;
         var maPlain = maEntry + 0x138, maDone = maEntry + 0x144, maPool = maEntry + 0x148, maEnd = maEntry + 0x160;
         var mptEntry = maEnd, mptDone = mptEntry + 0x60, mptPool = mptEntry + 0x64, mptEnd = mptEntry + 0x70;
+        // The keyboard's velocity floors and the peak hold's reload follow
+        // pressure_fix, and a latched note's MIDI in HOLD names the degree
+        // its CV plays (2026-09-28, the audit's follow-ups), in the erased
+        // flash from 0x80022c00.  velocity_floor: the floor both note-on
+        // velocities are held to.  peak_hold: the conditioner's countdown
+        // reloaded.  latch_hold_note: midi_arp_note's HOLD branch.
+        var vflEntry = 0x80022c00, vflOne = vflEntry + 0x1c, vflPool = vflEntry + 0x20, vflEnd = vflEntry + 0x30;
+        var phEntry = vflEnd, phStore = phEntry + 0xe, phPool = phEntry + 0x18, phEnd = phEntry + 0x20;
+        var lhnEntry = 0x80022c80, lhnUp = lhnEntry + 0x60, lhnDown = lhnEntry + 0x88;
+        var lhnFold = lhnEntry + 0xb0, lhnKeys = lhnEntry + 0xc0, lhnLow = lhnEntry + 0xe4;
+        var lhnDone = lhnEntry + 0xf0, lhnName = lhnEntry + 0x100, lhnPool = lhnEntry + 0x110, lhnEnd = lhnEntry + 0x130;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -12604,7 +12615,8 @@ function assembleProgram() {
         // that a poly note let go with the switch engaged now ends at its
         // lift rather than at the switch's return.  The CV, the gate, the
         // 208 bus and the LEDs keep reading state+0x85, so what they do in
-        // a take is unchanged.
+        // a take is unchanged, but for LED 9, which shows poly MIDI and
+        // reads the switch as well (below).
         function polyLiveCaves() {        var klEntry = 0x80021400, klTest = klEntry + 0x10, klMute = klEntry + 0x34;
         var klSend = klEntry + 0x36, klPool = klEntry + 0x38, klEnd = klEntry + 0x48;
         // The poly handler's press.  It ran with poly MIDI on and
@@ -12632,6 +12644,22 @@ function assembleProgram() {
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x80004c08");
         finish("poly_live_sustain", 0x80004bba);
+        // LED 9: lit while poly MIDI is on, blinking while the arpeggiator
+        // overrides it (2026-09-28, the audit's follow-ups).  The routine
+        // that draws it steady (0x80006f74, which the arp enable's edges,
+        // the edit keys and the settings loads call) and the edit-mode pass
+        // that blinks it (0x80006fb0, from event 4's case at 0x80004d82)
+        // asked state+0x85, which PLAY sets, so in a take with the switch
+        // off the lamp blinked though poly MIDI is live there.  Both ask the
+        // switch now, as the poly forks do.  With the transport stopped the
+        // byte is the switch's own, so nothing changes there.  R8 is the
+        // state base at both sites and dead past the branch.
+        begin(0x80006f86);
+        emit("LD.UH R8,R8[0x340]");     // state+0x340/0x341, the arp switch
+        emit("CP.W R8,0x0");
+        emit("BR{ne} 0x80006f9a");      // engaged: dark, and the blink draws it
+        finish("poly_led_steady", 0x80006f92);
+        fixedPatch("poly_led_blink", 0x80006fc8, 4, "LD.UH R8,R8[0x340]");
 
         // key_midi_live: in front of the mono path's four senders.  Four
         // entries load the sender and share one test.  The senders take
@@ -12859,6 +12887,94 @@ function assembleProgram() {
             block("poly_note_path") ? pnEntry : 0x80005660,
             "the poly handler's press and release -> poly_note_path");
         }        polyLiveCaves();
+
+        // The keyboard's velocity floors and the peak hold's reload follow
+        // pressure_fix (2026-09-28, the owner's call on the audit's
+        // follow-ups).
+        //
+        // Three factory sites carried fixed patches in every image, misnamed
+        // transpose_force_1..3 (audit 038711a, F14).  Two held a note-on
+        // velocity's floor at 1 over the factory's LD.UB R8,R8[0x2db]: the
+        // velocity a key's contact computes (0x80005466), which the poly
+        // handler sends and the mono path keeps at state+0x2e2 and sends,
+        // and the floor of the note-on the mono path's hand-back sends when
+        // the sounding key is let go and a held one takes the note back
+        // (0x800062f8, in 0x800062b4, which only the lift reaches).
+        // state+0x2db is the minimum configuration knob 3 sets, 1..127
+        // (0x800040c8), and the factory's settings page keeps it.
+        // knob4_curve writes 0xa0 | level into the same byte, and the
+        // pressure caves take a byte whose top three bits are 101 for that
+        // level.  The third reloaded the conditioner's peak-hold countdown
+        // at state+0x1c6 with 1 where the factory has 10, so a falling
+        // sensor reading lands every scan rather than every tenth.
+        //
+        // With the live pressure_fix byte on they do what they did.  With it
+        // off they are the factory's: the floor is the byte, but for a curve
+        // level left from a session with the fix on (0xa0..0xbf, which knob 3
+        // never writes), which reads as 1; the reload is 10.
+        //
+        // The contact site parks the maximum velocity in LR at 0x80005462
+        // and reads it back at 0x8000548c as the velocity routine's fifth
+        // argument, so an MCALL at the load would destroy it.  The hook
+        // takes 0x80005462..0x80005469 instead: the maximum rides in R10,
+        // which the routine writes at 0x80005472 before it reads it, across
+        // the call, and goes into LR after it.  R9, R11 and R12 are written
+        // before they are read past the site, and no flag is read before the
+        // next compare.  At the hand-back and the reload LR is already spent,
+        // since each routine saved it at entry and made a call before the
+        // site, so a plain MCALL stands over the load, and over the MOV and
+        // the store; R8-R12 are dead past both.
+        function pressureFixFloors() {        begin(0x80005462);
+        emit("MOV R10,R8");                                   // the maximum velocity, until LR can take it
+        emit(StringFormat("MCALL PC[0x%x]", vflPool));       // velocity_floor: R8 = the floor, R10 kept
+        emit("MOV LR,R10");                                   // where 0x8000548c reads it back
+        finish("velocity_floor_contact", 0x8000546a);
+        begin(0x800062f8);
+        emit(StringFormat("MCALL PC[0x%x]", vflPool));       // velocity_floor: R8 = the floor
+        finish("velocity_floor_handback", 0x800062fc);
+        begin(0x80005392);
+        emit(StringFormat("MCALL PC[0x%x]", phPool));        // peak_hold: the countdown reloaded
+        finish("peak_hold_reload", 0x80005398);
+
+        // velocity_floor: R8 = the floor a note-on velocity is held to.  1
+        // with the fix on; with it off state+0x2db as the factory reads it,
+        // or 1 when that byte holds a curve level.  Spends R9; a leaf.
+        begin(vflEntry);
+        emit("MOV R8,0x6d2f");                     // pressure_fix's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", vflOne));
+        emit("MOV R8,0x3560");
+        emit("LD.UB R8,R8[0x2db]");                // configuration knob 3's minimum
+        emit("LSR R9,R8,0x5");
+        emit("CP.W R9,0x5");
+        emit(StringFormat("BR{eq} 0x%x", vflOne)); // 0xa0..0xbf: a curve level, not a velocity
+        emit("MOV PC,LR");
+        padTo(vflOne);
+        emit("MOV R8,0x1");
+        emit("MOV PC,LR");
+        padTo(vflPool);
+        word(vflEntry);
+        finish("velocity_floor", vflEnd);
+
+        // peak_hold: the conditioner's countdown at state+0x1c6 reloaded, 1
+        // with the fix on and the factory's 10 with it off.  Spends R8 and
+        // R9; a leaf.
+        begin(phEntry);
+        emit("MOV R9,0x6d2f");
+        emit("LD.UB R9,R9[0x0]");
+        emit("MOV R8,0xa");
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", phStore));
+        emit("MOV R8,0x1");
+        padTo(phStore);
+        emit("MOV R9,0x3726");                     // state+0x1c6
+        emit("ST.B R9[0x0],R8");
+        emit("MOV PC,LR");
+        padTo(phPool);
+        word(phEntry);
+        finish("peak_hold", phEnd);
+        }        pressureFixFloors();
 
         // Cell 27: the alternate tunings, decided at boot.
         function tuningCaves() {        // tuning_key27: edit key 27.  On: slot 1 <-> slot 2, the old
@@ -13502,8 +13618,9 @@ function assembleProgram() {
         // sequencer idle: the key the owner map names, since a stacked press
         // borrows a slot, at the periods its stamp puts it above that key's
         // own pitch.  In HOLD it stays where it was entered, so the
-        // transpose the pad adds now comes off.  In AFTER the set follows the
-        // pad from its reference at 0x6580.
+        // transpose the pad adds now comes off, and latch_hold_note names
+        // it, with the degrees a quantised preset moved under it.  In AFTER
+        // the set follows the pad from its reference at 0x6580.
         //
         // What comes off is midi_period_transpose's, read from the switch,
         // the pad and the zone as they stand, not 0x60a0, which holds what
@@ -13603,9 +13720,8 @@ function assembleProgram() {
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x0");
         emit(StringFormat("BR{ne} 0x%x", maAfter));
-        emit(StringFormat("MCALL PC[0x%x]", maPool + 20));  // HOLD: midi_period_transpose
-        emit("SUB R2,R10");                        // less what the pad adds now
-        emit(StringFormat("RJMP 0x%x", maRound));
+        emit(StringFormat("MCALL PC[0x%x]", lhnPool + 16)); // HOLD: latch_hold_note names it
+        emit(StringFormat("RJMP 0x%x", maDone));
         padTo(maAfter);
         emit("MOV R8,0x6580");                     // AFTER: less the set's reference
         emit("LD.SH R8,R8[0x0]");
@@ -13633,6 +13749,132 @@ function assembleProgram() {
         word(0x8001e740); // midi_transpose's live entry
         word(mptEntry);    // midi_period_transpose
         finish("midi_arp_note", maEnd);
+
+        // latch_hold_note: a latched note's MIDI in HOLD, from midi_arp_note
+        // (2026-09-28, the audit's follow-ups).  R1 = the key the owner map
+        // names, R2 = table'[slot] + stamp - table'[key], how far the note's
+        // pitch stands above that key's, R3 = the pad's periods as the note
+        // counts them.  R12 = the note out; R0-R7 kept, R8-R11 spent.
+        //
+        // With the quantised preset the rotation moves the key under a held
+        // note by whole degrees, and latch_preset_pin takes that back out of
+        // the stamp, so the CV keeps the preset it was entered under.  The
+        // note used to add the preset's live degrees all the same, the N
+        // midi_period_live puts on.  So the whole periods are counted as they
+        // were, off the pitch less what the pad adds now, and what is left
+        // is found in degrees: the entry of the slot's table, rotated as the
+        // key is, whose pitch is nearest the note's.  That is the degree the
+        // CV plays, read off its own pitch, with nothing stored per note.
+        // The walk steps a degree at a time from the key's, while the next
+        // entry is at least as near; a tie goes away from the key.  The note
+        // is then named in one sum, the key, 36, the periods in keys, the
+        // degrees and N, held to 0..127 once: through midi_period_note a note
+        // far under its key's rotated entry was held at note 0 before N went
+        // on, and a preset moved up two periods named it three notes high.
+        // With the quantiser off the preset adds a voltage, not degrees, and
+        // the note is named in whole periods through midi_period_live as
+        // before; likewise before the transposer has run, when N is not yet
+        // anything to add.
+        begin(lhnEntry);
+        emit("STM --SP,R0,R1,R2,R3,R4,R5,LR");
+        emit(StringFormat("MCALL PC[0x%x]", lhnPool));       // midi_period_transpose: what the pad adds now
+        emit("SUB R2,R10");                        // the note against its key, at the live pad
+        emit("MOV R10,R2");
+        emit(StringFormat("MCALL PC[0x%x]", lhnPool + 4));   // midi_period_round
+        emit("MOV R4,R10");                        // its whole periods, as they were counted
+        emit("MOV R5,0x0");                        // and the degrees on top, none yet
+        emit("MOV R8,0x6d31");                     // the quantised preset's live byte
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", lhnName));
+        emit("MOV R8,0x60fa");
+        emit("LD.UH R9,R8[0x0]");
+        emit("LSR R9,0xc");
+        emit("CP.W R9,0xa");
+        emit(StringFormat("BR{ne} 0x%x", lhnName));         // the transposer has not run
+        emit("MOV R8,0x6814");
+        emit("LD.UH R9,R8[0x0]");                  // the period: number cell 10
+        emit("MUL R8,R4,R9");
+        emit("SUB R2,R8");                         // what is left, within half a period
+        emit("MOV R8,0x854");
+        emit("LD.SH R9,R8[R1 << 0x1]");            // table'[key]
+        emit("ADD R2,R9");                         // the pitch to name, in the key's period
+        emit("LSL R2,0x1");                        // doubled, against two entries summed
+        emit("MOV R12,R1");
+        emit("MOV R9,0x60fb");                     // N, the degrees the rotation stands at
+        emit(StringFormat("MCALL PC[0x%x]", lhnPool + 8));   // preset_entry: the key's entry
+        emit("MOV R0,R12");
+        emit("LSL R8,R12,0x1");
+        emit("CP.W R8,R2");
+        emit(StringFormat("BR{eq} 0x%x", lhnFold));         // on the key's own degree
+        emit(StringFormat("BR{gt} 0x%x", lhnDown));
+        padTo(lhnUp);
+        emit("MOV R12,R1");
+        emit("ADD R12,R5");
+        emit("SUB R12,-0x1");
+        emit("MOV R9,0x60fb");
+        emit(StringFormat("MCALL PC[0x%x]", lhnPool + 8));   // the entry a degree up
+        emit("ADD R8,R12,R0 << 0x0");
+        emit("CP.W R8,R2");
+        emit(StringFormat("BR{gt} 0x%x", lhnFold));         // their midpoint is past it: this one
+        emit("SUB R5,-0x1");
+        emit("MOV R0,R12");
+        emit("CP.W R5,0x20");
+        emit(StringFormat("BR{lt} 0x%x", lhnUp));
+        emit(StringFormat("RJMP 0x%x", lhnFold));
+        padTo(lhnDown);
+        emit("MOV R12,R1");
+        emit("ADD R12,R5");
+        emit("SUB R12,0x1");
+        emit("MOV R9,0x60fb");
+        emit(StringFormat("MCALL PC[0x%x]", lhnPool + 8));   // the entry a degree down
+        emit("ADD R8,R12,R0 << 0x0");
+        emit("CP.W R8,R2");
+        emit(StringFormat("BR{lt} 0x%x", lhnFold));         // their midpoint is short of it: this one
+        emit("SUB R5,0x1");
+        emit("MOV R0,R12");
+        emit("CP.W R5,-0x20");
+        emit(StringFormat("BR{gt} 0x%x", lhnDown));
+        padTo(lhnFold);
+        emit("MOV R8,0x6090");                     // the selected slot
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x2");
+        emit(StringFormat("BR{ls} 0x%x", lhnKeys));
+        emit("MOV R8,0x0");
+        padTo(lhnKeys);
+        emit("MOV R9,0x69a0");                     // keys per period, in the mirror
+        emit("LD.UH R9,R9[R8 << 0x1]");
+        emit("ADD R4,R3");                         // and the pad's periods
+        emit("MUL R12,R9,R4");                     // all of them, in keys
+        emit("ADD R12,R1");                        // on the key that was pressed
+        emit("SUB R12,-0x24");                     // and 36
+        emit("ADD R12,R5");                        // the degrees
+        emit("MOV R8,0x60fb");
+        emit("LD.UB R8,R8[0x0]");
+        emit("ADD R12,R8");                        // and N
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{ge} 0x%x", lhnLow));
+        emit("MOV R12,0x0");
+        padTo(lhnLow);
+        emit("CP.W R12,0x7f");
+        emit(StringFormat("BR{le} 0x%x", lhnDone));
+        emit("MOV R12,0x7f");
+        padTo(lhnDone);
+        emit("LDM SP++,R0,R1,R2,R3,R4,R5,PC");
+        padTo(lhnName);
+        emit("ADD R4,R3");                         // the pad's periods on the note's own
+        emit("MOV R12,R1");                        // the key that was pressed
+        emit("MOV R10,R4");
+        emit("MOV R11,0x0");
+        emit(StringFormat("MCALL PC[0x%x]", lhnPool + 12));  // midi_period_live
+        emit("LDM SP++,R0,R1,R2,R3,R4,R5,PC");
+        padTo(lhnPool);
+        word(mptEntry);    // midi_period_transpose
+        word(mprEntry);    // midi_period_round
+        word(0x8001e420); // preset_entry
+        word(mplEntry);    // midi_period_live
+        word(lhnEntry);    // this cave, for midi_arp_note's HOLD branch
+        finish("latch_hold_note", lhnEnd);
         }        midiOutCaves();
 
         // The factory's startup pool word names settings_boot now, in every
@@ -14295,14 +14537,6 @@ function assembleProgram() {
         emit("NOP");
         emit("NOP");
         finish("pressure_gain_nop", 0x800043ac);
-        // transpose_force_1..3 are named for a job they never had.  1 and 2
-        // are the keyboard's note-on velocity floors - the poly note at key
-        // contact and the mono note - over the factory's LD.UB R8,R8[0x2db],
-        // the minimum configuration knob 3 sets and the byte knob4_curve
-        // writes 0xa0 | level into; 3 is the peak hold's reload, 10 in the
-        // factory, so a falling reading lands every scan (audit 038711a, F14).
-        fixedPatch("transpose_force_1", 0x80005466, 4, "MOV R8,0x1");
-        fixedPatch("transpose_force_2", 0x800062f8, 4, "MOV R8,0x1");
         // The two clamp skips: each RJMP stood over the LDDPC that begins a
         // 4-byte load nothing else lands on, so each pair is a 6-byte call
         // to a cave (phase F) that replays the pair - the literal as a MOV,
@@ -14319,7 +14553,6 @@ function assembleProgram() {
         finish("pitch_clamp_skip_2", 0x800033c6);
         wordPatch("pressure_fn_pool", 0x80003574, pfEntry,
             "int-to-float pointer -> pressure_fn_dispatch: the calibrated curve, or the factory's conversion");
-        fixedPatch("transpose_force_3", 0x80005392, 2, "MOV R8,0x1");
         wordPatch("pressure_float_helper_pool", 0x8000357c, 0x80013434,
             "restore original post-gain float-to-int helper");
         // Decoupled preset voltages.  The factory reads the knob mirror at the

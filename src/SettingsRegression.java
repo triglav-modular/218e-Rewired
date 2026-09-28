@@ -1089,13 +1089,16 @@ public class SettingsRegression extends PersistenceRegression {
     // shipped whatever knob 4's role: under factory and vibrato the ADC
     // event's word reaches the factory's own zones, and trn writes the same
     // two bytes from its own; with cell 27 on key 27 selects a slot and the
-    // applier keeps the mode off.  docs/BUILD.md said the three
-    // transpose_force_* patches decided this and were skipped with four
-    // factory knobs; they stand in every image and are not transpose mode's
-    // at all: two are the keyboard's note-on velocity floors, over the
+    // applier keeps the mode off.  docs/BUILD.md once said three patches
+    // named for transpose mode decided this and were skipped with four
+    // factory knobs.  They were not transpose mode's at all (audit 038711a,
+    // F14): two are the keyboard's note-on velocity floors, over the
     // factory's reads of state+0x2db (configuration knob 3's minimum, and
     // the byte pressure_fix's edit knob 4 writes its curve level into), and
-    // one is the peak hold's reload, 10 in the factory (audit 038711a, F14).
+    // one is the peak hold's reload, 10 in the factory.  Since 2026-09-28
+    // they are hooks that follow pressure_fix (velocity_floor_contact,
+    // velocity_floor_handback, peak_hold_reload), which
+    // ControlRegression.velocityFloor() runs in both states of the byte.
     static final long EDITKEY=0x80003c24L, ADDER=0x80003590L, ADCWORD=0x800051f0L;
     void transposeMode() throws Exception {
         fresh();
@@ -1124,9 +1127,13 @@ public class SettingsRegression extends PersistenceRegression {
                     afterKey==0&&afterScan==0&&mode==0&&target==1000&&r(0x6090,1)==2);
             }
         }
-        check("transpose_force_1..3 stand in every image: the velocity floor 1 over both keyboard reads of state+0x2db, the peak-hold reload 1 over the factory's 10",
-            r(0x80005466L,4)==0x3018d703L&&r(0x800062f8L,4)==0x3018d703L&&r(0x80005392L,2)==0x3018);
-        println("PASS transpose mode: cell 27 alone retires it, every knob 4 role leaves it working; the transpose_force sites are the velocity floors and the peak hold");
+        long floorPool=0x80022c20L, holdPool=0x80022c48L;
+        long vf1=(floorPool-(0x80005464L&~3L))>>2, vf2=(floorPool-(0x800062f8L&~3L))>>2, ph=(holdPool-(0x80005392L&~3L))>>2;
+        check("the velocity floors and the peak hold are hooks onto pressure_fix's caves in every image, not constants",
+            r(0x80005462L,2)==0x109aL&&r(0x80005464L,4)==(0xf01f0000L|(vf1&0xffffL))&&r(0x80005468L,2)==0x149eL
+            &&r(0x800062f8L,4)==(0xf01f0000L|(vf2&0xffffL))&&r(0x80005392L,4)==(0xf01f0000L|(ph&0xffffL))
+            &&r(floorPool,4)==0x80022c00L&&r(holdPool,4)==0x80022c30L);
+        println("PASS transpose mode: cell 27 alone retires it, every knob 4 role leaves it working; the velocity floors and the peak hold are pressure_fix's hooks");
     }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }

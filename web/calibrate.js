@@ -1141,10 +1141,18 @@
             // at all was the one a chosen channel opted out of - and a keyboard
             // unplugged after the port list was built sails straight past.
             // Searching costs up to sixteen of these; confirming costs one.
+            //
+            // It answers `yes` when the pitch moved the two octaves, and
+            // `wrong` with the interval, in cents, when both notes were heard
+            // clearly and the pitch moved at least 300 cents but 300 or more
+            // away from the two octaves: something is listening, and the
+            // 208's trim is not the scaling the table plays at.  That is the
+            // volts per octave, not the MIDI channel, so it gets its own
+            // message.  Anything less than 300 cents is no movement.
             async function probe(ch) {
                 var hiNote = probeAt.note + 24;
                 var hiEntry = entryOf(hiNote);
-                if (!hiEntry) return false;
+                if (!hiEntry) return { yes: false, wrong: null };
                 var apart = 100 * (hiEntry.index - probeAt.index);
                 // Both measurements search the whole range.  Handing the second
                 // one the answer as its expected pitch narrows YIN to a band
@@ -1157,12 +1165,19 @@
                 // something is listening.
                 var lo = await hear(probeAt.note, null, ch, 'probe');
                 var hi = await hear(hiNote, null, ch, 'probe');
-                var yes = heard(lo) && heard(hi) &&
-                          Math.abs(cents(hi.hz, lo.hz) - apart) < 300;
+                var both = heard(lo) && heard(hi);
+                var moved = both ? cents(hi.hz, lo.hz) : null;
+                var yes = both && Math.abs(moved - apart) < 300;
                 if (yes) probeLo = lo;
-                return yes;
+                return { yes: yes, wrong: both && !yes && moved >= 300 ? moved : null };
             }
             var probeLo = null;
+            function wrongInterval(ch, moved) {
+                return new Error('MIDI channel ' + (ch + 1) + ' moved the pitch ' +
+                    (moved / 100).toFixed(1) + ' semitones where two octaves are 24. ' +
+                    'Set the volts per octave above to match how your 208 is trimmed, ' +
+                    'then measure again.');
+            }
 
             // The anchor, held until it has settled (ANCHOR_TRIES above).
             function steady(r, near) {
@@ -1190,7 +1205,11 @@
                 for (var ch = 0; ch < 16 && found === null; ch++) {
                     if (self.stopped) throw new Error('Stopped.');
                     if (o.onProbe) o.onProbe(ch, false);
-                    if (await probe(ch)) found = ch;
+                    var answer = await probe(ch);
+                    if (answer.yes) found = ch;
+                    // The first channel that moves the pitch is the one
+                    // listening, whatever the interval: the search ends there.
+                    else if (answer.wrong !== null) throw wrongInterval(ch, answer.wrong);
                 }
                 if (found === null) {
                     throw new Error('No MIDI channel moved the pitch. Check the ' +
@@ -1204,7 +1223,9 @@
             } else {
                 if (o.onProbe) o.onProbe(o.channel, true);
                 if (self.stopped) throw new Error('Stopped.');
-                if (!(await probe(o.channel))) {
+                var chosen = await probe(o.channel);
+                if (!chosen.yes && chosen.wrong !== null) throw wrongInterval(o.channel, chosen.wrong);
+                if (!chosen.yes) {
                     throw new Error('MIDI channel ' + (o.channel + 1) + ' did not ' +
                         'move the pitch, so nothing is listening there. Check the ' +
                         'keyboard is on the chosen MIDI port and still plugged in, ' +

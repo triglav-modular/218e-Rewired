@@ -1206,6 +1206,50 @@ function signature(w, out) {
        w.writes.length === 0 && !w.mode, (pf.err ? pf.err.message.slice(0, 60) : 'ran') + ', ' +
        pf.loads + ' load(s), the page at ' + pf.vpo + ', ' + w.writes.length + ' written');
 
+    // --- a 208 trimmed to neither scaling -------------------------------------
+    // With the page and the keyboard's table at one scaling and the 208 at the
+    // other, nothing needs writing before the probe, and its two octaves come
+    // out 2880 or 2000 cents apart.  Something is listening: the pitch moved,
+    // by the wrong interval.  So the run stops there and says what it heard
+    // and what to set, on a chosen channel and on Auto, where the search ends
+    // at the channel that moved (2026-09-28, the owner's wording).
+    var WRONG_RE = new RegExp('^MIDI channel (\\d+) moved the pitch (\\d+\\.\\d) semitones where ' +
+        'two octaves are 24\\. Set the volts per octave above to match how your 208 is trimmed, ' +
+        'then measure again\\.$');
+    var WRONG = [
+        { trim: 1.0, scale: 1.2, channel: 2 }, { trim: 1.0, scale: 1.2, channel: null },
+        { trim: 1.2, scale: 1.0, channel: 2 }, { trim: 1.2, scale: 1.0, channel: null }
+    ];
+    for (var wi = 0; wi < WRONG.length; wi++) {
+        var wc = WRONG[wi];
+        var wwhat = 'a 208 at ' + wc.trim.toFixed(1) + ' V/oct, the page and the keyboard’s table at ' +
+            wc.scale.toFixed(1) + (wc.channel === null ? ', on Auto' : '');
+        w = modeWorld({ listening: 2, vpo: wc.trim, slope: 0, wobble: 0 });
+        var scfg = B.expand({ volts_per_octave: wc.scale });
+        var scaled = B.pitchTable(scfg, scfg._calibration);
+        startFrom(w, scaled);
+        var pw = await pageRun(w, { pageVpo: wc.scale, channel: wc.channel, read: true });
+        // What the 208 actually did between the probe's two notes.
+        var probeOn = w.events.filter(function (ev) { return ev[0] === 'on' && ev[1] === 2; }).slice(0, 2);
+        var moved = probeOn.length === 2
+            ? 1200 * Math.log2(w.pitchOf(probeOn[1][2] - 21, w.mirror[probeOn[1][2] - 21]) /
+                               w.pitchOf(probeOn[0][2] - 21, w.mirror[probeOn[0][2] - 21]))
+            : NaN;
+        var said = pw.err ? WRONG_RE.exec(pw.err.message) : null;
+        var want = wc.scale > wc.trim ? '28.8' : '20.0';
+        ok(wwhat + ': the run stops on channel 3 with the interval the probe heard, ' + want + ' semitones',
+           !!said && said[1] === '3' && said[2] === want && Math.abs(Number(said[2]) - moved / 100) <= 0.1 &&
+           Math.abs(moved - 2400 * wc.scale / wc.trim) < 30,
+           (pw.err ? pw.err.message : 'it ran') + ' The 208 moved ' + moved.toFixed(1) + ' cents.');
+        ok('  no probe note went to a channel past the one that moved',
+           w.events.every(function (ev) { return ev[0] !== 'on' || ev[1] <= 2; }),
+           JSON.stringify(w.events.filter(function (ev) { return ev[0] === 'on'; })
+               .map(function (ev) { return ev[1]; })));
+        ok('  nothing was written, and the mode ended with the keyboard’s own table in the mirror',
+           w.writes.length === 0 && !w.mode && same(w.mirror, scaled) && !pw.out,
+           w.writes.length + ' written, the mode ' + (w.mode ? 'on' : 'off'));
+    }
+
     // --- what is filled in, and what is left alone ---------------------------
     // A note that is not heard is not written at all, and is not kept at the
     // value it came with either: after the run it is filled in from the

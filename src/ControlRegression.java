@@ -16,6 +16,8 @@ public class ControlRegression extends SequenceEditRegression {
     // order.  The arp step sends one for each note it sounds, a sequencer
     // step and a latched note alike.
     final List<Integer> midiOn=new ArrayList<>();
+    // And the velocity each of them carried (R11), in the same order.
+    final List<Integer> midiVel=new ArrayList<>();
     // midi_arp_note, the arp's word for a key's MIDI note since audit
     // 038711a (F07, F08).
     static final long ARP_NOTE=0x80020580L;
@@ -36,7 +38,7 @@ public class ControlRegression extends SequenceEditRegression {
         // overwrites before it returns, so they are caught here.
         if(pc()==0x80006478L) rawBase=(int)reg("R8");
         if(pc()==0x80006488L) rawTarget=(int)reg("R8");
-        if(pc()==0x80007de8L) midiOn.add((int)(reg("R12")&0xff));
+        if(pc()==0x80007de8L) { midiOn.add((int)(reg("R12")&0xff)); midiVel.add((int)(reg("R11")&0xff)); }
         // These helpers only update LED RAM. Execute them too, so a changed
         // call chain cannot accidentally rely on the peripheral stub's ABI.
         if(pc()==0x80006808L||pc()==0x800068ccL) {
@@ -805,6 +807,179 @@ public class ControlRegression extends SequenceEditRegression {
         check("in AFTER the pad moves the set on MIDI too: "+after.get(key)[0]+", want "+want,
             after.get(key)[0]==want);
         println("PASS latched MIDI, AFTER: the set follows the pad on MIDI from the octave each note had");
+    }
+    // A latched note's MIDI names the pitch its CV plays when the quantised
+    // preset moves after the note went in (2026-09-28, the audit's
+    // follow-ups).  In HOLD latch_preset_pin keeps the CV where it was
+    // entered, and the note used to add the preset's live degrees all the
+    // same; in AFTER the set follows the preset on both.  Each step's note is
+    // read against its own CV: the degree of the slot's table, at the live
+    // pad, nearest the CV, named as a live key on that degree is named.  The
+    // quantised preset is forced on where the variant was built without it:
+    // the latch runs there too, and the rotation is in every image.
+    long cvNote(long cv) {
+        long want=cv-livePad(), best=Long.MAX_VALUE;
+        int at=0;
+        for(int j=-64;j<192;j++) {
+            long d=Math.abs(wrappedEntry(j)-want);
+            if(d<best) { best=d; at=j; }
+        }
+        return Math.max(0,Math.min(127,at+36+(long)keysPerPeriod()*notePeriods()));
+    }
+    Map<Integer,long[]> presetRound(String when) throws Exception {
+        Map<Integer,long[]> heard=new TreeMap<>();
+        int sounded=0;
+        for(int i=0;i<16&&sounded<4;i++) {
+            midiOn.clear(); externalBeat(); sound();
+            if(midiOn.isEmpty()) continue;
+            sounded++;
+            int slot=(int)r(S+0x34d,1);
+            long note=lastNote(when), cv=r(S+0x352,2), want=cvNote(cv);
+            check(when+": slot "+slot+" sends note "+note+" for a CV of "+cv+", which plays note "+want,note==want);
+            heard.put(slot,new long[]{note,cv});
+        }
+        check(when+": four steps sound in sixteen beats, "+sounded+" did",sounded==4);
+        return heard;
+    }
+    void latchPresetMidi() throws Exception {
+        // Presets of about 200 and 500 cents: two and five degrees of a
+        // twelve-key map, four and ten of the 24-key one.  {AFTER, the
+        // preset the note goes in under, the one pad 2 moves it to}: a few
+        // degrees up in both states and down in HOLD, and two periods up in
+        // HOLD, where a note far under its key's rotated entry has to be
+        // named in one sum rather than held at note 0 on the way.
+        int key=9, low=61, high=153;
+        int[][] moves={{0,low,high},{1,low,high},{0,high,low},{0,0,760}};
+        long quantizer=-1;
+        for(int[] mv:moves) {
+            boolean after=mv[0]==1;
+            String state=after?"AFTER":"HOLD";
+            setup(0,false,1); command(0); latchFixture(); w(S+0x2fc,2,0);
+            if(quantizer<0) quantizer=r(0x6d31,1);      // this image's own, put back at the end
+            w(0x6d31,1,1);
+            w(0x613a+2*2,2,mv[2]);
+            presetSwitch(1,mv[1]);
+            long entered=r(0x60f3,1);
+            key(key); sound();
+            if(after) {
+                // Into AFTER through the toggle, with the pads up.
+                controlScan(); call(0x8001e580L);
+                check("the latch is in AFTER",r(0x62e2,1)==1);
+            }
+            Map<Integer,long[]> in=presetRound(state+", under the preset it went in with ("+entered+" degrees)");
+            presetSwitch(2,mv[2]);
+            long moved=r(0x60f3,1);
+            check(state+": pad 2 moves the preset "+(moved-entered)+" degrees",Math.abs(moved-entered)>=2);
+            Map<Integer,long[]> out=presetRound(state+", the preset moved "+(moved-entered)+" degrees");
+            long n0=in.get(key)[0], n1=out.get(key)[0], c0=in.get(key)[1], c1=out.get(key)[1];
+            if(!after)
+                check("in HOLD the CV and the note stay where they went in over "+(moved-entered)+" degrees: CV "
+                    +c0+" -> "+c1+", note "+n0+" -> "+n1,Math.abs(c1-c0)<=1&&n1==n0);
+            else
+                check("in AFTER the set follows the preset on both: CV "+c0+" -> "+c1+", note "+n0+" -> "+n1,
+                    c1>c0&&n1-n0==moved-entered);
+        }
+        // With the quantiser off the preset adds a voltage, not degrees, and
+        // a held note is named in whole periods as before: 100 units in,
+        // then 200, under half a period either way.
+        setup(0,false,1); command(0); latchFixture(); w(S+0x2fc,2,0);
+        w(0x6d31,1,0);
+        w(0x613a+2*2,2,152);
+        presetSwitch(1,76);
+        key(key); sound();
+        Map<Integer,long[]> in=latchedRound("HOLD, the quantiser off, under a preset voltage");
+        presetSwitch(2,152);
+        Map<Integer,long[]> out=latchedRound("HOLD, the quantiser off, the voltage moved");
+        long named=withJack(noteAt(key,notePeriods()));
+        check("with the quantiser off a held note keeps the note a live key names: "+in.get(key)[0]+" -> "
+            +out.get(key)[0]+", want "+named,in.get(key)[0]==named&&out.get(key)[0]==named);
+        w(0x6d31,1,quantizer);
+        println("PASS latched MIDI under a moved preset: HOLD names the degree its CV kept, AFTER the one it moved to, "
+            +keysPerPeriod()+" keys a period");
+    }
+    // The keyboard's velocity floors and the peak hold follow pressure_fix
+    // (2026-09-28, the audit's follow-ups).  Three factory sites held them
+    // in every image, as patches misnamed transpose_force_1..3: the floor of
+    // the velocity a key's contact computes (0x80005466), which the poly
+    // note and the mono note at the press both carry, the floor of the note
+    // the mono path's hand-back sends (0x800062f8), both 1, and the peak
+    // hold's reload (0x80005392), 1 where the factory has 10.  With the fix
+    // on they stay so.  With it off they are the factory's: the floor is
+    // state+0x2db, configuration knob 3's minimum, and a curve level
+    // knob4_curve left in that byte (0xa0 | level) reads as 1.  Through the
+    // real routines: the pressure state machine for the press and the lift,
+    // and the conditioner from its own call site for the peak hold.
+    static final long TOUCH=0x800053acL, KEY_VELOCITY=0x33e8L;
+    void touch(int key,int reading) throws Exception {
+        e.writeRegister("R11",reading); e.writeRegister("R12",key); call(TOUCH);
+    }
+    // The contact and lift thresholds at 210 and 180, the velocity's full
+    // scale at 700 and its maximum at 127, as the factory's defaults have
+    // the last two (0x8000714c).
+    void unitVelocity() {
+        w(S+0x394,2,100); w(S+0x396,2,100); w(S+0x2de,2,700); w(S+0x2dc,1,127);
+    }
+    void velocityFloor() throws Exception {
+        // {pressure_fix, state+0x2db}: knob 3's minimum at 100, and a level.
+        int[][] cases={{1,100},{0,100},{0,0xb5}};
+        for(int[] c:cases) {
+            boolean fix=c[0]==1, level=(c[1]>>5)==5;
+            long floor=fix||level?1:c[1];
+            String tag="pressure_fix "+(fix?"on":"off")+", state+0x2db 0x"+Integer.toHexString(c[1]);
+            // The press.  The unit's settings are the factory's defaults for
+            // the velocity (full scale 700, the maximum 127), and thresholds
+            // that let a reading sit on the contact threshold and above the
+            // lift's: a key pressed there takes the floor itself.
+            for(int poly=0;poly<2;poly++) {
+                setup(0,false,0); command(0);
+                w(S+0x84,1,poly);
+                unitVelocity();
+                w(0x6d2f,1,c[0]); w(S+0x2db,1,c[1]);
+                midiOn.clear(); midiVel.clear();
+                touch(4,210); touch(4,210);
+                long stored=r(KEY_VELOCITY+4,1), sent=midiVel.isEmpty()?-1:midiVel.get(midiVel.size()-1);
+                check(tag+(poly==1?", poly":", mono")+": a press on the threshold takes velocity "+stored
+                    +" and its note-on carries "+sent+", want "+floor,stored==floor&&sent==floor);
+            }
+            // The hand-back.  Both keys go down with the fix on, so the lift
+            // hands key 4 its note back from a velocity of 1 in every case:
+            // under a floor of 100 that is 100, and under a floor of 1 it
+            // is 1 plus the factory's jitter of -10..9, held at 1.
+            setup(0,false,0); command(0);
+            w(S+0x84,1,0);
+            unitVelocity();
+            w(0x6d2f,1,1);
+            touch(4,210); touch(4,210); touch(9,210); touch(9,210);
+            long four=withJack(noteAt(4,notePeriods())), nine=withJack(noteAt(9,notePeriods()));
+            check(tag+": key 9 took the note from key 4 at velocity 1: note "+r(S+0x2e1,1)+", want "+nine,
+                r(S+0x2e1,1)==nine&&r(S+0x2e2,1)==1);
+            w(0x6d2f,1,c[0]); w(S+0x2db,1,c[1]);
+            midiOn.clear(); midiVel.clear();
+            touch(9,0);
+            long back=midiVel.isEmpty()?-1:midiVel.get(midiVel.size()-1);
+            check(tag+": letting key 9 go hands key 4 its note back ("+midiOn+") at velocity "+back
+                +(floor==1?", 1..10":", want 100"),
+                !midiOn.isEmpty()&&midiOn.get(midiOn.size()-1)==four
+                &&(floor==1?back>=1&&back<=10:back==100));
+            // The peak hold.  The countdown runs out on this pass and is
+            // reloaded; on the next, a falling reading lands at once with a
+            // reload of 1, and waits nine more passes with the factory's 10.
+            // Sensor 30 is neither a key nor the strip, so the conditioner
+            // stores it and does nothing else with it.
+            setup(0,false,0); command(0);
+            w(0x6d2f,1,c[0]); w(S+0x2db,1,c[1]);
+            int k=30;
+            long m=r(0x2c+k,1), raw=S+0x86+2*m, base=S+0xd6+2*m, held=S+0x126+2*k;
+            w(base,2,0); w(raw,2,100); w(held,2,500); w(S+0x1c6,1,1);
+            call(0x80004d52L,0x80004d56L);
+            check(tag+": the countdown ran out, the falling reading landed, and the hold reloads with "
+                +r(S+0x1c6,1)+", want "+(fix?1:10),r(held,2)==100&&r(S+0x1c6,1)==(fix?1:10));
+            w(held,2,500);
+            call(0x80004d52L,0x80004d56L);
+            check(tag+": on the next pass a falling reading "+(fix?"lands":"waits")+": "+r(held,2),
+                r(held,2)==(fix?100:500));
+        }
+        println("PASS velocity floors and peak hold: 1 and every scan with pressure_fix on; knob 3's minimum and every tenth scan off, a curve level reading 1");
     }
     // A key played over a take names its own note (audit 038711a, F08).
     // midi_step_degree gave every note midi_transpose named in PLAY the
@@ -3214,7 +3389,11 @@ public class ControlRegression extends SequenceEditRegression {
                 try { latchStackMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 try { latchHoldMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 try { latchAfterMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                try { latchPresetMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 try { keyOverTakeMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+                // Not the map's, but MIDI the keyboard sends, and cheap: so
+                // every variant runs it.
+                try { velocityFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
                 if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
                 println("CONTROL REGRESSION PASS: "+checks+" assertions; the "+keysPerPeriod()+"-key map, octave pad, latch and keyboard MIDI checks, persist="+persistent);
                 return;
@@ -3244,6 +3423,8 @@ public class ControlRegression extends SequenceEditRegression {
             if(!lean)try { latchStackMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchHoldMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(!lean)try { latchAfterMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            if(!lean)try { latchPresetMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            try { velocityFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { keyOverTakeMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(jack)try { jackTransposer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
             if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }

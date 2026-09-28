@@ -745,6 +745,57 @@ public class PolyMidiProbe extends ControlRegression {
         println("PASS a poly note ends at its own lift whatever the switch, and a swallowed press ends nothing");
     }
 
+    // LED 9 (2026-09-28, the audit's follow-ups): lit while poly MIDI is on,
+    // blinking while the arpeggiator overrides it.  The routine that draws
+    // it steady and the edit-mode pass that blinks it read state+0x85,
+    // which PLAY sets, so in a take with the switch off the lamp blinked
+    // though poly MIDI is live there since 3.1.  Both read the switch now.
+    // The steady state is drawn by the routine the edit keys call, through
+    // key 29's poly toggle, pressed twice so poly ends on as it began; the
+    // blink by event 4's own case, the edit-mode LED pass at 0x80004d82,
+    // run past its call for LED 9 in each of its two phases.  Stopped, the
+    // byte is the switch's own, so every outcome there is 3.0.2's.
+    static final long LED_WORD=0x2ef4L, EDIT_KEY=0x80003c24L, LED_PASS=0x80004d82L, LED_PASS_DONE=0x80004e08L;
+    long led9() { return (r(LED_WORD,2)>>14)&1; }
+    void polyKey() throws Exception { e.writeRegister("R12",0x1c); call(EDIT_KEY); }
+    void drawPoly() throws Exception {
+        polyKey(); check("key 29 turns poly MIDI off",r(S+0x84,1)==0);
+        polyKey(); check("and on again",r(S+0x84,1)==1);
+    }
+    String led9Shows() throws Exception {
+        long edit=r(S+0x39,1), gate=r(S+0x390,1), phase=r(S+0x3c,1);
+        w(S+0x39,1,1); w(S+0x390,1,0);
+        long[] seen=new long[2];
+        for(int p=0;p<2;p++) { w(S+0x3c,1,p); call(LED_PASS,LED_PASS_DONE); seen[p]=led9(); }
+        w(S+0x39,1,edit); w(S+0x390,1,gate); w(S+0x3c,1,phase);
+        return seen[0]==seen[1]?(seen[0]==1?"steady":"dark"):seen[0]==1?"blinking":"inverted";
+    }
+    void polyLed() throws Exception {
+        bench(); arm(true); drawPoly();
+        String stoppedOff=led9Shows();
+        flip(2); String stoppedArp=led9Shows();
+        flip(1); String stoppedLatch=led9Shows();
+        flip(0); String stoppedBack=led9Shows();
+        polyKey(); String stoppedMono=led9Shows(); polyKey();
+        check("stopped, as 3.0.2: steady with the switch off, blinking on arp and on latch, steady again, dark with poly off: "
+            +stoppedOff+", "+stoppedArp+", "+stoppedLatch+", "+stoppedBack+", "+stoppedMono,
+            stoppedOff.equals("steady")&&stoppedArp.equals("blinking")&&stoppedLatch.equals("blinking")
+            &&stoppedBack.equals("steady")&&stoppedMono.equals("dark"));
+        play(); arm(true); drawPoly();
+        String takeOff=led9Shows();
+        check("in a take with the switch off LED 9 is steady, poly MIDI being live: "+takeOff,takeOff.equals("steady"));
+        flip(2); drawPoly();
+        String takeArp=led9Shows();
+        check("in a take with the switch engaged it blinks: "+takeArp,takeArp.equals("blinking"));
+        flip(0); drawPoly();
+        String takeBack=led9Shows();
+        check("and steady again with the switch back off: "+takeBack,takeBack.equals("steady"));
+        stop(); arm(true); drawPoly();
+        String stopped=led9Shows();
+        check("stopped after the take, steady: "+stopped,stopped.equals("steady"));
+        println("PASS LED 9 shows poly MIDI live in a take with the switch off, overridden with it engaged, and as 3.0.2 stopped");
+    }
+
     @Override public void run() throws Exception {
         try {
             String[] names={"stoppedStillSounds","overlap","keysPlayOverTheSequence","monoHandBackDuringPlay",
@@ -752,7 +803,7 @@ public class PolyMidiProbe extends ControlRegression {
                 "stopEndsEverything","theSequenceStillSounds","arpOnStaysMuted",
                 "polyChordOverATake","twoHeldIntoPlay","latchToggleWithKeysHeld","sustainOverATake",
                 "sustainGateInATake","arpOnKeepsTheFactoryMidi","octaveUnderAPolyKey",
-                "polyPressCutsTheSequencerNote","polyReleaseFollowsItsPress"};
+                "polyPressCutsTheSequencerNote","polyReleaseFollowsItsPress","polyLed"};
             for(String name:names) {
                 try { getClass().getDeclaredMethod(name).invoke(this); }
                 catch(java.lang.reflect.InvocationTargetException ex) {

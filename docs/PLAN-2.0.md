@@ -435,7 +435,9 @@ factory keyboard is live at all):
   sender calls go through `key_midi_live` (0x80021400), which keeps them
   off the ports while poly MIDI is live.  Behind its own gates the mono
   path still runs its bookkeeping, so the CV, the gate, the 208 bus and the
-  LEDs, which read `state+0x85`, do in a take what they did before.
+  LEDs, which read `state+0x85`, do in a take what they did before.  LED 9,
+  which shows poly MIDI, reads the switch too since 2026-09-28: in a take
+  with the switch off it is lit, and it blinks only with the switch engaged.
 - A poly note ends at its own lift, whatever the arp switch says by then.
   The factory's poly handler refuses a note-off with the switch engaged and
   leaves the note to the arp-off edge's flush when the switch returns, and
@@ -450,6 +452,9 @@ factory keyboard is live at all):
   stored for that key.  Outside a take this moves one note-off: a poly key
   let go with the switch engaged now ends at its lift, not at the switch's
   return.
+- Sustain held into PLAY is released on the receiver, and stays so: the
+  owner's call, 2026-09-28.  The factory's arp-on edge sends CC 64 = 0 as
+  PLAY begins, so the take's keyboard notes end at their lifts there.
 - A poly press over a sounding take ends the take's note before it sounds
   its own, as a mono press does.  The poly handler runs before the contact
   handler, where `seq_key_takes` ends the take's note, so its note-on came
