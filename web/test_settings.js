@@ -138,9 +138,9 @@ if (!app) {
 //
 // And it says so on the calibration line, in the owner's words (2026-09-28).
 // That line is validateCal()'s, which the switch runs last, so a message put
-// there before it was cleared or replaced at once: the offset's own is never
-// seen.  So what is read here is the line as the page leaves it, written by
-// the page's own msg() and validateCal().
+// there before it was cleared or replaced at once, as the offset's own was
+// until 2026-09-29.  So what is read here is the line as the page leaves it,
+// written by the page's own msg() and validateCal(), for both switches.
 if (app && typeof require === 'function') {
     var vm = require('vm'), fs = require('fs'), path = require('path');
     var appSource = function (open, close) {
@@ -176,6 +176,8 @@ if (app && typeof require === 'function') {
         appFunction('syncBaseline'), appFunction('press'), appFunction('loadPitchTable'),
         appFunction('msg'), appFunction('calibrationBlank'), appFunction('validateCal'),
         appSource('\n    var vpo = 1.2;', '\n    });\n'),
+        appFunction('setPitchOffset'),
+        appSource("\n    Array.prototype.forEach.call($('offset').children", '\n    });\n'),
         'clearBaseline();',
         'function built() { return BUILDLIB.pitchTable(BUILDLIB.expand({ volts_per_octave: vpo,',
         '    pitch_offset: pitchOffset }), rows()); }'
@@ -260,6 +262,34 @@ if (app && typeof require === 'function') {
     ok('and nothing is said when nothing was dropped',
        plain.length === 0 && says(same, 'ok', 'Correction is monotonic and inside the 12-bit DAC.'),
        JSON.stringify({ plain: plain, same: same }));
+
+    // The pitch offset drops a loaded table too, and says so in its own
+    // words, which the owner approved with the drop: the page's own offset
+    // buttons, read the same way.
+    var OFFSET_DROPPED = 'The loaded table was dropped: changing the pitch offset renumbers the ' +
+        'semitones, so it no longer describes this build. Load it again if it was measured at this setting.';
+    vm.runInContext('loadPitchTable(held, { volts_per_octave: 1.0, pitch_offset: true }, ' +
+                    '"the keyboard\\u2019s table", {});', page);
+    var loadedOn = line();
+    vm.runInContext('$("offset").children[0].click();', page);
+    var offLine = line(), offState = vm.runInContext('({ on: pitchOffset, have: haveBaseline() })', page);
+    ok('switching the offset off drops the table and says so, in its own words, and stays there',
+       says(loadedOn, 'ok', 'Correction is monotonic and inside the 12-bit DAC.') &&
+       says(offLine, 'bad', OFFSET_DROPPED) && offState.on === false && !offState.have,
+       JSON.stringify({ before: loadedOn, after: offLine, state: offState }));
+    page.heldOff = PB.pitchTable(PB.expand({ volts_per_octave: 1.0, pitch_offset: false }), ownerRows);
+    vm.runInContext('loadPitchTable(heldOff, { volts_per_octave: 1.0, pitch_offset: false }, ' +
+                    '"the keyboard\\u2019s table", {}); measured[30] = 4.5;' +
+                    '$("offset").children[1].click();', page);
+    var onLine = line();
+    vm.runInContext('for (var e = 0; e < TABLE_ENTRIES; e++) measured[e] = 0; clearBaseline();' +
+                    '$("offset").children[0].click();', page);
+    var bare = line();
+    vm.runInContext('$("offset").children[1].click();', page);
+    ok('and on again, beside readings; nothing is said when nothing was loaded',
+       says(onLine, 'bad', OFFSET_DROPPED) && bare.length === 0 &&
+       vm.runInContext('pitchOffset', page) === true,
+       JSON.stringify({ on: onLine, bare: bare }));
 }
 
 print_(failures ? ('FAILED ' + failures) : 'ALL SETTINGS TESTS PASSED');

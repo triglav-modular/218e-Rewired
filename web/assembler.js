@@ -1037,21 +1037,33 @@ function assembleProgram() {
         var lhnDone = lhnEntry + 0xf0, lhnName = lhnEntry + 0x100, lhnPool = lhnEntry + 0x110, lhnEnd = lhnEntry + 0x130;
         // The clamp-chain scan (2026-09-28), in the erased flash from
         // 0x80023c00.  arp_octave_floor: knob 3's random octave, tested on
-        // the target the adder will finish.  blend_goal: the pressure blend's
-        // offset, carried from the target the adder is about to clamp.
-        // pitch_clamp: the scan's one clamp, after the blend's offset.
-        // preset_degree_count: preset_degrees' answer, the degree kept with
-        // the period its interval was reduced by.  rebase_fold: the blend's
-        // re-base step, as the adder's clamp moves the target.
+        // the target the adder will finish.  pitch_clamp: the scan's one
+        // clamp, after the blend's offset.  preset_degree_count:
+        // preset_degrees' answer, the degree kept with the period its
+        // interval was reduced by.  rebase_fold: the blend's re-base step
+        // for an anchor held at its floor, as the adder's clamp moves the
+        // target.  The 0x50 bytes after arp_octave_floor held blend_goal
+        // until it moved on (round 5) and are erased.
         var aofEntry = 0x80023c00, aofHold = aofEntry + 0x54, aofStamp = aofEntry + 0x58;
         var aofTest = aofEntry + 0x64, aofDone = aofEntry + 0x74, aofEnd = aofEntry + 0x80;
-        var bgEntry = aofEnd, bgGo = bgEntry + 0xc, bgCeil = bgEntry + 0x24, bgStore = bgEntry + 0x40, bgEnd = bgEntry + 0x50;
-        var pclEntry = bgEnd, pclHigh = pclEntry + 0x8, pclGo = pclEntry + 0x14, pclPool = pclEntry + 0x18;
+        var pclEntry = aofEnd + 0x50, pclHigh = pclEntry + 0x8, pclGo = pclEntry + 0x14, pclPool = pclEntry + 0x18;
         var pclEnd = pclEntry + 0x20;
         var pdcEntry = pclEnd, pdcSlot = pdcEntry + 0x10, pdcKey = pdcEntry + 0x20, pdcDown = pdcEntry + 0x28;
         var pdcUp = pdcEntry + 0x34, pdcSum = pdcEntry + 0x40, pdcPool = pdcEntry + 0x4c, pdcEnd = pdcEntry + 0x50;
         var rfEntry = pdcEnd, rfOldHigh = rfEntry + 0x10, rfNew = rfEntry + 0x20, rfNewHigh = rfEntry + 0x30;
         var rfDone = rfEntry + 0x40, rfEnd = rfEntry + 0x48;
+        // Round 5 (2026-09-29), from 0x80023d90.  glide_ceiling: the glide
+        // engine's ceiling, by voice.  blend_deficit: the part of the
+        // blend's applied offset the adder's clamp has already spent.
+        // rebase_case: blend_rebase's step, by the case the offset was
+        // measured in.  blend_goal: what pressure_blend publishes, with the
+        // deficit beside it.
+        var gcEntry = 0x80023d90, gcDone = gcEntry + 0x14, gcPool = gcEntry + 0x18, gcEnd = gcEntry + 0x1c;
+        var bdfEntry = gcEnd, bdfCap = bdfEntry + 0x18, bdfSub = bdfEntry + 0x22, bdfDone = bdfEntry + 0x24;
+        var bdfPool = bdfEntry + 0x28, bdfEnd = bdfEntry + 0x2c;
+        var rcEntry = bdfEnd, rcEnd = rcEntry + 0x10;
+        var bgEntry = rcEnd, bgDeficit = bgEntry + 0x10, bgCase = bgEntry + 0x28, bgFold = bgEntry + 0x38;
+        var bgNew = bgEntry + 0x60, bgHeld = bgEntry + 0x62, bgStore = bgEntry + 0x68, bgEnd = bgEntry + 0x78;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -1998,9 +2010,10 @@ function assembleProgram() {
         padTo(0x80019d1c);
         emit("MOV R0,0x0");
         padTo(0x80019d1e);
-        // blend_goal publishes it, carried from the target the adder is
-        // about to clamp (R4), so the offset is not added to a floor the
-        // target never reached (clamp scan 2026-09-28, pitch finding 2).
+        // blend_goal publishes it, with the deficit of the target the adder
+        // is about to clamp (R4) beside it, so the offset is not added to a
+        // floor the target never reached (clamp scan 2026-09-28, pitch
+        // finding 2).
         emit("MCALL PC[0x80019d30]");
         emit("LDDPC R8,0x80019d34");
         emit("ST.H R8[0x352],R4");
@@ -3067,13 +3080,15 @@ function assembleProgram() {
         padTo(0x8001a914);
         emit("ADD R8,R11");
         emit("ST.H R9[0x2],R8");
-        // Glide, bend and the applied offset summed, and then the scan's one
-        // clamp, both ends, in pitch_clamp on the way to the remap.  The
-        // scan used to clamp glide plus bend first and this added the offset
-        // to what was left: a bend under the floor lost what it reached
-        // below, and the offset lifted the rest (clamp scan 2026-09-28,
-        // pitch finding 2).
+        // Glide, bend and the applied offset summed, less what the adder's
+        // clamp already spent of the offset (blend_deficit), and then the
+        // scan's one clamp, both ends, in pitch_clamp on the way to the
+        // remap.  The scan used to clamp glide plus bend first and this
+        // added the offset to what was left: a bend under the floor lost
+        // what it reached below, and the offset lifted the rest (clamp scan
+        // 2026-09-28, pitch finding 2).
         emit("ADD R12,R8");
+        emit(StringFormat("MCALL PC[0x%x]", bdfPool));
         emit("MCALL PC[0x8001a92c]");
         emit("LDM SP++,R7,PC");
         padTo(0x8001a92c);
@@ -3641,7 +3656,7 @@ function assembleProgram() {
         // and folding those steps into the offset bent every transition
         // backwards.  The base history above updates every scan regardless,
         // so returning to live playing measures from the current base.
-        emit("MCALL PC[0x8001ad74]");   // rebase_fold: old less new, as the clamped target moves
+        emit("MCALL PC[0x8001ad74]");   // rebase_case: old less new, as the offset's target moves
         emit("RJMP 0x8001ad62");
         padTo(0x8001ad60);
         emit("MOV R10,0x0");
@@ -3651,7 +3666,7 @@ function assembleProgram() {
         padTo(0x8001ad6c);
         word(0x8001de20); // the mode-aware re-base step, then the blend
         word(0x00003560); // global state base
-        word(rfEntry);     // rebase_fold
+        word(rcEntry);     // rebase_case
         finish("blend_rebase", 0x8001ad78);
 
         // Blend target conditioner: an EMA filter and a backlash band between
@@ -9377,10 +9392,10 @@ function assembleProgram() {
         var hold = holdPitchToGate();
         var fastShift = hold ? 0x18 : 0;
         var fastCompute = 0x8001c168 + fastShift;
-        // The blend's offset goes on ahead of the clamp pair, so its eight
+        // The blend's offset goes on ahead of the clamp pair, so its twelve
         // bytes move the pair along; the floor that followed the offset is
         // gone, and fastStage stays where it was.
-        var fastBlend = feature("pressure_blend") ? 0x8 : 0x0;
+        var fastBlend = feature("pressure_blend") ? 0xc : 0x0;
         var fastClampLow = (twoPhaseBeat() ? 0x8001c17c + fastShift : 0x8001c166) + fastBlend;
         var fastClampHigh = (twoPhaseBeat() ? 0x8001c188 + fastShift : 0x8001c172) + fastBlend;
         var fastStage = twoPhaseBeat() ? 0x8001c198 + fastShift : 0x8001c180;
@@ -9544,9 +9559,12 @@ function assembleProgram() {
             // nothing: the filter and its slew both live in the scan.  It is
             // added before the clamp, as the scan's own route adds it: the
             // bend is not held at the floor before the offset lifts it.
-            emit("MOV R11,0x60e2");
-            emit("LD.SH R11,R11[0x0]");
-            emit("ADD R12,R11");
+            // blend_deficit takes off what the adder's clamp already spent
+            // of it, as it does on the scan's route.
+            emit("MOV R8,0x60e2");
+            emit("LD.SH R8,R8[0x0]");
+            emit("ADD R12,R8");
+            emit(StringFormat("MCALL PC[0x%x]", bdfPool));
         }
         // and the scan's one clamp, both ends, as pitch_clamp holds the
         // scan's pitch: -remapOffset, entry 0 of the pitch table, up to
@@ -13251,11 +13269,14 @@ function assembleProgram() {
         // too - so it is zeroed here at every boot, or a session would
         // leave its last offset under every staged pitch after the restart;
         // nothing sounds when the chip comes up, so there is no offset to
-        // keep.
+        // keep.  blend_goal's deficit and case start from zero with it.
         begin(obcEntry);
         emit("MOV R8,0x60e2");
         emit("MOV R9,0x0");
         emit("ST.H R8[0x0],R9");
+        emit("MOV R8,0x6e10");
+        emit("ST.H R8[0x0],R9");        // the deficit
+        emit("ST.B R8[0x2],R9");        // the case: measured from the target
         padTo(obcDone);
         emit("MOV PC,LR");
         finish("option_boot_blend", obcEnd);
@@ -15280,59 +15301,6 @@ function assembleProgram() {
         emit("MOV PC,LR");
         finish("arp_octave_floor", aofEnd);
 
-        // blend_goal: what pressure_blend publishes at 0x60e0.  R0 the
-        // offset, X - R3; R3 the anchor, remapOffset up and held at zero as
-        // every contributor is; R4 the target, which the adder clamps to
-        // -remapOffset..0xfff as soon as this returns.  The apply shim adds
-        // the offset to the target's glide, so where the adder clamps, the
-        // offset is carried from the target it clamped: less the floor's
-        // deficit, or plus the cap's excess.  An offset the other way, or
-        // one that does not reach past the deficit, leaves the pitch where
-        // the clamp holds it, so a bend still moves the pitch the player
-        // hears.  An anchor the loop found among the held keys and held at
-        // the blend's own floor has its offset measured from that floor
-        // already: R3 zero, and R11, the value it was found by, a table
-        // entry and so at or over zero.  The base the loop falls back on
-        // when no held key is the anchor is never floored, and a MIDI note
-        // under the table's bottom puts it far under zero, so an R3 under
-        // zero is carried like any other; testing it as a floored anchor
-        // left note 12 over a held key 12 on the floor plus the whole offset
-        // (clamp-chain scan, round 3).  A zero offset has nothing to carry.
-        // Spends R8, R9.
-        begin(bgEntry);
-        emit("CP.W R0,0x0");
-        emit(StringFormat("BR{eq} 0x%x", bgStore));
-        emit("CP.W R3,0x0");
-        emit(StringFormat("BR{ne} 0x%x", bgGo));
-        emit("CP.W R11,0x0");
-        emit(StringFormat("BR{ge} 0x%x", bgStore));   // a found anchor at the blend's floor
-        padTo(bgGo);
-        emit(StringFormat("MOV R9,-0x%x", remapOffset));
-        emit("CP.W R4,R9");
-        emit(StringFormat("BR{ge} 0x%x", bgCeil));
-        emit("SUB R9,R4");              // the floor's deficit
-        emit("CP.W R0,0x0");
-        emit(StringFormat("BR{le} 0x%x", bgStore));
-        emit("SUB R0,R9");
-        emit(StringFormat("BR{ge} 0x%x", bgStore));
-        emit("MOV R0,0x0");             // not out of the deficit: the pitch stays on the floor
-        emit(StringFormat("RJMP 0x%x", bgStore));
-        padTo(bgCeil);
-        emit("MOV R9,0xfff");
-        emit("CP.W R4,R9");
-        emit(StringFormat("BR{le} 0x%x", bgStore));
-        emit("SUB R9,R4");              // minus the cap's excess
-        emit("CP.W R0,0x0");
-        emit(StringFormat("BR{ge} 0x%x", bgStore));
-        emit("SUB R0,R9");
-        emit(StringFormat("BR{le} 0x%x", bgStore));
-        emit("MOV R0,0x0");             // not back under the cap: the pitch stays on it
-        padTo(bgStore);
-        emit("MOV R8,0x60e0");
-        emit("ST.H R8[0x0],R0");
-        emit("MOV PC,LR");
-        finish("blend_goal", bgEnd);
-
         // pitch_clamp: the scan's one clamp.  R12 the pitch - glide plus
         // bend, and the blend's applied offset on its route - held to
         // -remapOffset, entry 0 of the pitch table, and to 0xfff, then on to
@@ -15411,15 +15379,14 @@ function assembleProgram() {
         word(0x000069a0); // the keys-per-period table, in the settings mirror
         finish("preset_degree_count", pdcEnd);
 
-        // rebase_fold: blend_rebase's step.  In: R10 the base the history
-        // held, R11 the base now, R12 the target the adder has summed from
-        // it.  Out: R10 how far the target moves as the adder holds it,
-        // clamp(R12 + old - new) - clamp(R12), which is old - new wherever
-        // neither end is clamped.  The fold keeps what sounds across a
-        // handover, and what sounds is the held target plus the applied
-        // offset: the base's own step moved the pitch by whatever the clamp
-        // took at either end, and blend_goal carries exactly that in the
-        // offset.  Spends R8, R9; R12 is left alone.
+        // rebase_fold: rebase_case's step for an anchor held at the blend's
+        // floor.  In: R10 the base the history held, R11 the base now, R12
+        // the target the adder has summed from it.  Out: R10 how far the
+        // target moves as the adder holds it, clamp(R12 + old - new) -
+        // clamp(R12), which is old - new wherever neither end is clamped.
+        // The fold keeps what sounds across a handover.  That anchor's
+        // offset is added to the clamped target, so what sounds moves by
+        // the clamped step.  Spends R8, R9; R12 is left alone.
         begin(rfEntry);
         emit("SUB R10,R11");            // old - new
         emit("ADD R10,R12");            // the target on the old base
@@ -15448,6 +15415,184 @@ function assembleProgram() {
         emit("MOV PC,LR");
         finish("rebase_fold", rfEnd);
         }        clampScanCaves();
+
+        // Round 5 (2026-09-29): the glide's ceiling and the blend's deficit,
+        // in the erased flash from 0x80023d90.
+        function carryCaves() {        // glide_ceiling: the float the glide engine holds a voice's
+        // accumulator under, in R12, for R9 the voice.  The engine holds
+        // every voice to 0..4095.0, and the pitch (voice 0, from the scan
+        // alone) runs remapOffset up since glide_domain_in, so its ceiling
+        // sat at 3975 while the adder, the clock's fast stage and
+        // pitch_clamp hold the pitch to 0xfff.  A target of 4000 glided to
+        // 3975, and an offset down then put the scan at DAC 2067 where the
+        // fast stage staged 2092 (clamp-chain scan, round 3).  The pitch's
+        // ceiling is 0xfff remapOffset up now, 4215.0, so the glide carries
+        // what the adder hands it and the scan's one clamp is the last.  The
+        // pressure glide (voice 2) keeps 4095.0.  Spends only R12, which
+        // both sites load the float into.
+        begin(gcEntry);
+        emit("MOV R12,0xf000");
+        emit("ORH R12,0x457f");         // 4095.0
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{ne} 0x%x", gcDone));
+        emit("MOV R12,0xb800");
+        emit("ORH R12,0x4583");         // 4215.0, 0xfff + 0x78
+        padTo(gcDone);
+        emit("MOV PC,LR");
+        padTo(gcPool);
+        word(gcEntry);
+        finish("glide_ceiling", gcEnd);
+
+        // The engine's two uses of its ceiling: the compare that finds the
+        // accumulator over it, and the store that holds it there.  Each
+        // loads 4095.0 in eight bytes with R9 the voice, and each calls
+        // glide_ceiling instead.  R11, the accumulator the compare takes,
+        // and R8 and R10, the store's index and array, are left alone.
+        begin(0x8000c09a);
+        emit(StringFormat("MCALL PC[0x%x]", gcPool));
+        padTo(0x8000c0a2);
+        finish("glide_ceiling_test", 0x8000c0a2);
+        begin(0x8000c0ba);
+        emit(StringFormat("MCALL PC[0x%x]", gcPool));
+        emit("MOV R9,R12");
+        padTo(0x8000c0c2);
+        finish("glide_ceiling_hold", 0x8000c0c2);
+
+        // blend_deficit: the part of the blend's applied offset that the
+        // adder's clamp has already spent.  In: R12 the pitch with the
+        // offset added, R8 the offset.  Out: R12 less that part.
+        // blend_goal leaves the target's deficit at 0x6e10 each time the
+        // adder runs: what the floor lifted it by, or what the cap took off
+        // it, as a negative.  An offset the same way spends the deficit
+        // first, and only what is left of it moves the pitch.  So the pitch
+        // is the target plus the offset, clamped once, and the deficit is
+        // spent on the scan the target moves.  It was carried inside the
+        // published offset, where the conditioner slewed it: a pad flip
+        // across the floor landed short and slid 20 to 45 ms to its pitch
+        // (round 5).  Now it lands at once, as a flip in range does.
+        // Called by blend_offset_apply and by the clock's fast stage.
+        // Spends R9.
+        begin(bdfEntry);
+        emit("MOV R9,0x6e10");
+        emit("LD.SH R9,R9[0x0]");       // the deficit
+        emit("CP.W R9,0x0");
+        emit(StringFormat("BR{eq} 0x%x", bdfDone));
+        emit(StringFormat("BR{lt} 0x%x", bdfCap));
+        emit("CP.W R8,0x1");            // the floor's: an offset up spends it
+        emit(StringFormat("BR{lt} 0x%x", bdfDone));
+        emit("CP.W R8,R9");
+        emit(StringFormat("BR{ge} 0x%x", bdfSub));
+        emit("MOV R9,R8");              // all of an offset short of the floor
+        emit(StringFormat("RJMP 0x%x", bdfSub));
+        padTo(bdfCap);
+        emit("CP.W R8,0x0");            // the cap's: an offset down spends it
+        emit(StringFormat("BR{ge} 0x%x", bdfDone));
+        emit("CP.W R8,R9");
+        emit(StringFormat("BR{lt} 0x%x", bdfSub));
+        emit("MOV R9,R8");              // all of an offset still over the cap
+        padTo(bdfSub);
+        emit("SUB R12,R9");
+        padTo(bdfDone);
+        emit("MOV PC,LR");
+        padTo(bdfPool);
+        word(bdfEntry);
+        finish("blend_deficit", bdfEnd);
+
+        // rebase_case: blend_rebase's step.  In: R10 the old base, R11 the
+        // new one, R12 the target.  Out: R10 how far the target the offset
+        // is added to moves.  Where blend_deficit spends the deficit, the
+        // pitch is the target plus the offset, clamped once, and the step
+        // is old - new as it stands.  An anchor held at the blend's floor
+        // has its offset measured from that floor and spends nothing, so
+        // the target its offset is added to is the clamped one, and
+        // rebase_fold takes the step between the two clamped targets.
+        // 0x6e12 is the case the last offset was measured in.  Spends R8.
+        begin(rcEntry);
+        emit("MOV R8,0x6e12");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", rfEntry));
+        emit("SUB R10,R11");            // old - new
+        emit("MOV PC,LR");
+        finish("rebase_case", rcEnd);
+
+        // blend_goal: what pressure_blend publishes.  R0 the offset, X - R3;
+        // R3 the anchor, remapOffset up and held at zero as every
+        // contributor is; R4 the target, which the adder clamps to
+        // -remapOffset..0xfff as soon as this returns; R11 the value the
+        // anchor was found by.  The offset goes to 0x60e0 as it is, for the
+        // conditioner to filter and slew.  The target's deficit,
+        // clamp(R4) - R4, goes to 0x6e10 unslewed, for blend_deficit to
+        // spend on this scan.  An anchor the loop found among the held keys
+        // and held at the blend's own floor has its offset measured from
+        // that floor already: R3 zero, and R11, a table entry, at or over
+        // zero.  That offset spends nothing, so its deficit is left at zero
+        // (clamp-chain scan, round 3: note 12 over a held key 12).  0x6e12
+        // keeps which case the offset is measured in, 1 for that anchor.  A
+        // zero offset leaves the case as it stood, so an offset slewing out
+        // keeps its route.  A change of case moves the target the offset is
+        // added to by the deficit, and the applied offset and the
+        // conditioner's two cells take the difference, as blend_slotmap
+        // folds a handover: the pitch holds, then slews to the new offset.
+        // Only while the blend is the portamento, as that fold is.  Spends
+        // R8..R10 and R12, and R1 and R2, which pressure_blend restores.
+        begin(bgEntry);
+        emit(StringFormat("MOV R9,-0x%x", remapOffset));
+        emit("CP.W R4,R9");
+        emit(StringFormat("BR{lt} 0x%x", bgDeficit));
+        emit("MOV R9,0xfff");
+        emit("CP.W R4,R9");
+        emit(StringFormat("BR{ge} 0x%x", bgDeficit));
+        emit("MOV R9,R4");              // in range: nothing held
+        padTo(bgDeficit);
+        emit("SUB R9,R4");              // the deficit
+        emit("MOV R8,0x6e10");
+        emit("LD.UB R10,R8[0x2]");      // the case the offset was measured in
+        emit("CP.W R0,0x0");
+        emit(StringFormat("BR{eq} 0x%x", bgHeld));
+        emit("MOV R12,0x0");
+        emit("CP.W R3,0x0");
+        emit(StringFormat("BR{ne} 0x%x", bgCase));
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{lt} 0x%x", bgCase));
+        emit("MOV R12,0x1");            // a found anchor at the blend's floor
+        padTo(bgCase);
+        emit("CP.W R12,R10");
+        emit(StringFormat("BR{eq} 0x%x", bgHeld));
+        emit("ST.B R8[0x2],R12");
+        emit("MOV R10,R9");             // leaving that anchor: the offset takes the deficit
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", bgFold));
+        emit("MOV R10,0x0");
+        emit("SUB R10,R9");             // joining it: gives it back
+        padTo(bgFold);
+        emit("MOV R1,0x6d30");
+        emit("LD.UB R1,R1[0x0]");
+        emit("CP.W R1,0x0");
+        emit(StringFormat("BR{eq} 0x%x", bgNew));
+        emit("MOV R1,0x60e2");
+        emit("LD.SH R2,R1[0x0]");
+        emit("ADD R2,R10");
+        emit("ST.H R1[0x0],R2");        // the applied offset
+        emit("LD.SH R2,R1[0x14]");
+        emit("ADD R2,R10");
+        emit("ST.H R1[0x14],R2");       // the filter
+        emit("LD.SH R2,R1[0x16]");
+        emit("ADD R2,R10");
+        emit("ST.H R1[0x16],R2");       // the backlash's held value
+        padTo(bgNew);
+        emit("MOV R10,R12");
+        padTo(bgHeld);
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{eq} 0x%x", bgStore));
+        emit("MOV R9,0x0");             // measured from the floor: nothing to spend
+        padTo(bgStore);
+        emit("ST.H R8[0x0],R9");
+        emit("MOV R8,0x60e0");
+        emit("ST.H R8[0x0],R0");
+        emit("MOV PC,LR");
+        finish("blend_goal", bgEnd);
+        }        carryCaves();
 
         // Tuning applier and tables.  Selector lives at RAM 0x6090 - see the
         // edit-key blocks below for why it is not state+2 - and is carried in

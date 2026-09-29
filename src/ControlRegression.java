@@ -35,7 +35,11 @@ public class ControlRegression extends SequenceEditRegression {
         // The factory PRNG answered with a chosen value while forcePrng is
         // set, and every call counted either way (randomOctaveFloor).
         if(pc()==0x80013e04L) { prngCalls++; if(forcePrng) { e.writeRegister("R12",prngValue); ret(); return; } }
-        if(pc()==0x80019980L) remapIn=(int)reg("R12");   // what the scan hands the remap
+        if(pc()==0x80019980L) {
+            remapIn=(int)reg("R12");    // what the scan hands the remap
+            if(skipRemap) { ret(); return; }
+        }
+        if(pc()==0x8001c0e0L) fastIn=(int)reg("R12");    // and the clock's fast stage, clock_remap_bare
         // The MIDI note-on's two reads of the key table by the note itself,
         // each just after it lands in R8: a base and a target the routine
         // overwrites before it returns, so they are caught here.
@@ -2864,7 +2868,10 @@ public class ControlRegression extends SequenceEditRegression {
     // the scan just run, so normal() is the pitch the scan itself computed:
     // what the instrument plays with the mode off.
     static final long CAL=0x6a6b, CAL_STAMP=0x6d40, CAL_ENTRY=0x6d44, CAL_MS=0x2efc;
-    long remapIn=Long.MIN_VALUE;
+    long remapIn=Long.MIN_VALUE, fastIn=Long.MIN_VALUE;
+    // Set, the remap returns as it is entered: a check that reads only what
+    // it was handed leaves the pitch curve and the tuning unread.
+    boolean skipRemap;
     // One USB-MIDI packet into the receive ring, then the factory parser
     // over it, as SettingsRegression feeds them.
     void usb(int status,int d1,int d2) throws Exception {
@@ -4030,8 +4037,8 @@ public class ControlRegression extends SequenceEditRegression {
                     +"; the old order "+old+" DAC "+remapModel(old)+"]");
             }
             // A target the adder holds at the floor can take the whole
-            // offset into its deficit (blend_goal), so engagement is asked
-            // of the cases whose target stands in range.
+            // offset into its deficit (blend_deficit), so engagement is
+            // asked of the cases whose target stands in range.
             if(target>-0x78&&target<0xfff) check(what+": the blend is engaged, or this proves nothing",off!=0);
             if(off!=0) engaged++;
             touchOff((Integer)c[1]); touchOff((Integer)c[2]); pressureFor(-1,0); w(S+0x216,2,0);
@@ -4047,12 +4054,13 @@ public class ControlRegression extends SequenceEditRegression {
         // The adder's route: the blend cave publishes the offset the apply
         // shim will add to the target's glide, and the adder clamps the
         // target as the cave returns.  The pitch the blend asks for is the
-        // unclamped target plus its offset, held once, so what it publishes
-        // must take the held target there; with the target in range that
-        // is the offset itself, as 3ca37de published it.  An offset that
-        // does not reach past what the clamp took off, or points further
-        // into it, leaves the pitch where the clamp holds it.  Random hands,
-        // none latched, against blendModel's offset.
+        // unclamped target plus its offset, held once, so the apply shim,
+        // handed the held target and the offset settled, must sound that;
+        // with the target in range that is the target plus the offset
+        // itself, as 3ca37de sounded it.  An offset that does not reach
+        // past what the clamp took off, or points further into it, leaves
+        // the pitch where the clamp holds it.  Random hands, none latched,
+        // against blendModel's offset.
         Random rnd=new Random(0x28092026L);
         int inRange=0, clampedHands=0, rangeWrong=0, clampWrong=0; StringBuilder hw=new StringBuilder();
         for(int t=0;t<300;t++) {
@@ -4065,12 +4073,12 @@ public class ControlRegression extends SequenceEditRegression {
             int target=base+terms[rnd.nextInt(terms.length)];
             int knob=0x30+rnd.nextInt(0x3d0);
             long o=blendModel(base,knob,cc,true);
-            long want=carriedOffset(target,o);
-            long got=blendPublish(base,target,knob,cc);
+            long want=clampPitch(target+o);
+            long got=blendSounds(target,blendPublish(base,target,knob,cc));
             if(target<-0x78||target>0xfff) { clampedHands++; if(got!=want) { clampWrong++; if(clampWrong<=4) hw.append(" clamped:").append(target).append("+").append(o).append("->").append(got).append("/").append(want); } }
             else { inRange++; if(got!=want) { rangeWrong++; if(rangeWrong<=4) hw.append(" in range:").append(target).append("+").append(o).append("->").append(got).append("/").append(want); } }
         }
-        check("the blend publishes its offset carried from the target the adder clamps: "+clampWrong+" of "+clampedHands
+        check("the blend sounds its offset carried from the target the adder clamps: "+clampWrong+" of "+clampedHands
             +" hands with the target clamped off, "+rangeWrong+" of "+inRange+" in range"+hw,
             clampWrong==0&&rangeWrong==0&&clampedHands>40&&inRange>40);
         // And from a base under the floor.  A MIDI note under the table's
@@ -4094,8 +4102,8 @@ public class ControlRegression extends SequenceEditRegression {
             int target=base+terms[low.nextInt(terms.length)];
             int knob=0x30+low.nextInt(0x3d0);
             long o=blendModel(base,knob,cc,true);
-            long want=carriedOffset(target,o);
-            long got=blendPublish(base,target,knob,cc);
+            long want=clampPitch(target+o);
+            long got=blendSounds(target,blendPublish(base,target,knob,cc));
             if(target<-0x78||target>0xfff) lowClamped++; else { lowRange++; if(got!=want) lowRangeWrong++; }
             if(got!=want) { lowWrong++; if(lowWrong<=4) lw.append(" ").append(base).append(":").append(target).append("+").append(o).append("->").append(got).append("/").append(want); }
         }
@@ -4121,24 +4129,25 @@ public class ControlRegression extends SequenceEditRegression {
             int knob=0x30+held.nextInt(0x3d0);
             long o=blendModel(anchor,knob,cc,true);
             if(o>0) heldPulled++;
-            long got=blendPublish(anchor,anchor-484,knob,cc,true);
-            if(got!=o) { heldWrong++; if(heldWrong<=4) hl.append(" ").append(anchor-484).append("+").append(o).append("->").append(got); }
+            long want=clampPitch(-0x78+o);
+            long got=blendSounds(anchor-484,blendPublish(anchor,anchor-484,knob,cc,true));
+            if(got!=want) { heldWrong++; if(heldWrong<=4) hl.append(" ").append(anchor-484).append("+").append(o).append("->").append(got).append("/").append(want); }
         }
         check("and an anchor latched under the floor keeps the offset measured from the blend's own floor: "+heldWrong+" of 60 hands off ("
             +heldPulled+" pulled up)"+hl,heldWrong==0&&heldPulled>10);
-        println("PASS the blend's offset is carried from the target the adder clamps, from a base under the floor too, and is 3ca37de's wherever the target is in range");
+        println("PASS the blend sounds its offset carried from the target the adder clamps, from a base under the floor too, and 3ca37de's pitch wherever the target is in range");
     }
-    // What the blend must publish for a target the adder is about to clamp
-    // and the offset o measured from its base: what takes the held target
-    // to target + o, the sum the pitch chain holds once at its end.  An
-    // offset pointing further into the clamp, or one that does not climb
-    // out of it, leaves the pitch where the clamp holds it.  Nothing is
-    // capped here: the one clamp after the glide, the bend and the offset
-    // does that.
-    long carriedOffset(long target,long o) {
-        if(target<-0x78&&o>0) return Math.max(0,target+o+0x78);
-        if(target>0xfff&&o<0) return Math.min(0,target+o-0xfff);
-        return o;
+    // The apply shim with the published offset settled: handed the held
+    // target as the glide leaves it, no bend, it sounds what the scan would
+    // once the conditioner has landed.  What it hands the remap, which
+    // returns unrun.
+    long blendSounds(long target,long published) throws Exception {
+        w(0x60e0,2,published&0xffff); w(0x60e2,2,published&0xffff);
+        e.writeRegister("R12",clampPitch(target)&0xffffffffL);
+        remapIn=Long.MIN_VALUE; skipRemap=true;
+        try { call(0x8001a8f0L); } finally { skipRemap=false; }
+        check("the apply shim reached the remap",remapIn!=Long.MIN_VALUE);
+        return remapIn;
     }
     // The blend cave as blend_slotmap enters it, with the target apart from
     // the base: R10 the base the offset is measured from, R12 the target
@@ -4236,6 +4245,191 @@ public class ControlRegression extends SequenceEditRegression {
         }
         check("a MIDI note under the floor over a held key sounds and holds what note 24 does, DAC "+ref+":"+seen,off==0);
         println("PASS a MIDI note under the table's bottom, its target on the floor, sounds the blend's pull as note 24 does and holds it across the handover");
+    }
+    // The glide's ceiling (round 5).  The glide engine holds a voice's
+    // accumulator to 0..4095.0, and the pitch glides remapOffset up, so a
+    // target over 3975 glided to 3975.  The adder, the clock's fast stage
+    // and the scan's one clamp hold the pitch to 0xfff, so under an offset
+    // down the scan and the fast stage sounded different notes: target 4000
+    // gave scan DAC 2067 against fast 2092.  The pitch the scan hands the
+    // remap and the one the fast stage stages must both be the target, the
+    // bend and the applied offset, clamped once.  Key 12 at 3900 and at
+    // 3975 glided there before and are the control.  With the blend off
+    // (lean) a bend down is the offset.
+    void glideCeiling() throws Exception {
+        // {key 12's pitch, key 0's raw pressure (110 is no finger), bend}
+        int[][] cases={{3900,1300,0},{3975,1300,0},{3976,1300,0},{4000,1300,0},{4050,1300,-200},{4095,1300,0},
+            {3900,110,-480},{4000,110,-480},{4095,110,-200}};
+        int wrong=0, over=0, control=0, engaged=0; StringBuilder why=new StringBuilder();
+        for(int[] c:cases) {
+            boolean leans=c[1]!=110;
+            if(lean&&leans) continue;
+            setup(0,false,0); command(2);
+            int[] t=new int[32];
+            for(int k=0;k<32;k++) t[k]=k==12?c[0]:1500+(484*k+6)/12;
+            liveTable(t);
+            exactPosition(2);
+            leanOn(12,0,300,c[1],c[2],leans?0x3ff:0);
+            long d=dac(), scan=remapIn;
+            long target=(short)r(S+0x352,2), off=(short)r(0x60e2,2);
+            fastIn=Long.MIN_VALUE;
+            long fast=fastStage(), staged=fastIn;
+            long want=clampPitch(target+c[2]+off);
+            check("key 12 at "+c[0]+" under octave pad 1 is the target, or this proves nothing: "+target,target==c[0]);
+            if(leans) { check("the blend pulls key 12 toward key 0, or this proves nothing: offset "+off,off<-100); engaged++; }
+            if(c[0]>3975) over++; else control++;
+            if(scan!=want||staged!=want||d!=remapModel(want)||fast!=remapModel(want)) {
+                wrong++;
+                why.append(String.format(" [key 12 at %d, offset %d, bend %d: scan %d DAC %d, fast stage %d DAC %d, once %d DAC %d]",
+                    c[0],off,c[2],scan,d,staged,fast,want,remapModel(want)));
+            }
+            touchOff(12); touchOff(0); pressureFor(-1,0); w(S+0x216,2,0);
+        }
+        check("the scan glides a target over 3975 to the target, and sounds what the fast stage stages: "+wrong+" of "+(over+control)
+            +" off ("+over+" over 3975, "+control+" at or under it, "+engaged+" with the blend engaged)"+why,
+            wrong==0&&over>=(lean?2:6)&&control>=(lean?1:3));
+        println("PASS the glide carries the pitch up to 0xfff, and the scan and the fast stage hold it once, at the same place");
+    }
+    // A pad flip across the pitch floor or the cap with the blend engaged
+    // (round 5).  The blend's offset is measured from the anchor's pitch,
+    // and the octave pad moves the target and nothing the offset is
+    // measured from, so a flip moves the pitch by the pad's step and the
+    // offset stays.  A flip in range lands on the scan after it and holds.
+    // Across the floor the adder's clamp takes part of the offset.
+    // blend_goal published the offset less that part, and a flip changed
+    // the part, so the published offset moved and the conditioner slewed
+    // it: the pitch landed where 3ca37de put it and slid 20 to 45 ms to the
+    // right one.  Every flip must sound the target plus the offset, clamped
+    // once, from the scan after it and in the fast stage before it.  The
+    // offset is read off the pitch at the start, where nothing clamps, and
+    // the target is the base plus the live transpose, unclamped.  The
+    // knob's two upper rates are the slow slews.  Latched notes in the
+    // latch's transpose state follow the pad the same way.
+    void padFlipLands() throws Exception {
+        if(lean) { println("SKIP a pad flip under the blend: the blend is off in this image"); return; }
+        int[] high=new int[32];
+        for(int k=0;k<32;k++) high[k]=3316+(484*k+6)/12;   // key 12 at 3800
+        // {table, sounding key, leaned key, start position, the positions it flips to}
+        Object[][] runs={
+            {anchored(300),0,12,2,new int[]{3,2,1,2}},    // in range up and back, then over the floor and back
+            {anchored(100),0,12,2,new int[]{3,2,1,2}},
+            {high,12,0,2,new int[]{1,2,3,2}},             // in range down and back, then over the cap and back
+        };
+        int across=0, inRange=0, wrong=0; StringBuilder why=new StringBuilder(), seen=new StringBuilder();
+        for(int knob:new int[]{0x180,0x300}) for(Object[] run:runs) {
+            setup(0,false,0); command(2);
+            liveTable((int[])run[0]);
+            exactPosition((Integer)run[3]);
+            leanOn((Integer)run[1],(Integer)run[2],300,1300,0,knob);
+            dac();
+            long before=(short)r(S+0x350,2)+livePad();
+            long o=remapIn-before;
+            check("the target stands in range at the start, or the offset cannot be read off the pitch: "+before,before>-0x78&&before<0xfff);
+            check("the blend is engaged, or this proves nothing: offset "+o,Math.abs(o)>100);
+            for(int pos:(int[])run[4]) {
+                octavePad(pos-1);
+                long target=(short)r(S+0x350,2)+livePad();
+                long want=clampPitch(target+o);
+                boolean clamped=before<-0x78||before>0xfff||target<-0x78||target>0xfff;
+                if(clamped) across++; else inRange++;
+                fastIn=Long.MIN_VALUE; fastStage(); long staged=fastIn;
+                long[] h=new long[12];
+                for(int i=0;i<h.length;i++) { dac(); h[i]=remapIn; }
+                boolean ok=staged==want; for(long x:h) ok&=x==want;
+                String what=String.format("knob 0x%x, target %d to %d%s: want %d, fast stage %d, scans %s",
+                    knob,before,target,clamped?" across the clamp":"",want,staged,Arrays.toString(h));
+                seen.append(" [").append(what).append("]");
+                if(!ok) { wrong++; if(wrong<=6) why.append(" [").append(what).append("]"); }
+                before=target;
+            }
+            touchOff((Integer)run[1]); touchOff((Integer)run[2]); pressureFor(-1,0);
+        }
+        // And latched, in the latch's transpose state, where the pad moves
+        // the latched set by latch_hold's term and the blend still measures
+        // from the notes as they were latched.  Keys 0 and 12 latched under
+        // octave pad 1, key 0 the arp's and resting, key 12 leaned on.
+        for(int knob:new int[]{0x180,0x300}) {
+            setup(0,false,1); command(0); latchFixture();
+            liveTable(anchored(300));
+            octavePad(1); sound();
+            for(int k:new int[]{0,12}) { key(k); aim(k); sound(); }
+            controlScan(); call(0x8001e580L);
+            check("the latch is in its transpose state, or this proves nothing",r(0x62e2,1)==1);
+            for(int k=0;k<29;k++) { w(0x3490+k,1,k==0||k==12?2:0); w(0x3686+2*k,2,k==12?1300:k==0?400:110); }
+            w(S+0x306,2,knob);
+            call(0x8001aa10L);
+            aim(0);
+            for(int i=0;i<40;i++) sound();
+            long start=(short)r(S+0x352,2), pad0=livePad(), before=start;
+            long o=remapIn-start;
+            check("latched key 0 sounds in range at the start, or the offset cannot be read off the pitch: "+start,start>-0x78&&start<0xfff);
+            check("the blend is engaged on the latched notes, or this proves nothing: offset "+o,Math.abs(o)>100);
+            for(int pad:new int[]{2,1,0,1}) {    // in range up and back, then over the floor and back
+                octavePad(pad);
+                long target=start+livePad()-pad0;
+                long want=clampPitch(target+o);
+                boolean clamped=before<-0x78||before>0xfff||target<-0x78||target>0xfff;
+                if(clamped) across++; else inRange++;
+                fastIn=Long.MIN_VALUE; fastStage(); long staged=fastIn;
+                long[] h=new long[12];
+                for(int i=0;i<h.length;i++) { sound(); h[i]=remapIn; }
+                boolean ok=staged==want; for(long x:h) ok&=x==want;
+                String what=String.format("latched, knob 0x%x, target %d to %d%s: want %d, fast stage %d, scans %s",
+                    knob,before,target,clamped?" across the clamp":"",want,staged,Arrays.toString(h));
+                seen.append(" [").append(what).append("]");
+                if(!ok) { wrong++; if(wrong<=6) why.append(" [").append(what).append("]"); }
+                before=target;
+            }
+        }
+        println("flips:"+seen);
+        check("a pad flip under the blend lands on the target plus the offset, clamped once, from the scan after it: "+wrong+" of "+(across+inRange)
+            +" off ("+across+" across the floor or the cap, "+inRange+" in range)"+why,
+            wrong==0&&across>=12&&inRange>=12);
+        println("PASS a pad flip across the floor or the cap lands at once under the blend, as a flip in range does, latched too");
+    }
+    // The blend's fold across a handover when an anchor sits under the
+    // floor (round 5).  A latched anchor the blend holds at its own floor
+    // has its offset measured from that floor and spends none of the
+    // target's deficit, so its offset is added to the clamped target.
+    // Every other anchor's offset is measured from its own pitch and
+    // blend_deficit spends the deficit from it, so its offset is added to
+    // the target itself.  A handover must fold the step between those two,
+    // whichever case each side is in, or the pitch jumps.  Keys 0 and 1 at
+    // 250 and 300 latched under octave pad 0 sound under the floor, key 7
+    // sounds 283 and key 12 485.  One finger leans on key 12 alone, so
+    // whichever key the arp stands on, the blend pulls the pitch onto key
+    // 12 and nothing should move: under the floor to under the floor, to
+    // range with an offset and back, and onto key 12 itself.
+    void floorAnchorHandover() throws Exception {
+        setup(0,false,1); command(0); latchFixture();
+        check("the sequencer is idle, or the audition owns the pitch: mode "+r(0x6158,1),r(0x6158,1)==0);
+        int[] t=anchored(250); t[1]=300;
+        liveTable(t);
+        octavePad(0); sound();
+        for(int k:new int[]{0,1,7,12}) { key(k); aim(k); sound(); }
+        check("keys 0, 1, 7 and 12 latched under octave pad 0 carry minus one period, or this proves nothing",
+            (short)r(0x60a2,2)==-484&&(short)r(0x60a2+2,2)==-484&&(short)r(0x60a2+14,2)==-484
+            &&(short)r(0x60a2+24,2)==-484&&r(0x608e,1)==1);
+        for(int k=0;k<29;k++) { w(0x3490+k,1,k==12?2:0); w(0x3686+2*k,2,k==12?1300:110); }
+        w(S+0x306,2,0x200);
+        call(0x8001aa10L);
+        for(int i=0;i<20;i++) sound();
+        long want=r(0x854+24,2)-484;
+        check("key 12 sounds its own pitch under the finger, or this proves nothing: "+remapIn+", "+want,remapIn==want);
+        StringBuilder seen=new StringBuilder(); int moved=0, floored=0, offset=0;
+        for(int k:new int[]{0,1,7,0,12,1,7,12,0}) {
+            aim(k);
+            StringBuilder h=new StringBuilder(); int off=0;
+            for(int i=0;i<10;i++) { sound(); h.append(" ").append(remapIn); if(Math.abs(remapIn-want)>1) off++; }
+            if((short)r(S+0x352,2)==-0x78) floored++;
+            if((short)r(0x60e2,2)!=0&&(short)r(S+0x352,2)>-0x78) offset++;
+            seen.append(String.format(" [to key %d:%s]",k,h));
+            if(off>0) moved++;
+        }
+        check("the arp stands on anchors under the floor, and in range with an offset, or this proves nothing: "+floored+", "+offset,
+            floored>=5&&offset>=2);
+        check("a handover between anchors under the floor and in range holds the pitch the blend pulls to, "+want+":"+seen,moved==0);
+        println("PASS the blend folds a handover to or from an anchor under the floor so the pitch holds, whichever case each side is in");
     }
     // The recording audition's pinned pitch (pitch finding 5).  It went in
     // as the relative pitch plus one, zero meaning none, so a press one unit
@@ -4349,7 +4543,7 @@ public class ControlRegression extends SequenceEditRegression {
         "calibrationPitch","calibrationSilence","calibrationExits","calibrationLiveEdit","exactPitch",
         "tunedNotes","midiNoteOffs","blendSign","latchedUnderThePeriod","anchoredBottomKey","glideUnderZero",
         "reloadedRotation","gainPairOff","randomOctaveFloor","blendClampOnce","blendCarriedOffset",
-        "rebaseSentinel","midiUnderTheFloor","auditionPin","presetDegreesRounded"};
+        "rebaseSentinel","midiUnderTheFloor","auditionPin","presetDegreesRounded","glideCeiling","padFlipLands","floorAnchorHandover"};
     String knob2="spacing";
     // The mirror as this run's configuration booted it: the settings record
     // laid for it, or the image's own defaults.  Where a check used to read
@@ -4371,6 +4565,7 @@ public class ControlRegression extends SequenceEditRegression {
                 return orders&&!knob2.equals("patterns")?null:"needs knob 1 on orders and knob 2 off patterns";
             case "latchExitHold": case "latchTransposeState": case "latchStackMidi": case "latchHoldMidi":
             case "latchAfterMidi": case "latchPresetMidi": case "staleAnchor": case "latchedUnderThePeriod":
+            case "floorAnchorHandover":
                 return lean?"needs the latching arp":null;
             case "keyOverTakeMidi": case "stripCarry": case "playbackPressure": case "heldPresetEdit":
                 return seq?null:"needs the sequencer";

@@ -330,7 +330,8 @@ measuring itself: it plays C0 to E5 into the keyboard over MIDI, listens to the
 instrument is already running. Load that table there first, and save the new
 one it produces &mdash; the file it writes is the same format this reads.
 Switching the page's volts per octave or its pitch offset drops a loaded
-table. It belongs to the scaling and the layout it was taken at.
+table. It belongs to the scaling and the layout it was taken at. The page
+says so on the calibration line.
 
 By hand, measure each key against 12-TET with a tuner and fold the readings
 in:
@@ -489,10 +490,13 @@ floors and the peak hold with `pressure_fix` on and off. It checks the
 pitch chain wherever a value was held at a floor or a cap before a later
 term was added. Knob 3's random octave is tested on the finished target.
 The glide, the bend and the blend's offset are summed and held once, on the
-scan and in the clock's fast stage. The blend's re-base history folds a
-base under zero. A MIDI note under the table's bottom, its base under the
-pitch floor, sounds the blend's pull over a held key as note 24 does. The
-recording audition pins a pitch one unit under the
+scan and in the clock's fast stage. The glide carries a target up to 0xfff,
+as the adder and the fast stage do. A pad flip across the floor or the cap
+with the blend engaged lands at once, as a flip in range does. A handover
+to or from a latched anchor under the floor holds the pitch. The blend's
+re-base history folds a base under zero. A MIDI note under the table's
+bottom, its base under the pitch floor, sounds the blend's pull over a held
+key as note 24 does. The recording audition pins a pitch one unit under the
 take's reference. The preset quantiser keeps its degree under a period that
 is not a whole number of units. The 24-key map is `tunings/24TET.scl` with
 `tunings/24TET-full.kbm`. There an octave pad steps the MIDI note 24, as the
@@ -555,7 +559,7 @@ The rules the rows follow:
   never read knob 2's byte or the bank. Tuned and jack run the blend's sign,
   its carried offset, the gain pair and the velocity floors the same as
   roles. The 24-key map runs the carried offset the same as default.
-- The lean configuration is out of the rows of the five checks that skip
+- The lean configuration is out of the rows of the six checks that skip
   themselves with the blend or the latch recording off.
 - The 24-key map and offset-off are in every row whose check reads what
   they change and passes under them. The exceptions assume something of

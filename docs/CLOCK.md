@@ -204,9 +204,11 @@ the housekeeping and the vibrato engine all advance once per scan and must not
 be run at 1 kHz — and then raises the gate, so pitch and trigger reach the DAC
 in the same flush. The staged word is the step's target plus the bend strip's
 offset at `state+0x216` and the pressure blend's applied offset at `0x60e2`,
-held once between entry 0 of the pitch table and 0xfff. Those are the three
-terms the scan adds and the one clamp it applies, so the two paths reach the
-same DAC word.
+held once between entry 0 of the pitch table and 0xfff. Where the adder held
+the target at the floor or the cap, the offset first spends what the clamp
+took, as the scan's apply does (`blend_deficit`). Those are the three terms
+the scan adds and the one clamp it applies, so the two paths reach the same
+DAC word.
 Omitting the bend was a pitch defect on the instrument: the flush drove slot 2
 to a bend-less note under every trigger and the scan only corrected it up to
 5 ms later, which is heard as the clock bleeding into the pitch output.

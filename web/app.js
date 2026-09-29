@@ -110,15 +110,16 @@
         // longer describes this instrument's layout - its row 3 is not this
         // build's row 3.  Dropped rather than shifted: a table quietly moved
         // under the user is the kind of baseline that folds into a plausible
-        // wrong answer.
-        if (haveBaseline()) {
-            clearBaseline();
-            msg($('calMsg'), 'bad', 'The loaded table was dropped: changing the pitch ' +
-                'offset renumbers the semitones, so it no longer describes this ' +
-                'build. Load it again if it was measured at this setting.');
-        }
+        // wrong answer.  Said through validateCal(), which writes the line
+        // last: said before it, the line was cleared or replaced at once.
+        var dropped = haveBaseline();
+        if (dropped) clearBaseline();
         syncBaseline();
-        buildTable(); drawPlot(); validateCal(); invalidate();
+        buildTable(); drawPlot();
+        validateCal(dropped ? 'The loaded table was dropped: changing the pitch ' +
+            'offset renumbers the semitones, so it no longer describes this ' +
+            'build. Load it again if it was measured at this setting.' : null);
+        invalidate();
     }
 
     // --- factory image ---------------------------------------------------

@@ -143,6 +143,9 @@ CHECKS: dict[str, tuple[str, ...]] = {
     "midiUnderTheFloor": ('default', 'roles', 'tuned', 'jack', 'offset-off'),
     "auditionPin": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
     "presetDegreesRounded": ('default', 'roles', 'tuned', 'lean', 'jack', 'kbm'),
+    "glideCeiling": ('default', 'roles', 'tuned', 'lean', 'jack', 'kbm', 'offset-off'),
+    "padFlipLands": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
+    "floorAnchorHandover": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
 }
 
 # Each check's emulation time under one configuration, in seconds, the most
@@ -204,11 +207,14 @@ SECONDS: dict[str, float] = {
     "gainPairOff": 1.0,
     "randomOctaveFloor": 36.0,
     "blendClampOnce": 11.0,
-    "blendCarriedOffset": 2.0,
+    "blendCarriedOffset": 4.0,
     "rebaseSentinel": 6.0,
     "midiUnderTheFloor": 5.0,
     "auditionPin": 2.0,
     "presetDegreesRounded": 40.0,
+    "glideCeiling": 20.0,
+    "padFlipLands": 29.0,
+    "floorAnchorHandover": 3.0,
 }
 JOB_SECONDS = 120.0
 
