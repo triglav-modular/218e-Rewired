@@ -493,12 +493,15 @@ The glide, the bend and the blend's offset are summed and held once, on the
 scan and in the clock's fast stage. The glide carries a target up to 0xfff,
 as the adder and the fast stage do. A pad flip across the floor or the cap
 with the blend engaged lands at once, as a flip in range does. A handover
-to or from a latched anchor under the floor holds the pitch. The blend's
-re-base history folds a base under zero. A MIDI note under the table's
-bottom, its base under the pitch floor, sounds the blend's pull over a held
-key as note 24 does. The recording audition pins a pitch one unit under the
-take's reference. The preset quantiser keeps its degree under a period that
-is not a whole number of units. The 24-key map is `tunings/24TET.scl` with
+to or from a latched anchor under the floor holds the pitch. The blend
+measures and weighs a note latched under the floor at its own pitch, not at
+the floor, so a latched set that the transpose state moves back into range
+pulls from where it sounds. The blend's re-base history folds a base under
+zero. A MIDI note under the table's bottom, its base under the pitch floor,
+sounds the blend's pull over a held key as note 24 does. The recording
+audition pins a pitch one unit under the take's reference. The preset
+quantiser keeps its degree under a period that is not a whole number of
+units. The 24-key map is `tunings/24TET.scl` with
 `tunings/24TET-full.kbm`. There an octave pad steps the MIDI note 24, as the
 jack does for a period.
 Like `test_persistence.py`, it requires Ghidra, models

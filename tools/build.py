@@ -1415,13 +1415,11 @@ RAM_REGIONS = [
     # it (zero for an empty take) and persist_pack stages it at record offset
     # 0x11c.  persist_boot's capture initialises it before anything reads it.
     (0x6DD0, 0x6DD2, "the take's octave reference, completed-edit snapshot for record 0x11c"),
-    # blend_goal writes both every time the adder runs, and option_boot_blend
-    # zeroes both at every boot.  The deficit is what the adder's clamp took
+    # blend_goal writes it every time the adder runs, and option_boot_blend
+    # zeroes it at every boot.  The deficit is what the adder's clamp took
     # from the target, spent from the applied offset by blend_deficit on the
-    # scan it changes; the case says whether the offset is measured from a
-    # floored anchor, which spends none of it.
+    # scan it changes.
     (0x6E10, 0x6E12, "the blend target's deficit under the adder's clamp"),
-    (0x6E12, 0x6E13, "the blend's case: 1 while its anchor is held at the floor"),
     # The settings mirror: the record's payload from 0x20, in RAM, which is
     # what every table reader and the ten runtime numbers address.  Filled
     # at boot from the image's own tables, then from the newer valid slot at

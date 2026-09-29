@@ -146,6 +146,7 @@ CHECKS: dict[str, tuple[str, ...]] = {
     "glideCeiling": ('default', 'roles', 'tuned', 'lean', 'jack', 'kbm', 'offset-off'),
     "padFlipLands": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
     "floorAnchorHandover": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
+    "transposedFloorAnchor": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
 }
 
 # Each check's emulation time under one configuration, in seconds, the most
@@ -214,7 +215,8 @@ SECONDS: dict[str, float] = {
     "presetDegreesRounded": 40.0,
     "glideCeiling": 20.0,
     "padFlipLands": 29.0,
-    "floorAnchorHandover": 3.0,
+    "floorAnchorHandover": 5.0,
+    "transposedFloorAnchor": 38.0,
 }
 JOB_SECONDS = 120.0
 
