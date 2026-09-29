@@ -182,12 +182,12 @@ back, not just the number in the cell.
 ## Verification and remaining bench checks
 
 Run `python3 tools/test_persistence.py` (requires Ghidra). `--quick` omits
-only the clock frequency/duty sweep. The runner builds presets-only,
-sequencer, clock, and sequencer+clock variants in private `build/` folders,
-restores shared build metadata and never invokes a flasher.
-For the same sequencer edit/transport checks with persistence disabled, run
-`python3 tools/test_persistence.py --mode seq --no-persist --quick` and
-repeat with `--mode seq-clock`.
+only the clock frequency/duty sweep. The runner builds one image in a private
+`build/` folder and runs the sequencer-only and clock-only configurations on
+it as settings records, beside its own sequencer+clock defaults
+([BUILD.md](BUILD.md), "One image"). It restores shared build metadata and
+never invokes a flasher. The volatile build, persistence off, is no longer
+tested.
 
 `src/PersistenceRegression.java` executes emitted save/load/CRC instructions,
 startup/gesture hooks and the real factory copy wrapper. Only controller

@@ -1464,6 +1464,10 @@ public class SettingsRegression extends PersistenceRegression {
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         String mode=args[0]; seq=mode.contains("seq"); clock=mode.contains("clock");
+        // This suite holds an image to its own defaults and lays its own
+        // records; one laid for it would be tested as the image's.
+        if(SettingsRecord.named()!=null)
+            throw new Exception("SettingsRegression runs on the image's own defaults: unset "+SettingsRecord.ENV);
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {

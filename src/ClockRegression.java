@@ -45,6 +45,7 @@ public class ClockRegression extends GhidraScript {
     void setReg(int n, long v) { e.writeRegister(regName(n), v); }
     void w(long a, int n, long v) { e.writeMemoryValue(toAddr(a), n, v); }
     long r(long a, int n) {
+        if (reads != null) for (long x=a; x<a+n; x++) if (watched(x)) reads.add(x);
         long v = 0;
         for (byte b : e.readMemory(toAddr(a), n)) v = (v << 8) | (b & 255);
         return v;
@@ -122,12 +123,17 @@ public class ClockRegression extends GhidraScript {
         }
         if (!e.step(monitor)) throw new Exception("PC=" + Long.toHexString(pc()) + " " + e.getLastError());
     }
-    int call(long entry, long end) throws Exception {
+    int call(long entry, long end) throws Exception { return call(entry, end, 20000); }
+    // The startup hook.  A laid settings record is checked (its CRC over
+    // 0x2a0 bytes) and copied before the rest of the boot, which takes it
+    // past the 20000 steps every other call is held to.
+    int startup() throws Exception { return call(0x80007bf4L,0x80007bf8L,500000); }
+    int call(long entry, long end, int budget) throws Exception {
         e.writeRegister("SP",0x7800);
         e.writeRegister("LR",0x100);
         e.writeRegister("R7",0x7600);
         jump(entry);
-        for (int i=0; i<20000; i++) {
+        for (int i=0; i<budget; i++) {
             if (pc()==end) return i;
             step();
         }
@@ -156,6 +162,10 @@ public class ClockRegression extends GhidraScript {
     void fresh(int divisor, int hz) throws Exception {
         if (e != null) e.dispose();
         e = AlignGuard.install(new EmulatorHelper(currentProgram));
+        // The configuration this run is under, as a committed send leaves
+        // it (SettingsRecord); the boot below loads it.
+        byte[] laid=SettingsRecord.named();
+        if (laid != null) SettingsRecord.lay(e,laid);
         e.writeMemory(toAddr(0),new byte[0x8000]);
         e.writeMemory(toAddr(8),e.readMemory(toAddr(0x80015d28L),0x2ecc));
         w(0x2ed4,4,0xffffffffL);
@@ -167,7 +177,7 @@ public class ClockRegression extends GhidraScript {
         // cold machine reads zero. Everything after this is the firmware's.
         w(0x61e6,2,0);
         w(0x29cc,4,hz); w(GPIO+0x60,4,0); w(GPIO+0xd0,4,0);
-        call(0x80007bf4L,0x80007bf8L); // actual startup hook/pool
+        startup(); // actual startup hook/pool
         check("CPU-frequency-derived timebase", r(0x6244,4)==hz/1000);
         check("clock RAM initialized", r(0x6234,4)==0 && r(0x6258,2)==0);
         // Run the real mode-setting call (not interrupt-controller setup).
@@ -194,7 +204,73 @@ public class ClockRegression extends GhidraScript {
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202); // SPI TX ready/empty
         advances=0; periodicAdvances=0; periodic=false; transfers=0; msTicks=0;
         transferPitches.clear();
+        traceOn();
         pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear(); fireTimes.clear();
+    }
+    // What a check reads of what a configuration sets, when the runner asks
+    // (REWIRED_READ_TRACE=1): the same watch as PersistenceRegression's -
+    // the mirror, the live option bytes and the settings slots, read after
+    // the boot in fresh() by the firmware outside the settings loader, or
+    // through r().
+    static final long[][] WATCHED={{0x6800,0x6a68},{0x6d28,0x6d39},{0x8003d000L,0x8003e000L}};
+    static final boolean TRACE="1".equals(System.getenv("REWIRED_READ_TRACE"));
+    java.util.TreeSet<Long> reads;
+    Object tracing;
+    static boolean watched(long a) { for(long[] w:WATCHED) if(a>=w[0]&&a<w[1]) return true; return false; }
+    void traceOn() {
+        if(reads==null||e==null||tracing==e) return;
+        tracing=e;
+        final ghidra.program.model.address.AddressSpace memory=e.getProgram().getAddressFactory().getDefaultAddressSpace();
+        final EmulatorHelper mine=e;
+        e.getEmulator().addMemoryAccessFilter(new ghidra.app.emulator.MemoryAccessFilter() {
+            @Override protected void processRead(ghidra.program.model.address.AddressSpace space,long offset,int size,byte[] values) {
+                java.util.TreeSet<Long> into=reads;
+                if(into==null||space!=memory||mine.getEmulateExecutionState()==ghidra.pcode.emulate.EmulateExecutionState.INSTRUCTION_DECODE) return;
+                if(PersistenceRegression.loader(mine.getExecutionAddress().getOffset())) return;
+                for(long a=offset;a<offset+size;a++) if(watched(a)) into.add(a);
+            }
+            @Override protected void processWrite(ghidra.program.model.address.AddressSpace space,long offset,int size,byte[] values) {}
+        });
+    }
+    static String ranges(java.util.Set<Long> s) {
+        StringBuilder out=new StringBuilder(); long start=-1, last=-2;
+        for(long a:s) {
+            if(a!=last+1) { if(start>=0) out.append(String.format(" %x-%x",start,last+1)); start=a; }
+            last=a;
+        }
+        if(start>=0) out.append(String.format(" %x-%x",start,last+1));
+        return out.toString().trim();
+    }
+    // A run's checks in order, by name, each one's reads printed when
+    // tracing; the first failure ends the run as before.
+    void each(Class<?> in,String... names) throws Exception {
+        for(String name:names) {
+            if(TRACE) { reads=new java.util.TreeSet<>(); traceOn(); }
+            try { PersistenceRegression.declared(in,name).invoke(this); }
+            catch(java.lang.reflect.InvocationTargetException ex) {
+                Throwable c=ex.getCause();
+                if(c instanceof Exception) throw (Exception)c;
+                throw new Exception(c);
+            }
+            finally { if(TRACE) { println("READS "+name+": "+ranges(reads)); reads=null; } }
+        }
+    }
+    void sweep() throws Exception {
+        for (int hz : new int[]{10,150,180,199,200})
+            for (double duty : new double[]{0.1,0.5,0.75,0.9})
+                for (int phase : new int[]{0,250}) square(hz,duty,phase);
+    }
+    // The configuration a run's arguments name, against the one the boot
+    // loaded: the record laid for it (SettingsRecord), and the sequencer and
+    // divider bytes the fixtures below assume.
+    void settingsLanded(boolean seq, boolean divider) throws Exception {
+        fresh(1,25000000);
+        byte[] laid=SettingsRecord.named();
+        String why=laid==null?"":SettingsRecord.landed(e,laid);
+        check("the laid record boots", why==null||why.isEmpty(), why);
+        check("the sequencer and divider bytes are the run's: sequencer="+seq+", divider="+divider,
+              (r(0x6d2d,1)!=0)==seq && (r(0x6d2e,1)!=0)==divider,
+              "0x6d2d="+r(0x6d2d,1)+" 0x6d2e="+r(0x6d2e,1));
     }
     void irq(long us, boolean high) throws Exception {
         time(us);
@@ -960,7 +1036,7 @@ public class ClockRegression extends GhidraScript {
               (r(0x60ee,1)==1 || r(0x625b,1)!=0) && r(0x6237,1)==1);
         w(0x6234,1,7); w(0x6235,1,5); w(0x6258,2,29);
         w(GPIO+0x60,4,0); time(61000);
-        call(0x80007bf4L,0x80007bf8L);
+        startup();
         check("warm restart clears FIFO and ownership", r(0x6234,4)==0 && r(0x6258,2)==0);
         check("warm restart cancels pre-restart trigger",
               r(0x60ee,1)==0 && r(0x625b,1)==0);
@@ -2365,7 +2441,7 @@ public class ClockRegression extends GhidraScript {
         long[] cells={0x6032,0x6034,0x6038,0x603a,0x603c,0x6040,0x6042,
                       0x6044,0x62f0,0x62f2};
         for (long a : cells) w(a,2,0xbeef);
-        call(0x80007bf4L,0x80007bf8L);   // the real startup hook
+        startup();   // the real startup hook
         for (long a : cells)
             check("clock-latency cell 0x"+Long.toHexString(a)
                   +" cleared at startup", r(a,2)==0);
@@ -2699,25 +2775,37 @@ public class ClockRegression extends GhidraScript {
                 +" external_settle_ms= and pressure_portamento= from its runner"
                 +" (tools/test_clock.py works them out of the configuration)");
         try {
+            settingsLanded(sequencer, true);
             // The settle variants exist to hold the TRIGGER to its bound at
             // settings the shipped build does not use. The rest of the suite
             // is fixture-timed for the shipped settle and says nothing extra
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
-            heldTransposeSurvivesEveryBeat();
+            each(ClockRegression.class,"heldTransposeSurvivesEveryBeat");
             // Both of these play a TAKE, which only a sequencer build has
             // the caves for - under the arp image the fixture would sound
             // nothing at all and fail on the silence.
-            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); sequencedGateHoldsAFinalTie(); sequencedGateIsHalfTheDividedStep(); }
+            if (sequencer) each(ClockRegression.class,"sequencedStepTakesTheOctaveOnce","sequencedGateIsHalfTheStep",
+                "sequencedGateHoldsAFinalTie","sequencedGateIsHalfTheDividedStep");
             if (jitterOnly) {
-                millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
+                each(ClockRegression.class,"millisecondTimebase","refractoryRejectsACloseEdge","bitFieldInstructions",
+                    "latencyCellsCleared","latencySplitsAtClaim","latencyTimesTheInternalBeat","latencyIgnoresABacklog",
+                    "latencyCountSaturates","riseJitter","internalJitter","declinedGlideJitter","loopModelJitter",
+                    "settleStartsAtTheTransfer","pitchWaitsForItsGate","heldPitchIsNeverOlderThanTheLastGate",
+                    "internalSettleTransfersTheNewPitch","anEdgeWaitsForAPendingStep","pendingGatesWithoutADispatch",
+                    "internalDispatchModel","keyboardKeepsTheScan");
             } else {
-            millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); thresholdsFollowTheCells(); lockFollowsTheCell(); overflowAndWrap(); longLowAndTies(); warmRestart();
+                each(ClockRegression.class,"millisecondTimebase","refractoryRejectsACloseEdge","bitFieldInstructions",
+                    "latencyCellsCleared","latencySplitsAtClaim","latencyTimesTheInternalBeat","latencyIgnoresABacklog",
+                    "latencyCountSaturates","abiAndNoise","dispatchJitter","riseJitter","internalJitter",
+                    "declinedGlideJitter","loopModelJitter","settleStartsAtTheTransfer","pitchWaitsForItsGate",
+                    "heldPitchIsNeverOlderThanTheLastGate","internalSettleTransfersTheNewPitch",
+                    "anEdgeWaitsForAPendingStep","pendingGatesWithoutADispatch","internalDispatchModel",
+                    "keyboardKeepsTheScan","bendAgreesWithTheScan","scanFlushOrder","divideAndSlow",
+                    "thresholdsFollowTheCells","lockFollowsTheCell","overflowAndWrap","longLowAndTies","warmRestart");
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
-            for (int hz : new int[]{10,150,180,199,200})
-                for (double duty : new double[]{0.1,0.5,0.75,0.9})
-                    for (int phase : new int[]{0,250}) square(hz,duty,phase);
+                each(ClockRegression.class,"sweep");
             println("CLOCK REGRESSION PASS: "+checks+" assertions; max GPIO ISR steps="+maxIrqSteps
                     +"; mode="+(sequencer?"sequencer":"arp"));
         } finally { if(e!=null)e.dispose(); }

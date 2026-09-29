@@ -147,7 +147,7 @@ built whenever **either** is enabled and each half is conditional. That matters
 because `pressure_fix = false` sets output smoothing to zero while leaving
 clock division on — gating the whole wrapper on smoothing put that build's
 trigger back on the 5 ms scan with the fast-trigger cave emitted but
-unreachable. `tools/test_clock.py --mode pressure-off` builds exactly that
+unreachable. `tools/test_clock.py --mode pressure-off` lays exactly that
 configuration and holds it to the same 1 ms bound.
 
 **The premise of the next paragraph is still unverified, but its conclusion
@@ -988,18 +988,20 @@ The period bound is what keeps it from mattering at the top of the range.
 ## Repeatable checks
 
 ```sh
-python3 tools/test_clock.py            # six builds; see below
+python3 tools/test_clock.py            # six configurations; see below
 python3 tools/test_persistence.py
 python3 tools/avr32/sweep.py
 python3 web/test_configs.py
 python3 tools/test.py --golden
 ```
 
-The first command builds six images without rewriting the flashers, then
-executes their bytes using ClockRegression.java. Three carry the shipped
-timing — clock-only, clock+sequencer, and the `pressure_fix = false` build
-that turns output smoothing off while leaving clock division on. The other
-three run the jitter tests only. `settle-scans` builds
+The first command emulates six configurations with ClockRegression.java,
+without rewriting the flashers. Three carry the shipped timing: clock-only,
+clock+sequencer, and `pressure_fix = false`, which turns output smoothing off
+while leaving clock division on. They run on one image, the shipped build,
+as settings records ([BUILD.md](BUILD.md), "One image"). The other three
+change internal constants that move code, so each builds an image of its
+own, and they run the jitter tests only. `settle-scans` builds
 `clock_settle_scans = 1` and `no-gate-settle` builds `gate_settle_scans = 0`,
 the two settings that used to decide whether the trigger rode the flush at
 all; `latency` builds the `clock_latency` diagnostic so its own tests run

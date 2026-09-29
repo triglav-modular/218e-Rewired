@@ -370,7 +370,7 @@ CLI (`build/settings.bin` beside every image).
 ## Verification, and what the bench still owes
 
 `src/SettingsRegression.java`, under `tools/test_persistence.py`, boots
-every image the persistence suite builds, plants records in the slots and
+the image the persistence suite builds, plants records in the slots and
 checks the load, the refusals, the receive, the commit, the dump, the
 identity block, and every stage 2 gate under both states of its byte with
 the registers its callers keep; the controls and clock suites run the

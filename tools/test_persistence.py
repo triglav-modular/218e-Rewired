@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""Build/emulate persistence variants and fault injection. Never flash hardware.
+"""Emulate persistence, fault injection and the sequencer on one image. Never flash hardware.
 
     python3 tools/test_persistence.py
     python3 tools/test_persistence.py --mode seq-clock --quick
-    python3 tools/test_persistence.py --mode seq --no-persist --quick
 
-The images are built one at a time and then emulated together; --jobs sets how
-many emulations run at once, and --jobs 1 puts the whole run back in a line.
+One image, the shipped configuration, runs every script.  The modes are
+configurations of it: seq-clock is the image's own defaults and lays
+nothing, and seq (the divider off) and clock (the sequencer off) are laid
+as settings records the way a send leaves one (src/SettingsRecord.java).  Each script runs
+under the modes in SCRIPTS below, each script and mode its own emulation,
+and the settings equivalence check boots each mode built in, sent over MIDI
+and laid, side by side (src/SettingsEquivalence.java).  --trace prints what
+each check reads of what a mode sets, which SCRIPTS is argued from.
+The records are built one at a time and then emulated together; --jobs sets
+how many emulations run at once, and --jobs 1 puts the whole run back in a
+line.
 
 Requires Ghidra's AVR32 language. All images, configs, logs and private
 Ghidra projects stay under build/persistence-regression-*. Shared build
@@ -21,18 +29,58 @@ import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
-import options  # noqa: E402
+import profiles  # noqa: E402
 import test_clock  # noqa: E402
 
 METADATA = ("VERSION", "build.properties", "patch_manifest.txt", "tables.txt", "settings.bin")
 # Ghidra ends every run with the JVM banner and its Unsafe warnings on stderr,
 # so a plain tail of the captured output never reaches the failure.
 NOISE = re.compile(r"^(WARNING: |openjdk version|OpenJDK |Picked up |WARN  Uninitialized memory read)")
+
+# The modes, as option values over config/218e.toml.  A fourth, presets
+# (the sequencer and the divider both off), ran PersistenceRegression alone,
+# and every check of it reads nothing either byte decides (--trace): it is
+# the seq-clock run again.
+MODES: dict[str, dict] = {
+    "seq": {"clock_divide": False},
+    "clock": {"sequencer": False},
+    "seq-clock": {},
+}
+# PersistenceRegression's checks and the modes each runs under.  --trace
+# shows every one but playbackSave reading nothing the modes set once the
+# boot has loaded them: they run the same under all four, so under the
+# image's own.  playbackSave plays a take with the divider on and holds the
+# arp with it off, so it runs under both modes the divider is on in; with
+# it off the check returns at once.  gestures returns at once with the
+# sequencer off and reads nothing of the divider.
+PERSISTENCE_CHECKS: dict[str, tuple[str, ...]] = {
+    "basic": ("seq-clock",), "polySettingsMigration": ("seq-clock",), "relativeSteps": ("seq-clock",),
+    "latchState": ("seq-clock",), "tuningSlot": ("seq-clock",), "stepDegrees": ("seq-clock",),
+    "takeReference": ("seq-clock",), "retries": ("seq-clock",), "powerCuts": ("seq-clock",),
+    "corruption": ("seq-clock",), "gesturePolicy": ("seq-clock",), "presets": ("seq-clock",),
+    "gestures": ("seq-clock",), "playbackSave": ("clock", "seq-clock"),
+}
+# Each script, the marker it ends a passing run with, and the modes it runs
+# under: see docs/BUILD.md, "One image", for why each row is what it is.
+SCRIPTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("PersistenceRegression.java", "PERSISTENCE REGRESSION PASS:",
+     tuple(m for m in MODES if any(m in modes for modes in PERSISTENCE_CHECKS.values()))),
+    # The image held to its own defaults and the records it makes: its
+    # sequencer and divider checks set both bytes themselves.
+    ("SettingsRegression.java", "SETTINGS REGRESSION PASS:", ("seq-clock",)),
+    ("PersistenceClockRegression.java", "CLOCK REGRESSION PASS:", ("clock", "seq-clock")),
+    ("SequenceTransportRegression.java", "SEQUENCE TRANSPORT PASS:", ("seq", "seq-clock")),
+    ("SequenceEditRegression.java", "SEQUENCE EDIT PASS:", ("seq", "seq-clock")),
+    # The keyboard over a running take: a sequencer, a divider and the
+    # persisted record in one configuration, which its bench() asserts.
+    # Until it was wired in here nothing executed it at all, while
+    # docs/PLAN-2.0.md told the next reader it pinned the behaviour.
+    ("PolyMidiProbe.java", "POLY MIDI PROBE PASS:", ("seq-clock",)),
+)
 
 
 def excerpt(output: str) -> str:
@@ -45,22 +93,15 @@ def excerpt(output: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("presets", "seq", "clock", "seq-clock", "all"), default="all")
+    parser.add_argument("--mode", choices=(*MODES, "all"), default="all")
     parser.add_argument("--quick", action="store_true", help="skip the clock frequency/duty sweep")
-    parser.add_argument("--no-persist", action="store_true", help="test volatile sequencer edits/transport (requires --mode seq or seq-clock)")
+    parser.add_argument("--trace", action="store_true", help="print what each check reads of the settings")
     parser.add_argument("--ghidra", type=Path)
     parser.add_argument("--jobs", type=int, default=0,
-                        help="emulations to run at once (default: one per mode, capped at 8)")
+                        help="emulations to run at once (default: one per emulation, capped at 8)")
     args = parser.parse_args()
-    if args.no_persist and args.mode not in ("seq", "seq-clock"):
-        parser.error("--no-persist requires --mode seq or seq-clock")
     base = (REPO / "config/218e.toml").read_text()
-    settings = tomllib.loads(base).get("tools", {})
-    local = REPO / "config/local.toml"
-    if local.exists():
-        settings.update(tomllib.loads(local.read_text()).get("tools", {}))
-    ghidra = args.ghidra or Path(os.environ.get("GHIDRA_HOME") or settings.get("ghidra_home", ""))
-    headless = ghidra / "support/analyzeHeadless"
+    headless = args.ghidra / "support/analyzeHeadless" if args.ghidra else profiles.headless(base)
     if not headless.is_file():
         raise SystemExit("Set GHIDRA_HOME, config/local.toml [tools].ghidra_home, or --ghidra.")
     build = REPO / "build"
@@ -68,112 +109,86 @@ def main() -> None:
     saved = {name: (build / name).read_bytes() if (build / name).exists() else None for name in METADATA}
     work = Path(tempfile.mkdtemp(prefix="persistence-regression-", dir=build))
     print(f"Artifacts: {work}", flush=True)
-    modes = ("presets", "seq", "clock", "seq-clock") if args.mode == "all" else (args.mode,)
-    # Built one at a time - every build writes the same fixed paths under
-    # build/ - then emulated together, since an emulation reads one image and
-    # writes one log and shares nothing with its neighbours.
-    jobs = args.jobs or min(len(modes), 8)
-    planned: list[tuple[str, list[str]]] = []
+    modes = tuple(MODES) if args.mode == "all" else (args.mode,)
+    plan = [(script, marker, mode) for script, marker, owed in SCRIPTS for mode in modes if mode in owed]
+    modes = tuple(m for m in modes if any(mode == m for _s, _m, mode in plan))
+    jobs = args.jobs or min(len(plan) + 1, 8)
     try:
-        for mode in modes:
-            text = base
-            for option, value in (("persist", not args.no_persist), ("sequencer", "seq" in mode), ("clock_divide", "clock" in mode)):
-                text, n = re.subn(rf"^{option} = (?:true|false)$", f"{option} = {str(value).lower()}", text, flags=re.M)
-                if n != 1:
-                    raise SystemExit(f"Cannot set {option} in regression config")
-            image = work / f"{mode}.hex"
-            text, n = re.subn(r'^output_hex\s*=\s*"[^"]*"', f'output_hex = "{image}"', text, flags=re.M)
-            if n != 1:
-                raise SystemExit("Cannot redirect regression image")
-            text, n = re.subn(r'^updaters?\s*=\s*(?:"[^"]*"|\[[^\]]*\])\n', "", text, flags=re.M)
-            if n != 1 or any(k in tomllib.loads(text)["firmware"] for k in ("updater", "updaters")):
-                raise SystemExit("Refusing a regression build that could rewrite the flashers")
-            config = work / f"{mode}.toml"
-            config.write_text(text)
-            # options.py refuses a non-persistent config; this harness is one
-            # of the few places allowed to characterise one.
-            env = dict(os.environ)
-            if args.no_persist:
-                env[options.VOLATILE_ENV] = "1"
-            result = subprocess.run(
-                [sys.executable, "tools/build.py", "--no-ghidra",
-                 "--config", str(config)],
-                env=env, cwd=REPO, text=True, capture_output=True)
-            (work / f"{mode}-build.log").write_text(result.stdout + result.stderr)
-            if result.returncode:
-                raise SystemExit(result.stdout + result.stderr)
-            # This image's own properties and settings record, kept beside
-            # it: the settings regression compares the mirror a boot fills
-            # against what tools/build.py serialized for the same build,
-            # and build/ holds only the last mode's by the time it runs.
-            for name, copy in (("build.properties", f"{mode}.properties"),
-                               ("settings.bin", f"{mode}.settings.bin")):
-                (work / copy).write_bytes((build / name).read_bytes())
-            # Its own Ghidra project per mode: a shared one would serialise the
-            # modes again on the project lock.
-            command = [str(headless), str(work), f"persistence-{mode}", "-import", str(image),
-                       "-processor", "avr32:BE:32:default", "-noanalysis", "-scriptPath", str(REPO / "src")]
-            if not args.no_persist:
-                command += ["-postScript", "PersistenceRegression.java", mode,
-                            "-postScript", "SettingsRegression.java", mode,
-                            str(work / f"{mode}.properties"), str(work / f"{mode}.settings.bin")]
-            if "clock" in mode and not args.no_persist:
-                command += ["-postScript", "PersistenceClockRegression.java", "seq" if "seq" in mode else "arp"]
-                if args.quick:
-                    command.append("quick")
+        # Built one at a time - every build writes the same fixed paths under
+        # build/ - then emulated together, since an emulation reads one image
+        # and writes one log and shares nothing with its neighbours.
+        image = profiles.build("image", base, work)
+        built = {mode: profiles.build(mode, profiles.configure(base, MODES[mode]), work) for mode in modes}
+        static = [f"{mode}: {problem}" for mode, b in built.items()
+                  for problem in profiles.static_differences(b, image["image"])]
+        if static:
+            raise SystemExit("A mode here is not data on the image under test:\n" + "\n".join(static))
+
+        def ghidra(project: str, *script: str) -> list[str]:
+            # Its own Ghidra project per emulation: a shared one would
+            # serialise them again on the project lock.
+            return [str(headless), str(work), project, "-import", str(image["image"]),
+                    "-processor", "avr32:BE:32:default", "-noanalysis",
+                    "-scriptPath", str(REPO / "src"), "-postScript", *script]
+
+        def arguments(script: str, mode: str) -> list[str]:
+            quick = ["quick"] if args.quick else []
+            if script == "PersistenceRegression.java":
+                owed = [c for c, modes in PERSISTENCE_CHECKS.items() if mode in modes]
+                return [mode] if len(owed) == len(PERSISTENCE_CHECKS) else [mode, "checks=" + ",".join(owed)]
+            if script == "SettingsRegression.java":
+                # This image's own properties and record, which the settings
+                # regression compares the mirror a boot fills against.
+                return [mode, str(image["properties"]), str(image["record"])]
+            if script == "PersistenceClockRegression.java":
                 # What this configuration builds, which the clock suite holds
                 # the image to: see test_clock.expectations.
-                command += test_clock.expectations(text)
-            if "seq" in mode:
-                command += ["-postScript", "SequenceTransportRegression.java", mode]
-                if args.quick:
-                    command.append("quick")
-                command += ["-postScript", "SequenceEditRegression.java", mode,
-                            "volatile" if args.no_persist else "persist"]
-            # The keyboard over a running take. It needs a sequencer, a
-            # divider and the persisted record all in one image, which is
-            # only this mode; its bench() asserts all three. Until it was
-            # wired in here nothing executed it at all, while docs/PLAN-2.0.md
-            # told the next reader it pinned the behaviour - so breaking
-            # seq_noteon_mute, dropping the 208-bus half of the contact
-            # handler, or letting a sequenced note survive a keyboard press
-            # left every suite in the repo green.
-            if mode == "seq-clock" and not args.no_persist:
-                command += ["-postScript", "PolyMidiProbe.java"]
-            planned.append((mode, command))
+                return ["seq" if "seq" in mode else "arp", *quick,
+                        *test_clock.expectations(built[mode]["text"])]
+            if script == "SequenceTransportRegression.java":
+                return [mode, *quick]
+            if script == "SequenceEditRegression.java":
+                return [mode, "persist"]
+            return []
 
-        def emulate(mode: str, command: list[str]) -> str:
-            result = subprocess.run(command, cwd=REPO, text=True, capture_output=True)
+        emulations = [("equivalence", "SETTINGS EQUIVALENCE PASS:", None,
+                       ghidra("equivalence", "SettingsEquivalence.java",
+                              *profiles.equivalence_arguments(built)))]
+        for script, marker, mode in plan:
+            name = f"{script.removesuffix('.java')}-{mode}"
+            # seq-clock is the image's own; every other mode is laid.
+            record = None if mode == "seq-clock" else built[mode]["record"]
+            emulations.append((name, marker, record, ghidra(name, script, *arguments(script, mode))))
+
+        def emulate(name: str, marker: str, record: Path | None, command: list[str]) -> str:
+            env = dict(os.environ)
+            env.pop("REWIRED_SETTINGS_RECORD", None)
+            env.pop("REWIRED_READ_TRACE", None)
+            if record:
+                env["REWIRED_SETTINGS_RECORD"] = str(record)
+            if args.trace:
+                env["REWIRED_READ_TRACE"] = "1"
+            result = subprocess.run(command, cwd=REPO, text=True, capture_output=True, env=env)
             output = result.stdout + result.stderr
-            log = work / f"{mode}-emulation.log"
+            log = work / f"{name}-emulation.log"
             log.write_text(output)
-            expected = []
-            if not args.no_persist:
-                expected.append("PERSISTENCE REGRESSION PASS:")
-                expected.append("SETTINGS REGRESSION PASS:")
-                if "clock" in mode:
-                    expected.append("CLOCK REGRESSION PASS:")
-                if mode == "seq-clock":
-                    expected.append("POLY MIDI PROBE PASS:")
-            if "seq" in mode:
-                expected += ["SEQUENCE TRANSPORT PASS:", "SEQUENCE EDIT PASS:"]
-            missing = [marker.rstrip(":") for marker in expected if marker not in output]
-            if result.returncode or "ERROR REPORT SCRIPT ERROR" in output or missing:
-                why = "no " + ", ".join(missing) if missing else "script error"
-                return f"Persistence regression failed: {mode}, {why}; see {log}\n{excerpt(output)}"
+            if result.returncode or "ERROR REPORT SCRIPT ERROR" in output or marker not in output:
+                why = f"no {marker.rstrip(':')}" if marker not in output else "script error"
+                return f"Persistence regression failed: {name}, {why}; see {log}\n{excerpt(output)}"
             return ""
 
-        print(f"Emulating {len(planned)} firmware image(s), {jobs} at a time...", flush=True)
+        print(f"Emulating {len(emulations)} job(s) on one image, {jobs} at a time...", flush=True)
         failures = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            pending = [(mode, pool.submit(emulate, mode, command)) for mode, command in planned]
-            # Reported in the order the modes were asked for, not the order
-            # they finish, so the run reads the same however it was scheduled.
-            for mode, future in pending:
+            pending = [(name, pool.submit(emulate, name, marker, record, command))
+                       for name, marker, record, command in emulations]
+            # Reported in the order they were planned, not the order they
+            # finish, so the run reads the same however it was scheduled.
+            for name, future in pending:
                 failure = future.result()
-                print(f"--- {mode}", flush=True)
-                for line in (work / f"{mode}-emulation.log").read_text().splitlines():
-                    for script in ("Regression.java>", "PolyMidiProbe.java>"):
+                print(f"--- {name}", flush=True)
+                for line in (work / f"{name}-emulation.log").read_text().splitlines():
+                    for script in ("Regression.java>", "PolyMidiProbe.java>", "SettingsEquivalence.java>"):
                         if script in line:
                             print(line.split(script, 1)[1].replace("(GhidraScript)", "").strip(), flush=True)
                             break

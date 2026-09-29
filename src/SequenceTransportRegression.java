@@ -55,13 +55,15 @@ public class SequenceTransportRegression extends ClockRegression {
         if(clock) super.fresh(divisor,hz);
         else {
             if(e!=null)e.dispose(); e=AlignGuard.install(new EmulatorHelper(currentProgram));
+            byte[] laid=SettingsRecord.named();
+            if(laid!=null) SettingsRecord.lay(e,laid);
             e.writeMemory(toAddr(0),new byte[0x8000]);
             e.writeMemory(toAddr(8),e.readMemory(toAddr(0x80015d28L),0x2ecc)); w(0x2ed4,4,0xffffffffL);
             for(int i=0;i<=12;i++)e.writeRegister("R"+i,0);
             e.writeRegister("SR",0); for(String f:new String[]{"C","N","V","Z"})e.writeRegister(f,0);
             frequency=hz; time(0); w(0x29cc,4,hz);
             w(GPIO+0x60,4,0); w(GPIO+0xd0,4,0);
-            call(0x80007bf4L,0x80007bf8L); call(0x8001ab60L,0x100);
+            startup(); call(0x8001ab60L,0x100); traceOn();
             w(S+0x34a,2,20); w(S+0x38e,2,100); w(0x2ee0,2,20); w(0x2ee6,2,1023);
             w(0x61e0,1,16);
             for(int k=0;k<16;k++) { w(0x6160+2*k,2,485+40*k); w(0x61ee+k,1,k); }
@@ -185,14 +187,14 @@ public class SequenceTransportRegression extends ClockRegression {
     @Override public void run() throws Exception {
         sequencer=true; clock=getScriptArgs().length>0&&getScriptArgs()[0].contains("clock");
         try {
-            transport();
-            if(!clock)legacyInputs();
+            settingsLanded(true,clock);
+            each(SequenceTransportRegression.class,"transport");
+            if(!clock)each(SequenceTransportRegression.class,"legacyInputs");
             if(clock) {
-                restart(); abiAndNoise(); dispatchJitter(); divideAndSlow(); overflowAndWrap(); longLowAndTies();
+                each(SequenceTransportRegression.class,"restart");
+                each(ClockRegression.class,"abiAndNoise","dispatchJitter","divideAndSlow","overflowAndWrap","longLowAndTies");
                 if(getScriptArgs().length<2||!getScriptArgs()[1].equals("quick"))
-                    for(int hz:new int[]{10,150,180,199,200})
-                        for(double duty:new double[]{0.1,0.5,0.75,0.9})
-                            for(int phase:new int[]{0,250})square(hz,duty,phase);
+                    each(ClockRegression.class,"sweep");
             }
             println("SEQUENCE TRANSPORT PASS: "+checks+" assertions; arp OFF external sweep="+clock);
         } finally { if(e!=null)e.dispose(); }

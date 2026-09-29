@@ -106,15 +106,19 @@ rewritten updater behind.
 `tools/test.py --golden` also rebuilds and compares against
 `[firmware].golden_sha256`.
 
-`python3 tools/test_clock.py` builds clock-only and clock+sequencer variants
-and emulates the actual ISR, divider and pitch/trigger hooks. It requires
-Ghidra and never flashes a device. See [CLOCK.md](CLOCK.md) for the input
-contract, regression coverage and remaining hardware checks.
+`python3 tools/test_clock.py` emulates the actual ISR, divider and
+pitch/trigger hooks. The clock-only, clock+sequencer and pressure-off
+configurations run on one image, the shipped build, as settings records.
+Three internal constants for the settles and the latency diagnostic move
+code, so each of those builds an image of its own. It requires Ghidra and
+never flashes a device. See [CLOCK.md](CLOCK.md) for the input contract,
+regression coverage and remaining hardware checks.
 
-`python3 tools/test_persistence.py` builds all four persistence/sequence/clock
-variants and executes the actual save/load/startup code and factory flash
-wrapper with controller failure and power-cut injection. It also reruns the
-clock suite with an unfinished preset held and tests saves during playback.
+`python3 tools/test_persistence.py` executes the actual save/load/startup
+code and factory flash wrapper with controller failure and power-cut
+injection, on one image under the sequencer and divider configurations each
+script needs. It also reruns the clock suite with an unfinished preset held
+and tests saves during playback.
 With `persist = true`, changed sequences save on record exit/CLEAR and
 changed presets on pad release, without an idle or arp-off requirement.
 Flash saves can briefly disrupt playback. See [PERSISTENCE.md](PERSISTENCE.md)
@@ -459,10 +463,12 @@ python3 tools/avr32/sweep.py       # every option both ways, both toolchains
 python3 tools/test_controls.py     # emitted knob roles and strip-gesture ownership
 ```
 
-`test_controls.py` runs default, six-order/transpose, tuned-transpose, and
-lean (factory arp, no sequencer or divider) images with persistence on and
-off, plus knob 2 on swing and on step patterns, which build once each
-because neither role touches persistence. It checks all six note orders, preset-4
+`test_controls.py` runs every check on one image, the shipped build, under
+the configurations its row of `CHECKS` names: default, six orders with trn
+and quantized randomness (roles), tuned-transpose, lean (factory arp, no
+sequencer or divider), the jack transposer over 5-limit JI, knob 2 on swing
+and on step patterns, a 24-key map, and the 208c pitch curve (offset-off).
+"One image" below says how the rows are chosen. It checks all six note orders, preset-4
 isolation through the actual ADC-event pitch target and DAC path from the
 first knob movement, release-triggered saves, released/unlatched press
 history, and pitch ordering with octave-stacked notes and equal pitches.
@@ -488,18 +494,88 @@ base under zero. A MIDI note under the table's bottom, its base under the
 pitch floor, sounds the blend's pull over a held key as note 24 does. The
 recording audition pins a pitch one unit under the
 take's reference. The preset quantiser keeps its degree under a period that
-is not a whole number of units. One more image carries a 24-key map,
-`tunings/24TET.scl` with `tunings/24TET-full.kbm`, and runs only the MIDI
-checks of the octave pads, the latch, a key played over a take, the one sum
-and the velocity floors. There an octave pad steps the MIDI note 24, as the
+is not a whole number of units. The 24-key map is `tunings/24TET.scl` with
+`tunings/24TET-full.kbm`. There an octave pad steps the MIDI note 24, as the
 jack does for a period.
 Like `test_persistence.py`, it requires Ghidra, models
 peripherals without flashing hardware, and restores shared build metadata.
 
-`sweep.py` builds 26 configurations twice — once through Ghidra, once
-through the JavaScript toolchain — and compares the images. It also asserts
+`sweep.py` builds 29 configurations twice, once through Ghidra and once
+through the JavaScript toolchain, and compares the images. It also asserts
 that every configuration produces a *distinct* image, so a variant that
 silently stopped taking effect cannot pass as agreement.
+
+### One image, settings per check
+
+Every option that can ship changes only data: the settings record at
+`0x8001fb00` (`settings_numbers`) and the tables the settings mirror is
+filled from. Only `persist = false` changes code, and it is no longer built
+or tested. So the Ghidra suites build one image, the shipped one, and run
+each check under the configurations it needs.
+
+A configuration is a set of option values over `config/218e.toml`.
+`tools/profiles.py` builds it with `tools/build.py` and keeps the record
+that build serialized. `src/SettingsRecord.java` lays that record in the
+first settings slot before every boot, the way a send leaves it once it is
+committed. The runner names the record in `REWIRED_SETTINGS_RECORD`. The
+image's own defaults lay nothing.
+
+The settings equivalence check proves that a laid record is the image built
+with those options. It runs in each suite, for every configuration the suite
+uses, in two halves.
+
+- Flash side: each configuration's image, built by `tools/build.py`, has
+  the code of the image under test, and its data is its record's own bytes.
+  The pattern bank's two copy lengths in `settings_defaults` count as data.
+- Emulated side: `src/SettingsEquivalence.java` boots each configuration
+  three ways. Built in: its image's flash over the one under test. Sent:
+  all 338 parameters through the factory MIDI parser in the page's order,
+  the commit, then a power cycle. Laid: the record in slot 0. The three
+  leave the same RAM below the stack, apart from the loader's own slot and
+  generation, and again after one pass of the per-scan chain. The committed
+  record is the build's record byte for byte.
+
+Which configurations a check runs under is argued from what it reads.
+`test_controls.py --every --trace` runs each check under every
+configuration it can run under. With `--trace` each check prints the bytes
+it read, after the boot, of what a configuration sets: the mirror, the live
+option bytes and the settings slots in flash. Reads by the settings loader,
+its CRC and `option_boot` do not count. They only copy a valid record to
+the mirror and the live bytes, and what reads those copies is caught there.
+Two configurations whose booted machines differ only in bytes a check never
+read, under either, run that check the same. So a row keeps one of them.
+`test_persistence.py --trace` and `test_clock.py --trace` print the same.
+
+The rules the rows follow:
+
+- A configuration the old per-image suite ran a check under stays, unless
+  it runs the check the same as one kept, or the check skips itself under
+  it.
+- Knob 2 on swing or on patterns runs most checks the same as roles: they
+  never read knob 2's byte or the bank. Tuned and jack run the blend's sign,
+  its carried offset, the gain pair and the velocity floors the same as
+  roles. The 24-key map runs the carried offset the same as default.
+- The lean configuration is out of the rows of the five checks that skip
+  themselves with the blend or the latch recording off.
+- The 24-key map and offset-off are in every row whose check reads what
+  they change and passes under them. The exceptions assume something of
+  the default tables. presetQuantize, periodCell, calibrationPitch,
+  reloadedRotation and midiUnderTheFloor assume twelve keys to the period.
+  bendUnderTheBottomKey needs room under the bottom key, and lays a 208c
+  curve itself. jackTransposer measures the 5-limit JI's 16/15 against its
+  9/8, so it runs under jack alone.
+- In the persistence suite, every PersistenceRegression check but
+  playbackSave reads nothing the sequencer or divider set once the boot has
+  loaded them. They run under the image's own defaults. playbackSave also
+  runs with the sequencer off, and the presets mode is gone.
+  SettingsRegression holds the image to its own defaults, and runs once.
+- In the clock suite, nine checks read neither pressure byte under
+  pressure-off. They stay in that run: they take seconds, and the sweep
+  that does read them sets its length.
+
+Each configuration's checks are cut into jobs of about two minutes, from
+the times in `SECONDS`. So a run can use more emulations at once than it
+has configurations.
 
 ## How a patch becomes firmware
 
@@ -560,7 +636,7 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 |---|---|
 | `tools/test.py` | 231 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
-| `tools/avr32/sweep.py` | representative configurations, including all four persistence variants, built by both toolchains and compared byte for byte |
+| `tools/avr32/sweep.py` | representative configurations, the sequencer and the divider on and off among them, built by both toolchains and compared byte for byte |
 | `web/test_configs.py` | the browser build matches `build.py` across its option/interaction matrix |
 | `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, clock continuation after saves, and the keyboard played over a running take |
 | `web/test_matrix.js` | **2,304 option combinations**, including persistence on/off, built through the guarded path |

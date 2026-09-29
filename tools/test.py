@@ -1914,8 +1914,8 @@ def test_persist_required() -> None:
     already matching comes back in whatever mode it left - PLAY included,
     where seq_noteon_mute eats every key and the keyboard reads as dead.  So
     the option is not a default any more: the only way to build one is to ask
-    for the unsupported image by name, which the parity sweep and the control
-    and persistence regressions do and nothing that ships does.
+    for the unsupported image by name, which the builder parity rows and this
+    test do and nothing that ships does.
     """
     print("persistence is mandatory")
     import options as _options

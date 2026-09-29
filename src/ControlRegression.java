@@ -6,7 +6,7 @@ import java.util.*;
 
 public class ControlRegression extends SequenceEditRegression {
     static final long APPLIER=0x8001a2e8L;
-    boolean transpose, orders, lean, quantized, gridRhythm, jack, kbm;
+    boolean transpose, orders, lean, quantized, gridRhythm;
     int zones=9;
     // Instructions executed, for the scan-budget figures below: counted in
     // step(), reset by whoever measures.
@@ -1925,13 +1925,14 @@ public class ControlRegression extends SequenceEditRegression {
     long presetTarget(int base,int store) throws Exception {
         w(S+0x350,2,base); w(0x613a,2,store); musicalScan(); return r(S+0x352,2);
     }
-    // The slot tables in flash, 32 halfwords each.  This is the rotation's
-    // source and the only table intervals may be read from: RAM 0x854 is the
-    // applier's copy, the applier refreshes it only when the slot CHANGES
-    // (its guard at 0x60e4), and cv_transpose overwrites it with its own
-    // rotated output - so a model that reads 0x854 measures the firmware's
-    // last answer instead of the tuning.
-    int slotEntry(int j) { return (int)r(0x80019af8L+2L*j,2); }
+    // Slot 0 as the configuration booted it, 32 halfwords: the image's own
+    // table or the record's.  This is the rotation's source and the only
+    // table intervals may be read from: RAM 0x854 is the applier's copy, the
+    // applier refreshes it only when the slot CHANGES (its guard at 0x60e4),
+    // and cv_transpose overwrites it with its own rotated output - so a
+    // model that reads 0x854 measures the firmware's last answer instead of
+    // the tuning.
+    int slotEntry(int j) { return bootedHalf(0x68e0+2L*j); }
     // A transcription of preset_degrees, in the cave's own order: entries from
     // the bottom up, first strictly nearer candidate wins, the whole period
     // seeded ahead of them all.  The winner's degree moves with its interval:
@@ -2423,12 +2424,14 @@ public class ControlRegression extends SequenceEditRegression {
     // length; and because there is no shift-by-register here the mask walks
     // down to bit zero instead.  Both the walk and the wrap shipped in every
     // patterns build with nothing executing them.
-    static final long PATTERNS=0x8001b050L, BANK=0x80019f20L, LENGTHS=0x80019fa0L;
+    // The bank and its lengths as the configuration booted them, the
+    // mirror's: a record's bank replaces the image's whole.
+    static final long PATTERNS=0x8001b050L, BANK=0x69a8L, LENGTHS=0x6a28L;
     // The knob dispatchers (stage 2 phase B): the words name these, and the
     // live option bytes decide where they go.
     static final long KBSEL=0x8001fb80L, KBRHY=0x8001fbe0L;
-    long patternMask(int i) { return r(BANK+4L*i,2)|(r(BANK+4L*i+2,2)<<16); }
-    int patternLength(int i) { return (int)r(LENGTHS+2L*i,2); }
+    long patternMask(int i) { return bootedHalf(BANK+4L*i)|((long)bootedHalf(BANK+4L*i+2)<<16); }
+    int patternLength(int i) { return bootedHalf(LENGTHS+2L*i); }
     // The bank entry as the gate should play it: 'x' for a step that sounds.
     String patternAt(int i) {
         StringBuilder out=new StringBuilder();
@@ -2676,7 +2679,7 @@ public class ControlRegression extends SequenceEditRegression {
         // period is 484 (every controls variant repeats at the octave).
         // The knobs' "off" is the factory role, not zero.
         byte[] rec=new byte[0x2a8];
-        byte[] payload=e.readMemory(toAddr(0x6800),0x288-0x20);
+        byte[] payload=traced(0x6800,0x288-0x20);
         System.arraycopy(payload,0,rec,0x20,payload.length);
         int[] off={0,2,4,1,2,0,0,0,0,0,0,0};
         if(allOff) for(int c=16;c<28;c++) { rec[0x20+2*c]=0; rec[0x21+2*c]=(byte)off[c-16]; }
@@ -3069,8 +3072,10 @@ public class ControlRegression extends SequenceEditRegression {
     void calibrationLiveEdit() throws Exception {
         setup(0,false,0); command(2); calibrate();
         int n=40, entry=19;
-        long flash=r(0x80019bc0L+2*entry,2);
-        check("the mirror holds the image's own entry "+entry+": "+mirror(entry)+" = "+flash,mirror(entry)==flash);
+        // What the configuration booted: the image's own curve, or the
+        // record's, which 0x3f01 reloads.
+        long flash=bootedHalf(0x6840+2*entry);
+        check("the mirror holds the booted entry "+entry+": "+mirror(entry)+" = "+flash,mirror(entry)==flash);
         noteOn(n); plays("note "+n,entry);
         long state=r(0x6a70,1), guard=r(0x60e4,2);
         int edit=(int)(flash>=0x800?flash-37:flash+37);
@@ -3078,7 +3083,7 @@ public class ControlRegression extends SequenceEditRegression {
         check("an NRPN write to parameter 0x"+Integer.toHexString(0x80+entry)+" lands in entry "+entry+" of the mirror itself: "+mirror(entry),
             mirror(entry)==edit);
         check("and moves nothing else: its neighbours, the commit state, the applier's guard",
-            mirror(entry-1)==r(0x80019bc0L+2*(entry-1),2)&&mirror(entry+1)==r(0x80019bc0L+2*(entry+1),2)
+            mirror(entry-1)==bootedHalf(0x6840+2*(entry-1))&&mirror(entry+1)==bootedHalf(0x6840+2*(entry+1))
             &&r(0x6a70,1)==state&&r(0x60e4,2)==guard);
         long d=dac();
         check("the next scan plays the new value: "+d+" = "+edit,d==edit);
@@ -4297,7 +4302,7 @@ public class ControlRegression extends SequenceEditRegression {
         // The three slot tables and their keys per period, the period and the
         // slot, put back afterwards: the kbm variant reads its map's size off
         // them for its own summary.
-        byte[] keepTables=e.readMemory(toAddr(0x68e0),0xc8);
+        byte[] keepTables=traced(0x68e0,0xc8);
         long keepPeriod=r(0x6814,2), keepSlot=r(0x6090,1);
         StringBuilder why=new StringBuilder(); int probeWrong=0, bundledMoved=0, bundledOff=0, probes=0;
         for(int s=0;s<pdTables.size();s++) {
@@ -4326,34 +4331,92 @@ public class ControlRegression extends SequenceEditRegression {
         println("PASS preset degrees keep the degree with the period each interval was reduced by: "+probes+" rounded periods right, "
             +(pdTables.size()-probes)+" bundled tunings unchanged, 1024 stores each");
     }
+    // Every check, in the order a run takes them.  One image runs them all:
+    // tools/test_controls.py says which configurations each one runs under,
+    // lays each configuration as a settings record (SettingsRecord), and asks
+    // for the checks that configuration owes.  What a check needs of the
+    // configuration it is given is unusable() below, so a check asked for
+    // under settings it cannot run under fails instead of skipping.
+    // tunedNotes stands apart from exactPitch, so a note-on exactPitch
+    // refuses leaves those to be heard.
+    static final String[] CHECKS={"midiPeriod","presetOwnership","quickTapGate","bendUnderTheBottomKey",
+        "presetQuantize","presetSequencer","transposeOutput","knob4Zones","noteOrders","releasedOrders",
+        "latchedOrders","latchExitHold","latchTransposeState","latchStackMidi","latchHoldMidi","latchAfterMidi",
+        "latchPresetMidi","velocityFloor","keyOverTakeMidi","midiOneSum","midiClampPaths","jackTransposer",
+        "stripCarry","latchRecording","recordedOctaves","capacityAudition","pressureOwnership","staleAnchor",
+        "previewBoundaries","recordedBounds","playbackPressure","heldPresetEdit","retainedStartup",
+        "quantizedRhythm","swingRhythm","patternGate","periodCell","residue","calibrationCommand",
+        "calibrationPitch","calibrationSilence","calibrationExits","calibrationLiveEdit","exactPitch",
+        "tunedNotes","midiNoteOffs","blendSign","latchedUnderThePeriod","anchoredBottomKey","glideUnderZero",
+        "reloadedRotation","gainPairOff","randomOctaveFloor","blendClampOnce","blendCarriedOffset",
+        "rebaseSentinel","midiUnderTheFloor","auditionPin","presetDegreesRounded"};
+    String knob2="spacing";
+    // The mirror as this run's configuration booted it: the settings record
+    // laid for it, or the image's own defaults.  Where a check used to read
+    // a table out of the image (the tuning slots, the pattern bank, the
+    // pitch curve), it reads the one the configuration boots.
+    byte[] booted;
+    int bootedHalf(long mirror) {
+        if(reads!=null) { reads.add(mirror); reads.add(mirror+1); }
+        int i=(int)(mirror-0x6800); return ((booted[i]&255)<<8)|(booted[i+1]&255);
+    }
+    String unusable(String name) {
+        switch(name) {
+            case "presetSequencer": return quantized&&seq?null:"needs the quantiser and the sequencer";
+            case "transposeOutput": case "knob4Zones": case "recordedBounds":
+                return !transpose?"needs knob 4 on trn":name.equals("recordedBounds")&&!seq?"needs the sequencer":null;
+            case "noteOrders": case "releasedOrders": case "latchedOrders":
+                // The pattern gate answers a rest with -1 at the note
+                // selector, so an order walk cannot read one key per beat.
+                return orders&&!knob2.equals("patterns")?null:"needs knob 1 on orders and knob 2 off patterns";
+            case "latchExitHold": case "latchTransposeState": case "latchStackMidi": case "latchHoldMidi":
+            case "latchAfterMidi": case "latchPresetMidi": case "staleAnchor": case "latchedUnderThePeriod":
+                return lean?"needs the latching arp":null;
+            case "keyOverTakeMidi": case "stripCarry": case "playbackPressure": case "heldPresetEdit":
+                return seq?null:"needs the sequencer";
+            case "latchRecording": case "recordedOctaves": case "capacityAudition": case "pressureOwnership":
+            case "previewBoundaries":
+                return seq&&!transpose?null:"needs the sequencer and knob 4 off trn";
+            // Its borrowed-slot half measures a 16/15 against a 9/8: the
+            // jack configuration's 5-limit JI in slot 0.
+            case "jackTransposer": {
+                int step=bootedHalf(0x68e2)-bootedHalf(0x68e0);
+                return r(0x6d32,1)!=0&&r(0x6d33,1)!=0&&step>=44&&step<=46?null:"needs the jack on transpose over the 5-limit JI";
+            }
+            case "retainedStartup": return lean?null:"needs the lean switches off";
+            case "quantizedRhythm": return gridRhythm?null:"needs knob 2 on quantized";
+            case "swingRhythm": return knob2.equals("swing")?null:"needs knob 2 on swing";
+            case "patternGate": return knob2.equals("patterns")?null:"needs knob 2 on patterns";
+            case "periodCell": case "residue":
+                // One session with every option on: the shipped roles.
+                return !transpose&&!orders&&!lean&&knob2.equals("spacing")?null:"needs the shipped knob roles and every option on";
+            default: return null;
+        }
+    }
     @Override public void run() throws Exception {
-        String[] args=getScriptArgs();
-        transpose=args.length>0&&args[0].equals("trn");
-        orders=args.length>1&&args[1].equals("orders");
-        zones=args.length>3?Integer.parseInt(args[3]):9;
-        lean=args.length>4&&args[4].equals("lean");
-        quantized=args.length>5&&args[5].equals("quantized");
-        // Which of knob 2's four roles this image was built with.
-        String knob2=args.length>6?args[6]:"spacing";
-        gridRhythm=knob2.equals("quantized");
-        jack=args.length>7&&args[7].equals("jack");
-        // args[8]: bp:<keys per period>:<period>:<32 table entries, commas>
-        if(args.length>8&&args[8].startsWith("bp:")) {
-            String[] part=args[8].split(":");
-            bpKeys=Integer.parseInt(part[1]); bpPeriod=Integer.parseInt(part[2]);
-            String[] v=part[3].split(",");
+        // key=value: checks= the names to run, comma-separated; profile= the
+        // configuration's name, for the log; bp= and pd=, tables
+        // tools/build.py made for tunedNotes/midiOneSum and
+        // presetDegreesRounded.  The configuration itself is the record
+        // SettingsRecord lays.
+        Map<String,String> opt=new HashMap<>();
+        for(String a:getScriptArgs()) {
+            int i=a.indexOf('=');
+            if(i<0) throw new Exception("ControlRegression takes key=value arguments, not "+a);
+            opt.put(a.substring(0,i),a.substring(i+1));
+        }
+        String profile=opt.getOrDefault("profile","the image's own");
+        // bp:<keys per period>:<period>:<32 table entries, commas>
+        if(opt.containsKey("bp")) {
+            String[] part=opt.get("bp").split(":");
+            bpKeys=Integer.parseInt(part[0]); bpPeriod=Integer.parseInt(part[1]);
+            String[] v=part[2].split(",");
             bpTable=new int[32];
             for(int k=0;k<32;k++) bpTable[k]=Integer.parseInt(v[k].trim());
         }
-        // The 24-key map, 24TET.scl with 24TET-full.kbm (audit 038711a,
-        // F13).  It runs the MIDI checks of the octave pads, the latch and a
-        // key played over a take alone: the rest of the suite reads its
-        // intervals off the twelve-key maps the other variants carry.
-        kbm=args.length>9&&args[9].equals("kbm");        // args[9], after the Bohlen-Pierce table
-        // args[10]: pd:<name>|<keys>|<period>|<1 probe, 0 bundled>|<32 entries>;...
-        // tools/build.py's key tables for presetDegreesRounded.
-        if(args.length>10&&args[10].startsWith("pd:")) {
-            for(String one:args[10].substring(3).split(";")) {
+        // pd:<name>|<keys>|<period>|<1 probe, 0 bundled>|<32 entries>;...
+        if(opt.containsKey("pd")) {
+            for(String one:opt.get("pd").split(";")) {
                 String[] part=one.split("\\|");
                 int[] t=new int[32]; String[] v=part[4].split(",");
                 for(int k=0;k<32;k++) t[k]=Integer.parseInt(v[k].trim());
@@ -4361,107 +4424,58 @@ public class ControlRegression extends SequenceEditRegression {
                 pdShape.add(new int[]{Integer.parseInt(part[1]),Integer.parseInt(part[2]),Integer.parseInt(part[3])});
             }
         }
-        seq=!lean; clock=!lean; persistent=args.length>2&&args[2].equals("persist");
+        List<String> wanted=new ArrayList<>(Arrays.asList(opt.getOrDefault("checks","").split(",")));
+        wanted.removeIf(String::isEmpty);
+        for(String name:wanted)
+            if(!Arrays.asList(CHECKS).contains(name)) throw new Exception("no check named "+name);
+        if(wanted.isEmpty()) throw new Exception("checks= names nothing to run");
         List<String> failures=new ArrayList<>();
+        StringBuilder times=new StringBuilder();
         try {
-            if(kbm) {
-                try { midiPeriod(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { latchStackMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { latchHoldMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { latchAfterMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { latchPresetMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { keyOverTakeMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { midiOneSum(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { midiClampPaths(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { midiNoteOffs(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                // Not the map's, but MIDI the keyboard sends, and cheap: so
-                // every variant runs it.
-                try { velocityFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                // The clamp-chain scan's checks that read no MIDI: the same
-                // code in every image, so the 24-key map runs them too.
-                try { randomOctaveFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { blendClampOnce(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { blendCarriedOffset(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                try { presetDegreesRounded(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-                if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
-                println("CONTROL REGRESSION PASS: "+checks+" assertions; the "+keysPerPeriod()+"-key map, octave pad, latch and keyboard MIDI checks, persist="+persistent);
-                return;
+            // The configuration, off the live option bytes its boot left:
+            // the record laid for it, landed whole, or the image's own.
+            fresh();
+            byte[] laid=laidRecord();
+            String why=laid==null?null:SettingsRecord.landed(e,laid);
+            check("the settings laid for "+profile+" boot: "+why,why==null);
+            booted=e.readMemory(toAddr(0x6800),0x268);
+            int[] live=new int[12];
+            for(int i=0;i<12;i++) live[i]=(int)r(0x6d28+i,1);
+            boolean latch=live[0]!=0;
+            orders=live[1]==1; transpose=live[4]==1;
+            knob2=new String[]{"spacing","quantized","swing","patterns","factory"}[live[2]];
+            gridRhythm=knob2.equals("quantized"); quantized=live[9]!=0;
+            seq=live[5]!=0; clock=live[6]!=0; persistent=true; zones=9;
+            // The lean switches go together here: the checks that read
+            // `lean` were written for all five off, and no configuration
+            // turns some of them off alone.
+            boolean[] leanSwitches={latch,seq,clock,live[7]!=0,live[8]!=0};
+            lean=!latch;
+            for(boolean on:leanSwitches)
+                if(on==lean) throw new Exception("the latch, sequencer, divider, pressure fix and portamento must be all on or all off: "+Arrays.toString(live));
+            println("SETTINGS "+profile+": live "+Arrays.toString(live)+", knob2="+knob2+(laid==null?", the image's own":", laid as a record"));
+            // every=1: every check it was given that this configuration can
+            // run, the rest named and passed over (test_controls.py --every).
+            boolean every=opt.getOrDefault("every","0").equals("1");
+            int ran=0;
+            for(String name:CHECKS) {
+                if(!wanted.contains(name)) continue;
+                String no=unusable(name);
+                if(no!=null&&every) { println("NOT "+name+" under "+profile+": "+no); continue; }
+                if(no!=null) { failures.add(name+" cannot run under "+profile+": "+no); println("FAIL "+name+" cannot run under "+profile+": "+no); continue; }
+                long t0=System.nanoTime();
+                try { traced(name,ControlRegression.class); }
+                catch(java.lang.reflect.InvocationTargetException ex) {
+                    Throwable c=ex.getCause(); failures.add(c.toString()); println(c.toString());
+                }
+                ran++;
+                times.append(String.format(" %s=%.1f",name,(System.nanoTime()-t0)/1e9));
             }
-            try { midiPeriod(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { presetOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { quickTapGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { bendUnderTheBottomKey(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { presetQuantize(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(quantized&&seq) {
-                try { presetSequencer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            }
-            if(transpose)try { transposeOutput(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(transpose)try { knob4Zones(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            // The pattern gate sits at the note selector and answers a rest
-            // with -1 without moving the note on, so on a patterns build an
-            // order walk no longer gives one key per beat and these three
-            // fixtures cannot read it. The walks are covered by the roles
-            // variant, which carries the same selector without the gate;
-            // what the gate itself does is patternGate() below.
-            boolean orderWalks=orders&&!knob2.equals("patterns");
-            if(orderWalks)try { noteOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(orderWalks)try { releasedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(orderWalks)try { latchedOrders(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { latchExitHold(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { latchTransposeState(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { latchStackMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { latchHoldMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { latchAfterMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { latchPresetMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { velocityFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq)try { keyOverTakeMidi(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { midiOneSum(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { midiClampPaths(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(jack)try { jackTransposer(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq)try { stripCarry(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq&&!transpose)try { latchRecording(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq&&!transpose)try { recordedOctaves(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq&&!transpose)try { capacityAudition(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq&&!transpose)try { pressureOwnership(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { staleAnchor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq&&!transpose)try { previewBoundaries(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq&&transpose)try { recordedBounds(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq)try { playbackPressure(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(seq)try { heldPresetEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(lean)try { retainedStartup(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(gridRhythm)try { quantizedRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(knob2.equals("swing"))try { swingRhythm(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(knob2.equals("patterns"))try { patternGate(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            // The default variant alone: one image with every option on, in
-            // both builds now that seq_restart_clear resets the sequencer's
-            // runtime whether or not persistence is built.
-            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { periodCell(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!transpose&&!orders&&!lean&&!jack&&knob2.equals("spacing"))try { residue(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { calibrationCommand(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { calibrationPitch(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { calibrationSilence(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { calibrationExits(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { calibrationLiveEdit(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { exactPitch(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            // On its own, so a note-on exactPitch refuses leaves these to be heard.
-            try { tunedNotes(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { midiNoteOffs(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { blendSign(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            if(!lean)try { latchedUnderThePeriod(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { anchoredBottomKey(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { glideUnderZero(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { reloadedRotation(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { gainPairOff(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            // The clamp-chain scan (2026-09-28).
-            try { randomOctaveFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { blendClampOnce(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { blendCarriedOffset(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { rebaseSentinel(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { midiUnderTheFloor(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { auditionPin(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
-            try { presetDegreesRounded(); } catch(Exception ex) { failures.add(ex.toString()); println(ex.toString()); }
+            println("TIMES "+profile+":"+times);
             if(!failures.isEmpty())throw new Exception("CONTROL REGRESSION FAIL: "+failures);
-            println("CONTROL REGRESSION PASS: "+checks+" assertions; transpose="+transpose+", orders="+orders+", persist="+persistent+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
+            if(ran==0&&!every) throw new Exception("CONTROL REGRESSION FAIL: none of "+wanted+" can run under "+profile);
+            println("CONTROL REGRESSION PASS: "+checks+" assertions; "+ran+" of "+wanted.size()+" checks under "+profile
+                +": transpose="+transpose+", orders="+orders+", lean="+lean+", quantized="+quantized+", knob2="+knob2);
         } finally { if(e!=null)e.dispose(); }
     }
 }

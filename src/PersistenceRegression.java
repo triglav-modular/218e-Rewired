@@ -4,6 +4,9 @@
 //@category Buchla218.Tests
 import ghidra.app.script.GhidraScript;
 import ghidra.app.emulator.EmulatorHelper;
+import ghidra.app.emulator.MemoryAccessFilter;
+import ghidra.pcode.emulate.EmulateExecutionState;
+import ghidra.program.model.address.AddressSpace;
 import java.util.*;
 import java.util.zip.CRC32;
 
@@ -32,6 +35,7 @@ public class PersistenceRegression extends GhidraScript {
     long reg(String n) { return e.readRegister(n).longValue()&0xffffffffL; }
     void w(long a,int n,long v) { e.writeMemoryValue(toAddr(a),n,v); }
     long r(long a,int n) {
+        if(reads!=null) for(long x=a;x<a+n;x++) if(watched(x)) reads.add(x);
         long v=0; for(byte b:e.readMemory(toAddr(a),n)) v=(v<<8)|(b&255); return v;
     }
     void check(String name,boolean ok) throws Exception {
@@ -173,9 +177,99 @@ public class PersistenceRegression extends GhidraScript {
         sizeFn=r(0x80010e80L,4); clearFn=r(0x80010e84L,4); errorCell=r(0x80010e88L,4);
         eraseFn=r(0x80010e8cL,4); programFn=r(0x80010e90L,4);
         byte[] ff=new byte[4096]; Arrays.fill(ff,(byte)255); e.writeMemory(toAddr(BASE),ff);
+        byte[] laid=laidRecord(); if(laid!=null) SettingsRecord.lay(e,laid);
         locked=false; allBad=false; badCommit=false; clockExercise=false; migrationProbe=false; cut=""; badPages.clear(); targets.clear();
         writes=0; erases=0; programs=0; stores=0; cold();
         check("settings page untouched",r(0x968,4)==0x8003f000L);
+        traceOn();
+    }
+    // The settings a runner laid for this run (SettingsRecord), boot by boot.
+    byte[] laidRecord() throws Exception { return SettingsRecord.named(); }
+    // The live bytes a mode says, once a boot has laid its record: a runner
+    // that names the mode and lays another configuration would test neither.
+    void modeLanded(String mode) throws Exception {
+        fresh();
+        check("the settings laid for "+mode+" boot its sequencer and divider: 0x6d2d="+r(0x6d2d,1)+" 0x6d2e="+r(0x6d2e,1),
+            (r(0x6d2d,1)!=0)==seq&&(r(0x6d2e,1)!=0)==clock);
+        byte[] laid=laidRecord();
+        String why=laid==null?null:SettingsRecord.landed(e,laid);
+        check("the laid record boots: "+why,why==null);
+    }
+    // What a check reads of what a configuration sets, when the runner
+    // asks (REWIRED_READ_TRACE=1): every byte a boot of one configuration
+    // can leave different from another's - the mirror and the live option
+    // bytes; SettingsEquivalence prints where two boots differ, and it is
+    // nowhere else - and the settings slots in flash a later boot or reload
+    // reads.  Read by the firmware after the boot in fresh(), or by the check
+    // itself through r() and traced().  A configuration that differs from a
+    // kept one only in bytes a check never read runs that check the same, so
+    // the runners' tables of which check runs under which configuration are
+    // argued from this (docs/BUILD.md, "One image").
+    static final long[][] WATCHED={{0x6800,0x6a68},{0x6d28,0x6d39},{0x8003d000L,0x8003e000L}};
+    // Code that only moves a setting to where it is kept, whose reads are
+    // not a check's: the settings loader (copy, validate, newest, boot,
+    // defaults, reload) and the CRC it checks a record with, which read a
+    // valid record into the mirror, and option_boot, which copies the
+    // mirror's option cells to the live bytes and reads nothing else.  What
+    // they copy to is watched, so whatever reads the copy is caught there.
+    static final long[][] LOADER={{0x8001cc00L,0x8001cc80L},{0x8001f000L,0x8001f340L},{0x8001fdf0L,0x8001fe50L}};
+    static boolean loader(long pc) { for(long[] w:LOADER) if(pc>=w[0]&&pc<w[1]) return true; return false; }
+    static final boolean TRACE="1".equals(System.getenv("REWIRED_READ_TRACE"));
+    TreeSet<Long> reads;
+    Object tracing;
+    static boolean watched(long a) { for(long[] w:WATCHED) if(a>=w[0]&&a<w[1]) return true; return false; }
+    void traceOn() {
+        if(reads==null||e==null||tracing==e) return;
+        tracing=e;
+        final AddressSpace memory=e.getProgram().getAddressFactory().getDefaultAddressSpace();
+        final EmulatorHelper mine=e;
+        e.getEmulator().addMemoryAccessFilter(new MemoryAccessFilter() {
+            @Override protected void processRead(AddressSpace space,long offset,int size,byte[] values) {
+                TreeSet<Long> into=reads;
+                if(into==null||space!=memory||mine.getEmulateExecutionState()==EmulateExecutionState.INSTRUCTION_DECODE) return;
+                if(loader(mine.getExecutionAddress().getOffset())) return;
+                for(long a=offset;a<offset+size;a++) if(watched(a)) into.add(a);
+            }
+            @Override protected void processWrite(AddressSpace space,long offset,int size,byte[] values) {}
+        });
+    }
+    byte[] traced(long a,int n) {
+        if(reads!=null) for(long x=a;x<a+n;x++) if(watched(x)) reads.add(x);
+        return e.readMemory(toAddr(a),n);
+    }
+    static String ranges(Set<Long> s) {
+        StringBuilder out=new StringBuilder(); long start=-1, last=-2;
+        for(long a:s) {
+            if(a!=last+1) { if(start>=0) out.append(String.format(" %x-%x",start,last+1)); start=a; }
+            last=a;
+        }
+        if(start>=0) out.append(String.format(" %x-%x",start,last+1));
+        return out.toString().trim();
+    }
+    // One check by name, its reads printed when tracing.  The caller says
+    // which class declares it, since a subclass's own name finds nothing.
+    void traced(String name,Class<?> in) throws Exception {
+        if(TRACE) { reads=new TreeSet<>(); traceOn(); }
+        try { declared(in,name).invoke(this); }
+        finally { if(TRACE) { println("READS "+name+": "+ranges(reads)); reads=null; } }
+    }
+    // The check by name in `in` or the class it extends: a subclass's own
+    // run lists checks its parents declare.
+    static java.lang.reflect.Method declared(Class<?> in,String name) throws Exception {
+        for(Class<?> c=in;c!=null;c=c.getSuperclass())
+            try { return c.getDeclaredMethod(name); } catch(NoSuchMethodException ex) {}
+        throw new NoSuchMethodException(in.getName()+"."+name+"()");
+    }
+    // A run's checks in order, the first failure ending it as before.
+    void each(Class<?> in,String... names) throws Exception {
+        for(String name:names) {
+            try { traced(name,in); }
+            catch(java.lang.reflect.InvocationTargetException ex) {
+                Throwable c=ex.getCause();
+                if(c instanceof Exception) throw (Exception)c;
+                throw new Exception(c);
+            }
+        }
     }
     void seed() throws Exception {
         for(int i=0;i<4;i++) { w(0x613a+2*i,2,400+100*i); w(0x6160+2*i,2,500+100*i); w(0x61ee+i,1,i); }
@@ -672,12 +766,25 @@ public class PersistenceRegression extends GhidraScript {
         clockExercise=false;
         println("PASS actual clock/output before and after a release save; no reset or synthetic catch-up triggers");
     }
+    // The checks, in the order a run takes them.  checks=a,b as the second
+    // argument runs those alone: tools/test_persistence.py says which modes
+    // each one runs under.
+    static final String[] CHECKS={"basic","polySettingsMigration","relativeSteps","latchState","tuningSlot",
+        "stepDegrees","takeReference","retries","powerCuts","corruption","gesturePolicy","presets","gestures","playbackSave"};
     public void run() throws Exception {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
+        List<String> wanted=new ArrayList<>(Arrays.asList(CHECKS));
+        if(getScriptArgs().length>1&&getScriptArgs()[1].startsWith("checks=")) {
+            wanted=Arrays.asList(getScriptArgs()[1].substring(7).split(","));
+            for(String name:wanted) if(!Arrays.asList(CHECKS).contains(name)) throw new Exception("no check named "+name);
+        }
+        List<String> run=new ArrayList<>();
+        for(String name:CHECKS) if(wanted.contains(name)) run.add(name);
         try {
-            basic(); polySettingsMigration(); relativeSteps(); latchState(); tuningSlot(); stepDegrees(); takeReference(); retries(); powerCuts(); corruption(); gesturePolicy(); presets(); gestures(); playbackSave();
-            println("PERSISTENCE REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash/analog testing.");
+            modeLanded(mode);
+            each(PersistenceRegression.class,run.toArray(new String[0]));
+            println("PERSISTENCE REGRESSION PASS: "+mode+", "+run.size()+" check(s), "+checks+" assertions; no physical flash/analog testing.");
         } finally { if(e!=null)e.dispose(); }
     }
 }
