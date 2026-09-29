@@ -100,6 +100,25 @@ knobs: two are 4-byte loads that an `MCALL` shim replaces, the third is a
 With tunings still build-time, an image with a tuning keeps forcing it as
 today.
 
+*Corrected 2026-09-28 (audit 038711a, F14):* the three sites are not
+transpose mode's. Two are the keyboard's note-on velocity floors, over
+the factory's reads of `state+0x2db`, the minimum configuration knob 3
+sets and the byte `pressure_fix`'s edit-mode knob 4 writes the curve level
+into; the third is the peak hold's reload, 10 in the factory. Transpose
+mode with cell 27 off runs as shipped whatever the knob roles (emulated
+against the factory image: key 27, knob 4's zones and the adder agree), so
+there is nothing here to put on a knob's byte. Restoring the factory load
+while the curve level can sit in that byte would read 160 or more as the
+velocity floor.
+
+*Done 2026-09-28, on `pressure_fix`'s byte instead:* the three are named
+for what they feed, `velocity_floor_contact`, `velocity_floor_handback` and
+`peak_hold_reload`, and are hooks onto `velocity_floor` and `peak_hold`.
+With the fix on they are 1 as before; with it off they are the factory's,
+and a byte whose top three bits are 101, the curve level, reads as a floor
+of 1. LR was live at the contact's load: the factory parks the maximum
+velocity there across it, so that hook moves the park past its call.
+
 ## The sites, by class
 
 The 99 sites in factory code, from the union of extents across the golden,
@@ -147,7 +166,8 @@ reads/outs, the octave-switch redirects, the `octave_*` arithmetic and the
 remote-enable guards, all build-time or unconditional already, and
 `poly_persistence_marker` is internal. The seven that carry an option:
 `factory_pad_latch_off` (over the factory's own `MCALL`, so LR is already
-spent), `transpose_force_1/2` (over `LD.UB R8,R9[0x2db]`), `glide_cv_addend`
+spent), `velocity_floor_contact`/`velocity_floor_handback`, once
+`transpose_force_1/2` (over `LD.UB R8,R8[0x2db]`), `glide_cv_addend`
 (over `LD.UH R8,R8[0x2f0]`), `clock_tempo_hook` (already an `MCALL` into
 `clock_tempo`, which grows the test), `pressure_target_redirect` and
 `strip_dac_redirect` (stores redirected into our cells, which stay redirected
@@ -162,7 +182,8 @@ as they are (`scan_period`, the two `poly_*` defaults); two become always-on
 dropping the falling one when the divider is off). The four that carry an
 option and have no room: `pressure_gain_nop` (over a `BR{eq}` that
 skips the factory gain), `pitch_clamp_skip_1/2` (over the `LDDPC R8` that
-begins the factory 16-tap filter), `transpose_force_3` (over `MOV R8,0xa`),
+begins the factory 16-tap filter), `peak_hold_reload`, once `transpose_force_3`
+(over `MOV R8,0xa`).
 Each of the four is
 followed by a 4-byte instruction and the control-flow table shows nothing
 landing between them, so each becomes a 6-byte hook: `MCALL` plus `NOP`, the
@@ -269,6 +290,16 @@ watchdog-reset chip back to the application, are the bench's to confirm
   bootloader's ISP RAM key, which makes the bootloader stop the watchdog
   itself, as its own START does. The evidence is in docs/SETTINGS.md, under
   what the bench still owes.
+
+  A power cycle by other means left any note sounding over MIDI on at the
+  receiver (audit 038711a, 2026-09-28): the watchdog reset sends nothing
+  and neither does the boot. Since then `restart_quiet` (`0x80020c80`),
+  on settings_apply's restart word, ends every sounding note on both
+  ports first - the mono note when the factory's active-note table has
+  lost it, the factory panic `0x800094ec` for the rest with CC 121 and
+  CC 123, note 127 after the panic's walk stops at 126 - and waits for
+  port one's transmit ring to empty, about 40 ms at most, before
+  `settings_restart` writes the key and arms the watchdog.
 
 ## The boot chain, and what always runs
 
@@ -446,7 +477,11 @@ rises along it:
   factory), so four factory knobs and no tuning over MIDI keep the factory
   transpose mode forced off; and knob 1 factory with knob 2 on patterns now
   plays the patterns, where the build used to leave the factory selector
-  in place with the gate unreachable. Verified: both toolchains at
+  in place with the gate unreachable. (Corrected 2026-09-28: the first
+  of the two is not so. The forcing patches are the keyboard's velocity
+  floors and the peak hold, not transpose mode, which four factory knobs
+  and no tuning leave as shipped; see the note under the option table.)
+  Verified: both toolchains at
   `8438b900`, historical `e945d1b0` (sweep: match + known image), parity
   44/44, `test.py --golden`, the corpus (11,500 instructions),
   `SettingsRegression` in all four modes (704..707 assertions: every cell
@@ -742,6 +777,13 @@ rises along it:
   refused as another image's. The count is worked out from cell 10 when
   the knob is read since; `ControlRegression.knob4Zones` drives it at six
   periods and `web/test_readback.js` compares the two builds' markers.
+  Corrected 2026-09-28 by audit 038711a: a seventh 484 stood outside the
+  block, the MIDI note-on's drop at `0x800064f8` while the add-to-pitch
+  switch is off OCTAVE. It is a call onto `note_on_period`
+  (`0x80020c68`), R8 less cell 10, under the note-on's own condition.
+  `SettingsRegression.state` checks its word and its answer at both
+  periods, and `ControlRegression.exactPitch` plays MIDI notes under a
+  Bohlen-Pierce record.
 - **K. The 2.4 A/B (criterion 1).** Run 2026-09-23. `src/AbTrace.java` and
   `tools/ab_trace.py`: one scripted session through the factory entry
   points every Rewired image shares - boot, the touch handlers, the ADC
@@ -787,7 +829,9 @@ rises along it:
   the musical cells stay, the take's preset reference at `0x6091` among
   them, which `persist_load` restores from the first per-step count (the
   suite caught the clear taking it: `clock_init` calls the wrapper after
-  the restore). The sixth octave site, the add-to-pitch `-484` at `0x800035c0`,
+  the restore). Since 2026-09-28 the take's octave reference at `0x62f4`
+  stays too: the record carries it (v4) and `persist_load` restores it.
+  The sixth octave site, the add-to-pitch `-484` at `0x800035c0`,
   calls `octave_period`'s "down" word like the panel's octave-down, so
   with `quantize_presets` the base shift is a whole period. And the
   residue test runs in both directions - every option on restarting

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>218e Rewired</title>
+    <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+    <atom:link href="https://triglavmodular.hu/mods/218e-Rewired/feed.xml" rel="self" type="application/rss+xml"/>
+    <description>Firmware releases for the Buchla 218e V3.</description>
+    <language>en</language>
+    <pubDate>Mon, 28 Sep 2026 12:00:00 +0000</pubDate>
+    <item>
+      <title>Rewired 3.1</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#3.1</guid>
+      <pubDate>Mon, 28 Sep 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Fixed several pitch and MIDI bugs: received MIDI notes now follow the tuning across their whole range, and poly MIDI plays over a running sequence.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 3.0</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#3.0</guid>
+      <pubDate>Sun, 27 Sep 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Settings can now be changed over Web MIDI after flashing.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 2.4</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#2.4</guid>
+      <pubDate>Sun, 13 Sep 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;The selected tuning is now remembered between power cycles.&lt;/li&gt;&lt;li&gt;Sequenced and latched notes now keep the pitch the preset voltage gave them, over MIDI, after a power cycle, and while the portamento in banana jack is transposing.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 2.3</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#2.3</guid>
+      <pubDate>Sat, 12 Sep 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Any preset knob can now be set to None, which leaves it as a preset voltage.&lt;/li&gt;&lt;li&gt;The add-to-pitch preset voltage can now be quantized to the selected tuning.&lt;/li&gt;&lt;li&gt;The portamento in banana jack can now transpose the keyboard by whole degrees of the selected tuning. This feature also allows the keyboard to act as a basic pitch quantizer.&lt;/li&gt;&lt;li&gt;Knob 2 can now be set to quantized random triggers.&lt;/li&gt;&lt;li&gt;Hold pads 2 and 3 together to change if “add to pitch” is applied before or after a note is entered in latch mode. The default state is “before”.&lt;/li&gt;&lt;li&gt;Holding pad 4 for the sequencer, or pads 2 and 3 for the latch, now restore the original octave.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 2.2</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#2.2</guid>
+      <pubDate>Wed, 02 Sep 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;With the arpeggiator off, the keyboard now plays over a running sequence on CV and MIDI, and takes priority: while a key is held the sequence keeps time without sounding. STOP still stops everything.&lt;/li&gt;&lt;li&gt;Fixed a portamento bug.&lt;/li&gt;&lt;li&gt;The pitch offset can now be disabled.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 2.1</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#2.1</guid>
+      <pubDate>Wed, 02 Sep 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Sequencer notes recorded below the initial octave now keep their MIDI notes after a power cycle.&lt;/li&gt;&lt;li&gt;A tie at the end of a loop now holds its note to the next step instead of cutting it short.&lt;/li&gt;&lt;li&gt;The clock divider’s gate is now half the step at every division.&lt;/li&gt;&lt;li&gt;The strip LEDs now provide feedback when entering a tie or a rest.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 2.0</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#2.0</guid>
+      <pubDate>Mon, 31 Aug 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Step sequencer: 64 steps, recorded and played from the preset pads.&lt;/li&gt;&lt;li&gt;External clock divider: the arpeggiator rate knob now divides a patched clock from /1 to /8.&lt;/li&gt;&lt;li&gt;Preset knobs can now be assigned individually.&lt;/li&gt;&lt;li&gt;Preset voltages are now set by holding a pad and turning the knob above it.&lt;/li&gt;&lt;li&gt;Alternate tunings now accept Scala keyboard maps, so a scale can have any number of degrees and repeat at something other than the octave.&lt;/li&gt;&lt;li&gt;Leaving the arpeggiator’s latch no longer stops notes still held by hand.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 1.2</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#1.2</guid>
+      <pubDate>Tue, 25 Aug 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Improved pressure-based portamento behavior.&lt;/li&gt;&lt;li&gt;Held-key state is cleared on the first boot after flashing, so a stuck gate no longer survives an update.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 1.1</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#1.1</guid>
+      <pubDate>Fri, 21 Aug 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;trn and remote enable stay factory when nothing has taken them.&lt;/li&gt;&lt;li&gt;The macOS flasher is a signed, notarised app.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>Rewired 1.0</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#1.0</guid>
+      <pubDate>Wed, 19 Aug 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;Initial release.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+  </channel>
+</rss>

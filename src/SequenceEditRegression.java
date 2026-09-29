@@ -449,9 +449,9 @@ public class SequenceEditRegression extends PersistenceRegression {
         seq=true; clock=getScriptArgs().length>0&&getScriptArgs()[0].contains("clock");
         persistent=getScriptArgs().length<2||!getScriptArgs()[1].equals("volatile");
         try {
-            previewOnce(); restsAndTies(); stripCarry(); stripLamps();
-            cancellation(); unarmedHold(); backspace();
-            previewTieEnd(); deleteFlash();
+            modeLanded(getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock");
+            each(SequenceEditRegression.class,"previewOnce","restsAndTies","stripCarry","stripLamps",
+                "cancellation","unarmedHold","backspace","previewTieEnd","deleteFlash");
             println("SEQUENCE EDIT PASS: "+checks+" assertions; clock="+clock+", persist="+persistent
                 +"; emitted firmware with modeled peripherals, no hardware flash.");
         } finally { if(e!=null)e.dispose(); }

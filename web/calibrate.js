@@ -549,13 +549,18 @@
     // going away - and only if on() ever did.
     //
     // `opts.adjust`, { table, write(entry, value) -> Promise, countsPerCent,
-    // reference }: converge each entry instead of only reading it.  `table`
-    // is the 79 entries the instrument is playing, `write` puts one into its
-    // live mirror, and countsPerCent is the DAC counts that move the ramp a
-    // cent (BUILDLIB.pitchCountsPerCent).  A note more than half a count out
-    // is moved by its reading and played again, up to ADJUST_TRIES times,
-    // and the closest value is the one kept.  The result carries `table`,
-    // and each reading its `value`, `original`, `tries` and `residual`.
+    // reference, playing }: converge each entry instead of only reading it.
+    // `table` is the 79 entries the run starts from, `write` puts one into
+    // the instrument's live mirror, and countsPerCent is the DAC counts that
+    // move the ramp a cent (BUILDLIB.pitchCountsPerCent).  A note more than
+    // half a count out is moved by its reading and played again, up to
+    // ADJUST_TRIES times, and the closest value is the one kept.  The result
+    // carries `table`, and each reading its `value`, `original`, `tries` and
+    // `residual`.  `table` is what the instrument is playing, unless
+    // `playing` is given: then that is, and tuning, the run writes `table`
+    // over it before the channel probe plays anything.  The page gives it
+    // where the keyboard's table is at the other volts per octave from the
+    // page's, and `table` is the flat table at the page's (app.js runStart).
     //
     // With both, the run tunes the table to the 208's 0 V pitch, which is
     // where its owner tunes it (with the keyboard off).  `reference` is the
@@ -955,6 +960,31 @@
             return Math.max(lo, Math.min(hi, v));
         }
 
+        // The run sweeps upward, so every entry above the one being tuned is
+        // still to come and holds the value it started from.  Bounded by
+        // that, an entry that had to rise by more than the gap to it stopped
+        // short, flat, and nothing came back for it.  So when an entry has to
+        // rise past the one above, the entries above it rise first by what it
+        // lacks, from the top down, and the table never runs backwards, not
+        // even between two writes.  Only the entries this run still reaches
+        // move, each kept under the ones above it and under the first entry
+        // the run does not reach, or the top of the DAC; each is tuned in its
+        // turn from where it is left.  The entry below is tuned already, so
+        // it stays the bound under the entry.
+        var runTop = steps[steps.length - 1].index;
+        async function lift(e, v) {
+            if (e >= runTop || v <= table[e + 1] - 1) return;
+            var need = v - (table[e + 1] - 1);
+            var roof = runTop + 1 < table.length ? table[runTop + 1] : DAC_TOP + 1;
+            for (var k = runTop; k > e; k--) {
+                var up = Math.min(roof - (runTop + 1 - k), table[k] + need);
+                if (up > table[k]) {
+                    await adjust.write(k, up);
+                    table[k] = up;
+                }
+            }
+        }
+
         // One entry, brought as close to its pitch as the table allows.  It
         // is read as the plain sweep reads it; more than half a count out,
         // it is moved by that reading - the ramp's counts per cent, which a
@@ -1005,7 +1035,9 @@
                     var ramp = 1 / adjust.countsPerCent;
                     if (slope >= ramp / 2 && slope <= ramp * 2) rate = 1 / slope;
                 }
-                var next = room(e, value - Math.round(j.cents * rate));
+                var want = value - Math.round(j.cents * rate);
+                await lift(e, want);
+                var next = room(e, want);
                 // Nowhere to go, or somewhere already heard: another try
                 // would only say again what one has said.
                 if (next === null || next === value ||
@@ -1106,6 +1138,25 @@
                     'cable and the channel\u2019s level.');
             }
 
+            // Tuning from a table the instrument does not hold yet (it holds
+            // `playing`), the table goes into the mirror before the probe
+            // plays anything: two octaves at the other scaling came out 2000
+            // or 2880 cents apart, and the probe blamed the MIDI channel.  In
+            // the mode, so the run's end reloads the mirror however it ends.
+            // Entries that move down are written from the bottom up and
+            // entries that move up from the top down, so the table being
+            // played never runs backwards, not even between two writes.
+            if (tuning && adjust.playing) {
+                modeUp();
+                var lower = [], higher = [];
+                for (var k = 0; k < table.length; k++) {
+                    if (table[k] < adjust.playing[k]) lower.push(k);
+                    else if (table[k] > adjust.playing[k]) higher.push(k);
+                }
+                for (k = 0; k < lower.length; k++) await adjust.write(lower[k], table[lower[k]]);
+                for (k = higher.length - 1; k >= 0; k--) await adjust.write(higher[k], table[higher[k]]);
+            }
+
             // Which channel the instrument is listening on.  There is no way
             // to ask it, so this plays two notes two octaves apart and watches
             // for the pitch to move: on the wrong channel nothing is heard and
@@ -1117,10 +1168,18 @@
             // at all was the one a chosen channel opted out of - and a keyboard
             // unplugged after the port list was built sails straight past.
             // Searching costs up to sixteen of these; confirming costs one.
+            //
+            // It answers `yes` when the pitch moved the two octaves, and
+            // `wrong` with the interval, in cents, when both notes were heard
+            // clearly and the pitch moved at least 300 cents but 300 or more
+            // away from the two octaves: something is listening, and the
+            // 208's trim is not the scaling the table plays at.  That is the
+            // volts per octave, not the MIDI channel, so it gets its own
+            // message.  Anything less than 300 cents is no movement.
             async function probe(ch) {
                 var hiNote = probeAt.note + 24;
                 var hiEntry = entryOf(hiNote);
-                if (!hiEntry) return false;
+                if (!hiEntry) return { yes: false, wrong: null };
                 var apart = 100 * (hiEntry.index - probeAt.index);
                 // Both measurements search the whole range.  Handing the second
                 // one the answer as its expected pitch narrows YIN to a band
@@ -1133,12 +1192,19 @@
                 // something is listening.
                 var lo = await hear(probeAt.note, null, ch, 'probe');
                 var hi = await hear(hiNote, null, ch, 'probe');
-                var yes = heard(lo) && heard(hi) &&
-                          Math.abs(cents(hi.hz, lo.hz) - apart) < 300;
+                var both = heard(lo) && heard(hi);
+                var moved = both ? cents(hi.hz, lo.hz) : null;
+                var yes = both && Math.abs(moved - apart) < 300;
                 if (yes) probeLo = lo;
-                return yes;
+                return { yes: yes, wrong: both && !yes && moved >= 300 ? moved : null };
             }
             var probeLo = null;
+            function wrongInterval(ch, moved) {
+                return new Error('MIDI channel ' + (ch + 1) + ' moved the pitch ' +
+                    (moved / 100).toFixed(1) + ' semitones where two octaves are 24. ' +
+                    'Set the volts per octave above to match how your 208 is trimmed, ' +
+                    'then measure again.');
+            }
 
             // The anchor, held until it has settled (ANCHOR_TRIES above).
             function steady(r, near) {
@@ -1166,7 +1232,11 @@
                 for (var ch = 0; ch < 16 && found === null; ch++) {
                     if (self.stopped) throw new Error('Stopped.');
                     if (o.onProbe) o.onProbe(ch, false);
-                    if (await probe(ch)) found = ch;
+                    var answer = await probe(ch);
+                    if (answer.yes) found = ch;
+                    // The first channel that moves the pitch is the one
+                    // listening, whatever the interval: the search ends there.
+                    else if (answer.wrong !== null) throw wrongInterval(ch, answer.wrong);
                 }
                 if (found === null) {
                     throw new Error('No MIDI channel moved the pitch. Check the ' +
@@ -1180,7 +1250,9 @@
             } else {
                 if (o.onProbe) o.onProbe(o.channel, true);
                 if (self.stopped) throw new Error('Stopped.');
-                if (!(await probe(o.channel))) {
+                var chosen = await probe(o.channel);
+                if (!chosen.yes && chosen.wrong !== null) throw wrongInterval(o.channel, chosen.wrong);
+                if (!chosen.yes) {
                     throw new Error('MIDI channel ' + (o.channel + 1) + ' did not ' +
                         'move the pitch, so nothing is listening there. Check the ' +
                         'keyboard is on the chosen MIDI port and still plugged in, ' +

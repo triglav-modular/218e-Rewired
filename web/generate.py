@@ -10,12 +10,15 @@ tools/factory_control_flow.txt.
 from __future__ import annotations
 
 import base64
+import datetime
+import email.utils
 import json
 import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from xml.sax.saxutils import escape, quoteattr
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
@@ -23,6 +26,101 @@ import build as B          # noqa: E402
 import options as O        # noqa: E402
 
 OUT = REPO / "web" / "generated.js"
+FEED = REPO / "web" / "feed.xml"
+
+# The feed's own words.  Everything else in it is the changelog, verbatim.
+FEED_TITLE = "218e Rewired"
+FEED_DESCRIPTION = "Firmware releases for the Buchla 218e V3."
+
+# The same heading the page's changelog panel recognises (app.js), so a line
+# the panel shows as a release is a release here too, and nothing else is.
+HEADING = re.compile(r"^(\d+\.\d+(?:\.\d+)?)\s*(?:\((.+)\))?\s*$")
+
+
+def releases(changelog: str) -> list[tuple[str, str | None, list[str]]]:
+    """(version, date, entries) per release, newest first, as the file has them."""
+    out: list[tuple[str, str | None, list[str]]] = []
+    for line in changelog.splitlines():
+        if not line.strip():
+            continue
+        head = HEADING.match(line)
+        if head:
+            out.append((head.group(1), head.group(2), []))
+        elif out:
+            out[-1][2].append(re.sub(r"^[-–—]\s*", "", line.strip()))
+    return out
+
+
+def rfc822(date: str) -> str | None:
+    """A changelog date as RSS wants it, or None if it is not a plain date.
+
+    Noon UTC, because the changelog records a day and not a moment: midnight
+    would show every release a day early to a reader west of Greenwich, and
+    noon is the same calendar day from UTC-11 to UTC+11.
+    """
+    try:
+        d = datetime.date.fromisoformat(date.strip())
+    except ValueError:
+        return None
+    # email.utils rather than strftime, whose %a and %b follow the locale.
+    return email.utils.format_datetime(
+        datetime.datetime(d.year, d.month, d.day, 12, tzinfo=datetime.timezone.utc))
+
+
+def feed(changelog: str, root: str) -> str:
+    """The changelog as RSS 2.0, one item per release.
+
+    Deterministic - no build time anywhere - so it can be committed and
+    checked for staleness exactly as generated.js is.  The item's guid is the
+    version rather than the text, so correcting a line later does not announce
+    the release a second time.
+    """
+    items = []
+    newest = None
+    for version, date, entries in releases(changelog):
+        shown = ".".join(version.split(".")[:2])
+        when = rfc822(date) if date else None
+        newest = newest or when
+        body = "<ul>" + "".join(f"<li>{escape(e)}</li>" for e in entries) + "</ul>"
+        items.append("\n".join(filter(None, [
+            "    <item>",
+            f"      <title>Rewired {escape(shown)}</title>",
+            f"      <link>{escape(root)}</link>",
+            f"      <guid isPermaLink=\"false\">{escape(root)}#{escape(version)}</guid>",
+            f"      <pubDate>{when}</pubDate>" if when else None,
+            f"      <description>{escape(body)}</description>",
+            "    </item>",
+        ])))
+    return "\n".join(filter(None, [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">',
+        "  <channel>",
+        f"    <title>{escape(FEED_TITLE)}</title>",
+        f"    <link>{escape(root)}</link>",
+        f"    <atom:link href={quoteattr(root + FEED.name)} rel=\"self\" "
+        f"type=\"application/rss+xml\"/>",
+        f"    <description>{escape(FEED_DESCRIPTION)}</description>",
+        "    <language>en</language>",
+        f"    <pubDate>{newest}</pubDate>" if newest else None,
+        *items,
+        "  </channel>",
+        "</rss>",
+    ])) + "\n"
+
+
+def canonical_root() -> str:
+    """Where the page lives, from its own canonical link.
+
+    The feed has to name the page absolutely - a reader resolves nothing
+    relative - and the canonical is already the one place that says where the
+    site is (tools/version-assets.py reads it for the same reason).  The dev
+    build moves it under /dev/ and the feed with it; see pages.yml.
+    """
+    page = (REPO / "web" / "index.html").read_text(encoding="utf-8")
+    m = re.search(r'<link\b[^>]*\brel="canonical"[^>]*\bhref="([^"]+)"', page)
+    if not m:
+        raise SystemExit("web/index.html has no canonical link to build the feed from")
+    return m.group(1).rstrip("/") + "/"
 
 
 def main() -> None:
@@ -94,6 +192,12 @@ def main() -> None:
 
     OUT.write_text("\n".join(parts) + "\n")
 
+    # The changelog again, for feed readers.  Rewritten whenever generated.js
+    # is, since both carry the same file: a changelog edit already means
+    # running this, and it now brings the feed along.
+    FEED.write_text(feed((REPO / "CHANGELOG.txt").read_text(), canonical_root()),
+                    encoding="utf-8")
+
     # Bundle the assembler into web/ so the page loads only files beside it,
     # and so program.js is always the one transpiled from the current Java.
     subprocess.run([sys.executable, str(REPO / "tools" / "avr32" / "transpile.py")],
@@ -106,6 +210,8 @@ def main() -> None:
           f"({bundle.stat().st_size // 1024} KB)")
     kb = OUT.stat().st_size // 1024
     print(f"wrote {OUT.relative_to(REPO)} ({kb} KB)")
+    print(f"wrote {FEED.relative_to(REPO)} "
+          f"({len(releases((REPO / 'CHANGELOG.txt').read_text()))} releases)")
     print(f"  {len(flat)//3} control transfers, {len(java)} bytes of assembler source")
 
 

@@ -34,10 +34,11 @@ REPO = Path(__file__).resolve().parent.parent
 # image restores a runtime that never reloads its committed musical data,
 # and on a warm reset that finds the initialisation marker already matching
 # it can come back in PLAY with seq_noteon_mute eating every key.  The
-# variants still exist as internal fixtures - the parity sweep and the
-# control and persistence regressions build them deliberately, to
-# characterise the path rather than to ship it - so the refusal is lifted
-# by an environment variable, which no config file can set.
+# variant still exists as an internal fixture - the builder parity rows in
+# web/test_configs.py, the jsc matrix and tools/test.py's refusal test build
+# it deliberately, to prove both builders refuse and override it alike - so
+# the refusal is lifted by an environment variable, which no config file
+# can set.  No regression emulates it any more.
 VOLATILE_ENV = "REWIRED_UNSUPPORTED_VOLATILE"
 
 # Frozen default behaviour for every setting the simplified config does not
@@ -619,16 +620,21 @@ def expand(options: dict) -> dict:
                 raise SystemExit(
                     f"arp_patterns[{i}] has {len(steps)} steps; "
                     "it must have 1 to 32")
-            mask = sum(1 << k for k, c in enumerate(steps) if c != ".")
-            if mask == 0:
-                raise SystemExit(
-                    f"arp_patterns[{i}] is all rests — it would never sound")
             if length is None:
                 length = len(steps)
             if not isinstance(length, int) or isinstance(length, bool) \
                     or not 1 <= length <= 32:
                 raise SystemExit(
                     f"arp_patterns[{i}] length must be a whole number 1..32")
+            # Only the steps inside the length ever play: the firmware wraps
+            # the step at the length, and a clear bit under it rests unless
+            # the whole mask is zero.  A hit past the length made the mask
+            # look like a pattern, so one that rests on every step it plays
+            # was built.  web/buildlib.js does the same.
+            mask = sum(1 << k for k, c in enumerate(steps[:length]) if c != ".")
+            if mask == 0:
+                raise SystemExit(
+                    f"arp_patterns[{i}] is all rests — it would never sound")
             masks.append(mask)
             lengths.append(length)
         cfg["knob2"]["patterns"] = masks

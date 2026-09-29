@@ -11,6 +11,15 @@ public class ClockRegression extends GhidraScript {
     EmulatorHelper e;
     int frequency, advances, periodicAdvances, checks, maxIrqSteps, dispatches, callbacks, msTicks;
     boolean sequencer, periodic;
+    // What the configuration built, handed in by the runner: the internal
+    // beat's settle (gate_settle_scans scans of scan_period_ms), the
+    // external beat's (clock_settle_scans of them), and whether the pressure
+    // blend is the portamento.  tools/test_clock.py works each out of
+    // tools/options.py for its mode, override included.  The settle checks
+    // used to ask the image under test what settle it carried and hold it to
+    // that answer, so a settle cut short passed and a lost one turned its
+    // tests into SKIPs.
+    int expectedInternalSettleMs=-1, expectedExternalSettleMs=-1, expectedBlend=-1;
     // Entries to the factory DAC transfer clock_deadline performs at phase A.
     // Counting it is how a test tells a settle build from a held one without
     // being told: the deadline calls it only when a settle was configured for
@@ -36,6 +45,7 @@ public class ClockRegression extends GhidraScript {
     void setReg(int n, long v) { e.writeRegister(regName(n), v); }
     void w(long a, int n, long v) { e.writeMemoryValue(toAddr(a), n, v); }
     long r(long a, int n) {
+        if (reads != null) for (long x=a; x<a+n; x++) if (watched(x)) reads.add(x);
         long v = 0;
         for (byte b : e.readMemory(toAddr(a), n)) v = (v << 8) | (b & 255);
         return v;
@@ -113,12 +123,17 @@ public class ClockRegression extends GhidraScript {
         }
         if (!e.step(monitor)) throw new Exception("PC=" + Long.toHexString(pc()) + " " + e.getLastError());
     }
-    int call(long entry, long end) throws Exception {
+    int call(long entry, long end) throws Exception { return call(entry, end, 20000); }
+    // The startup hook.  A laid settings record is checked (its CRC over
+    // 0x2a0 bytes) and copied before the rest of the boot, which takes it
+    // past the 20000 steps every other call is held to.
+    int startup() throws Exception { return call(0x80007bf4L,0x80007bf8L,500000); }
+    int call(long entry, long end, int budget) throws Exception {
         e.writeRegister("SP",0x7800);
         e.writeRegister("LR",0x100);
         e.writeRegister("R7",0x7600);
         jump(entry);
-        for (int i=0; i<20000; i++) {
+        for (int i=0; i<budget; i++) {
             if (pc()==end) return i;
             step();
         }
@@ -147,6 +162,10 @@ public class ClockRegression extends GhidraScript {
     void fresh(int divisor, int hz) throws Exception {
         if (e != null) e.dispose();
         e = AlignGuard.install(new EmulatorHelper(currentProgram));
+        // The configuration this run is under, as a committed send leaves
+        // it (SettingsRecord); the boot below loads it.
+        byte[] laid=SettingsRecord.named();
+        if (laid != null) SettingsRecord.lay(e,laid);
         e.writeMemory(toAddr(0),new byte[0x8000]);
         e.writeMemory(toAddr(8),e.readMemory(toAddr(0x80015d28L),0x2ecc));
         w(0x2ed4,4,0xffffffffL);
@@ -158,7 +177,7 @@ public class ClockRegression extends GhidraScript {
         // cold machine reads zero. Everything after this is the firmware's.
         w(0x61e6,2,0);
         w(0x29cc,4,hz); w(GPIO+0x60,4,0); w(GPIO+0xd0,4,0);
-        call(0x80007bf4L,0x80007bf8L); // actual startup hook/pool
+        startup(); // actual startup hook/pool
         check("CPU-frequency-derived timebase", r(0x6244,4)==hz/1000);
         check("clock RAM initialized", r(0x6234,4)==0 && r(0x6258,2)==0);
         // Run the real mode-setting call (not interrupt-controller setup).
@@ -185,7 +204,73 @@ public class ClockRegression extends GhidraScript {
         w(0xffff2404L,4,0); w(0xffff2410L,4,0x202); // SPI TX ready/empty
         advances=0; periodicAdvances=0; periodic=false; transfers=0; msTicks=0;
         transferPitches.clear();
+        traceOn();
         pitches.clear(); dac.clear(); outputTimes.clear(); beatTimes.clear(); fireTimes.clear();
+    }
+    // What a check reads of what a configuration sets, when the runner asks
+    // (REWIRED_READ_TRACE=1): the same watch as PersistenceRegression's -
+    // the mirror, the live option bytes and the settings slots, read after
+    // the boot in fresh() by the firmware outside the settings loader, or
+    // through r().
+    static final long[][] WATCHED={{0x6800,0x6a68},{0x6d28,0x6d39},{0x8003d000L,0x8003e000L}};
+    static final boolean TRACE="1".equals(System.getenv("REWIRED_READ_TRACE"));
+    java.util.TreeSet<Long> reads;
+    Object tracing;
+    static boolean watched(long a) { for(long[] w:WATCHED) if(a>=w[0]&&a<w[1]) return true; return false; }
+    void traceOn() {
+        if(reads==null||e==null||tracing==e) return;
+        tracing=e;
+        final ghidra.program.model.address.AddressSpace memory=e.getProgram().getAddressFactory().getDefaultAddressSpace();
+        final EmulatorHelper mine=e;
+        e.getEmulator().addMemoryAccessFilter(new ghidra.app.emulator.MemoryAccessFilter() {
+            @Override protected void processRead(ghidra.program.model.address.AddressSpace space,long offset,int size,byte[] values) {
+                java.util.TreeSet<Long> into=reads;
+                if(into==null||space!=memory||mine.getEmulateExecutionState()==ghidra.pcode.emulate.EmulateExecutionState.INSTRUCTION_DECODE) return;
+                if(PersistenceRegression.loader(mine.getExecutionAddress().getOffset())) return;
+                for(long a=offset;a<offset+size;a++) if(watched(a)) into.add(a);
+            }
+            @Override protected void processWrite(ghidra.program.model.address.AddressSpace space,long offset,int size,byte[] values) {}
+        });
+    }
+    static String ranges(java.util.Set<Long> s) {
+        StringBuilder out=new StringBuilder(); long start=-1, last=-2;
+        for(long a:s) {
+            if(a!=last+1) { if(start>=0) out.append(String.format(" %x-%x",start,last+1)); start=a; }
+            last=a;
+        }
+        if(start>=0) out.append(String.format(" %x-%x",start,last+1));
+        return out.toString().trim();
+    }
+    // A run's checks in order, by name, each one's reads printed when
+    // tracing; the first failure ends the run as before.
+    void each(Class<?> in,String... names) throws Exception {
+        for(String name:names) {
+            if(TRACE) { reads=new java.util.TreeSet<>(); traceOn(); }
+            try { PersistenceRegression.declared(in,name).invoke(this); }
+            catch(java.lang.reflect.InvocationTargetException ex) {
+                Throwable c=ex.getCause();
+                if(c instanceof Exception) throw (Exception)c;
+                throw new Exception(c);
+            }
+            finally { if(TRACE) { println("READS "+name+": "+ranges(reads)); reads=null; } }
+        }
+    }
+    void sweep() throws Exception {
+        for (int hz : new int[]{10,150,180,199,200})
+            for (double duty : new double[]{0.1,0.5,0.75,0.9})
+                for (int phase : new int[]{0,250}) square(hz,duty,phase);
+    }
+    // The configuration a run's arguments name, against the one the boot
+    // loaded: the record laid for it (SettingsRecord), and the sequencer and
+    // divider bytes the fixtures below assume.
+    void settingsLanded(boolean seq, boolean divider) throws Exception {
+        fresh(1,25000000);
+        byte[] laid=SettingsRecord.named();
+        String why=laid==null?"":SettingsRecord.landed(e,laid);
+        check("the laid record boots", why==null||why.isEmpty(), why);
+        check("the sequencer and divider bytes are the run's: sequencer="+seq+", divider="+divider,
+              (r(0x6d2d,1)!=0)==seq && (r(0x6d2e,1)!=0)==divider,
+              "0x6d2d="+r(0x6d2d,1)+" 0x6d2e="+r(0x6d2e,1));
     }
     void irq(long us, boolean high) throws Exception {
         time(us);
@@ -228,6 +313,16 @@ public class ClockRegression extends GhidraScript {
     void scan(long us) throws Exception {
         time(us);
         call(0x800031b8L,0x80003256L);
+    }
+    // The same pass entered one block earlier, at 0x8000313a, where the
+    // factory works the glide-rate index out of the PORTAMENTO knob
+    // (state+0x306) and the jack's addend and stores it at state+0x3a2.
+    // scan() starts at the rate lookup that reads that index back, so under
+    // it the knob does nothing: the index stays at the zero fresh() left and
+    // every glide snaps.  Only the glide tests move the knob.
+    void knobScan(long us) throws Exception {
+        time(us);
+        call(0x8000313aL,0x80003256L);
     }
     void internal(long us) throws Exception {
         time(us); periodic=true;
@@ -291,24 +386,60 @@ public class ClockRegression extends GhidraScript {
         call(0x8001c100L,0x100);
     }
     // What settle the emitted image gives the internal beat, in milliseconds,
-    // asked of the firmware rather than assumed. A deadline build spends the
-    // wait as a COUNT target computed at phase A from the actual DAC
-    // transfer, so claim a beat and let one flush run phase A, then read the
-    // target back; an older build writes the milliseconds at the claim.
-    // Returns 0 when the build claims 1 and holds no gate at all. Runs on a
-    // fresh machine and leaves it dirty -- call before the fixture's own
-    // fresh().
+    // asked of the firmware and then held to what the configuration asked
+    // for. A deadline build spends the wait as a COUNT target computed at
+    // phase A from the actual DAC transfer, so claim a beat and let one
+    // flush run phase A, then read the target back; an older build writes
+    // the milliseconds at the claim. 0 when the build claims 1 and holds no
+    // gate at all. Asking alone was the whole check once: an image with the
+    // settle cut to 1 ms held itself to 1 ms and passed, and one that lost
+    // it turned the settle tests into SKIPs. Runs on a fresh machine and
+    // leaves it dirty -- call before the fixture's own fresh().
     int askInternalSettleMs() throws Exception {
         fresh(1,25000000);
         w(0x6236,1,0); w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
         time(50000);
         call(0x8001c700L,0x100);        // the claim
-        if (r(0x625b,1)!=2) return 0;
-        if (!deadlineBuild()) return (int)r(0x60ee,1);
-        flush(50000);                    // phase A stores the target
+        int claim=(int)r(0x625b,1), ms;
+        if (claim!=2) ms=0;
+        else if (!deadlineBuild()) ms=(int)r(0x60ee,1);
+        else {
+            flush(50000);                // phase A stores the target
+            long target=r(0x60dc,4);
+            long now=(50000L*frequency)/1000000L;
+            ms=(int)((target-now)/(frequency/1000));
+        }
+        check("the internal beat's settle is the configured "
+              +expectedInternalSettleMs+" ms, gate_settle_scans x scan_period_ms",
+              ms==expectedInternalSettleMs,
+              "the image gives "+ms+" ms under claim "+claim);
+        return ms;
+    }
+    // The same question for the external beat, whose gate waits for the
+    // later of two legs: edge + deadline + settle, bounded by half the
+    // acquired period, and transfer + settle.  Only the second is the settle
+    // alone, and it stands alone only before a period is acquired, so ask on
+    // a session's first edge: its dequeue pass claims it and runs phase A,
+    // which sends the pitch ahead and targets transfer + settle when a
+    // settle is configured, and targets the transfer itself when none is.
+    // Held to the configuration like the internal one.  Deadline builds
+    // only; runs on a fresh machine and leaves it dirty.
+    int askExternalSettleMs() throws Exception {
+        fresh(1,25000000);
+        int sent=transfers;
+        irq(50000,true);
+        service(50000);                  // the dequeue pass: claim, then phase A
         long target=r(0x60dc,4);
         long now=(50000L*frequency)/1000000L;
-        return (int)((target-now)/(frequency/1000));
+        int ms=target==0 ? -1 : (int)((target-now)/(frequency/1000));
+        check("the external beat's settle is the configured "
+              +expectedExternalSettleMs+" ms, clock_settle_scans x scan_period_ms",
+              ms==expectedExternalSettleMs, "the image gives "+ms+" ms");
+        check("phase A sends the pitch ahead of the gate exactly when an"
+              +" external settle is configured",
+              (transfers>sent)==(expectedExternalSettleMs>0),
+              (transfers-sent)+" transfer(s) at phase A");
+        return ms;
     }
     void abiAndNoise() throws Exception {
         fresh(1,25000000);
@@ -905,7 +1036,7 @@ public class ClockRegression extends GhidraScript {
               (r(0x60ee,1)==1 || r(0x625b,1)!=0) && r(0x6237,1)==1);
         w(0x6234,1,7); w(0x6235,1,5); w(0x6258,2,29);
         w(GPIO+0x60,4,0); time(61000);
-        call(0x80007bf4L,0x80007bf8L);
+        startup();
         check("warm restart clears FIFO and ownership", r(0x6234,4)==0 && r(0x6258,2)==0);
         check("warm restart cancels pre-restart trigger",
               r(0x60ee,1)==0 && r(0x625b,1)==0);
@@ -960,11 +1091,10 @@ public class ClockRegression extends GhidraScript {
     // settle is milliseconds, and quantising it to 5 ms scans is the whole
     // of the beat's jitter. Walk the tempo across that grid and measure.
     void internalJitter() throws Exception {
-        // Ask the FIRMWARE what settle this build was configured with rather
-        // than assuming the default. On a deadline build the wait is the
-        // COUNT target phase A stores; on an older one it is the countdown
-        // clock_settle writes. askInternalSettleMs() reads whichever this
-        // image is.
+        // Ask the FIRMWARE what settle this build carries, and hold it to the
+        // configuration's. On a deadline build the wait is the COUNT target
+        // phase A stores; on an older one it is the countdown clock_settle
+        // writes. askInternalSettleMs() reads whichever this image is.
         final int settleMs=askInternalSettleMs();
         println("internal settle this build asks for: "+settleMs+" ms");
         fresh(1,25000000);
@@ -1002,8 +1132,8 @@ public class ClockRegression extends GhidraScript {
         println("internal beat to trigger us, beats 5..."+(beforeBeats-1)+":"+each);
         println("internal beat to trigger: min="+lo+" max="+hi+" spread="+(hi-lo)+" us");
         // The settle is not given up to buy the promptness.
-        check("every internal beat still gets its full "+settleMs+" ms settle",
-              lo>=settleMs*1000L);
+        check("every internal beat still gets its full "+expectedInternalSettleMs
+              +" ms settle", lo>=expectedInternalSettleMs*1000L, "min "+lo+" us");
         // The target is 1-2 ms peak to peak, on every build, on both clocks.
         check("under a 1 ms fixture the internal beat rides the flush claim "
               +"(fixture-bounded: NOT a hardware jitter figure)", hi-lo<=2000);
@@ -1035,9 +1165,14 @@ public class ClockRegression extends GhidraScript {
         // settle in MILLISECONDS here, not in scans.
         w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
         call(0x8001c700L,0x100);
+        // Which of the two is the configuration's to say: claim 2 holds the
+        // gate for a settle, and claim 1 is right only where none was asked
+        // for. This accepted either, however built.
         int beatClaim=(int)r(0x625b,1);
-        check("the internal beat is claimed by the flush, however built",
-              beatClaim==1 || beatClaim==2);
+        check("the internal beat is claimed by the flush: claim "
+              +(expectedInternalSettleMs>0?2:1)+" for a "+expectedInternalSettleMs
+              +" ms settle", beatClaim==(expectedInternalSettleMs>0?2:1),
+              "claim "+beatClaim);
         check("a held claim leaves the wait where this build spends it",
               beatClaim!=2 || (deadlineBuild() ? r(0x60ee,1)==0
                                                : r(0x60ee,1)>=1));
@@ -1164,76 +1299,163 @@ public class ClockRegression extends GhidraScript {
 
     // The fast path declines when 0x2eee != 0 -- a real portamento time --
     // because it stages the step's TARGET while the scan stages wherever the
-    // glide has got to. Declining sends the beat back to the 5 ms scan. No
-    // other test in this file ever writes 0x2eee, so every jitter figure here
-    // is for a snapping glide; on the instrument the portamento knob decides
-    // it. This measures what the decline costs, with the dispatcher punctual
-    // at 1 kHz the way the internal-clock measurement showed it to be.
+    // glide has got to.  The decline block at 0x8001c1dc drops the claim and
+    // arms the scan's countdown, so the 5 ms scan gates the beat, on the
+    // glide's own position.
+    //
+    // 0x2eee is the scan's to write.  glide_rate_value (0x8001ef10) answers
+    // zero while the pressure blend's live byte 0x6d30 is set, zero while
+    // the PORTAMENTO knob (0x3866, state+0x306) sits in its deadzone below
+    // 0x30, and otherwise the factory table at the index the scan works out
+    // of the knob; seq_glide (0x8001b610) asks the same knob first while the
+    // sequencer plays, blend or not.  This probe used to drive 0x2ee0 and
+    // 0x2ee6, the arp's tempo mirrors, which nothing on that path reads, and
+    // scan() never ran the block that turns the knob into the index: 0x2eee
+    // came out zero in every mode, and the probe printed "decline
+    // unreachable" on the pressure-off build too, where the instrument
+    // declines every beat once the knob is past its deadzone.  Now it moves
+    // the knob, holds 0x2eee to that rule at every corner of it, and
+    // wherever the rule says this build declines, asserts what the decline
+    // does.
     void declinedGlideJitter() throws Exception {
-        // Is the decline branch reachable in THIS build at all?  0x2eee is
-        // derived by the scan, not stored, so it has to be provoked from the
-        // portamento sources rather than written directly.
-        for (int src : new int[]{0,64,256,512,1023}) {
-            fresh(1,25000000);
-            w(0x2ee0,2,src); w(0x2ee6,2,src);
-            scan(10000);
-            println("    portamento sources="+src+" -> 0x2eee="+r(0x2eee,2));
-        }
-        for (int glide : new int[]{0,8,64}) {
-            fresh(1,25000000);
-            w(0x2eee,2,glide);
-            final long period=26200;
-            final int warm=6, beats=20;
-            final List<Long> edges=new ArrayList<>();
-            long rise=10000, fall=rise+period/2, end=10000+period*beats+20000;
-            for (long tick=10000; tick<=end; tick+=1000) {
-                while (Math.min(rise,fall)<=tick) {
-                    if (rise<=fall) {
-                        if (edges.size()>=beats) { rise=end+period; continue; }
-                        irq(rise,true); edges.add(rise); rise+=period;
-                    } else { irq(fall,false); fall+=period; }
-                }
-                bank(tick); service(tick); flush(tick);
-                if (tick%5000==0) {
-                    long before=r(0x2eee,2);
-                    scan(tick);
-                    if (tick==10000) println("    0x2eee before scan="+before
-                                             +" after scan="+r(0x2eee,2));
-                }
+        fresh(1,25000000);
+        final int live=(int)r(0x6d30,1);
+        // The seq fixture plays its take (fresh() starts the transport), so
+        // there seq_glide is the writer; the arp fixture never plays one.
+        final boolean playing=r(0x6158,1)==2;
+        check("the blend's live byte is what the configuration built, "
+              +"pressure_portamento="+expectedBlend,
+              (live!=0)==(expectedBlend!=0), "0x6d30="+live);
+        for (int transport : new int[]{0,2})
+            for (int knob : new int[]{0,0x2f,0x30,0x200,0x3ff}) {
+                fresh(1,25000000);
+                w(0x6158,1,transport);
+                w(S+0x306,2,knob);
+                knobScan(10000);
+                long rate=r(0x2eee,2), entry=r(0x80015150L+2L*knob,2);
+                boolean glides=knob>=0x30 && (live==0 || transport==2);
+                check("knob 0x"+Integer.toHexString(knob)+", sequencer "
+                      +(transport==2?"playing":"stopped")+", blend "
+                      +(live!=0?"on":"off")+": 0x2eee is "
+                      +(glides?"the table's "+entry:"zero"),
+                      glides ? rate!=0 && rate==entry : rate==0,
+                      "0x2eee="+rate);
             }
-            println("    0x2eee at end="+r(0x2eee,2));
-            // A lost trigger is a lost trigger whether or not the decline
-            // branch is reachable in this build: twenty edges went in and
-            // twenty gates have to come out. This was a println and a
-            // `continue`, so the one test that reaches the glide path could
-            // drop a beat and still print PASS.
-            check("glide 0x2eee="+glide+": every edge still gated",
-                  outputTimes.size()>=beats,
-                  outputTimes.size()+" of "+beats);
-            long lo=Long.MAX_VALUE, hi=Long.MIN_VALUE, sum=0; int n=0;
-            for (int i=warm;i<beats;i++) {
-                long d=outputTimes.get(i)-edges.get(i);
-                lo=Math.min(lo,d); hi=Math.max(hi,d); sum+=d; n++;
-            }
-            println("  glide 0x2eee="+glide+(glide==0?" (snapping)":" (written, then"
-                    +" zeroed by the scan)")+": min="+lo+" max="+hi+" spread="
-                    +(hi-lo)+" mean="+(sum/n)+" us");
-            if (glide!=0) glideDeclineSpread=Math.max(glideDeclineSpread,hi-lo);
+        // Twenty edges of a locked /1 clock over the scan grid, with the
+        // knob at zero and then raised, over the same notes.
+        final int warm=6, beats=20;
+        List<Long> edges=glideTrain(0,beats);
+        check("knob at zero: one gate per edge",
+              edges.size()==beats && advances==beats && outputTimes.size()==beats,
+              edges.size()+" edges, "+advances+" advances, "+outputTimes.size()+" gates");
+        check("knob at zero: 0x2eee is zero on every scan", glideScans==0,
+              glideScans+" of "+trainScans+" scans glided");
+        for (int i=warm;i<beats;i++)
+            check("knob at zero: the flush gates beat "+i, !gatedOnScan.get(i),
+                  "the scan gated it");
+        final List<Integer> snapped=new ArrayList<>(dac);
+        long[] snap=edgeToGate(edges,warm);
+        println("  knob 0 (snapping): edge to gate min="+snap[0]+" max="+snap[1]
+                +" spread="+(snap[1]-snap[0])+" us");
+        edges=glideTrain(0x200,beats);
+        check("knob at 0x200: one gate per edge on a locked clock",
+              edges.size()==beats && advances==beats && outputTimes.size()==beats
+              && r(0x6233,1)==1,
+              edges.size()+" edges, "+advances+" advances, "+outputTimes.size()
+              +" gates, lock="+r(0x6233,1));
+        long[] up=edgeToGate(edges,warm);
+        println("  knob 0x200 (0x2eee="+r(0x2eee,2)+"): edge to gate min="+up[0]
+                +" max="+up[1]+" spread="+(up[1]-up[0])+" us");
+        if (live!=0 && !playing) {
+            // The blend is the portamento and no take is playing: every
+            // corner of the rule above answered zero, so there is no decline
+            // to measure, and the knob must leave the trigger exactly where
+            // it was.
+            check("knob at 0x200, blend on, arp: 0x2eee is zero on every scan",
+                  glideScans==0, glideScans+" of "+trainScans+" scans glided");
+            for (int i=warm;i<beats;i++)
+                check("knob at 0x200, blend on, arp: the flush still gates beat "+i,
+                      !gatedOnScan.get(i), "the scan gated it");
+            println("PASS glide probe: with the blend on and no take playing the"
+                    +" knob leaves 0x2eee at zero, so this build never declines");
+            return;
         }
-        // A decline puts the beat back on the 5 ms scan, so it must cost more
-        // than the flush's tick. If it does not, this test is not reaching the
-        // decline branch and proves nothing.
-        // Reported, not asserted.  In a blend build the scan derives 0x2eee=0
-        // from every source tried, so the decline branch is unreachable and
-        // there is nothing here to bound.  The value of this probe is that it
-        // states the glide's condition alongside the jitter, so no future
-        // jitter figure gets quoted without saying whether the glide was
-        // snapping when it was taken.  A build where the sources DO derive a
-        // nonzero 0x2eee will show a spread of a whole scan period here.
-        println("PASS glide probe: decline unreachable from the modeled "
-                +"sources, spread unchanged at "+glideDeclineSpread+" us");
+        // The decline, beat by beat.  It shows as where each gate goes out
+        // and on which DAC word, so the notes move under the fixture - the
+        // take's steps, or two held keys in the arp: a beat repeating one
+        // note gives a gate that staged the target and a gate that took the
+        // glide the same word, and nothing here could tell them apart.
+        check("knob at 0x200: 0x2eee is nonzero on every scan",
+              glideScans==trainScans, glideScans+" of "+trainScans+" scans glided");
+        for (int i=warm;i<beats;i++) {
+            check("knob at 0x200: beat "+i+" gates on the scan's glide position: "
+                  +dac.get(i)+" vs "+scanWords.get(i),
+                  dac.get(i).equals(scanWords.get(i)));
+            check("knob at 0x200: the decline hands beat "+i+" to the 5 ms scan",
+                  gatedOnScan.get(i), "the flush gated it");
+            check("knob at 0x200: beat "+i+" gates mid-glide, not on its note's"
+                  +" own word "+snapped.get(i)+", so a gate that staged the"
+                  +" target would show", !dac.get(i).equals(snapped.get(i)),
+                  "gated "+dac.get(i));
+        }
+        check("knob at 0x200: the declined beats spread over at most one scan"
+              +" period, "+(up[1]-up[0])+" us", up[1]-up[0]<=SCAN_US);
+        println("PASS glide decline: every beat from "+warm+" on declined to the"
+                +" scan and gated on its glide; spread "+(up[1]-up[0])+" us, one"
+                +" scan period at most, where the 1-2 ms target is "
+                +TARGET_SPREAD_US+" us");
     }
-    long glideDeclineSpread=0;
+    // The fixture's pitch scan period, and so the most a declined beat can
+    // wait for the scan that gates it.
+    static final long SCAN_US=5000;
+    // One locked /1 clock of `beats` edges walked over the scan grid, with
+    // the PORTAMENTO knob at `knob` and every scan entered where it works
+    // the glide index out of it.  An arp image holds a second key a fifth
+    // up, so every beat changes note the way a take's steps do.  Records,
+    // per gate, whether a scan raised it and the DAC word the first scan at
+    // or after it left: the glide's own position at that gate.
+    final List<Boolean> gatedOnScan=new ArrayList<>();
+    final List<Integer> scanWords=new ArrayList<>();
+    int glideScans, trainScans;
+    List<Long> glideTrain(int knob, int beats) throws Exception {
+        fresh(1,25000000);
+        if (!sequencer) {
+            w(S+0x21a,1,2); w(S+0x21b+7,1,1);
+            e.writeRegister("R12",7); call(0x8001a020L,0x100);
+        }
+        w(S+0x306,2,knob);
+        gatedOnScan.clear(); scanWords.clear(); glideScans=0; trainScans=0;
+        final long period=26200;
+        final List<Long> edges=new ArrayList<>();
+        long rise=10000, fall=rise+period/2, end=10000+period*beats+20000;
+        for (long tick=10000; tick<=end; tick+=1000) {
+            while (Math.min(rise,fall)<=tick) {
+                if (rise<=fall) {
+                    if (edges.size()>=beats) { rise=end+period; continue; }
+                    irq(rise,true); edges.add(rise); rise+=period;
+                } else { irq(fall,false); fall+=period; }
+            }
+            bank(tick); service(tick); flush(tick);
+            while (gatedOnScan.size()<outputTimes.size()) gatedOnScan.add(false);
+            if (tick%SCAN_US==0) {
+                knobScan(tick);
+                trainScans++;
+                if (r(0x2eee,2)!=0) glideScans++;
+                while (gatedOnScan.size()<outputTimes.size()) gatedOnScan.add(true);
+                while (scanWords.size()<outputTimes.size()) scanWords.add((int)r(S+0x358,2));
+            }
+        }
+        return edges;
+    }
+    // {min, max} of edge-to-gate over the edges from `from` on.
+    long[] edgeToGate(List<Long> edges, int from) {
+        long lo=Long.MAX_VALUE, hi=Long.MIN_VALUE;
+        for (int i=from;i<edges.size();i++) {
+            long d=outputTimes.get(i)-edges.get(i);
+            lo=Math.min(lo,d); hi=Math.max(hi,d);
+        }
+        return new long[]{lo,hi};
+    }
 
     void loopModelJitter() throws Exception {
         println("main-loop model: one dispatcher pop per pass; hardware was"
@@ -1333,15 +1555,23 @@ public class ClockRegression extends GhidraScript {
         int claim=(int)r(0x625b,1);
         println("internal claim="+claim+" countdown="+r(0x60ee,1)
                 +" target="+r(0x60dc,4));
+        // Which claim is the configuration's to say. This used to SKIP on
+        // whatever claim the image took, so an image that lost its settle
+        // skipped the one test that times it.
+        check("the internal beat takes claim "+(expectedInternalSettleMs>0?2:1)
+              +" for a "+expectedInternalSettleMs+" ms settle",
+              claim==(expectedInternalSettleMs>0?2:1), "claim "+claim);
         if (claim!=2) {
-            println("SKIP settle start: this build claims "+claim
-                    +", so there is no held gate to start");
+            println("SKIP settle start: no internal settle configured, so"
+                    +" there is no held gate to start");
             return;
         }
         if (!deadlineBuild()) {
             // Countdown build: the same property in its legacy form.
             long settle=r(0x60ee,1);
-            check("a claimed beat carries its wait in the countdown", settle>=1);
+            check("a claimed beat carries the configured "+expectedInternalSettleMs
+                  +" ms in the countdown", settle==expectedInternalSettleMs,
+                  "countdown "+settle);
             for (long k=1;k<=settle+3;k++) bank(t+k*1000);
             check("the countdown is not spent before phase A has transferred",
                   r(0x60ee,1)==settle && r(0x625b,1)==2 && outputTimes.isEmpty());
@@ -1377,8 +1607,9 @@ public class ClockRegression extends GhidraScript {
         long target=r(0x60dc,4);
         long settleMs=(target-(tA*frequency/1000000L))/(frequency/1000);
         println("target is "+settleMs+" ms after the transfer");
-        check("the stored target is a real settle past the transfer",
-              settleMs>=1);
+        check("the stored target is the configured "+expectedInternalSettleMs
+              +" ms past the transfer", settleMs==expectedInternalSettleMs,
+              settleMs+" ms");
         // A pass before the target holds the gate...
         service(tA+1000);
         check("a pass before the target holds the gate", outputTimes.isEmpty());
@@ -1417,6 +1648,12 @@ public class ClockRegression extends GhidraScript {
             println("SKIP pitch hold: no deadline built");
             return;
         }
+        // Which of the two contracts below applies is the configuration's
+        // to say, not this image's: it used to follow whether phase A
+        // happened to transfer, so an external settle that went missing
+        // took the other branch and passed there.
+        askExternalSettleMs();
+        fresh(1,25000000);
         // The deadline needs an acquired period, so spend four whole beats
         // first and leave the output showing the last one's pitch.
         long t=10000;
@@ -1446,6 +1683,8 @@ public class ClockRegression extends GhidraScript {
             // travel before the trigger.  Assert that instead - the pitch out
             // first, the gate a real settle behind it - rather than skipping,
             // which would leave this config asserting nothing at all.
+            check("only a configured external settle sends the pitch at phase A",
+                  expectedExternalSettleMs>0, "external_settle_ms=0");
             check("a settle build puts the pitch out at phase A",
                   r(S+0x358,2)!=shown);
             long due=(r(0x60dc,4)-t*(frequency/1000000L))/(frequency/1000000L);
@@ -1455,11 +1694,17 @@ public class ClockRegression extends GhidraScript {
                 bank(u); pending(u);
                 if (outputTimes.size()>before) { g=u; break; }
             }
-            check("and its gate waits the settle out", g>0 && g-t>=due);
+            check("and its gate waits the settle out, "+expectedExternalSettleMs
+                  +" ms at least", g>0 && g-t>=due
+                  && g-t>=expectedExternalSettleMs*1000L,
+                  "gate "+(g-t)+" us after the transfer, target "+due+" us");
             println("PASS a configured settle sends the pitch "+(g-t)
                     +" us ahead of its gate, which is what it is for");
             return;
         }
+        check("a configured "+expectedExternalSettleMs+" ms external settle"
+              +" sends the pitch at phase A", expectedExternalSettleMs==0,
+              "phase A transferred nothing");
         check("phase A left the output where it was", r(S+0x358,2)==shown);
         long dueUs=(r(0x60dc,4)-t*(frequency/1000000L))/(frequency/1000000L);
         long gate=-1;
@@ -1495,6 +1740,12 @@ public class ClockRegression extends GhidraScript {
             return;
         }
         irq(10000,true); service(10000); finishStep(19000);
+        // Whether phase A sent the pitch ahead is the configuration's to say:
+        // read off the image alone, an external settle that went missing
+        // turned this test on, and one that appeared unasked skipped it.
+        check("phase A sends the pitch ahead exactly when an external settle"
+              +" is configured ("+expectedExternalSettleMs+" ms)",
+              (transfers>0)==(expectedExternalSettleMs>0), transfers+" transfer(s)");
         if (transfers>0) {
             // With external RC settling the pitch deliberately precedes its
             // gate. pitchWaitsForItsGate() asserts that separate contract.
@@ -1557,8 +1808,9 @@ public class ClockRegression extends GhidraScript {
     void internalSettleTransfersTheNewPitch() throws Exception {
         int settleMs=askInternalSettleMs();
         fresh(1,25000000);
-        if (settleMs<=0) {
-            println("SKIP internal settle pitch: this build holds no gate");
+        if (expectedInternalSettleMs==0) {
+            println("SKIP internal settle pitch: no internal settle configured,"
+                    +" so no gate is held");
             return;
         }
         w(S+0x340,1,1); w(S+0x34a,2,26); w(S+0x38e,2,1);
@@ -1658,14 +1910,14 @@ public class ClockRegression extends GhidraScript {
     }
 
     void anEdgeWaitsForAPendingStep() throws Exception {
-        int settleMs=askInternalSettleMs();
-        if (!deadlineBuild() || settleMs<=0) {
+        askInternalSettleMs();
+        if (!deadlineBuild() || expectedInternalSettleMs==0) {
             println("SKIP pending takeover: no held internal step to take over");
             return;
         }
         for (int hz : new int[]{25000000,60000000})
             for (boolean before : new boolean[]{true,false})
-                pendingStepKeepsItsSource(before,hz,settleMs);
+                pendingStepKeepsItsSource(before,hz,expectedInternalSettleMs);
     }
 
     // A sequenced step is stored RELATIVE to the transpose its take was born
@@ -2090,13 +2342,17 @@ public class ClockRegression extends GhidraScript {
     static final long TARGET_SPREAD_US=2000;
 
     void internalDispatchModel() throws Exception {
-        // Ask the firmware what it was built with rather than assuming the
-        // shipped settle: no-gate-settle claims 1 and holds no gate at all,
-        // and the two-dispatch structure is not what that build does.
+        // What the configuration built, not only the shipped settle:
+        // no-gate-settle claims 1 and holds no gate at all, and the
+        // two-dispatch structure is not what that build does.  The claim and
+        // the settle are both held to the configuration.
         fresh(1,25000000);
         w(0x6236,1,0); w(0x60ee,1,0); w(0x625b,1,0); w(S+0x340,1,1);
         call(0x8001c700L,0x100);
         final int claim=(int)r(0x625b,1);
+        check("the internal beat takes claim "+(expectedInternalSettleMs>0?2:1)
+              +" for a "+expectedInternalSettleMs+" ms settle",
+              claim==(expectedInternalSettleMs>0?2:1), "claim "+claim);
         final long settleMs=askInternalSettleMs();
         println("internal beat under the ring model: hardware was min="
                 +HW_INT_MIN+" max="+HW_INT_MAX+" spread="+(HW_INT_MAX-HW_INT_MIN)
@@ -2147,9 +2403,10 @@ public class ClockRegression extends GhidraScript {
         // nominal 5000 (a whole event-17 dispatch sat before phase A); a
         // mean back above settle + 1.5 ms is that dispatch having returned,
         // and a mean BELOW the settle is the defect having returned.
-        if (claim==2 && deadlineBuild())
+        if (expectedInternalSettleMs>0 && deadlineBuild())
             check("the internal wait is the settle plus main-loop service",
-                  nominal>=settleMs*1000L && nominal<=settleMs*1000L+1500);
+                  nominal>=settleMs*1000L && nominal<=settleMs*1000L+1500,
+                  "mean "+nominal+" us");
         check("the internal beat is inside the 1-2 ms target under the model",
               !deadlineBuild() || widest<=TARGET_SPREAD_US);
         println("PASS internal ring model: mean "+nominal+" us against a"
@@ -2184,7 +2441,7 @@ public class ClockRegression extends GhidraScript {
         long[] cells={0x6032,0x6034,0x6038,0x603a,0x603c,0x6040,0x6042,
                       0x6044,0x62f0,0x62f2};
         for (long a : cells) w(a,2,0xbeef);
-        call(0x80007bf4L,0x80007bf8L);   // the real startup hook
+        startup();   // the real startup hook
         for (long a : cells)
             check("clock-latency cell 0x"+Long.toHexString(a)
                   +" cleared at startup", r(a,2)==0);
@@ -2501,26 +2758,54 @@ public class ClockRegression extends GhidraScript {
 
     public void run() throws Exception {
         sequencer=getScriptArgs().length==0 || !getScriptArgs()[0].equals("arp");
+        // The configuration's settles and blend, as setting=value after the
+        // positional arguments.  Required: a runner that does not say what it
+        // built leaves nothing to hold the image to.
+        for (String arg : getScriptArgs()) {
+            String[] kv=arg.split("=",2);
+            if (kv.length<2) continue;
+            int v=Integer.parseInt(kv[1]);
+            if (kv[0].equals("internal_settle_ms")) expectedInternalSettleMs=v;
+            else if (kv[0].equals("external_settle_ms")) expectedExternalSettleMs=v;
+            else if (kv[0].equals("pressure_portamento")) expectedBlend=v;
+            else throw new Exception("unknown argument "+arg);
+        }
+        if (expectedInternalSettleMs<0 || expectedExternalSettleMs<0 || expectedBlend<0)
+            throw new Exception("ClockRegression needs internal_settle_ms=,"
+                +" external_settle_ms= and pressure_portamento= from its runner"
+                +" (tools/test_clock.py works them out of the configuration)");
         try {
+            settingsLanded(sequencer, true);
             // The settle variants exist to hold the TRIGGER to its bound at
             // settings the shipped build does not use. The rest of the suite
             // is fixture-timed for the shipped settle and says nothing extra
             // under them, so those builds run the jitter set alone.
             boolean jitterOnly = List.of(getScriptArgs()).contains("jitter");
-            heldTransposeSurvivesEveryBeat();
+            each(ClockRegression.class,"heldTransposeSurvivesEveryBeat");
             // Both of these play a TAKE, which only a sequencer build has
             // the caves for - under the arp image the fixture would sound
             // nothing at all and fail on the silence.
-            if (sequencer) { sequencedStepTakesTheOctaveOnce(); sequencedGateIsHalfTheStep(); sequencedGateHoldsAFinalTie(); sequencedGateIsHalfTheDividedStep(); }
+            if (sequencer) each(ClockRegression.class,"sequencedStepTakesTheOctaveOnce","sequencedGateIsHalfTheStep",
+                "sequencedGateHoldsAFinalTie","sequencedGateIsHalfTheDividedStep");
             if (jitterOnly) {
-                millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan();
+                each(ClockRegression.class,"millisecondTimebase","refractoryRejectsACloseEdge","bitFieldInstructions",
+                    "latencyCellsCleared","latencySplitsAtClaim","latencyTimesTheInternalBeat","latencyIgnoresABacklog",
+                    "latencyCountSaturates","riseJitter","internalJitter","declinedGlideJitter","loopModelJitter",
+                    "settleStartsAtTheTransfer","pitchWaitsForItsGate","heldPitchIsNeverOlderThanTheLastGate",
+                    "internalSettleTransfersTheNewPitch","anEdgeWaitsForAPendingStep","pendingGatesWithoutADispatch",
+                    "internalDispatchModel","keyboardKeepsTheScan");
             } else {
-            millisecondTimebase(); refractoryRejectsACloseEdge(); bitFieldInstructions(); latencyCellsCleared(); latencySplitsAtClaim(); latencyTimesTheInternalBeat(); latencyIgnoresABacklog(); latencyCountSaturates(); abiAndNoise(); dispatchJitter(); riseJitter(); internalJitter(); declinedGlideJitter(); loopModelJitter(); settleStartsAtTheTransfer(); pitchWaitsForItsGate(); heldPitchIsNeverOlderThanTheLastGate(); internalSettleTransfersTheNewPitch(); anEdgeWaitsForAPendingStep(); pendingGatesWithoutADispatch(); internalDispatchModel(); keyboardKeepsTheScan(); bendAgreesWithTheScan(); scanFlushOrder(); divideAndSlow(); thresholdsFollowTheCells(); lockFollowsTheCell(); overflowAndWrap(); longLowAndTies(); warmRestart();
+                each(ClockRegression.class,"millisecondTimebase","refractoryRejectsACloseEdge","bitFieldInstructions",
+                    "latencyCellsCleared","latencySplitsAtClaim","latencyTimesTheInternalBeat","latencyIgnoresABacklog",
+                    "latencyCountSaturates","abiAndNoise","dispatchJitter","riseJitter","internalJitter",
+                    "declinedGlideJitter","loopModelJitter","settleStartsAtTheTransfer","pitchWaitsForItsGate",
+                    "heldPitchIsNeverOlderThanTheLastGate","internalSettleTransfersTheNewPitch",
+                    "anEdgeWaitsForAPendingStep","pendingGatesWithoutADispatch","internalDispatchModel",
+                    "keyboardKeepsTheScan","bendAgreesWithTheScan","scanFlushOrder","divideAndSlow",
+                    "thresholdsFollowTheCells","lockFollowsTheCell","overflowAndWrap","longLowAndTies","warmRestart");
             }
             if (!jitterOnly && (getScriptArgs().length<2 || !getScriptArgs()[1].equals("quick")))
-            for (int hz : new int[]{10,150,180,199,200})
-                for (double duty : new double[]{0.1,0.5,0.75,0.9})
-                    for (int phase : new int[]{0,250}) square(hz,duty,phase);
+                each(ClockRegression.class,"sweep");
             println("CLOCK REGRESSION PASS: "+checks+" assertions; max GPIO ISR steps="+maxIrqSteps
                     +"; mode="+(sequencer?"sequencer":"arp"));
         } finally { if(e!=null)e.dispose(); }

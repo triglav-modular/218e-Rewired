@@ -491,9 +491,16 @@ const OLD = {
 
   // The same drift one level up: a field the page sends that the worker never
   // reads is collected from the browser and thrown away.
-  const body = app.match(/var body = JSON\.stringify\(\{([\s\S]*?)\n            \}\);/);
-  const sent = body ? (body[1].match(/^\s{16}(\w+):/gm) || [])
-    .map((m) => m.trim().replace(':', '')) : [];
+  // The download's body: its own two fields, the option summary it shares
+  // with a send, and the daily ordinal set after it.
+  const own = app.match(/var fields = \{([\s\S]*?)\n            \};/);
+  const summary = app.match(/function optionSummary\(o\) \{\n        return \{([\s\S]*?)\n        \};/);
+  const sent = own && summary
+    ? (own[1].match(/^\s{16}(\w+):/gm) || [])
+      .concat(summary[1].match(/^\s{12}(\w+):/gm) || [])
+      .map((m) => m.trim().replace(':', ''))
+      .concat([...app.matchAll(/^\s{12}fields\.(\w+) = /gm)].map((m) => m[1]))
+    : [];
   // The cap is written down twice - the page stops counting at it, the worker
   // refuses anything above it - and the two failing to agree is silent in both
   // directions: a page counting past the worker's ceiling has its busiest
@@ -524,6 +531,10 @@ async function postSettings(body, env, url) {
 }
 const SEND = { action: 'send', outcome: 'ok', version: '3.0.0', firmware: '3.0.0',
                restarted: true, nth_today: 2 };
+// The option summary a download carries, as a send carries it under
+// `options`: REAL without the download's own fields.
+const SENT_OPTIONS = Object.fromEntries(Object.entries(REAL)
+  .filter(([k]) => !['platform', 'version', 'nth_today'].includes(k)));
 
 {
   const env = fakeEnv();
@@ -543,6 +554,72 @@ const SEND = { action: 'send', outcome: 'ok', version: '3.0.0', firmware: '3.0.0
         k && k.opts.expirationTtl === 400 * 24 * 60 * 60, k && String(k.opts.expirationTtl));
   check('never in the dataset, whose columns all mean a build',
         env.written.length === 0, `${env.written.length} point(s)`);
+}
+
+{
+  // A send carrying its options: they land exactly as the same options in a
+  // download do, so the dashboard counts the two side by side.
+  const env = fakeEnv();
+  await postSettings({ ...SEND, options: SENT_OPTIONS }, env);
+  const m = env.keys[0].opts.metadata;
+  const dl = fakeEnv();
+  await post(REAL, dl);
+  const b = dl.keys[0].opts.metadata;
+  const optionKeys = Object.keys(b).filter((k) =>
+    !['platform', 'version', 'nth_today'].includes(k));
+  const differ = optionKeys.filter((k) => m[k] !== b[k]);
+  check('a send\'s options land exactly as a download\'s do',
+        optionKeys.length === 17 && differ.length === 0,
+        `${optionKeys.length} option fields; differ: ${differ.join(', ')}`);
+  check('beside the send\'s own fields, untouched',
+        m.action === 'send' && m.outcome === 'ok' && m.version === '3.0.0'
+        && m.firmware === '3.0.0' && m.restarted === 1 && m.nth_today === 2,
+        JSON.stringify(m));
+  check('and still small enough for KV metadata',
+        JSON.stringify(m).length <= 1024, String(JSON.stringify(m).length));
+  check('and never in the dataset', env.written.length === 0);
+
+  // The page's real body, options and all, is well inside the body limit.
+  const text = JSON.stringify({ ...SEND, options: SENT_OPTIONS });
+  check('the page\'s send body fits the worker\'s 1024-character limit',
+        text.length <= 1024, String(text.length));
+}
+
+{
+  // A read carries no options, and one that claims some is not believed:
+  // what a keyboard holds was counted when somebody chose it.
+  const env = fakeEnv();
+  await postSettings({ action: 'read', outcome: 'ok', version: '3.0.0',
+                       firmware: '3.0.0', nth_today: 1, options: SENT_OPTIONS }, env);
+  const m = env.keys[0].opts.metadata;
+  check('a read never records options', !('volts' in m) && !('knob1' in m),
+        JSON.stringify(m));
+}
+
+{
+  // A send from a page older than this carries none: nothing is recorded
+  // for them, rather than a send with every option off.
+  const env = fakeEnv();
+  await postSettings(SEND, env);
+  const m = env.keys[0].opts.metadata;
+  check('a send without options records none', !('volts' in m) && !('arp' in m),
+        JSON.stringify(m));
+}
+
+{
+  const env = fakeEnv();
+  await postSettings({ ...SEND, options: { volts_per_octave: '<script>', knob1: 'rm',
+                       portamento_in: 'x'.repeat(40), alternate_tunings: 99,
+                       arp_patterns: -5, sequencer: 'yes' } }, env);
+  const m = env.keys[0].opts.metadata;
+  check('hostile options never reach the namespace as themselves',
+        m.volts === 'other' && m.knob1 === 'other' && m.portamento_in === 'other'
+        && m.tunings === -1 && m.patterns === -1 && m.sequencer === -1,
+        JSON.stringify(m));
+  const arr = fakeEnv();
+  await postSettings({ ...SEND, options: ['knob1'] }, arr);
+  check('options that are not an object are ignored',
+        !('volts' in arr.keys[0].opts.metadata), JSON.stringify(arr.keys[0].opts.metadata));
 }
 
 {
@@ -627,6 +704,8 @@ const SEND = { action: 'send', outcome: 'ok', version: '3.0.0', firmware: '3.0.0
   const fn = source.slice(source.indexOf('async function recordSettings'),
                           source.indexOf('export default'));
   const ignored = sent.filter((f) => !fn.includes(`body.${f}`));
+  check('a send\'s options go through the same reader as a download\'s',
+        fn.includes('optionsOf(body.options)'));
   check('every field the settings beacon sends is one the worker records',
         sent.length > 0 && ignored.length === 0,
         sent.length ? `the worker never reads ${ignored.join(', ')}`

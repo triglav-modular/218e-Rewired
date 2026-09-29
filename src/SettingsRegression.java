@@ -26,6 +26,18 @@ public class SettingsRegression extends PersistenceRegression {
     // +0x10 and the spin at +0x12.
     static final long RESTART=0x8001fb60L, RESTART_1ST=RESTART+0xc, RESTART_2ND=RESTART+0x10, RESTART_SPIN=RESTART+0x12;
     static final long ISPK=0x4953504bL;
+    // restart_quiet, on settings_apply's restart word ahead of it: the head
+    // of its wait for port one's ring.  Port one's queue writer, which both
+    // port-one senders hand three bytes to; port two's own note senders,
+    // reached while its link is up (state+0x349); the factory's two note-on
+    // senders, port one's and the one that also marks the active-note table
+    // at 0x3924; the ring, its read index at +0x60 and write at +0x64, and
+    // the byte the USART interrupt is at in its packet.
+    static final long RQ=0x80020c80L, RQ_LOOP=RQ+0x90, QUEUE=0x80009a64L, USB_OFF=0x800081f0L;
+    static final long PORT2_ON=0x80007f5cL, PORT2_OFF=0x80007fc8L, DIN_ON=0x80007de8L, TABLE_ON=0x80008170L;
+    static final long RING=0x465c, ISR_BYTE=0x2f74, NOTES=0x3924, CONTACT_WORD=0x80005650L;
+    // note_on_period: the MIDI note-on's drop off OCTAVE, a seventh octave site.
+    static final long NP=0x80020c68L, NPPOOL=NP+0xc, NOTE_DROP=0x800064f8L;
     static final int LEN=0x2a8, PAY=0x20, END=0x288, LAYOUT=2;
     static final String[] NUMBERS={"tie_glide_rate","strip_halfway_units","clock_min_ms",
         "clock_rearm_us","clock_lock_pulses","transpose_cv_period","transpose_cv_zero",
@@ -54,6 +66,8 @@ public class SettingsRegression extends PersistenceRegression {
     // Phase F: the pressure dispatchers, the three hook caves, the interpolator's gate, the route word, the glide value, the boot clear.
     static final long PF=0x8001ee00L, K1=0x8001ee20L, K4=0x8001ee40L, C2=0x8001ee60L, C1=0x8001ee80L, GN=0x8001eea0L;
     static final long IP=0x8001eec0L, PB=0x8001eef0L, GR=0x8001ef10L, OBC=0x8001ef40L;
+    // gain_pair_guard, where pitch_clamp_2's off path replays the gain load.
+    static final long GAINGUARD=0x80021c00L;
     static final long REBASE=0x8001ad28L, PIN=0x8001eca8L, BLENDAT=0x80019c64L, STALLED=0x4718;
     // option_boot, and option_boot_state between it and the blend tail: the state an option owns, cleared with it off.
     static final long OB=0x8001fdf0L, OBS=0x8001ff30L;
@@ -63,6 +77,8 @@ public class SettingsRegression extends PersistenceRegression {
     static final long SQC=0x8001ed60L;
     static final long CURVE=0x80019580L, I2F=0x80013350L, KNOB1=0x800194c0L, FKNOB1=0x80004188L, KNOB4=0x80014380L, FKNOB4=0x80004070L;
     static final long COND=0x8001ad78L, REMAPCAVE=0x80019980L, INTERP=0x8001a600L, INTERPOUT=0x8001a688L, GLIDETABLE=0x80015150L;
+    // pitch_clamp (the clamp-chain scan, 2026-09-28): the scan's one clamp, on both of the pitch hook's routes.
+    static final long PITCHCLAMP=0x80023cd0L;
     // Phase G: the ISR dispatch, the event-10 dispatch, the pulse dispatch, and what they choose.
     static final long CI=0x8001ef60L, CE=0x8001ef90L, PU=0x8001efc0L, CAPTURE=0x8001c200L, FBODY=0x800072f4L;
     static final long SKIP10=0x800051b0L, ARPSTEP=0x8000210cL, CLOCKPULSE=0x8001c700L, DEFER=0x8001a26cL, ISR=0x800072e4L, ISREND=0x80007328L;
@@ -76,6 +92,16 @@ public class SettingsRegression extends PersistenceRegression {
     static final long CALCMD=0x80020200L, CALNOTE=0x80020240L, CALPITCH=0x80020290L, CALSTORE=0x800202e0L;
     static final long CALBARE=0x80020310L, CALARP=0x80020330L, CALKEY=0x80020350L;
     long wdtFirst=-1, wdtSecond=-1, keyAtArm=-1, keyAtSpin=-1; int restarts;
+    // What the restart sends and when.  Port one's packets as its queue
+    // writer is handed them (the ring fills for real: no interrupt drains it
+    // here), port two's notes, and where each list stood when the watchdog's
+    // first word went out.  The wait's time is this fixture's: each pass of
+    // the loop is a millisecond on the factory's count unless msStands, and
+    // cyclesPerPass of COUNT; drainAt empties the ring on that pass with the
+    // interrupt mid-packet, and interruptDoneAt finishes the packet.
+    final List<int[]> din=new ArrayList<>(), port2=new ArrayList<>();
+    int passes, drainAt=-1, interruptDoneAt=-1, dinAtArm=-1, port2AtArm=-1, usbAtArm=-1, passesAtArm=-1;
+    boolean msStands; long cyclesPerPass=1000, msAtArm=-1;
     Properties props=new Properties();
     byte[] record;
     boolean keepSlots, stubChain, failWrite, stubSelector;
@@ -117,7 +143,22 @@ public class SettingsRegression extends PersistenceRegression {
         // The key has to be in SRAM word 0 before the watchdog is armed: after
         // a watchdog reset the bootloader stops the watchdog only when it
         // finds its key there (AVR32784, Figure 6-2).
-        if(p==RESTART_1ST) keyAtArm=r(0,4);
+        if(p==RESTART_1ST) {
+            keyAtArm=r(0,4); msAtArm=r(MS,4); passesAtArm=passes;
+            dinAtArm=din.size(); port2AtArm=port2.size(); usbAtArm=sent.size();
+        }
+        if(p==QUEUE) { long b=reg("R11"); din.add(new int[]{(int)r(b,1),(int)r(b+1,1),(int)r(b+2,1)}); }
+        if(p==PORT2_ON||p==PORT2_OFF) {
+            port2.add(new int[]{p==PORT2_ON?1:0,(int)reg("R12"),(int)reg("R11"),(int)reg("R10")});
+            ret(); return;
+        }
+        if(p==RQ_LOOP) {
+            passes++;
+            if(passes==drainAt) { w(RING+0x60,4,r(RING+0x64,4)); w(ISR_BYTE,4,2); }
+            if(passes==interruptDoneAt) w(ISR_BYTE,4,0);
+            if(!msStands) w(MS,4,r(MS,4)+1);
+            e.writeRegister("COUNT",(reg("COUNT")+cyclesPerPass)&0xffffffffL);
+        }
         if(p==RESTART_2ND) wdtFirst=r(WDT,4);
         if(p==RESTART_SPIN) { wdtSecond=r(WDT,4); keyAtSpin=r(0,4); restarts++; ret(); return; }
         if(p==SENDER) {
@@ -353,6 +394,96 @@ public class SettingsRegression extends PersistenceRegression {
             keyAtArm==ISPK&&keyAtSpin==ISPK);
         keepSlots=false;
         println("PASS commit: alternating slots, generations, a failed write, reload, defaults and the restart");
+    }
+    // The restart owes a receiver its note-offs (audit 038711a): the
+    // watchdog takes the keyboard down, nothing at boot sends one, and a
+    // synth following it would hold whatever was sounding.  A key held, and
+    // two notes the arp or the poly sender leaves in the factory's
+    // active-note table - one of them 127, where the factory panic's walk
+    // stops short - each through the factory's own senders.  Then 0x3f04
+    // with the key must put a note-off for each on both ports, and CC 121
+    // and CC 123 on both, all before the watchdog's first word; and wait for
+    // port one's ring to empty and its interrupt to finish the packet it is
+    // on, with a bound on the millisecond count and another in COUNT for
+    // when that count stands still.  The key and the two-key watchdog write
+    // are unchanged.  Two more states, one a run: another path's note-off
+    // for the key's note number on another channel, which clears the
+    // table's record of the key's note while it sounds on, so only the
+    // mono note's own step can end it; and the instrument's channel
+    // changed since the notes went out, so each note-off has to go on the
+    // channel its note went out on and only the controllers on the new one.
+    int count(List<int[]> list,int from,int a,int b) {
+        int n=0; for(int[] m:list.subList(from,list.size())) if(m[0]==a&&m[1]==b) n++; return n;
+    }
+    String packets(List<int[]> list,int from,int to) {
+        StringBuilder t=new StringBuilder();
+        for(int[] m:list.subList(from,to)) t.append(" ").append(Arrays.toString(m));
+        return t.toString();
+    }
+    void restartQuiet() throws Exception {
+        String[] runs={"the ring never empties","the ring empties on pass 3, the packet on pass 5, "
+            +"the key's note gone from the table","the millisecond count stands still, the channel changed"};
+        for(int run=0;run<3;run++) {
+            fresh(); clockExercise=true;   // the gate's pulse is not what this is about
+            w(S+0x349,1,1);                // port two's link up: the page is on it
+            int ch=(int)r(S+0x2e7,1), other=(ch+1)&15;
+            din.clear(); port2.clear(); sent.clear();
+            e.writeRegister("R12",9); call(r(CONTACT_WORD,4));
+            int note=(int)r(S+0x2e1,1);
+            check("a held key sounds its mono note on both ports and in the table: note "+note
+                +", port one"+packets(din,0,din.size())+", port two"+packets(port2,0,port2.size()),
+                note<128&&r(0x33c5,1)==1&&r(NOTES+8L*note,4)==1
+                &&count(din,0,0x90|ch,note)==1&&count(port2,0,1,note)==1);
+            for(int n:new int[]{60,127}) {
+                e.writeRegister("R12",n); e.writeRegister("R11",100); e.writeRegister("R10",ch); call(DIN_ON);
+                e.writeRegister("R12",n); e.writeRegister("R11",100); e.writeRegister("R10",ch); call(TABLE_ON);
+            }
+            check("notes 60 and 127 are in the table",r(NOTES+8L*60,4)==1&&r(NOTES+8L*127,4)==1);
+            if(run==1) {
+                e.writeRegister("R12",note); e.writeRegister("R11",0x40); e.writeRegister("R10",other); call(USB_OFF);
+                check("another channel's note-off for the key's note number leaves the key sounding and the table without it",
+                    r(S+0x2e1,1)==note&&r(0x33c5,1)==1&&r(NOTES+8L*note,4)==0);
+            }
+            int now=ch;
+            if(run==2) { now=other; w(S+0x2e7,1,other); }
+            int d0=din.size(), p0=port2.size(), u0=sent.size();
+            restarts=0; passes=0; wdtFirst=-1; wdtSecond=-1; keyAtArm=-1; keyAtSpin=-1; w(0,4,0);
+            dinAtArm=-1; port2AtArm=-1; usbAtArm=-1; passesAtArm=-1; msAtArm=-1;
+            drainAt=run==1?3:-1; interruptDoneAt=run==1?5:-1;
+            msStands=run==2; cyclesPerPass=run==2?25000:1000;
+            long ms0=r(MS,4);
+            nrpn(0x3f04,0x2a2a);
+            check(runs[run]+": the restart reaches the watchdog, 0x55 then 0xaa, with the ISP key in SRAM word 0 first",
+                restarts==1&&wdtFirst==0x55000701L&&wdtSecond==0xaa000701L&&keyAtArm==ISPK&&keyAtSpin==ISPK);
+            String sentOne=packets(din,d0,din.size()), sentTwo=packets(port2,p0,port2.size());
+            check(runs[run]+": a note-off on port one for each sounding note on the channel it went out on, then CC 121 "
+                +"and CC 123 on the instrument's channel, between the 0x3f04 and the watchdog:"+sentOne,
+                dinAtArm-d0==5&&din.size()==dinAtArm
+                &&count(din,d0,0x80|ch,note)==1&&count(din,d0,0x80|ch,60)==1&&count(din,d0,0x80|ch,127)==1
+                &&count(din,d0,0xb0|now,0x79)==1&&count(din,d0,0xb0|now,0x7b)==1);
+            boolean onItsChannel=true;
+            for(int[] m:port2.subList(p0,port2.size())) onItsChannel&=m[0]==0&&m[3]==ch;
+            check(runs[run]+": and on port two:"+sentTwo+", "+(sent.size()-u0)+" CC(s)",
+                port2AtArm-p0==3&&port2.size()==port2AtArm&&onItsChannel
+                &&count(port2,p0,0,note)==1&&count(port2,p0,0,60)==1&&count(port2,p0,0,127)==1
+                &&usbAtArm-u0==2&&sent.size()==usbAtArm
+                &&sent.get(u0)[0]==0x79&&sent.get(u0)[1]==0&&sent.get(u0)[2]==now
+                &&sent.get(u0+1)[0]==0x7b&&sent.get(u0+1)[1]==0&&sent.get(u0+1)[2]==now);
+            check(runs[run]+": nothing is left sounding: the table, the mono note and its flag",
+                r(NOTES+8L*note,4)==0&&r(NOTES+8L*60,4)==0&&r(NOTES+8L*127,4)==0
+                &&r(S+0x2e1,1)==0xff&&r(0x33c5,1)==0);
+            long waited=msAtArm-ms0;
+            if(run==0) check("the ring never empties: the watchdog is armed once the count passes 40 ms: "
+                +waited+" ms, "+passesAtArm+" passes",waited>40&&waited<=42&&passesAtArm==waited);
+            if(run==1) check("the ring empties on pass 3 with the interrupt mid-packet, which ends on pass 5: armed on pass "
+                +passesAtArm,passesAtArm==5);
+            if(run==2) check("the count stands still: the wait ends on COUNT, between 40 and 200 ms at 25 MHz: "
+                +passesAtArm+" passes of 1 ms",r(MS,4)==ms0&&passesAtArm>=40&&passesAtArm<=200);
+        }
+        msStands=false; cyclesPerPass=1000; drainAt=-1; interruptDoneAt=-1; clockExercise=false;
+        println("PASS the restart ends every sounding note on both ports on its own channel, the key's note when the table has "
+            +"lost it, CC 121 and CC 123 after, then waits for port one's ring, at most 40 ms or 0x400000 cycles, "
+            +"before the key and the watchdog");
     }
     void dumps() throws Exception {
         fresh(); keepSlots=true; sent.clear();
@@ -721,8 +852,19 @@ public class SettingsRegression extends PersistenceRegression {
         w(LIVE+7,1,0); w(S+0x33c,4,0x1234); w(0x3216+0x1c,2,0x2345);
         e.writeRegister("R9",9); e.writeRegister("R11",11); e.writeRegister("R12",12);
         long p=resolve(C2);
+        check("fix off: the gain's load goes on to the pair guard, "+Long.toHexString(p),p==GAINGUARD);
+        p=resolve(GAINGUARD);
         check("fix off: the gain's pair replays - the gain in R8 - and returns, R9, R11, R12 kept",
             p==0x100&&reg("R8")==0x1234&&reg("R9")==9&&reg("R11")==11&&reg("R12")==12);
+        // The cell is the fix's floor/ceiling pair as often as the factory's
+        // float: a pair reads as the factory's 12.0, the factory's own 0.0,
+        // 12.0 and knob floats as they stand, and the cell keeps what it had.
+        for(long[] g:new long[][]{{0x02330352L,0x41400000L},{0x01c40348L,0x41400000L},{0x000003ffL,0x000003ffL},
+                                  {0x03ff001fL,0x03ff001fL},{0,0},{0x41400000L,0x41400000L},{0x3c703c0fL,0x3c703c0fL}}) {
+            w(S+0x33c,4,g[0]); p=resolve(GAINGUARD);
+            check("fix off: a gain cell of 0x"+Long.toHexString(g[0])+" reaches the multiply as 0x"+Long.toHexString(reg("R8")),
+                p==0x100&&reg("R8")==g[1]&&r(S+0x33c,4)==g[0]);
+        }
         p=resolve(C1);
         check("fix off: the filter's pair replays - the history in R8 - and returns",p==0x100&&reg("R8")==0x2345);
         w(LIVE+7,1,1);
@@ -749,7 +891,17 @@ public class SettingsRegression extends PersistenceRegression {
         w(LIVE+8,1,1); e.writeRegister("R12",0x3e8); p=resolve(PB);
         check("blend on: the pitch hook routes through the conditioner with the pitch kept",p==COND&&reg("R12")==0x3e8);
         w(LIVE+8,1,0); e.writeRegister("R12",0x3e8); p=resolve(PB);
-        check("blend off: the pitch hook goes straight to the remap",p==REMAPCAVE&&reg("R12")==0x3e8);
+        check("blend off: the pitch hook goes to the scan's one clamp, the pitch kept",p==PITCHCLAMP&&reg("R12")==0x3e8);
+        // And the clamp holds it at both ends and goes on to the remap:
+        // the scan carries glide plus bend unclamped since the clamp-chain
+        // scan (2026-09-28), so this is the only clamp on the blend-off
+        // route, as blend_offset_apply's call is on the blend's.
+        for(long[] c:new long[][]{{0x3e8,0x3e8},{-0x78,-0x78},{-0x79,-0x78},{-0x1e4,-0x78},{0xfff,0xfff},{0x1000,0xfff},{0x2000,0xfff}}) {
+            e.writeRegister("R12",c[0]&0xffffffffL); p=resolve(PITCHCLAMP);
+            check("the scan's one clamp takes "+c[0]+" to "+c[1]+" and on to the remap: R12="+(int)reg("R12"),
+                p==REMAPCAVE&&(int)reg("R12")==c[1]);
+        }
+        check("and the blend's apply shim reaches the remap through the same clamp",r(0x8001a92cL,4)==PITCHCLAMP);
         w(LIVE+8,1,1); e.writeRegister("R9",3); p=resolve(GR);
         check("blend on: the glide rate value is zero, the index kept",p==0x100&&reg("R8")==0&&reg("R9")==3);
         w(LIVE+8,1,0); w(S+0x306,2,0x10); p=resolve(GR);
@@ -768,7 +920,7 @@ public class SettingsRegression extends PersistenceRegression {
         // raised while notes changed, then parked, left -200 there until the
         // next boot (audit 2026-09-24).
         for(int on=1;on>=0;on--) {
-            w(LIVE+8,1,on); w(0x6158,1,0); w(0x60e2,2,0); w(0x60f4,2,0xffff);
+            w(LIVE+8,1,on); w(0x6158,1,0); w(0x60e2,2,0); w(0x60f4,2,0x7fff);
             for(long b:new long[]{1000,1500,1200}) {
                 w(S+0x350,2,b); w(S+0x306,2,0x200); e.writeRegister("R12",b); call(REBASE);
             }
@@ -806,6 +958,11 @@ public class SettingsRegression extends PersistenceRegression {
             hooked&=r(s[0],4)==(0xf01f0000L|(disp&0xffffL));
         }
         check("the six factory octave sites call octave_period's words, and the words name its entries",hooked);
+        // The seventh, the MIDI note-on's drop with the switch off OCTAVE, is
+        // a call onto note_on_period's word, which names it.
+        long dropDisp=(NPPOOL-(NOTE_DROP&~3L))>>2;
+        check("the MIDI note-on's drop calls note_on_period's word, and the word names it",
+            r(NOTE_DROP,4)==(0xf01f0000L|(dropDisp&0xffffL))&&r(NPPOOL,4)==NP);
         // seq_restart_clear: called from seq_restart_init, zeroes the
         // sequencer's runtime and leaves its musical cells.
         check("seq_restart_init's second word names seq_restart_clear",r(0x8001dfa4L,4)==SQC);
@@ -815,12 +972,15 @@ public class SettingsRegression extends PersistenceRegression {
         w(0x6500,2,0x888); w(0x6503,1,2); w(0x657a,2,0x999); w(0x657c,1,3); w(0x657e,1,8); w(0x6580,4,0xaaaaL); w(0x6584,2,0xbbb);
         w(0x6090,1,1); w(0x6091,1,4); w(0x6092,1,5); w(0x6600,2,0xccc);
         call(SQC);
-        check("seq_restart_clear zeroes the runtime: snapshot, flags, chord and mode, cursor, borrowed strip, countdown, stamps, reference, preview, audition, lamps, latch shadow, the count the rebuild saw",
+        check("seq_restart_clear zeroes the runtime: snapshot, flags, chord and mode, cursor, borrowed strip, countdown, stamps, preview, audition, lamps, latch shadow, the count the rebuild saw",
             r(0x6142,2)==0&&r(0x614d,1)==0&&r(0x6154,2)==0&&r(0x6158,1)==0&&r(0x615f,1)==0&&r(0x61e1,1)==0&&r(0x61e5,1)==0&&r(0x622e,2)==0&&r(0x6230,2)==0
-            &&r(0x62e3,1)==0&&r(0x62e8,2)==0&&r(0x62f4,2)==0&&r(0x62fe,1)==0&&r(0x62ff,1)==0&&r(0x6500,2)==0&&r(0x6503,1)==0&&r(0x657c,1)==0&&r(0x657e,1)==0
+            &&r(0x62e3,1)==0&&r(0x62e8,2)==0&&r(0x62fe,1)==0&&r(0x62ff,1)==0&&r(0x6500,2)==0&&r(0x6503,1)==0&&r(0x657c,1)==0&&r(0x657e,1)==0
             &&r(0x6580,4)==0&&r(0x6584,2)==0&&r(0x6092,1)==0);
-        check("and keeps the musical cells: presets, steps and count, keys, the latch's state, the tuning slot, the take's preset reference, the per-step degrees, the strip's slot, the clock's counter",
-            r(0x613a,2)==0x111&&r(0x6160,2)==0x444&&r(0x61e0,1)==5&&r(0x61ee,1)==9&&r(0x62e2,1)==1&&r(0x6090,1)==1&&r(0x6091,1)==4&&r(0x6600,2)==0xccc&&r(0x657a,2)==0x999&&r(0x61e6,2)==0x555);
+        // The take's octave reference at 0x62f4 is musical since the record
+        // carries it (v4): persist_load restores it, and this clear, which
+        // clock_init runs after the restore, used to take it again.
+        check("and keeps the musical cells: presets, steps and count, keys, the latch's state, the tuning slot, the take's preset and octave references, the per-step degrees, the strip's slot, the clock's counter",
+            r(0x613a,2)==0x111&&r(0x6160,2)==0x444&&r(0x61e0,1)==5&&r(0x61ee,1)==9&&r(0x62e2,1)==1&&r(0x6090,1)==1&&r(0x6091,1)==4&&r(0x62f4,2)==0x777&&r(0x6600,2)==0xccc&&r(0x657a,2)==0x999&&r(0x61e6,2)==0x555);
         for(int p:new int[]{767,484}) {
             w(0x6814,2,p);
             e.writeRegister("R8",1000); long q=resolve(OP);
@@ -833,6 +993,8 @@ public class SettingsRegression extends PersistenceRegression {
             check("the bias takes two periods off R8",q==0x100&&reg("R8")==3000-2*p);
             e.writeRegister("R9",7); q=resolve(OP+0x10);
             check("the multiplier's entry leaves R9, the octave index",q==0x100&&reg("R9")==7);
+            e.writeRegister("R8",1000); q=resolve(NP);
+            check("the MIDI note-on's drop answers R8 less "+p,q==0x100&&reg("R8")==1000-p);
         }
         byte[] off=edited(); setHalf(off,0x20+2*20,2); setHalf(off,0x20+2*26,0); setHalf(off,0x20+2*24,0); stamp(off); plant(SLOT0,off);
         cold(); w(0x6024,2,0x1111); w(0x6026,2,0x2222); w(0x6028,2,0x3333); w(0x60fa,2,0xa035); w(0x60f4,2,0x0c82); boot();
@@ -840,7 +1002,7 @@ public class SettingsRegression extends PersistenceRegression {
             +" live="+r(LIVE+4,1)+","+r(LIVE+10,1)+","+r(LIVE+8,1)+" vib="+Long.toHexString(r(0x6024,2))+","+Long.toHexString(r(0x6026,2))+","+Long.toHexString(r(0x6028,2))
             +" jack="+Long.toHexString(r(0x60fa,2))+" base="+Long.toHexString(r(0x60f4,2)),
             r(LIVE+4,1)==2&&r(LIVE+10,1)==0&&r(LIVE+8,1)==0
-            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0xffff);
+            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0x7fff);
         byte[] trn=edited(); setHalf(trn,0x20+2*20,1); setHalf(trn,0x20+2*26,0); setHalf(trn,0x20+2*24,0); setGen(trn,4); stamp(trn); plant(SLOT0,trn);
         cold(); w(0x6028,2,0x3333); boot();
         check("knob 4 as trn clears the vibrato too",r(LIVE+4,1)==1&&r(0x6028,2)==0);
@@ -849,9 +1011,9 @@ public class SettingsRegression extends PersistenceRegression {
         check("knob 4 vibrato, jack transposing, blend on at boot: cleared just the same, none of them is happening when the chip comes up"
             +" live="+r(LIVE+4,1)+","+r(LIVE+10,1)+","+r(LIVE+8,1),
             r(LIVE+4,1)==0&&r(LIVE+10,1)==1&&r(LIVE+8,1)==1
-            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0xffff);
+            &&r(0x6024,2)==0&&r(0x6026,2)==0&&r(0x6028,2)==0&&r(0x60fa,2)==0&&r(0x60f4,2)==0x7fff);
         keepSlots=false;
-        println("PASS option state: the vibrato's cells, the transposer's word and the re-base history are cleared at every boot; the six octave sites and the sequencer's clear");
+        println("PASS option state: the vibrato's cells, the transposer's word and the re-base history are cleared at every boot; the six octave sites, the MIDI note-on's drop and the sequencer's clear");
     }
     void clock() throws Exception {
         fresh();
@@ -932,6 +1094,58 @@ public class SettingsRegression extends PersistenceRegression {
             &&r(0x80003d82L,4)==(0xf01f0000L|(k27&0xffffL))&&r(0x80003db8L,4)==(0xf01f0000L|(k28&0xffffL))
             &&r(0x80006528L,4)==(0xf01f0000L|(g1&0xffffL))&&r(0x800066aeL,4)==(0xf01f0000L|(g2&0xffffL))&&r(0x800085daL,4)==(0xf01f0000L|(g3&0xffffL)));
         println("PASS tunings: the two edit keys, the remote-enable guard and the applier follow cell 27's byte");
+    }
+    // The factory's transpose mode (User's Guide, "Knob 4 TRANSPOSITION":
+    // key 27 in edit mode, the trn LED, knob 4 choosing the octave) is cell
+    // 27's to retire, not the knob roles'.  With cell 27 off it runs as
+    // shipped whatever knob 4's role: under factory and vibrato the ADC
+    // event's word reaches the factory's own zones, and trn writes the same
+    // two bytes from its own; with cell 27 on key 27 selects a slot and the
+    // applier keeps the mode off.  docs/BUILD.md once said three patches
+    // named for transpose mode decided this and were skipped with four
+    // factory knobs.  They were not transpose mode's at all (audit 038711a,
+    // F14): two are the keyboard's note-on velocity floors, over the
+    // factory's reads of state+0x2db (configuration knob 3's minimum, and
+    // the byte pressure_fix's edit knob 4 writes its curve level into), and
+    // one is the peak hold's reload, 10 in the factory.  Since 2026-09-28
+    // they are hooks that follow pressure_fix (velocity_floor_contact,
+    // velocity_floor_handback, peak_hold_reload), which
+    // ControlRegression.velocityFloor() runs in both states of the byte.
+    static final long EDITKEY=0x80003c24L, ADDER=0x80003590L, ADCWORD=0x800051f0L;
+    void transposeMode() throws Exception {
+        fresh();
+        for(int[] c:new int[][]{{2,0},{0,0},{1,0},{2,1},{0,1}}) {
+            int knob4=c[0], cell27=c[1];
+            String tag="knob 4 "+(knob4==2?"factory":knob4==0?"vibrato":"trn")+", cell 27 "+(cell27==1?"on":"off");
+            w(LIVE+4,1,knob4); w(LIVE+11,1,cell27); w(0x6090,1,1);
+            w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x2ef,1,1);       // add to pitch on octaves, the neutral pad
+            w(S+0x6a,1,0); w(S+0x6b,1,0);
+            e.writeRegister("R12",0x1a); call(EDITKEY);            // key 27, through the factory's edit-key routine
+            long afterKey=r(S+0x6a,1);
+            call(CHAIN);                                          // a scan's applier chain
+            long afterScan=r(S+0x6a,1);
+            w(S+0x310,2,1000); call(r(ADCWORD,4));                // knob 4 through the ADC event's word
+            long zone=r(S+0x6b,1), mode=r(S+0x6a,1);
+            w(S+0x350,2,1000); call(ADDER);
+            long target=r(S+0x352,2);
+            if(cell27==0) {
+                check(tag+": key 27 turns transpose mode on and a scan keeps it, "+afterKey+" then "+afterScan,
+                    afterKey==1&&afterScan==1);
+                check(tag+": knob 4 at 1000 picks octave "+zone+" of the "+(knob4==1?"role's nine":"factory's")
+                    +" zones and the adder adds it: "+target,
+                    zone==(knob4==1?8:7)&&mode==1&&target==1000+(zone-2)*r(0x6814,2));
+            } else {
+                check(tag+": key 27 selects a slot and transpose mode stays off, "+afterKey+", "+afterScan+", "+mode+", "+target,
+                    afterKey==0&&afterScan==0&&mode==0&&target==1000&&r(0x6090,1)==2);
+            }
+        }
+        long floorPool=0x80022c20L, holdPool=0x80022c48L;
+        long vf1=(floorPool-(0x80005464L&~3L))>>2, vf2=(floorPool-(0x800062f8L&~3L))>>2, ph=(holdPool-(0x80005392L&~3L))>>2;
+        check("the velocity floors and the peak hold are hooks onto pressure_fix's caves in every image, not constants",
+            r(0x80005462L,2)==0x109aL&&r(0x80005464L,4)==(0xf01f0000L|(vf1&0xffffL))&&r(0x80005468L,2)==0x149eL
+            &&r(0x800062f8L,4)==(0xf01f0000L|(vf2&0xffffL))&&r(0x80005392L,4)==(0xf01f0000L|(ph&0xffffL))
+            &&r(floorPool,4)==0x80022c00L&&r(holdPool,4)==0x80022c30L);
+        println("PASS transpose mode: cell 27 alone retires it, every knob 4 role leaves it working; the velocity floors and the peak hold are pressure_fix's hooks");
     }
     byte[] mirror() { return e.readMemory(toAddr(MIRROR),END-PAY); }
     static byte[] payloadOf(byte[] rec) { return Arrays.copyOfRange(rec,PAY,END); }
@@ -1250,10 +1464,14 @@ public class SettingsRegression extends PersistenceRegression {
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         String mode=args[0]; seq=mode.contains("seq"); clock=mode.contains("clock");
+        // This suite holds an image to its own defaults and lays its own
+        // records; one laid for it would be tested as the image's.
+        if(SettingsRecord.named()!=null)
+            throw new Exception("SettingsRegression runs on the image's own defaults: unset "+SettingsRecord.ENV);
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings(); bootGuard(); calibration();
+            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); restartQuiet(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings(); transposeMode(); bootGuard(); calibration();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

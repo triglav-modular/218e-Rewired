@@ -607,6 +607,21 @@ def check_table_range(name: str, table: list[int], period_units: int) -> None:
             f"{period_units} units, so the keyboard runs out of pitch before "
             f"it runs out of keys: use a mapping with more degrees to the "
             f"period, or a smaller period.")
+    # And the table as emitted stops at 0x3fff, the fourteen bits a record
+    # carries, so every key past it is stored as that one value.  Two or more
+    # of them are one pitch to the latch, which matches the table as emitted.
+    # Judged on the table before the clamp this passed, and the latch spacing
+    # check that caught it gave advice for a scale too fine.  The owner's
+    # words (2026-09-28); web/buildlib.js says the same.
+    past = [k for k, v in enumerate(table) if v > 0x3FFF]
+    if len(past) > 1:
+        raise ValueError(
+            f"{name}: keys {past[0]} to {past[-1]} sit past 16383, the most a "
+            f"table entry carries, and would all be stored there, one pitch the "
+            f"latch cannot tell apart. This scale’s period spans "
+            f"{period_units} units, so the keyboard runs out of table before it "
+            f"runs out of keys: use a mapping with more degrees to the period, "
+            f"or a smaller period.")
 
 
 def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
@@ -623,12 +638,16 @@ def pressure_curve(span: int, onset_db: float, fade: int = 0) -> list[int]:
     exponent = -onset_db / 20.0
     for x in range(span + 1):
         if x == 0:
-            value = 0
+            value = 0.0
         else:
-            value = math.floor(span * 10.0 ** ((x / span - 1.0) * exponent) + 0.5)
+            value = span * 10.0 ** ((x / span - 1.0) * exponent)
+        # The fade scales the curve itself, and the result is rounded once.
+        # Rounded to a count first and the scaled count floored, 38 of the
+        # 59 faded entries came out a count low.  web/buildlib.js does the
+        # same arithmetic in the same order.
         if fade and 0 < x < fade:
-            value = min(value, value * x // fade)
-        value = max(previous, min(span, value))
+            value = value * x / fade
+        value = max(previous, min(span, math.floor(value + 0.5)))
         out.append(value)
         previous = value
     return out
@@ -1389,8 +1408,18 @@ RAM_REGIONS = [
     # The record staged for writing, 8-byte aligned and a multiple of 8 long,
     # so the flash driver takes its simple aligned path - the same reason the
     # factory stages its own record rather than writing from scattered state.
-    (0x6300, 0x6420, "canonical v3 record, staged for body then marker commit"),
+    (0x6300, 0x6420, "canonical v4 record, staged for body then marker commit"),
     (0x6640, 0x674C, "canonical musical payload from completed edit gestures"),
+    # The take's octave reference in the same snapshot, apart from the block
+    # above because the block is full: persist_capture's sequence bit writes
+    # it (zero for an empty take) and persist_pack stages it at record offset
+    # 0x11c.  persist_boot's capture initialises it before anything reads it.
+    (0x6DD0, 0x6DD2, "the take's octave reference, completed-edit snapshot for record 0x11c"),
+    # blend_goal writes it every time the adder runs, and option_boot_blend
+    # zeroes it at every boot.  The deficit is what the adder's clamp took
+    # from the target, spent from the applied offset by blend_deficit on the
+    # scan it changes.
+    (0x6E10, 0x6E12, "the blend target's deficit under the adder's clamp"),
     # The settings mirror: the record's payload from 0x20, in RAM, which is
     # what every table reader and the ten runtime numbers address.  Filled
     # at boot from the image's own tables, then from the newer valid slot at
@@ -1450,7 +1479,7 @@ RAM_REGIONS = [
     # validated before it is trusted, so none of this needs the first-use
     # fill.  The flash countdown is also cleared by the startup wrapper,
     # because SRAM survives a same-image warm restart.
-    (0x6500, 0x6502, "the audition's pinned pitch, plus one"),
+    (0x6500, 0x6502, "the audition's pinned pitch, biased by 0x8000; zero for none"),
     (0x6502, 0x6503, "delete-pad flash countdown, in scans"),
     # Written by seq_select as it fires a step, read by seq_gate_length for
     # the length of that step; the cursor is already on the next one.
@@ -1495,6 +1524,12 @@ FACTORY_CELLS = [
     # The factory's pressure gain, which pitch_clamp_2 replays from the
     # factory's own pair while the fix is off (stage 2 phase F).
     (0x389C, 0x38A0, "state+0x33c: the factory pressure gain"),
+    # The two cells pressure_fix's floors read and write by address
+    # (2026-09-28): the note-on velocity floor configuration knob 3 sets,
+    # which knob4_curve also writes its curve level into, and the
+    # conditioner's peak-hold countdown, which peak_hold reloads.
+    (0x383B, 0x383C, "state+0x2db: the note-on velocity floor, or knob4_curve's level"),
+    (0x3726, 0x3727, "state+0x1c6: the conditioner's peak-hold countdown"),
     # The two cells the edit keys' caves address by the state base since
     # cell 27 (2026-09-23): the remote-enable flag the factory's key 28
     # toggles and the guards read, and the dirty flag both keys set.
@@ -1537,9 +1572,33 @@ FACTORY_CELLS = [
     # of the contact handler, cleared by its lift and by the release the
     # transport now does on the way into PLAY.
     (0x33C5, 0x33C6, "keyboard active-note flag"),
-    # The poly-MIDI setting and the arpeggiator mirror beside it.  Together
-    # they are what the contact and lift handlers fork on, so the play-mode
-    # send guard has to read the same pair.
+    # One byte per MIDI note: the lift sets a note's byte when the sustain
+    # holds it, the port-two note-off clears it, and the sustain's release
+    # (0x80005864) drops the gate for every byte still set.  key_midi_live
+    # clears it for a note-off it keeps off the wire.
+    (0x32D0, 0x3350, "the keyboard's sustained-note marks"),
+    # The poly handler's own record of each key's note, and the channel it
+    # went out on.  poly_note_path marks a key's channel byte (bit 7) when
+    # the handler sends the key's note, and ends that note at the key's
+    # lift whatever the switch; the C runtime zeroes both at every reset.
+    # It reads the ports' active-note records at 0x3924, declared below.
+    (0x3350, 0x336D, "the poly handler's note per key"),
+    (0x33C8, 0x33E5, "the poly handler's channel per key, bit 7 its note sounding"),
+    # What restart_quiet reads before the watchdog restart.  The factory
+    # keeps a record per MIDI note it has sent: a word, 1 while the note
+    # sounds, and the channel byte after it, eight bytes a note, set by the
+    # note-on sender at 0x80008170 and cleared by the note-off at 0x800081f0.
+    # Its panic walks notes 0..126, and restart_quiet reads note 127's.
+    (0x3924, 0x3D24, "the factory's active-note table: 128 notes, 8 bytes each"),
+    # Port one's transmit ring: 32 three-byte packets, then the read index
+    # the USART interrupt advances and the write index 0x80009a64 advances.
+    (0x465C, 0x46C4, "port one MIDI transmit ring and its two indices"),
+    # The USART interrupt sends a packet a byte an interrupt; this word is
+    # its place in the packet, 0 between packets.
+    (0x2F74, 0x2F78, "port one transmit interrupt: byte of the packet in flight"),
+    # The poly-MIDI setting and the arpeggiator mirror beside it.  The
+    # contact and lift handlers fork on the pair; key_midi_live reads the
+    # setting beside the switch at state+0x340, which PLAY does not set.
     (0x35E4, 0x35E6, "state+0x84/0x85: poly MIDI setting and arp mirror"),
     (0x3599, 0x359A, "state+0x39: global edit mode"),
     (0x35CA, 0x35CC, "state+0x6a/0x6b: transpose enable and knob zone"),
@@ -2044,12 +2103,20 @@ def main() -> None:
         # A settings record carries fourteen bits, so the table stops at
         # 0x3fff - an entry up there, or one no key reaches, is far past the
         # DAC's 0xfff, where the pitch path clamps it anyway.
-        tables[f"tuning_slot{index}"] = [max(0, min(v, 0x3FFF)) for v in table]
+        emitted = [max(0, min(v, 0x3FFF)) for v in table]
+        tables[f"tuning_slot{index}"] = emitted
         period_keys.append(12 if degrees is None else len(degrees))
         periods.add(period_units)
+        # The latch compares the table as emitted, so the spacing is judged
+        # on that: keys the clamp stacks at 0x3fff are one note to it.
+        # Judged on the table before the clamp, a scale whose top keys ran
+        # past 0x3fff a period apart was passed, and pressing one of them
+        # released another.  The range check above stays on the table as
+        # computed: an entry under zero is 0 once clamped, and it is still a
+        # key the scale puts below the instrument's lowest pitch.
         spacing_slots.append((
             ideal_key_pitches(cents, degrees, period or 1200.0, offset),
-            table, period or 1200.0, period_units))
+            emitted, period or 1200.0, period_units))
         anchor = (NOTE_NAMES[reference_key] if abs((period or 1200.0) - 1200.0) <= 0.001
                   else "bottom key")
         shape = ("" if degrees is None else
@@ -2078,8 +2145,13 @@ def main() -> None:
     # round(scale*256)-256 for black ones.  A table makes the correction
     # branchless at every use site and lets the same numbers serve the
     # pressure aggregate and the portamento weighting.
+    #
+    # Rounded half up, here and at black_key_scale_32 and trim_min below,
+    # because the page rounds that way (floorHalf, Math.round) and Python's
+    # round() takes a tie to the even neighbour: at a scale of 1.197265625,
+    # 306.5 in 1/256ths, the two builders emitted 50 and 51.
     black_mask = 0x0A54A54A
-    excess = round(cfg["pressure"]["black_key_scale"] * 256) - 256
+    excess = math.floor(cfg["pressure"]["black_key_scale"] * 256 + 0.5) - 256
     if not 0 <= excess <= 0x400:
         raise SystemExit("[pressure].black_key_scale must be between 1.0 and 5.0")
     tables["black_key_excess"] = [excess if (black_mask >> k) & 1 else 0 for k in range(32)]
@@ -2106,7 +2178,7 @@ def main() -> None:
         # fallbacks here used to disagree (1.0 vs 1.35), which would have
         # split one correction across its two consumers had the key ever
         # gone missing from the frozen defaults.
-        "black_key_scale_32": round(cfg["pressure"]["black_key_scale"] * 32),
+        "black_key_scale_32": math.floor(cfg["pressure"]["black_key_scale"] * 32 + 0.5),
         "smoothing_taps": cfg["pressure"].get("smoothing_taps", 8),
         "curve_default_level": cfg["pressure"]["curve"].get("default_level", 31),
         # One more than the top level, because the knob maps adc*steps>>10.
@@ -2264,16 +2336,16 @@ def main() -> None:
     factory_tunings = all(slot == "factory" for slot in cfg["tuning"]["slots"])
     features["alternate_tunings"] = True
 
-    # Transpose mode survives only when nothing has taken what it needs.  The
-    # tuning applier zeroes the transpose-mode byte outright, and the knob
-    # remap takes the knobs transpose is driven with, so either option retires
-    # it.  With both off there is nothing in its way, so key 27 and the trn
-    # LED work as they shipped and these three forcing patches stay out.
-    # With the knob roles decided at runtime the build cannot know whether
-    # the knobs are all factory, so the forcing patches stay in every image:
-    # a keyboard set to four factory knobs and no tuning over MIDI keeps the
-    # factory transpose mode forced off, where a build made that way used to
-    # leave it.  A later phase can put the three sites on knob 4's live byte.
+    # Transpose mode survives whenever cell 27 is off: the tuning applier
+    # zeroes its byte, and nothing else touches it.  Knob 4's roles leave it
+    # working (knob4_early_dispatch hands vibrato and factory the factory's
+    # zones; trn writes the same two bytes).  The three patches once named
+    # transpose_force_* were never transpose mode's (audit 038711a, F14):
+    # velocity_floor_contact and velocity_floor_handback are the keyboard's
+    # note-on velocity floors over state+0x2db, the byte pressure_fix's edit
+    # knob 4 writes its curve level into, and peak_hold_reload is the peak
+    # hold's reload.  All three follow pressure_fix's live byte since
+    # 2026-09-28, in every image.  See docs/BUILD.md.
 
     # Arp latch reads the live octave offset through the blend hook, so the
     # blend *caves* have to exist whenever latch is on — but the pressure
@@ -2367,7 +2439,7 @@ def main() -> None:
     # setting rather than a constant because it decides what the knob can still
     # reach: capacitive coupling falls by about a third when the player's feet
     # leave the floor, and a range that starts above that cannot get back to it.
-    k_min = int(round(calib.get("trim_min", 0.70) * 256))
+    k_min = math.floor(calib.get("trim_min", 0.70) * 256 + 0.5)
     k_max = min(0x180, (0x3FF * 256) // calib["ceiling"])
     if mode == "scale" and k_max <= k_min:
         raise SystemExit(
@@ -2587,7 +2659,8 @@ def main() -> None:
     for name in ("persist_crc", "persist_record_crc", "persist_pack",
                  "persist_valid", "persist_newest", "persist_load",
                  "persist_same", "persist_verify", "persist_save", "persist_tick",
-                 "persist_capture", "persist_boot", "persist_scan_shim", "persist"):
+                 "persist_capture", "persist_capture_ref", "persist_boot",
+                 "persist_scan_shim", "persist"):
         blocks[name] = keep
     # The settings mirror is in every image: the boot chain starts at
     # settings_boot whatever else is built, and its record validator

@@ -12,7 +12,6 @@ settings emit different code — so this walks the options.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import sys
@@ -21,12 +20,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 import build as build_mod  # noqa: E402
-import options  # noqa: E402
-
-# This harness is here to build the unsupported non-persistent images and
-# say how they behave, so it lifts the refusal in tools/options.py for the
-# builds it spawns.  Nothing that ships passes through here.
-os.environ[options.VOLATILE_ENV] = "1"
 
 BASE = REPO / "config" / "218e.toml"
 TEMP = REPO / "config" / "_sweep.toml"
@@ -92,22 +85,13 @@ VARIANTS: list[tuple[str, list[tuple[str, str]]]] = [
     # that builds every one of them through Ghidra.
     # All three ship ON, so the variants worth building are the ones that
     # turn them OFF - those are the images the defaults no longer cover, and
-    # the ones whose housekeeping chain loses a call.  Persistence joined the
-    # defaults after the divider knob was reversed, which is why the four
-    # rows below read "volatile" rather than "persist": the combination that
-    # needs proving is the one nobody gets by accident.
+    # the ones whose housekeeping chain loses a call.  The volatile build
+    # (persist = false) is no longer tested (2026-09-28): both builders
+    # refuse it, and the rows that built it are gone.
     ("sequencer_off",         [(r"^sequencer = true", "sequencer = false")]),
     ("clock_divide_off",      [(r"^clock_divide = true", "clock_divide = false")]),
     ("seq_and_clock_off",     [(r"^sequencer = true", "sequencer = false"),
                                (r"^clock_divide = true", "clock_divide = false")]),
-    ("volatile_bare",         [(r"^persist = true", "persist = false"),
-                               (r"^sequencer = true", "sequencer = false"),
-                               (r"^clock_divide = true", "clock_divide = false")]),
-    ("volatile_sequencer",    [(r"^persist = true", "persist = false"),
-                               (r"^clock_divide = true", "clock_divide = false")]),
-    ("volatile_clock",        [(r"^persist = true", "persist = false"),
-                               (r"^sequencer = true", "sequencer = false")]),
-    ("volatile_only",         [(r"^persist = true", "persist = false")]),
     ("knob_roles",            [(r"^latching_arp = true",
                                'latching_arp = true\nknob1 = "orders"\nknob2 = "patterns"\nknob4 = "trn"')]),
     ("knob2_swing",           [(r"^latching_arp = true", 'latching_arp = true\nknob2 = "swing"')]),
@@ -292,7 +276,7 @@ def audit_call_pools(image_path) -> list[str]:
 # image and in every slot left at the factory temperament.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "c2938b154b59de8cbda9b7c92fe9895a4ea789c4c04b2bdfa8c345b4ad484420",
+    "historical_config": "61da7423f97e294a66482f63fc045d1e6487e206f53260848e5f41539cbd16b6",
 }
 
 

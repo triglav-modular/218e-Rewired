@@ -15,8 +15,15 @@
 // MIDI, the 208 bus and the CV, and has priority - a press ends the note the
 // sequencer is sounding, a held key silences the take on every output while
 // it keeps time, holds the gate through the take's rests and half-step drops,
-// and keeps it through STOP; its own lift is what ends it.  With the arp
-// switch ON a press still means nothing.
+// and keeps it through STOP; its own lift is what ends it.  Poly MIDI stays
+// poly through a take: a chord is a chord, every lift ends its own note, the
+// sustain goes out as CC 64.  With the arp switch ON a press still means
+// nothing.
+//
+// state+0x85, the factory's arp-engaged byte, is the firmware's: PLAY sets it
+// through the tempo routine, and nothing here writes it.  Once this probe
+// cleared it after PLAY "for the poly path", and every poly scenario then ran
+// in a state the instrument never holds (audit 038711a, F12).
 // Usage: -postScript PolyMidiProbe.java
 //@category Buchla218.Tests
 import java.util.*;
@@ -24,10 +31,14 @@ import java.util.*;
 public class PolyMidiProbe extends ControlRegression {
     static final long QUEUE=0x80009a64L,          // DIN/USB three-byte enqueue
         PORT2_ON=0x80007f5cL, PORT2_OFF=0x80007fc8L,  // port two's own link
+        PORT2_CC=0x80008034L,                     // and its controller change
         BUS_ON=0x8000f2c0L, BUS_OFF=0x8000f3a8L,      // the optional 208 bus
         PRESSURE=0x800053acL,                     // the physical pressure scan
         PUBLISH=0x8001d670L,                      // seq_transport's ST.B R12[0x4],R1
-        SEQ_GATE=0x8001b4f0L, ARP_STEP=0x8000210cL;
+        SEQ_GATE=0x8001b4f0L, ARP_STEP=0x8000210cL,
+        TEMPO=0x80002b28L,                        // the scan's tempo pass: the arp enable's edges
+        PULSE_JACK=0x80004afcL,                   // the scan's pulse-jack read: the sustain
+        OCTAVE_PAD=0x8000a784L;                   // an octave pad pressed, R12 the pad
     final List<String> midi=new ArrayList<>();
     final List<String> failures=new ArrayList<>();
     int sustain;
@@ -52,6 +63,9 @@ public class PolyMidiProbe extends ControlRegression {
             midi.add((p==PORT2_ON?"on":"off")+" p2 n"+reg("R12")+" v"+reg("R11")+" c"+reg("R10"));
             ret(); return;
         }
+        // Port two's controller change runs in the emulator, so it is only
+        // watched: R12 the controller, R11 the value, R10 the channel.
+        if(p==PORT2_CC) midi.add("other p2 n"+reg("R12")+" v"+reg("R11")+" c"+reg("R10"));
         // The 208 bus is a third destination: the contact and lift handlers
         // reach it BEFORE their poly/mono fork, so a claim about "the
         // keyboard's outputs" that never watched it is only a claim about
@@ -94,10 +108,19 @@ public class PolyMidiProbe extends ControlRegression {
         check("and published the mode through the sequencer's block, not a"
             +" register a sender left behind: R12="+Long.toHexString(publishR12),
             publishR12==0x6154);
+        check("and set the arp-engaged byte, as the instrument does in a take: "
+            +r(S+0x85,1),r(S+0x85,1)==1);
     }
     void stop() throws Exception {
         button(1); check("the real transport reached STOP",r(0x6158,1)==0);
+        check("and gave the arp-engaged byte back to the switch: "+r(S+0x85,1),
+            r(S+0x85,1)==(r(S+0x340,2)!=0?1:0));
     }
+    // The switch moved, then the tempo pass the main loop runs every scan:
+    // the one routine that writes the arp-engaged byte, which the transport
+    // calls as well.
+    void tempo() throws Exception { call(TEMPO); }
+    void flip(int position) throws Exception { arp(position); tempo(); settle(); }
 
     void bench() throws Exception { bench(0); }
     void bench(int steps) throws Exception {
@@ -116,12 +139,17 @@ public class PolyMidiProbe extends ControlRegression {
     // The settings the keyboard's MIDI path reads.  Set AFTER any transport
     // call: the persistence tick reloads the saved record, and poly MIDI
     // defaults off, so arming before a transport gesture silently disarms.
+    // Not state+0x85: the arp-engaged byte is the firmware's, and it is
+    // asserted here instead - 1 in a take or with the switch engaged, as
+    // seq_clock_enabled answers, 0 otherwise.
     void arm(boolean poly) throws Exception {
         w(S+0x84,1,poly?1:0);   // the edit-mode poly setting
-        w(S+0x85,1,0);          // arpeggiator off, which the poly path requires
         w(S+0x349,1,1);         // port two's own link, so it is observable
         w(0x2efa,1,1); w(S+0x4,4,0x1234);   // and the 208 bus, present and open
         w(S+0x2e7,1,3);         // a channel that is not the default
+        long engaged=r(0x6158,1)==2||r(S+0x340,2)!=0?1:0;
+        check("the arp-engaged byte is the firmware's own: "+r(S+0x85,1)
+            +" in mode "+r(0x6158,1),r(S+0x85,1)==engaged);
     }
     // Arming does NOT clear the log - one test needs the messages the
     // transport itself sends - so every test opens its own window.
@@ -145,6 +173,36 @@ public class PolyMidiProbe extends ControlRegression {
         int n=0;
         for(String m:midi) if(m.startsWith(kind+" ")) n++;
         return n;
+    }
+    // Only the two MIDI ports, whatever the note: the bus is reached from
+    // outside the poly/mono fork and says nothing about it.
+    int ports(String kind) {
+        int n=0;
+        for(String m:midi) if(m.startsWith(kind+" p1 ")||m.startsWith(kind+" p2 ")) n++;
+        return n;
+    }
+    // A controller change with a given value, on both ports.
+    int cc(int controller,int value) {
+        int n=0;
+        for(String m:midi)
+            if((m.startsWith("other p1 ")||m.startsWith("other p2 "))
+                &&m.contains(" n"+controller+" v"+value+" ")) n++;
+        return n;
+    }
+    // Every note sounded on the ports was ended there exactly once, and the
+    // factory's active-note table agrees.  The log is the whole scenario's.
+    boolean balanced(List<String> log,int... notes) {
+        for(int note:notes)
+            for(String port:new String[]{" p1 "," p2 "}) {
+                int on=0, off=0;
+                for(String m:log) {
+                    if(!m.contains(port)||!m.contains(" n"+note+" ")) continue;
+                    if(m.startsWith("on ")) on++;
+                    if(m.startsWith("off ")) off++;
+                }
+                if(on!=1||off!=1||activeNote(note)!=0) return false;
+            }
+        return true;
     }
 
     // Ordinary poly use: two overlapping keys keep independent lifecycles and
@@ -378,11 +436,374 @@ public class PolyMidiProbe extends ControlRegression {
         println("PASS the arp-on keyboard stays off the take");
     }
 
+    // A chord over a take is two notes, as it is stopped in overlap().  One
+    // key sounds the same on either path, so only two can tell poly from
+    // mono: the second press must not end the first, and each lift ends its
+    // own note and only that.  The CV is the one voice it always was: the
+    // newer key has it, and letting the older one go leaves it there.
+    void polyChordOverATake() throws Exception {
+        bench(4); play(); armed(true);
+        down(4); down(9);
+        check("a chord over a take sounds both notes on both ports: "+seen(),
+            count("on",40)==2&&count("on",45)==2);
+        check("and the second press ends nothing on the ports: "+seen(),ports("off")==0);
+        check("the CV is the newer key's: "+state(),base()==table(9)&&gate()!=0);
+        midi.clear();
+        up(4);
+        check("letting the older key go ends its own note on both ports: "+seen(),
+            count("off",40)==2&&ports("off")==2&&ports("on")==0
+            &&activeNote(40)==0&&activeNote(45)!=0);
+        check("and leaves the CV where it was: "+state(),base()==table(9)&&gate()!=0);
+        midi.clear();
+        up(9);
+        check("the other lift ends the other note and sounds nothing: "+seen(),
+            count("off",45)==2&&ports("off")==2&&ports("on")==0&&activeNote(45)==0);
+        check("and drops the gate: "+state(),gate()==0);
+        stop();
+        println("PASS a poly chord over a take is two notes, each ended by its own lift");
+    }
+
+    // Two poly keys held into PLAY, let go in either order: each lift ends
+    // its own note on both ports and sounds nothing new.  Older first is the
+    // audit's stranded note: the older key is not the note the mono path
+    // remembers, so its lift sent nothing and the note rang until STOP.
+    // Newer first, the mono path hands the voice back to the key still held,
+    // which on the ports is a second note-on for a note already sounding.
+    // The CV does what it always did: the hand-back moves it to that key.
+    void twoHeldIntoPlay() throws Exception {
+        for(boolean olderFirst:new boolean[]{true,false}) {
+            bench(4); armed(true);
+            down(4); down(9);
+            check("two keys held before PLAY are two notes (older first="+olderFirst+"): "+seen(),
+                count("on",40)==2&&count("on",45)==2&&ports("off")==0);
+            midi.clear();
+            play(); settle();
+            check("entering PLAY ends neither: "+state(),
+                midi.isEmpty()&&gate()!=0&&base()==table(9));
+            armed(true);
+            int first=olderFirst?4:9, second=olderFirst?9:4;
+            up(first);
+            check("the first lift ends its own note on both ports and nothing else"
+                +" (older first="+olderFirst+"): "+seen(),
+                count("off",36+first)==2&&ports("off")==2&&ports("on")==0
+                &&activeNote(36+first)==0&&activeNote(36+second)!=0);
+            check("the CV is the held key's, gate up (older first="+olderFirst+"): "+state(),
+                base()==table(second)&&gate()!=0);
+            midi.clear();
+            up(second);
+            check("the second lift ends the other (older first="+olderFirst+"): "+seen(),
+                count("off",36+second)==2&&ports("off")==2&&ports("on")==0
+                &&activeNote(36+second)==0);
+            check("and drops the gate: "+state(),gate()==0);
+            stop();
+        }
+        println("PASS two poly keys held into PLAY each end on their own lift, in either order");
+    }
+
+    // The arp switch to latch and back with two poly keys down, stopped and
+    // in a take, then the keys let go.  Stopped, the switch's return is the
+    // factory's arp-off edge, which ends every note it knows is sounding.
+    // In a take the take holds the enable, so there is no edge and nothing
+    // ends until the lifts.  Either way every note sounded on the ports
+    // ends there exactly once.
+    void latchToggleWithKeysHeld() throws Exception {
+        for(boolean playing:new boolean[]{false,true}) {
+            bench(4); if(playing) play(); armed(true);
+            down(4); down(9);
+            check("two keys, two notes (playing="+playing+"): "+seen(),
+                count("on",40)==2&&count("on",45)==2&&ports("off")==0);
+            flip(1);
+            check("the latch position engages the arp byte (playing="+playing+"): "
+                +r(S+0x85,1),r(S+0x85,1)==1);
+            flip(0);
+            check("and its return gives it back (playing="+playing+"): "+r(S+0x85,1),
+                r(S+0x85,1)==(playing?1:0));
+            if(playing) check("in a take nothing has ended yet: "+seen(),ports("off")==0);
+            else check("stopped, the arp-off edge ended both notes on both ports: "+seen(),
+                count("off",40)==2&&count("off",45)==2&&activeNote(40)==0&&activeNote(45)==0);
+            int ended=ports("off");
+            up(4);
+            if(playing) check("in a take the older key's lift ends its note: "+seen(),
+                count("off",40)==2&&ports("off")==ended+2);
+            up(9);
+            check("every note sounded on the ports ended there once (playing="+playing+"): "
+                +seen(),balanced(midi,40,45)&&ports("on")==4);
+            if(playing) stop();
+        }
+        println("PASS a latch toggle with keys down ends every note once, stopped and in a take");
+    }
+
+    // The pulse jack's sustain, read as the scan reads it: the jack's
+    // polarity is taken once at boot (0x800077bc), and with the jack low
+    // then, high is the sustain.
+    void pedal(boolean down) throws Exception {
+        long high=r(S+0x2e8,1)==0?0xfff:0;
+        w(S+0x2f4,2,down?high:0xfff-high); call(PULSE_JACK);
+        check("the sustain follows the jack",r(S+0x2e9,1)==(down?1:0));
+    }
+
+    // The sustain over a poly take is poly's, as it is stopped: it goes out
+    // as CC 64 on both ports, a key let go under it sends its note-off at
+    // once for the receiver to hold, and the sustain's release sends CC 64
+    // = 0 and no second note-off.  The gate keeps the factory's hold: up
+    // under the sustain, down at its release.
+    void sustainOverATake() throws Exception {
+        bench(4); play(); armed(true);
+        check("no sustain yet",r(S+0x2e9,1)==0&&r(S+0x2ea,1)==0);
+        pedal(true);
+        check("the sustain goes out as CC 64 = 127 on both ports: "+seen(),cc(64,127)==2);
+        midi.clear();
+        down(4); up(4);
+        check("a key let go under it sends its note-off at once: "+seen(),
+            count("on",40)==2&&count("off",40)==2&&activeNote(40)==0);
+        check("the gate holds for the sustain: "+state(),gate()!=0);
+        midi.clear();
+        pedal(false);
+        check("its release sends CC 64 = 0 on both ports and no second note-off: "+seen(),
+            cc(64,0)==2&&ports("off")==0&&ports("on")==0);
+        check("and drops the gate: "+state(),gate()==0);
+        stop();
+        println("PASS the sustain over a poly take is CC 64, and no note ends twice");
+    }
+
+    // The gate under the sustain in a poly take, CV only, so that it holds
+    // on the image before the fix as well: the fix keeps the MIDI off the
+    // mono path and must leave what the CV does alone.  The sustain's
+    // release drops the gate for every note the sustain was holding - a
+    // byte per note at 0x32d0 that the mono path's port-two note-off
+    // clears - so a note-off kept off the ports without that clear would
+    // drop the gate of a key still held, the next time the sustain lets go.
+    void sustainGateInATake() throws Exception {
+        for(boolean cleared:new boolean[]{false,true}) {
+            bench(4); play(); armed(true);
+            pedal(true);
+            down(4); up(4);
+            check("the sustain holds the gate after the lift: "+state(),gate()!=0);
+            if(cleared) {
+                // The sustain lets go first, so the note it held ends there.
+                pedal(false);
+                check("its release drops the gate: "+state(),gate()==0);
+                down(9); pedal(true);
+            } else {
+                // Another key takes the voice first, ending the held note.
+                down(9);
+            }
+            check("the held key has the voice: "+state(),base()==table(9)&&gate()!=0);
+            pedal(false);
+            check("a sustain let go over a held key leaves its gate up (cleared="
+                +cleared+"): "+state(),base()==table(9)&&gate()!=0);
+            up(9);
+            check("and the key's own lift drops it: "+state(),gate()==0);
+            stop();
+        }
+        println("PASS the sustain's release never drops the gate of a held key in a take");
+    }
+
+    // With the arp switch engaged the keyboard's MIDI is the factory's, poly
+    // or not.  A poly note let go under the sustain with the switch off,
+    // the switch then engaged, the sustain let go: the factory sends no
+    // CC 64 with the arp engaged, and its release sends the mono note-off
+    // for the note the sustain held - a second note-off, the factory's own,
+    // kept as it was.  So this passes before the fix too; it is here to
+    // fail if the fix ever reaches past the switch.
+    void arpOnKeepsTheFactoryMidi() throws Exception {
+        bench(); armed(true);
+        pedal(true);
+        check("stopped, poly MIDI sends the sustain as CC 64: "+seen(),cc(64,127)==2);
+        down(4); up(4);
+        check("a lift under it sends its note-off at once: "+seen(),
+            count("on",40)==2&&count("off",40)==2);
+        flip(2);
+        check("engaging the arp lets the receiver's sustain go, as the factory's"
+            +" edge does: "+seen(),r(S+0x85,1)==1&&cc(64,0)==2);
+        midi.clear();
+        pedal(false);
+        check("with the arp engaged the release sends no CC 64 and the factory's"
+            +" mono note-off: "+seen(),cc(64,0)==0&&cc(64,127)==0&&count("off",40)==2);
+        flip(0);
+        println("PASS with the arp switch engaged the keyboard's MIDI is the factory's");
+    }
+
+    // An octave pad under a poly key in a take: the poly note keeps
+    // sounding, as it does stopped, and its lift ends it under the name it
+    // was sent with.  The mono path's retune - a note-off for the old name
+    // and a note-on for the new one - reaches the 208 bus, which is mono,
+    // and stays off the ports.
+    void octaveUnderAPolyKey() throws Exception {
+        bench(4); play(); armed(true);
+        // The add-to-pitch switch in its octave position, as its reader at
+        // 0x800039f0 leaves it: the pads then move the note by octaves, and
+        // a pad pressed with a key down retunes the note that key sounds.
+        w(S+0x342,1,1); w(S+0x343,1,0); w(S+0x344,4,2);
+        check("pad 1 is selected",r(S+0x2ef,1)==0);
+        down(4);
+        check("the key sounds, an octave under the table's note: "+seen(),count("on",28)==2);
+        midi.clear();
+        e.writeRegister("R12",1); call(OCTAVE_PAD); settle();
+        check("pad 2 moved the mono path's note, on the bus: "+seen(),
+            r(S+0x2ef,1)==1&&bus("off",28)==1&&bus("on",40)==1);
+        check("and sent nothing for it on the ports: "+seen(),
+            count("off",28)==0&&count("on",40)==0&&count("off",40)==0);
+        midi.clear();
+        up(4);
+        check("the lift ends the note under the name it was sent with: "+seen(),
+            count("off",28)==2&&count("off",40)==0&&ports("on")==0
+            &&activeNote(28)==0&&activeNote(40)==0);
+        stop();
+        println("PASS an octave under a poly key moves the bus and leaves the note to its lift");
+    }
+
+    // Where in the log the first message of a kind is, or -1.
+    int first(String prefix) {
+        for(int i=0;i<midi.size();i++) if(midi.get(i).startsWith(prefix)) return i;
+        return -1;
+    }
+
+    // Keyboard priority holds in poly: a press over a sounding take ends
+    // the take's note on both ports and only then sounds its own, as the
+    // mono press does in pressCutsTheSequencerNote().  The order is the
+    // point when the two are one note: a note-on for the key followed by
+    // the take's note-off for the same note leaves the receiver silent,
+    // and clears the port's active-note record the key's own lift needs.
+    // Key 0 plays the take's first note; key 4 another.
+    void polyPressCutsTheSequencerNote() throws Exception {
+        for(int key:new int[]{4,0}) {
+            bench(4); play(); armed(true);
+            externalBeat();
+            int taken=(int)r(S+0x34e,1), note=36+key;
+            check("a sequenced note is sounding (key "+key+"): "+state(),
+                seqSounding()&&count("on",taken)==2);
+            midi.clear();
+            down(key);
+            check("the press ends the take's note on both ports, then sounds its own"
+                +" (key "+key+"): "+seen(),!seqSounding()&&ports("off")==2&&ports("on")==2
+                &&first("off p1 n"+taken+" ")>=0&&first("off p2 n"+taken+" ")>=0
+                &&first("on p1 n"+note+" ")>first("off p1 n"+taken+" ")
+                &&first("on p2 n"+note+" ")>first("off p2 n"+taken+" ")
+                &&activeNote(note)!=0);
+            check("and on the bus (key "+key+"): "+seen(),
+                midi.indexOf("on bus n"+note)>midi.indexOf("off bus n"+taken));
+            check("the CV is the key's: "+state(),base()==table(key)&&gate()!=0);
+            midi.clear();
+            up(key);
+            check("its lift ends its own note on both ports (key "+key+"): "+seen(),
+                count("off",note)==2&&ports("off")==2&&ports("on")==0&&activeNote(note)==0);
+            check("and drops the gate: "+state(),gate()==0);
+            stop();
+        }
+        println("PASS a poly press ends the take's note before it sounds its own, one note or two");
+    }
+
+    // A poly note ends at its own lift whatever the arp switch says by
+    // then: the release follows the path the press took.  Engaged before
+    // the lift, the handler would refuse the note-off, and in a take no
+    // arp-off edge follows the switch's return, so the note rang until
+    // STOP.  Let go first, the switch has nothing left to end.  Engaged
+    // and back with the key down is latchToggleWithKeysHeld().  And a key
+    // the switch swallowed sent nothing, so its lift ends nothing - not
+    // even the note the take is sounding under the number the handler last
+    // stored for that key.
+    void polyReleaseFollowsItsPress() throws Exception {
+        for(boolean playing:new boolean[]{false,true}) {
+            bench(4); if(playing) play(); armed(true);
+            down(4);
+            check("the key sounds (playing="+playing+"): "+seen(),count("on",40)==2);
+            flip(1);
+            midi.clear();
+            up(4);
+            check("let go with the switch engaged, it ends its note on both ports"
+                +" (playing="+playing+"): "+seen(),
+                count("off",40)==2&&ports("off")==2&&ports("on")==0&&activeNote(40)==0);
+            midi.clear();
+            flip(0);
+            check("and the switch's return ends nothing twice (playing="+playing+"): "+seen(),
+                ports("off")==0&&ports("on")==0);
+            midi.clear();
+            down(9); up(9);
+            flip(1); flip(0);
+            check("let go before the switch moves, the lift ends it and the switch nothing"
+                +" (playing="+playing+"): "+seen(),
+                count("on",45)==2&&count("off",45)==2&&ports("off")==2&&ports("on")==2);
+            if(playing) stop();
+        }
+        bench(4); play(); armed(true);
+        for(int i=0;i<4;i++) w(0x61ee+i,1,0);    // every step plays key 0's note
+        down(0); up(0);
+        check("key 0's own note came and went: "+seen(),count("on",36)==2&&count("off",36)==2);
+        externalBeat();
+        check("the take sounds the same note: "+state(),
+            seqSounding()&&r(S+0x34e,1)==36&&activeNote(36)!=0);
+        flip(1);
+        midi.clear();
+        down(0);
+        check("a press with the switch engaged sends nothing: "+seen(),ports("on")==0&&ports("off")==0);
+        flip(0);
+        up(0);
+        check("and its lift ends nothing, the take's note included: "+seen(),
+            ports("off")==0&&activeNote(36)!=0);
+        stop();
+        println("PASS a poly note ends at its own lift whatever the switch, and a swallowed press ends nothing");
+    }
+
+    // LED 9 (2026-09-28, the audit's follow-ups): lit while poly MIDI is on,
+    // blinking while the arpeggiator overrides it.  The routine that draws
+    // it steady and the edit-mode pass that blinks it read state+0x85,
+    // which PLAY sets, so in a take with the switch off the lamp blinked
+    // though poly MIDI is live there since 3.1.  Both read the switch now.
+    // The steady state is drawn by the routine the edit keys call, through
+    // key 29's poly toggle, pressed twice so poly ends on as it began; the
+    // blink by event 4's own case, the edit-mode LED pass at 0x80004d82,
+    // run past its call for LED 9 in each of its two phases.  Stopped, the
+    // byte is the switch's own, so every outcome there is 3.0.2's.
+    static final long LED_WORD=0x2ef4L, EDIT_KEY=0x80003c24L, LED_PASS=0x80004d82L, LED_PASS_DONE=0x80004e08L;
+    long led9() { return (r(LED_WORD,2)>>14)&1; }
+    void polyKey() throws Exception { e.writeRegister("R12",0x1c); call(EDIT_KEY); }
+    void drawPoly() throws Exception {
+        polyKey(); check("key 29 turns poly MIDI off",r(S+0x84,1)==0);
+        polyKey(); check("and on again",r(S+0x84,1)==1);
+    }
+    String led9Shows() throws Exception {
+        long edit=r(S+0x39,1), gate=r(S+0x390,1), phase=r(S+0x3c,1);
+        w(S+0x39,1,1); w(S+0x390,1,0);
+        long[] seen=new long[2];
+        for(int p=0;p<2;p++) { w(S+0x3c,1,p); call(LED_PASS,LED_PASS_DONE); seen[p]=led9(); }
+        w(S+0x39,1,edit); w(S+0x390,1,gate); w(S+0x3c,1,phase);
+        return seen[0]==seen[1]?(seen[0]==1?"steady":"dark"):seen[0]==1?"blinking":"inverted";
+    }
+    void polyLed() throws Exception {
+        bench(); arm(true); drawPoly();
+        String stoppedOff=led9Shows();
+        flip(2); String stoppedArp=led9Shows();
+        flip(1); String stoppedLatch=led9Shows();
+        flip(0); String stoppedBack=led9Shows();
+        polyKey(); String stoppedMono=led9Shows(); polyKey();
+        check("stopped, as 3.0.2: steady with the switch off, blinking on arp and on latch, steady again, dark with poly off: "
+            +stoppedOff+", "+stoppedArp+", "+stoppedLatch+", "+stoppedBack+", "+stoppedMono,
+            stoppedOff.equals("steady")&&stoppedArp.equals("blinking")&&stoppedLatch.equals("blinking")
+            &&stoppedBack.equals("steady")&&stoppedMono.equals("dark"));
+        play(); arm(true); drawPoly();
+        String takeOff=led9Shows();
+        check("in a take with the switch off LED 9 is steady, poly MIDI being live: "+takeOff,takeOff.equals("steady"));
+        flip(2); drawPoly();
+        String takeArp=led9Shows();
+        check("in a take with the switch engaged it blinks: "+takeArp,takeArp.equals("blinking"));
+        flip(0); drawPoly();
+        String takeBack=led9Shows();
+        check("and steady again with the switch back off: "+takeBack,takeBack.equals("steady"));
+        stop(); arm(true); drawPoly();
+        String stopped=led9Shows();
+        check("stopped after the take, steady: "+stopped,stopped.equals("steady"));
+        println("PASS LED 9 shows poly MIDI live in a take with the switch off, overridden with it engaged, and as 3.0.2 stopped");
+    }
+
     @Override public void run() throws Exception {
         try {
             String[] names={"stoppedStillSounds","overlap","keysPlayOverTheSequence","monoHandBackDuringPlay",
                 "heldAcrossPlay","pressCutsTheSequencerNote","heldKeySilencesTheTake","heldKeyHoldsTheGate",
-                "stopEndsEverything","theSequenceStillSounds","arpOnStaysMuted"};
+                "stopEndsEverything","theSequenceStillSounds","arpOnStaysMuted",
+                "polyChordOverATake","twoHeldIntoPlay","latchToggleWithKeysHeld","sustainOverATake",
+                "sustainGateInATake","arpOnKeepsTheFactoryMidi","octaveUnderAPolyKey",
+                "polyPressCutsTheSequencerNote","polyReleaseFollowsItsPress","polyLed"};
             for(String name:names) {
                 try { getClass().getDeclaredMethod(name).invoke(this); }
                 catch(java.lang.reflect.InvocationTargetException ex) {

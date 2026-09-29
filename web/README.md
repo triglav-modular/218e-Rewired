@@ -17,9 +17,10 @@ system sans; the build is identical either way.
 Two things leave. On a download: which options were chosen, which platform,
 and which version, POSTed to `beacon` beside the page. And when a read or a
 send of the settings over MIDI ends: which button, how it ended, the page's
-version and the firmware the keyboard reported, POSTed to `settings-beacon`.
-No identifier, no header kept, and never the image, the calibration or the
-settings themselves. The URLs are relative, so they report only where
+version and the firmware the keyboard reported, and for a send which options
+it carried, summarised as a download's are, POSTed to `settings-beacon`.
+No identifier, no header kept, and never the image, the calibration, the
+patterns, the tunings or the pitch table themselves. The URLs are relative, so they report only where
 something is listening — a clone served anywhere else, or the page opened
 from a file, reports nowhere. See "Counting builds" in
 [../docs/BUILD.md](../docs/BUILD.md).
@@ -35,10 +36,12 @@ released page remembered.
 
 The feature is deliberately invisible: nothing on the page explains it, and the
 only control is a small **Reset** beside the step 2 heading, which is hidden
-until something has actually moved off its default. Reset puts the choices back
-and nothing else — it walks the same ordered appliers a restore does, and the
-Scala files, the pattern bank, the measured calibration and the dropped factory
-image are not among the defaults, so none of them is touched. Re-ticking a box
+until something has actually moved off its default. Reset puts the choices back.
+It walks the same ordered appliers a restore does. The Scala files, the
+pattern bank, the measured calibration and the dropped factory image are not
+among the defaults, so none of them is reset. A loaded table still goes when
+Reset moves the volts per octave or the pitch offset: those switches drop it,
+as they do when pressed. Re-ticking a box
 brings what was loaded back with it. The deviations being empty afterwards is
 what empties the save.
 
@@ -49,8 +52,12 @@ returning visitor on whichever version they first saw, and an option added
 default-on later would come back off. `BUILDLIB.SETTINGS_ORDER` fixes the order
 a restore applies things in, which is a dependency rather than a preference:
 the pitch offset renumbers every semitone and drops a loaded calibration by
-design, so it has to go back first. `web/test_settings.js` asserts on that
-array and reads `app.js` to catch an applier that was never added to it.
+design, so it has to go back first. The volts per octave drops one too,
+because a table belongs to the scaling it was taken at, and goes back first
+as well.
+`web/test_settings.js` asserts on that array, runs the page's own volts per
+octave buttons against a loaded table and reads the calibration line they
+leave, and reads `app.js` to catch an applier that was never added to it.
 
 ## How it fits together
 
@@ -59,7 +66,7 @@ array and reads `app.js` to catch an applier that was never added to it.
 | `index.html`, `app.js` | the interface |
 | `build.js` | the whole build: options + factory image → flashable image; `test_readback.js` builds, reads the record back into table slots as the page's read does, and builds again (local only: it needs the factory image) |
 | `calibrate.js` | the automatic measurement: drives the keyboard over MIDI, measures the 208 on an audio input, fills in the calibration offsets |
-| `settings.js` | the settings transport: pushes a build's record to the keyboard as NRPN, reads it back, commits it; `test_settingsmidi.js` runs it against a fake instrument, `test_nrpn.js` the codec in `buildlib.js`, and `test_unsent.js` the page's unsent card (a change after a read, sent by its Send) |
+| `settings.js` | the settings transport: pushes a build's record to the keyboard as NRPN, reads it back, commits it; `test_settingsmidi.js` runs it against a fake instrument, `test_nrpn.js` the codec in `buildlib.js`, and `test_unsent.js` the page's unsent card (a change after a read, a calibration run's own read included, sent by its Send) and who holds the keyboard's port |
 | `buildlib.js` | ported from `tools/build.py` — tables, hex, flags, properties, and the fold that accumulates readings onto a flashed table |
 | `sha256.js` | synchronous SHA-256 (SubtleCrypto is async and absent from jsc) |
 | `generated.js` | **generated** — frozen defaults, feature map, control flow, assembler source |
@@ -94,10 +101,13 @@ is checked against Ghidra instruction by instruction. On top of that:
 python3 web/test_configs.py
 ```
 
-builds thirty configurations with `tools/build.py` and again with this
+builds thirty-five configurations with `tools/build.py` and again with this
 pipeline, and compares **both** the generated `build.properties` and the final
-image SHA-256; eleven more are option sets both toolchains have to refuse, and
-refuse for the same reason. A clean run reports every configuration matching,
+image SHA-256; no two of them may build the same image, except one slot
+written two ways, which must. Three of them change an internal setting as
+well, through `REWIRED_INTERNAL_OVERRIDE` for the CLI and the same setting in
+the page's defaults. Sixteen more are option sets both toolchains
+have to refuse, and refuse for the same reason. A clean run reports every configuration matching,
 `historical` included — the most complex one, with measured calibration and
 three tunings. It is an anchor for that combination rather than a reproduction
 of any older image: the power-up marker hashes the assembler source, so no

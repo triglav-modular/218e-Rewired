@@ -440,6 +440,31 @@ def test_table_range() -> None:
     B.check_table_range("tail", [40 * k for k in range(29)] + [60000] * 3, 0)
     check("the three unreachable entries are not ranged", True)
 
+    # The table as emitted stops at 0x3fff, the fourteen bits a record
+    # carries.  One degree to a 5/2 period puts keys 25 to 28 past it, a
+    # period apart, and emitted they are one value the latch cannot tell
+    # apart.  Stepped up six periods they stay under the signed limit, so
+    # nothing above sees it.  Refused in the owner's words (2026-09-28).
+    ninth = tmp("! t\nOne degree per 5/2 period\n 1\n 5/2\n", "_ninth.scl")
+    one = tmp("! t\n 0\n 0\n 127\n 60\n 69\n 440.0\n 1\n", "_ninth.kbm")
+    cents = B.parse_scala(ninth, mapped=True)
+    degrees, formal = B.parse_kbm(one, cents)
+    period_units = math.floor(cents[formal] * 484 / 1200 + 0.5)
+    table = B.tuning_table(cents, period_units + 1, 484, 0.0, degrees, cents[formal])
+    try:
+        B.check_table_range("_ninth.scl", table, period_units)
+        said = None
+    except ValueError as error:
+        said = str(error)
+    check("keys past 16383, stored as one value, are refused in the owner's words",
+          said == "_ninth.scl: keys 25 to 28 sit past 16383, the most a table entry "
+                  "carries, and would all be stored there, one pitch the latch cannot "
+                  "tell apart. This scale’s period spans 640 units, so the keyboard "
+                  "runs out of table before it runs out of keys: use a mapping with "
+                  "more degrees to the period, or a smaller period.", str(said))
+    B.check_table_range("one past", [40 * k for k in range(28)] + [0x4000], 484)
+    check("one key past 16383 is left to the latch spacing: it is one key", True)
+
 
 def test_tables(cfg: dict) -> None:
     print("generated tables")
@@ -510,6 +535,16 @@ def test_tables(cfg: dict) -> None:
     if fade:
         check("fade softens the onset", faded[1] < plain[1] // 4)
         check("fade rejoins the curve", faded[fade:] == plain[fade:])
+        # The fade scales the curve itself, and each faded entry is rounded
+        # once.  Rounded to a count first and the scaled count floored, 38 of
+        # the 59 came out a count low.
+        span, exponent = curve["span"], -curve["onset_db"] / 20.0
+        once = [math.floor(span * 10.0 ** ((x / span - 1.0) * exponent) * x / fade + 0.5)
+                for x in range(1, fade)]
+        low = [x for x in range(1, fade) if faded[x] != once[x - 1]]
+        check("the faded onset is the curve times x/fade, rounded once", not low,
+              f"{len(low)} of {fade - 1} differ, from x = {low[:1]}: "
+              f"{[(x, faded[x], once[x - 1]) for x in low[:4]]}")
 
 
 def test_resolution(cfg: dict) -> None:
@@ -681,6 +716,9 @@ def test_blend(cfg: dict) -> None:
             anchor = pitch == base
             if latch:
                 pitch += stamp.get(k, 0)
+            # Held at the pitch floor, entry 0 of the pitch table, as the
+            # firmware holds every contributor since audit 038711a (F2).
+            pitch = max(pitch, -0x78)
             if anchor:
                 measured_from = pitch
             z = press.get(k, 0) - (0 if anchor else thresh)
@@ -706,9 +744,20 @@ def test_blend(cfg: dict) -> None:
           swept[0] == 0 and swept[1] > 100 and swept[2] > 270, str(swept))
 
     # 32-bit accumulators with every key contributing at maximum weight.
+    # The firmware divides unsigned, so every contributor is carried 0x78 up
+    # from the pitch floor (-0x78) and the top of the range is 4095 + 0x78.
     weight = (63 ** 3) >> 3
+    top = 4095 + 0x78
     check("accumulators cannot overflow with 29 contributors",
-          29 * weight * 4095 < 2 ** 32, f"{29 * weight * 4095:,}")
+          29 * weight * top < 2 ** 32, f"{29 * weight * top:,}")
+
+    # A note latched under octave pad 0 on a slot whose key 0 is under one
+    # period (483, both bundled Sabat II scales) sounds at -1, and alone it
+    # is its own anchor: no offset, whatever the pressure.
+    saved, table[0] = table[0], 483
+    under = [blend({0}, 0, True, {0: -484}, {0: p}) for p in (100, 500, 900)]
+    table[0] = saved
+    check("a lone latched key under zero publishes no offset", under == [0, 0, 0], str(under))
 
     # Shifting only as far as overflow safety requires preserves the cubic
     # ratio at light pressure.  The old >>6 quantised z=4 and z=5 to the same
@@ -1865,8 +1914,8 @@ def test_persist_required() -> None:
     already matching comes back in whatever mode it left - PLAY included,
     where seq_noteon_mute eats every key and the keyboard reads as dead.  So
     the option is not a default any more: the only way to build one is to ask
-    for the unsupported image by name, which the parity sweep and the control
-    and persistence regressions do and nothing that ships does.
+    for the unsupported image by name, which the builder parity rows and this
+    test do and nothing that ships does.
     """
     print("persistence is mandatory")
     import options as _options
@@ -1919,7 +1968,10 @@ def test_generated_is_current() -> None:
     # Both outputs: generate.py rewrites generated.js AND assembler.js, and
     # only the first was compared - so an encoder or runtime edit left a
     # stale assembler.js shipping while this check stayed green.
-    outputs = [REPO / "web" / "generated.js", REPO / "web" / "assembler.js"]
+    # And feed.xml, the changelog for feed readers, which comes from the same
+    # run and goes stale on the same edit.
+    outputs = [REPO / "web" / "generated.js", REPO / "web" / "assembler.js",
+               REPO / "web" / "feed.xml"]
     if not all(p.exists() for p in outputs):
         print("  skip  web bundle is not built")
         return

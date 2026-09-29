@@ -143,7 +143,7 @@ jobs:
       - name: generated.js is not stale
         run: |
           python3 web/generate.py
-          git diff --exit-code -- web/generated.js web/assembler.js \
+          git diff --exit-code -- web/generated.js web/assembler.js web/feed.xml \
             || { echo "::error::generated.js is out of date - run python3 web/generate.py"; exit 1; }
 
   flasher-macos:

@@ -71,14 +71,19 @@ var WEBBUILD = (function () {
                 // fourteen bits, so the table stops at 0x3fff - an entry up
                 // there, or one no key reaches, is far past the DAC's 0xfff,
                 // where the pitch path clamps it anyway.
-                tables['tuning_slot' + index] = table.map(function (v) {
+                var emitted = table.map(function (v) {
                     return Math.max(0, Math.min(v, 0x3FFF));
                 });
+                tables['tuning_slot' + index] = emitted;
                 tables.tuning_period_keys.push(scale.degrees ? scale.degrees.length : 12);
+                // Same rule as tools/build.py: the latch compares the table
+                // as emitted, so the spacing is judged on that, where keys
+                // the clamp stacks at 0x3fff are one note.  The range check
+                // above stays on the table as computed.
                 spacingSlots.push({
                     ideal: BUILDLIB.idealKeyPitches(
                         scale.cents, scale.degrees, period, offset),
-                    table: table,
+                    table: emitted,
                     periodCents: period,
                     periodUnits: periodUnits
                 });
@@ -212,7 +217,8 @@ var WEBBUILD = (function () {
         ['persist_crc', 'persist_record_crc', 'persist_pack',
          'persist_valid', 'persist_newest', 'persist_load',
          'persist_same', 'persist_verify', 'persist_save', 'persist_tick',
-         'persist_capture', 'persist_boot', 'persist_scan_shim', 'persist']
+         'persist_capture', 'persist_capture_ref', 'persist_boot',
+         'persist_scan_shim', 'persist']
             .forEach(function (n) { blocks[n] = keep; });
         // Since phase G the factory ISR posts the clock event whenever the
         // divider's byte is off, so the sequencer's gate on it always stands.

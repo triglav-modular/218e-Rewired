@@ -106,15 +106,19 @@ rewritten updater behind.
 `tools/test.py --golden` also rebuilds and compares against
 `[firmware].golden_sha256`.
 
-`python3 tools/test_clock.py` builds clock-only and clock+sequencer variants
-and emulates the actual ISR, divider and pitch/trigger hooks. It requires
-Ghidra and never flashes a device. See [CLOCK.md](CLOCK.md) for the input
-contract, regression coverage and remaining hardware checks.
+`python3 tools/test_clock.py` emulates the actual ISR, divider and
+pitch/trigger hooks. The clock-only, clock+sequencer and pressure-off
+configurations run on one image, the shipped build, as settings records.
+Three internal constants for the settles and the latency diagnostic move
+code, so each of those builds an image of its own. It requires Ghidra and
+never flashes a device. See [CLOCK.md](CLOCK.md) for the input contract,
+regression coverage and remaining hardware checks.
 
-`python3 tools/test_persistence.py` builds all four persistence/sequence/clock
-variants and executes the actual save/load/startup code and factory flash
-wrapper with controller failure and power-cut injection. It also reruns the
-clock suite with an unfinished preset held and tests saves during playback.
+`python3 tools/test_persistence.py` executes the actual save/load/startup
+code and factory flash wrapper with controller failure and power-cut
+injection, on one image under the sequencer and divider configurations each
+script needs. It also reruns the clock suite with an unfinished preset held
+and tests saves during playback.
 With `persist = true`, changed sequences save on record exit/CLEAR and
 changed presets on pad release, without an idle or arp-off requirement.
 Flash saves can briefly disrupt playback. See [PERSISTENCE.md](PERSISTENCE.md)
@@ -298,7 +302,7 @@ the options into the full internal settings the build has always used.
 | `pressure_fix` | `true` | The reworked pressure path — 218r curve, pressure combined across held keys, proximity rejection, interpolated output. `false` returns all of it to factory. |
 | `pressure_portamento` | `true` | Pitch moves between held notes as their relative pressure moves. `false` restores the factory time-based glide. |
 | `knob1`, `knob2`, `knob3`, `knob4` | per knob | What each preset knob does outside edit mode. Left out, a knob takes the first role listed: `knob1` `order`/`orders`, `knob2` `spacing`/`quantized`/`swing`/`patterns`, `knob3` `octaves`, `knob4` `vibrato`/`trn`. Any may be `factory` to hand that knob back to its preset voltage. Edit-mode knobs 1 and 4 are unaffected. |
-| `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Left out, the bank is the 22 CLIX fills. |
+| `arp_patterns` | CLIX bank | Only read when `knob2 = "patterns"`. Up to 32 step patterns, each a string where a dot is a rest, or a `[pattern, length]` pair. Only the steps up to the length play, so a pattern that rests on all of them is refused. Left out, the bank is the 22 CLIX fills. |
 | `sequencer` | `true` | A 64-step sequencer: hold pad 4 about one second, then pad 1 records, pad 2 plays/stops, pad 3 clears. The hold puts the octave back where it was before pad 4 was pressed. The strip enters rests and ties. PLAY/STOP control its clock independently of the arp switch. |
 | `persist` | `true`, required | Saves changed sequences on record exit/CLEAR and changed presets on pad release. Flash saves can briefly disrupt playback; see [PERSISTENCE.md](PERSISTENCE.md). `false` is refused: it is a diagnostic shape, built only by the harnesses that characterise it. |
 | `clock_divide` | `true` | The arp RATE knob divides an external clock /1–/8 after five consistent measured intervals. Target: 0.5–200 Hz; releases after >2.6 s without input. Conditioned MCU low phase must exceed 250 us. See [CLOCK.md](CLOCK.md). |
@@ -325,6 +329,9 @@ measuring itself: it plays C0 to E5 into the keyboard over MIDI, listens to the
 208 on an audio input, and folds the readings onto whatever table the
 instrument is already running. Load that table there first, and save the new
 one it produces &mdash; the file it writes is the same format this reads.
+Switching the page's volts per octave or its pitch offset drops a loaded
+table. It belongs to the scaling and the layout it was taken at. The page
+says so on the calibration line.
 
 By hand, measure each key against 12-TET with a tuner and fold the readings
 in:
@@ -379,12 +386,26 @@ remote-enable toggle — and the rem-en and trn LEDs are left alone, because the
 applier that drives them is not called. There is nothing to switch between, so
 nothing is taken over.
 
-Transpose *mode* needs one more thing to survive: the knobs. It is driven from
-the knobs the roles take over, so any knob not set to `factory` retires it as
-surely as a tuning does. With no tuning and all four knobs `factory`, the three
-`transpose_force_*` patches are skipped and transpose works as it shipped; with
-either a tuning or a remapped knob, they are applied and it does not. That is
-the only place two options combine to decide a third thing.
+Transpose *mode*, the factory's knob 4 transposition (key 27 in edit mode, the
+trn LED, knob 4 choosing the octave), survives without a tuning whatever the
+knob roles are. Under `vibrato` knob 4's factory octave zones keep running
+beside the vibrato, so with the trn LED lit knob 4 transposes as well. Under
+`trn` the role sets the same octave from its own zones and keeps the mode on.
+A tuning retires the factory mode: the applier clears the transpose-mode byte
+on every scan, and key 27 selects slots instead. The `trn` role sets the byte
+again after the applier, so knob 4 on `trn` transposes with a tuning too.
+
+Three patches once named for transpose mode have no part in it. They follow
+`pressure_fix`. With it on, `velocity_floor_contact` and
+`velocity_floor_handback` hold the lowest keyboard note-on velocity at 1, and
+`peak_hold_reload` reloads the factory's peak hold with 1 instead of 10, so a
+falling sensor reading is taken on every scan rather than every tenth. The
+factory reads the velocity floor from `state+0x2db`, the minimum
+configuration knob 3 sets, which is also the byte the fix's edit-mode knob 4
+writes its curve level into. So with the fix on the knob 3 minimum is not
+used, while the arpeggiator's own minimum, pad 3 and knob 3, still is. With
+the fix off both are the factory's, and a curve level left in that byte
+reads as a floor of 1.
 
 **Anchoring.** Each scale is shifted so that **A** lands on the 12-TET grid,
 which keeps the note you tuned the 208 to in the same place in every slot;
@@ -443,21 +464,125 @@ python3 tools/avr32/sweep.py       # every option both ways, both toolchains
 python3 tools/test_controls.py     # emitted knob roles and strip-gesture ownership
 ```
 
-`test_controls.py` runs default, six-order/transpose, tuned-transpose, and
-lean (factory arp, no sequencer or divider) images with persistence on and
-off, plus knob 2 on swing and on step patterns, which build once each
-because neither role touches persistence. It checks all six note orders, preset-4
+`test_controls.py` runs every check on one image, the shipped build, under
+the configurations its row of `CHECKS` names: default, six orders with trn
+and quantized randomness (roles), tuned-transpose, lean (factory arp, no
+sequencer or divider), the jack transposer over 5-limit JI, knob 2 on swing
+and on step patterns, a 24-key map, and the 208c pitch curve (offset-off).
+"One image" below says how the rows are chosen. It checks all six note orders, preset-4
 isolation through the actual ADC-event pitch target and DAC path from the
 first knob movement, release-triggered saves, released/unlatched press
 history, and pitch ordering with octave-stacked notes and equal pitches.
-It also checks strip touches across preview and RECORD boundaries.
+It also checks strip touches across preview and RECORD boundaries, and
+that each MIDI note names the note its pitch CV plays: a latched note at
+the octave it was entered at, and in HOLD at the degree of a quantised
+preset it was entered under, a recorded step at the octave it was played
+at, a preview pinned as its CV is, and a key played over a take at its own
+note. Each note is named in one sum and held to 0..127 once. The helpers
+that name one are swept over the key, the periods, the jack's degrees and
+a step's degrees, and the paths are driven where part of a note falls under
+0 or over 127 before the rest goes on. MIDI notes 0..127 are played in, and
+those under 24 play their own pitches. Their note-ons and note-offs are
+driven in orders under and across 24: each note-off lets its own note go,
+writes nothing past the held-note flags, and ends the gate when it lets go
+of the note pressed last. It checks the keyboard's velocity
+floors and the peak hold with `pressure_fix` on and off. It checks the
+pitch chain wherever a value was held at a floor or a cap before a later
+term was added. Knob 3's random octave is tested on the finished target.
+The glide, the bend and the blend's offset are summed and held once, on the
+scan and in the clock's fast stage. The glide carries a target up to 0xfff,
+as the adder and the fast stage do. A pad flip across the floor or the cap
+with the blend engaged lands at once, as a flip in range does. A handover
+to or from a latched anchor under the floor holds the pitch. The blend
+measures and weighs a note latched under the floor at its own pitch, not at
+the floor, so a latched set that the transpose state moves back into range
+pulls from where it sounds. The blend's re-base history folds a base under
+zero. A MIDI note under the table's bottom, its base under the pitch floor,
+sounds the blend's pull over a held key as note 24 does. The recording
+audition pins a pitch one unit under the take's reference. The preset
+quantiser keeps its degree under a period that is not a whole number of
+units. The 24-key map is `tunings/24TET.scl` with
+`tunings/24TET-full.kbm`. There an octave pad steps the MIDI note 24, as the
+jack does for a period.
 Like `test_persistence.py`, it requires Ghidra, models
 peripherals without flashing hardware, and restores shared build metadata.
 
-`sweep.py` builds 26 configurations twice — once through Ghidra, once
-through the JavaScript toolchain — and compares the images. It also asserts
+`sweep.py` builds 29 configurations twice, once through Ghidra and once
+through the JavaScript toolchain, and compares the images. It also asserts
 that every configuration produces a *distinct* image, so a variant that
 silently stopped taking effect cannot pass as agreement.
+
+### One image, settings per check
+
+Every option that can ship changes only data: the settings record at
+`0x8001fb00` (`settings_numbers`) and the tables the settings mirror is
+filled from. Only `persist = false` changes code, and it is no longer built
+or tested. So the Ghidra suites build one image, the shipped one, and run
+each check under the configurations it needs.
+
+A configuration is a set of option values over `config/218e.toml`.
+`tools/profiles.py` builds it with `tools/build.py` and keeps the record
+that build serialized. `src/SettingsRecord.java` lays that record in the
+first settings slot before every boot, the way a send leaves it once it is
+committed. The runner names the record in `REWIRED_SETTINGS_RECORD`. The
+image's own defaults lay nothing.
+
+The settings equivalence check proves that a laid record is the image built
+with those options. It runs in each suite, for every configuration the suite
+uses, in two halves.
+
+- Flash side: each configuration's image, built by `tools/build.py`, has
+  the code of the image under test, and its data is its record's own bytes.
+  The pattern bank's two copy lengths in `settings_defaults` count as data.
+- Emulated side: `src/SettingsEquivalence.java` boots each configuration
+  three ways. Built in: its image's flash over the one under test. Sent:
+  all 338 parameters through the factory MIDI parser in the page's order,
+  the commit, then a power cycle. Laid: the record in slot 0. The three
+  leave the same RAM below the stack, apart from the loader's own slot and
+  generation, and again after one pass of the per-scan chain. The committed
+  record is the build's record byte for byte.
+
+Which configurations a check runs under is argued from what it reads.
+`test_controls.py --every --trace` runs each check under every
+configuration it can run under. With `--trace` each check prints the bytes
+it read, after the boot, of what a configuration sets: the mirror, the live
+option bytes and the settings slots in flash. Reads by the settings loader,
+its CRC and `option_boot` do not count. They only copy a valid record to
+the mirror and the live bytes, and what reads those copies is caught there.
+Two configurations whose booted machines differ only in bytes a check never
+read, under either, run that check the same. So a row keeps one of them.
+`test_persistence.py --trace` and `test_clock.py --trace` print the same.
+
+The rules the rows follow:
+
+- A configuration the old per-image suite ran a check under stays, unless
+  it runs the check the same as one kept, or the check skips itself under
+  it.
+- Knob 2 on swing or on patterns runs most checks the same as roles: they
+  never read knob 2's byte or the bank. Tuned and jack run the blend's sign,
+  its carried offset, the gain pair and the velocity floors the same as
+  roles. The 24-key map runs the carried offset the same as default.
+- The lean configuration is out of the rows of the six checks that skip
+  themselves with the blend or the latch recording off.
+- The 24-key map and offset-off are in every row whose check reads what
+  they change and passes under them. The exceptions assume something of
+  the default tables. presetQuantize, periodCell, calibrationPitch,
+  reloadedRotation and midiUnderTheFloor assume twelve keys to the period.
+  bendUnderTheBottomKey needs room under the bottom key, and lays a 208c
+  curve itself. jackTransposer measures the 5-limit JI's 16/15 against its
+  9/8, so it runs under jack alone.
+- In the persistence suite, every PersistenceRegression check but
+  playbackSave reads nothing the sequencer or divider set once the boot has
+  loaded them. They run under the image's own defaults. playbackSave also
+  runs with the sequencer off, and the presets mode is gone.
+  SettingsRegression holds the image to its own defaults, and runs once.
+- In the clock suite, nine checks read neither pressure byte under
+  pressure-off. They stay in that run: they take seconds, and the sweep
+  that does read them sets its length.
+
+Each configuration's checks are cut into jobs of about two minutes, from
+the times in `SECONDS`. So a run can use more emulations at once than it
+has configurations.
 
 ## How a patch becomes firmware
 
@@ -518,7 +643,7 @@ $GHIDRA_HOME/support/analyzeHeadless build/verify checkbuild \
 |---|---|
 | `tools/test.py` | 231 assertions on the generated tables — pitch curve monotonic and inside the DAC, Scala files parse and are rejected when malformed, tuning tables exact |
 | `tools/test.py --golden` | the default build still reproduces its pinned image |
-| `tools/avr32/sweep.py` | representative configurations, including all four persistence variants, built by both toolchains and compared byte for byte |
+| `tools/avr32/sweep.py` | representative configurations, the sequencer and the divider on and off among them, built by both toolchains and compared byte for byte |
 | `web/test_configs.py` | the browser build matches `build.py` across its option/interaction matrix |
 | `tools/test_persistence.py` | emitted persistence and factory copy code, fault injection, power cuts, same-scan gestures, unfinished-edit isolation, clock continuation after saves, and the keyboard played over a running take |
 | `web/test_matrix.js` | **2,304 option combinations**, including persistence on/off, built through the guarded path |
@@ -582,6 +707,26 @@ rules - with two differences. It is marked `noindex`, so the released page is
 the one search finds. And its beacon is answered but written nowhere: the
 download counts describe the released page, and a build of whatever the
 development branch held that afternoon is not one of those.
+
+### The release feed
+
+`web/feed.xml` is `CHANGELOG.txt` as RSS 2.0, one item per release, written by
+`web/generate.py` in the same run as `generated.js` and checked for staleness
+the same way. A changelog edit already meant running the generator; the feed
+now comes along with it.
+
+The page names it twice, in a `<link rel="alternate">` for feed readers and on
+the RSS pill beside the changelog, both absolutely. A relative link would be
+stamped with `?v=` like every other asset and then served immutable
+for a year, and a subscription keeps the URL it was given: it would never see
+another release. Unstamped, it gets the origin's ten minutes.
+
+Its URLs come from the page's canonical, so the development build's feed moves
+under `/dev/` with the page; the workflow checks that the page's link, the
+feed's self link and its channel all name the site being built. Each item's
+guid is its version, so correcting a line later does not announce the release
+again. Dates are noon UTC, because the changelog records a day, and noon is
+that same day for a reader anywhere from UTC-11 to UTC+11.
 
 ### The remaining ten minutes
 
@@ -878,8 +1023,14 @@ route of their own: `settings-beacon`, posted when Read settings (between steps
 `error` for a failure the page has no name for), the page's version, the
 firmware version the keyboard reported (absent when it never answered),
 whether a send restarted the keyboard to run a changed option, and a daily
-ordinal kept apart from the downloads'. Never the settings, the patterns, the
-tunings or the pitch table: those are one person's instrument.
+ordinal kept apart from the downloads'. A send also carries the options it
+sent, under `options`, in exactly the summary a download reports:
+`optionSummary` in `web/app.js` builds both, and the worker reads both
+through `optionsOf`. So a keyboard set over MIDI counts in the dashboard's
+option panels beside a flashed one, from sends that ended `ok`. A read carries
+none, because what a keyboard already holds was counted when somebody chose
+it. Never the patterns, the tunings or the pitch table themselves: those are
+one person's instrument.
 
 A route of its own rather than a field on the download's, because a worker
 from before it would have counted every read as a build from platform

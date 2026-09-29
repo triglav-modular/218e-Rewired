@@ -422,8 +422,46 @@ factory keyboard is live at all):
   transition, whose arp-off half (`0x80002c96`) ends every note and drops the
   gate whatever is under a finger - the same silence the arp switch makes
   when it is turned off under a held key.  Left as the factory has it.
-- Poly mode gets the same CV behaviour, since the contact path is shared;
-  poly MIDI was already live.
+- Poly mode gets the same CV behaviour, since the contact path is shared.
+- Poly MIDI stays poly through a take: a chord is two notes, each lift ends
+  its own note, and the sustain goes out as CC 64.  That needed a fix (audit
+  038711a, F11).  The factory forks the keyboard's MIDI between its poly and
+  mono senders on `state+0x85`, the arp-engaged byte, and PLAY sets that
+  byte through `seq_clock_enabled`, so a take turned poly MIDI into mono: a
+  chord retriggered, and a poly key held into PLAY that was not the last one
+  pressed lost its note-off until STOP.  The MIDI decisions now read the
+  arp switch at `state+0x340/0x341`.  The poly handler's press test and the
+  sustain's CC 64 test are rewritten in place.  The mono path's fourteen
+  sender calls go through `key_midi_live` (0x80021400), which keeps them
+  off the ports while poly MIDI is live.  Behind its own gates the mono
+  path still runs its bookkeeping, so the CV, the gate, the 208 bus and the
+  LEDs, which read `state+0x85`, do in a take what they did before.  LED 9,
+  which shows poly MIDI, reads the switch too since 2026-09-28: in a take
+  with the switch off it is lit, and it blinks only with the switch engaged.
+- A poly note ends at its own lift, whatever the arp switch says by then.
+  The factory's poly handler refuses a note-off with the switch engaged and
+  leaves the note to the arp-off edge's flush when the switch returns, and
+  a take makes no such edge, so a poly key let go with the switch engaged
+  in a take rang until STOP.  `poly_note_path` (0x80021450), on the poly
+  handler's pool word, marks a key when the handler sends its note (bit 7
+  of the handler's channel byte for the key, 0x33c8 + key, which the C
+  runtime zeroes at every reset).  Every lift reaches it.  A marked key's
+  note is ended the way the handler ends one, while the ports still hold it
+  as sounding; an unmarked key ends nothing, so a press the switch
+  swallowed cannot end another note under the number the handler last
+  stored for that key.  Outside a take this moves one note-off: a poly key
+  let go with the switch engaged now ends at its lift, not at the switch's
+  return.
+- Sustain held into PLAY is released on the receiver, and stays so: the
+  owner's call, 2026-09-28.  The factory's arp-on edge sends CC 64 = 0 as
+  PLAY begins, so the take's keyboard notes end at their lifts there.
+- A poly press over a sounding take ends the take's note before it sounds
+  its own, as a mono press does.  The poly handler runs before the contact
+  handler, where `seq_key_takes` ends the take's note, so its note-on came
+  first; on one note the take's note-off then silenced the key at the
+  receiver and cleared the port's active-note record, and the key's lift
+  sent nothing.  `poly_note_path` ends the take's note first, the way
+  `seq_key_takes` does.
 
 With the arp switch ON a press still means nothing (`seq_noteon_mute` keeps
 its test for those two positions).  That is deliberate: with the arp engaged
@@ -440,7 +478,12 @@ sequencer's note - no longer arises, because the sequencer's note is ended by
 the press itself.  `src/PolyMidiProbe.java` pins all of it, and fails on the
 2.1 image for every claim that is new.  It runs in the `seq-clock` mode of
 `tools/test_persistence.py`, which is the only one that builds a sequencer,
-a divider and the persisted record into one image.
+a divider and the persisted record into one image.  It does not write
+`state+0x85`.  It used to clear the byte after PLAY, which ran every poly
+scenario in a state the instrument never holds (audit 038711a, F12).  It now
+asserts the byte after PLAY, after STOP and at every arming, and its poly
+scenarios over a take use two keys, since one key sounds the same on either
+path.
 
 ### 1. .kbm support (build-side only)
 - Parsers in `tools/build.py` AND `web/buildlib.js` (test_configs.py keeps

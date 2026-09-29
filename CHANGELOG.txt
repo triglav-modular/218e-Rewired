@@ -1,3 +1,6 @@
+3.1 (2026-09-28)
+- Fixed several pitch and MIDI bugs: received MIDI notes now follow the tuning across their whole range, and poly MIDI plays over a running sequence.
+
 3.0 (2026-09-27)
 - Settings can now be changed over Web MIDI after flashing.
 

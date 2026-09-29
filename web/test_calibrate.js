@@ -224,6 +224,87 @@ if (!lib) {
     });
 }
 
+// --- a table file, as the page reads one --------------------------------
+// tools/build.py reads a calibration table's columns by name and refuses a
+// semitone named twice.  The page read the cents and Source by position,
+// so a table with its columns in another order loaded on the CLI and was
+// "No usable rows" here, and it counted every row it read, so a table with
+// one semitone twice was refused as 79 of the 79 rows, missing one.  The
+// parser out of buildlib, then the page's own file loader out of app.js,
+// with the file picker and the page around it stubbed.
+if (!lib) {
+    print_('SKIP  the calibration file reader - no module loader here, run this under node');
+} else {
+    var csvText = fs.readFileSync(path.join(__dirname, '..', 'calibration',
+                                            '218e-pitch-calibration.csv'), 'utf8');
+    var shipped = lib.build.parseCalibration(csvText, 79);
+    ok('the shipped table reads as 79 semitones, none twice',
+       shipped.found === 79 && Object.keys(shipped.rows).length === 79 && shipped.twice === null,
+       shipped.found + ' found, twice ' + shipped.twice);
+    var twiceText = csvText.replace(/\n41;/, '\n40;');
+    var twiceRead = lib.build.parseCalibration(twiceText, 79);
+    ok('a table naming semitone 40 twice counts 78 semitones and says which came twice',
+       twiceRead.found === 78 && twiceRead.twice === 40, twiceRead.found + ' found, twice ' + twiceRead.twice);
+    // The same table with its columns in another order, and a measurement
+    // with its column where the CLI's fold writes it: read by name.
+    var lines = csvText.split('\n').filter(function (l) { return l && l.charAt(0) !== '#'; });
+    var head = lines[0].split(';'), cents = head.indexOf('Offset_Cents'), src = head.indexOf('Source');
+    var moved = lines.map(function (l) {
+        var q = l.split(';');
+        return [q[0], q[cents], q[1], q[2], q[src]].join(';');
+    }).join('\n');
+    var movedRead = lib.build.parseCalibration(moved, 79);
+    ok('a table with its columns in another order reads the same offsets and sources',
+       movedRead.found === 79 && JSON.stringify(movedRead.rows) === JSON.stringify(shipped.rows) &&
+       JSON.stringify(movedRead.sources) === JSON.stringify(shipped.sources), moved.split('\n')[0]);
+    var headless = lines.slice(1).join('\n');
+    ok('a table with no header still reads by position',
+       JSON.stringify(lib.build.parseCalibration(headless, 79).rows) === JSON.stringify(shipped.rows));
+    var measuredRead = lib.build.parseCalibration('Semitone;Measured_Cents\n40;1.5\n41;-2.25\n', 79);
+    ok('a measurement reads its cents by name',
+       measuredRead.found === 2 && measuredRead.rows[40] === 1.5 && measuredRead.rows[41] === -2.25,
+       JSON.stringify(measuredRead.rows));
+
+    // The page's loader: a file picked, read, and loaded or refused.
+    var vm = require('vm');
+    var APP = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+    var open = "\n    $('calFile').addEventListener('change', function (e) {";
+    var at = APP.indexOf(open);
+    var loader = at < 0 ? '' : APP.slice(at, APP.indexOf('\n    });\n', at) + 8);
+    var pageCtx = vm.createContext({ BUILDLIB: lib.build });
+    vm.runInContext([
+        'var nodes = {}, TABLE_ENTRIES = 79, PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67;',
+        'var measured = [], baseline = {}, baselineSources = {}, baselineName = "", baselineHistory = null, interpolated = {};',
+        'for (var i = 0; i < 79; i++) measured.push(0);',
+        'function $(id) { return nodes[id] || (nodes[id] = { id: id, value: "", checked: false, on: {},',
+        '    addEventListener: function (t, f) { this.on[t] = f; } }); }',
+        'function msg(el, kind, text) { el.kind = kind; el.text = text; }',
+        'function syncCalBody() {} function syncBaseline() {} function buildTable() {} function drawPlot() {}',
+        'function validateCal() {} function invalidate() {}',
+        'function FileReader() {} FileReader.prototype.readAsText = function (f) { this.result = f.text; this.onload(); };',
+        'function pick(name, text) {',
+        '    baseline = {}; nodes.calMsg = null;',
+        '    nodes.calFile.on.change({ target: { files: [{ name: name, text: text }], value: "" } });',
+        '    return { kind: $("calMsg").kind, text: $("calMsg").text, rows: Object.keys(baseline).length };',
+        '}',
+        loader
+    ].join('\n'), pageCtx, { filename: 'web/app.js (extracted)' });
+    var pick = loader ? pageCtx.pick : function () { return { text: 'no file loader in app.js' }; };
+    var got = pick('218e-pitch-calibration.csv', csvText);
+    ok('the page loads the shipped table whole', got.kind === 'ok' && got.rows === 79, got.text);
+    got = pick('twice.csv', twiceText);
+    ok('and refuses one naming a semitone twice in tools/build.py’s words',
+       got.kind === 'bad' && got.rows === 0 &&
+       got.text === 'twice.csv: semitone 40 appears twice - a stale row from a hand edit would silently win',
+       got.text);
+    got = pick('short.csv', csvText.replace(/\n41;[^\n]*/, ''));
+    ok('a table one row short says 78 of the 79, and which one',
+       got.kind === 'bad' && got.rows === 0 &&
+       /^short\.csv has 78 of the 79 rows a table needs - missing semitone 41\./.test(got.text), got.text);
+    got = pick('moved.csv', moved);
+    ok('and one with its columns in another order loads', got.kind === 'ok' && got.rows === 79, got.text);
+}
+
 // --- the estimator ------------------------------------------------------
 // A reading has to be good to a small fraction of a DAC step, or the rounding
 // it decides is a coin toss.  One step is 2.5 cents at 1.2 V/oct.
