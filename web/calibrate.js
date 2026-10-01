@@ -429,8 +429,21 @@
     var ANCHOR_TRIES = 3;
     var MAX_CHANNELS = 32;          // asked for; the device gives what it has
     // Converging (opts.adjust): how many times one note is played, the first
-    // reading included, and the top of the 12-bit DAC.
-    var ADJUST_TRIES = 3;
+    // reading included, and the top of the 12-bit DAC.  Past ADJUST_TRIES a
+    // note is played again only while it is still closing in, and never more
+    // than CONVERGE_TRIES times: each reading at most CLOSING of the closest
+    // before it, or the note found pinned at the 208's top, where every try
+    // narrows where it is (converge).  In sweep log 12 (2026-10-01) D#5 read
+    // +101, +52 and +20 cents, still closing in when its three plays ran
+    // out, and was filled in.  CLOSING counts a move at the ramp's rate into
+    // a 208 that answers a third of it, which is the move a note makes while
+    // only one of its readings can be believed (E5 under log 12's stop,
+    // modelled in test_sweep.js, answered 0.45 of one: -12.2 cents, then
+    // -6.5), and not the same reading again give or take the noise.
+    // CONVERGE_TRIES is E5's five plays there, with room for two halvings,
+    // at about a second a play.  SHALLOW is the least of the ramp's slope
+    // that is believed (converge).
+    var ADJUST_TRIES = 3, CONVERGE_TRIES = 8, CLOSING = 0.7, SHALLOW = 0.25;
     var DAC_TOP = 0xFFF;
     // Tuning (mode and adjust together).  An entry still further out than
     // this after its tries is not kept: it is filled in from the entries
@@ -554,11 +567,12 @@
     // the instrument's live mirror, and countsPerCent is the DAC counts that
     // move the ramp a cent (BUILDLIB.pitchCountsPerCent).  A note more than
     // half a count out is moved by its reading and played again, up to
-    // ADJUST_TRIES times, and the closest value is the one kept.  The result
-    // carries `table`, and each reading its `value`, `original`, `tries` and
-    // `residual`.  `table` is what the instrument is playing, unless
-    // `playing` is given: then that is, and tuning, the run writes `table`
-    // over it before the channel probe plays anything.  The page gives it
+    // ADJUST_TRIES times and past that while it is still closing in, and
+    // the closest value is the one kept.  The result carries `table`, and
+    // each reading its `value`, `original`, `tries` and `residual`.
+    // `table` is what the instrument is playing, unless `playing` is given:
+    // then that is, and tuning, the run writes `table` over it before the
+    // channel probe plays anything.  The page gives it
     // where the keyboard's table is at the other volts per octave from the
     // page's, and `table` is the flat table at the page's (app.js runStart).
     //
@@ -989,11 +1003,14 @@
         // is read as the plain sweep reads it; more than half a count out,
         // it is moved by that reading - the ramp's counts per cent, which a
         // 208 answers with a few percent more or less, so the next reading
-        // says how far that fell short - and played again.  The closest of
-        // the tries is the one kept, and written back if it was not the last
-        // one played.  A note not heard, or not believed, keeps the value it
-        // came with; so does the anchor, which is the reference every other
-        // reading is taken against: moving it would move them all.
+        // says how far that fell short - and played again: ADJUST_TRIES
+        // times, and past that while it is still closing in.  One past the
+        // 208's top reads only the gap to it, and is brought down from the
+        // entry under it instead.  The closest of the tries is the one kept,
+        // and written back if it was not the last one played.  A note not
+        // heard, or not believed, keeps the value it came with; so does the
+        // anchor, which is the reference every other reading is taken
+        // against: moving it would move them all.
         //
         // Tuning, a note not heard or not believed, or one still more than
         // FILL_CENTS out after its tries, is filled in after the run
@@ -1003,7 +1020,10 @@
             var e = step.index, original = start[e], value = table[e], was = value;
             var tried = [], best = null, played = 0, reading = null, silent = false;
             var fixed = e === anchor.index, at = warnings.length;
-            while (played < ADJUST_TRIES) {
+            // The lowest value this entry has been heard pinned at the top
+            // of the 208 (below), if any.
+            var pinned = null;
+            while (played < CONVERGE_TRIES) {
                 if (played > 0 && self.stopped) throw new Error('Stopped.');
                 var wantHz = anchorAt(marks, Date.now()) *
                              Math.pow(2, (e - anchor.index) / 12);
@@ -1018,24 +1038,73 @@
                 var j = judge(step, got, Date.now(), tuning ? '' : ', left unchanged', played > 1);
                 if (played === 1) reading = j;
                 if (!j || j.cents === null) break;
-                tried.push({ value: value, cents: j.cents, hz: j.hz });
-                if (!best || Math.abs(j.cents) < Math.abs(best.cents)) best = tried[tried.length - 1];
-                if (fixed || Math.abs(j.cents) <= HALF_COUNT || played >= ADJUST_TRIES) break;
+                var now = { value: value, cents: j.cents, hz: j.hz, pinned: false };
+                var last = tried.length ? tried[tried.length - 1] : null;
+                // At the top of the 208.  It cannot play past its stop (log
+                // 12: 2672 Hz, 27 cents over E5), and an entry past it reads
+                // only the gap from its pitch to the stop.  Moved down by
+                // that, it is still past it and reads the same gap again: E5
+                // read +26.9 cents on all three plays.  So a sharp reading
+                // that a move down changed by under a quarter of what the
+                // ramp moved is pinned there, and so is the reading before it;
+                // after a pinned one, a reading of the same gap again, give or
+                // take half a count.
+                if (last && last.cents > HALF_COUNT && now.cents > HALF_COUNT && now.value < last.value &&
+                    last.cents - now.cents < (last.pinned ? HALF_COUNT
+                        : (last.value - now.value) / adjust.countsPerCent / 4)) {
+                    last.pinned = now.pinned = true;
+                }
+                if (now.pinned) pinned = pinned === null ? now.value : Math.min(pinned, now.value);
+                // Still closing in: nearer than the closest before it by a
+                // real margin, not by noise.  Or pinned: every try from then
+                // on is played inside where the note is known to be, which
+                // narrows it.
+                var closing = !best || Math.abs(now.cents) <= CLOSING * Math.abs(best.cents) ||
+                              pinned !== null;
+                tried.push(now);
+                if (!best || Math.abs(now.cents) < Math.abs(best.cents)) best = now;
+                if (fixed || Math.abs(now.cents) <= HALF_COUNT || played >= CONVERGE_TRIES ||
+                    (played >= ADJUST_TRIES && !closing)) break;
                 // The first move is at the ramp's rate.  After it the note
                 // has been heard at two values, which is its own slope, and
                 // the next move goes by that: at the ramp's rate a 208 four
                 // percent steep there took 2123 to 2094 to 2096 around an
                 // in-tune 2095.45, and three tries ended 1.4 cents out.  A
-                // slope under half or over twice the ramp's is not a 208's
-                // and is not believed.
+                // slope over twice the ramp's is not a 208's, and one under
+                // SHALLOW of it is not believed either.  That was half until
+                // log 12: under its stop a 208 answers less (D#5's first move
+                // 0.48 of the ramp's), and moving at the ramp's rate instead
+                // took E5 two plays more in the model of it.  A reading
+                // pinned at the stop is not the note's own, so it is left out.
                 var rate = adjust.countsPerCent;
-                if (tried.length >= 2) {
-                    var a = tried[tried.length - 1], b = tried[tried.length - 2];
+                var free = tried.filter(function (t) { return !t.pinned; });
+                if (free.length >= 2) {
+                    var a = free[free.length - 1], b = free[free.length - 2];
                     var slope = (a.cents - b.cents) / (a.value - b.value);     // cents a count
                     var ramp = 1 / adjust.countsPerCent;
-                    if (slope >= ramp / 2 && slope <= ramp * 2) rate = 1 / slope;
+                    if (slope >= ramp * SHALLOW && slope <= ramp * 2) rate = 1 / slope;
                 }
-                var want = value - Math.round(j.cents * rate);
+                var want = value - Math.round(now.cents * rate);
+                // Pinned, a move by the reading never gets out: the note is
+                // somewhere between the entry under it, or the highest value
+                // it read flat at, and the lowest value it read sharp at.
+                // Just pinned and never heard flat, it starts from the entry
+                // under it and a semitone at the counts the one under that
+                // took, a little short where the 208 is flattening out, which
+                // is the side a reading can be believed on; past where it is
+                // known to be, or just pinned again, halfway.
+                if (pinned !== null) {
+                    var lo = e > 0 ? table[e - 1] : -1, hi = pinned, heardFlat = false;
+                    tried.forEach(function (t) {
+                        if (t.cents < 0 && t.value > lo) { lo = t.value; heardFlat = true; }
+                        if (t.cents > 0 && t.value < hi) hi = t.value;
+                    });
+                    if (now.pinned) {
+                        want = !heardFlat && e >= 2 && table[e - 1] > table[e - 2]
+                            ? lo + (table[e - 1] - table[e - 2]) : Math.floor((lo + hi) / 2);
+                    }
+                    if (want <= lo || want >= hi) want = Math.floor((lo + hi) / 2);
+                }
                 await lift(e, want);
                 var next = room(e, want);
                 // Nowhere to go, or somewhere already heard: another try
@@ -1493,6 +1562,7 @@
         entryFor: entryFor, plan: plan, noteLabel: noteLabel,
         MODE_FIRST_NOTE: MODE_FIRST_NOTE, modeEntryFor: modeEntryFor, modePlan: modePlan,
         fillGaps: fillGaps, FILL_CENTS: FILL_CENTS,
+        ADJUST_TRIES: ADJUST_TRIES, CONVERGE_TRIES: CONVERGE_TRIES, CLOSING: CLOSING,
         measure: measure, cents: cents, yin: yin, refine: refine,
         audioTrouble: audioTrouble, channelCount: channelCount, listen: listen,
         onMidiChange: onMidiChange, portGone: portGone,
