@@ -290,6 +290,73 @@ if (app && typeof require === 'function') {
        says(onLine, 'bad', OFFSET_DROPPED) && bare.length === 0 &&
        vm.runInContext('pitchOffset', page) === true,
        JSON.stringify({ on: onLine, bare: bare }));
+
+    // --- the boxes and the plot after a tuning run ------------------------
+    // A run leaves no readings: it moved the entries until they played in
+    // tune.  The boxes and the plot used to show those readings, all zero,
+    // so a run that tuned every note looked like one that found nothing.
+    // With its table loaded they show the offsets it holds, and a box edits
+    // its own entry (the owner, 2026-10-01).  The page's own buildTable and
+    // drawPlot, against a DOM that keeps what they write.
+    var view = vm.createContext({ console: console });
+    ['generated.js', 'buildlib.js'].forEach(function (f) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), view, { filename: 'web/' + f });
+    });
+    vm.runInContext([
+        'var nodes = {};',
+        'function element(id) { return { id: id, checked: true, textContent: "", className: "", value: "",',
+        '    style: {}, on: {}, kids: [], set innerHTML(v) { this.kids = []; this.html = v; },',
+        '    get innerHTML() { return this.html; },',
+        '    appendChild: function (c) { this.kids.push(c); },',
+        '    addEventListener: function (t, f) { this.on[t] = f; }, classList: { toggle: function () {} } }; }',
+        'var document = { createElement: function () { return element(null); } };',
+        'function $(id) { return nodes[id] || (nodes[id] = element(id)); }',
+        'function validateCal() {} function saveSoon() {} function invalidate() {} function syncBaseline() {}',
+        'function press() {} function syncCalBody() {}',
+        'var pitchOffset = true, PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
+        'var measured = [], interpolated = {};',
+        'for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);',
+        appSource('\n    var NAMES_C', ';\n'), appSource('\n    var NAMES_A', ';\n'),
+        appFunction('noteNames'), appFunction('noteName'), appFunction('keyLabel'),
+        appSource('\n    var baseline = {}', ';\n'),
+        appFunction('clearBaseline'), appFunction('haveBaseline'), appFunction('rows'),
+        appFunction('showsTable'), appFunction('shownCents'), appFunction('loadPitchTable'),
+        appFunction('drawPlot'), appSource('\n    var WHITE_W', ';\n'), appFunction('buildTable'),
+        'clearBaseline();',
+        'function boxes() { return $("calKeys").kids.map(function (k) { return k.kids[1]; }); }',
+        'function built() { return BUILDLIB.pitchTable(BUILDLIB.expand({ volts_per_octave: 1.2,',
+        '    pitch_offset: true }), rows()); }'
+    ].join('\n'), view, { filename: 'web/app.js (extracted)' });
+    view.tuned = once;
+    vm.runInContext('loadPitchTable(tuned, { volts_per_octave: 1.2, pitch_offset: true }, ' +
+                    '"the tuned table", {});', view);
+    var cents = PB.pitchCents(at12, once).map(function (r) { return r.cents; });
+    var after = vm.runInContext('({ values: boxes().map(function (b) { return b.value; }), ' +
+                                'hi: $("calHi").textContent, lo: $("calLo").textContent })', view);
+    var want = cents.slice(3, 68).map(function (c) { return c.toFixed(2); });
+    var play = cents.slice(3, 68);
+    ok('after a run the 65 boxes show the offsets the tuned table holds, and the plot spans them',
+       JSON.stringify(after.values) === JSON.stringify(want) &&
+       after.values.some(function (v) { return v !== '0.00'; }) &&
+       after.hi === Math.max.apply(null, play).toFixed(1) + ' cents' &&
+       after.lo === Math.min.apply(null, play).toFixed(1),
+       JSON.stringify({ first: after.values.slice(0, 4), want: want.slice(0, 4), hi: after.hi, lo: after.lo }));
+    vm.runInContext('var b = boxes()[27]; b.value = String(baseline[30] + 2.5); b.on.change();', view);
+    var edited = vm.runInContext('({ base: baseline[30], measured: measured[30], built: built() })', view);
+    var wantRows = cents.map(function (c, s) { return { semitone: s, cents: s === 30 ? c + 2.5 : c }; });
+    ok('a box edits its own entry of the tuned table, not a reading on top of it',
+       Math.abs(edited.base - (cents[30] + 2.5)) < 1e-9 && edited.measured === 0 &&
+       JSON.stringify(edited.built) === JSON.stringify(PB.pitchTable(at12, wantRows)),
+       JSON.stringify({ base: edited.base, measured: edited.measured }));
+    vm.runInContext('loadPitchTable(tuned, { volts_per_octave: 1.2, pitch_offset: true }, ' +
+                    '"the keyboard\\u2019s table", {});', view);
+    var read = vm.runInContext('boxes().every(function (b) { return b.value === "0.00"; })', view);
+    vm.runInContext('loadPitchTable(tuned, { volts_per_octave: 1.2, pitch_offset: true }, ' +
+                    '"the tuned table", {}); measured[30] = 4.5; buildTable();', view);
+    var onTop = vm.runInContext('boxes().map(function (b) { return b.value; })', view);
+    ok('a table read off the keyboard, or readings on top of a tuned one, still show readings',
+       read && onTop[27] === '4.50' && onTop.filter(function (v) { return v !== '0.00'; }).length === 1,
+       JSON.stringify({ read: read, onTop: onTop.slice(26, 29) }));
 }
 
 print_(failures ? ('FAILED ' + failures) : 'ALL SETTINGS TESTS PASSED');

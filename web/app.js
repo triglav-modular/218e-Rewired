@@ -749,8 +749,23 @@
     clearBaseline();
     function haveBaseline() { return !!baselineName; }
 
+    // What the boxes and the plot show, per semitone.  Readings, ordinarily:
+    // what each note played against the table it was measured on.  A tuning
+    // run leaves none - it moved the entries until they played in tune - so
+    // with its table loaded and nothing typed or loaded on top, they show the
+    // offsets that table holds, and a box edits its own entry.  Zero boxes
+    // after a run read as a run that found nothing (the owner, 2026-10-01).
+    function showsTable() {
+        return baselineName === 'the tuned table' &&
+            !measured.some(function (v) { return v !== 0; });
+    }
+    function shownCents() {
+        if (!showsTable()) return measured;
+        return measured.map(function (v, n) { return baseline[n] || 0; });
+    }
+
     function drawPlot() {
-        var play = measured.slice(PLAYABLE_LOW, PLAYABLE_HIGH + 1);
+        var play = shownCents().slice(PLAYABLE_LOW, PLAYABLE_HIGH + 1);
         var svg = $('calPlot'), lo = Math.min.apply(null, play),
             hi = Math.max.apply(null, play);
         if (hi - lo < 1) { lo -= 1; hi += 1; }
@@ -792,7 +807,7 @@
     function buildTable() {
         var kbd = $('calKeys');
         kbd.innerHTML = '';
-        var whites = 0;
+        var whites = 0, table = showsTable(), cents = shownCents();
         for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
             (function (n) {
                 var black = noteNames()[n % 12].indexOf('#') >= 0;
@@ -811,13 +826,21 @@
                 var input = document.createElement('input');
                 input.type = 'number';
                 input.step = '0.01';
-                input.value = measured[n].toFixed(2);
+                input.value = cents[n].toFixed(2);
                 input.title = noteName(n) + ', key ' + keyLabel(n);
-                if (measured[n] !== 0) input.className = 'set';
+                if (cents[n] !== 0) input.className = 'set';
                 input.addEventListener('change', function () {
-                    measured[n] = parseFloat(input.value) || 0;
-                    delete interpolated[n];
-                    input.className = measured[n] !== 0 ? 'set' : '';
+                    var v = parseFloat(input.value) || 0;
+                    if (table) {
+                        // The offset itself, so the note is no longer one
+                        // the run carried across from its neighbours.
+                        baseline[n] = v;
+                        delete baselineSources[n];
+                    } else {
+                        measured[n] = v;
+                        delete interpolated[n];
+                    }
+                    input.className = v !== 0 ? 'set' : '';
                     drawPlot(); validateCal();
                     saveSoon();
                     if ($('useCal').checked) invalidate();
