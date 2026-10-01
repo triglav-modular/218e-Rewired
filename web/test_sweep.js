@@ -241,6 +241,39 @@ function countsPerCentOf(cfg) {
            cfg.pitch.volts_per_octave / GEN.calibrationVoltsPerOctave / 1200;
 }
 
+// The top of a real 208, from sweep log 12 (2026-10-01): its pitch cannot
+// pass 2672 Hz, and under that its gain against the ramp's falls away, from
+// 1 an octave and a bit under the stop to under half 50 cents under it.
+// [cents under the stop, gain], each from a note's first move: the cents it
+// moved over the counts the ramp's rate gave it.  The gain at the stop
+// itself is not in the log, which only says E5 was pinned there.
+var STOP_GAIN = [[0, 0.40], [50, 0.48], [91, 0.62], [149, 0.64], [254, 0.69], [358, 0.73],
+                 [463, 0.77], [568, 0.80], [673, 0.83], [776, 0.85], [881, 0.87], [985, 0.90],
+                 [1089, 0.93], [1192, 0.95], [1296, 0.97], [1399, 0.99], [1500, 1]];
+// Cents under the stop that a 208 would be at without it -> cents under it
+// with it.  Far under, the same; nearer, compressed; past it, 0.
+var stopUnder = (function () {
+    var knee = STOP_GAIN[STOP_GAIN.length - 1][0], U = new Float64Array(knee + 1);
+    function gain(d) {
+        for (var k = 1; k < STOP_GAIN.length; k++) {
+            var a = STOP_GAIN[k - 1], b = STOP_GAIN[k];
+            if (d <= b[0]) return a[1] + (b[1] - a[1]) * (d - a[0]) / (b[0] - a[0]);
+        }
+        return 1;
+    }
+    // U[d]: cents of the free curve that take the compressed one from d under
+    // the stop to the knee.
+    for (var d = knee - 1; d >= 0; d--) U[d] = U[d + 1] + 1 / gain(d + 0.5);
+    return function (u) {
+        if (u >= knee) return u;
+        var r = knee - u;
+        if (r >= U[0]) return 0;
+        var lo = 0, hi = knee;
+        while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (U[mid] >= r) lo = mid; else hi = mid; }
+        return lo + (U[lo] - r) / (U[lo] - U[lo + 1]);
+    };
+})();
+
 function modeWorld(opts) {
     var w = makeWorld({ listening: opts.listening === undefined ? 2 : opts.listening,
                         mute: opts.mute });
@@ -283,19 +316,24 @@ function modeWorld(opts) {
     // The 0 V pitch wandering by itself: refWander(k) cents on the k-th note
     // played at the 0 V entry in the mode, counted from 1.
     w.refPlays = 0;
+    // A stop like log 12's (STOP_GAIN): `stop.cents` above where entry
+    // `stop.entry` is in tune against the 0 V pitch.  In octaves above F0.
+    var stopAt = opts.stop ? octaves(0) + (opts.stop.entry - w.shift) / 12 + opts.stop.cents / 1200 : null;
     // The pitch entry e sounds at when it holds v.  gainAt makes one entry
     // answer a move that many times over: not a 208, but the way to make a
     // try that overshoots on purpose.  drift is cents a second.
     w.pitchOf = function (e, v) {
         var o = octaves(v);
         if (gainAt[e]) o = octaves(w.flash[e]) + (o - octaves(w.flash[e])) * gainAt[e];
+        if (stopAt !== null) o = stopAt - stopUnder(1200 * (stopAt - o)) / 1200;
         return F0 * Math.pow(2, o + drift * w.clock / 1000 / 1200);
     };
+    if (stopAt !== null) w.stopHz = F0 * Math.pow(2, stopAt);
     // Where entry e is exactly in tune against the 208's 0 V pitch - the
     // 0 V entry at 0 counts - in counts: what a run is meant to get within
-    // half a count of.
-    w.ideal = function (e) {
-        var want = w.pitchOf(w.shift, 0) * Math.pow(2, (e - w.shift) / 12), lo = 0, hi = 8000;
+    // half a count of.  Or `c` cents from in tune.
+    w.ideal = function (e, c) {
+        var want = w.pitchOf(w.shift, 0) * Math.pow(2, (e - w.shift) / 12 + (c || 0) / 1200), lo = 0, hi = 8000;
         for (var k = 0; k < 80; k++) {
             var mid = (lo + hi) / 2;
             if (w.pitchOf(e, mid) < want) lo = mid; else hi = mid;
@@ -354,6 +392,15 @@ function modeWorld(opts) {
             }
             if (w.mode && idx === w.shift && opts.refWander) extra += opts.refWander(++w.refPlays);
             w.hz = w.pitchOf(idx, w.mirror[idx]) * Math.pow(2, extra / 1200);
+            // A note that goes where it likes: the k-th play of entry e in
+            // the mode, counted from 1, sounds readsAt[e](k) cents from in
+            // tune, whatever the entry holds.
+            if (w.mode && opts.readsAt && opts.readsAt[idx]) {
+                w.plays = w.plays || {};
+                w.plays[idx] = (w.plays[idx] || 0) + 1;
+                w.hz = w.pitchOf(w.shift, 0) * Math.pow(2, (idx - w.shift) / 12 +
+                                                         opts.readsAt[idx](w.plays[idx]) / 1200);
+            }
             w.quiet = !!w.mute[note];
         } else if (status === 0x80) {
             w.notesOn--;
@@ -423,6 +470,28 @@ function tolerance(w, out) {
         ? Math.abs(PLAIN.cents(out.anchorHz, w.pitchOf(w.shift, 0))) : 0;
     return { counts: 0.5 / w.gMin + 0.01 + ref * countsPerCentOf(w.cfg) / w.gMin,
              cents: 0.5 / countsPerCentOf(w.cfg) * w.gMax + 0.02, ref: ref };
+}
+// The entries a run played past ADJUST_TRIES without earning it - the play
+// before each such play has to have closed in, to CLOSING of the closest
+// before it or nearer - or past CONVERGE_TRIES at all.  From the log, so it
+// is the readings as heard.  (Not for a 208 with a stop: a note pinned there
+// is played on whatever its readings do.)
+function unearned(out) {
+    var plays = {}, bad = [];
+    out.log.forEach(function (r) {
+        if ((r.what === 'sweep' || r.what === 'retry') && r.hz !== null && r.expectHz) {
+            (plays[r.entry] = plays[r.entry] || []).push(PLAIN.cents(r.hz, r.expectHz));
+        }
+    });
+    Object.keys(plays).forEach(function (e) {
+        var c = plays[e];
+        if (c.length > PLAIN.CONVERGE_TRIES) { bad.push(e); return; }
+        for (var k = PLAIN.ADJUST_TRIES; k < c.length; k++) {
+            var closest = Math.min.apply(null, c.slice(0, k - 1).map(Math.abs));
+            if (Math.abs(c[k - 1]) > PLAIN.CLOSING * closest) { bad.push(e); return; }
+        }
+    });
+    return bad;
 }
 function lastPairs(w, n) { return JSON.stringify(w.pairs.slice(-n)); }
 var ENDED = JSON.stringify([[0x3f05, 0], [0x3f01, 0]]);
@@ -1015,8 +1084,10 @@ function signature(w, out) {
        'worst ' + near.cents.toFixed(3) + ' cents, at entry ' + near.centsAt);
     var start = Math.max.apply(null, rd.map(function (r) { return Math.abs(r.first || 0); }));
     ok('from a table that needed it', start > 50, 'the flat table read up to ' + start.toFixed(1) + ' cents out');
-    ok('in at most three tries a note', rd.every(function (r) { return r.tries >= 1 && r.tries <= 3; }),
-       rd.map(function (r) { return r.tries; }).join(''));
+    var over3 = unearned(out);
+    ok('in at most ' + PLAIN.ADJUST_TRIES + ' tries a note, or more only while it is still closing in, and never more than ' +
+       PLAIN.CONVERGE_TRIES, rd.every(function (r) { return r.tries >= 1; }) && !over3.length,
+       rd.map(function (r) { return r.tries; }).join('') + (over3.length ? '; unearned at ' + over3.join(',') : ''));
     // The 0 V entry is written once, to 0, before it is first heard.
     var zeroWrite = -1, zeroHeard = -1;
     w.events.forEach(function (ev, k) {
@@ -1495,6 +1566,129 @@ function signature(w, out) {
        out.readings.length === 18 && out.readings.every(function (r) { return r.tries >= 1; }) &&
        !!out.filled && same(out.filled, { 4: 'interpolated', 5: 'interpolated', 6: 'interpolated' }),
        JSON.stringify(out.filled) + ', ' + out.readings.length + ' readings');
+
+    // --- a 208 that stops: sweep log 12 ---------------------------------------
+    // The owner's run of 2026-10-01.  A trim change on the 208 had made its
+    // top sharper than the table the keyboard held, and the run started from
+    // that table: the first readings climbed to +112 cents at D5, and every
+    // note up to there was measured, in two or three plays.  Above that the
+    // 208 stops.  It cannot play past 2672 Hz, 27 cents over E5, and under
+    // that its gain falls away (STOP_GAIN).  D#5 read +101, +52 and +20
+    // cents - by its readings its second move was at the ramp's rate, a
+    // slope under half the ramp's not being believed - and was still closing
+    // in when its three plays ran out.  E5 started past the stop and read
+    // +26.9 three times: the gap from its pitch to the stop, not how far its
+    // entry was out.  Both were filled in.  This is that 208, its gain the
+    // one log 12 measured and no other, from a table that reads what log 12
+    // first read, and that goes on past D#5 at the counts a semitone of the
+    // octave under it.
+    var LOG12_FIRST = [0, -1.1, -1.4, -2.6, -5.6, -5.7, -6.0, -6.6, -7.3, -8.8, -9.3, -10.3, -11.3,
+        -11.1, -11.7, -12.6, -13.0, -14.0, -14.4, -15.2, -15.6, -16.1, -16.3, -16.7, -16.8, -16.9, -16.9,
+        -14.8, -14.9, -13.6, -13.5, -13.9, -11.1, -12.5, -11.7, -10.8, -10.1, -6.5, -5.1, -3.5, 0.1, 2.0,
+        3.7, 6.0, 8.1, 12.6, 15.1, 20.3, 22.5, 27.4, 32.3, 38.9, 44.4, 48.4, 53.7, 60.8, 65.2, 72.1, 77.3,
+        84.2, 89.0, 94.7, 100.6, 106.0, 108.2, 112.2, 101.3];
+    w = modeWorld({ listening: 2, slope: 0, wobble: 0, stop: { entry: 67, cents: 27 } });
+    var log12 = LOG12_FIRST.map(function (c, e) { return e ? Math.round(w.ideal(e, c)) : 0; });
+    var semi12 = (log12[66] - log12[54]) / 12;
+    for (var le = 67; le < 79; le++) log12.push(Math.round(log12[66] + semi12 * (le - 66)));
+    startFrom(w, log12);
+    out = await modeSweep(w, {});
+    t = out.table || [];
+    var by12 = {}, plays12 = {};
+    out.readings.forEach(function (r) { by12[r.index] = r; });
+    out.log.forEach(function (r) {
+        if (r.what === 'sweep' || r.what === 'retry') (plays12[r.entry] = plays12[r.entry] || []).push(r);
+    });
+    var read12 = function (r) { return r.hz === null ? null : PLAIN.cents(r.hz, r.expectHz); };
+    var first12 = function (e) { return plays12[e] ? read12(plays12[e][0]) : null; };
+    // The fixture first: if this 208 does not play log 12's top, nothing
+    // below says anything about it.
+    ok('this 208 plays log 12’s top: D#5 first reads +101 cents, E5 the stop 27 cents over it, F5 the same stop',
+       Math.abs(first12(66) - 101.3) < 1 && Math.abs(first12(67) - 26.9) < 0.5 &&
+       Math.abs(first12(68) + 73.1) < 1 && !!plays12[67] && Math.abs(plays12[67][0].hz - w.stopHz) < 0.01,
+       [66, 67, 68].map(function (e) {
+           var c = first12(e);
+           return PLAIN.noteLabel(e) + ' ' + (c === null ? '-' : c.toFixed(1));
+       }).join(', '));
+    // Every entry under the stop, as the 208 plays it, not as the run read it.
+    var under12 = [], over12 = [], tol12 = tolerance(w, out);
+    for (var ue = 1; ue < 79; ue++) {
+        (w.pitchOf(w.shift, 0) * Math.pow(2, (ue - w.shift) / 12) < w.stopHz ? under12 : over12).push(ue);
+    }
+    var off12 = function (e) {
+        return PLAIN.cents(w.pitchOf(e, t[e]), w.pitchOf(w.shift, 0) * Math.pow(2, (e - w.shift) / 12));
+    };
+    var untuned12 = under12.filter(function (e) {
+        return !by12[e] || by12[e].source !== 'measured' || Math.abs(off12(e)) > tol12.cents + tol12.ref;
+    });
+    ok('every entry under the stop is tuned in one run, D#5 and E5 included, each within half a count (' +
+       (tol12.cents + tol12.ref).toFixed(2) + ' cents) as the 208 plays it',
+       under12.length === 67 && t.length === 79 && !untuned12.length,
+       untuned12.map(function (e) {
+           return PLAIN.noteLabel(e) + ' ' + (by12[e] || {}).source + ' ' + off12(e).toFixed(2);
+       }).join(', ') || 'worst ' + Math.max.apply(null, under12.map(function (e) {
+           return Math.abs(off12(e));
+       })).toFixed(2) + ' cents');
+    var ds5 = by12[66] || {};
+    ok('D#5, still closing in after ' + PLAIN.ADJUST_TRIES + ' plays, is played on until it is in tune',
+       ds5.tries > PLAIN.ADJUST_TRIES && ds5.source === 'measured' && Math.abs(ds5.residual) <= 0.5 / countsPerCentOf(w.cfg),
+       'tries ' + ds5.tries + ', ' + (typeof ds5.residual === 'number' ? ds5.residual.toFixed(2) : '-') + ' cents');
+    // E5 is past the stop for its first plays.  Moved by the reading it is
+    // still past it, which the reading cannot say, so the next try starts
+    // under it, above D#5; not at the stop again; and it is not kept there.
+    var e5 = plays12[67] || [];
+    ok('E5, which starts past the stop, is brought down under it from D#5, and is not kept there',
+       e5.length >= 3 && Math.abs(e5[0].hz - w.stopHz) < 0.01 && Math.abs(e5[1].hz - w.stopHz) < 0.01 &&
+       e5[2].hz < w.stopHz * Math.pow(2, -1 / 1200) && e5[2].value > t[66] && e5[2].value < e5[1].value &&
+       w.pitchOf(67, t[67]) < w.stopHz * Math.pow(2, -1 / 1200),
+       e5.map(function (r) { return r.value + ': ' + read12(r).toFixed(1); }).join(', '));
+    ok('no note is played more than ' + PLAIN.CONVERGE_TRIES + ' times',
+       out.readings.every(function (r) { return r.tries <= PLAIN.CONVERGE_TRIES; }),
+       out.readings.slice(60, 70).map(function (r) { return r.tries; }).join(''));
+    var notOn12 = over12.filter(function (e) {
+        return !by12[e] || by12[e].source !== 'extrapolated' ||
+               t[e] !== Math.round(t[67] + (t[67] - t[55]) / 12 * (e - 67));
+    });
+    var swept12 = {};
+    w.events.forEach(function (ev) { if (ev[0] === 'on' && ev[1] === w.listening) swept12[ev[2]] = true; });
+    ok('the entries past the stop are extrapolated from the octave under E5, and the sweep ends where log 12’s did',
+       over12.length === 11 && !notOn12.length && increasing(t, 0) && t[78] <= 4095 &&
+       !!swept12[72 + 21] && !swept12[73 + 21],
+       'not on the octave: ' + notOn12.join(',') + '; highest note played ' +
+       Math.max.apply(null, Object.keys(swept12).map(Number)));
+    ok('and the warnings name neither D#5 nor E5',
+       !out.warnings.some(function (x) { return x.indexOf(PLAIN.noteLabel(66)) === 0 || x.indexOf(PLAIN.noteLabel(67)) === 0; }),
+       out.warnings.join(' | '));
+    ok('the table the keyboard plays never runs backwards, and the run ends with the mode off and the mirror reloaded',
+       w.backwards.length === 0 && lastPairs(w, 2) === ENDED && !w.mode && same(w.mirror, w.flash) && w.notesOn === 0,
+       JSON.stringify(w.backwards.slice(0, 2)));
+
+    // --- three plays are not the limit for a note still closing in ----------
+    // A note that goes where it likes (readsAt): its readings close in by
+    // a third a play, whatever it is moved to.  It is played on, and
+    // stopped at CONVERGE_TRIES still out, keeping the closest.  The
+    // entries over it start 60 counts up, so it has room to move.
+    var roomy = function (w) { return tunedTable(w).map(function (v, e) { return e >= 40 ? v + 60 : v; }); };
+    w = modeWorld({ listening: 2, readsAt: { 40: function (k) { return 25 * Math.pow(0.68, k - 1); } } });
+    startFrom(w, roomy(w));
+    out = await modeSweep(w, { low: 40, high: 40 });
+    var wan = out.readings.filter(function (r) { return r.index === 40; })[0] || {};
+    var wanLast = 25 * Math.pow(0.68, PLAIN.CONVERGE_TRIES - 1);
+    ok('a note still closing in after ' + PLAIN.ADJUST_TRIES + ' plays is played on, and stopped at ' +
+       PLAIN.CONVERGE_TRIES + ', keeping the closest',
+       wan.tries === PLAIN.CONVERGE_TRIES && Math.abs(wan.residual - wanLast) < 0.1 && wan.source === 'measured' &&
+       out.warnings.indexOf(PLAIN.noteLabel(40) + ': ' + wan.residual.toFixed(1) + ' cents out after ' +
+                            PLAIN.CONVERGE_TRIES + ' tries') >= 0,
+       'tries ' + wan.tries + ', ' + (typeof wan.residual === 'number' ? wan.residual.toFixed(2) : '-') +
+       ' cents; ' + out.warnings.join(' | '));
+    // One that stops closing in stops there: -7.5 after -8 is not a third.
+    w = modeWorld({ listening: 2, readsAt: { 40: function (k) { return [20, 13, -8, -7.5, -7, -6.5, -6, -5.5][k - 1]; } } });
+    startFrom(w, roomy(w));
+    out = await modeSweep(w, { low: 40, high: 40 });
+    wan = out.readings.filter(function (r) { return r.index === 40; })[0] || {};
+    ok('one that stops closing in is played no further, and keeps the closest',
+       wan.tries === PLAIN.ADJUST_TRIES + 1 && Math.abs(wan.residual + 7.5) < 0.1,
+       'tries ' + wan.tries + ', ' + (typeof wan.residual === 'number' ? wan.residual.toFixed(2) : '-') + ' cents');
 
     // --- the 0 V reference has to repeat ------------------------------------
     // The 0 V pitch reading 6 cents sharp from the first drift check on:
