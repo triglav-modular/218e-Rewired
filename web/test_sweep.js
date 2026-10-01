@@ -542,6 +542,16 @@ function sourcesOf(out, w) {
     return page.runSources(out.readings, w.cfg.pitch.bottom_key_semitone);
 }
 
+// The page's script tags, out of index.html, and the stamp the deploy puts
+// on each one's URL: the first 8 hex digits of the file's SHA-256
+// (tools/version-assets.py).
+var PAGE_SCRIPTS = (fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
+    .match(/<script src="[^"]+"/g) || []).map(function (tag) { return tag.slice(13, -1); });
+function stampOf(file) {
+    return require('crypto').createHash('sha256')
+        .update(fs.readFileSync(path.join(__dirname, file))).digest('hex').slice(0, 8);
+}
+
 // The page's own run, out of app.js: sweepInMode, handed the keyboard's read
 // the way Start measuring hands it one, against this world's keyboard and
 // 208, with the mode and the writes going out through SETTINGSMIDI.  The DOM,
@@ -550,8 +560,15 @@ function sourcesOf(out, w) {
 // `read`, whether Read settings has armed the card for this keyboard; and
 // `channel`, the MIDI channel picked, null for Auto.  A load puts the
 // keyboard's scaling on the page, as loadFromKeyboard's press does.
-function pageRun(w, opts) {
-    var vm = require('vm'), C = load(w), got = { out: null, err: null, playing: null };
+//
+// The page stays open for more than one run (pageOpen): run() is Start
+// measuring past its read, taking what the keyboard holds then.  The log is
+// the page's own too - its rows, Clear log and Download log CSV - with the
+// download caught: save() presses the button and hands back the file.  The
+// script tags are stamped as the deploy stamps them, unless `stamped` is
+// false, which is a clone served as it is.
+function pageOpen(w, opts) {
+    var vm = require('vm'), C = load(w), got = null;
     var timers = { setTimeout: function (fn, ms) { w.clock += ms || 0; return setTimeout(fn, 0); } };
     var page = vm.createContext({
         BUILDLIB: B, GEN: GEN, console: console,
@@ -564,37 +581,133 @@ function pageRun(w, opts) {
         SETTINGSMIDI: { calibrationMode: M.calibrationMode, endCalibration: M.endCalibration,
                         writePitch: function (output, e, v) {
                             return M.writePitch(output, e, v, { timers: timers });
-                        } }
+                        } },
+        scripts: PAGE_SCRIPTS.map(function (src) {
+            return opts.stamped === false ? src : src + '?v=' + stampOf(src);
+        })
     });
     vm.runInContext([
         'var vpo = ' + opts.pageVpo + ', sweep = null, TABLE_ENTRIES = 79, loaded = null, loads = 0;',
         'var unsent = { armed: ' + !!opts.read + ', name: ' +
             JSON.stringify(opts.read ? w.output.name : null) + ' };',
-        'function $() { return {}; } function msg() {} function autoNote() {} function noteProgress() {}',
+        'var nodes = {}, saved = [];',
+        'function $(id) { return nodes[id] || (nodes[id] = { id: id, on: {},',
+        '    classList: { add: function () {}, remove: function () {} },',
+        '    insertAdjacentHTML: function () {}, insertAdjacentText: function () {},',
+        '    addEventListener: function (type, fn) { this.on[type] = fn; } }); }',
+        // The one selector the page asks its document: a script by the start
+        // of its src.
+        'var document = { querySelector: function (sel) {',
+        '    var m = /^script\\[src\\^="([^"]+)"\\]$/.exec(sel);',
+        '    var src = m && scripts.filter(function (s) { return s.indexOf(m[1]) === 0; })[0];',
+        '    return src ? { getAttribute: function (a) { return a === "src" ? src : null; } } : null; } };',
+        'function download(text, name, type) { saved.push({ text: text, name: name, type: type }); }',
+        'function msg() {} function autoNote() {} function noteProgress() {}',
         'function withWarnings(note) { return note; }',
         'function press(id, v) { if (id === "vpo") vpo = Number(v); }',
         'function loadFromKeyboard(r) { loads++; press("vpo", BUILDLIB.pitchTableSettings(' +
             'r.fields.pitch_remap).volts_per_octave === 1.2 ? "1.2" : "1.0"); return ""; }',
         'function unsentArm(name) { unsent.armed = true; unsent.name = name; }',
+        // The log, as the page's sweepOptions gives it.
         'function sweepOptions(chosen) { return { output: chosen, channel: ' +
             JSON.stringify(opts.channel === undefined ? w.listening : opts.channel) +
-            ', deviceId: null, audioChannel: 0, velocity: 100 }; }',
+            ', deviceId: null, audioChannel: 0, velocity: 100, onReading: pushLog }; }',
         // As the page's: the scaling the table was built at onto the page.
         'function loadPitchTable(table, was, name, sources) {',
         '    press("vpo", was.volts_per_octave === 1.2 ? "1.2" : "1.0");',
         '    loaded = { table: table.slice(), was: was, name: name, sources: sources }; }',
+        appSource('\n    var logRows', ';\n'), appSource('\n    var logRuns', ';\n'),
+        appFunction('tunerStamp'), appFunction('logLine'), appFunction('pushLog'),
+        appSource("\n    $('calLogClear').addEventListener('click', function () {", '\n    });\n'),
+        appSource("\n    $('calLogSave').addEventListener('click', function () {", '\n    });\n'),
         appFunction('runSources'), appFunction('runStart'), appFunction('sweepInMode')
     ].join('\n'), page, { filename: 'web/app.js (extracted)' });
     page.chosen = w.output;
-    page.r = { fields: { pitch_remap: w.flash.slice() },
-               identity: { firmwareVersion: GEN.version, imageMarker: 0 } };
-    var ran;
-    try { ran = Promise.resolve(vm.runInContext('sweepInMode(chosen, r)', page)); }
-    catch (e) { ran = Promise.reject(e); }
-    return ran.then(function () {}, function (e) { got.err = e; }).then(function () {
-        got.loaded = page.loaded; got.loads = page.loads; got.vpo = page.vpo;
-        return got;
+    function click(id) {
+        var on = page.nodes[id] && page.nodes[id].on.click;
+        if (!on) throw new Error('the page has no ' + id + ' to press');
+        on();
+    }
+    return {
+        page: page,
+        run: function () {
+            var mine = got = { out: null, err: null, playing: null };
+            page.r = { fields: { pitch_remap: w.flash.slice() },
+                       identity: { firmwareVersion: GEN.version, imageMarker: 0 } };
+            var ran;
+            try { ran = Promise.resolve(vm.runInContext('sweepInMode(chosen, r)', page)); }
+            catch (e) { ran = Promise.reject(e); }
+            return ran.then(function () {}, function (e) { mine.err = e; }).then(function () {
+                mine.loaded = page.loaded; mine.loads = page.loads; mine.vpo = page.vpo;
+                return mine;
+            });
+        },
+        clear: function () { click('calLogClear'); },
+        save: function () { click('calLogSave'); return page.saved[page.saved.length - 1]; }
+    };
+}
+function pageRun(w, opts) { return pageOpen(w, opts).run(); }
+
+// A saved log as its readers take it (the 208 lane's tables.py and
+// analyze.py): every line that starts with # dropped, the first one left
+// the column names, the rest split on commas and read by name.  `runs` is
+// the header's account of each run in it.
+function readLog(text) {
+    var lines = text.split('\n'), tail = lines.pop();
+    var notes = lines.filter(function (l) { return l.charAt(0) === '#'; });
+    var data = lines.filter(function (l) { return l.charAt(0) !== '#'; });
+    var cols = (data[0] || '').split(','), runs = [];
+    notes.forEach(function (l) {
+        var m = new RegExp('^# run (\\d+): rows (\\d+) to (\\d+), started from the ' +
+            '(table the keyboard held|flat table), at (\\d\\.\\d) V/oct$').exec(l);
+        if (m) runs[m[1] - 1] = { first: +m[2], last: +m[3], held: m[4] !== 'flat table', vpo: +m[5] };
+        m = /^# run (\d+) starting table: ([\d,]+)$/.exec(l);
+        if (m && runs[m[1] - 1]) runs[m[1] - 1].table = m[2].split(',').map(Number);
     });
+    return { notes: notes, cols: cols, runs: runs, ended: tail === '',
+             // Every comment above the column names: a header, nothing after it.
+             headed: lines.slice(0, notes.length).every(function (l) { return l.charAt(0) === '#'; }),
+             rows: data.slice(1).map(function (l) {
+                 var f = l.split(','), r = { fields: f.length };
+                 cols.forEach(function (c, k) { r[c] = f[k]; });
+                 return r;
+             }) };
+}
+// Every note-on the keyboard takes from here on: the entry it plays and the
+// counts that entry holds in the mirror as it does.
+function playedBy(w) {
+    var played = [], send = w.output.send;
+    w.output.send = function (m) {
+        if ((m[0] & 0xf0) === 0x90 && (m[0] & 0x0f) === w.listening) {
+            played.push({ entry: m[1] - 21, value: w.mirror[m[1] - 21] });
+        }
+        return send(m);
+    };
+    return played;
+}
+// What is wrong with a saved run's rows against the notes the keyboard
+// played for them, in order, one a row but the fills: a sweep or a retry
+// carries the counts its entry held, a probe none and it played what
+// `start` holds, an anchor none and it played 0 counts, and a fill the
+// counts `table` ends with.
+function rowFaults(rows, played, start, table) {
+    var bad = [], k = 0;
+    rows.forEach(function (r, i) {
+        var e = Number(r.table_entry), at = 'row ' + (i + 1) + ' ' + r.what + ' ' + r.name + ': ';
+        if (r.what === 'fill') {
+            if (r.dac_value !== String(table[e])) bad.push(at + r.dac_value + ', filled with ' + table[e]);
+            return;
+        }
+        var p = played[k++];
+        if (!p || p.entry !== e) { bad.push(at + 'the keyboard played ' + (p ? 'entry ' + p.entry : 'nothing')); return; }
+        if (r.what === 'sweep' || r.what === 'retry') {
+            if (r.dac_value !== String(p.value)) bad.push(at + r.dac_value + ', played at ' + p.value);
+        } else if (r.dac_value !== '' || p.value !== (r.what === 'anchor' ? 0 : start[e])) {
+            bad.push(at + JSON.stringify(r.dac_value) + ', played at ' + p.value);
+        }
+    });
+    if (k !== played.length) bad.push(played.length - k + ' notes played with no row');
+    return bad;
 }
 // Every pitch write that went out before the first note-on.
 function writesBeforeFirstNote(w) {
@@ -1328,6 +1441,147 @@ function signature(w, out) {
         ok('  nothing was written, and the mode ended with the keyboard’s own table in the mirror',
            w.writes.length === 0 && !w.mode && same(w.mirror, scaled) && !pw.out,
            w.writes.length + ' written, the mode ' + (w.mode ? 'on' : 'off'));
+    }
+
+    // --- the saved log ---------------------------------------------------------
+    // Download log CSV, the page's own, after the page's own run.  The file
+    // carries the DAC counts each note was played at and the table the run
+    // started from: for sweep logs 12 and 13 (2026-10-01) the counts behind
+    // each reading had to be worked out again, by playing converge() back
+    // over the log from an assumed table, by the rules of the day, to get the
+    // 208's raw curve.  The rows are held to what the keyboard played, note
+    // for note, and not to what the run says it wrote.
+    {
+        const COLS = 'ms,what,midi_note,name,table_entry,midi_channel,expected_hz,detected_hz,' +
+            'first_half_hz,second_half_hz,half_drift_cents,clarity,rms,why';
+        const kinds = function (rows) {
+            const n = { probe: 0, anchor: 0, sweep: 0, retry: 0, fill: 0 };
+            rows.forEach(function (r) { n[r.what]++; });
+            return n;
+        };
+        const notFills = function (rows) { return rows.filter(function (r) { return r.what !== 'fill'; }).length; };
+        const tunerLine = function (stamp) {
+            return '# tuner: calibrate.js ' + stamp + ', page for Rewired ' + GEN.version;
+        };
+
+        // The keyboard's own table at the page's scaling, two notes muted so
+        // that two entries are filled in.
+        const mute = {}; mute[41] = true; mute[42] = true;      // entries 20 and 21
+        let lw = modeWorld({ listening: 2, mute: mute });
+        const kept = lw.flash.slice();
+        let played = playedBy(lw), P = pageOpen(lw, { pageVpo: 1.2, read: true });
+        let ran = await P.run(), file = P.save() || {}, log = readLog(file.text || '');
+        let n = kinds(log.rows);
+        ok('the saved log keeps its columns in their order, and adds dac_value after them',
+           !ran.err && file.name === '218e-sweep-log.csv' && file.type === 'text/csv' && log.ended &&
+           log.headed && log.cols.join(',') === COLS + ',dac_value' && !!ran.out &&
+           log.rows.length === ran.out.log.length &&
+           log.rows.every(function (r) { return r.fields === log.cols.length; }),
+           (ran.err ? ran.err.message.slice(0, 80) + ' ' : '') + log.rows.length + ' rows, columns ' + log.cols.slice(13).join(','));
+        let faults = rowFaults(log.rows, played, kept, ran.out ? ran.out.table : []);
+        ok('a sweep or a retry row carries the counts its entry held as the keyboard played the note',
+           n.sweep === 79 && n.retry > 20 && !faults.length,
+           faults.slice(0, 3).join('; ') || n.sweep + ' sweep rows, ' + n.retry + ' retries');
+        ok('a fill row the counts the entry was filled in with, and a probe or an anchor row none: ' +
+           'the probe played the starting table’s entries and the anchor 0 counts',
+           n.fill === 2 && n.probe === 2 && n.anchor >= 2 && !faults.length,
+           JSON.stringify(n));
+        const at = {};
+        log.rows.forEach(function (r) {
+            if (r.what === 'sweep' || r.what === 'retry') (at[r.table_entry] = at[r.table_entry] || []).push(Number(r.dac_value));
+        });
+        const tunedRows = ran.out ? ran.out.readings.filter(function (x) { return x.source === 'measured'; }) : [];
+        const stray = tunedRows.filter(function (x) { return (at[x.index] || []).indexOf(ran.out.table[x.index]) < 0; });
+        ok('and every tuned entry was left at one of the counts its rows say it was played at',
+           tunedRows.length === 76 && !stray.length,
+           tunedRows.length + ' tuned, ' + stray.length + ' left at counts no row has');
+        ok('the header says where the run started: its rows, the table the keyboard held, its scaling, ' +
+           'and the 79 counts of that table',
+           log.runs.length === 1 && log.runs[0].first === 1 && log.runs[0].last === log.rows.length &&
+           log.runs[0].held && log.runs[0].vpo === 1.2 && same(log.runs[0].table, kept) &&
+           !same(kept, ran.out ? ran.out.table : kept),
+           JSON.stringify(log.runs.map(function (r) { return [r.first, r.last, r.held, r.vpo, (r.table || []).length]; })));
+        const stamp = stampOf('calibrate.js');
+        ok('and which build of the tuner ran it: the stamp the deploy puts on calibrate.js, a hash of the file',
+           PAGE_SCRIPTS.indexOf('calibrate.js') >= 0 &&
+           log.notes.indexOf(tunerLine(stamp + ' (the first 8 hex digits of its SHA-256)')) >= 0 &&
+           log.notes.some(function (l) { return /^# dac_value: /.test(l); }),
+           log.notes.filter(function (l) { return /^# tuner/.test(l); }).join(' | ') || 'no tuner line');
+
+        // Cleared in the middle of the next run, the log is that run's rows
+        // from there on, counted from 1 again, and the run before is gone
+        // from the header with its rows.
+        let reads = 0, before = null;
+        lw.onRead = function () { if (++reads === 40) { before = played.length; P.clear(); } };
+        played = playedBy(lw);
+        ran = await P.run();
+        lw.onRead = null;
+        file = P.save() || {}; log = readLog(file.text || '');
+        ok('a log cleared mid-run holds the rest of that run, its rows counted from 1, and no run before it',
+           !ran.err && before !== null && log.runs.length === 1 && log.runs[0].first === 1 &&
+           log.runs[0].last === log.rows.length && log.rows.length > 40 &&
+           log.rows.length < ran.out.log.length && notFills(log.rows) === played.length - before + 1 &&
+           same(log.runs[0].table, kept),
+           log.rows.length + ' rows of the run’s ' + (ran.out ? ran.out.log.length : '?') + ', header ' +
+           JSON.stringify(log.runs.map(function (r) { return [r.first, r.last]; })));
+
+        // A keyboard at the other scaling: the run starts from the flat
+        // table at the page's, and the file says so, with that table and not
+        // the keyboard's.  A clone of the page has no stamp to give.
+        lw = modeWorld({ listening: 2, vpo: 1.0 });
+        const other = B.expand({ volts_per_octave: 1.2, pitch_offset: true });
+        const theirs = B.pitchTable(other, other._calibration);
+        const flat = B.pitchTable(lw.cfg, lw.cfg._calibration);
+        startFrom(lw, theirs);
+        played = playedBy(lw); P = pageOpen(lw, { pageVpo: 1.0, read: true, stamped: false });
+        const first = await P.run();
+        file = P.save() || {}; log = readLog(file.text || '');
+        const firstRows = log.rows.length, firstNotes = played.length;
+        faults = rowFaults(log.rows, played, flat, first.out ? first.out.table : []);
+        ok('a run from the flat table says so, with the flat table’s counts and the page’s scaling',
+           !first.err && log.runs.length === 1 && !log.runs[0].held && log.runs[0].vpo === 1.0 &&
+           same(log.runs[0].table, flat) && !same(flat, theirs) && log.runs[0].last === firstRows,
+           JSON.stringify(log.runs.map(function (r) { return [r.first, r.last, r.held, r.vpo]; })));
+        ok('  its probe played the flat table’s entries, and its rows the counts they carry',
+           !faults.length && firstRows > 100, faults.slice(0, 3).join('; ') || firstRows + ' rows');
+        ok('  and a page served unstamped says it has no build stamp',
+           log.notes.indexOf(tunerLine('unstamped (not a deployed page)')) >= 0,
+           log.notes.filter(function (l) { return /^# tuner/.test(l); }).join(' | ') || 'no tuner line');
+
+        // The tuned table sent to the keyboard, and a second run in the same
+        // log: each run has its own rows and its own start in the header.
+        startFrom(lw, first.out ? first.out.table : flat);
+        const second = await P.run();
+        file = P.save() || {}; log = readLog(file.text || '');
+        const two = log.runs;
+        ok('two runs in one log are told apart: each its own rows, start and table',
+           !second.err && two.length === 2 && two[0].first === 1 && two[0].last === firstRows &&
+           two[1].first === firstRows + 1 && two[1].last === log.rows.length &&
+           log.rows.length === firstRows + second.out.log.length &&
+           !two[0].held && same(two[0].table, flat) &&
+           two[1].held && two[1].vpo === 1.0 && same(two[1].table, first.out.table),
+           JSON.stringify(two.map(function (r) { return [r.first, r.last, r.held, r.vpo]; })));
+        faults = two.length === 2
+            ? rowFaults(log.rows.slice(0, firstRows), played.slice(0, firstNotes), flat, first.out.table)
+                .concat(rowFaults(log.rows.slice(firstRows), played.slice(firstNotes), first.out.table, second.out.table))
+            : ['no two runs'];
+        ok('  and the rows of both carry the counts the keyboard played', !faults.length, faults.slice(0, 3).join('; '));
+
+        // Cleared, with the page set to the other scaling: the run stops at
+        // the probe, and its two rows are in the log with the table they
+        // were played from.
+        P.clear();
+        require('vm').runInContext('press("vpo", "1.2")', P.page);
+        played = playedBy(lw);
+        const third = await P.run();
+        file = P.save() || {}; log = readLog(file.text || '');
+        faults = rowFaults(log.rows, played, theirs, []);
+        ok('a cleared log forgets the runs it held, and a run that stops at the probe is logged with its start',
+           !!third.err && /moved the pitch/.test(third.err.message) && log.runs.length === 1 &&
+           log.runs[0].first === 1 && log.runs[0].last === 2 && log.rows.length === 2 &&
+           !log.runs[0].held && log.runs[0].vpo === 1.2 && same(log.runs[0].table, theirs) && !faults.length,
+           (third.err ? third.err.message.slice(0, 60) : 'it ran') + ' ' + log.rows.length + ' rows ' +
+           faults.slice(0, 2).join('; '));
     }
 
     // --- what is filled in, and what is left alone ---------------------------

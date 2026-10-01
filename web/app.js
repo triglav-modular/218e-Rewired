@@ -1114,6 +1114,20 @@
 
     // The measurement log: every note sent, and the pitch that came back.
     var logRows = [];
+    // The tuning runs those rows are of, oldest first: where each started
+    // from (sweepInMode), and which rows are its, counted from 1.  The saved
+    // file says both, so the table behind a reading need not be worked out
+    // again from the run's rules (the 208's raw curve, 2026-10-01).
+    var logRuns = [];
+
+    // Which build of the tuner this page runs: the stamp the deploy puts on
+    // calibrate.js's URL, the first eight hex digits of the file's SHA-256
+    // (tools/version-assets.py).  Null on a copy served unstamped.
+    function tunerStamp() {
+        var el = document.querySelector('script[src^="calibrate.js"]');
+        var m = el && /[?&]v=([0-9a-f]+)/.exec(el.getAttribute('src') || '');
+        return m ? m[1] : null;
+    }
 
     function logLine(r) {
         function f(v, n) { return v === null || v === undefined ? '--' : v.toFixed(n); }
@@ -1146,8 +1160,14 @@
         $('calLogClear').disabled = false;
     }
 
-    function pushLog(r) {
+    // `run`, the run the row is of (logRuns).  A log cleared while a run is
+    // going starts that run's rows again from 1.
+    function pushLog(r, run) {
         logRows.push(r);
+        if (run) {
+            if (logRuns[logRuns.length - 1] !== run) { logRuns.push(run); run.first = logRows.length; }
+            run.last = logRows.length;
+        }
         var el = $('calLog');
         el.classList.add('on');
         el.insertAdjacentHTML('beforeend', logLine(r) + '\n');
@@ -1159,6 +1179,7 @@
 
     $('calLogClear').addEventListener('click', function () {
         logRows = [];
+        logRuns = [];
         $('calLog').textContent = '';
         $('calLog').classList.remove('on');
         $('calLogRow').classList.remove('on');
@@ -1169,7 +1190,8 @@
     $('calLogSave').addEventListener('click', function () {
         var cols = ['ms', 'what', 'midi_note', 'name', 'table_entry', 'midi_channel',
                     'expected_hz', 'detected_hz', 'first_half_hz', 'second_half_hz',
-                    'half_drift_cents', 'clarity', 'rms', 'why'];
+                    'half_drift_cents', 'clarity', 'rms', 'why', 'dac_value'];
+        var stamp = tunerStamp();
         var out = [
             '# 218e calibration sweep log.',
             '# One row per note sent: what came back for it, as measured.',
@@ -1180,8 +1202,28 @@
             '#       not tune, filled in after the run (why says how).',
             '# A sweep row whose detected_hz is below the sweep row before it is',
             '# a note that did not take - the firmware cannot play a higher note lower.',
-            cols.join(',')
+            '# dac_value: the DAC counts, 0 to 4095, that the table entry held as the',
+            '#       note played (sweep, retry) or was filled in with (fill).  Empty',
+            '#       for a probe and an anchor: the anchor is the 0 V entry, held at',
+            '#       0 counts, and the two probe notes play their entries as the',
+            '#       starting table has them.',
+            '# tuner: calibrate.js ' + (stamp ? stamp + ' (the first 8 hex digits of its SHA-256)'
+                                             : 'unstamped (not a deployed page)') +
+                ', page for Rewired ' + GEN.version
         ];
+        if (logRuns.length) {
+            out.push('# Each run in this log: its rows, counted from 1 under the column names;',
+                     '#       the table it started from, the one the keyboard held or the flat',
+                     '#       one at the volts per octave set on the page; and the 79 DAC',
+                     '#       values of that table, entry 0 first.');
+        }
+        logRuns.forEach(function (run, k) {
+            out.push('# run ' + (k + 1) + ': rows ' + run.first + ' to ' + run.last +
+                     ', started from the ' + (run.held ? 'table the keyboard held' : 'flat table') +
+                     ', at ' + run.vpo.toFixed(1) + ' V/oct',
+                     '# run ' + (k + 1) + ' starting table: ' + run.table.join(','));
+        });
+        out.push(cols.join(','));
         logRows.forEach(function (r) {
             out.push([r.t, r.what, r.note, r.name, r.entry === null ? '' : r.entry,
                       r.channel + 1,
@@ -1192,7 +1234,8 @@
                       r.halfDrift === null ? '' : r.halfDrift.toFixed(3),
                       r.clarity === null ? '' : r.clarity.toFixed(4),
                       r.rms === null ? '' : r.rms.toFixed(6),
-                      r.why].join(','));
+                      r.why,
+                      r.value === null || r.value === undefined ? '' : r.value].join(','));
         });
         download(out.join('\n') + '\n', '218e-sweep-log.csv', 'text/csv');
     });
@@ -2255,6 +2298,11 @@
         };
         if (start !== held) o.adjust.playing = held;
         o.onNote = noteProgress;
+        // The log's rows, each with this run: the table it starts from,
+        // whether that is the keyboard's, and its scaling, which the saved
+        // file's header says (logRuns).
+        var logRun = { table: start.slice(), held: start === held, vpo: was.volts_per_octave };
+        o.onReading = function (row) { pushLog(row, logRun); };
         sweep = new CALIBRATE.Sweep(o);
         return sweep.run().then(function (out) {
             loadPitchTable(out.table, was, 'the tuned table', runSources(out.readings, bottom));
