@@ -808,6 +808,13 @@
         var kbd = $('calKeys');
         kbd.innerHTML = '';
         var whites = 0, table = showsTable(), cents = shownCents();
+        // Offsets and readings have opposite signs: a note that played five
+        // cents sharp gets an offset of minus five.
+        $('calKeysHint').innerHTML = table
+            ? '<strong>The offset each note gets, in cents.</strong><br>Positive raises ' +
+              'the pitch, negative lowers it. A tuning run fills these in. Scroll for the full range'
+            : '<strong>What each note played, in cents.</strong><br>Positive for sharp, ' +
+              'negative for flat. Scroll for the full range';
         for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
             (function (n) {
                 var black = noteNames()[n % 12].indexOf('#') >= 0;

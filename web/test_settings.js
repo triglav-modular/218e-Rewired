@@ -332,15 +332,18 @@ if (app && typeof require === 'function') {
                     '"the tuned table", {});', view);
     var cents = PB.pitchCents(at12, once).map(function (r) { return r.cents; });
     var after = vm.runInContext('({ values: boxes().map(function (b) { return b.value; }), ' +
-                                'hi: $("calHi").textContent, lo: $("calLo").textContent })', view);
+                                'hi: $("calHi").textContent, lo: $("calLo").textContent, ' +
+                                'hint: $("calKeysHint").innerHTML })', view);
     var want = cents.slice(3, 68).map(function (c) { return c.toFixed(2); });
     var play = cents.slice(3, 68);
     ok('after a run the 65 boxes show the offsets the tuned table holds, and the plot spans them',
        JSON.stringify(after.values) === JSON.stringify(want) &&
        after.values.some(function (v) { return v !== '0.00'; }) &&
        after.hi === Math.max.apply(null, play).toFixed(1) + ' cents' &&
-       after.lo === Math.min.apply(null, play).toFixed(1),
-       JSON.stringify({ first: after.values.slice(0, 4), want: want.slice(0, 4), hi: after.hi, lo: after.lo }));
+       after.lo === Math.min.apply(null, play).toFixed(1) &&
+       /^<strong>The offset each note gets, in cents\.<\/strong>/.test(after.hint),
+       JSON.stringify({ first: after.values.slice(0, 4), want: want.slice(0, 4), hi: after.hi, lo: after.lo,
+                        hint: after.hint }));
     vm.runInContext('var b = boxes()[27]; b.value = String(baseline[30] + 2.5); b.on.change();', view);
     var edited = vm.runInContext('({ base: baseline[30], measured: measured[30], built: built() })', view);
     var wantRows = cents.map(function (c, s) { return { semitone: s, cents: s === 30 ? c + 2.5 : c }; });
@@ -354,8 +357,10 @@ if (app && typeof require === 'function') {
     vm.runInContext('loadPitchTable(tuned, { volts_per_octave: 1.2, pitch_offset: true }, ' +
                     '"the tuned table", {}); measured[30] = 4.5; buildTable();', view);
     var onTop = vm.runInContext('boxes().map(function (b) { return b.value; })', view);
+    var readHint = vm.runInContext('$("calKeysHint").innerHTML', view);
     ok('a table read off the keyboard, or readings on top of a tuned one, still show readings',
-       read && onTop[27] === '4.50' && onTop.filter(function (v) { return v !== '0.00'; }).length === 1,
+       read && onTop[27] === '4.50' && onTop.filter(function (v) { return v !== '0.00'; }).length === 1 &&
+       /^<strong>What each note played, in cents\.<\/strong>/.test(readHint),
        JSON.stringify({ read: read, onTop: onTop.slice(26, 29) }));
 }
 
