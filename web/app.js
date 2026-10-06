@@ -2626,7 +2626,8 @@
             'Scaling: ' + o.volts_per_octave + ' V/octave',
             // No brackets: echoed by both flashers, see the tunings line.
             'Pitch offset: ' + (o.pitch_offset === false
-                ? 'none - 208c' : '3 semitones - 208, 208r, 208p'),
+                ? 'none - 208 calibrated to 33 Hz'
+                : '3 semitones - 208 calibrated to 55 Hz'),
             'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off'),
             'Preset voltages: ' + (o.quantize_presets
                 ? 'quantized to the tuning when added to pitch' : 'not quantized'),
