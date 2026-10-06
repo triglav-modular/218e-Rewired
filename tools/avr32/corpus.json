@@ -6,7 +6,7 @@
 "build/assemble.log",
 "build/assemble.nomulti.log"
 ],
-"count": 13652,
+"count": 13645,
 "entries": [
 {
 "addr": "80014300",
@@ -17320,8 +17320,8 @@
 },
 {
 "addr": "8001ab6c",
-"text": "MOV R11,0x2af9",
-"bytes": "e06b2af9",
+"text": "MOV R11,0xd358",
+"bytes": "e06bd358",
 "width": 4
 },
 {
@@ -18352,8 +18352,8 @@
 },
 {
 "addr": "8001ad1c",
-"text": "MOV R11,0x2af9",
-"bytes": "e06b2af9",
+"text": "MOV R11,0xd358",
+"bytes": "e06bd358",
 "width": 4
 },
 {
@@ -55624,8 +55624,8 @@
 },
 {
 "addr": "8001f05c",
-"text": "MOV R9,0x2af9",
-"bytes": "e0692af9",
+"text": "MOV R9,0xd358",
+"bytes": "e069d358",
 "width": 4
 },
 {
@@ -59614,8 +59614,8 @@
 },
 {
 "addr": "8001f6da",
-"text": "MOV R12,0x310",
-"bytes": "e06c0310",
+"text": "MOV R12,0x320",
+"bytes": "e06c0320",
 "width": 4
 },
 {
@@ -59662,8 +59662,8 @@
 },
 {
 "addr": "8001f6ee",
-"text": "MOV R12,0x2af9",
-"bytes": "e06c2af9",
+"text": "MOV R12,0xd358",
+"bytes": "e06cd358",
 "width": 4
 },
 {
@@ -60088,8 +60088,8 @@
 },
 {
 "addr": "8001f78e",
-"text": "MOV R12,0x2af9",
-"bytes": "e06c2af9",
+"text": "MOV R12,0xd358",
+"bytes": "e06cd358",
 "width": 4
 },
 {
@@ -60988,8 +60988,8 @@
 },
 {
 "addr": "8001f902",
-"text": "MOV R8,0x2af9",
-"bytes": "e0682af9",
+"text": "MOV R8,0xd358",
+"bytes": "e068d358",
 "width": 4
 },
 {
@@ -68350,8 +68350,8 @@
 },
 {
 "addr": "8002000a",
-"text": "MOV R9,0x2af9",
-"bytes": "e0692af9",
+"text": "MOV R9,0xd358",
+"bytes": "e069d358",
 "width": 4
 },
 {
@@ -81597,18 +81597,6 @@
 "width": 2
 },
 {
-"addr": "8001ab6c",
-"text": "MOV R11,0x4e12",
-"bytes": "e06b4e12",
-"width": 4
-},
-{
-"addr": "8001ad1c",
-"text": "MOV R11,0x4e12",
-"bytes": "e06b4e12",
-"width": 4
-},
-{
 "addr": "8001c330",
 "text": "MOV R10,0x6244",
 "bytes": "e06a6244",
@@ -81888,36 +81876,6 @@
 "addr": "8001c1f8",
 "text": ".word 0x8001e100",
 "bytes": "8001e100",
-"width": 4
-},
-{
-"addr": "8001f05c",
-"text": "MOV R9,0x4e12",
-"bytes": "e0694e12",
-"width": 4
-},
-{
-"addr": "8001f6ee",
-"text": "MOV R12,0x4e12",
-"bytes": "e06c4e12",
-"width": 4
-},
-{
-"addr": "8001f78e",
-"text": "MOV R12,0x4e12",
-"bytes": "e06c4e12",
-"width": 4
-},
-{
-"addr": "8001f902",
-"text": "MOV R8,0x4e12",
-"bytes": "e0684e12",
-"width": 4
-},
-{
-"addr": "8002000a",
-"text": "MOV R9,0x4e12",
-"bytes": "e0694e12",
 "width": 4
 }
 ],
