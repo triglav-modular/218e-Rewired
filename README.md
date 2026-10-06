@@ -64,6 +64,7 @@ after an interrupted flash. The second writes nothing.
 | Portamento | How much pressure a second held note needs to pull pitch toward it. Off at zero; no time-based glide at any setting. |
 | Portamento in banana jack | With `portamento_in = "transpose"`: transposes the keyboard, the sequencer and the MIDI notes by whole degrees of the current tuning, one period of it per 4 V — so the jack’s 0–10 V is about two and a half periods. The pitch ramp’s own scaling does not change it. Otherwise adds to the portamento time, as the factory has it. |
 | Arp switch | latch / regular / off. In latch, keys are toggles. |
+| Octave pads | With pad 4 active, hold the highest key for a second and tap pad 4: the octave pads play one octave higher. With pad 1 active, hold the lowest key and tap pad 1 to go back. The tapped pad flashes to confirm; the choice is remembered. |
 
 
 

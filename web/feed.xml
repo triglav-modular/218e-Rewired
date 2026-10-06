@@ -6,7 +6,14 @@
     <atom:link href="https://triglavmodular.hu/mods/218e-Rewired/feed.xml" rel="self" type="application/rss+xml"/>
     <description>Firmware releases for the Buchla 218e V3.</description>
     <language>en</language>
-    <pubDate>Mon, 28 Sep 2026 12:00:00 +0000</pubDate>
+    <pubDate>Tue, 06 Oct 2026 12:00:00 +0000</pubDate>
+    <item>
+      <title>Rewired 3.2</title>
+      <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
+      <guid isPermaLink="false">https://triglavmodular.hu/mods/218e-Rewired/#3.2</guid>
+      <pubDate>Tue, 06 Oct 2026 12:00:00 +0000</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;With pad 4 active, hold the highest key for a second and tap pad 4 to play the octave pads one octave higher. With pad 1 active, hold the lowest key and tap pad 1 to go back.&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
     <item>
       <title>Rewired 3.1</title>
       <link>https://triglavmodular.hu/mods/218e-Rewired/</link>
