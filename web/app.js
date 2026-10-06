@@ -62,7 +62,7 @@
     // from C, so there the bottom key IS semitone 0.  Keys are numbered from
     // 1 — the three different ways the CSV let you name a row, and the
     // reason this shows all of them.
-    var pitchOffset = true;
+    var pitchOffset = false;
     var NAMES_A = ['A','A#','B','C','C#','D','D#','E','F','F#','G','G#'];
     var NAMES_C = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     function noteNames() { return pitchOffset ? NAMES_A : NAMES_C; }
@@ -86,7 +86,7 @@
     // so neither can be played or measured.  They are filled in from the
     // ends of the measured range instead of being offered as boxes nobody
     // can fill.  Without the offset the same 65 notes start at semitone 0.
-    var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;
+    var PLAYABLE_LOW = 0, PLAYABLE_HIGH = 64, TABLE_ENTRIES = 79;
     function setPitchOffset(on) {
         if (on === pitchOffset) return;
         var from = PLAYABLE_LOW;
