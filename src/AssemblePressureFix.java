@@ -493,7 +493,7 @@ public class AssemblePressureFix extends GhidraScript {
         // latched note.  midi_period_transpose: the transpose the pitch
         // adder adds for the switch, pad and zone standing now.
         long mpcEntry = 0x80020400L, mpcLow = mpcEntry + 0x28, mpcOct = mpcEntry + 0x34;
-        long mpcPitch = mpcEntry + 0x50, mpcDone = mpcEntry + 0x60, mpcEnd = mpcEntry + 0x70;
+        long mpcPitch = mpcEntry + 0x56, mpcDone = mpcEntry + 0x64, mpcEnd = mpcEntry + 0x70;
         long mprEntry = mpcEnd, mprUp = mprEntry + 0x14, mprDiv = mprEntry + 0x18, mprEnd = mprEntry + 0x20;
         long mpnEntry = mprEnd, mpnSlot = mpnEntry + 0x22, mpnOwn = mpnEntry + 0x42;
         long mpnFloor = mpnEntry + 0x52, mpnDone = mpnEntry + 0x5c, mpnPool = mpnEntry + 0x60, mpnEnd = mpnEntry + 0x70;
@@ -543,6 +543,25 @@ public class AssemblePressureFix extends GhidraScript {
         long bgEntry = bdfEnd + 0x10, bgDeficit = bgEntry + 0x10, bgEnd = bgEntry + 0x20;
         long bfEntry = 0x80023e60L, bfLoop = bfEntry + 0xc, bfLow = bfEntry + 0x30, bfNext = bfEntry + 0x36;
         long bfCap = bfEntry + 0x44, bfDone = bfEntry + 0x4e, bfPool = bfEntry + 0x58, bfEnd = bfEntry + 0x5c;
+        // Pad octave mode (2026-10-06): hold the top key for
+        // latch_state_hold_scans and tap pad 4, and the octave pads step one
+        // period up from then on; hold the bottom key and tap pad 1 to put
+        // them back, each with its pad already the active one.
+        // pad_octave_term sits beside the MIDI naming caves, inside the
+        // adder's MCALL reach; the rest in the free flash above the blend
+        // frame.
+        long poTermPool = 0x80020800L, poTermEntry = poTermPool + 0x4, poTermDone = poTermEntry + 0x18, poTermEnd = poTermPool + 0x20;
+        long poScanEntry = 0x80024000L, poScanForget = poScanEntry + 0x46, poScanKeep = poScanEntry + 0x4e, poScanRelease = poScanEntry + 0x52, poScanSet = poScanEntry + 0x62;
+        long poScanEdges = poScanEntry + 0x66, poScanPad1 = poScanEntry + 0x94, poScanCounts = poScanEntry + 0xc8, poScanHi = poScanEntry + 0xd8;
+        long poScanHiClear = poScanEntry + 0xf6, poScanHiStore = poScanEntry + 0xf8, poScanHiDone = poScanEntry + 0xfa;
+        long poScanLoClear = poScanEntry + 0x112, poScanLoStore = poScanEntry + 0x114, poScanAck = poScanEntry + 0x116;
+        long poScanBlink = poScanEntry + 0x132, poScanDark = poScanEntry + 0x142, poScanFlush = poScanEntry + 0x146;
+        long poScanDone = poScanEntry + 0x14a, poScanPool = poScanEntry + 0x150, poSetEntry = poScanEntry + 0x170;
+        long poSetDone = poSetEntry + 0x26, poScanEnd = poScanEntry + 0x1a0;
+        long poNamesEntry = 0x800241a0L, poNamesDone = poNamesEntry + 0x10, poNamesEnd = poNamesEntry + 0x20;
+        long pcbEntry = 0x800241c0L, pcbSt5 = pcbEntry + 0x1a, pcbBit6 = pcbEntry + 0x1e, pcbSt6 = pcbEntry + 0x38;
+        long pcbBit7 = pcbEntry + 0x3c, pcbSt7 = pcbEntry + 0x66, pcbDone = pcbEntry + 0x6a, pcbEnd = pcbEntry + 0x70;
+        long plbPool = 0x80024230L, plbEntry = plbPool + 0x4, plbEnd = plbPool + 0x30;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -6225,6 +6244,10 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R8,R0[0x1a]");
         emit("CP.W R8,0x2");
         emit("BR{hi} 0x8001cde0");
+        // The pad octave mode: 0 or 1, bounded like the latch state.
+        emit("LD.UB R8,R0[0x1b]");
+        emit("CP.W R8,0x1");
+        emit("BR{hi} 0x8001cde0");
         emit("MOV R1,0x0");
         padTo(0x8001cd30L);
         emit("ADD R8,R0,R1 << 0x1");
@@ -6425,16 +6448,16 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R1,0x40");
         emit("BR{lt} 0x8001cf78");
         padTo(0x8001cf90L);
-        // The latch state and the tuning slot, from the snapshot the same
-        // way as the rest: 0x6649 and 0x664a in the payload, 0x0019 and
-        // 0x001a in the record.  Two byte copies, not one halfword: both
-        // addresses are odd.
-        emit("MOV R8,0x6649");
-        emit("LD.UB R9,R8[0x0]");
-        emit("LD.UB R10,R8[0x1]");
-        emit("MOV R8,0x6319");
-        emit("ST.B R8[0x0],R9");
-        emit("ST.B R8[0x1],R10");
+        // The latch state, the tuning slot and the pad octave mode, from
+        // the snapshot the same way as the rest: 0x6649..0x664b in the
+        // payload, 0x0019..0x001b in the record.  One aligned word from
+        // 0x6648, the length's byte included, and the length put back as
+        // the clamp above left it.
+        emit("MOV R8,0x6648");
+        emit("LD.W R9,R8[0x0]");
+        emit("MOV R8,0x6318");
+        emit("ST.W R8[0x0],R9");
+        emit("ST.B R8[0x0],R2");
         // The take's octave reference, from its own snapshot cell into
         // record offset 0x11c, ahead of the CRC that covers it.
         emit("MOV R9,0x6dd0");
@@ -6503,21 +6526,17 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R1,-0x1");
         emit("CP.W R1,0x40");
         emit("BR{lt} 0x8001d010");
-        // The latch's transpose state, into the cell latch_hold and the
-        // toggle read.  The boot wrapper zeroed it before this ran, so a
-        // missing or rejected record leaves the hold state.
-        emit("LD.UB R9,R0[0x19]");
-        emit("MOV R8,0x62e2");
-        emit("ST.B R8[0x0],R9");
-        // The tuning slot, into the cell the applier selects with.  The
-        // first-use bootstrap put slot 0 there before this ran, so a
-        // missing or rejected record still powers up on slot 0.  The
-        // apply guard at 0x60e4 is zero either way, so the first scan
-        // copies whichever table this names into RAM 0x854 and lights the
-        // LEDs for it - the selection is restored, not just the number.
-        emit("LD.UB R9,R0[0x1a]");
-        emit("MOV R8,0x6090");
-        emit("ST.B R8[0x0],R9");
+        // The latch's transpose state, the tuning slot and the pad octave
+        // mode, bytes 0x19..0x1b, into their cells - in persist_load_bytes,
+        // which the third byte pushed out of this cave.  The boot wrapper
+        // zeroed the latch state and the mode before this ran and the
+        // first-use bootstrap put slot 0 in its cell, so a missing or
+        // rejected record leaves the hold state, slot 0 and the pads as the
+        // factory has them.  The apply guard at 0x60e4 is zero either way,
+        // so the first scan copies whichever table the slot names into RAM
+        // 0x854 and lights the LEDs for it - the selection is restored, not
+        // just the number.
+        emit(String.format("MCALL PC[0x%x]", plbPool));   // persist_load_bytes
         // The per-step preset counts, and the take's reference off the
         // first: 0x6091 is adopted from the same live count, at the same
         // moment, as the first step's own - so the array carries it and
@@ -6691,9 +6710,11 @@ public class AssemblePressureFix extends GhidraScript {
 
         // Capture only completed musical edits into 0x6640..0x674b.
         // R12 mask: bits 0..3 = released preset pads, bit 4 = sequence,
-        // bit 5 = the latch's transpose state, bit 6 = the tuning slot.
+        // bit 5 = the latch's transpose state, bit 6 = the tuning slot,
+        // bit 7 = the pad octave mode (the three byte compares live in
+        // persist_capture_bytes, which this cave's tail jumps to).
         // Return R12 = changed. Unchanged gestures (including empty clear)
-        // never write even on a blank ring. Mask 0x7f initializes every
+        // never write even on a blank ring. Mask 0xff initializes every
         // snapshot byte at boot; no snapshot survives a warm reset.
         begin(0x8001d280L);
         emit("STM --SP,R0,R1,R2,R3,R4,R7,LR");
@@ -6742,12 +6763,11 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R0,0x1");
         padTo(0x8001d30cL);
         emit("ST.B R3[0x8],R4");
-        emit("MOV R8,0x0");
-        // 0x664b alone is still reserved zero.  0x6649 and 0x664a hold the
-        // latch state and the tuning slot, and a sequence capture has to
-        // leave both alone; the halfword store that used to stand here
-        // reached 0x664a and would now wipe the slot.
-        emit("ST.B R3[0xb],R8");
+        // 0x6649, 0x664a and 0x664b hold the latch state, the tuning slot
+        // and the pad octave mode, each with a bit of its own below; a
+        // sequence capture leaves all three alone.  A halfword store once
+        // stood here and reached 0x664a, and a byte store zeroing 0x664b
+        // stood here until the mode took that byte.
         emit("MOV R1,0x0");
         // The take's octave reference belongs to the sequence too: its
         // snapshot cell is 0x6dd0, outside this block, so the compare and
@@ -6808,36 +6828,14 @@ public class AssemblePressureFix extends GhidraScript {
         emit("SUB R1,-0x1");
         emit("RJMP 0x8001d320");
         padTo(0x8001d3b0L);
-        // Bit 5: the latch's transpose state, a byte compared like the rest.
-        emit("MOV R8,R2");
-        emit("ANDL R8,0x2");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001d3d0");
-        emit("MOV R8,0x62e2");
-        emit("LD.UB R9,R8[0x0]");
-        emit("LD.UB R8,R3[0x9]");
-        emit("CP.W R8,R9");
-        emit("BR{eq} 0x8001d3cc");
-        emit("MOV R0,0x1");
-        padTo(0x8001d3ccL);
-        emit("ST.B R3[0x9],R9");
-        padTo(0x8001d3d0L);
-        // Bit 6: the selected tuning slot, a byte compared like the rest.
-        emit("MOV R8,R2");
-        emit("ANDL R8,0x4");
-        emit("CP.W R8,0x0");
-        emit("BR{eq} 0x8001d3f0");
-        emit("MOV R8,0x6090");
-        emit("LD.UB R9,R8[0x0]");
-        emit("LD.UB R8,R3[0xa]");
-        emit("CP.W R8,R9");
-        emit("BR{eq} 0x8001d3ec");
-        emit("MOV R0,0x1");
-        padTo(0x8001d3ecL);
-        emit("ST.B R3[0xa],R9");
-        padTo(0x8001d3f0L);
-        emit("MOV R12,R0");
-        emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
+        // Bits 5, 6 and 7 - the latch's transpose state, the tuning slot
+        // and the pad octave mode, a byte compared like the rest each - and
+        // the return, in persist_capture_bytes: the third byte outgrew this
+        // cave.  R0, R2 and R3 go across as they stand.
+        emit("LDDPC R8,0x8001d3f8");
+        emit("MOV PC,R8");
+        padTo(0x8001d3f8L);
+        word(pcbEntry);                  // persist_capture_bytes
         padTo(0x8001d3fcL);
         word(prEntry);                  // persist_capture_ref
         finish("persist_capture", 0x8001d400L);
@@ -6963,8 +6961,9 @@ public class AssemblePressureFix extends GhidraScript {
         // edit keys step it once per press, so the capture's own compare
         // already bounds a press to a single flash write, and the moment
         // the write lands is the press - which is in edit mode, where
-        // nothing is being played by hand.
-        emit("MOV R8,0x40");            // bit 6: the tuning slot
+        // nothing is being played by hand.  The pad octave mode the same:
+        // a tap sets it once, and the moment is the tap, with a key held.
+        emit("MOV R8,0xc0");            // bits 6 and 7: the tuning slot and the pad octave mode
         emit("OR R2,R8");
         padTo(0x8001d4e0L);
         emit("CP.W R2,0x0");
@@ -7025,6 +7024,15 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R10,0x6580");
         emit("ST.W R10[0x0],R8");
         emit("ST.H R10[0x4],R8");
+        // And the pad octave mode's block at 0x6586..0x6591: the mode
+        // itself, which the load puts back from the record's byte 0x1b, the
+        // two hold counts, last scan's pad levels, the acknowledgment and
+        // the tap in progress - a count that starts as SRAM garbage with a
+        // key down at power-up would arm the gesture early.
+        emit("ST.H R10[0x6],R8");
+        emit("ST.W R10[0x8],R8");
+        emit("ST.W R10[0xc],R8");
+        emit("ST.H R10[0x10],R8");      // 0x6590: the tap's length
         // The take's preset reference and the preset count the last rebuild
         // saw.  seq_boot clears the reference for the same reason it clears
         // 0x62f4 - SRAM survives a DFU, and a retained reference transposes
@@ -7051,7 +7059,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,-0x1");
         emit("ST.B R10[0x1],R9");
         emit("MCALL PC[0x8001d5f4]");
-        emit("MOV R12,0x7f");
+        emit("MOV R12,0xff");
         emit("MCALL PC[0x8001d5fc]");   // initialize completed-edit snapshot
         emit("MOV R10,0x62e0");
         emit("MOV R9,0x1");
@@ -10663,7 +10671,7 @@ public class AssemblePressureFix extends GhidraScript {
         // acknowledgment flash lands on top of them, and after its bare-hold
         // counter has counted, so a two-pad hold can zero it.  Every build:
         // the cave also shadows the octave the chord restores.
-        emit("MCALL PC[0x8001a52c]");   // latch_state: pads 2 & 3, octave shadow
+        emit("MCALL PC[0x8001a52c]");   // pad_octave_scan, which calls latch_state (pads 2 & 3, octave shadow) first
         // Clock dequeue runs only from the main loop, never inside a pitch
         // remap whose input pitch has already been calculated.
         emit("LDM SP++,R7,PC");
@@ -10675,7 +10683,7 @@ public class AssemblePressureFix extends GhidraScript {
         word(0x8001b180L);              // the sequencer chord
         word(0x8001b980L);              // the external clock, per scan
         padTo(0x8001a52cL);
-        word(0x8001e600L);              // latch_state
+        word(poScanEntry);              // pad_octave_scan, then latch_state (0x8001e600)
         padTo(0x8001a534L);
         word(0x00003560L); // global state base
         finish("scan_housekeeping", 0x8001a53cL);
@@ -13775,6 +13783,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LD.UB R8,R9[0x342]");
         emit("CP.W R8,0x0");
         emit(String.format("BR{eq} 0x%x", mpcDone));
+        // The pad octave mode: one more period on the pitch whichever pad
+        // stands, and on the note with it.
+        emit("MOV R8,0x6586");
+        emit("LD.UB R8,R8[0x0]");
+        emit("ADD R10,R8");
+        emit("ADD R11,R8");
         emit("LD.UB R8,R9[0x2ef]");                // the pad
         emit("ADD R10,R8");
         emit("LD.UB R8,R9[0x6a]");
@@ -13837,9 +13851,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R9,0x69a0");                     // keys per period, in the mirror
         emit("LD.UH R2,R9[R8 << 0x1]");
         emit(String.format("MCALL PC[0x%x]", mpnPool + 4));  // midi_period_counts
-        emit("CP.W R2,0xc");
-        emit(String.format("BR{ne} 0x%x", mpnOwn));
-        emit("CP.W R1,R10");
+        emit(String.format("MCALL PC[0x%x]", mpnPool + 8));  // pad_octave_names: twelve keys, the factory's count, the mode off
         emit(String.format("BR{ne} 0x%x", mpnOwn));
         emit("CP.W R3,0x0");
         emit(String.format("BR{ne} 0x%x", mpnOwn));    // degrees on top: the sum
@@ -13863,6 +13875,7 @@ public class AssemblePressureFix extends GhidraScript {
         padTo(mpnPool);
         word(0x800057a8L); // the factory's key -> MIDI note
         word(mpcEntry);    // midi_period_counts
+        word(poNamesEntry); // pad_octave_names
         finish("midi_period_note", mpnEnd);
 
         // midi_period_key: midi_transpose's word for the factory's routine.
@@ -15078,6 +15091,390 @@ public class AssemblePressureFix extends GhidraScript {
         }; // end carryCaves
         carryCaves.go();
 
+        // Pad octave mode.  The octave pads choose a period each - -1, 0,
+        // +1, +2 from pad 1 with ADD TO PITCH on octaves - and this mode
+        // puts one more period under all four, so the keyboard stands a
+        // period of the tuning higher wherever the pads are.  It is the
+        // pads' own term that moves, read back by the adder at 0x800037aa,
+        // so everything built on the transpose follows it as it follows a
+        // pad: the term at 0x60a0, the latch's stamps in both its states,
+        // the sequencer's reference and its playback, the MIDI note.  The
+        // switch's position is the pads' too: off octaves the pads add
+        // nothing, and nor does this.
+        //
+        // The gesture (the owner's design, clarified 2026-10-06): with pad
+        // 4 already the active pad, hold the top key (28) for
+        // latch_state_hold_scans and, still holding it, tap pad 4 for the
+        // mode; with pad 1 active, hold the bottom key (0) and tap pad 1 to
+        // leave it.  The hold counts only while that pad is the active one,
+        // so a tap of pad 4 under the top key with another pad active is
+        // the selection it always was, and the tap that switches re-selects
+        // the pad already standing: nothing moves but the mode.  A tap is a
+        // press the key was armed for, released before chord_hold_scans
+        // with no knob moved under it: so holding pad 4 to arm the
+        // sequencer's chord or to edit preset 4 while the top key sounds
+        // switches nothing (the audit, 2026-10-06), and the switch lands on
+        // the release.  Pad 1 is never a tap while pad 4 is held, where it
+        // is the chord's RECORD.  Only with ADD TO PITCH on octaves, where
+        // the pads are octave pads; not in edit mode, where the keys are
+        // settings and neither hold counts.  The tapped pad flashes for
+        // 0x30 scans, as the pads 2 & 3 toggle and the pad-4 hold
+        // acknowledge.  A switch with a key touched runs the factory's
+        // held-note retune, as a pad change does, so a held key's MIDI note
+        // moves with its CV.  The mode persists in the record's byte 0x1b,
+        // saved once the gesture key has lifted, and is restored beside the
+        // latch state.
+        //
+        // RAM off 0x6586: +0 the mode (persisted, 0..1), +1 the pad the
+        // acknowledgment flashes, +2 the bottom key's hold count and +4 the
+        // top key's (halfwords, saturating at the threshold, cleared when
+        // the key lifts), +6 and +7 last scan's touch levels of pads 1 and
+        // 4, +8 the acknowledgment countdown, +9 the tap in progress (the
+        // pad's index plus one, 0 for none), +0xa its length in scans.  All
+        // zeroed by persist_boot beside 0x6580..0x6585.
+        Emitter padOctaveCaves = () -> {
+        // pad_octave_term: the displaced LD.SH R8,R7[-0xc] at 0x800037aa -
+        // the pads' term off the adder's frame - and in the mode one
+        // period more, number cell 10.  R9 is the base there, live; R10 is
+        // kept whole.
+        begin(poTermPool);
+        word(poTermEntry);
+        padTo(poTermEntry);
+        emit("LD.SH R8,R7[-0xc]");
+        emit("ST.W --SP,R10");
+        emit("MOV R10,0x6586");
+        emit("LD.UB R10,R10[0x0]");
+        emit("CP.W R10,0x0");
+        emit(String.format("BR{eq} 0x%x", poTermDone));
+        emit("MOV R10,0x6814");         // number cell 10: the period
+        emit("LD.UH R10,R10[0x0]");
+        emit("ADD R8,R10");
+        padTo(poTermDone);
+        emit("LD.W R10,SP++");
+        emit("MOV PC,LR");
+        finish("pad_octave_term", poTermEnd);
+
+        // pad_octave_scan: once per control scan, in latch_state's place in
+        // scan_housekeeping, and it calls latch_state first.  Then the tap
+        // in progress, if any: its pad still held counts its length, and a
+        // length reaching chord_hold_scans or a knob moved under the pad
+        // forgets it, as a hold or an edit; its pad released switches the
+        // mode.  Then pads 4 and 1 on their press edge while the matching
+        // key is armed, outside edit mode, on octaves, which starts a tap;
+        // then the two keys' holds, off the touch-scan flags (state+0x239,
+        // which know where the fingers are in every arp position), each
+        // counting only while its pad is the active one (state+0x2ef) and
+        // never in edit mode; then the acknowledgment.
+        begin(poScanEntry);
+        emit("STM --SP,R0,R1,R2,R7,LR");
+        emit("MOV R7,SP");
+        emit(String.format("MCALL PC[0x%x]", poScanPool));        // latch_state
+        emit(String.format("LDDPC R0,0x%x", poScanPool + 4));     // global state base
+        emit("MOV R1,0x6586");
+        emit("MOV R2,0x46f0");          // the pad touch array, 2 = held
+        emit("MOV R9,0x6812");          // settings cell 9: latch_state_hold_scans
+        emit("LD.UH R9,R9[0x0]");
+        // The tap in progress.
+        emit("LD.UB R10,R1[0x9]");      // the pad's index plus one, 0 for none
+        emit("CP.W R10,0x0");
+        emit(String.format("BR{eq} 0x%x", poScanEdges));
+        emit("SUB R10,0x1");            // the pad
+        emit("LD.UB R11,R2[R10 << 0x0]");   // its level now
+        emit("CP.W R11,0x2");
+        emit(String.format("BR{ne} 0x%x", poScanRelease));
+        // Still held.  Its knob moved under it, says the preset editor's
+        // following flag (set on the move, cleared only once the finger
+        // leaves, ahead of this cave): an edit, not a tap.  Else its length
+        // counts, and reaching chord_hold_scans it is a hold, not a tap.
+        emit("MOV R8,0x614a");
+        emit("LD.UB R8,R8[R10 << 0x0]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", poScanForget));
+        emit("LD.UH R11,R1[0xa]");
+        emit("MOV R8,0x6810");          // settings cell 8: chord_hold_scans
+        emit("LD.UH R8,R8[0x0]");
+        emit("SUB R11,-0x1");
+        emit("CP.W R11,R8");
+        emit(String.format("BR{lt} 0x%x", poScanKeep));
+        padTo(poScanForget);
+        emit("MOV R10,0x0");            // forgotten
+        emit("ST.B R1[0x9],R10");
+        emit(String.format("RJMP 0x%x", poScanEdges));
+        padTo(poScanKeep);
+        emit("ST.H R1[0xa],R11");
+        emit(String.format("RJMP 0x%x", poScanEdges));
+        padTo(poScanRelease);
+        emit("MOV R11,0x0");
+        emit("ST.B R1[0x9],R11");       // the tap is over, and it switches
+        emit("MOV R11,R10");            // the pad to flash
+        emit("MOV R10,0x0");            // pad 1: the mode off
+        emit("CP.W R11,0x3");
+        emit(String.format("BR{ne} 0x%x", poScanSet));
+        emit("MOV R10,0x1");            // pad 4: the mode on
+        padTo(poScanSet);
+        emit(String.format("MCALL PC[0x%x]", poScanPool + 8));    // pad_octave_set
+        padTo(poScanEdges);
+        // Pad 4's press edge with the top key armed, outside edit mode, on
+        // octaves: a tap begins.
+        emit("LD.UB R10,R2[0x3]");
+        emit("LD.UB R11,R1[0x7]");
+        emit("ST.B R1[0x7],R10");
+        emit("CP.W R10,0x2");
+        emit(String.format("BR{ne} 0x%x", poScanPad1));
+        emit("CP.W R11,0x2");
+        emit(String.format("BR{eq} 0x%x", poScanPad1));
+        emit("LD.UH R11,R1[0x4]");
+        emit("CP.W R11,R9");
+        emit(String.format("BR{lt} 0x%x", poScanPad1));
+        emit("LD.UB R11,R0[0x39]");
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{ne} 0x%x", poScanPad1));
+        emit("LD.UB R11,R0[0x342]");    // ADD TO PITCH on octaves
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{eq} 0x%x", poScanPad1));
+        emit("MOV R11,0x4");
+        emit("ST.B R1[0x9],R11");       // a tap of pad 4
+        emit("MOV R11,0x0");
+        emit("ST.H R1[0xa],R11");
+        padTo(poScanPad1);
+        // Pad 1's with the bottom key armed, pad 4 up: a tap begins.
+        emit("LD.UB R10,R2[0x0]");
+        emit("LD.UB R11,R1[0x6]");
+        emit("ST.B R1[0x6],R10");
+        emit("CP.W R10,0x2");
+        emit(String.format("BR{ne} 0x%x", poScanCounts));
+        emit("CP.W R11,0x2");
+        emit(String.format("BR{eq} 0x%x", poScanCounts));
+        emit("LD.UB R11,R2[0x3]");
+        emit("CP.W R11,0x2");
+        emit(String.format("BR{eq} 0x%x", poScanCounts));  // pad 4 down: the chord's RECORD
+        emit("LD.UH R11,R1[0x2]");
+        emit("CP.W R11,R9");
+        emit(String.format("BR{lt} 0x%x", poScanCounts));
+        emit("LD.UB R11,R0[0x39]");
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{ne} 0x%x", poScanCounts));
+        emit("LD.UB R11,R0[0x342]");
+        emit("CP.W R11,0x0");
+        emit(String.format("BR{eq} 0x%x", poScanCounts));
+        emit("MOV R11,0x1");
+        emit("ST.B R1[0x9],R11");       // a tap of pad 1
+        emit("MOV R11,0x0");
+        emit("ST.H R1[0xa],R11");
+        padTo(poScanCounts);
+        // In edit mode the keys are settings: neither hold counts there,
+        // so a hold begun in edit mode cannot arm a tap once it ends.
+        emit("LD.UB R10,R0[0x39]");
+        emit("CP.W R10,0x0");
+        emit(String.format("BR{eq} 0x%x", poScanHi));
+        emit("MOV R11,0x0");
+        emit("ST.H R1[0x2],R11");
+        emit("ST.H R1[0x4],R11");
+        emit(String.format("RJMP 0x%x", poScanAck));
+        padTo(poScanHi);
+        // The top key's hold, with pad 4 active: saturating at the
+        // threshold, cleared when the key lifts or the pad changes.
+        emit("MOV R8,0x3799");          // state+0x239, the touch-scan held flags
+        emit("LD.UB R10,R8[0x1c]");
+        emit("LD.UH R11,R1[0x4]");
+        emit("CP.W R10,0x1");
+        emit(String.format("BR{ne} 0x%x", poScanHiClear));
+        emit("LD.UB R10,R0[0x2ef]");    // the active pad
+        emit("CP.W R10,0x3");
+        emit(String.format("BR{ne} 0x%x", poScanHiClear));
+        emit("CP.W R11,R9");
+        emit(String.format("BR{ge} 0x%x", poScanHiDone));
+        emit("SUB R11,-0x1");
+        emit(String.format("RJMP 0x%x", poScanHiStore));
+        padTo(poScanHiClear);
+        emit("MOV R11,0x0");
+        padTo(poScanHiStore);
+        emit("ST.H R1[0x4],R11");
+        padTo(poScanHiDone);
+        // The bottom key's, with pad 1 active.
+        emit("LD.UB R10,R8[0x0]");
+        emit("LD.UH R11,R1[0x2]");
+        emit("CP.W R10,0x1");
+        emit(String.format("BR{ne} 0x%x", poScanLoClear));
+        emit("LD.UB R10,R0[0x2ef]");
+        emit("CP.W R10,0x0");
+        emit(String.format("BR{ne} 0x%x", poScanLoClear));
+        emit("CP.W R11,R9");
+        emit(String.format("BR{ge} 0x%x", poScanAck));
+        emit("SUB R11,-0x1");
+        emit(String.format("RJMP 0x%x", poScanLoStore));
+        padTo(poScanLoClear);
+        emit("MOV R11,0x0");
+        padTo(poScanLoStore);
+        emit("ST.H R1[0x2],R11");
+        padTo(poScanAck);
+        // The acknowledgment, as latch_state's: bit 3 of the countdown
+        // blinks the pad every eight scans, written every scan because
+        // select_pad repaints on every press, and the last tick repaints
+        // all four from the standing selection.
+        emit("LD.UB R8,R1[0x8]");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", poScanDone));
+        emit("SUB R8,0x1");
+        emit("ST.B R1[0x8],R8");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", poScanBlink));
+        emit("LD.UB R12,R0[0x2ef]");
+        emit(String.format("MCALL PC[0x%x]", poScanPool + 12));   // select_pad repaints all four
+        emit(String.format("RJMP 0x%x", poScanFlush));
+        padTo(poScanBlink);
+        emit("BFEXTU R9,R8,0x3,0x1");   // the blink phase
+        emit("LD.UB R12,R1[0x1]");      // the pad's channel
+        emit("CP.W R9,0x0");
+        emit(String.format("BR{eq} 0x%x", poScanDark));
+        emit(String.format("MCALL PC[0x%x]", poScanPool + 16));   // led_set
+        emit(String.format("RJMP 0x%x", poScanFlush));
+        padTo(poScanDark);
+        emit(String.format("MCALL PC[0x%x]", poScanPool + 20));   // led_clear
+        padTo(poScanFlush);
+        emit(String.format("MCALL PC[0x%x]", poScanPool + 24));   // led_flush
+        padTo(poScanDone);
+        emit("LDM SP++,R0,R1,R2,R7,PC");
+        padTo(poScanPool);
+        word(0x8001e600L);              // latch_state
+        word(0x00003560L);              // global state base
+        word(poSetEntry);               // pad_octave_set
+        word(0x8000698cL);              // select_pad(0..3)
+        word(0x80006808L);              // led_set(ch)
+        word(0x800068ccL);              // led_clear(ch)
+        word(0x8000673cL);              // led_flush()
+        word(0x80009838L);              // the factory's retune of held notes at a pad change
+        padTo(poSetEntry);
+        // pad_octave_set: R10 = the mode, R11 = the pad to flash, R0 = the
+        // state base.  Stores the mode and starts the acknowledgment, and
+        // when the mode changed with a key touched (state+0x238, the
+        // touch-scan count) calls the factory's own retune at 0x80009838,
+        // which a pad press with keys held calls once the pad is selected:
+        // with the arp off it renames the sounding key's MIDI note, which
+        // our naming now counts a period up, and sends it; with the arp on
+        // it sends every active note off, and the arp re-sounds the set at
+        // its next step.  The tap that switches re-selects the pad already
+        // standing, so the handler's own retune does not run for it, and
+        // without this call a held key's CV would move a period while its
+        // MIDI note stayed.  Called at the tap's release.  R9 is the
+        // caller's threshold and goes across the call; R8 and R12 are
+        // spent.
+        emit("STM --SP,R7,R9,LR");
+        emit("MOV R7,SP");
+        emit("MOV R8,0x6586");
+        emit("LD.UB R12,R8[0x0]");      // the mode as it stood
+        emit("ST.B R8[0x0],R10");       // the mode
+        emit("ST.B R8[0x1],R11");       // the pad the acknowledgment flashes
+        emit("MOV R9,0x30");            // the acknowledgment, in scans
+        emit("ST.B R8[0x8],R9");
+        emit("CP.W R12,R10");
+        emit(String.format("BR{eq} 0x%x", poSetDone));   // the same mode again: nothing to retune
+        emit("LD.UB R8,R0[0x238]");     // a key touched?
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", poSetDone));
+        emit(String.format("MCALL PC[0x%x]", poScanPool + 28));   // the factory's retune
+        padTo(poSetDone);
+        emit("LDM SP++,R7,R9,PC");
+        finish("pad_octave_scan", poScanEnd);
+
+        // pad_octave_names: midi_period_note's test for the factory's own
+        // routine.  Z out when it names the note: twelve keys to the period
+        // (R2), the periods asked for are the factory's count (R1, R10),
+        // and the mode is off - in the mode the note is a period over the
+        // factory's, which midi_period_note's own sum names.  Spends R8.
+        begin(poNamesEntry);
+        emit("CP.W R2,0xc");
+        emit(String.format("BR{ne} 0x%x", poNamesDone));
+        emit("CP.W R1,R10");
+        emit(String.format("BR{ne} 0x%x", poNamesDone));
+        emit("MOV R8,0x6586");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        padTo(poNamesDone);
+        emit("MOV PC,LR");
+        finish("pad_octave_names", poNamesEnd);
+
+        // persist_capture_bytes: persist_capture's tail, moved out when the
+        // third byte joined.  R2 = the mask shifted past the pads, R3 = the
+        // snapshot, R0 = changed so far.  Bit 5 the latch's transpose state
+        // (0x62e2 -> 0x6649), bit 6 the tuning slot (0x6090 -> 0x664a), bit
+        // 7 the pad octave mode (0x6586 -> 0x664b), each a byte compared
+        // like the rest, the mode's only once the gesture keys are up; then
+        // persist_capture's own return.
+        begin(pcbEntry);
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x2");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", pcbBit6));
+        emit("MOV R8,0x62e2");
+        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R8,R3[0x9]");
+        emit("CP.W R8,R9");
+        emit(String.format("BR{eq} 0x%x", pcbSt5));
+        emit("MOV R0,0x1");
+        padTo(pcbSt5);
+        emit("ST.B R3[0x9],R9");
+        padTo(pcbBit6);
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x4");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", pcbBit7));
+        emit("MOV R8,0x6090");
+        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R8,R3[0xa]");
+        emit("CP.W R8,R9");
+        emit(String.format("BR{eq} 0x%x", pcbSt6));
+        emit("MOV R0,0x1");
+        padTo(pcbSt6);
+        emit("ST.B R3[0xa],R9");
+        padTo(pcbBit7);
+        emit("MOV R8,R2");
+        emit("ANDL R8,0x8");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{eq} 0x%x", pcbDone));
+        // Not while either gesture key is touched: the save lands when the
+        // key lifts, as the latch's lands when its pads do, so the flash
+        // stall never falls under the key that is sounding.
+        emit("MOV R8,0x3799");          // state+0x239, the touch-scan held flags
+        emit("LD.UB R9,R8[0x0]");       // the bottom key
+        emit("LD.UB R8,R8[0x1c]");      // the top key
+        emit("OR R8,R9");
+        emit("CP.W R8,0x0");
+        emit(String.format("BR{ne} 0x%x", pcbDone));
+        emit("MOV R8,0x6586");
+        emit("LD.UB R9,R8[0x0]");
+        emit("LD.UB R8,R3[0xb]");
+        emit("CP.W R8,R9");
+        emit(String.format("BR{eq} 0x%x", pcbSt7));
+        emit("MOV R0,0x1");
+        padTo(pcbSt7);
+        emit("ST.B R3[0xb],R9");
+        padTo(pcbDone);
+        emit("MOV R12,R0");
+        emit("LDM SP++,R0,R1,R2,R3,R4,R7,PC");
+        finish("persist_capture_bytes", pcbEnd);
+
+        // persist_load_bytes: persist_load's three byte restores, R0 = the
+        // record.  The latch's transpose state (0x19 -> 0x62e2), the tuning
+        // slot (0x1a -> 0x6090) and the pad octave mode (0x1b -> 0x6586).
+        // A leaf; spends R8 and R9, as the loader did in their place.
+        begin(plbPool);
+        word(plbEntry);
+        padTo(plbEntry);
+        emit("LD.UB R9,R0[0x19]");
+        emit("MOV R8,0x62e2");
+        emit("ST.B R8[0x0],R9");
+        emit("LD.UB R9,R0[0x1a]");
+        emit("MOV R8,0x6090");
+        emit("ST.B R8[0x0],R9");
+        emit("LD.UB R9,R0[0x1b]");
+        emit("MOV R8,0x6586");
+        emit("ST.B R8[0x0],R9");
+        emit("MOV PC,LR");
+        finish("persist_load_bytes", plbEnd);
+        }; // end padOctaveCaves
+        padOctaveCaves.go();
+
         // Tuning applier and tables.  Selector lives at RAM 0x6090 - see the
         // edit-key blocks below for why it is not state+2 - and is carried in
         // the persistence record's byte 0x1a, so the slot a player left
@@ -15403,6 +15800,13 @@ public class AssemblePressureFix extends GhidraScript {
         begin(0x80003792L);
         emit(String.format("MCALL PC[0x%x]", opPool + 8));   // two periods: the top position
         finish("octave_step_up2", 0x80003796L);
+        // The pads' term as the adder reads it back off its frame to add to
+        // the base (0x800037aa, inside the branch state+0x342 selects, so
+        // only with ADD TO PITCH on octaves): pad_octave_term hands it back
+        // one period up in the pad octave mode.  See padOctaveCaves.
+        begin(0x800037aaL);
+        emit(String.format("MCALL PC[0x%x]", poTermPool));   // LD.SH R8,R7[-0xc], the pads' term
+        finish("pad_octave_hook", 0x800037aeL);
         begin(0x800035e4L);
         emit(String.format("MCALL PC[0x%x]", opPool + 4));   // the stored octave's multiplier
         finish("octave_scale_mul", 0x800035e8L);

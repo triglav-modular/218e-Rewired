@@ -32,11 +32,11 @@ DEADLINE_OUT="$(mktemp -t rewired)"
 # command substitution, so a variable set there does not survive; a file does.
 REJECTED_OUT="$(mktemp -t rewired)"
 trap 'rm -f "$DEADLINE_OUT" "$REJECTED_OUT"; printf "\033[?25h"' EXIT
-EXPECTED_SHA256="f303453f4a0e659898e3048f451afd3f6a042c2e6e6ab41d017c33af77b44a88"
+EXPECTED_SHA256="3f476697eda5a2fb29ea931b90b58d21253f43172d82239a199e552951ba916d"
 # Buchla's own v36.9 image.  Recognised so that going back to stock is an
 # offered choice rather than something to be identified by hand.
 FACTORY_SHA256="565f2d0c3466edfd13ddc1626cb7a74204723ff3a01f65eac34a9db99901dd47"
-FIRMWARE_VERSION="Rewired 3.1.0 (f303453f)"
+FIRMWARE_VERSION="Rewired 3.1.0 (3f476697)"
 # What this flasher itself was stamped with.  FIRMWARE_VERSION is rewritten
 # by the manifest below and again by whichever image is chosen, so by the time
 # anything reaches the log it no longer says which flasher wrote it.

@@ -682,6 +682,168 @@ public class ControlRegression extends SequenceEditRegression {
     // entries with the transposer's word down, so each answers the key's
     // own note.  The kbm variant carries 24TET.scl with 24TET-full.kbm, and
     // there a pad and a zone step 24 notes.
+    // The pad octave mode: with pad 4 active, hold the top key for
+    // latch_state_hold_scans and tap pad 4, and the octave pads stand one
+    // period higher from then on; with pad 1 active, hold the bottom key and
+    // tap pad 1 to put them back.  The hold counts only on its own pad, the
+    // tap is a press released before the chord's hold time with no knob
+    // moved, it re-selects the pad standing, the tapped pad flashes, the
+    // CV, the term and MIDI move a period together, and the mode rides in
+    // the record's byte 0x1b.  The press goes the way the factory's handler
+    // sends it, through the pool word at 0x8000a810.
+    void pressPad(int pad) throws Exception { w(0x46f0+pad,1,2); e.writeRegister("R12",pad); call(r(0x8000a810L,4)); }
+    void liftPad(int pad) throws Exception { w(0x46f0+pad,1,0); }
+    void holdKey(int key,int scans) throws Exception { w(S+0x239+key,1,1); for(int i=0;i<scans;i++) controlScan(); }
+    // A key's MIDI note through midi_transpose's three entries, which agree.
+    long midiNote(int key) throws Exception {
+        long note=-1;
+        for(long entry:new long[]{0x8001e740L,0x8001e744L,0x8001e748L}) {
+            e.writeRegister("R12",key); long got=call(entry);
+            check("the three MIDI entries agree on key "+key+": "+got+" after "+note,note<0||got==note);
+            note=got;
+        }
+        return note;
+    }
+    void padOctaveMode() throws Exception {
+        setup(0,false,0); command(0); latchFixture();   // arp off, ADD TO PITCH on octaves
+        int period=periodUnits(), chord=bootedHalf(0x6810);
+        w(0x60fa,2,0);                                  // the transposer's word down: a key's own note
+        octavePad(1); aim(0); sound();
+        long base=r(S+0x352,2), term=livePad();
+        check("the mode starts off, and the note is the factory's",r(0x6586,1)==0&&midiNote(0)==noteAt(0,notePeriods()));
+        // The hold counts only with pad 4 active: with pad 2 active the top
+        // key counts nothing, and a tap of pad 4 is the selection it always was.
+        holdKey(28,220);
+        check("with pad 2 active the top key's hold counts nothing",r(0x658a,2)==0);
+        pressPad(3); controlScan();
+        check("and a tap of pad 4 under it selects pad 4, as any tap does",r(S+0x2ef,1)==3&&r(0x658f,1)==0);
+        liftPad(3); controlScan();
+        check("the count runs once pad 4 is active, and nothing switched",r(0x658a,2)==2&&r(0x6586,1)==0);
+        for(int i=0;i<197;i++) controlScan();
+        check("199 scans arm nothing yet",r(0x658a,2)==199&&r(0x6586,1)==0);
+        pressPad(3); controlScan(); liftPad(3); controlScan();
+        check("a tap before the hold completes begins nothing",r(0x6586,1)==0&&r(0x658f,1)==0&&r(S+0x2ef,1)==3);
+        for(int i=0;i<20;i++) controlScan();
+        check("the hold saturates at the threshold",r(0x658a,2)==200);
+        pressPad(2); controlScan(); liftPad(2); controlScan();
+        check("another pad resets the count",r(0x658a,2)==0&&r(S+0x2ef,1)==2&&r(0x6586,1)==0);
+        pressPad(3); controlScan(); liftPad(3); controlScan();
+        for(int i=0;i<200;i++) controlScan();
+        check("back on pad 4 the count runs again",r(0x658a,2)==200);
+        // A hold of pad 4 as long as the chord's is not a tap, and nor is a
+        // press under which the pad's knob moved.
+        pressPad(3); controlScan();
+        check("the press begins a tap",r(0x658f,1)==4&&r(0x6586,1)==0);
+        for(int i=0;i<chord;i++) controlScan();
+        check("held to the chord's time the tap is forgotten",r(0x658f,1)==0&&r(0x6586,1)==0);
+        liftPad(3); controlScan();
+        check("and its release switches nothing",r(0x6586,1)==0);
+        pressPad(3); controlScan(); w(0x614a+3,1,1); controlScan();
+        check("a knob moved under the press forgets the tap",r(0x658f,1)==0);
+        liftPad(3); controlScan(); w(0x614a+3,1,0); controlScan();
+        check("and its release switches nothing",r(0x6586,1)==0);
+        int before=writes;
+        aim(0); sound(); long padFour=r(S+0x352,2);
+        pressPad(3); controlScan();
+        check("the tap begins on the press and switches nothing yet",r(0x658f,1)==4&&r(0x6586,1)==0&&r(S+0x2ef,1)==3);
+        liftPad(3); controlScan();
+        check("the release switches the pads one period up, pad 4 standing",r(0x6586,1)==1&&r(S+0x2ef,1)==3&&r(0x658f,1)==0);
+        check("the acknowledgment counts on pad 4",r(0x658e,1)==0x2f&&r(0x6587,1)==3);
+        sound();
+        check("the same key under pad 4 sounds one period higher",Math.abs(r(S+0x352,2)-(padFour+period))<=1);
+        check("the transpose term carries it: three periods over pad 2",Math.abs(livePad()-(term+3*period))<=1);
+        check("MIDI names the note a period up with the CV",midiNote(0)==noteAt(0,notePeriods()+1));
+        check("nothing saves while the gesture key is held",writes==before);
+        for(int i=0;i<0x30;i++) controlScan();
+        check("the acknowledgment ends on pad 4",r(0x658e,1)==0&&r(S+0x2ef,1)==3);
+        pressPad(3); controlScan(); liftPad(3); controlScan();
+        check("a second tap keeps the mode",r(0x6586,1)==1&&r(S+0x2ef,1)==3&&r(0x658e,1)==0x2f);
+        for(int i=0;i<0x30;i++) controlScan();
+        w(S+0x239+28,1,0); controlScan();
+        check("lifting the key clears the hold",r(0x658a,2)==0);
+        check("and saves the mode",writes>before&&r(call(NEWEST)+27,1)==1);
+        // Pad 1 under the top key's hold is a selection, and the bottom key
+        // counts nothing with pad 4 active.
+        holdKey(28,200); pressPad(0); controlScan(); liftPad(0); controlScan(); w(S+0x239+28,1,0); controlScan();
+        check("the top key's hold with pad 4 does not take pad 1",r(S+0x2ef,1)==0&&r(0x6586,1)==1&&r(0x658f,1)==0);
+        octavePad(3); holdKey(0,220);
+        check("the bottom key counts nothing with pad 4 active",r(0x6588,2)==0);
+        w(S+0x239,1,0); controlScan();
+        // In edit mode the keys are settings: neither hold counts there.
+        octavePad(0); holdKey(0,100);
+        check("with pad 1 active the bottom key counts",r(0x6588,2)==100);
+        w(S+0x39,1,1); controlScan();
+        check("edit mode clears a hold in progress",r(0x6588,2)==0);
+        holdKey(0,200); pressPad(0); controlScan(); liftPad(0); controlScan();
+        check("and the gesture does nothing there",r(0x6586,1)==1&&r(0x6588,2)==0&&r(S+0x2ef,1)==0&&r(0x658f,1)==0);
+        w(S+0x39,1,0); w(S+0x239,1,0); controlScan();
+        // Pad 1 under a held pad 4 is the chord's RECORD, not a tap.
+        octavePad(0); holdKey(0,200); w(0x46f3,1,2); pressPad(0); controlScan();
+        check("pad 1 under a held pad 4 begins no tap",r(0x658f,1)==0);
+        liftPad(0); w(0x46f3,1,0); controlScan(); controlScan();
+        check("and nothing switched",r(0x6586,1)==1&&r(S+0x2ef,1)==0);
+        // Back: pad 1 active, the bottom key held, pad 1 tapped.  Key 14
+        // for the pitch, which pad 1 without the mode puts a period under
+        // key 0's: well above the adder's floor.
+        aim(14); sound(); long upAtOne=r(S+0x352,2);
+        check("in the mode pad 1 stands where its key's table entry does",Math.abs(upAtOne-r(0x854+28,2))<=1);
+        w(S+0x239,1,0); controlScan(); holdKey(0,200);
+        check("the bottom key's hold counts with pad 1 active, apart from the top key's",r(0x6588,2)==200&&r(0x658a,2)==0);
+        pressPad(0); controlScan(); liftPad(0); controlScan();
+        check("the tap puts the pads back, pad 1 standing",r(0x6586,1)==0&&r(S+0x2ef,1)==0&&r(0x6587,1)==0&&r(0x658e,1)==0x2f);
+        sound();
+        check("the key sounds a period under where the mode had it",Math.abs(r(S+0x352,2)-(upAtOne-period))<=1);
+        w(S+0x239,1,0);
+        for(int i=0;i<0x30;i++) controlScan();
+        check("the record carries the mode back",r(call(NEWEST)+27,1)==0);
+        // The mode survives a power cycle; the counts, the flash and the tap do not.
+        octavePad(3); holdKey(28,200); pressPad(3); controlScan(); liftPad(3); controlScan(); w(S+0x239+28,1,0); controlScan();
+        w(0x6588,2,0x1234); w(0x658a,2,0x5678); w(0x658e,1,0x20); w(0x658f,1,4); w(0x6590,2,7);
+        cold();
+        check("the mode survives a power cycle; the counts, the flash and the tap do not",
+            r(0x6586,1)==1&&r(0x664b,1)==1&&r(0x6588,2)==0&&r(0x658a,2)==0&&r(0x658e,1)==0&&r(0x658f,1)==0&&r(0x6590,2)==0);
+        // With the arp off a held key's MIDI note moves with its CV: the
+        // switch runs the factory's retune, as a pad change does, and a
+        // second tap in the same hold sends nothing more.
+        setup(0,false,0); command(0); latchFixture(); w(0x60fa,2,0); octavePad(3);
+        w(0x2efa,1,1);                                  // the 208's bus present: the factory's retune sends only then
+        midiOn.clear(); touchOn(28); key(28); aim(28); sound();
+        check("a live key names its note on MIDI before the switch",
+            !midiOn.isEmpty()&&r(S+0x2e1,1)==noteAt(28,notePeriods())&&midiOn.get(midiOn.size()-1)==noteAt(28,notePeriods()));
+        int sent=midiOn.size(); long cvBefore=r(S+0x352,2);
+        holdKey(28,200); pressPad(3); controlScan(); liftPad(3); controlScan();
+        check("the switch renames the held key's MIDI note a period up, with its CV: mode "+r(0x6586,1)+", sent "+(midiOn.size()-sent)
+            +(midiOn.size()>sent?" last "+midiOn.get(midiOn.size()-1):"")+", live "+r(S+0x2e1,1)+", want "+noteAt(28,notePeriods()+1),
+            r(0x6586,1)==1&&midiOn.size()==sent+1&&midiOn.get(sent)==noteAt(28,notePeriods()+1)&&r(S+0x2e1,1)==noteAt(28,notePeriods()+1));
+        sound();
+        check("and the CV moved the period",Math.abs(r(S+0x352,2)-(cvBefore+period))<=1);
+        for(int i=0;i<0x30;i++) controlScan();
+        pressPad(3); controlScan(); liftPad(3); controlScan();
+        check("a second tap in the same hold sends nothing more",midiOn.size()==sent+1&&r(0x6586,1)==1);
+        touchOff(28); w(S+0x239+28,1,0); controlScan();
+        // Off octaves the pads are not octave pads: the gesture begins
+        // nothing, and the mode changes nothing.
+        w(S+0x342,1,0); w(S+0x343,1,0); controlScan();
+        holdKey(28,200); pressPad(3); controlScan();
+        check("off octaves the gesture begins no tap",r(0x658f,1)==0);
+        liftPad(3); controlScan(); w(S+0x239+28,1,0); controlScan();
+        check("and switches nothing",r(0x6586,1)==1);
+        aim(0); sound();
+        long off=r(S+0x352,2);
+        w(0x6586,1,0); controlScan(); aim(0); sound();
+        check("with ADD TO PITCH off octaves the mode changes nothing",Math.abs(r(S+0x352,2)-off)<=1);
+        // In the latch's hold state the mode acts as a pad does: a note
+        // already entered stays put.
+        if(!lean) {
+            setup(0,false,1); command(0); latchFixture();
+            octavePad(3); key(0); aim(0); sound(); long entered=r(S+0x352,2);
+            holdKey(28,200); pressPad(3); controlScan(); liftPad(3); controlScan(); w(S+0x239+28,1,0); controlScan();
+            sound();
+            check("in HOLD a latched note keeps its pitch through the switch, as through a pad",
+                r(0x6586,1)==1&&Math.abs(r(S+0x352,2)-entered)<=1);
+        }
+        println("PASS pad octave mode: armed by the top key's hold on pad 4, taken by a tap of pad 4 on its release on the CV, the term and MIDI, not by a hold, back by the bottom key on pad 1, saved once the key lifts and restored");
+    }
     void midiPeriod() throws Exception {
         setup(0,false,0); command(0);
         int k=keysPerPeriod();
@@ -4642,7 +4804,8 @@ public class ControlRegression extends SequenceEditRegression {
         "calibrationPitch","calibrationSilence","calibrationExits","calibrationLiveEdit","exactPitch",
         "tunedNotes","midiNoteOffs","blendSign","latchedUnderThePeriod","anchoredBottomKey","glideUnderZero",
         "reloadedRotation","gainPairOff","randomOctaveFloor","blendClampOnce","blendCarriedOffset",
-        "rebaseSentinel","midiUnderTheFloor","auditionPin","presetDegreesRounded","glideCeiling","padFlipLands","floorAnchorHandover","transposedFloorAnchor"};
+        "rebaseSentinel","midiUnderTheFloor","auditionPin","presetDegreesRounded","glideCeiling","padFlipLands","floorAnchorHandover","transposedFloorAnchor",
+        "padOctaveMode"};
     String knob2="spacing";
     // The mirror as this run's configuration booted it: the settings record
     // laid for it, or the image's own defaults.  Where a check used to read

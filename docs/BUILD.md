@@ -478,7 +478,15 @@ that each MIDI note names the note its pitch CV plays: a latched note at
 the octave it was entered at, and in HOLD at the degree of a quantised
 preset it was entered under, a recorded step at the octave it was played
 at, a preview pinned as its CV is, and a key played over a take at its own
-note. Each note is named in one sum and held to 0..127 once. The helpers
+note. The pad octave mode is driven through its gesture: with pad 4
+active, the top key held for the hold time and pad 4 tapped puts a period
+under the pads on the CV, the transpose term and MIDI when the pad is
+released, the pad flashes, a held key's MIDI note is retuned with its CV,
+the hold counts on no other pad, a hold of the pad as long as the chord's
+or with its knob moved is not a tap, pad 1 under a held pad 4 is the
+chord's, the bottom key on pad 1 takes it away, edit mode and the switch
+off octaves leave it alone, a latched note in HOLD stays put, and the mode
+saves once the key lifts and survives a power cycle. Each note is named in one sum and held to 0..127 once. The helpers
 that name one are swept over the key, the periods, the jack's degrees and
 a step's degrees, and the paths are driven where part of a note falls under
 0 or over 127 before the rest goes on. MIDI notes 0..127 are played in, and

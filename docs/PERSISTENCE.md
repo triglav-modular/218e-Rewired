@@ -3,8 +3,8 @@
 `persist = true` in `[options]`, which is required: the build refuses
 `persist = false`. This saves the four remapped preset voltages, the
 sequence with the octave it was recorded under, the latching
-arpeggiator's transpose state and the selected tuning slot, not the
-factory's settings. The factory preset path is unchanged when knob remapping is
+arpeggiator's transpose state, the selected tuning slot and the pad
+octave mode, not the factory's settings. The factory preset path is unchanged when knob remapping is
 disabled.
 
 ## Saving and restarting
@@ -38,6 +38,12 @@ Saving is automatic at the end of an edit:
   first boot with the cell off loads it, the first scan puts it back, and
   that change is saved like any other: one commit, once, after which the
   record carries slot 0.
+- The pad octave mode (with pad 4 active, the top key held for a second
+  and pad 4 tapped, pressed and released; with pad 1 active, the bottom
+  key and pad 1) saves once neither of those two keys is
+  touched any longer after a switch: the tap sets it under a held key,
+  and the save lands when that key lifts, as the latch's state waits for
+  its pads.
 - Only changed musical data causes a commit. An unchanged take, an empty
   clear, a pad tap without editing, or a value returned to its old setting
   does not write flash, including when storage is still empty.
@@ -99,7 +105,7 @@ one version-4 record; multi-byte values are big-endian.
 | `0x18` | 1 | Sequence length, `0..64` |
 | `0x19` | 1 | Latch transpose state: `0` the octave pads act before a note is entered, `1` after, on everything held |
 | `0x1a` | 1 | Selected tuning slot, `0..2` |
-| `0x1b` | 1 | Reserved, zero |
+| `0x1b` | 1 | Pad octave mode: `0` the octave pads as the factory has them, `1` one period up |
 | `0x1c` | 128 | 64 pitches, signed and relative to the take's reference, `-0x2000..0x2000`; rest `0x7ffe`, tie `0x7fff` |
 | `0x9c` | 64 | Key indexes `0..28`; rest/tie and inactive keys are zero |
 | `0xdc` | 64 | Per-step preset degrees, `0..127`; zero past the take's length |
@@ -161,8 +167,9 @@ alone, as it does the preset reference.
 `0x62f9..0x62fc` latch which presets were edited until each pad is fully
 released. `persist_capture` at `0x8001d280` accepts a mask: bits 0–3 select
 preset pads, bit 4 selects the sequence, bit 5 the latch transpose
-state (RAM `0x62e2`, snapshot byte `0x6649`) and bit 6 the tuning slot
-(RAM `0x6090`, snapshot byte `0x664a`). Bit 4 also takes the per-step
+state (RAM `0x62e2`, snapshot byte `0x6649`), bit 6 the tuning slot
+(RAM `0x6090`, snapshot byte `0x664a`) and bit 7 the pad octave mode
+(RAM `0x6586`, snapshot byte `0x664b`). Bit 4 also takes the per-step
 preset degrees (RAM `0x6600..0x663f`, snapshot `0x670c..0x674b`) and the
 octave reference (RAM `0x62f4`, snapshot `0x6dd0`, compared and stored by
 `persist_capture_ref` at `0x80022400`), which belong to the sequence they
@@ -170,9 +177,9 @@ describe. An empty take's reference is captured as zero, whatever
 `0x62f4` still holds, so emptying a take compares like any other empty
 take. It canonicalizes and
 compares only selected data before the save code stages the combined
-record. Records written before either of those two states existed carry a
-zero there, which is the state every latch and every tuning selector had
-until then.
+record. Records written before any of those three states existed carry a
+zero there, which is the state every latch, every tuning selector and
+every set of octave pads had until then.
 
 The tuning slot is restored into `0x6090` before the first scan, while the
 applier's guard at `0x60e4` is still zero — so the first scan copies that
@@ -196,7 +203,9 @@ Coverage includes rotation, no-change saves, retry exhaustion, retained
 backups, body/marker power cuts, corruption/bounds, generation wrap,
 same-scan clear/record-exit gestures, independent/overlapping preset edits,
 saving during record/playback, the tuning slot's own capture bit and its
-isolation from a sequence capture, the per-step preset degrees and the
+isolation from a sequence capture, the pad octave mode's own capture bit,
+its deferral while a gesture key is touched and its isolation from a
+sequence capture, the per-step preset degrees and the
 reference derived from them, the octave reference (captured with the
 sequence, zero when empty, bounded, v3 refused, restored past
 `clock_init`'s restart clear), and cold/warm startup without phantom

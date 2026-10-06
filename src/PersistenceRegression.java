@@ -398,7 +398,7 @@ public class PersistenceRegression extends GhidraScript {
         w(0x61e0,1,4); capture(16);
         check("the slot's own bit captures the change",capture(64)==1&&call(SAVE)==0&&writes==4);
         long p=call(NEWEST);
-        check("the record carries the slot and the last reserved byte stays zero",
+        check("the record carries the slot and leaves the mode's byte zero",
             p==BASE+512&&r(p+26,1)==2&&r(p+27,1)==0);
         check("an unchanged slot skips flash",capture(64)==0);
         byte[] good=e.readMemory(toAddr(p),512);
@@ -421,6 +421,44 @@ public class PersistenceRegression extends GhidraScript {
             writes==6&&r(call(NEWEST)+26,1)==1);
         call(TICK); check("and only once",writes==6);
         println("PASS tuning slot: own capture bit, saved on change, bounded, restored");
+    }
+    void padOctaveMode() throws Exception {
+        // The pad octave mode rides in the record's byte 0x1b, the last of
+        // the three once reserved, captured by its own mask bit, asked for
+        // by the scan on every pass beside the tuning slot, taken only once
+        // the two gesture keys are up, bounded to 0..1, and restored into
+        // its cell; its hold counts and acknowledgment start at zero.
+        fresh(); seed();
+        check("the mode starts clear in record and snapshot",r(call(NEWEST)+27,1)==0&&r(0x664b,1)==0);
+        w(0x6586,1,1);
+        check("a musical capture ignores the mode",capture(31)==0&&saveLive()==0&&writes==2);
+        check("the latch's and the slot's bits ignore it too",capture(96)==0&&writes==2);
+        w(0x61e0,1,3);
+        check("a sequence capture leaves the mode's snapshot byte alone",capture(16)==1&&r(0x664b,1)==0);
+        w(0x61e0,1,4); capture(16);
+        check("the mode's own bit captures the change",capture(128)==1&&call(SAVE)==0&&writes==4);
+        long p=call(NEWEST);
+        check("the record carries the mode and leaves its neighbours alone",
+            p==BASE+512&&r(p+27,1)==1&&r(p+25,1)==0&&r(p+26,1)==0&&r(p+24,1)==4);
+        check("an unchanged mode skips flash",capture(128)==0);
+        byte[] good=e.readMemory(toAddr(p),512);
+        w(p+27,1,2); fixCrc(p);
+        check("a mode out of range is rejected",call(NEWEST)==BASE);
+        e.writeMemory(toAddr(p),good);
+        check("and the bounded one accepted again",call(NEWEST)==p);
+        w(0x6587,1,3); w(0x6588,2,0x1234); w(0x658a,2,0x5678); w(0x658c,2,0x0202); w(0x658e,1,0x20); w(0x658f,1,4); w(0x6590,2,0x55);
+        cold();
+        check("the mode survives a power cycle",r(0x6586,1)==1&&r(0x664b,1)==1);
+        check("the hold counts, the levels, the flash and its pad, and the tap start at zero",
+            r(0x6587,1)==0&&r(0x6588,4)==0&&r(0x658c,4)==0&&r(0x6590,2)==0);
+        w(0x6586,1,0); w(S+0x239+28,1,1); call(TICK);
+        check("the top key touched defers the save",writes==4&&r(0x664b,1)==1);
+        w(S+0x239+28,1,0); w(S+0x239,1,1); call(TICK);
+        check("the bottom key touched defers it too",writes==4);
+        w(S+0x239,1,0); call(TICK);
+        check("both keys up commits the mode",writes==6&&r(call(NEWEST)+27,1)==0);
+        call(TICK); check("and only once",writes==6);
+        println("PASS pad octave mode: own capture bit, saved once the keys are up, bounded, restored");
     }
     void stepDegrees() throws Exception {
         // The preset count each step was recorded under rides in the v3
@@ -770,7 +808,7 @@ public class PersistenceRegression extends GhidraScript {
     // argument runs those alone: tools/test_persistence.py says which modes
     // each one runs under.
     static final String[] CHECKS={"basic","polySettingsMigration","relativeSteps","latchState","tuningSlot",
-        "stepDegrees","takeReference","retries","powerCuts","corruption","gesturePolicy","presets","gestures","playbackSave"};
+        "padOctaveMode","stepDegrees","takeReference","retries","powerCuts","corruption","gesturePolicy","presets","gestures","playbackSave"};
     public void run() throws Exception {
         String mode=getScriptArgs().length>0?getScriptArgs()[0]:"seq-clock";
         seq=mode.contains("seq"); clock=mode.contains("clock");
