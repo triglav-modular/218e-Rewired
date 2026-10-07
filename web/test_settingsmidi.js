@@ -23,7 +23,7 @@ function check(name, ok, detail) {
 // A record to push, with something in every section.
 var tables = { pitch_remap: [], tuning_slot0: [], tuning_slot1: [], tuning_slot2: [],
                tuning_period_keys: [12, 12, 7], arp_pattern_bank: [], arp_pattern_len: [] };
-for (var i = 0; i < 79; i++) tables.pitch_remap.push(485 + 40 * i);
+for (var i = 0; i < 80; i++) tables.pitch_remap.push(485 + 40 * i);
 for (var k = 0; k < 32; k++) {
     tables.tuning_slot0.push(500 + 40 * k); tables.tuning_slot1.push(510 + 40 * k); tables.tuning_slot2.push(520 + 40 * k);
 }
@@ -151,9 +151,9 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     var pushed = M.push(inst.output, record, { timers: timers, onProgress: function (n, t) { progress.push(n); } });
     await timers.run(pushed); await pushed;
     check('a push lands every parameter in the mirror', same(inst.mirror, record));
-    check('338 parameters, in the dump order, the live bytes not among them', inst.received.length === 338
-          && inst.received[0][0] === 0 && inst.received[31][0] === 31 && inst.received[32][0] === 0x80 && inst.received[337][0] === 0x1ff);
-    check('progress is reported per burst', progress.length === 85 && progress[0] === 4 && progress[84] === 338,
+    check('339 parameters, in the dump order, the live bytes not among them', inst.received.length === 339
+          && inst.received[0][0] === 0 && inst.received[31][0] === 31 && inst.received[32][0] === 0x80 && inst.received[338][0] === 0x1ff);
+    check('progress is reported per burst', progress.length === 85 && progress[0] === 4 && progress[84] === 339,
           progress.length + ' bursts');
     check('a push changes no live byte', inst.live.every(function (b) { return b === 0; }));
 
@@ -163,7 +163,7 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     check('identity answers with the block', id.layoutVersion === 2 && id.imageMarker === 0x1234 && id.slotLoaded === 0xff);
     check('an identity request costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f7f);
     var dp = M.dump(inst.output, inst.input, 5000, timers); await timers.run(dp); var d = await dp;
-    check('a dump answers with every parameter, the live bytes and the block', d.pairs.length === 364 && d.identity.imageMarker === 0x1234
+    check('a dump answers with every parameter, the live bytes and the block', d.pairs.length === 365 && d.identity.imageMarker === 0x1234
           && d.identity.firmwareVersion === '3.0.0' && d.pairs[32][0] === 0x20 && d.pairs[47][0] === 0x2f && d.pairs[48][0] === 0x80);
     var diff = M.differences(record, d.pairs);
     var nonzero = B.nrpnParamsOf(record).filter(function (p) { return p[1] !== 0; }).length;
@@ -208,7 +208,7 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     var every = B.nrpnParamsOf(record).map(function (p) { return p[0]; });
     re = await readOf(fakeInstrument({ lose: every }));
     check('and one that is the identity block alone is too, not a record of zeros', re && re.reason === 'incomplete'
-          && re.missing.length === 338);
+          && re.missing.length === 339);
     re = await readOf(fakeInstrument({ lose: [0x3f7a] }));
     check('as is one short of an identity parameter', re && re.reason === 'incomplete' && re.missing.join(',') === String(0x3f7a));
     re = await readOf(fakeInstrument({ lose: [0x25], layout: 3 }));

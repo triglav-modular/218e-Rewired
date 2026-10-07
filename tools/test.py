@@ -2170,7 +2170,7 @@ def test_settings_record() -> None:
     numbers = {"chord_hold_scans": 200, "transpose_cv_period": 819,
                "transpose_cv_hysteresis": 12}
     tables = {
-        "pitch_remap": [485 + 40 * i for i in range(79)],
+        "pitch_remap": [485 + 40 * i for i in range(80)],
         "tuning_slot0": [500 + 40 * k for k in range(32)],
         "tuning_slot1": [510 + 40 * k for k in range(32)],
         "tuning_slot2": [520 + 40 * k for k in range(32)],
@@ -2236,7 +2236,7 @@ def test_settings_record() -> None:
           back["pitch_remap"] == tables["pitch_remap"]
           and back["tuning_slot2"] == tables["tuning_slot2"]
           and back["tuning_period_keys"] == [12, 12, 7])
-    check("the pad after the 79 pitch entries is zero", rec[0xfe:0x100] == b"\0\0")
+    check("the 80th pitch entry lands where the pad was", rec[0xfe:0x100] == bytes([(485 + 40 * 79) >> 8, (485 + 40 * 79) & 0xff]))
     check("pattern masks keep the table's low-first halfword pairs",
           rec[0x1c8:0x1d0] == bytes.fromhex("1234abcd00018000") and rec[0x1d0:0x248] == bytes(0x78),
           rec[0x1c8:0x1d0].hex())
@@ -2257,11 +2257,11 @@ def test_settings_record() -> None:
     raises("a number past its range is refused",
            lambda: S.record({"tie_glide_rate": 1025}, tables, True, 0, 484), "1..1024")
     raises("a pitch entry past the DAC is refused",
-           lambda: S.record(numbers, dict(tables, pitch_remap=[0x1000] * 79), True, 0, 484),
+           lambda: S.record(numbers, dict(tables, pitch_remap=[0x1000] * 80), True, 0, 484),
            "pitch_remap[0]")
     raises("a short pitch table is refused",
-           lambda: S.record(numbers, dict(tables, pitch_remap=[1] * 78), True, 0, 484),
-           "79 entries")
+           lambda: S.record(numbers, dict(tables, pitch_remap=[1] * 79), True, 0, 484),
+           "80 entries")
     raises("a period of zero keys is refused",
            lambda: S.record(numbers, dict(tables, tuning_period_keys=[0, 12, 12]), True, 0, 484),
            "1..127")

@@ -562,6 +562,9 @@ public class AssemblePressureFix extends GhidraScript {
         long pcbEntry = 0x800241c0L, pcbSt5 = pcbEntry + 0x1a, pcbBit6 = pcbEntry + 0x1e, pcbSt6 = pcbEntry + 0x38;
         long pcbBit7 = pcbEntry + 0x3c, pcbSt7 = pcbEntry + 0x66, pcbDone = pcbEntry + 0x6a, pcbEnd = pcbEntry + 0x70;
         long plbPool = 0x80024230L, plbEntry = plbPool + 0x4, plbEnd = plbPool + 0x30;
+        // The pitch table's 80th entry (2026-10-06): settings_copy_top, in
+        // settings_reload's place for the record over the mirror.
+        long sctEntry = 0x80024260L, sctStore = sctEntry + 0x2a, sctDone = sctEntry + 0x2c, sctPool = sctEntry + 0x30, sctEnd = sctEntry + 0x40;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -1293,9 +1296,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MUL R8,R8,R9");
         emit("MOV R9,0x1e4");
         emit("DIVU R8,R8,R9");
-        emit("CP.W R8,0x4d");
+        emit("CP.W R8,0x4e");
         emit("BR{ls} 0x800199bc");
-        emit("MOV R8,0x4d");
+        emit("MOV R8,0x4e");
         emit("MOV R9,0x1e3");
         padTo(0x800199bcL);
         emit("MOV R11,R9");
@@ -1332,9 +1335,11 @@ public class AssemblePressureFix extends GhidraScript {
         // are DAC units: the per-octave calibration interpolated per
         // semitone, minus the measured tracking error at each semitone
         // (218e-key-calibration_done.csv), held constant beyond semi 64.
+        // 80 entries since 3.2: entry 79 is E6, the top key with pad 4 one
+        // octave up, and the remap interpolates 78 towards it.
         begin(0x80019bc0L);
         emitTable("pitch_remap");
-        finish("tracking_correction_table", 0x80019c5eL);
+        finish("tracking_correction_table", 0x80019c60L);
 
         // Knob 2's pattern bank: one 32-bit mask per pattern as two halfwords,
         // low first, then one length each.  In the gap the relocated sine
@@ -11108,8 +11113,8 @@ public class AssemblePressureFix extends GhidraScript {
         emit("MOV R10,0x20");
         emit("MCALL PC[0x8001f2f4]");
         emit("MOV R12,0x6840");
-        emit("LDDPC R11,0x8001f2e0");   // the pitch curve
-        emit("MOV R10,0x4f");
+        emit("LDDPC R11,0x8001f2e0");   // the pitch curve, 80 halfwords
+        emit("MOV R10,0x50");
         emit("MCALL PC[0x8001f2f4]");
         emit("MOV R12,0x68e0");
         emit("LDDPC R11,0x8001f2e4");   // the three tuning tables
@@ -11171,7 +11176,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("LDM SP++,R0,R7,PC");
         padTo(0x8001f338L);
         word(0x8001f150L); // settings_newest
-        word(0x8001f000L); // settings_copy
+        word(sctEntry);    // settings_copy_top: settings_copy, then entry 79 if the record left it unset
         finish("settings_reload", 0x8001f340L);
 
         // Where a parameter lives.  R12 = the 14-bit NRPN parameter number;
@@ -11206,12 +11211,12 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ADD R12,R8");
         emit("MOV PC,LR");
         padTo(tgPitch);
-        // 0x0080..0x00ce: the pitch curve.
+        // 0x0080..0x00cf: the pitch curve, 80 entries.
         emit("MOV R8,R12");
         emit("SUB R8,0x80");
         emit("CP.W R8,0x0");
         emit(String.format("BR{lt} 0x%x", tgNone));
-        emit("CP.W R8,0x4f");
+        emit("CP.W R8,0x50");
         emit(String.format("BR{ge} 0x%x", tgTune));
         emit("MOV R11,0x0");
         emit("MOV R10,0x0");
@@ -11709,7 +11714,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit("CP.W R9,0x4000");
         emit(String.format("BR{ge} 0x%x", scOut));
         // Advance first, over the gaps: 0x30 -> 0x80 (the 32 cells and the
-        // 16 live bytes are one run), 0xcf -> 0x100, 0x163 -> 0x180,
+        // 16 live bytes are one run), 0xd0 -> 0x100, 0x163 -> 0x180,
         // 0x200 -> 0x3f76, 0x3f80 -> idle.
         emit("MOV R10,R9");
         emit("SUB R10,-0x1");
@@ -11717,7 +11722,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("BR{ne} 0x%x", scG1));
         emit("MOV R10,0x80");
         padTo(scG1);
-        emit("CP.W R10,0xcf");
+        emit("CP.W R10,0xd0");
         emit(String.format("BR{ne} 0x%x", scG2));
         emit("MOV R10,0x100");
         padTo(scG2);
@@ -13567,7 +13572,7 @@ public class AssemblePressureFix extends GhidraScript {
         // channel - and go through to it untouched, so the note still sounds
         // its gate as it always does.  In the mode, any note-on restarts the
         // five seconds, and one on the instrument's channel chooses the
-        // entry: note 21, the 208's 0 V A, is entry 0, clamped to 0..78.
+        // entry: note 21, the 208's 0 V A, is entry 0, clamped to 0..79.
         // Spends R8, which the factory note-on overwrites first.
         begin(calNoteEntry);
         emit("MOV R8,0x6a6b");
@@ -13589,9 +13594,9 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("BR{ge} 0x%x", calNoteLow));
         emit("MOV R10,0x0");
         padTo(calNoteLow);
-        emit("CP.W R10,0x4f");
+        emit("CP.W R10,0x50");
         emit(String.format("BR{lt} 0x%x", calNoteHigh));
-        emit("MOV R10,0x4e");
+        emit("MOV R10,0x4f");
         padTo(calNoteHigh);
         emit("ST.B R8[0x4],R10");       // 0x6d44, the entry
         padTo(calNoteDone);
@@ -15472,6 +15477,35 @@ public class AssemblePressureFix extends GhidraScript {
         emit("ST.B R8[0x0],R9");
         emit("MOV PC,LR");
         finish("persist_load_bytes", plbEnd);
+
+        // settings_copy_top: settings_copy (R12 the destination, R11 the
+        // source, R10 the count, through as given), then the pitch table's
+        // entry 79 (RAM 0x68de, record 0x0fe, parameter 0x00cf) when the
+        // record left it at zero - the halfword was the layout's pad until
+        // 3.2 - from 77 and 78 by their step, held at the DAC's top.  A
+        // zero is never a curve entry: E6 stands thousands of counts up.
+        begin(sctEntry);
+        emit("STM --SP,R7,LR");
+        emit("MOV R7,SP");
+        emit(String.format("MCALL PC[0x%x]", sctPool));        // settings_copy
+        emit("MOV R8,0x68da");          // entry 77
+        emit("LD.UH R9,R8[0x4]");       // entry 79
+        emit("CP.W R9,0x0");
+        emit(String.format("BR{ne} 0x%x", sctDone));
+        emit("LD.UH R9,R8[0x2]");       // entry 78
+        emit("LD.UH R10,R8[0x0]");      // entry 77
+        emit("LSL R9,0x1");
+        emit("SUB R9,R10");             // 78 + (78 - 77)
+        emit("CP.W R9,0xfff");
+        emit(String.format("BR{le} 0x%x", sctStore));
+        emit("MOV R9,0xfff");
+        padTo(sctStore);
+        emit("ST.H R8[0x4],R9");
+        padTo(sctDone);
+        emit("LDM SP++,R7,PC");
+        padTo(sctPool);
+        word(0x8001f000L);              // settings_copy
+        finish("settings_copy_top", sctEnd);
         }; // end padOctaveCaves
         padOctaveCaves.go();
 

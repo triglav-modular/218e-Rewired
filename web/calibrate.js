@@ -21,6 +21,7 @@
 // pitch, which would transpose the whole run by however that pad is set.  Off
 // adds neither term.
 //   index  = (raw + 120) * 12 / 484     integer divide, clamped at 0x4d
+//                                       (0x4e since 3.2: the table has 80 entries)
 //   output = table[index], interpolated towards table[index+1] by the remainder
 //
 // Which is why notes 24 to 88 are the sweep: they land on table entries 3 to
@@ -111,16 +112,16 @@
     // Firmware with calibration mode plays the table itself.  NRPN 0x3f05
     // with 0x2a2a turns it on (SETTINGSMIDI.calibrationMode), and while it
     // is on the pitch output is exactly mirror[note - 21] for the last
-    // note-on on the instrument's channel, clamped to entries 0..78.  None
+    // note-on on the instrument's channel, clamped to entries 0..79.  None
     // of the arithmetic above applies: no key table, no remap and no lean,
     // and nothing added - no transposition, pads, tuning slot, glide or
     // vibrato - with the arpeggiator and the sequencer silent.  So every one
-    // of the 79 entries is reachable, notes 21 to 99, one apiece, and the
-    // bottom C is still note 24 on entry 3.  A pitch-table write (NRPN
+    // of the 80 entries is reachable, notes 21 to 100, one apiece (entry 79,
+    // E6, since 3.2), and the bottom C is still note 24 on entry 3.  A pitch-table write (NRPN
     // 0x0080 + entry) lands in the live mirror at once, so the next note
     // plays it.  The mode ends after five seconds without a note-on, on a
     // key press, and on boot.
-    var MODE_FIRST_NOTE = 21, MODE_ENTRIES = 79;
+    var MODE_FIRST_NOTE = 21, MODE_ENTRIES = 80;
     function modeEntryFor(note) {
         var index = note - MODE_FIRST_NOTE;
         if (index < 0 || index >= MODE_ENTRIES) return null;

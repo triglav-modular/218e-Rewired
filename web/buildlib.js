@@ -35,7 +35,7 @@ var BUILDLIB = (function () {
     // --- option expansion (tools/options.py) ----------------------------
     function flatCalibration() {
         var rows = [];
-        for (var i = 0; i < 79; i++) rows.push({ semitone: i, cents: 0.0 });
+        for (var i = 0; i < 80; i++) rows.push({ semitone: i, cents: 0.0 });
         return rows;
     }
 
@@ -1485,8 +1485,8 @@ var BUILDLIB = (function () {
         });
         checkPair(cells);
         halfwords(L.numbers, values, 'numbers', 0, 0xFFFF);
-        if (tables.pitch_remap.length !== 79) {
-            throw new Error('pitch_remap must have 79 entries, got ' + tables.pitch_remap.length);
+        if (tables.pitch_remap.length !== 80) {
+            throw new Error('pitch_remap must have 80 entries, got ' + tables.pitch_remap.length);
         }
         halfwords(L.pitch, tables.pitch_remap, 'pitch_remap', 0, 0xFFF);
         for (var slot = 0; slot < 3; slot++) {
@@ -1523,7 +1523,7 @@ var BUILDLIB = (function () {
     var NRPN_CHANNEL = 15;          // channel 16, the telemetry's
     var NRPN_SECTIONS = [
         { base: 0x0000, count: 32, offset: 0x20, kind: 'half' },
-        { base: 0x0080, count: 79, offset: 0x60, kind: 'half' },
+        { base: 0x0080, count: 80, offset: 0x60, kind: 'half' },
         { base: 0x0100, count: 96, offset: 0x100, kind: 'half' },
         { base: 0x0160, count: 3, offset: 0x1c0, kind: 'half' },
         { base: 0x0180, count: 96, offset: 0x1c8, kind: 'mask' },
@@ -1737,7 +1737,7 @@ var BUILDLIB = (function () {
         // cell past its range (which the firmware would never hold) reads
         // as undefined rather than as some other choice.
         out.options = optionsOf(out.cells);
-        for (i = 0; i < 79; i++) out.pitch_remap.push(halfAt(bytes, L.pitch + 2 * i));
+        for (i = 0; i < 80; i++) out.pitch_remap.push(halfAt(bytes, L.pitch + 2 * i));
         for (var slot = 0; slot < 3; slot++) {
             var table = [];
             for (i = 0; i < 32; i++) table.push(halfAt(bytes, L.tuning + 64 * slot + 2 * i));

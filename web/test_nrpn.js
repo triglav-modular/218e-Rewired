@@ -31,7 +31,7 @@ var tables = {
     tuning_period_keys: [12, 7, 36],
     arp_pattern_bank: [], arp_pattern_len: []
 };
-for (var i = 0; i < 79; i++) tables.pitch_remap.push(485 + 40 * i);
+for (var i = 0; i < 80; i++) tables.pitch_remap.push(485 + 40 * i);
 for (var k = 0; k < 32; k++) {
     tables.tuning_slot0.push(500 + 40 * k);
     tables.tuning_slot1.push(510 + 40 * k);
@@ -46,12 +46,12 @@ masks.forEach(function (m, i) {
 var record = B.settingsRecord(numbers, tables, true, 0xB007, 484, 5);
 
 var params = B.nrpnParamsOf(record);
-check('338 parameters in a record', params.length === 338, String(params.length));
+check('339 parameters in a record', params.length === 339, String(params.length));
 check('the walk is the instrument\'s: cells, pitch, tuning, keys, masks, lengths',
-      params[0][0] === 0 && params[31][0] === 31 && params[32][0] === 0x80 && params[110][0] === 0xce
-      && params[111][0] === 0x100 && params[206][0] === 0x15f && params[207][0] === 0x160
-      && params[210][0] === 0x180 && params[305][0] === 0x1df && params[306][0] === 0x1e0
-      && params[337][0] === 0x1ff);
+      params[0][0] === 0 && params[31][0] === 31 && params[32][0] === 0x80 && params[111][0] === 0xcf
+      && params[112][0] === 0x100 && params[207][0] === 0x15f && params[208][0] === 0x160
+      && params[211][0] === 0x180 && params[306][0] === 0x1df && params[307][0] === 0x1e0
+      && params[338][0] === 0x1ff);
 check('the live bytes are not pushed', params.every(function (p) { return p[0] < 0x20 || p[0] >= 0x80; }));
 check('a number reads its cell', B.nrpnValueOf(record, 8) === 200 && B.nrpnValueOf(record, 5) === 819);
 check('an option cell reads its index: knob2 swing, knob4 trn, sequencer off, jack portamento',
@@ -92,7 +92,7 @@ check('the thirds of 0x12345678', B.nrpnValueOf(record, 0x180) === (0x12345678 &
 check('bit 31 rides in the top third', B.nrpnValueOf(record, 0x180 + 3) === 1
       && B.nrpnValueOf(record, 0x181 + 3) === 0 && B.nrpnValueOf(record, 0x182 + 3) === 8);
 check('a gap names nothing', B.nrpnValueOf(record, 0x20) === null && B.nrpnValueOf(record, 0x30) === null
-      && B.nrpnValueOf(record, 0xcf) === null && B.nrpnValueOf(record, 0x163) === null && B.nrpnValueOf(record, 0x200) === null);
+      && B.nrpnValueOf(record, 0xd0) === null && B.nrpnValueOf(record, 0x163) === null && B.nrpnValueOf(record, 0x200) === null);
 
 // Every parameter into a blank record: the payload comes back exactly.
 var blank = [];
@@ -158,7 +158,7 @@ check('pending names the options whose cell and live byte differ', B.pendingOpti
       && B.pendingOptions(record, [1, 0, 2, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0]).join(',') === 'cell 28');
 check('the fields come back by name', f.numbers.chord_hold_scans === 200
       && f.numbers.transpose_cv_period === 819 && f.numbers.tie_glide_rate === 60
-      && f.pitch_remap.length === 79 && f.pitch_remap[78] === 485 + 40 * 78
+      && f.pitch_remap.length === 80 && f.pitch_remap[79] === 485 + 40 * 79
       && f.tuning_slot0[0] === 500 && f.tuning_slot2[31] === 520 + 40 * 31
       && f.tuning_period_keys.join(',') === '12,7,36'
       && f.masks.length === 32 && f.masks[2] === 0xFFFFFFFF && f.masks[7] === 0xDEADBEEF
@@ -181,12 +181,12 @@ check('the fields come back by name', f.numbers.chord_hold_scans === 200
               was.volts_per_octave === c[0] && was.pitch_offset === c[1], JSON.stringify(was));
         var rows = B.pitchCents(cfg, table);
         var again = B.pitchTable(cfg, rows);
-        check(name + ': builds again from its offsets', rows.length === 79
+        check(name + ': builds again from its offsets', rows.length === 80
               && again.length === table.length && again.every(function (v, i) { return v === table[i]; }));
     });
 });
 check('a table of the wrong length is refused', (function () {
-    try { B.pitchCents(B.expand({}), [1, 2, 3]); return false; } catch (e) { return /79 entries/.test(e.message); }
+    try { B.pitchCents(B.expand({}), [1, 2, 3]); return false; } catch (e) { return /80 entries/.test(e.message); }
 })());
 
 // The identity block, sent last, with the generation in three parts.

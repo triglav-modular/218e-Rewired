@@ -2887,11 +2887,11 @@ public class ControlRegression extends SequenceEditRegression {
     void residue() throws Exception { residueRun(true); residueRun(false); }
     // What the remap makes of a raw pitch, from the image's own table: add
     // 120 (and the vibrato), hold at entry 0, twelve entries to the 484-unit
-    // octave, clamp at entry 77, interpolate with the firmware's rounding.
+    // octave, clamp at entry 79, interpolate with the firmware's rounding.
     long remapModel(long d) {
         d=Math.max(0,d+0x78);
         long idx=d*12/484, rem=d*12%484;
-        if(idx>0x4d) { idx=0x4d; rem=0x1e3; }
+        if(idx>0x4e) { idx=0x4e; rem=0x1e3; }
         long lo=r(0x6840+2*idx,2), hi=r(0x6840+2*idx+2,2);
         return lo+(rem*(hi-lo)+0xf2)/484;
     }
@@ -2941,12 +2941,12 @@ public class ControlRegression extends SequenceEditRegression {
         w(0x6028,2,0);
         // A 208c table - pitch_offset off - lays the curve three entries
         // later and leaves 0 V under the bottom key: bent or not, it reads 0.
-        long[] table=new long[79];
-        for(int i=0;i<79;i++) table[i]=r(0x6840+2*i,2);
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,i<3?0:table[i-3]);
+        long[] table=new long[80];
+        for(int i=0;i<80;i++) table[i]=r(0x6840+2*i,2);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,i<3?0:table[i-3]);
         check("a 208c table: a bend under the bottom key stays at 0 V",
             bent(0,-480)==0&&bent(0,-40)==0&&bent(0,0)==remapModel(0));
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,table[i]);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,table[i]);
         w(S+0x216,2,0); pitch();
         println("PASS a bend reaches under the bottom key to the table's entry 0, and holds there");
     }
@@ -3093,11 +3093,11 @@ public class ControlRegression extends SequenceEditRegression {
     }
     void calibrationPitch() throws Exception {
         setup(0,false,0); command(2); calibrate();
-        int[][] ends={{21,0},{99,78},{0,0},{20,0},{100,78},{127,78}};
+        int[][] ends={{21,0},{99,78},{0,0},{20,0},{100,79},{127,79}};
         for(int[] n:ends) { noteOn(n[0]); plays("note "+n[0]+" is entry "+n[1],n[1]); }
         int wrong=0;
-        for(int i=0;i<=78;i++) { noteOn(21+i); if(dac()!=mirror(i)||r(CAL_ENTRY,1)!=i) wrong++; }
-        check("notes 21..99 play entries 0..78, every one exactly: "+wrong+" wrong",wrong==0);
+        for(int i=0;i<=79;i++) { noteOn(21+i); if(dac()!=mirror(i)||r(CAL_ENTRY,1)!=i) wrong++; }
+        check("notes 21..100 play entries 0..79, every one exactly: "+wrong+" wrong",wrong==0);
         noteOn(40); noteOn(50,(channel()+1)&15);
         plays("a note on another channel leaves the entry",19);
         // What the instrument would add, one thing at a time, on a key the
@@ -3151,7 +3151,7 @@ public class ControlRegression extends SequenceEditRegression {
             w(0x6090,1,0); w(0x60e4,2,0); controlScan();
             println("CALIBRATION tuning slots: "+moved+" of 3 put key 16 elsewhere");
         }
-        println("PASS calibration mode: entries 0..78, both ends clamped, exact over the octave pads, the preset, the strip"
+        println("PASS calibration mode: entries 0..79, both ends clamped, exact over the octave pads, the preset, the strip"
             +(r(0x6d32,1)!=0?", the jack":"")+(r(0x6d33,1)!=0?", the tuning slots":""));
     }
     void calibrationSilence() throws Exception {
@@ -3613,7 +3613,7 @@ public class ControlRegression extends SequenceEditRegression {
     // where the note-on floored the index at 0 and notes 0..23 all played
     // note 24; and the note-on drops it a further period (number cell 10,
     // 484 here) with the switch off the octaves (0x800064f8).  Past entry
-    // 78 the remap holds the last entry.  Under
+    // 79 the remap holds the last entry.  Under
     // entry 3 the target is negative, and since audit 038711a (F4) it plays
     // entries 0..2 as a bend does; under entry 0 it holds at entry 0, the
     // pitch floor: those are counted and held to that entry.  Notes run from
@@ -3677,7 +3677,7 @@ public class ControlRegression extends SequenceEditRegression {
                 int entry=15+k+12*periods;
                 touchOn(k); pressureFor(k,600);
                 long d=settled(names[p]+" key "+k);
-                long want=mirror(Math.max(0,Math.min(entry,78)));
+                long want=mirror(Math.max(0,Math.min(entry,79)));
                 if(d!=want) { keyWrong++; keys.append(String.format(" %d:%+d",k,d-want)); }
                 touchOff(k); pressureFor(-1,0); dac();
                 played++;
@@ -3703,20 +3703,20 @@ public class ControlRegression extends SequenceEditRegression {
                 if(base!=today||(short)r(S+0x352,2)!=today||rawBase!=raw||rawTarget!=raw) {
                     baseWrong++; bases.append(String.format(" %d:%+d/%+d",n,base-today,rawBase-raw));
                 }
-                // The DAC for the notes it always had.  Past 99 every entry is
-                // past 78, where the remap holds the last one, and the note-on
+                // The DAC for the notes it always had.  Past 100 every entry is
+                // past 79, where the remap holds the last one, and the note-on
                 // above, the same as before, is the whole of what could move.
-                if(n<=99) {
+                if(n<=100) {
                     long d=settled(names[p]+" note "+n);
-                    long want=mirror(Math.max(0,Math.min(entry,78)));
-                    if(entry<0) floored++; else if(entry>78) clamped++;
+                    long want=mirror(Math.max(0,Math.min(entry,79)));
+                    if(entry<0) floored++; else if(entry>79) clamped++;
                     if(d!=want) { noteWrong++; notes.append(String.format(" %d:%+d",n,d-want)); }
                     noteOff(n); dac();
                 } else noteOff(n);
                 played++;
             }
             println("EXACT "+names[p]+", slot "+slot+", "+periods+" period(s): keys 0..24 "+keyWrong+" off"
-                +(keyWrong>0?" (key:DAC-entry)"+keys:"")+"; notes 0..99 "+noteWrong+" off"
+                +(keyWrong>0?" (key:DAC-entry)"+keys:"")+"; notes 0..100 "+noteWrong+" off"
                 +(noteWrong>0?" (note:DAC-entry)"+notes:"")+"; note-on for 0..127 "+baseWrong+" changed"
                 +(baseWrong>0?" (note:pitch/by-the-note, against before)"+bases:""));
             if(keyWrong>0) failed.add(names[p]+": "+keyWrong+" key(s)");
@@ -3727,7 +3727,7 @@ public class ControlRegression extends SequenceEditRegression {
             +"reads what it read before for the factory temperament from note 24 up, and each note's own entry under it: "
             +(failed.isEmpty()?"all":failed.toString()),failed.isEmpty());
         println("PASS normal play lands on the pitch table entry: "+played+" keys and notes in six add-to-pitch positions, "
-            +clamped+" past entry 78 held on it, "+floored+" under entry 0 held on it; "
+            +clamped+" past entry 79 held on it, "+floored+" under entry 0 held on it; "
             +"the note-on's three reads byte for byte as before for notes 24..127, and under 24 each note's own entry");
     }
     // ---- MIDI notes past the tuning slot (audit 038711a) ----------------

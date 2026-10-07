@@ -68,11 +68,12 @@ CODE_END = 0x8003C000
 # only to say in the build log which note a tuning is anchored to.
 NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 
-# The pitch remap clamps its semitone index to 0x4D and interpolates against
-# index+1, so the calibration table must supply 79 entries.  A shorter table
+# The pitch remap clamps its semitone index to 0x4E and interpolates against
+# index+1, so the calibration table must supply 80 entries, the last E6: the
+# top key with pad 4 one octave up (3.2).  A shorter table
 # would leave the rest of the fixed table area as assembler padding, which the
 # firmware would read as pitch values.
-PITCH_TABLE_ENTRIES = 0x4D + 2
+PITCH_TABLE_ENTRIES = 0x4E + 2
 
 # The pitch remap adds 120 units - three semitones at 484 to the octave -
 # before it reads the table, so the bottom key at the lowest octave position
@@ -686,7 +687,7 @@ def read_calibration(path: Path) -> dict[int, float]:
     if len(offsets) < PITCH_TABLE_ENTRIES:
         raise ValueError(
             f"{path.name}: {len(offsets)} rows, but the firmware reads {PITCH_TABLE_ENTRIES} "
-            "(semitones 0..78); a shorter table leaves assembler padding to be read as pitch"
+            "(semitones 0..79); a shorter table leaves assembler padding to be read as pitch"
         )
     return offsets
 
@@ -1425,7 +1426,7 @@ RAM_REGIONS = [
     # at boot from the image's own tables, then from the newer valid slot at
     # 0x8003d000/0x8003d800.  See docs/PLAN-SETTINGS.md and tools/settings.py.
     (0x6800, 0x6840, "settings mirror: 32 number cells"),
-    (0x6840, 0x68E0, "settings mirror: pitch curve, 79 halfwords and a pad"),
+    (0x6840, 0x68E0, "settings mirror: pitch curve, 80 halfwords (the 80th was the pad until 3.2)"),
     (0x68E0, 0x69A0, "settings mirror: three tuning tables"),
     (0x69A0, 0x69A8, "settings mirror: keys per period"),
     (0x69A8, 0x6A28, "settings mirror: pattern masks, two halfwords each"),
@@ -1458,7 +1459,7 @@ RAM_REGIONS = [
     # Calibration mode's two cells, both written by the 0x3f05 that turns it
     # on before anything reads them, so neither needs clearing at boot.
     (0x6D40, 0x6D44, "calibration mode: the millisecond count at the last note-on"),
-    (0x6D44, 0x6D45, "calibration mode: the pitch-table entry it plays, 0..78"),
+    (0x6D44, 0x6D45, "calibration mode: the pitch-table entry it plays, 0..79"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to

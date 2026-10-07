@@ -168,7 +168,7 @@ if (app && typeof require === 'function') {
         '$("offset").children = [button("0"), button("1")]; $("offset").children[1].setAttribute("aria-pressed", "true");',
         'function bindDashes() {} function buildTable() {} function drawPlot() {}',
         'function invalidate() {} function updateOffsetNote() {} function syncCalBody() {}',
-        'var pitchOffset = true, PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
+        'var pitchOffset = true, PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 80;',
         'var measured = [], interpolated = {};',
         'for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);',
         appSource('\n    var baseline = {}', ';\n'),
@@ -184,9 +184,9 @@ if (app && typeof require === 'function') {
     ].join('\n'), page, { filename: 'web/app.js (extracted)' });
     var PB = page.BUILDLIB;
     var owner = PB.parseCalibration(fs.readFileSync(path.join(__dirname, '..', 'calibration',
-                                                             '218e-pitch-calibration.csv'), 'utf8'), 79);
+                                                             '218e-pitch-calibration.csv'), 'utf8'), 80);
     var ownerRows = [];
-    for (var s = 0; s < 79; s++) ownerRows.push({ semitone: s, cents: owner.rows[s] });
+    for (var s = 0; s < 80; s++) ownerRows.push({ semitone: s, cents: owner.rows[s] });
     var at10 = PB.expand({ volts_per_octave: 1.0 }), at12 = PB.expand({ volts_per_octave: 1.2 });
     var held = PB.pitchTable(at10, ownerRows);
     var twice = PB.pitchTable(at12, PB.pitchCents(at10, held)), once = PB.pitchTable(at12, ownerRows);
@@ -313,7 +313,7 @@ if (app && typeof require === 'function') {
         'function $(id) { return nodes[id] || (nodes[id] = element(id)); }',
         'function validateCal() {} function saveSoon() {} function invalidate() {} function syncBaseline() {}',
         'function press() {} function syncCalBody() {}',
-        'var pitchOffset = true, PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
+        'var pitchOffset = true, PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 80;',
         'var measured = [], interpolated = {};',
         'for (var i = 0; i < TABLE_ENTRIES; i++) measured.push(0);',
         appSource('\n    var NAMES_C', ';\n'), appSource('\n    var NAMES_A', ';\n'),

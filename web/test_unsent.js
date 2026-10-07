@@ -111,7 +111,7 @@ vm.runInContext([
     // stubbed, the run the test's (CALIBRATE.Sweep below).  What a run tuned
     // goes into the page as loadPitchTable puts it there: a calibration that
     // builds that table, which the page's options then carry.
-    'var vpo = 1.2, TABLE_ENTRIES = 79, warmed = null, chanFor = {};',
+    'var vpo = 1.2, TABLE_ENTRIES = 80, warmed = null, chanFor = {};',
     'function listMidi() {} function listAudio() {} function listChannels() {}',
     'function applyMidiPick() {} function keepWarm() {} function autoNote() {} function noteProgress() {}',
     'function sweepOptions(chosen) { return { output: chosen, channel: 2 }; }',
@@ -135,7 +135,7 @@ function same(a, b) {
 // A calibration with one entry moved.
 function correction(moves) {
     var rows = [];
-    for (var s = 0; s < 79; s++) rows.push({ semitone: s, cents: moves[s] || 0 });
+    for (var s = 0; s < 80; s++) rows.push({ semitone: s, cents: moves[s] || 0 });
     return rows;
 }
 
@@ -310,7 +310,7 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     check('while the send runs the card stays up', up() && page.unsent.sending);
     await T.run(SENT_WAIT - 1);
     check('Send settings sends the whole record, saves it and restarts the keyboard',
-          pushedSince(kb, at).length === 338 && countSince(kb, at, 0x3f00) === 1 && kb.restarts === restarts + 1
+          pushedSince(kb, at).length === 339 && countSince(kb, at, 0x3f00) === 1 && kb.restarts === restarts + 1
           && same(kb.flash, bytesOf(page.opts)), pushedSince(kb, at).length + ' pushed');
     check('then the card says so, and no longer that anything is unsent',
           up() && !headShown() && kbdMsg().text ===
@@ -542,7 +542,7 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     await T.run(60);                               // past the paint wait: the push is under way
     check('while a send has the port, Start measuring is held',
           heldBy() === 'send' && buttons() === 'true,true,true' && pushedSince(kb, at).length > 0 &&
-          pushedSince(kb, at).length < 338, heldBy() + ' ' + buttons() + ', ' + pushedSince(kb, at).length + ' pushed');
+          pushedSince(kb, at).length < 339, heldBy() + ' ' + buttons() + ', ' + pushedSince(kb, at).length + ' pushed');
     measure();                                     // a press that got past the button
     await T.run();
     check('and a press starts no run: the send lands, and gives the port back',

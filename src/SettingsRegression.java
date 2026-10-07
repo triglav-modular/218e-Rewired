@@ -47,7 +47,7 @@ public class SettingsRegression extends PersistenceRegression {
     static final String[] OPTIONS={"latching_arp","knob1","knob2","knob3","knob4","sequencer",
         "clock_divide","pressure_fix","pressure_portamento","quantize_presets","portamento_in","alternate_tunings"};
     static final int[] OPTION_MAX={1,2,4,1,2,1,1,1,1,1,1,1};
-    static final int PARAMS=354;   // 32 cells, 16 live bytes, 79, 96, 3, 96, 32
+    static final int PARAMS=355;   // 32 cells, 16 live bytes, 80, 96, 3, 96, 32
     // Phase B: the knob dispatchers and latch helpers, and the caves they choose.
     static final long KB=0x8001fb80L, KBSEL=KB, KBK1=KB+0x20, KBRHY=KB+0x60, KBVIB=KB+0xa0;
     static final long KBEARLY=KB+0xc0, KBLATE=KB+0xe0, KBL1=KB+0x100, KBL3=KB+0x130, BLEND=0x6d38;
@@ -219,7 +219,7 @@ public class SettingsRegression extends PersistenceRegression {
     long expect(int param) throws Exception {
         if(param<0x20) return r(MIRROR+2*param,2);
         if(param<0x30) return r(LIVE+param-0x20,1);
-        if(param>=0x80&&param<0xcf) return r(0x6840+2*(param-0x80),2);
+        if(param>=0x80&&param<0xd0) return r(0x6840+2*(param-0x80),2);
         if(param>=0x100&&param<0x160) return r(0x68e0+2*(param-0x100),2);
         if(param>=0x160&&param<0x163) return r(0x69a0+2*(param-0x160),2);
         if(param>=0x180&&param<0x1e0) {
@@ -497,7 +497,7 @@ public class SettingsRegression extends PersistenceRegression {
         check(PARAMS+" parameters and the ten of the identity block: "+got.size(),got.size()==PARAMS+10);
         boolean order=true, values=true;
         int[] walk=new int[PARAMS]; int n=0;
-        for(int q=0;q<0x30;q++)walk[n++]=q; for(int q=0x80;q<0xcf;q++)walk[n++]=q; for(int q=0x100;q<0x163;q++)walk[n++]=q;
+        for(int q=0;q<0x30;q++)walk[n++]=q; for(int q=0x80;q<0xd0;q++)walk[n++]=q; for(int q=0x100;q<0x163;q++)walk[n++]=q;
         for(int q=0x180;q<0x200;q++)walk[n++]=q;
         for(int i=0;i<PARAMS;i++) { if(got.get(i)[0]!=walk[i])order=false; if(got.get(i)[1]!=expect(walk[i]))values=false; }
         check("in the instrument's order: cells, live bytes, pitch, tuning, keys, masks, lengths",order);
@@ -1194,7 +1194,7 @@ public class SettingsRegression extends PersistenceRegression {
         check("nothing loaded: state clean, no slot, generation zero",
             r(STATE,1)==0&&r(STATE+1,1)==0xff&&r(STATE+4,4)==0);
         check("the pitch curve is the emitted one",
-            Arrays.equals(e.readMemory(toAddr(0x6840),158),e.readMemory(toAddr(0x80019bc0L),158)));
+            Arrays.equals(e.readMemory(toAddr(0x6840),160),e.readMemory(toAddr(0x80019bc0L),160)));
         check("the tuning tables are the emitted ones",
             Arrays.equals(e.readMemory(toAddr(0x68e0),192),e.readMemory(toAddr(0x80019af8L),192)));
         check("keys per period are the emitted ones",
@@ -1217,23 +1217,23 @@ public class SettingsRegression extends PersistenceRegression {
         check("and slot 0",r(0x854,2)==777);
         // The pitch remap interpolates between neighbours, so a flat mirror
         // curve remaps every raw pitch to that one value.
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,1000);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,1000);
         w(0x6028,2,0); e.writeRegister("R12",0x300); stubChain=true; call(REMAP); stubChain=false;
         check("the pitch remap reads the mirror",r(0x3212,2)==1000);
         // A falling curve: every segment interpolates between its own two
         // entries, inside the DAC.  (Audit 2026-09-24: an unsigned divide
         // put a falling segment's output near 0x6e16.)
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,3900-40*i);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,3900-40*i);
         stubChain=true;
         boolean inside=true; String worst="";
         for(int p=0;p<0x1000;p+=37) {
             w(0x6028,2,0); e.writeRegister("R12",p); call(REMAP);
             long out=r(0x3212,2);
-            if(out<3900-40*78||out>3900) { inside=false; worst=p+"->"+Long.toHexString(out); }
+            if(out<3900-40*79||out>3900) { inside=false; worst=p+"->"+Long.toHexString(out); }
         }
         stubChain=false;
         check("a falling pitch curve interpolates inside its own entries "+worst,inside);
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,0);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,0);
         boot();
         check("a warm reset reloads the record",Arrays.equals(mirror(),payloadOf(rec)));
         if(clock) {

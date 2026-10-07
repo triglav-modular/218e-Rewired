@@ -94,7 +94,7 @@ Everything the build produces lands in `build/` and is not tracked:
   octave, needs a .kbm keyboard map beside it saying which degree each key
   plays.  The octave controls then step that period rather than an octave,
   and every slot has to agree about it, since there is one set of them;
-- the pitch calibration covers every semitone the firmware reads (0..78), so
+- the pitch calibration covers every semitone the firmware reads (0..79), so
   a short table cannot leave assembler padding to be read as pitch.
 
 Any failure stops the build without writing firmware: the image is rendered
@@ -325,7 +325,7 @@ operating point and its error is not the same curve. Set `volts_per_octave` to
 match your 208 first, then measure against that.
 
 The quickest way to calibrate your own is the builder page, which does the
-measuring itself: it plays C0 to E5 into the keyboard over MIDI, listens to the
+measuring itself: it plays C0 to E6 into the keyboard over MIDI, listens to the
 208 on an audio input, and folds the readings onto whatever table the
 instrument is already running. Load that table there first, and save the new
 one it produces &mdash; the file it writes is the same format this reads.

@@ -36,7 +36,7 @@ import settings as SETTINGS  # noqa: E402
 DATA = (
     (0x8001FB00, 0x40, SETTINGS.NUMBERS),     # settings_numbers
     (0x80019AF8, 0xC0, SETTINGS.TUNING),      # the three tuning slots
-    (0x80019BC0, 0x9E, SETTINGS.PITCH),       # the pitch curve
+    (0x80019BC0, 0xA0, SETTINGS.PITCH),       # the pitch curve
     (0x8001E2D0, 0x06, SETTINGS.PERIOD_KEYS), # keys per period
 )
 BANK, LENGTHS, BANK_BYTES, LENGTHS_BYTES = 0x80019F20, 0x80019FA0, 0x80, 0x40

@@ -364,11 +364,11 @@ function modeWorld(opts) {
                 }
             } else if (got.param === 0x3f01) {
                 w.mirror = w.flash.slice();
-            } else if (got.param >= 0x80 && got.param < 0x80 + 79) {
+            } else if (got.param >= 0x80 && got.param < 0x80 + 80) {
                 var e = got.param - 0x80;
                 w.mirror[e] = got.value;
                 w.writes.push([e, got.value]);
-                for (var k = w.shift + 1; k < 79; k++) {
+                for (var k = w.shift + 1; k < 80; k++) {
                     if (w.mirror[k] <= w.mirror[k - 1]) { w.backwards.push([e, got.value, k]); break; }
                 }
             }
@@ -383,7 +383,7 @@ function modeWorld(opts) {
             if (w.keyAt[w.heardOn]) { w.mode = false; w.keyNote = note; }   // a key pressed with this note
             var idx, extra = 0;
             if (w.mode) {
-                idx = Math.max(0, Math.min(78, note - 21));
+                idx = Math.max(0, Math.min(79, note - 21));
             } else {
                 w.outside++;
                 var hit = PLAIN.entryFor(note, false);
@@ -411,13 +411,13 @@ function modeWorld(opts) {
 
 // The page's wiring, in the test's hands: the mode and the writes go
 // through SETTINGSMIDI exactly as app.js sends them.  Every entry that holds
-// an offset is swept - all 79 with the pitch offset, from the bottom key's
+// an offset is swept - all 80 with the pitch offset, from the bottom key's
 // up without it - which is what the page asks for.
 function modeSweep(w, opts) {
     var C = load(w);
     var timers = { setTimeout: function (fn, ms) { w.clock += ms || 0; return setTimeout(fn, 0); } };
     var o = { output: w.output, channel: w.listening, deviceId: null, audioChannel: 0,
-              low: w.shift, high: 78, velocity: 100,
+              low: w.shift, high: 79, velocity: 100,
               mode: { on: function () { M.calibrationMode(w.output, true); },
                       off: function () { M.endCalibration(w.output); } },
               adjust: { table: w.flash.slice(), countsPerCent: countsPerCentOf(w.cfg),
@@ -516,10 +516,10 @@ function pageLoad(table, sources) {
     var vm = require('vm'), page = vm.createContext({ BUILDLIB: B, GEN: GEN });
     vm.runInContext([
         'var vpo = 1.2, pitchOffset = true, nodes = {};',
-        'var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
+        'var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 80;',
         'var measured = [], baseline = {}, baselineSources = {}, baselineName = "", baselineHistory = null, interpolated = {};',
         // Readings on the page before the run: the load clears them.
-        'for (var i = 0; i < 79; i++) measured.push(i % 7 ? 0 : 3.5);',
+        'for (var i = 0; i < 80; i++) measured.push(i % 7 ? 0 : 3.5);',
         'function $(id) { return nodes[id] || (nodes[id] = { checked: false }); }',
         'function press(id, v) { if (id === "vpo") vpo = Number(v); else if (id === "offset") { var on = v === "1"; if (on !== pitchOffset) { pitchOffset = on; PLAYABLE_LOW = on ? 3 : 0; PLAYABLE_HIGH = PLAYABLE_LOW + 64; if (haveBaseline()) clearBaseline(); } } }',
         'function syncCalBody() {} function syncBaseline() {} function buildTable() {} function drawPlot() {} function validateCal() {} function invalidate() {}',
@@ -587,7 +587,7 @@ function pageOpen(w, opts) {
         })
     });
     vm.runInContext([
-        'var vpo = ' + opts.pageVpo + ', sweep = null, TABLE_ENTRIES = 79, loaded = null, loads = 0;',
+        'var vpo = ' + opts.pageVpo + ', sweep = null, TABLE_ENTRIES = 80, loaded = null, loads = 0;',
         'var unsent = { armed: ' + !!opts.read + ', name: ' +
             JSON.stringify(opts.read ? w.output.name : null) + ' };',
         'var nodes = {}, saved = [];',
@@ -713,7 +713,7 @@ function rowFaults(rows, played, start, table) {
 function writesBeforeFirstNote(w) {
     var n = 0;
     for (var k = 0; k < w.events.length && w.events[k][0] !== 'on'; k++) {
-        if (w.events[k][0] === 'nrpn' && w.events[k][1] >= 0x80 && w.events[k][1] < 0x80 + 79) n++;
+        if (w.events[k][0] === 'nrpn' && w.events[k][1] >= 0x80 && w.events[k][1] < 0x80 + 80) n++;
     }
     return n;
 }
@@ -1157,7 +1157,7 @@ function signature(w, out) {
        sigs.join(' ') === PLAIN_SWEEP, sigs.join(' '));
 
     // --- calibration mode: one run converges -----------------------------
-    // 1.2 V/oct with the pitch offset: all 79 entries, from the flat table,
+    // 1.2 V/oct with the pitch offset: all 80 entries, from the flat table,
     // on a 208 whose slope is 1.5% steep, whose gain wanders 3%, and whose
     // 0 V pitch sits 20 cents flat of the curve the rest of it follows.
     // The owner tunes the 208 at 0 V with the keyboard off, so that pitch is
@@ -1171,15 +1171,15 @@ function signature(w, out) {
     try { out = await modeSweep(w, {}); } catch (e) { err = e; out = { readings: [], warnings: [], log: [] }; }
     ok('a run in calibration mode completes', !err, err ? err.message : '');
     var rd = out.readings;
-    ok('calibration mode sweeps all 79 entries, notes 21 to 99, one apiece',
-       rd.length === 79 && rd.every(function (r, i) { return r.index === i && r.note === i + 21; }),
+    ok('calibration mode sweeps all 80 entries, notes 21 to 100, one apiece',
+       rd.length === 80 && rd.every(function (r, i) { return r.index === i && r.note === i + 21; }),
        rd.length + ' readings, ' + (rd.length ? rd[0].note + '..' + rd[rd.length - 1].note : '-'));
-    ok('and returns the table it converged', !!out.table && out.table.length === 79);
+    ok('and returns the table it converged', !!out.table && out.table.length === 80);
     var near = closeness(w, out), tol = tolerance(w, out);
     ok('and every entry is heard and tuned, none filled in',
-       near.heard === 79 && rd.every(function (r) { return r.source === (r.index ? 'measured' : 'reference'); }) &&
+       near.heard === 80 && rd.every(function (r) { return r.source === (r.index ? 'measured' : 'reference'); }) &&
        !!out.filled && Object.keys(out.filled).length === 0,
-       near.heard + '/79, sources ' + rd.map(function (r) { return r.source; }).filter(function (s, i, a) {
+       near.heard + '/80, sources ' + rd.map(function (r) { return r.source; }).filter(function (s, i, a) {
            return a.indexOf(s) === i; }).join(','));
     ok('the 0 V entry is 0 counts in the table', !!out.table && out.table[0] === 0,
        out.table ? 'entry 0 = ' + out.table[0] : '-');
@@ -1257,8 +1257,8 @@ function signature(w, out) {
        !!conv12 && same(B.pitchTable(cfg12, rows), conv12));
     var base = {}, zeros = [];
     rows.forEach(function (r) { base[r.semitone] = r.cents; });
-    for (var z = 0; z < 79; z++) zeros.push(0);
-    var pageRows = B.calibrationRows(base, {}, zeros, 3, 67, 79, true, null)
+    for (var z = 0; z < 80; z++) zeros.push(0);
+    var pageRows = B.calibrationRows(base, {}, zeros, 3, 67, 80, true, null)
         .map(function (v, s) { return { semitone: s, cents: v }; });
     ok('and through the page’s own rows, loaded as a baseline',
        !!conv12 && same(B.pitchTable(cfg12, pageRows), conv12));
@@ -1282,8 +1282,8 @@ function signature(w, out) {
     half = 0.5 / countsPerCentOf(w.cfg);
     out = await modeSweep(w, {});
     near = closeness(w, out); tol = tolerance(w, out);
-    ok('at 1 V/oct without the offset, entries 3 to 78 are swept',
-       out.readings.length === 76 && out.readings[0].index === 3 && near.heard === 76,
+    ok('at 1 V/oct without the offset, entries 3 to 79 are swept',
+       out.readings.length === 77 && out.readings[0].index === 3 && near.heard === 77,
        out.readings.length + ' readings, ' + near.heard + ' heard');
     ok('against entry 3 at 0 counts, the 208’s 0 V pitch',
        !!out.table && out.table[3] === 0 && out.anchorEntry === 3 &&
@@ -1480,7 +1480,7 @@ function signature(w, out) {
            (ran.err ? ran.err.message.slice(0, 80) + ' ' : '') + log.rows.length + ' rows, columns ' + log.cols.slice(13).join(','));
         let faults = rowFaults(log.rows, played, kept, ran.out ? ran.out.table : []);
         ok('a sweep or a retry row carries the counts its entry held as the keyboard played the note',
-           n.sweep === 79 && n.retry > 20 && !faults.length,
+           n.sweep === 80 && n.retry > 20 && !faults.length,
            faults.slice(0, 3).join('; ') || n.sweep + ' sweep rows, ' + n.retry + ' retries');
         ok('a fill row the counts the entry was filled in with, and a probe or an anchor row none: ' +
            'the probe played the starting table’s entries and the anchor 0 counts',
@@ -1493,10 +1493,10 @@ function signature(w, out) {
         const tunedRows = ran.out ? ran.out.readings.filter(function (x) { return x.source === 'measured'; }) : [];
         const stray = tunedRows.filter(function (x) { return (at[x.index] || []).indexOf(ran.out.table[x.index]) < 0; });
         ok('and every tuned entry was left at one of the counts its rows say it was played at',
-           tunedRows.length === 76 && !stray.length,
+           tunedRows.length === 77 && !stray.length,
            tunedRows.length + ' tuned, ' + stray.length + ' left at counts no row has');
         ok('the header says where the run started: its rows, the table the keyboard held, its scaling, ' +
-           'and the 79 counts of that table',
+           'and the 80 counts of that table',
            log.runs.length === 1 && log.runs[0].first === 1 && log.runs[0].last === log.rows.length &&
            log.runs[0].held && log.runs[0].vpo === 1.2 && same(log.runs[0].table, kept) &&
            !same(kept, ran.out ? ran.out.table : kept),
@@ -1671,26 +1671,26 @@ function signature(w, out) {
     // calibration, from the flat table, at each scaling: every entry has to
     // be heard and tuned in one run, the ones that rise furthest included.
     var ownerCsv = B.parseCalibration(fs.readFileSync(path.join(__dirname, '..', 'calibration',
-                                                               '218e-pitch-calibration.csv'), 'utf8'), 79);
+                                                               '218e-pitch-calibration.csv'), 'utf8'), 80);
     var ownerRows = [];
-    for (var os = 0; os < 79; os++) ownerRows.push({ semitone: os, cents: ownerCsv.rows[os] });
+    for (var os = 0; os < 80; os++) ownerRows.push({ semitone: os, cents: ownerCsv.rows[os] });
     var OWNER_VPO = [1.0, 1.2];
     for (var ov = 0; ov < OWNER_VPO.length; ov++) {
         var ownerTable = B.pitchTable(B.expand({ volts_per_octave: OWNER_VPO[ov] }), ownerRows);
         w = modeWorld({ listening: 2, vpo: OWNER_VPO[ov], profile: ownerTable });
         var rise = 0, riseAt = null;
-        for (var oe = 0; oe < 79; oe++) {
+        for (var oe = 0; oe < 80; oe++) {
             if (ownerTable[oe] - w.flash[oe] > rise) { rise = ownerTable[oe] - w.flash[oe]; riseAt = oe; }
         }
         out = await modeSweep(w, {});
         near = closeness(w, out); tol = tolerance(w, out);
         var owned = 'the owner’s 208 at ' + OWNER_VPO[ov].toFixed(1) + ' V/oct, from the flat table';
-        ok(owned + ': one run hears and tunes all 79 entries, none filled in',
-           near.heard === 79 && !!out.filled && Object.keys(out.filled).length === 0,
+        ok(owned + ': one run hears and tunes all 80 entries, none filled in',
+           near.heard === 80 && !!out.filled && Object.keys(out.filled).length === 0,
            near.heard + ' tuned, filled ' + JSON.stringify(out.filled));
         ok('  every one within half a count (' + tol.counts.toFixed(3) + ' of its counts), entry ' + riseAt +
            ', which rises ' + rise + ' counts, included',
-           near.heard === 79 && near.counts <= tol.counts && !!out.table &&
+           near.heard === 80 && near.counts <= tol.counts && !!out.table &&
            Math.abs(out.table[riseAt] - w.ideal(riseAt)) <= tol.counts,
            'worst ' + near.counts.toFixed(3) + ' counts, at entry ' + near.at);
         ok('  and the table it plays never runs backwards', w.backwards.length === 0 && increasing(out.table, w.shift),
@@ -1714,14 +1714,14 @@ function signature(w, out) {
     // --- both ends of the range ---------------------------------------------
     // From a table in tune, with four entries that will not tune: entry 1
     // silent, entry 2 answering a move two and a half times over, 30 cents
-    // sharp, and the same at the top, 77 and 78.  None is kept at a value
+    // sharp, and the same at the top, 78 and 79.  None is kept at a value
     // it was played at or started from: the bottom pair is interpolated
     // between the 0 V entry's 0 counts and entry 3, the top pair carries on
-    // at the slope of the octave under 76.
-    var ends = {}; ends[22] = true; ends[99] = true;
-    w = modeWorld({ listening: 2, bend: -20, mute: ends, gainAt: { 2: 2.5, 77: 2.5 } });
+    // at the slope of the octave under 77.
+    var ends = {}; ends[22] = true; ends[100] = true;
+    w = modeWorld({ listening: 2, bend: -20, mute: ends, gainAt: { 2: 2.5, 78: 2.5 } });
     var edged = tunedTable(modeWorld({ listening: 2, bend: -20 }));
-    edged[1] += 6; edged[2] += 12; edged[77] += 12; edged[78] += 20;
+    edged[1] += 6; edged[2] += 12; edged[78] += 12; edged[79] += 20;
     startFrom(w, edged);
     out = await modeSweep(w, {});
     t = out.table || [];
@@ -1733,24 +1733,28 @@ function signature(w, out) {
     };
     var endWant = {
         1: Math.round(t[3] / 3), 2: Math.round(2 * t[3] / 3),
-        77: Math.round(t[76] + (t[76] - t[64]) / 12), 78: Math.round(t[76] + 2 * (t[76] - t[64]) / 12)
+        78: Math.round(t[77] + (t[77] - t[65]) / 12), 79: Math.round(t[77] + 2 * (t[77] - t[65]) / 12)
     };
     ok('entries that will not tune at both ends are filled in, not kept',
-       [1, 2, 77, 78].every(function (e) {
+       [1, 2, 78, 79].every(function (e) {
            var r = byEntry[e] || {};
            return t[e] === endWant[e] && r.value === t[e] && r.cents === null && played(e).indexOf(t[e]) < 0;
        }),
-       [1, 2, 77, 78].map(function (e) {
+       [1, 2, 78, 79].map(function (e) {
            return e + ': ' + t[e] + ' (want ' + endWant[e] + ', played ' + played(e).join('/') + ')';
        }).join('; '));
     ok('the bottom pair interpolated from 0 V, the top pair extrapolated, and flagged so',
-       !!out.filled && same(out.filled, { 1: 'interpolated', 2: 'interpolated', 77: 'extrapolated', 78: 'extrapolated' }) &&
+       !!out.filled && same(out.filled, { 1: 'interpolated', 2: 'interpolated', 78: 'extrapolated', 79: 'extrapolated' }) &&
        [1, 2].every(function (e) { return byEntry[e] && byEntry[e].source === 'interpolated'; }) &&
-       [77, 78].every(function (e) { return byEntry[e] && byEntry[e].source === 'extrapolated'; }),
+       [78, 79].every(function (e) { return byEntry[e] && byEntry[e].source === 'extrapolated'; }),
        JSON.stringify(out.filled));
     ok('with a warning each that ends in what became of it',
        [[1, /^\S+: too quiet to read, interpolated$/], [2, /^\S+: -?\d+\.\d cents out after \d tries, interpolated$/],
-        [77, /^\S+: -?\d+\.\d cents out after \d tries, extrapolated$/], [78, /^\S+: too quiet to read, extrapolated$/]]
+        [78, /^\S+: -?\d+\.\d cents out after \d tries, extrapolated$/],
+        // The top entry is noise to the reader; whether YIN finds a period in
+        // it, inside the narrow band E6 leaves it, is the noise sequence's
+        // business.  The claim here is the ending.
+        [79, /^\S+: (too quiet to read|not heard clearly), extrapolated$/]]
            .every(function (p) {
                return out.warnings.some(function (x) {
                    return x.indexOf(PLAIN.noteLabel(p[0]) + ': ') === 0 && p[1].test(x);
@@ -1759,12 +1763,12 @@ function signature(w, out) {
     ok('and a fill row each in the log',
        same(out.log.filter(function (r) { return r.what === 'fill'; })
                    .map(function (r) { return [r.entry, r.why]; }),
-            [[1, 'interpolated'], [2, 'interpolated'], [77, 'extrapolated'], [78, 'extrapolated']]));
+            [[1, 'interpolated'], [2, 'interpolated'], [78, 'extrapolated'], [79, 'extrapolated']]));
     ok('the silent ones are never written, and the table stays increasing inside the DAC',
-       !w.writes.some(function (p) { return p[0] === 1 || p[0] === 78; }) &&
-       increasing(t, 0) && t[0] === 0 && t[78] <= 4095);
+       !w.writes.some(function (p) { return p[0] === 1 || p[0] === 79; }) &&
+       increasing(t, 0) && t[0] === 0 && t[79] <= 4095);
     ok('while every other entry is tuned',
-       closeness(w, out).heard === 75 && closeness(w, out).counts <= tolerance(w, out).counts,
+       closeness(w, out).heard === 76 && closeness(w, out).counts <= tolerance(w, out).counts,
        closeness(w, out).heard + ' tuned, worst ' + closeness(w, out).counts.toFixed(3));
     var srcEnds = sourcesOf(out, w);
     loaded = null;
@@ -1772,7 +1776,7 @@ function signature(w, out) {
     ok('the page loads it exactly, and its saved table says which rows were filled in',
        !!loaded && !loaded.error && same(loaded.built, out.table) &&
        loaded.sources[1] === 'interpolated' && loaded.sources[2] === 'interpolated' &&
-       loaded.sources[77] === 'extrapolated' && loaded.sources[78] === 'extrapolated' &&
+       loaded.sources[78] === 'extrapolated' && loaded.sources[79] === 'extrapolated' &&
        loaded.sources[3] === 'measured' && loaded.sources[0] === undefined,
        loaded && loaded.error ? loaded.error : JSON.stringify(loaded && loaded.sources));
 
@@ -1781,7 +1785,7 @@ function signature(w, out) {
     // the top: the sweep stops there, plays nothing above, and the rest are
     // extrapolated from the octave under the last entry that tuned.
     var topless = {};
-    for (var tn = 72 + 21; tn <= 99; tn++) topless[tn] = true;
+    for (var tn = 72 + 21; tn <= 100; tn++) topless[tn] = true;
     w = modeWorld({ listening: 2, mute: topless });
     startFrom(w, tunedTable(w));
     out = await modeSweep(w, {});
@@ -1790,20 +1794,20 @@ function signature(w, out) {
     w.events.forEach(function (ev) { if (ev[0] === 'on' && ev[1] === w.listening) sweptNotes[ev[2]] = true; });
     ok('three silent entries at the top stop the sweep: nothing above them is played',
        !!sweptNotes[95] && !sweptNotes[96] && Object.keys(sweptNotes).length === 75,
-       Object.keys(sweptNotes).length + ' notes played, of 79, the highest ' +
+       Object.keys(sweptNotes).length + ' notes played, of 80, the highest ' +
        Math.max.apply(null, Object.keys(sweptNotes).map(Number)));
     var slope71 = (t[71] - t[59]) / 12, topOk = true;
-    for (var te = 72; te <= 78; te++) {
+    for (var te = 72; te <= 79; te++) {
         var tr = out.readings.filter(function (r) { return r.index === te; })[0] || {};
         if (tr.source !== 'extrapolated' || t[te] !== Math.round(t[71] + slope71 * (te - 71)) ||
             tr.tries !== (te <= 74 ? 1 : 0)) topOk = false;
     }
     ok('and every entry from the first silent one up is extrapolated from the octave under 71',
-       topOk && out.readings.length === 79 && increasing(t, 0) && t[78] <= 4095,
+       topOk && out.readings.length === 80 && increasing(t, 0) && t[79] <= 4095,
        t.slice(70).join(','));
     ok('which the warnings say',
        out.warnings.indexOf('three notes in a row were not heard, so the sweep stopped: ' +
-                            PLAIN.noteLabel(75) + ' to ' + PLAIN.noteLabel(78) + ' extrapolated') >= 0 &&
+                            PLAIN.noteLabel(75) + ' to ' + PLAIN.noteLabel(79) + ' extrapolated') >= 0 &&
        out.warnings.some(function (x) { return x === PLAIN.noteLabel(72) + ': too quiet to read, extrapolated'; }),
        out.warnings.join(' | '));
     ok('and the run still ends with the mode off and the mirror reloaded',
@@ -1844,7 +1848,7 @@ function signature(w, out) {
     w = modeWorld({ listening: 2, slope: 0, wobble: 0, stop: { entry: 67, cents: 27 } });
     var log12 = LOG12_FIRST.map(function (c, e) { return e ? Math.round(w.ideal(e, c)) : 0; });
     var semi12 = (log12[66] - log12[54]) / 12;
-    for (var le = 67; le < 79; le++) log12.push(Math.round(log12[66] + semi12 * (le - 66)));
+    for (var le = 67; le < 80; le++) log12.push(Math.round(log12[66] + semi12 * (le - 66)));
     startFrom(w, log12);
     out = await modeSweep(w, {});
     t = out.table || [];
@@ -1866,7 +1870,7 @@ function signature(w, out) {
        }).join(', '));
     // Every entry under the stop, as the 208 plays it, not as the run read it.
     var under12 = [], over12 = [], tol12 = tolerance(w, out);
-    for (var ue = 1; ue < 79; ue++) {
+    for (var ue = 1; ue < 80; ue++) {
         (w.pitchOf(w.shift, 0) * Math.pow(2, (ue - w.shift) / 12) < w.stopHz ? under12 : over12).push(ue);
     }
     var off12 = function (e) {
@@ -1877,7 +1881,7 @@ function signature(w, out) {
     });
     ok('every entry under the stop is tuned in one run, D#5 and E5 included, each within half a count (' +
        (tol12.cents + tol12.ref).toFixed(2) + ' cents) as the 208 plays it',
-       under12.length === 67 && t.length === 79 && !untuned12.length,
+       under12.length === 67 && t.length === 80 && !untuned12.length,
        untuned12.map(function (e) {
            return PLAIN.noteLabel(e) + ' ' + (by12[e] || {}).source + ' ' + off12(e).toFixed(2);
        }).join(', ') || 'worst ' + Math.max.apply(null, under12.map(function (e) {
@@ -1906,7 +1910,7 @@ function signature(w, out) {
     var swept12 = {};
     w.events.forEach(function (ev) { if (ev[0] === 'on' && ev[1] === w.listening) swept12[ev[2]] = true; });
     ok('the entries past the stop are extrapolated from the octave under E5, and the sweep ends where log 12’s did',
-       over12.length === 11 && !notOn12.length && increasing(t, 0) && t[78] <= 4095 &&
+       over12.length === 12 && !notOn12.length && increasing(t, 0) && t[79] <= 4095 &&
        !!swept12[72 + 21] && !swept12[73 + 21],
        'not on the octave: ' + notOn12.join(',') + '; highest note played ' +
        Math.max.apply(null, Object.keys(swept12).map(Number)));
@@ -1964,29 +1968,29 @@ function signature(w, out) {
 
     // --- filling in, on its own ---------------------------------------------
     var FG = PLAIN.fillGaps, ramp = [];
-    for (var fe = 0; fe < 79; fe++) ramp.push(40 * fe);
+    for (var fe = 0; fe < 80; fe++) ramp.push(40 * fe);
     var bent = ramp.slice(); bent[4] = 163;
     var fg = FG ? FG(bent, [2, 3], 0) : null;
     ok('fillGaps: between two entries that stand, linearly in counts',
        !!fg && fg.table[2] === 81 && fg.table[3] === 122 && same(fg.sources, { 2: 'interpolated', 3: 'interpolated' }) &&
        same(fg.table.slice(4), bent.slice(4)), fg ? fg.table.slice(0, 5).join(',') : 'missing');
     var steep = ramp.slice(); steep[75] = 3060;          // the last octave: (3060 - 2520) / 12 = 45 a semitone
-    fg = FG ? FG(steep, [76, 77, 78], 0) : null;
+    fg = FG ? FG(steep, [76, 77, 78, 79], 0) : null;
     ok('fillGaps: above the last that stands, at the slope of its last octave',
-       !!fg && fg.table.slice(76).join() === '3105,3150,3195' && fg.sources[78] === 'extrapolated',
+       !!fg && fg.table.slice(76).join() === '3105,3150,3195,3240' && fg.sources[79] === 'extrapolated',
        fg ? fg.table.slice(75).join(',') : 'missing');
     fg = FG ? FG([0, 30, 70].concat(ramp.slice(3)), ramp.map(function (v, e) { return e; }).slice(3), 0) : null;
     ok('fillGaps: with less than an octave standing above the floor, over what there is',
-       !!fg && fg.table.slice(3, 6).join() === '105,140,175' && fg.sources[78] === 'extrapolated',
+       !!fg && fg.table.slice(3, 6).join() === '105,140,175' && fg.sources[79] === 'extrapolated',
        fg ? fg.table.slice(0, 6).join(',') : 'missing');
     var nearTop = ramp.slice(); nearTop[62] = 3000; nearTop[74] = 4000;
-    fg = FG ? FG(nearTop, [75, 76, 77, 78], 0) : null;
+    fg = FG ? FG(nearTop, [75, 76, 77, 78, 79], 0) : null;
     ok('fillGaps: kept strictly increasing and inside the DAC',
-       !!fg && fg.table.slice(74).join() === '4000,4083,4093,4094,4095', fg ? fg.table.slice(74).join(',') : 'missing');
+       !!fg && fg.table.slice(74).join() === '4000,4083,4092,4093,4094,4095', fg ? fg.table.slice(74).join(',') : 'missing');
     fg = FG ? FG(ramp, ramp.map(function (v, e) { return e; }).slice(1), 0) : null;
     ok('fillGaps: with nothing standing above the floor, nothing is filled',
        !!fg && same(fg.table, ramp) && same(fg.sources, {}));
-    var c208 = [0, 0, 0, 0].concat(ramp.slice(1, 76));
+    var c208 = [0, 0, 0, 0].concat(ramp.slice(1, 77));
     fg = FG ? FG(c208, [1, 2, 3, 5], 3) : null;
     ok('fillGaps: the floor and everything under it stand',
        !!fg && same(fg.table.slice(0, 5), [0, 0, 0, 0, 40]) && fg.table[5] === 80 && same(fg.sources, { 5: 'interpolated' }),

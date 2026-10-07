@@ -86,7 +86,7 @@
     // so neither can be played or measured.  They are filled in from the
     // ends of the measured range instead of being offered as boxes nobody
     // can fill.  Without the offset the same 65 notes start at semitone 0.
-    var PLAYABLE_LOW = 0, PLAYABLE_HIGH = 64, TABLE_ENTRIES = 79;
+    var PLAYABLE_LOW = 0, PLAYABLE_HIGH = 64, TABLE_ENTRIES = 80;
     function setPitchOffset(on) {
         if (on === pitchOffset) return;
         var from = PLAYABLE_LOW;
@@ -1244,7 +1244,7 @@
         if (logRuns.length) {
             out.push('# Each run in this log: its rows, counted from 1 under the column names;',
                      '#       the table it started from, the one the keyboard held or the flat',
-                     '#       one at the volts per octave set on the page; and the 79 DAC',
+                     '#       one at the volts per octave set on the page; and the 80 DAC',
                      '#       values of that table, entry 0 first.');
         }
         logRuns.forEach(function (run, k) {

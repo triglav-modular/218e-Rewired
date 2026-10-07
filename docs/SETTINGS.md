@@ -176,8 +176,7 @@ Big-endian.
 | `0x012` | 2 | `octave_units` the record was generated for; informational, cell 10 is what the keyboard reads |
 | `0x014` | 12 | Reserved, zero |
 | `0x020` | 64 | 32 numbers: the ten timing numbers, cell 10 the period, cells 16..27 the options (27 the tunings' switch), the rest zero |
-| `0x060` | 158 | `pitch_remap`, 79 halfwords |
-| `0x0fe` | 2 | Pad |
+| `0x060` | 160 | `pitch_remap`, 80 halfwords; the 80th, E6, was a pad until 3.2 and is filled from 77 and 78 when a record leaves it zero |
 | `0x100` | 192 | Tuning slots 0..2, 32 halfwords each |
 | `0x1c0` | 8 | `tuning_period_keys`, 3 halfwords and a pad |
 | `0x1c8` | 128 | 32 pattern masks, each as two halfwords, low first |
@@ -254,7 +253,7 @@ the last NRPN or on cell 0.
 |---|---|---|
 | `0x0000..0x001f` | cell *n* | its bounds; out of range is ignored |
 | `0x0020..0x002f` | the live option bytes | read-only; a dump sends them |
-| `0x0080..0x00ce` | `pitch_remap[0..78]` | `0..0xfff` |
+| `0x0080..0x00cf` | `pitch_remap[0..79]` | `0..0xfff` |
 | `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | `0..0x3fff`; a write clears the applier's guard |
 | `0x0160..0x0162` | keys per period | `1..32`; a write clears the applier's guard, as does one to cell 10, since both shape the jack's rotated table |
 | `0x0180 + 3p + 0..2` | pattern *p*'s mask, bits 0..13, 14..27, 28..31 | each third replaces its own bits |
@@ -270,7 +269,7 @@ the last NRPN or on cell 0.
 **Calibration mode.** `0x3f05` with data `0x2a2a` turns it on, for the
 page's pitch sweep; any other value turns it off. While it is on, the
 pitch output on every scan is the mirror's pitch-table entry for the last
-MIDI note, `0x6840 + 2e` with e = note - 21 clamped to 0..78, and entry 3
+MIDI note, `0x6840 + 2e` with e = note - 21 clamped to 0..79, and entry 3
 before a note arrives. Nothing is added to it: not the add-to-pitch
 switch, the preset, trn, the jack's transposition, the tuning slot, glide,
 vibrato or either bend. A pitch-table write (`0x0080 + e`) lands in the

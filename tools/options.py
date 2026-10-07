@@ -141,7 +141,7 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                          # the INPUT's law to the OUTPUT's scaling: 1.2 V
                          # bought an octave, so the jack's range bought far
                          # more of them than the pitch output can show - the
-                         # curve at 0x80019bc0 holds 79 semitones, so the DAC
+                         # curve at 0x80019bc0 holds 80 semitones, so the DAC
                          # stops at 3125 counts of the 4095 it can drive.
                          #
                          # 4.0, not the 2.0 it was first set to that day:
@@ -322,7 +322,7 @@ def _override(cfg: dict) -> None:
             + " claim the same telemetry fields; enable one at a time.")
 
 # A flat pitch ramp: no per-key correction, every semitone exactly 100 cents.
-# 79 rows, matching what the firmware reads (semitones 0..78).
+# 80 rows, matching what the firmware reads (semitones 0..79).
 FLAT_CALIBRATION = REPO / "build" / "_flat_pitch_calibration.csv"
 
 
@@ -330,7 +330,7 @@ def _write_flat_calibration() -> Path:
     FLAT_CALIBRATION.parent.mkdir(exist_ok=True)
     rows = ["# Generated: pitch_correction = false -> an ideal ramp, no per-key trim.",
             "Semitone;Note;Key;Offset_Cents;Source"]
-    rows += [f"{i};;;0.000000;flat" for i in range(79)]
+    rows += [f"{i};;;0.000000;flat" for i in range(80)]
     FLAT_CALIBRATION.write_text("\n".join(rows) + "\n")
     return FLAT_CALIBRATION
 
