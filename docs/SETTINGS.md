@@ -357,7 +357,12 @@ finished; decoded, the lost values would read as zeros, and a dump without
 all sixteen live bytes gives no way to tell whether a restart is owed. So
 anything short of every parameter it is due to carry (`BUILDLIB.nrpnMissing`)
 is refused whole: a send calls it a mismatch and commits nothing, a read
-says the reply was incomplete and loads nothing. The page's verdict tells apart a
+says the reply was incomplete and loads nothing. What a dump is due to carry
+follows the firmware it reports: every version from 3.0 on is layout 2, but
+one before 3.2.0 has 79 pitch entries and dumps no `0x00cf`. A read of one
+fills the 80th entry in as 3.2's boot does, from entries 77 and 78, and a
+run on one tunes up to entry 78 and fills the 80th from the tuned two.
+The page's verdict tells apart a
 keyboard on the settings built into its firmware, one holding saved
 settings, this build with *n* differences, the same version from another
 build, an older build and a newer one.

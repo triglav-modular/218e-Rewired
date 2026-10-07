@@ -2317,7 +2317,11 @@
         // `low` is the 0 V entry, semitone 0, which the run holds at 0
         // counts and tunes everything else against.
         o.low = CALIBRATE.entryForSemitone(0, bottom);
-        o.high = TABLE_ENTRIES - 1;
+        // Firmware before 3.2 neither plays nor takes the 80th entry, E6:
+        // the run stops under it, and the entry is filled in afterwards from
+        // the tuned ones below it, the way 3.2 fills it at boot.
+        var entries = r.pitchEntries || TABLE_ENTRIES;
+        o.high = entries - 1;
         o.mode = {
             on: function () { SETTINGSMIDI.calibrationMode(chosen, true); },
             off: function () { SETTINGSMIDI.endCalibration(chosen); }
@@ -2335,6 +2339,10 @@
         o.onReading = function (row) { pushLog(row, logRun); };
         sweep = new CALIBRATE.Sweep(o);
         return sweep.run().then(function (out) {
+            if (entries < TABLE_ENTRIES) {
+                out.table[TABLE_ENTRIES - 1] = 0;
+                BUILDLIB.extendPitchTable(out.table);
+            }
             loadPitchTable(out.table, was, 'the tuned table', runSources(out.readings, bottom));
             var heard = out.readings.filter(function (x) { return x.cents !== null; });
             autoNote('');

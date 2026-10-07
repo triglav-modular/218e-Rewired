@@ -1676,17 +1676,40 @@ var BUILDLIB = (function () {
     // - a pitch table of zeros, every option at its first choice, and live
     // bytes that cannot be compared, which is how a send used to skip a
     // restart it needed.  So a reply with anything missing is refused whole.
+    // A keyboard on firmware before 3.2 dumps the 79 pitch entries its table
+    // has (nrpnPitchEntries), and only those are due from it.
     function nrpnMissing(pairs, identityOnly) {
         var got = {}, want = [];
         pairs.forEach(function (p) { got[p[0]] = true; });
         if (!identityOnly) {
+            var id = nrpnIdentity(pairs);
+            var pitch = nrpnPitchEntries(id && id.firmwareVersion);
             NRPN_SECTIONS.forEach(function (s) {
-                for (var i = 0; i < s.count; i++) want.push(s.base + i);
+                var count = s.base === PITCH_BASE ? pitch : s.count;
+                for (var i = 0; i < count; i++) want.push(s.base + i);
             });
             for (var v = 0; v < NRPN_LIVE.count; v++) want.push(NRPN_LIVE.base + v);
         }
         Object.keys(NRPN_IDENTITY).forEach(function (k) { want.push(NRPN_IDENTITY[k]); });
         return want.filter(function (q) { return !got[q]; });
+    }
+
+    // How many pitch-table entries a keyboard reporting `version` holds and
+    // dumps: 79 before 3.2.0, whose table stopped at D#6, and 80 since, with
+    // E6.  Every 3.0 and later sends its version; one that sends none is
+    // taken to hold all 80.  The map is layout 2 either way: the 80th entry
+    // went into a halfword the record already had.
+    var PITCH_BASE = 0x0080, PITCH_ENTRIES_SINCE = '3.2.0';
+    function nrpnPitchEntries(version) {
+        return version && compareVersions(version, PITCH_ENTRIES_SINCE) < 0 ? 79 : 80;
+    }
+    // A 79-entry table's 80th entry, as 3.2's settings_copy_top fills it in
+    // when a record saved by an earlier image left it zero: entry 78 plus
+    // the step from 77 to 78, at most 0xfff.  In place; returns the table.
+    function extendPitchTable(table) {
+        if (table.length >= 80 && table[79]) return table;
+        table[79] = Math.max(0, Math.min(0xFFF, 2 * table[78] - table[77]));
+        return table;
     }
 
     // The live option bytes out of a dump's pairs, all sixteen or null.
@@ -1927,7 +1950,7 @@ var BUILDLIB = (function () {
         nrpnValueOf: nrpnValueOf, nrpnApply: nrpnApply, nrpnParamsOf: nrpnParamsOf,
         nrpnMessages: nrpnMessages, nrpnDecoder: nrpnDecoder, nrpnIdentity: nrpnIdentity,
         nrpnRecordOf: nrpnRecordOf, nrpnLiveOf: nrpnLiveOf, pendingOptions: pendingOptions,
-        nrpnMissing: nrpnMissing,
+        nrpnMissing: nrpnMissing, nrpnPitchEntries: nrpnPitchEntries, extendPitchTable: extendPitchTable,
         NRPN_LIVE: NRPN_LIVE, SETTINGS_OPTIONS: SETTINGS_OPTIONS, SETTINGS_CELLS: SETTINGS_CELLS,
         SETTINGS_OPTION_CELL: SETTINGS_OPTION_CELL, optionCells: optionCells, optionsOf: optionsOf, settingsFields: settingsFields,
         versionCode: versionCode, versionText: versionText, compareVersions: compareVersions,

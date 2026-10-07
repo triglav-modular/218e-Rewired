@@ -196,6 +196,12 @@ var SETTINGSMIDI = (function () {
     // apply.  Rejects with `reason` 'no reply' or 'wrong layout' - a map
     // this page does not know is not read into it - or 'incomplete' (with
     // `missing`) when the dump lost parameters on the way.
+    //
+    // Every firmware from 3.0 on is read: they all dump layout 2.  One
+    // before 3.2 dumps 79 pitch entries (B.nrpnPitchEntries), and its
+    // record's 80th is filled in here as 3.2 fills it at boot, so the page
+    // has the table a flash of this page's firmware would play.
+    // `pitchEntries` says how many the keyboard itself holds.
     function read(output, input, opts) {
         opts = opts || {};
         return dump(output, input, opts.timeout, opts.timers).catch(function () {
@@ -204,8 +210,14 @@ var SETTINGSMIDI = (function () {
             if (d.identity.layoutVersion !== LAYOUT) return fail('wrong layout', { identity: d.identity });
             if (d.missing.length) return fail('incomplete', { identity: d.identity, missing: d.missing });
             var record = B.nrpnRecordOf(d.pairs), live = B.nrpnLiveOf(d.pairs);
+            var entries = B.nrpnPitchEntries(d.identity.firmwareVersion);
+            if (entries < 80) {
+                var table = [];
+                for (var i = 0; i < 80; i++) table.push(B.nrpnValueOf(record, 0x80 + i));
+                B.nrpnApply(record, 0x80 + 79, B.extendPitchTable(table)[79]);
+            }
             return { identity: d.identity, pairs: d.pairs, record: record, fields: B.settingsFields(record),
-                     live: live, pending: B.pendingOptions(record, live) };
+                     live: live, pending: B.pendingOptions(record, live), pitchEntries: entries };
         });
     }
 

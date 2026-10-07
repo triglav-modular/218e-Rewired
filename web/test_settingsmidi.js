@@ -69,6 +69,9 @@ function fakeTimers() {
 // The instrument.  `mirror` is a record-shaped array; `generation`, `slot`
 // and `state` are what the identity block reports; `live` is the sixteen
 // option bytes as booted, which only a restart refreshes from the mirror.
+// `version` is the firmware it reports, 3.2.0 unless given; one before
+// 3.2.0 has a 79-entry pitch table, so its dump leaves out 0x00cf and a
+// value sent there lands nowhere, as the firmware's target bound had it.
 function fakeInstrument(options) {
     options = options || {};
     var mirror = [], live = [];
@@ -77,7 +80,8 @@ function fakeInstrument(options) {
     var dec = B.nrpnDecoder();
     var inst = {
         mirror: mirror, live: live, marker: options.marker === undefined ? 0xB007 : options.marker,
-        layout: options.layout === undefined ? 2 : options.layout, version: options.version,
+        layout: options.layout === undefined ? 2 : options.layout,
+        version: options.version === undefined ? 0x320 : options.version,
         state: 0, slot: 0xff, generation: 0, received: [], sent: [], scans: 0, restarts: 0,
         drop: options.drop || null,     // a parameter number to lose on the wire
         dropOnce: options.dropOnce || null, dropped: false,   // lost the first time only
@@ -95,7 +99,7 @@ function fakeInstrument(options) {
         });
     }
     function identityBlock() {
-        reply(0x3f76, inst.version === undefined ? 0x300 : inst.version);
+        reply(0x3f76, inst.version);
         reply(0x3f77, inst.marker >>> 14); reply(0x3f78, 484); reply(0x3f79, inst.slot); reply(0x3f7a, inst.state);
         reply(0x3f7b, Math.floor(inst.generation / 268435456) & 0xF);
         reply(0x3f7c, Math.floor(inst.generation / 16384) & 0x3FFF);
@@ -111,7 +115,9 @@ function fakeInstrument(options) {
             if (got.param === inst.dropOnce && !inst.dropped) { inst.dropped = true; return; }
             if (got.param === 0x3f00) { if (got.value === 0x2a2a) inst.state = 1; return; }
             if (got.param === 0x3f03) {
-                var params = B.nrpnParamsOf(inst.mirror);
+                var params = B.nrpnParamsOf(inst.mirror).filter(function (p) {
+                    return inst.version >= 0x320 || p[0] !== 0xcf;
+                });
                 params.slice(0, 32).forEach(function (p) { reply(p[0], p[1]); });
                 inst.live.forEach(function (b, i) { reply(0x20 + i, b); });
                 params.slice(32).forEach(function (p) { reply(p[0], p[1]); });
@@ -127,6 +133,7 @@ function fakeInstrument(options) {
                 return;
             }
             if (got.param >= 0x20 && got.param < 0x30) return;   // read-only
+            if (got.param === 0xcf && inst.version < 0x320) return;
             B.nrpnApply(inst.mirror, got.param, got.value);
         }
     };
@@ -164,7 +171,7 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
     check('an identity request costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f7f);
     var dp = M.dump(inst.output, inst.input, 5000, timers); await timers.run(dp); var d = await dp;
     check('a dump answers with every parameter, the live bytes and the block', d.pairs.length === 365 && d.identity.imageMarker === 0x1234
-          && d.identity.firmwareVersion === '3.0.0' && d.pairs[32][0] === 0x20 && d.pairs[47][0] === 0x2f && d.pairs[48][0] === 0x80);
+          && d.identity.firmwareVersion === '3.2.0' && d.pairs[32][0] === 0x20 && d.pairs[47][0] === 0x2f && d.pairs[48][0] === 0x80);
     var diff = M.differences(record, d.pairs);
     var nonzero = B.nrpnParamsOf(record).filter(function (p) { return p[1] !== 0; }).length;
     check('differences against an empty instrument name every non-zero parameter',
@@ -183,6 +190,38 @@ function same(a, b) { for (var o = 0x20; o < 0x288; o++) if (a[o] !== b[o]) retu
           && rd.pending.join(',') === 'latching_arp,knob2,clock_divide,pressure_fix,pressure_portamento,quantize_presets,portamento_in',
           rd.pending.join(','));
     check('a read costs one parameter', inst.received.length === 1 && inst.received[0][0] === 0x3f03);
+    // Every firmware from 3.0 on is read.  One before 3.2 dumps 79 pitch
+    // entries; the 80th comes back filled in as 3.2's boot fills it, entry
+    // 78 plus the step from 77, and everything else as it was.
+    for (var ov of [0x300, 0x302, 0x310]) {
+        var old = fakeInstrument({ marker: 0x1234, version: ov }); timers = fakeTimers();
+        for (var oo = 0; oo < 0x2a8; oo++) old.mirror[oo] = record[oo];
+        B.nrpnApply(old.mirror, 0xcf, 0);   // the halfword an earlier image left as padding
+        var orp = M.read(old.output, old.input, { timers: timers }).then(null, function (x) { return x; });
+        await timers.run(orp); var ord = await orp;
+        var want = 2 * tables.pitch_remap[78] - tables.pitch_remap[77];
+        check('a ' + B.versionText(ov) + ' keyboard is read, its 80th pitch entry filled in from 77 and 78',
+              ord && !ord.reason && ord.pitchEntries === 79 && ord.fields.pitch_remap.length === 80
+              && ord.fields.pitch_remap[79] === want
+              && ord.fields.pitch_remap.slice(0, 79).join(',') === tables.pitch_remap.slice(0, 79).join(',')
+              && same(ord.record, record) && ord.fields.options.knob2 === 'swing'
+              && ord.identity.firmwareVersion === B.versionText(ov),
+              ord && (ord.reason || JSON.stringify(ord.fields.pitch_remap.slice(76))));
+    }
+    var oldLossy = fakeInstrument({ version: 0x310, lose: [0x80 + 78] });
+    timers = fakeTimers();
+    var olp = M.read(oldLossy.output, oldLossy.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
+    await timers.run(olp); var ole = await olp;
+    check('a 3.1 dump that lost one of its own 79 entries is still "incomplete"', ole && ole.reason === 'incomplete'
+          && ole.missing.join(',') === String(0x80 + 78));
+    var newLossy = fakeInstrument({ lose: [0xcf] });
+    timers = fakeTimers();
+    var nlp = M.read(newLossy.output, newLossy.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
+    await timers.run(nlp); var nle = await nlp;
+    check('and a 3.2 dump without the 80th entry is too', nle && nle.reason === 'incomplete' && nle.missing.join(',') === String(0xcf));
+    check('extendPitchTable clamps at 0xfff and leaves a held 80th entry alone',
+          B.extendPitchTable([].concat(new Array(77).fill(0), [4000, 4090, 0]))[79] === 0xFFF
+          && B.extendPitchTable(tables.pitch_remap.slice())[79] === tables.pitch_remap[79]);
     var other = fakeInstrument({ layout: 3, version: 0x320 }); timers = fakeTimers();
     var rl = M.read(other.output, other.input, { timers: timers }).then(function () { return null; }, function (x) { return x; });
     await timers.run(rl); var re = await rl;
