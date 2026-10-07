@@ -1063,28 +1063,31 @@ function assembleProgram() {
         var bgEntry = bdfEnd + 0x10, bgDeficit = bgEntry + 0x10, bgEnd = bgEntry + 0x20;
         var bfEntry = 0x80023e60, bfLoop = bfEntry + 0xc, bfLow = bfEntry + 0x30, bfNext = bfEntry + 0x36;
         var bfCap = bfEntry + 0x44, bfDone = bfEntry + 0x4e, bfPool = bfEntry + 0x58, bfEnd = bfEntry + 0x5c;
-        // Pad octave mode (2026-10-06): hold the top key for
-        // latch_state_hold_scans and tap pad 4, and the octave pads step one
-        // period up from then on; hold the bottom key and tap pad 1 to put
-        // them back, each with its pad already the active one.
+        // Pad octave mode (2026-10-06; the double tap 2026-10-07): tap pad 4
+        // twice, the second within poTapWindow scans of the first's
+        // release, and the octave pads step one period up from then on;
+        // tap pad 1 twice to put them back.
         // pad_octave_term sits beside the MIDI naming caves, inside the
         // adder's MCALL reach; the rest in the free flash above the blend
         // frame.
         var poTermPool = 0x80020800, poTermEntry = poTermPool + 0x4, poTermDone = poTermEntry + 0x18, poTermEnd = poTermPool + 0x20;
-        var poScanEntry = 0x80024000, poScanForget = poScanEntry + 0x46, poScanKeep = poScanEntry + 0x4e, poScanRelease = poScanEntry + 0x52, poScanSet = poScanEntry + 0x62;
-        var poScanEdges = poScanEntry + 0x66, poScanPad1 = poScanEntry + 0x94, poScanCounts = poScanEntry + 0xc8, poScanHi = poScanEntry + 0xd8;
-        var poScanHiClear = poScanEntry + 0xf6, poScanHiStore = poScanEntry + 0xf8, poScanHiDone = poScanEntry + 0xfa;
-        var poScanLoClear = poScanEntry + 0x112, poScanLoStore = poScanEntry + 0x114, poScanAck = poScanEntry + 0x116;
-        var poScanBlink = poScanEntry + 0x132, poScanDark = poScanEntry + 0x142, poScanFlush = poScanEntry + 0x146;
-        var poScanDone = poScanEntry + 0x14a, poScanPool = poScanEntry + 0x150, poSetEntry = poScanEntry + 0x170;
-        var poSetDone = poSetEntry + 0x26, poScanEnd = poScanEntry + 0x1a0;
-        var poNamesEntry = 0x800241a0, poNamesDone = poNamesEntry + 0x10, poNamesEnd = poNamesEntry + 0x20;
-        var pcbEntry = 0x800241c0, pcbSt5 = pcbEntry + 0x1a, pcbBit6 = pcbEntry + 0x1e, pcbSt6 = pcbEntry + 0x38;
+        var poTapWindow = 0x50;        // 400 ms of 5 ms scans from the first tap's release to the second's press
+        var poScanEntry = 0x80024000, poScanLive = poScanEntry + 0x28, poScanWin1Down = poScanEntry + 0x38, poScanWin4 = poScanEntry + 0x3c;
+        var poScanWin4Down = poScanEntry + 0x4c, poScanHeld = poScanEntry + 0x50, poScanH1 = poScanHeld + 0xa, poScanH2 = poScanHeld + 0x12;
+        var poScanH3 = poScanHeld + 0x1a, poScanH4 = poScanHeld + 0x22, poScanTap = poScanEntry + 0x8c, poScanForget = poScanEntry + 0xc0;
+        var poScanKeep = poScanEntry + 0xcc, poScanRelease = poScanEntry + 0xd4, poScanOpen4 = poScanEntry + 0xec, poScanSwitch = poScanEntry + 0xf4;
+        var poScanSet = poScanEntry + 0x104, poScanEdges = poScanEntry + 0x10c, poScanStart4 = poScanEntry + 0x138, poScanPad1 = poScanEntry + 0x144;
+        var poScanStart1 = poScanEntry + 0x170, poScanAck = poScanEntry + 0x17c;
+        var poScanBlink = poScanEntry + 0x198, poScanDark = poScanEntry + 0x1a8, poScanFlush = poScanEntry + 0x1ac;
+        var poScanDone = poScanEntry + 0x1b0, poScanPool = poScanEntry + 0x1b8, poSetEntry = poScanEntry + 0x1d8;
+        var poSetDone = poSetEntry + 0x26, poScanEnd = poScanEntry + 0x210;
+        var poNamesEntry = poScanEnd, poNamesDone = poNamesEntry + 0x10, poNamesEnd = poNamesEntry + 0x20;
+        var pcbEntry = poNamesEnd, pcbSt5 = pcbEntry + 0x1a, pcbBit6 = pcbEntry + 0x1e, pcbSt6 = pcbEntry + 0x38;
         var pcbBit7 = pcbEntry + 0x3c, pcbSt7 = pcbEntry + 0x66, pcbDone = pcbEntry + 0x6a, pcbEnd = pcbEntry + 0x70;
-        var plbPool = 0x80024230, plbEntry = plbPool + 0x4, plbEnd = plbPool + 0x30;
+        var plbPool = pcbEnd, plbEntry = plbPool + 0x4, plbEnd = plbPool + 0x30;
         // The pitch table's 80th entry (2026-10-06): settings_copy_top, in
         // settings_reload's place for the record over the mirror.
-        var sctEntry = 0x80024260, sctStore = sctEntry + 0x2a, sctDone = sctEntry + 0x2c, sctPool = sctEntry + 0x30, sctEnd = sctEntry + 0x40;
+        var sctEntry = plbEnd, sctStore = sctEntry + 0x2a, sctDone = sctEntry + 0x2c, sctPool = sctEntry + 0x30, sctEnd = sctEntry + 0x40;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -7485,7 +7488,8 @@ function assembleProgram() {
         // already bounds a press to a single flash write, and the moment
         // the write lands is the press - which is in edit mode, where
         // nothing is being played by hand.  The pad octave mode the same:
-        // a tap sets it once, and the moment is the tap, with a key held.
+        // a double tap sets it once, and the moment is the second tap's
+        // release.
         emit("MOV R8,0xc0");            // bits 6 and 7: the tuning slot and the pad octave mode
         emit("OR R2,R8");
         padTo(0x8001d4e0);
@@ -15615,12 +15619,13 @@ function assembleProgram() {
         // latch state.
         //
         // RAM off 0x6586: +0 the mode (persisted, 0..1), +1 the pad the
-        // acknowledgment flashes, +2 the bottom key's hold count and +4 the
-        // top key's (halfwords, saturating at the threshold, cleared when
-        // the key lifts), +6 and +7 last scan's touch levels of pads 1 and
-        // 4, +8 the acknowledgment countdown, +9 the tap in progress (the
-        // pad's index plus one, 0 for none), +0xa its length in scans.  All
-        // zeroed by persist_boot beside 0x6580..0x6585.
+        // acknowledgment flashes, +2 pad 1's window and +4 pad 4's (the
+        // scans left for a second tap, halfwords, opened at a first tap's
+        // release, 0 when closed), +6 and +7 last scan's touch levels of
+        // pads 1 and 4, +8 the acknowledgment countdown, +9 the tap in
+        // progress (bits 0-2 the pad's index plus one, 0 for none, bit 7
+        // for the second tap), +0xa its length in scans.  All zeroed by
+        // persist_boot beside 0x6580..0x6585.
         function padOctaveCaves() {        // pad_octave_term: the displaced LD.SH R8,R7[-0xc] at 0x800037aa -
         // the pads' term off the adder's frame - and in the mode one
         // period more, number cell 10.  R9 is the base there, live; R10 is
@@ -15643,16 +15648,22 @@ function assembleProgram() {
         finish("pad_octave_term", poTermEnd);
 
         // pad_octave_scan: once per control scan, in latch_state's place in
-        // scan_housekeeping, and it calls latch_state first.  Then the tap
-        // in progress, if any: its pad still held counts its length, and a
-        // length reaching chord_hold_scans or a knob moved under the pad
-        // forgets it, as a hold or an edit; its pad released switches the
-        // mode.  Then pads 4 and 1 on their press edge while the matching
-        // key is armed, outside edit mode, on octaves, which starts a tap;
-        // then the two keys' holds, off the touch-scan flags (state+0x239,
-        // which know where the fingers are in every arp position), each
-        // counting only while its pad is the active one (state+0x2ef) and
-        // never in edit mode; then the acknowledgment.
+        // scan_housekeeping, and it calls latch_state first.  In edit mode
+        // the pads are presets: nothing counts and nothing is pending.
+        // Else each pad's window - the scans left for a second tap, opened
+        // by a first tap's release - counts down, and closes early once
+        // its pad is no longer the active one (state+0x2ef): another pad
+        // selected is another tap.  Two or more pads down is another
+        // gesture (pads 2 and 3, the chord's RECORD, a sequencer command
+        // under pad 4): the tap and both windows are forgotten.  Then the
+        // tap in progress, if any: its pad still held counts its length,
+        // and a length reaching chord_hold_scans or a knob moved under the
+        // pad forgets it, as a hold or an edit; its pad released ends it,
+        // a second tap switching the mode where a first opens its pad's
+        // window.  Then pads 4 and 1 on their press edge, on octaves, with
+        // no tap in progress, begin a tap - the second when the pad's
+        // window is open - and close the other pad's window; then the
+        // acknowledgment.
         begin(poScanEntry);
         emit("STM --SP,R0,R1,R2,R7,LR");
         emit("MOV R7,SP");
@@ -15660,50 +15671,138 @@ function assembleProgram() {
         emit(StringFormat("LDDPC R0,0x%x", poScanPool + 4));     // global state base
         emit("MOV R1,0x6586");
         emit("MOV R2,0x46f0");          // the pad touch array, 2 = held
-        emit("MOV R9,0x6812");          // settings cell 9: latch_state_hold_scans
-        emit("LD.UH R9,R9[0x0]");
-        // The tap in progress.
-        emit("LD.UB R10,R1[0x9]");      // the pad's index plus one, 0 for none
+        emit("LD.UB R10,R0[0x39]");     // edit mode
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{eq} 0x%x", poScanLive));
+        emit("MOV R10,0x0");
+        emit("ST.H R1[0x2],R10");
+        emit("ST.H R1[0x4],R10");
+        emit("ST.B R1[0x9],R10");
+        emit(StringFormat("RJMP 0x%x", poScanAck));
+        padTo(poScanLive);
+        // Pad 1's window, then pad 4's: down by one a scan, closed when
+        // another pad is the active one.
+        emit("LD.UH R10,R1[0x2]");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{eq} 0x%x", poScanWin4));
+        emit("LD.UB R11,R0[0x2ef]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{eq} 0x%x", poScanWin1Down));
+        emit("MOV R10,0x1");
+        padTo(poScanWin1Down);
+        emit("SUB R10,0x1");
+        emit("ST.H R1[0x2],R10");
+        padTo(poScanWin4);
+        emit("LD.UH R10,R1[0x4]");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{eq} 0x%x", poScanHeld));
+        emit("LD.UB R11,R0[0x2ef]");
+        emit("CP.W R11,0x3");
+        emit(StringFormat("BR{eq} 0x%x", poScanWin4Down));
+        emit("MOV R10,0x1");
+        padTo(poScanWin4Down);
+        emit("SUB R10,0x1");
+        emit("ST.H R1[0x4],R10");
+        padTo(poScanHeld);
+        // How many pads are down.
+        emit("MOV R8,0x0");
+        emit("LD.UB R10,R2[0x0]");
+        emit("CP.W R10,0x2");
+        emit(StringFormat("BR{ne} 0x%x", poScanH1));
+        emit("SUB R8,-0x1");
+        padTo(poScanH1);
+        emit("LD.UB R10,R2[0x1]");
+        emit("CP.W R10,0x2");
+        emit(StringFormat("BR{ne} 0x%x", poScanH2));
+        emit("SUB R8,-0x1");
+        padTo(poScanH2);
+        emit("LD.UB R10,R2[0x2]");
+        emit("CP.W R10,0x2");
+        emit(StringFormat("BR{ne} 0x%x", poScanH3));
+        emit("SUB R8,-0x1");
+        padTo(poScanH3);
+        emit("LD.UB R10,R2[0x3]");
+        emit("CP.W R10,0x2");
+        emit(StringFormat("BR{ne} 0x%x", poScanH4));
+        emit("SUB R8,-0x1");
+        padTo(poScanH4);
+        emit("CP.W R8,0x2");
+        emit(StringFormat("BR{lt} 0x%x", poScanTap));
+        // Two or more: another gesture.  The levels are kept up so that
+        // no press edge is left over when they lift.
+        emit("MOV R10,0x0");
+        emit("ST.H R1[0x2],R10");
+        emit("ST.H R1[0x4],R10");
+        emit("ST.B R1[0x9],R10");
+        emit("LD.UB R10,R2[0x0]");
+        emit("ST.B R1[0x6],R10");
+        emit("LD.UB R10,R2[0x3]");
+        emit("ST.B R1[0x7],R10");
+        emit(StringFormat("RJMP 0x%x", poScanAck));
+        padTo(poScanTap);
+        // The tap in progress: bits 0-2 the pad's index plus one, bit 7
+        // set for the second tap.
+        emit("LD.UB R10,R1[0x9]");
         emit("CP.W R10,0x0");
         emit(StringFormat("BR{eq} 0x%x", poScanEdges));
-        emit("SUB R10,0x1");            // the pad
-        emit("LD.UB R11,R2[R10 << 0x0]");   // its level now
-        emit("CP.W R11,0x2");
+        emit("MOV R11,R10");
+        emit("ANDL R11,0x7");
+        emit("SUB R11,0x1");            // the pad
+        emit("LD.UB R12,R2[R11 << 0x0]");   // its level now
+        emit("CP.W R12,0x2");
         emit(StringFormat("BR{ne} 0x%x", poScanRelease));
         // Still held.  Its knob moved under it, says the preset editor's
         // following flag (set on the move, cleared only once the finger
         // leaves, ahead of this cave): an edit, not a tap.  Else its length
         // counts, and reaching chord_hold_scans it is a hold, not a tap.
         emit("MOV R8,0x614a");
-        emit("LD.UB R8,R8[R10 << 0x0]");
+        emit("LD.UB R8,R8[R11 << 0x0]");
         emit("CP.W R8,0x0");
         emit(StringFormat("BR{ne} 0x%x", poScanForget));
-        emit("LD.UH R11,R1[0xa]");
+        emit("LD.UH R12,R1[0xa]");
         emit("MOV R8,0x6810");          // settings cell 8: chord_hold_scans
         emit("LD.UH R8,R8[0x0]");
-        emit("SUB R11,-0x1");
-        emit("CP.W R11,R8");
+        emit("SUB R12,-0x1");
+        emit("CP.W R12,R8");
         emit(StringFormat("BR{lt} 0x%x", poScanKeep));
         padTo(poScanForget);
-        emit("MOV R10,0x0");            // forgotten
+        emit("MOV R10,0x0");            // forgotten, with both windows
         emit("ST.B R1[0x9],R10");
+        emit("ST.H R1[0x2],R10");
+        emit("ST.H R1[0x4],R10");
         emit(StringFormat("RJMP 0x%x", poScanEdges));
         padTo(poScanKeep);
-        emit("ST.H R1[0xa],R11");
+        emit("ST.H R1[0xa],R12");
         emit(StringFormat("RJMP 0x%x", poScanEdges));
         padTo(poScanRelease);
-        emit("MOV R11,0x0");
-        emit("ST.B R1[0x9],R11");       // the tap is over, and it switches
-        emit("MOV R11,R10");            // the pad to flash
+        // The tap is over: the second switches, the first opens its pad's
+        // window.
+        emit("MOV R12,0x0");
+        emit("ST.B R1[0x9],R12");
+        emit("ANDL R10,0x80");
+        emit("CP.W R10,0x0");
+        emit(StringFormat("BR{ne} 0x%x", poScanSwitch));
+        emit(StringFormat("MOV R12,0x%x", poTapWindow));
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{ne} 0x%x", poScanOpen4));
+        emit("ST.H R1[0x2],R12");       // pad 1's window
+        emit(StringFormat("RJMP 0x%x", poScanEdges));
+        padTo(poScanOpen4);
+        emit("ST.H R1[0x4],R12");       // pad 4's
+        emit(StringFormat("RJMP 0x%x", poScanEdges));
+        padTo(poScanSwitch);
+        emit("ST.H R1[0x2],R12");       // both windows closed
+        emit("ST.H R1[0x4],R12");
         emit("MOV R10,0x0");            // pad 1: the mode off
         emit("CP.W R11,0x3");
         emit(StringFormat("BR{ne} 0x%x", poScanSet));
         emit("MOV R10,0x1");            // pad 4: the mode on
         padTo(poScanSet);
-        emit(StringFormat("MCALL PC[0x%x]", poScanPool + 8));    // pad_octave_set
+        emit(StringFormat("MCALL PC[0x%x]", poScanPool + 8));    // pad_octave_set(R10 the mode, R11 the pad)
         padTo(poScanEdges);
-        // Pad 4's press edge with the top key armed, outside edit mode, on
-        // octaves: a tap begins.
+        // Pad 4's press edge, on octaves, with no tap in progress: a tap
+        // begins, the second when pad 4's window is open; pad 1's window
+        // closes.
         emit("LD.UB R10,R2[0x3]");
         emit("LD.UB R11,R1[0x7]");
         emit("ST.B R1[0x7],R10");
@@ -15711,90 +15810,47 @@ function assembleProgram() {
         emit(StringFormat("BR{ne} 0x%x", poScanPad1));
         emit("CP.W R11,0x2");
         emit(StringFormat("BR{eq} 0x%x", poScanPad1));
-        emit("LD.UH R11,R1[0x4]");
-        emit("CP.W R11,R9");
-        emit(StringFormat("BR{lt} 0x%x", poScanPad1));
-        emit("LD.UB R11,R0[0x39]");
-        emit("CP.W R11,0x0");
-        emit(StringFormat("BR{ne} 0x%x", poScanPad1));
         emit("LD.UB R11,R0[0x342]");    // ADD TO PITCH on octaves
         emit("CP.W R11,0x0");
         emit(StringFormat("BR{eq} 0x%x", poScanPad1));
+        emit("LD.UB R11,R1[0x9]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{ne} 0x%x", poScanPad1));
         emit("MOV R11,0x4");
-        emit("ST.B R1[0x9],R11");       // a tap of pad 4
+        emit("LD.UH R12,R1[0x4]");
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", poScanStart4));
+        emit("MOV R11,0x84");           // the second tap of pad 4
+        padTo(poScanStart4);
+        emit("ST.B R1[0x9],R11");
         emit("MOV R11,0x0");
         emit("ST.H R1[0xa],R11");
+        emit("ST.H R1[0x2],R11");
         padTo(poScanPad1);
-        // Pad 1's with the bottom key armed, pad 4 up: a tap begins.
+        // Pad 1's, the same way round.
         emit("LD.UB R10,R2[0x0]");
         emit("LD.UB R11,R1[0x6]");
         emit("ST.B R1[0x6],R10");
         emit("CP.W R10,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanCounts));
+        emit(StringFormat("BR{ne} 0x%x", poScanAck));
         emit("CP.W R11,0x2");
-        emit(StringFormat("BR{eq} 0x%x", poScanCounts));
-        emit("LD.UB R11,R2[0x3]");
-        emit("CP.W R11,0x2");
-        emit(StringFormat("BR{eq} 0x%x", poScanCounts));  // pad 4 down: the chord's RECORD
-        emit("LD.UH R11,R1[0x2]");
-        emit("CP.W R11,R9");
-        emit(StringFormat("BR{lt} 0x%x", poScanCounts));
-        emit("LD.UB R11,R0[0x39]");
-        emit("CP.W R11,0x0");
-        emit(StringFormat("BR{ne} 0x%x", poScanCounts));
+        emit(StringFormat("BR{eq} 0x%x", poScanAck));
         emit("LD.UB R11,R0[0x342]");
         emit("CP.W R11,0x0");
-        emit(StringFormat("BR{eq} 0x%x", poScanCounts));
+        emit(StringFormat("BR{eq} 0x%x", poScanAck));
+        emit("LD.UB R11,R1[0x9]");
+        emit("CP.W R11,0x0");
+        emit(StringFormat("BR{ne} 0x%x", poScanAck));
         emit("MOV R11,0x1");
-        emit("ST.B R1[0x9],R11");       // a tap of pad 1
+        emit("LD.UH R12,R1[0x2]");
+        emit("CP.W R12,0x0");
+        emit(StringFormat("BR{eq} 0x%x", poScanStart1));
+        emit("MOV R11,0x81");           // the second tap of pad 1
+        padTo(poScanStart1);
+        emit("ST.B R1[0x9],R11");
         emit("MOV R11,0x0");
         emit("ST.H R1[0xa],R11");
-        padTo(poScanCounts);
-        // In edit mode the keys are settings: neither hold counts there,
-        // so a hold begun in edit mode cannot arm a tap once it ends.
-        emit("LD.UB R10,R0[0x39]");
-        emit("CP.W R10,0x0");
-        emit(StringFormat("BR{eq} 0x%x", poScanHi));
-        emit("MOV R11,0x0");
-        emit("ST.H R1[0x2],R11");
         emit("ST.H R1[0x4],R11");
-        emit(StringFormat("RJMP 0x%x", poScanAck));
-        padTo(poScanHi);
-        // The top key's hold, with pad 4 active: saturating at the
-        // threshold, cleared when the key lifts or the pad changes.
-        emit("MOV R8,0x3799");          // state+0x239, the touch-scan held flags
-        emit("LD.UB R10,R8[0x1c]");
-        emit("LD.UH R11,R1[0x4]");
-        emit("CP.W R10,0x1");
-        emit(StringFormat("BR{ne} 0x%x", poScanHiClear));
-        emit("LD.UB R10,R0[0x2ef]");    // the active pad
-        emit("CP.W R10,0x3");
-        emit(StringFormat("BR{ne} 0x%x", poScanHiClear));
-        emit("CP.W R11,R9");
-        emit(StringFormat("BR{ge} 0x%x", poScanHiDone));
-        emit("SUB R11,-0x1");
-        emit(StringFormat("RJMP 0x%x", poScanHiStore));
-        padTo(poScanHiClear);
-        emit("MOV R11,0x0");
-        padTo(poScanHiStore);
-        emit("ST.H R1[0x4],R11");
-        padTo(poScanHiDone);
-        // The bottom key's, with pad 1 active.
-        emit("LD.UB R10,R8[0x0]");
-        emit("LD.UH R11,R1[0x2]");
-        emit("CP.W R10,0x1");
-        emit(StringFormat("BR{ne} 0x%x", poScanLoClear));
-        emit("LD.UB R10,R0[0x2ef]");
-        emit("CP.W R10,0x0");
-        emit(StringFormat("BR{ne} 0x%x", poScanLoClear));
-        emit("CP.W R11,R9");
-        emit(StringFormat("BR{ge} 0x%x", poScanAck));
-        emit("SUB R11,-0x1");
-        emit(StringFormat("RJMP 0x%x", poScanLoStore));
-        padTo(poScanLoClear);
-        emit("MOV R11,0x0");
-        padTo(poScanLoStore);
-        emit("ST.H R1[0x2],R11");
         padTo(poScanAck);
         // The acknowledgment, as latch_state's: bit 3 of the countdown
         // blinks the pad every eight scans, written every scan because
@@ -15844,9 +15900,8 @@ function assembleProgram() {
         // its next step.  The tap that switches re-selects the pad already
         // standing, so the handler's own retune does not run for it, and
         // without this call a held key's CV would move a period while its
-        // MIDI note stayed.  Called at the tap's release.  R9 is the
-        // caller's threshold and goes across the call; R8 and R12 are
-        // spent.
+        // MIDI note stayed.  Called at the second tap's release.  R9 goes
+        // across the call for the acknowledgment; R8 and R12 are spent.
         emit("STM --SP,R7,R9,LR");
         emit("MOV R7,SP");
         emit("MOV R8,0x6586");
@@ -15887,8 +15942,7 @@ function assembleProgram() {
         // snapshot, R0 = changed so far.  Bit 5 the latch's transpose state
         // (0x62e2 -> 0x6649), bit 6 the tuning slot (0x6090 -> 0x664a), bit
         // 7 the pad octave mode (0x6586 -> 0x664b), each a byte compared
-        // like the rest, the mode's only once the gesture keys are up; then
-        // persist_capture's own return.
+        // like the rest; then persist_capture's own return.
         begin(pcbEntry);
         emit("MOV R8,R2");
         emit("ANDL R8,0x2");
@@ -15920,15 +15974,6 @@ function assembleProgram() {
         emit("ANDL R8,0x8");
         emit("CP.W R8,0x0");
         emit(StringFormat("BR{eq} 0x%x", pcbDone));
-        // Not while either gesture key is touched: the save lands when the
-        // key lifts, as the latch's lands when its pads do, so the flash
-        // stall never falls under the key that is sounding.
-        emit("MOV R8,0x3799");          // state+0x239, the touch-scan held flags
-        emit("LD.UB R9,R8[0x0]");       // the bottom key
-        emit("LD.UB R8,R8[0x1c]");      // the top key
-        emit("OR R8,R9");
-        emit("CP.W R8,0x0");
-        emit(StringFormat("BR{ne} 0x%x", pcbDone));
         emit("MOV R8,0x6586");
         emit("LD.UB R9,R8[0x0]");
         emit("LD.UB R8,R3[0xb]");

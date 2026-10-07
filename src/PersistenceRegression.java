@@ -425,9 +425,9 @@ public class PersistenceRegression extends GhidraScript {
     void padOctaveMode() throws Exception {
         // The pad octave mode rides in the record's byte 0x1b, the last of
         // the three once reserved, captured by its own mask bit, asked for
-        // by the scan on every pass beside the tuning slot, taken only once
-        // the two gesture keys are up, bounded to 0..1, and restored into
-        // its cell; its hold counts and acknowledgment start at zero.
+        // by the scan on every pass beside the tuning slot, bounded to
+        // 0..1, and restored into its cell; its windows and acknowledgment
+        // start at zero.
         fresh(); seed();
         check("the mode starts clear in record and snapshot",r(call(NEWEST)+27,1)==0&&r(0x664b,1)==0);
         w(0x6586,1,1);
@@ -449,16 +449,12 @@ public class PersistenceRegression extends GhidraScript {
         w(0x6587,1,3); w(0x6588,2,0x1234); w(0x658a,2,0x5678); w(0x658c,2,0x0202); w(0x658e,1,0x20); w(0x658f,1,4); w(0x6590,2,0x55);
         cold();
         check("the mode survives a power cycle",r(0x6586,1)==1&&r(0x664b,1)==1);
-        check("the hold counts, the levels, the flash and its pad, and the tap start at zero",
+        check("the windows, the levels, the flash and its pad, and the tap start at zero",
             r(0x6587,1)==0&&r(0x6588,4)==0&&r(0x658c,4)==0&&r(0x6590,2)==0);
-        w(0x6586,1,0); w(S+0x239+28,1,1); call(TICK);
-        check("the top key touched defers the save",writes==4&&r(0x664b,1)==1);
-        w(S+0x239+28,1,0); w(S+0x239,1,1); call(TICK);
-        check("the bottom key touched defers it too",writes==4);
-        w(S+0x239,1,0); call(TICK);
-        check("both keys up commits the mode",writes==6&&r(call(NEWEST)+27,1)==0);
-        call(TICK); check("and only once",writes==6);
-        println("PASS pad octave mode: own capture bit, saved once the keys are up, bounded, restored");
+        w(0x6586,1,0); w(S+0x239+28,1,1); w(S+0x239,1,1); call(TICK);
+        check("a change commits at the next tick, keys touched or not",writes==6&&r(call(NEWEST)+27,1)==0);
+        w(S+0x239+28,1,0); w(S+0x239,1,0); call(TICK); check("and only once",writes==6);
+        println("PASS pad octave mode: own capture bit, saved at the next tick, bounded, restored");
     }
     void stepDegrees() throws Exception {
         // The preset count each step was recorded under rides in the v3

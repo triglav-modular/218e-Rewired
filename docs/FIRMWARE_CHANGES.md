@@ -39,10 +39,9 @@ replaces it with a linear response across a calibrated window.
   the keys move with the shift, as they do for the banana jack. The per-note
   calibration applies to the result, and the preset voltage output itself is
   unchanged.
-- **Octave pads one octave up.** With pad 4 active, hold the highest key for a
-  second and tap pad 4: the octave pads play one octave higher. With pad 1
-  active, hold the lowest key and tap pad 1 to go back. The tapped pad flashes
-  to confirm; the choice is remembered.
+- **Octave pads one octave up.** Tap pad 4 twice, quickly: the octave pads
+  play one octave higher. Tap pad 1 twice to go back. The pad flashes to
+  confirm; the choice is remembered.
 
 ## Portamento
 

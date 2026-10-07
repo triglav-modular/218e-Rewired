@@ -1512,11 +1512,11 @@ RAM_REGIONS = [
     # persist_boot zeroes the whole block beside the latch's cells above.
     (0x6586, 0x6587, "pad octave mode, persisted: 0 the pads as the factory has them, 1 a period up"),
     (0x6587, 0x6588, "pad octave mode: the pad its acknowledgment flashes"),
-    (0x6588, 0x658A, "pad octave mode: the bottom key's hold count, in scans"),
-    (0x658A, 0x658C, "pad octave mode: the top key's hold count, in scans"),
+    (0x6588, 0x658A, "pad octave mode: pad 1's window, the scans left for a second tap"),
+    (0x658A, 0x658C, "pad octave mode: pad 4's window, the scans left for a second tap"),
     (0x658C, 0x658E, "pad octave mode: last scan's touch levels of pads 1 and 4"),
     (0x658E, 0x658F, "pad octave mode: acknowledgment countdown, in scans"),
-    (0x658F, 0x6590, "pad octave mode: the tap in progress, the pad's index plus one"),
+    (0x658F, 0x6590, "pad octave mode: the tap in progress, the pad's index plus one, bit 7 the second tap"),
     (0x6590, 0x6592, "pad octave mode: the tap's length so far, in scans"),
 ]
 
@@ -1618,9 +1618,9 @@ FACTORY_CELLS = [
     (0x35CA, 0x35CC, "state+0x6a/0x6b: transpose enable and knob zone"),
     (0x3686, 0x36C0, "per-key raw pressure"),
     (0x377B, 0x3798, "state+0x21b: per-slot held flags"),
-    # The touch scan's own per-key flags, which pad_octave_scan counts the
-    # two gesture keys' holds off: true to the fingers in every arp position,
-    # where the pair above is the latch's.
+    # The touch scan's own per-key flags: true to the fingers in every arp
+    # position, where the pair above is the latch's.  The pad octave mode's
+    # key holds counted off them until the double tap (2026-10-07).
     (0x3799, 0x37B6, "state+0x239: per-key touch-scan held flags"),
     # state+0x306: the PORTAMENTO knob, 0..1023.  Six knobs are conditioned
     # together at 0x80007ad8 - portamento, arp rate, and the four preset

@@ -38,12 +38,11 @@ Saving is automatic at the end of an edit:
   first boot with the cell off loads it, the first scan puts it back, and
   that change is saved like any other: one commit, once, after which the
   record carries slot 0.
-- The pad octave mode (with pad 4 active, the top key held for a second
-  and pad 4 tapped, pressed and released; with pad 1 active, the bottom
-  key and pad 1) saves once neither of those two keys is
-  touched any longer after a switch: the tap sets it under a held key,
-  and the save lands when that key lifts, as the latch's state waits for
-  its pads.
+- The pad octave mode (pad 4 tapped twice, the second within 400 ms of
+  the first's release, puts the octave pads a period up; pad 1 tapped
+  twice puts them back) saves on the scan after the switch, once. The
+  second tap's release is the gesture's end, so nothing is held when the
+  flash stall lands.
 - Only changed musical data causes a commit. An unchanged take, an empty
   clear, a pad tap without editing, or a value returned to its old setting
   does not write flash, including when storage is still empty.
