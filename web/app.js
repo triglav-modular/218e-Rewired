@@ -749,15 +749,16 @@
     clearBaseline();
     function haveBaseline() { return !!baselineName; }
 
-    // What the boxes and the plot show, per semitone.  Readings, ordinarily:
-    // what each note played against the table it was measured on.  A tuning
-    // run leaves none - it moved the entries until they played in tune - so
-    // with its table loaded and nothing typed or loaded on top, they show the
-    // offsets that table holds, and a box edits its own entry.  Zero boxes
-    // after a run read as a run that found nothing (the owner, 2026-10-01).
+    // What the boxes and the plot show, per semitone.  With a table loaded -
+    // the keyboard's, a tuning run's or a file's - and no readings loaded on
+    // top, they show the offsets that table holds, and a box edits its own
+    // entry: a tuning run tunes in one pass, so readings typed on top of a
+    // table are no longer how a table is made (the owner, 2026-10-07).  Zero
+    // boxes after a run read as a run that found nothing (the owner,
+    // 2026-10-01).  Readings otherwise: what each note played, on a page with
+    // no table loaded, or loaded from a readings file.
     function showsTable() {
-        return baselineName === 'the tuned table' &&
-            !measured.some(function (v) { return v !== 0; });
+        return haveBaseline() && !measured.some(function (v) { return v !== 0; });
     }
     function shownCents() {
         if (!showsTable()) return measured;
@@ -840,9 +841,15 @@
                     var v = parseFloat(input.value) || 0;
                     if (table) {
                         // The offset itself, so the note is no longer one
-                        // the run carried across from its neighbours.
+                        // the run carried across from its neighbours, and a
+                        // loaded file's record of the reading behind it no
+                        // longer describes it.
                         baseline[n] = v;
                         delete baselineSources[n];
+                        if (baselineHistory) {
+                            delete baselineHistory.read[n];
+                            delete baselineHistory.against[n];
+                        }
                     } else {
                         measured[n] = v;
                         delete interpolated[n];
@@ -932,16 +939,10 @@
             .map(function (v, i) { return { semitone: i, cents: v }; });
     }
 
+    // The keys show a loaded table (showsTable), so nothing else says one is
+    // loaded; Forget loaded table is there only when one is.
     function syncBaseline() {
-        var el = $('calBase');
-        if (!el) return;
-        el.textContent = haveBaseline()
-            ? 'Measuring on top of ' + baselineName +
-              ' \u2014 new readings accumulate onto it.'
-            : 'No table loaded: readings are taken as a first calibration of an ' +
-              'uncorrected instrument.';
-        el.classList.toggle('set', haveBaseline());
-        $('calBaseClear').disabled = !haveBaseline();
+        if ($('calBaseClear')) $('calBaseClear').disabled = !haveBaseline();
     }
 
     function syncCalBody() {
@@ -1104,8 +1105,7 @@
             syncCalBody(); syncBaseline();
             buildTable(); drawPlot(); validateCal(); invalidate();
             msg($('calMsg'), 'ok', isCorrection
-                ? 'Loaded ' + f.name + ' as the table already on the instrument. ' +
-                  'Anything measured now accumulates onto it.' +
+                ? 'Loaded ' + f.name + ' as the table already on the instrument.' +
                   (clearedReadings ? ' The readings that were entered have been ' +
                    'cleared: they were taken against whatever was flashed at the ' +
                    'time, which this file now says. Measure again.' : '')

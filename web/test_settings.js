@@ -199,13 +199,11 @@ if (app && typeof require === 'function') {
        loaded.vpo === 1.0 && loaded.have && JSON.stringify(loaded.built) === JSON.stringify(held),
        JSON.stringify({ vpo: loaded.vpo, have: loaded.have }));
     vm.runInContext('$("vpo").children[1].click();', page);
-    var switched = vm.runInContext('({ vpo: vpo, have: haveBaseline(), built: built(), ' +
-                                   'line: $("calBase").textContent })', page);
+    var switched = vm.runInContext('({ vpo: vpo, have: haveBaseline(), built: built() })', page);
     var flat = PB.pitchTable(at12, at12._calibration);
     ok('switching to 1.2 V/oct drops it, as switching the offset does, rather than build it ' +
        'rounded twice (' + off + ' entries a count off)',
-       switched.vpo === 1.2 && !switched.have && JSON.stringify(switched.built) === JSON.stringify(flat) &&
-       /^No table loaded/.test(switched.line),
+       switched.vpo === 1.2 && !switched.have && JSON.stringify(switched.built) === JSON.stringify(flat),
        JSON.stringify({ vpo: switched.vpo, have: switched.have,
                         rescaled: JSON.stringify(switched.built) === JSON.stringify(twice) }));
     page.held12 = once;
@@ -351,17 +349,33 @@ if (app && typeof require === 'function') {
        Math.abs(edited.base - (cents[30] + 2.5)) < 1e-9 && edited.measured === 0 &&
        JSON.stringify(edited.built) === JSON.stringify(PB.pitchTable(at12, wantRows)),
        JSON.stringify({ base: edited.base, measured: edited.measured }));
+    // Any loaded table shows its offsets in the keys, not only a run's
+    // (the owner, 2026-10-07): the keyboard's, read with Read settings, and
+    // a file's.
     vm.runInContext('loadPitchTable(tuned, { volts_per_octave: 1.2, pitch_offset: true }, ' +
                     '"the keyboard\\u2019s table", {});', view);
-    var read = vm.runInContext('boxes().every(function (b) { return b.value === "0.00"; })', view);
+    var read = vm.runInContext('({ values: boxes().map(function (b) { return b.value; }), ' +
+                               'hint: $("calKeysHint").innerHTML })', view);
+    ok('a table read off the keyboard shows its offsets in the keys too',
+       JSON.stringify(read.values) === JSON.stringify(want) &&
+       /^<strong>The offset each note gets, in cents\.<\/strong>/.test(read.hint),
+       JSON.stringify({ first: read.values.slice(0, 4), want: want.slice(0, 4) }));
+    vm.runInContext('loadPitchTable(tuned, { volts_per_octave: 1.2, pitch_offset: true }, "cal.csv", {}); ' +
+                    'baselineHistory = { read: { 30: 3, 31: 2 }, against: { 30: 1, 31: 1 } }; buildTable(); ' +
+                    'var b = boxes()[27]; b.value = String(baseline[30] - 1.5); b.on.change();', view);
+    var file = vm.runInContext('({ base: baseline[30], measured: measured[30], ' +
+                               'history: JSON.stringify(baselineHistory) })', view);
+    ok('a file\u2019s table edits the same way, and the edited key loses the reading the file recorded for it',
+       Math.abs(file.base - (cents[30] - 1.5)) < 1e-9 && file.measured === 0 &&
+       file.history === JSON.stringify({ read: { 31: 2 }, against: { 31: 1 } }), JSON.stringify(file));
     vm.runInContext('loadPitchTable(tuned, { volts_per_octave: 1.2, pitch_offset: true }, ' +
                     '"the tuned table", {}); measured[30] = 4.5; buildTable();', view);
     var onTop = vm.runInContext('boxes().map(function (b) { return b.value; })', view);
     var readHint = vm.runInContext('$("calKeysHint").innerHTML', view);
-    ok('a table read off the keyboard, or readings on top of a tuned one, still show readings',
-       read && onTop[27] === '4.50' && onTop.filter(function (v) { return v !== '0.00'; }).length === 1 &&
+    ok('readings loaded on top of a table still show readings',
+       onTop[27] === '4.50' && onTop.filter(function (v) { return v !== '0.00'; }).length === 1 &&
        /^<strong>What each note played, in cents\.<\/strong>/.test(readHint),
-       JSON.stringify({ read: read, onTop: onTop.slice(26, 29) }));
+       JSON.stringify({ onTop: onTop.slice(26, 29) }));
 }
 
 print_(failures ? ('FAILED ' + failures) : 'ALL SETTINGS TESTS PASSED');
