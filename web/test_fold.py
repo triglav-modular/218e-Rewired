@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "tools"))
 import build as B                                        # noqa: E402
 
 BASELINE = REPO / "calibration" / "218e-pitch-calibration.csv"
-LOW, HIGH, ENTRIES = 3, 67, 79
+LOW, HIGH, ENTRIES = 3, 67, 80
 
 
 def readings():
@@ -168,7 +168,7 @@ def js_fold(base, sources, meas, history=None):
 
 def js_history(text):
     """What the page's parser reads back as the record: (read, against)."""
-    h = js("B.parseCalibration(a.text, 79).history", text=text)
+    h = js("B.parseCalibration(a.text, 80).history", text=text)
     return keyed(h["read"]), keyed(h["against"])
 
 
@@ -260,8 +260,8 @@ def main():
     # table rather than assumed, so it comes out a rounding away from 1.0 and
     # carries that into the product.  The bound below is twelve orders under a
     # cent - a scaling that was actually wrong would miss by percent.
-    flat = {n: 0.0 for n in range(79)}
-    flat_src = {n: "measured" for n in range(79)}
+    flat = {n: 0.0 for n in range(80)}
+    flat_src = {n: "measured" for n in range(80)}
     even = uniform()
     got = js_fold(flat, flat_src, even)
     off = max(abs(got[s] - -even[s]) for s in even)
@@ -506,13 +506,13 @@ def main():
         m = Path(tmp) / "moved.csv"
         m.write_text(moved)
         cli_moved = B.read_calibration(m)
-    page = js("B.calibrationTwice(a.name, B.parseCalibration(a.text, 79).twice)",
+    page = js("B.calibrationTwice(a.name, B.parseCalibration(a.text, 80).twice)",
               name="twice.csv", text=twice)
     if cli is None or page != cli:
         print(f"FAIL  a semitone named twice: cli {cli!r}, page {page!r}")
         return 1
     print("ok    a semitone named twice is refused by both, in the same words")
-    page_moved = keyed(js("B.parseCalibration(a.text, 79).rows", text=moved))
+    page_moved = keyed(js("B.parseCalibration(a.text, 80).rows", text=moved))
     if page_moved != cli_moved or page_moved != base:
         print("FAIL  a table with its columns in another order reads differently in the two")
         return 1
