@@ -2959,9 +2959,6 @@
     // with.  The patch number and the build's own fingerprint belong on the
     // build result, not in the masthead.
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
-    // The version a keyboard has to run for a send to land, shown as the
-    // masthead's is.
-    ['kbdNeedsLoad'].forEach(function (id) { if ($(id)) $(id).textContent = shown(GEN.version); });
 
     // Each preset knob picks its own role, the same control the volts-per-
     // octave choice uses; None hands that knob back to its preset voltage.
