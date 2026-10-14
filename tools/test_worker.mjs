@@ -715,5 +715,50 @@ const SENT_OPTIONS = Object.fromEntries(Object.entries(REAL)
         && source.includes("const SETTINGS_BEACON = PUBLIC + '/settings-beacon'"));
 }
 
+// One address, over https.  The route takes plain http as well, and the zone
+// does not redirect it before the worker runs, so without this the page
+// answers at a second address that search engines keep.  The beacons are the
+// exception: the page posts them relative to itself, so a page loaded over
+// http posts over http, and a browser follows a 301 on a POST as a GET - the
+// beacon would answer 405 and the count would be lost.
+{
+  const realFetch = globalThis.fetch;
+  let fetched = 0;
+  globalThis.fetch = async () => {
+    fetched++;
+    return new Response('<html>', { status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' } });
+  };
+  const at = (url, init) => worker.fetch(new Request(url, init), fakeEnv(), ctx);
+  const moved = (res, to) => res.status === 301 && res.headers.get('location') === to;
+  const said = (res) => `status ${res.status}, location ${res.headers.get('location')}`;
+
+  let res = await at('http://triglavmodular.hu/mods/218e-Rewired/');
+  check('the page over http moves to https, permanently',
+        moved(res, 'https://triglavmodular.hu/mods/218e-Rewired/'), said(res));
+  check('without asking the origin for an http copy', fetched === 0, `fetched ${fetched}`);
+  res = await at('http://triglavmodular.hu/mods/218e-Rewired/?v=abc12345', { method: 'HEAD' });
+  check('a HEAD moves too, query string and all',
+        moved(res, 'https://triglavmodular.hu/mods/218e-Rewired/?v=abc12345'), said(res));
+  res = await at('http://triglavmodular.hu/mods/218e-Rewired/dev/');
+  check('and so does the dev page',
+        moved(res, 'https://triglavmodular.hu/mods/218e-Rewired/dev/'), said(res));
+
+  let env = fakeEnv();
+  res = await worker.fetch(new Request(BEACON.replace('https:', 'http:'),
+    { method: 'POST', body: JSON.stringify(REAL) }), env, ctx);
+  await Promise.all(pending.splice(0));
+  check('a download beacon posted over http is recorded where it lands',
+        res.status === 204 && env.written.length === 1,
+        `status ${res.status}, written ${env.written.length}`);
+  env = fakeEnv();
+  res = await postSettings(SEND, env, SETTINGS.replace('https:', 'http:'));
+  check('and so is a settings beacon',
+        res.status === 204 && env.keys.length === 1,
+        `status ${res.status}, keys ${env.keys.length}`);
+
+  globalThis.fetch = realFetch;
+}
+
 console.log(failures ? `\n  ${failures} failure(s)` : '\n  the beacon only records what the page can send, and the deploy matches it');
 process.exit(failures ? 1 : 0);

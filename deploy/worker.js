@@ -297,6 +297,18 @@ export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
 
+    // The route takes plain http as well, which the zone does not redirect
+    // before the worker runs (WordPress redirects its own pages, not this
+    // path), so the page would answer at a second address.  One address:
+    // https, permanently.  GET and HEAD only: the page posts its beacons
+    // relative to itself, so a page loaded over http posts over http, and a
+    // browser follows a 301 on a POST as a GET, which the beacon refuses.
+    if (url.protocol === 'http:' &&
+        (request.method === 'GET' || request.method === 'HEAD')) {
+      url.protocol = 'https:';
+      return Response.redirect(url.toString(), 301);
+    }
+
     if (url.pathname === BEACON) return record(request, env, context);
     if (url.pathname === DEV_BEACON) return new Response(null, { status: 204 });
     if (url.pathname === SETTINGS_BEACON) return recordSettings(request, env, context);

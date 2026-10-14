@@ -752,7 +752,14 @@ Click that name to open it, then **Edit code**. (The same worker is also under
 **2. Replace the code** with `deploy/worker.js` from this repository, which is
 kept as the source of truth for what is pasted in there.
 
-It differs from the plain proxy in three ways.
+It differs from the plain proxy in four ways.
+
+*Plain http moves to https with a 301.* The route matches both schemes, and
+the zone does not redirect this path before the worker runs, so without it the
+page answers at a second address that search engines keep. Only GET and HEAD
+move: the page posts its beacons relative to itself, so a page loaded over http
+posts over http, and a browser follows a 301 on a POST as a GET, which the
+beacon refuses.
 
 *The page is marked `no-cache`.* Not `no-store`: the browser still keeps it and
 still revalidates, so an unchanged page costs a 304 rather than a download.
