@@ -553,20 +553,23 @@
     //
     // `opts.mode`, { on, off }: the instrument is in calibration mode for
     // the run (above).  Notes map straight to entries, `low` and `high` can
-    // reach all 79, and the anchor is entry 3 whatever the range.  on() goes
-    // out before every note-on, not once: the mode lapses after five seconds
-    // without a note-on on the instrument's channel, and an Auto search
-    // spends longer than that playing on the others - so a single on()
-    // left everything after it played through the pads and the
+    // reach all 80 (an instrument before 3.2 holds 79, and the page's run
+    // on one stops at 78), and the anchor is entry 3 whatever the range.
+    // on() goes out before every note-on, not once: the mode lapses after
+    // five seconds without a note-on on the instrument's channel, and an
+    // Auto search spends longer than that playing on the others - so a
+    // single on() left everything after it played through the pads and the
     // transposition, which is a plausible, wrong table.  off() goes out once
     // the run ends, however it ends - done, failed, stopped, or the page
     // going away - and only if on() ever did.
     //
     // `opts.adjust`, { table, write(entry, value) -> Promise, countsPerCent,
     // reference, playing }: converge each entry instead of only reading it.
-    // `table` is the 79 entries the run starts from, `write` puts one into
-    // the instrument's live mirror, and countsPerCent is the DAC counts that
-    // move the ramp a cent (BUILDLIB.pitchCountsPerCent).  A note more than
+    // `table` is the entries the run starts from, as many as the instrument
+    // holds - 80, or 79 before 3.2 - and its last is the top: nothing past
+    // it bounds the run.  `write` puts one into the instrument's live
+    // mirror, and countsPerCent is the DAC counts that move the ramp a cent
+    // (BUILDLIB.pitchCountsPerCent).  A note more than
     // half a count out is moved by its reading and played again, up to
     // ADJUST_TRIES times and past that while it is still closing in, and
     // the closest value is the one kept.  The result carries `table`, and

@@ -881,9 +881,11 @@ var BUILDLIB = (function () {
     // `found` counts semitones, not lines, and `twice` is the first
     // semitone a second row named, or null: tools/build.py refuses such a
     // table, because a stale row from a hand edit would silently win.
+    // `top` is the highest semitone a row names, -1 for none, counting the
+    // rows at `entries` and past it, which are not read.
     function parseCalibration(text, entries) {
         var rows = {}, sources = {}, history = { read: {}, against: {} };
-        var found = 0, twice = null, readCol = -1, againstCol = -1;
+        var found = 0, twice = null, readCol = -1, againstCol = -1, top = -1;
         var centsCol = 3, sourceCol = 4;
         // Split on any line ending: CRLF from Windows, and CR alone, which
         // Excel can still write.
@@ -912,7 +914,9 @@ var BUILDLIB = (function () {
                 return parseFloat(raw);
             }
             var n = parseInt(q[0], 10), c = num(q[centsCol]);
-            if (isNaN(n) || isNaN(c) || n < 0 || n >= entries) return;
+            if (isNaN(n) || isNaN(c) || n < 0) return;
+            if (n > top) top = n;
+            if (n >= entries) return;
             if (rows.hasOwnProperty(n)) { if (twice === null) twice = n; }
             else found++;
             rows[n] = c;
@@ -922,7 +926,36 @@ var BUILDLIB = (function () {
                 if (!isNaN(rd) && !isNaN(ag)) { history.read[n] = rd; history.against[n] = ag; }
             }
         });
-        return { rows: rows, sources: sources, history: history, found: found, twice: twice };
+        return { rows: rows, sources: sources, history: history, found: found, twice: twice,
+                 top: top };
+    }
+
+    // A table of offsets, semitone -> cents, that stops one row short of
+    // `entries`, as every table before 3.2 stopped at D#6: its last row is
+    // the row under it plus the step to it.  That is extendPitchTable's rule
+    // for a 79-entry table, in cents rather than DAC counts, which is the
+    // same line before rounding.  In place; true when it added the row, and
+    // false for a table that already has it or is not whole up to it.
+    function extendOffsets(offsets, entries) {
+        var last = entries - 1, has = Object.prototype.hasOwnProperty;
+        if (has.call(offsets, last)) return false;
+        for (var n = 0; n < last; n++) if (!has.call(offsets, n)) return false;
+        offsets[last] = 2 * offsets[last - 1] - offsets[last - 2];
+        return true;
+    }
+
+    // A table file that runs to semitone 78, D#6, and stops there, as every
+    // table before 3.2 did, given the row E6 needs (extendOffsets), marked
+    // extrapolated.  tools/build.py read_calibration adds the same row, so
+    // the two builders build the same image from such a file.  A table that
+    // stops anywhere else, has a gap or names a row past E6 is left as it
+    // is, to be refused.  In place, on what parseCalibration returned; true
+    // when it added the row.
+    function extendCalibration(parsed, entries) {
+        if (parsed.top !== entries - 2 || !extendOffsets(parsed.rows, entries)) return false;
+        parsed.sources[entries - 1] = 'extrapolated';
+        parsed.found++;
+        return true;
     }
 
     // tools/build.py read_calibration's refusal of a table that names a
@@ -1933,6 +1966,7 @@ var BUILDLIB = (function () {
         octaveWidth: octaveWidth, measuredGain: measuredGain, keyDelta: keyDelta,
         foldOffsets: foldOffsets, calibrationRows: calibrationRows,
         historyToSave: historyToSave, parseCalibration: parseCalibration,
+        extendOffsets: extendOffsets, extendCalibration: extendCalibration,
         calibrationTwice: calibrationTwice,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,

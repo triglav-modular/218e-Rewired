@@ -684,6 +684,14 @@ def read_calibration(path: Path) -> dict[int, float]:
         raise ValueError(
             f"{path.name}: semitones must run 0..N with no gaps; missing {sorted(missing)[:8]}"
         )
+    # A table that stops at semitone 78, D#6, as every table before 3.2 did,
+    # gets E6 the way the firmware fills in a 79-entry table: the row under
+    # it plus the step to it, in cents, which is the same line as in DAC
+    # counts before rounding.  web/buildlib.js extendCalibration adds the
+    # same row, so the page and this build the same image from such a file.
+    if len(offsets) == PITCH_TABLE_ENTRIES - 1:
+        last = PITCH_TABLE_ENTRIES - 1
+        offsets[last] = 2 * offsets[last - 1] - offsets[last - 2]
     if len(offsets) < PITCH_TABLE_ENTRIES:
         raise ValueError(
             f"{path.name}: {len(offsets)} rows, but the firmware reads {PITCH_TABLE_ENTRIES} "

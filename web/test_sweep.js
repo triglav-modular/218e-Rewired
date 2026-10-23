@@ -557,9 +557,11 @@ function stampOf(file) {
 // 208, with the mode and the writes going out through SETTINGSMIDI.  The DOM,
 // the page's load of a read and its card are stubbed, and what the run hands
 // loadPitchTable is caught.  `pageVpo` is the page's volts per octave;
-// `read`, whether Read settings has armed the card for this keyboard; and
-// `channel`, the MIDI channel picked, null for Auto.  A load puts the
-// keyboard's scaling on the page, as loadFromKeyboard's press does.
+// `read`, whether Read settings has armed the card for this keyboard;
+// `channel`, the MIDI channel picked, null for Auto; and `pitchEntries`
+// and `version`, what the read says the keyboard holds and runs (80 and
+// this page's version unless given).  A load puts the keyboard's scaling
+// on the page, as loadFromKeyboard's press does.
 //
 // The page stays open for more than one run (pageOpen): run() is Start
 // measuring past its read, taking what the keyboard holds then.  The log is
@@ -633,7 +635,8 @@ function pageOpen(w, opts) {
         run: function () {
             var mine = got = { out: null, err: null, playing: null };
             page.r = { fields: { pitch_remap: w.flash.slice() },
-                       identity: { firmwareVersion: GEN.version, imageMarker: 0 } };
+                       identity: { firmwareVersion: opts.version || GEN.version, imageMarker: 0 },
+                       pitchEntries: opts.pitchEntries || 80 };
             var ran;
             try { ran = Promise.resolve(vm.runInContext('sweepInMode(chosen, r)', page)); }
             catch (e) { ran = Promise.reject(e); }
@@ -2074,6 +2077,134 @@ function signature(w, out) {
     try { await modeSweep(w, { audioChannel: 11 }); } catch (e) { err = e; }
     ok('a run refused before its first note sends nothing, the mode included',
        !!err && w.sent.length === 0, (err ? err.message : 'ran') + ', ' + w.sent.length + ' sent');
+
+    // --- a keyboard that holds 79 entries: Rewired 3.0 and 3.1 -----------------
+    // Firmware before 3.2 holds the table up to D#6, entry 78.  The read fills
+    // in E6, entry 79, from the step under it, as 3.2 does at boot, so the
+    // page has the table a flash of 3.2 would play; the run stops under it,
+    // and the page fills it in again from the tuned 77 and 78.  The keyboard
+    // has no entry 79, so it must not bound the run either.  It was D#6's
+    // ceiling, the roof of every lift under it and the neighbour a D#6 not
+    // heard was filled in towards: a D#6 that needed a push past it came out
+    // 87 cents flat, and one not heard 27, with E6 57 (audit 2026-10-23).
+    // The page's own run on a 208 whose top steepens from entry 72, so that
+    // D#6 needs a semitone and a half more than the table gives it, and on
+    // one whose top steepens gently from 70 with D#6 not heard.  Seeded the
+    // same for each run, so the 79-entry and the 80-entry runs hear the same
+    // noise until they part.
+    var cfgTop = B.expand({ volts_per_octave: 1.2, pitch_offset: true });
+    var flatTop = B.pitchTable(cfgTop, cfgTop._calibration);
+    var read79 = B.extendPitchTable(flatTop.slice(0, 79).concat([0]));
+    var TOPS = [
+        { what: 'a D#6 that needs a semitone and a half more',
+          profile: flatTop.map(function (v, e) { return v + Math.max(0, e - 72) * 10; }), mute: {} },
+        { what: 'a D#6 not heard',
+          profile: flatTop.map(function (v, e) { return v + Math.max(0, e - 70) * 2.5; }), mute: { 99: true } }
+    ];
+    async function topRun(tc, start, entries) {
+        seed = 2026;
+        var tw = modeWorld({ listening: 2, profile: tc.profile, mute: tc.mute });
+        startFrom(tw, start);
+        var P = pageOpen(tw, { pageVpo: 1.2, channel: 2, read: true, pitchEntries: entries,
+                               version: entries === 79 ? '3.1.0' : undefined });
+        var tr = await P.run();
+        tr.w = tw;
+        tr.log = readLog((P.save() || {}).text || '');
+        return tr;
+    }
+    function entryOf(out, e) {
+        return (out && out.readings || []).filter(function (x) { return x.index === e; })[0] || {};
+    }
+    for (var ti = 0; ti < TOPS.length; ti++) {
+        var tc = TOPS[ti];
+        var at80 = await topRun(tc, flatTop, 80), at79 = await topRun(tc, read79, 79);
+        // The lowest entry 79 a read could start the run from: one count over D#6.
+        var low79 = read79.slice(); low79[79] = read79[78] + 1;
+        var under = await topRun(tc, low79, 79);
+        var t80 = at80.out && at80.out.table, t79 = at79.out && at79.out.table;
+        var tol79 = tolerance(at79.w, at79.out), near79 = closeness(at79.w, at79.out);
+        ok('79 entries, ' + tc.what + ': the run tunes up to D#6 and plays nothing above it',
+           !at79.err && !!t79 && at79.out.readings.length === 79 &&
+           at79.w.events.every(function (ev) { return ev[0] !== 'on' || ev[2] <= 99; }) &&
+           near79.counts <= tol79.counts,
+           at79.err ? at79.err.message.slice(0, 100) : near79.heard + ' tuned, worst ' + near79.counts.toFixed(3) +
+           ' counts at entry ' + near79.at + ', highest note ' + Math.max.apply(null, at79.w.events
+               .filter(function (ev) { return ev[0] === 'on'; }).map(function (ev) { return ev[2]; })));
+        ok('  and nothing goes to entry 79, which the keyboard does not have',
+           !at79.w.pairs.some(function (p) { return p[0] === 0x80 + 79; }) &&
+           !under.w.pairs.some(function (p) { return p[0] === 0x80 + 79; }),
+           JSON.stringify(at79.w.pairs.filter(function (p) { return p[0] === 0x80 + 79; }).concat(
+               under.w.pairs.filter(function (p) { return p[0] === 0x80 + 79; }))));
+        ok('  the entry 79 the read starts it from bounds nothing: from one count over D#6, the same run',
+           !!t79 && !!under.out && same(under.out.table.slice(0, 79), t79.slice(0, 79)) &&
+           same(under.out.warnings, at79.out.warnings),
+           under.out ? 'D#6 ' + t79[78] + ' and ' + under.out.table[78] : (under.err && under.err.message));
+        var r78 = entryOf(at79.out, 78);
+        if (!tc.mute[99]) {
+            var apart = [];
+            for (var te9 = 0; te9 <= 78; te9++) {
+                if (t79 && t80 && Math.abs(t79[te9] - t80[te9]) > tol79.counts) apart.push(te9);
+            }
+            ok('  every entry up to D#6 as an 80-entry keyboard’s run tunes it, D#6 in tune',
+               !!t79 && !!t80 && !apart.length && r78.source === 'measured' &&
+               Math.abs(t79[78] - at79.w.ideal(78)) <= tol79.counts &&
+               !at79.out.warnings.some(function (x) { return x.indexOf(PLAIN.noteLabel(78) + ':') === 0; }),
+               t79 ? 'D#6 ' + t79[78] + ', in tune ' + at79.w.ideal(78).toFixed(1) + ', 80 entries ' +
+               (t80 && t80[78]) + '; apart at ' + (apart.join(',') || 'none') +
+               (at79.out.warnings.length ? ' | ' + at79.out.warnings.join(' | ') : '') : '');
+        } else {
+            var apartLow = [];
+            for (var tl9 = 0; tl9 <= 77; tl9++) {
+                if (t79 && t80 && Math.abs(t79[tl9] - t80[tl9]) > tol79.counts) apartLow.push(tl9);
+            }
+            // With nothing above it on this keyboard, D#6 carries on at the
+            // slope of the octave under 77 (fillGaps), as the top of any run does.
+            var want78 = t79 && Math.round(t79[77] + (t79[77] - t79[65]) / 12);
+            ok('  every entry under D#6 as an 80-entry keyboard’s run tunes it, and D#6 is ' +
+               'extrapolated from them',
+               !!t79 && !!t80 && !apartLow.length && r78.source === 'extrapolated' && t79[78] === want78 &&
+               at79.out.warnings.some(function (x) {
+                   return x.indexOf(PLAIN.noteLabel(78) + ': ') === 0 &&
+                          /: (too quiet to read|not heard clearly), extrapolated$/.test(x);
+               }),
+               t79 ? 'D#6 ' + t79[78] + ' (' + r78.source + ', want ' + want78 + '), in tune ' +
+               at79.w.ideal(78).toFixed(1) + '; apart under it at ' + (apartLow.join(',') || 'none') : '');
+        }
+        var page79 = at79.loaded && at79.loaded.table;
+        ok('  and the page’s E6 is the step the tuned 77 and 78 take',
+           !!page79 && page79.length === 80 && same(page79.slice(0, 79), t79.slice(0, 79)) &&
+           page79[79] === Math.min(0xfff, 2 * page79[78] - page79[77]),
+           page79 ? page79.slice(76).join(',') + ', in tune ' +
+           [76, 77, 78, 79].map(function (e) { return at79.w.ideal(e).toFixed(1); }).join(',') : 'nothing loaded');
+        // The saved log's header gives each run the table it started from:
+        // the keyboard's own entries, not the E6 the read filled in.
+        var logged = function (tr) { return tr.log.runs.length === 1 ? tr.log.runs[0].table || [] : []; };
+        ok('  the saved log says the run started from the 79 entries the keyboard holds, 80 on 3.2',
+           same(logged(at79), read79.slice(0, 79)) && at79.log.runs[0].held &&
+           same(logged(at80), flatTop) && at80.log.runs[0].held,
+           logged(at79).length + ' entries logged on 79, ' + logged(at80).length + ' on 80');
+    }
+    // A keyboard at the other scaling from the page's: the run writes the
+    // flat table at the page's into the mirror before the probe, and on a
+    // 79-entry keyboard that is entries 0 to 78.  It used to send entry 79
+    // as well, NRPN 0x00cf, which the keyboard does not have.
+    seed = 2026;
+    w = modeWorld({ listening: 2, vpo: 1.0 });
+    var kcfg79 = B.expand({ volts_per_octave: 1.2 });
+    var held79 = B.extendPitchTable(B.pitchTable(kcfg79, kcfg79._calibration).slice(0, 79).concat([0]));
+    startFrom(w, held79);
+    var P10 = pageOpen(w, { pageVpo: 1.0, channel: 2, read: true, pitchEntries: 79, version: '3.1.0' });
+    var at10 = await P10.run(), log10 = readLog((P10.save() || {}).text || '');
+    ok('79 entries at the other scaling: the table goes in before the probe up to entry 78, and none to 79',
+       !at10.err && !!at10.out && writesBeforeFirstNote(w) > 70 &&
+       !w.pairs.some(function (p) { return p[0] === 0x80 + 79; }),
+       at10.err ? at10.err.message.slice(0, 100) : writesBeforeFirstNote(w) + ' written before the first note, ' +
+       JSON.stringify(w.pairs.filter(function (p) { return p[0] === 0x80 + 79; })) + ' to entry 79');
+    var flat10 = B.pitchTable(B.expand({ volts_per_octave: 1.0 }), B.expand({})._calibration);
+    ok('  and the saved log says it started from the flat table\u2019s first 79 entries',
+       log10.runs.length === 1 && !log10.runs[0].held && log10.runs[0].vpo === 1.0 &&
+       same(log10.runs[0].table, flat10.slice(0, 79)),
+       JSON.stringify(log10.runs.map(function (r) { return [r.held, r.vpo, (r.table || []).length]; })));
 
     console.log(failures ? ('FAILED ' + failures) : 'ALL SWEEP DRIVER TESTS PASSED');
     if (failures) process.exit(1);

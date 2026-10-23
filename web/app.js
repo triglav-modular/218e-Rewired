@@ -1023,9 +1023,12 @@
         download(calibrationCsv(), CAL_CSV_NAME, 'text/csv');
     });
 
+    // The keys too.  Left as they were, they showed the forgotten table's
+    // offsets, and a box typed into edited the cleared table: an offset no
+    // box showed and every build applied.
     $('calBaseClear').addEventListener('click', function () {
         clearBaseline();
-        syncBaseline(); drawPlot(); validateCal(); invalidate();
+        syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
         msg($('calMsg'), '', 'Forgotten. Readings now build a first calibration of an ' +
             'uncorrected instrument.');
     });
@@ -1071,6 +1074,10 @@
                     msg($('calMsg'), 'bad', BUILDLIB.calibrationTwice(f.name, parsed.twice));
                     return;
                 }
+                // A table that stops at D#6, as every table before 3.2 did,
+                // gets E6 the way the firmware fills in a 79-entry table's,
+                // and the way tools/build.py reads the same file.
+                BUILDLIB.extendCalibration(parsed, TABLE_ENTRIES);
                 // A table is a baseline only if it is a whole one.  A partial
                 // file would leave the rest of the instrument's correction at
                 // zero, which is not "unknown" - it is "no correction", and
@@ -2317,9 +2324,13 @@
         // `low` is the 0 V entry, semitone 0, which the run holds at 0
         // counts and tunes everything else against.
         o.low = CALIBRATE.entryForSemitone(0, bottom);
-        // Firmware before 3.2 neither plays nor takes the 80th entry, E6:
-        // the run stops under it, and the entry is filled in afterwards from
-        // the tuned ones below it, the way 3.2 fills it at boot.
+        // Firmware before 3.2 neither plays nor takes the 80th entry, E6.
+        // The run has only the entries the keyboard holds, so it stops
+        // under E6, and the E6 the read filled in, which is not the
+        // keyboard's, bounds nothing in it: not D#6's ceiling, not a lift's
+        // roof, not a gap filled in under it, and no write goes to it.  The
+        // entry is filled in afterwards from the tuned ones below it, the
+        // way 3.2 fills it at boot.
         var entries = r.pitchEntries || TABLE_ENTRIES;
         o.high = entries - 1;
         o.mode = {
@@ -2327,15 +2338,18 @@
             off: function () { SETTINGSMIDI.endCalibration(chosen); }
         };
         o.adjust = {
-            table: start, countsPerCent: BUILDLIB.pitchCountsPerCent(cfg), reference: o.low,
+            table: start.slice(0, entries), countsPerCent: BUILDLIB.pitchCountsPerCent(cfg),
+            reference: o.low,
             write: function (entry, value) { return SETTINGSMIDI.writePitch(chosen, entry, value); }
         };
-        if (start !== held) o.adjust.playing = held;
+        if (start !== held) o.adjust.playing = held.slice(0, entries);
         o.onNote = noteProgress;
-        // The log's rows, each with this run: the table it starts from,
-        // whether that is the keyboard's, and its scaling, which the saved
-        // file's header says (logRuns).
-        var logRun = { table: start.slice(), held: start === held, vpo: was.volts_per_octave };
+        // The log's rows, each with this run: the table it starts from, the
+        // entries the keyboard holds as the run has them, whether that is
+        // the keyboard's, and its scaling, which the saved file's header
+        // says (logRuns).
+        var logRun = { table: start.slice(0, entries), held: start === held,
+                       vpo: was.volts_per_octave };
         o.onReading = function (row) { pushLog(row, logRun); };
         sweep = new CALIBRATE.Sweep(o);
         return sweep.run().then(function (out) {
@@ -3300,21 +3314,33 @@
     // a loaded table is: a half-applied one leaves the rest at zero, which is
     // "no correction" rather than "unknown", and the fold would quietly undo
     // what is flashed there.
+    //
+    // Whole is 80 entries, or the 79 every page before 3.2 saved, its table
+    // stopping at D#6.  That one comes back as though saved here with E6
+    // not measured: no reading for it, and the table's E6 the step under
+    // it (BUILDLIB.extendOffsets), which is where the read of a 79-entry
+    // keyboard and the load of a 79-row file put it.  Nothing else a save
+    // holds names E6: the sources, the record and the interpolated marks
+    // are kept as they are.
     function goodCalibration(v) {
         if (!v || typeof v !== 'object') return null;
-        if (!Array.isArray(v.measured) || v.measured.length !== TABLE_ENTRIES) return null;
+        if (!Array.isArray(v.measured)) return null;
+        var kept = v.measured.length;
+        if (kept !== TABLE_ENTRIES && kept !== TABLE_ENTRIES - 1) return null;
         var m = [], i;
-        for (i = 0; i < TABLE_ENTRIES; i++) {
+        for (i = 0; i < kept; i++) {
             if (typeof v.measured[i] !== 'number' || !isFinite(v.measured[i])) return null;
             m.push(v.measured[i]);
         }
+        while (m.length < TABLE_ENTRIES) m.push(0);
         var base = {}, src = {}, marks = {};
         if (v.baseline && typeof v.baseline === 'object') {
-            for (i = 0; i < TABLE_ENTRIES; i++) {
+            for (i = 0; i < kept; i++) {
                 var b = v.baseline[i];
                 if (typeof b !== 'number' || !isFinite(b)) return null;
                 base[i] = b;
             }
+            if (kept < TABLE_ENTRIES) BUILDLIB.extendOffsets(base, TABLE_ENTRIES);
         } else {
             for (i = 0; i < TABLE_ENTRIES; i++) base[i] = 0;
         }
@@ -3328,11 +3354,22 @@
                 if (v.interpolated[k]) marks[k] = true;
             });
         }
+        var name = typeof v.baselineName === 'string' ? v.baselineName : '';
+        var history = v.baselineHistory && typeof v.baselineHistory === 'object'
+            ? v.baselineHistory : null;
+        // No name is no table loaded, and that table is the one
+        // clearBaseline() leaves.  A page whose Forget left the keys showing
+        // the table it had forgotten saved an edit typed there into the
+        // cleared table: an offset no box showed and every build applied.
+        // It goes here, as Forget drops a table.
+        if (!name) {
+            for (i = 0; i < TABLE_ENTRIES; i++) base[i] = 0;
+            src = {};
+            history = null;
+        }
         return {
             measured: m, interpolated: marks, baseline: base, baselineSources: src,
-            baselineName: typeof v.baselineName === 'string' ? v.baselineName : '',
-            baselineHistory: v.baselineHistory && typeof v.baselineHistory === 'object'
-                ? v.baselineHistory : null
+            baselineName: name, baselineHistory: history
         };
     }
 
@@ -3419,7 +3456,25 @@
             all.calibration = saved.calibration;
         }
         all.factory = hex;
+        // A save names the pitch offset only where it was moved off its
+        // page's default.  A calibration of 79 entries was saved by a page
+        // before 3.2, whose default was 3 semitones, so with no offset named
+        // it was made at 3 semitones, where this page restores None (the
+        // owner, 2026-10-23).  It goes back at 3 semitones, and the offset
+        // is then switched to the one restored the way its buttons switch
+        // it (setPitchOffset): the readings move with their keys and a
+        // loaded table is dropped.
+        var restored = all.pitch_offset, madeAt = null;
+        if (saved && saved.calibration && Array.isArray(saved.calibration.measured) &&
+                saved.calibration.measured.length === TABLE_ENTRIES - 1 &&
+                !(saved.options && typeof saved.options === 'object' &&
+                  Object.prototype.hasOwnProperty.call(saved.options, 'pitch_offset'))) {
+            madeAt = '1';
+        }
+        if (madeAt !== null && madeAt !== restored) all.pitch_offset = madeAt;
+        else madeAt = null;
         applyAll(all);
+        if (madeAt !== null) applyAll({ pitch_offset: restored });
     }
 
     // Remembering is meant to be invisible: nothing on the page announces it,

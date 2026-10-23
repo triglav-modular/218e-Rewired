@@ -81,12 +81,41 @@ def test_pitch_table(cfg: dict) -> None:
     raises("only the two layouts are accepted",
            lambda: B.pitch_table(c_cfg, offsets), "must be 3 or 0")
 
+    # A table that stops at semitone 78, D#6, as every table before 3.2 did,
+    # gets E6 the way the firmware fills in a 79-entry table: the row under
+    # it plus the step to it.  The shipped table's own 80th row is exactly
+    # that, so the shipped table without it builds the same curve.  A row
+    # fewer, or a gap anywhere, D#6 included, is still refused.
     header = "Semitone;Note;Key;Offset_Cents;Source\n"
-    short = header + "".join(f"{i};;;0.0;t\n" for i in range(61))
-    raises("short table rejected", lambda: B.read_calibration(tmp(short, "_short.csv")),
+    short = header + "".join(f"{i};;;0.0;t\n" for i in range(78))
+    raises("a table of 78 rows is refused", lambda: B.read_calibration(tmp(short, "_short.csv")),
            "firmware reads")
     gap = header + "".join(f"{i};;;0.0;t\n" for i in range(80) if i != 40)
     raises("gapped table rejected", lambda: B.read_calibration(tmp(gap, "_gap.csv")), "no gaps")
+    under = header + "".join(f"{i};;;0.0;t\n" for i in range(80) if i != 78)
+    raises("a gap at D#6 is refused, not filled in",
+           lambda: B.read_calibration(tmp(under, "_gap78.csv")), "no gaps")
+
+    def read_or_refusal(path: Path) -> dict:
+        try:
+            return B.read_calibration(path)
+        except ValueError as exc:
+            return {"refused": str(exc)}
+
+    shipped = REPO / "calibration" / "218e-pitch-calibration.csv"
+    want = B.read_calibration(shipped)
+    got = read_or_refusal(tmp("".join(ln for ln in shipped.read_text().splitlines(keepends=True)
+                                      if not ln.startswith("79;")), "_79.csv"))
+    check("a table that stops at D#6 gets E6 from the step under it: the shipped table's 80th row",
+          sorted(got) == list(range(80)) and got[79] == 2 * got[78] - got[77]
+          and all(abs(got[s] - want[s]) < 1e-9 for s in range(80)),
+          str(got.get("refused", got.get(79))))
+    check("and builds the shipped table's curve",
+          "refused" not in got and B.pitch_table(cfg, got) == B.pitch_table(cfg, want))
+    old = read_or_refusal(REPO / "calibration" / "218e-pitch-calibration-2026-09-13.csv")
+    check("the tracked 79-row table of 2026-09-13 reads whole, E6 added the same way",
+          sorted(old) == list(range(80)) and old[79] == 2 * old[78] - old[77],
+          str(old.get("refused", "")))
 
 
 def test_scala() -> None:

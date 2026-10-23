@@ -504,18 +504,22 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
           'Keyboard settings loaded successfully. This keyboard runs Rewired 3.1; this page builds ' +
           run('shown(GEN.version)') + '. ' + flashLine, page.nodes.kbdLoadMsg.text);
     // A run on it stops under the 80th entry, which 3.1 neither plays nor
-    // takes, and the page's 80th comes from the tuned 77 and 78.
+    // takes, and the page's 80th comes from the tuned 77 and 78.  The run
+    // is the test's here, so what it sends is not: web/test_sweep.js plays
+    // one on a 79-entry keyboard.
     var t31 = B.settingsFields(old31).pitch_remap.slice(0, 79);
     t31[77] += 3; t31[78] += 6; t31.push(4000);
     measure();
     await T.run();
     var o31 = runs[runs.length - 1].o;
-    check('a calibration run on 3.1 tunes entries up to 78 only', o31.high === 78 && o31.adjust.table.length === 80, o31.high);
+    check('a calibration run on 3.1 tunes entries up to 78 only, from the 79 it holds',
+          o31.high === 78 && o31.adjust.table.length === 79,
+          o31.high + ', ' + o31.adjust.table.length + ' entries');
     ends(t31.slice());
     await T.run();
     var want31 = t31.slice(0, 79).concat([2 * t31[78] - t31[77]]);
-    check('and the page\u2019s 80th entry is filled in from the tuned 77 and 78', sameTable(pageTable(), want31)
-          && kb31.received.every(function (p) { return p[0] !== 0xcf; }), JSON.stringify(pageTable().slice(76)));
+    check('and the page\u2019s 80th entry is filled in from the tuned 77 and 78', sameTable(pageTable(), want31),
+          JSON.stringify(pageTable().slice(76)));
     run('$("kbdLoadPort").value = "kbd"; $("calMidi").value = "kbd"; unsentOff();');
     page.opts = clone(held);
 
