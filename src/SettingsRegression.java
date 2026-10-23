@@ -869,7 +869,7 @@ public class SettingsRegression extends PersistenceRegression {
         check("fix off: the filter's pair replays - the history in R8 - and returns",p==0x100&&reg("R8")==0x2345);
         w(LIVE+7,1,1);
         check("fix on: the gain is skipped",resolve(C2)==0x800033d6L);
-        check("fix on: the filter is skipped",resolve(C1)==0x80003506L);
+        check("fix on: the filter is skipped, and not the channel-pressure test after it",resolve(C1)==0x800034e0L);
         // The gain branch: mode 4 (Z set) calls whatever the byte; otherwise the byte decides.
         w(LIVE+7,1,0); e.writeRegister("Z",1); p=resolve(GN);
         check("gain, mode 4: the knob-4 call is made through the dispatch with R12 = 5",p==K4&&reg("R12")==5);

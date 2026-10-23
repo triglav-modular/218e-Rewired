@@ -148,6 +148,7 @@ CHECKS: dict[str, tuple[str, ...]] = {
     "floorAnchorHandover": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
     "transposedFloorAnchor": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
     "padOctaveMode": ('default', 'roles', 'tuned', 'lean', 'jack', 'kbm', 'offset-off'),
+    "midiPressure": ('default', 'roles', 'tuned', 'lean', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
 }
 
 # Each check's emulation time under one configuration, in seconds, the most
@@ -219,6 +220,7 @@ SECONDS: dict[str, float] = {
     "padFlipLands": 29.0,
     "floorAnchorHandover": 5.0,
     "transposedFloorAnchor": 38.0,
+    "midiPressure": 2.0,
 }
 JOB_SECONDS = 120.0
 

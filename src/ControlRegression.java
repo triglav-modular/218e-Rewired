@@ -3592,6 +3592,75 @@ public class ControlRegression extends SequenceEditRegression {
         }
         println("PASS pressure_fix off: a floor/ceiling pair the fix left reads as the factory's 12.0, the factory's own gains as they are; pairs"+pairs);
     }
+    // ---- MIDI channel pressure (2026-10-23) --------------------------------
+    // The User's Guide: channel pressure on the keyboard's own MIDI channel
+    // comes out of the pressure jack.  The factory's receive (0x8000853a)
+    // keeps the byte at state+0x2d8 and raises state+0x2d9, and while no key
+    // is touched (state+0x238) the pressure routine takes the byte times 32
+    // in place of the keys' own at 0x800034e0.  A touch hands the jack back
+    // and drops the flag.  With pressure_fix on, pitch_clamp_1's skip over
+    // the 16-tap filter landed past that test, so the jack never heard MIDI.
+    // Through the real receive, the routine, the output stage and the 1 kHz
+    // flush, under both settings of the fix.
+    static final long OUTPUT_STAGE=0x8000307cL, FLUSH=0x8001a600L, FLUSH_OUT=0x8001a688L;
+    // One scan and the five flushes that follow it at the default period.
+    long pressureScan() throws Exception {
+        call(PRESSURE_ROUTINE); call(OUTPUT_STAGE);
+        for(int t=0;t<5;t++) call(FLUSH,FLUSH_OUT);
+        return r(S+0x356,2);
+    }
+    // Scans until the jack reads want three times running, or -1.
+    int scansTo(long want) throws Exception {
+        int run=0;
+        for(int i=1;i<=400;i++) {
+            run=pressureScan()==want?run+1:0;
+            if(run==3) return i-2;
+        }
+        return -1;
+    }
+    void midiPressure() throws Exception {
+        setup(0,false,0);
+        boolean fix=r(0x6d2f,1)!=0;
+        String tag="pressure_fix "+(fix?"on":"off");
+        int ch=channel();
+        // The keys' own pressure with one key touched and nothing pressed,
+        // and the room between it and the MIDI value the touch must undo.
+        w(S+0x238,1,1); w(S+0x2d9,1,0); call(PRESSURE_ROUTINE);
+        long keys=r(S+0x398,2);
+        check(tag+": the keys' own pressure is not the MIDI value used below: "+keys,keys!=32*100);
+        w(S+0x238,1,0);
+        for(int v:new int[]{127,64,1,100,0,127}) {
+            usb(0xd0|ch,v,0);
+            check(tag+": channel pressure "+v+" is received: byte "+r(S+0x2d8,1)+", flag "+r(S+0x2d9,1),
+                r(S+0x2d8,1)==v&&r(S+0x2d9,1)==1);
+            call(PRESSURE_ROUTINE);
+            check(tag+": with no key touched it is the keys' pressure times 32: "+r(S+0x398,2)+", want "+32*v,
+                r(S+0x398,2)==32*v&&r(S+0x2d9,1)==1);
+        }
+        // Another channel is not the keyboard's.
+        usb(0xd0|((ch+1)&15),50,0);
+        call(PRESSURE_ROUTINE);
+        check(tag+": channel pressure on another channel is ignored: "+r(S+0x2d8,1)+", "+r(S+0x398,2),
+            r(S+0x2d8,1)==127&&r(S+0x398,2)==32*127);
+        // Held to the jack, and back down, through the factory slew and the
+        // flush: 127 is 4064 counts, 0 is 0.
+        int up=scansTo(32*127);
+        check(tag+": 127 reaches the jack as 4064 and holds there: "+up+" scans",up>0);
+        usb(0xd0|ch,0,0);
+        int down=scansTo(0);
+        check(tag+": 0 brings the jack back to 0 and holds there: "+down+" scans",down>0);
+        // A touch takes the jack back, drops the flag, and the lift leaves it
+        // with the keys.
+        usb(0xd0|ch,100,0);
+        w(S+0x238,1,1); call(PRESSURE_ROUTINE);
+        check(tag+": a touched key takes the jack back and drops the flag: "+r(S+0x398,2)+", want "+keys+", flag "+r(S+0x2d9,1),
+            r(S+0x398,2)==keys&&r(S+0x2d9,1)==0);
+        w(S+0x238,1,0); call(PRESSURE_ROUTINE);
+        check(tag+": after the lift the jack stays with the keys until the next message: "+r(S+0x398,2),
+            r(S+0x398,2)!=32*100&&r(S+0x2d9,1)==0);
+        println("PASS "+tag+": channel pressure plays the pressure jack at 32 counts a step while no key is touched, "
+            +"0 to 4064 in "+up+" scans and back in "+down);
+    }
     // ---- Normal play on the table's entries (3.0.2) ----------------------
     // Calibration mode plays mirror[entry] for an entry.  Normal play has to
     // give the same DAC for every key and MIDI note that maps to that entry,
@@ -4806,7 +4875,7 @@ public class ControlRegression extends SequenceEditRegression {
         "tunedNotes","midiNoteOffs","blendSign","latchedUnderThePeriod","anchoredBottomKey","glideUnderZero",
         "reloadedRotation","gainPairOff","randomOctaveFloor","blendClampOnce","blendCarriedOffset",
         "rebaseSentinel","midiUnderTheFloor","auditionPin","presetDegreesRounded","glideCeiling","padFlipLands","floorAnchorHandover","transposedFloorAnchor",
-        "padOctaveMode"};
+        "padOctaveMode","midiPressure"};
     String knob2="spacing";
     // The mirror as this run's configuration booted it: the settings record
     // laid for it, or the image's own defaults.  Where a check used to read

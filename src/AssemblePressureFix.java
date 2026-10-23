@@ -12650,7 +12650,13 @@ public class AssemblePressureFix extends GhidraScript {
         // pitch_clamp_2 and pitch_clamp_1: the pairs the skips stood over.
         // Off: the pair replayed - the literal the LDDPC loaded, then the
         // load - and back to the instruction after the pair.  On: the skip's
-        // own target, LR and all.  Each spends R8, the load's destination.
+        // own target, LR and all.  pitch_clamp_1's lands at 0x800034e0, the
+        // end of the 16-tap filter and the head of the factory's channel-
+        // pressure test: while no key is touched, a MIDI channel pressure
+        // the receive (0x8000853a) flagged at state+0x2d9 is the keys'
+        // pressure, times 32, as the User's Guide has it.  It used to land
+        // at 0x80003506, past the test, so the jack ignored MIDI.  Each
+        // spends R8, the load's destination.
         // The second word of each pool is the cave's own entry, for the
         // site's MCALL.  pitch_clamp_2's load is replayed by gain_pair_guard,
         // LR still the site's, since the cell it loads can hold the fix's
@@ -12683,7 +12689,7 @@ public class AssemblePressureFix extends GhidraScript {
         emit(String.format("LDDPC R8,0x%x", c1Pool));
         emit("MOV PC,R8");
         padTo(c1Pool);
-        word(0x80003506L);              // over the filter
+        word(0x800034e0L);              // over the filter, onto the channel-pressure test
         word(c1Entry);
         finish("pitch_clamp_1", c1End);
 
