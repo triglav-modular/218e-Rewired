@@ -303,9 +303,12 @@ export default {
     // https, permanently.  GET and HEAD only: the page posts its beacons
     // relative to itself, so a page loaded over http posts over http, and a
     // browser follows a 301 on a POST as a GET, which the beacon refuses.
+    // The port goes too: Cloudflare's other http ports (8080, 8880, ...)
+    // have no TLS on the same number.
     if (url.protocol === 'http:' &&
         (request.method === 'GET' || request.method === 'HEAD')) {
       url.protocol = 'https:';
+      url.port = '';
       return Response.redirect(url.toString(), 301);
     }
 

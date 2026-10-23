@@ -743,6 +743,11 @@ const SENT_OPTIONS = Object.fromEntries(Object.entries(REAL)
   res = await at('http://triglavmodular.hu/mods/218e-Rewired/dev/');
   check('and so does the dev page',
         moved(res, 'https://triglavmodular.hu/mods/218e-Rewired/dev/'), said(res));
+  // Cloudflare's other http ports have no TLS on the same number, so the
+  // move goes to the default https port, not https on :8080.
+  res = await at('http://triglavmodular.hu:8080/mods/218e-Rewired/?v=1');
+  check('from another http port it moves to the https default port',
+        moved(res, 'https://triglavmodular.hu/mods/218e-Rewired/?v=1'), said(res));
 
   let env = fakeEnv();
   res = await worker.fetch(new Request(BEACON.replace('https:', 'http:'),
