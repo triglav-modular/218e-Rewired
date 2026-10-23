@@ -682,18 +682,45 @@ public class ControlRegression extends SequenceEditRegression {
     // entries with the transposer's word down, so each answers the key's
     // own note.  The kbm variant carries 24TET.scl with 24TET-full.kbm, and
     // there a pad and a zone step 24 notes.
-    // The pad octave mode: with pad 4 active, hold the top key for
-    // latch_state_hold_scans and tap pad 4, and the octave pads stand one
-    // period higher from then on; with pad 1 active, hold the bottom key and
-    // tap pad 1 to put them back.  The hold counts only on its own pad, the
-    // tap is a press released before the chord's hold time with no knob
-    // moved, it re-selects the pad standing, the tapped pad flashes, the
-    // CV, the term and MIDI move a period together, and the mode rides in
-    // the record's byte 0x1b.  The press goes the way the factory's handler
-    // sends it, through the pool word at 0x8000a810.
+    // The pad octave mode: tap pad 4 twice, the second press within 80
+    // scans of the first's release, and the octave pads stand one period
+    // higher from the second tap's release; tap pad 1 twice to put them
+    // back.  A tap is a press released before the chord's hold time, with
+    // no knob moved and no other pad held; the second re-selects the pad
+    // standing, the tapped pad flashes, the CV, the term and MIDI move a
+    // period together, and the mode rides in the record's byte 0x1b.
+    // pressPad and liftPad write a pad's level as held or up, the press
+    // going the way the factory's handler sends it, through the pool word
+    // at 0x8000a810; padReadings drives the factory's pad state machine.
     void pressPad(int pad) throws Exception { w(0x46f0+pad,1,2); e.writeRegister("R12",pad); call(r(0x8000a810L,4)); }
     void liftPad(int pad) throws Exception { w(0x46f0+pad,1,0); }
-    void holdKey(int key,int scans) throws Exception { w(S+0x239+key,1,1); for(int i=0;i<scans;i++) controlScan(); }
+    // The factory's pad state machine (0x8000a4f8) with one reading of one
+    // pad, as the pad scan (0x8000a6c0) hands it each pad once a scan ahead
+    // of the control scan.  0 up; 1 after one reading over the threshold
+    // (state+0x392, plus 5 for pad 1 and 12 for the others); 2 from the
+    // second, which runs the press handler (0x8000a784); 3 after one
+    // reading at or under it while held; 0 from the second, which runs the
+    // release handler (0x8000a85c).  3 back to 2 and 1 back to 0 run
+    // neither, so the factory holds a pad from its 1 -> 2 to its 3 -> 0.
+    static final long PAD_STATE=0x8000a4f8L;
+    int padThreshold(int pad) { int t=(short)((short)r(S+0x392,2)+(pad==0?5:12)); return pad==0&&t<0?1:t; }
+    void padReading(int pad,char c) throws Exception {
+        e.writeRegister("R11",c=='#'?padThreshold(pad)+100:0); e.writeRegister("R12",pad); call(PAD_STATE);
+    }
+    // One control scan per reading: '#' over the pad's threshold, '.' zero.
+    void padReadings(int pad,String readings) throws Exception {
+        for(char c:readings.toCharArray()) { padReading(pad,c); controlScan(); }
+    }
+    // Pads 1 and 4 together, a reading of each a scan, pad 1's first as the
+    // pad scan takes them.
+    void padReadings(String pad1,String pad4) throws Exception {
+        for(int i=0;i<pad1.length();i++) { padReading(0,pad1.charAt(i)); padReading(3,pad4.charAt(i)); controlScan(); }
+    }
+    // All four pads, a reading of each a scan in the pad scan's order.
+    void padRows(String pad1,String pad2,String pad3,String pad4) throws Exception {
+        String[] rows={pad1,pad2,pad3,pad4};
+        for(int i=0;i<pad1.length();i++) { for(int p=0;p<4;p++) padReading(p,rows[p].charAt(i)); controlScan(); }
+    }
     // A key's MIDI note through midi_transpose's three entries, which agree.
     long midiNote(int key) throws Exception {
         long note=-1;
@@ -704,7 +731,241 @@ public class ControlRegression extends SequenceEditRegression {
         }
         return note;
     }
+    // The double tap as the factory's pad state machine delivers it, so its
+    // states 1 and 3 occur: a press it holds through a dip, or whose
+    // release bounces, is one tap, and a real double tap switches.
+    void padOctaveTaps() throws Exception {
+        setup(0,false,0); command(0); latchFixture(); w(0x60fa,2,0); octavePad(1);
+        final int window=0x50;
+        check("the pads' thresholds leave a zero reading under them: "+padThreshold(0)+", "+padThreshold(3),
+            padThreshold(0)>=0&&padThreshold(3)>=0);
+        padReadings(3,"#.");
+        check("one reading over the threshold and back is no press: no tap, pad 2 standing",
+            r(0x46f3,1)==0&&r(0x658f,1)==0&&r(S+0x2ef,1)==1);
+        padReadings(3,"#");
+        check("the first reading over is not yet the press",r(0x46f3,1)==1&&r(0x658f,1)==0&&r(S+0x2ef,1)==1);
+        padReadings(3,"#");
+        check("the second is the factory's press: pad 4 selected, and a tap begins",
+            r(0x46f3,1)==2&&r(S+0x2ef,1)==3&&r(0x658f,1)==4);
+        padReadings(3,"##.###");
+        check("a one-scan dip mid-hold is no release: the tap goes on and no window opens: tap 0x"
+            +Long.toHexString(r(0x658f,1))+", window "+r(0x658a,2)+", mode "+r(0x6586,1),
+            r(0x658f,1)==4&&r(0x658a,2)==0&&r(0x6586,1)==0);
+        padReadings(3,".");
+        check("one reading under is not yet the release",r(0x46f3,1)==3&&r(0x658f,1)==4&&r(0x658a,2)==0);
+        padReadings(3,".");
+        check("the second is the factory's release: one tap, its window open, nothing switched",
+            r(0x46f3,1)==0&&r(0x658f,1)==0&&r(0x658a,2)!=0&&r(0x6586,1)==0);
+        padReadings(3,".".repeat(window+1));
+        check("and the window closes",r(0x658a,2)==0);
+        // A press whose release bounces: under, over, under, under.
+        padReadings(3,"#####.#..");
+        check("a press whose release bounces is one tap: its window open, nothing switched: mode "+r(0x6586,1)
+            +", tap 0x"+Long.toHexString(r(0x658f,1)),
+            r(0x6586,1)==0&&r(0x658f,1)==0&&r(0x658a,2)!=0);
+        // A real double tap, the second inside that window, switches at the
+        // factory's release of the second.
+        padReadings(3,"##");
+        check("a second press in the window begins the second tap",r(0x658f,1)==0x84&&r(0x6586,1)==0);
+        padReadings(3,"##.");
+        check("and switches nothing before the factory's release",r(0x46f3,1)==3&&r(0x6586,1)==0);
+        padReadings(3,".");
+        check("its release switches the pads a period up, pad 4 standing, the window closed",
+            r(0x6586,1)==1&&r(S+0x2ef,1)==3&&r(0x658f,1)==0&&r(0x658a,2)==0);
+        padReadings(3,".".repeat(0x30));
+        // Two pads down is another gesture as the factory holds them: pad
+        // 4 pressed before the factory has released pad 1's second tap
+        // forgets that tap, and pad 1's release a scan later switches
+        // nothing.
+        padReadings(0,"##..##");
+        check("pad 1 tapped, then pressed again: its second tap begins",r(0x658f,1)==0x81&&r(S+0x2ef,1)==0&&r(0x6586,1)==1);
+        padReadings("#..","###");
+        check("pad 4 pressed while the factory still holds pad 1: the tap is forgotten and nothing switched: mode "+r(0x6586,1)
+            +", tap 0x"+Long.toHexString(r(0x658f,1)),
+            r(0x6586,1)==1&&r(0x658f,1)==0&&r(0x6588,2)==0&&r(0x658a,2)==0&&r(S+0x2ef,1)==3);
+        padReadings(3,"..");
+        check("and pad 4's release begins and switches nothing",r(0x6586,1)==1&&r(0x658f,1)==0&&r(0x658a,2)==0);
+        // The window's two edges, counted from the scan of the factory's
+        // release: a press first seen 80 scans after it is the second tap,
+        // one first seen 81 after is a first.  Pad 1 out of the mode, then
+        // pad 4 back in.
+        padReadings(0,"##..");                          // released on the last reading
+        padReadings(0,".".repeat(window-2)+"##");       // pressed on the 80th scan after it
+        check("a press first seen "+window+" scans after the release is the second tap: tap 0x"+Long.toHexString(r(0x658f,1)),
+            r(0x658f,1)==0x81);
+        padReadings(0,"..");
+        check("and its release puts the pads back",r(0x6586,1)==0&&r(S+0x2ef,1)==0);
+        padReadings(3,".".repeat(0x30));
+        padReadings(3,"##..");
+        padReadings(3,".".repeat(window-1)+"##");       // pressed on the 81st
+        check("a press first seen "+(window+1)+" scans after the release is a first tap: tap 0x"+Long.toHexString(r(0x658f,1)),
+            r(0x658f,1)==4);
+        padReadings(3,"..");
+        check("whose release opens the window again, switching nothing",r(0x6586,1)==0&&r(0x658a,2)!=0);
+        padReadings(3,"##..");
+        check("and the next tap inside it switches",r(0x6586,1)==1&&r(S+0x2ef,1)==3);
+        padReadings(3,".".repeat(0x30));
+        // The chord's edge.  seq_chord arms on the scan its count of pad 4
+        // at 2 (0x6154) reaches chord_hold_scans, and the second tap is
+        // forgotten on that scan; held one scan less it is a tap, its
+        // release through 3 and 0 included.
+        final int chord=bootedHalf(0x6810);
+        padReadings(3,"##..#"+"#".repeat(chord-1));
+        check("a second tap held one scan short of the chord's "+chord+" is still the second tap: tap 0x"
+            +Long.toHexString(r(0x658f,1))+", the chord's count "+r(0x6154,2),
+            r(0x658f,1)==0x84&&r(0x6154,2)==chord-1);
+        padReadings(3,"#");
+        check("held "+chord+" scans it is forgotten on the scan the chord's count reaches it: tap 0x"
+            +Long.toHexString(r(0x658f,1))+", count "+r(0x6154,2),
+            r(0x658f,1)==0&&r(0x6154,2)==chord&&r(0x658a,2)==0);
+        padReadings(3,"..");
+        check("and its release switches nothing",r(0x6586,1)==1&&r(0x658e,1)==0);
+        padReadings(0,"##..##..");
+        check("pad 1's double tap puts the pads back",r(0x6586,1)==0&&r(S+0x2ef,1)==0);
+        padReadings(3,".".repeat(0x30));
+        padReadings(3,"##..#"+"#".repeat(chord-1));
+        check("a second tap held "+(chord-1)+" scans: tap 0x"+Long.toHexString(r(0x658f,1))+", the chord's count "+r(0x6154,2),
+            r(0x658f,1)==0x84&&r(0x6154,2)==chord-1);
+        padReadings(3,"..");
+        check("is a tap, and its release switches",r(0x6586,1)==1&&r(S+0x2ef,1)==3);
+        padReadings(3,".".repeat(0x30));
+        // ADD TO PITCH moved off octaves between the second tap's press and
+        // its release: no switch, and nothing flashes.
+        padReadings(0,"##..##");
+        check("pad 1's second tap begins on octaves",r(0x658f,1)==0x81&&r(0x6586,1)==1);
+        w(S+0x342,1,0);
+        padReadings(0,"..");
+        check("its release with the switch off octaves switches nothing and flashes nothing: mode "+r(0x6586,1)
+            +", flash "+r(0x658e,1),
+            r(0x6586,1)==1&&r(0x658e,1)==0&&r(0x658f,1)==0&&r(0x6588,2)==0);
+        w(S+0x342,1,1);
+        padReadings(0,"##..##..");
+        check("back on octaves the same double tap switches",r(0x6586,1)==0&&r(S+0x2ef,1)==0);
+        padReadings(3,".".repeat(0x30));
+        // The chord's edge with a dip in the second tap: the dip holds the
+        // chord's count and the tap's length both where they stand, so the
+        // tap is still forgotten on the scan the chord arms, and one scan
+        // short it is still a tap.
+        final int half=chord/2;
+        String dipped="##..#"+"#".repeat(half)+"."+"#".repeat(chord-half-1);
+        padReadings(3,dipped);
+        check("a second tap with a dip, "+(chord-1)+" scans at 2: tap 0x"+Long.toHexString(r(0x658f,1))+", the chord's count "+r(0x6154,2),
+            r(0x658f,1)==0x84&&r(0x6154,2)==chord-1);
+        padReadings(3,"#");
+        check("its "+chord+"th scan at 2 forgets it, the scan the chord's count reaches it: tap 0x"
+            +Long.toHexString(r(0x658f,1))+", count "+r(0x6154,2),
+            r(0x658f,1)==0&&r(0x6154,2)==chord);
+        padReadings(3,"..");
+        check("and its release switches nothing",r(0x6586,1)==0);
+        padReadings(3,dipped+"..");
+        check("one scan short, with the dip, it is a tap: its release switches",r(0x6586,1)==1&&r(S+0x2ef,1)==3);
+        padReadings(3,".".repeat(0x30));
+        println("PASS pad octave taps through the factory's pad states: a dip or a bouncing release is one tap, a real double tap switches, a press over another pad's release is two pads; "
+            +"a press "+window+" scans after the release is the second tap, "+(window+1)+" a first; a second tap held the chord's "+chord
+            +" scans is a hold, "+(chord-1)+" a tap, with a dip in it or not; off octaves at the release nothing switches");
+    }
+    // ---- The sequencer's chord through the factory's pad states ----------
+    // seq_chord holds pad 4 from the factory's press to its release, at 2
+    // and 3.  A one-scan dip holds the hold count where it stands and keeps
+    // an arm; the factory's release (3 to 0) ends the gesture.  Under the
+    // arm, pads 1 to 3 take the factory's press only, so a dip under
+    // RECORD is not a second press, which would toggle recording back.
+    // The count runs with the sequencer off as well; the arm needs it on.
+    void seqChordDip() throws Exception {
+        setup(0,false,0); latchFixture(); w(0x60fa,2,0); octavePad(1);
+        final int chord=bootedHalf(0x6810), half=chord/2;
+        final long armed=seq?1:0;
+        padReadings(3,"##"+"#".repeat(half-1));
+        check("pad 4 held "+half+" scans at 2: the chord's count "+r(0x6154,2),
+            r(0x46f3,1)==2&&r(0x6154,2)==half&&r(0x6156,1)==0);
+        padReadings(3,".");
+        check("a one-scan dip before the arm holds the count where it stands: count "+r(0x6154,2)+", pad 4 at "+r(0x46f3,1),
+            r(0x46f3,1)==3&&r(0x6154,2)==half&&r(0x6156,1)==0);
+        padReadings(3,"#".repeat(chord-half-1));
+        check("one scan short of "+chord+" at 2 it is not armed yet: count "+r(0x6154,2),r(0x6154,2)==chord-1&&r(0x6156,1)==0);
+        padReadings(3,"#");
+        check("and its "+chord+"th scan at 2 arms it"+(seq?"":", the sequencer off: counted, not armed")+": count "+r(0x6154,2)+", armed "+r(0x6156,1),
+            r(0x6154,2)==chord&&r(0x6156,1)==armed);
+        check("the arm holds the octave from before pad 4 went down, the dip notwithstanding: pad "+r(S+0x2ef,1),
+            r(S+0x2ef,1)==(seq?1:3));
+        padReadings(3,".");
+        check("a dip after the arm keeps it: armed "+r(0x6156,1)+", count "+r(0x6154,2),
+            r(0x46f3,1)==3&&r(0x6154,2)==chord&&r(0x6156,1)==armed);
+        padReadings(3,"#");
+        check("and the hold goes on",r(0x46f3,1)==2&&r(0x6154,2)==chord&&r(0x6156,1)==armed);
+        if(seq) {
+            // RECORD under the arm, its press dipping once: one press, so
+            // recording toggles once.
+            long mode=r(0x6158,1), toggled=mode==1?0:1;
+            padRows("##.##..",".......",".......","#######");
+            check("a RECORD press that dips is one press: mode "+mode+" to "+r(0x6158,1)+", want "+toggled,
+                r(0x6158,1)==toggled&&r(0x6156,1)==1);
+            padRows("##..","....","....","####");
+            check("and a second press toggles it back",r(0x6158,1)==mode&&r(0x6156,1)==1);
+        }
+        padReadings(3,".");
+        check("one reading under is not the release: the hold stands",r(0x46f3,1)==3&&r(0x6154,2)==chord&&r(0x6156,1)==armed);
+        padReadings(3,".");
+        check("the factory's release ends it: count 0, disarmed",r(0x46f3,1)==0&&r(0x6154,2)==0&&r(0x6156,1)==0);
+        println("PASS the sequencer's chord through the factory's pad states: a dip holds the count and keeps the arm, "
+            +(seq?"a dipping RECORD under it is one press, ":"")+"the factory's release ends the hold");
+    }
+    // ---- latch_state through the factory's pad states --------------------
+    // latch_state holds the pads at 2 and 3, from the factory's press to its
+    // release.  The octave shadow follows the selection only while pads 2
+    // to 4 are all released, so a dip inside a gesture's own hold cannot
+    // shadow the pad the gesture selected on its way in.  With the latching
+    // arp, pads 2 and 3 count the scans both read 2 towards the toggle: a
+    // dip of either or both holds the count where it stands, pad 4 at 3 is
+    // still pad 4 down, and the count clears only once both are released,
+    // so one hold is one toggle.
+    void latchStateDip() throws Exception {
+        setup(0,false,1); command(0); latchFixture(); w(0x60fa,2,0); octavePad(1); controlScan();   // stopped, latch position
+        final boolean latch=r(0x6d28,1)!=0;
+        final int hold=bootedHalf(0x6812), half=hold/2;
+        check("pad 2 stands, and the octave shadow has it",r(S+0x2ef,1)==1&&r(0x615d,1)==1);
+        padReadings(3,"####.##");
+        check("a dip in a pad-4 hold leaves the shadow on the octave from before it: shadow "+r(0x615d,1)+", pad 4 at "+r(0x46f3,1),
+            r(0x46f3,1)==2&&r(S+0x2ef,1)==3&&r(0x615d,1)==1);
+        padReadings(3,".");
+        check("so does the first reading under",r(0x46f3,1)==3&&r(0x615d,1)==1);
+        padReadings(3,".");
+        check("the factory's release lets it follow the selection pad 4 made",r(0x46f3,1)==0&&r(0x615d,1)==3);
+        octavePad(1); controlScan();
+        if(latch) {
+            long state=r(0x62e2,1), flipped=state^1;
+            String idle=".".repeat(half+1), both="##"+"#".repeat(half-1);
+            padRows(idle,both,both,idle);
+            check("pads 2 and 3 held "+half+" scans count "+r(0x6582,2),r(0x6582,2)==half&&r(0x62e2,1)==state);
+            padRows(".",".",".",".");
+            check("both dipping on one scan hold the count and the shadow: count "+r(0x6582,2)+", shadow "+r(0x615d,1),
+                r(0x46f1,1)==3&&r(0x46f2,1)==3&&r(0x6582,2)==half&&r(0x615d,1)==1);
+            idle=".".repeat(hold-half); both="#".repeat(hold-half);
+            padRows(idle,both,both,idle);
+            check("their "+hold+"th scan at 2 toggles, and the octave from before comes back: state "+r(0x62e2,1)+", pad "+r(S+0x2ef,1),
+                r(0x62e2,1)==flipped&&r(0x6582,2)==hold&&r(S+0x2ef,1)==1);
+            idle=".".repeat(hold+6); both="."+"#".repeat(hold+5);
+            padRows(idle,both,both,idle);
+            check("a dip of both after it, and the hold going on as long again, toggles nothing more: state "+r(0x62e2,1)+", count "+r(0x6582,2),
+                r(0x62e2,1)==flipped&&r(0x6582,2)==hold+1);
+            padRows("..","#.","..","..");
+            check("one released and the other dipping keeps the count",r(0x46f1,1)==3&&r(0x46f2,1)==0&&r(0x6582,2)==hold+1);
+            padRows(".",".",".",".");
+            check("both released clear it",r(0x46f1,1)==0&&r(0x46f2,1)==0&&r(0x6582,2)==0);
+            // Pads 2 and 3 under a held pad 4 are the sequencer's: pad 4's dip
+            // is still pad 4 down, and counts nothing.
+            padRows("....","..##","..##","####");
+            check("pads 2 and 3 under pad 4 count nothing",r(0x6582,2)==0);
+            padRows("..","##","##",".#");
+            check("nor while pad 4 dips: count "+r(0x6582,2),r(0x6582,2)==0);
+            padRows("..","..","..","..");
+            check("and nothing toggled",r(0x62e2,1)==flipped&&r(0x6582,2)==0);
+        }
+        println("PASS latch_state through the factory's pad states: a dip leaves the octave shadow alone"
+            +(latch?", holds the pads 2 & 3 count, and one hold is one toggle; pad 4 dipping is pad 4 down":", the latch off"));
+    }
     void padOctaveMode() throws Exception {
+        padOctaveTaps();
         setup(0,false,0); command(0); latchFixture();   // arp off, ADD TO PITCH on octaves
         int period=periodUnits(), chord=bootedHalf(0x6810);
         final int window=0x50;                          // the double tap's window, in scans
@@ -717,15 +978,16 @@ public class ControlRegression extends SequenceEditRegression {
         pressPad(3); controlScan();
         check("a tap of pad 4 begins on the press and selects pad 4, as any tap does",r(0x658f,1)==4&&r(S+0x2ef,1)==3&&r(0x6586,1)==0);
         liftPad(3); controlScan();
-        check("its release opens the window and switches nothing",r(0x658a,2)==window&&r(0x6586,1)==0&&r(0x658f,1)==0);
-        for(int i=0;i<window-1;i++) controlScan();
-        check("the window counts down",r(0x658a,2)==1);
+        check("its release opens the window and switches nothing",r(0x658a,2)==window+1&&r(0x6586,1)==0&&r(0x658f,1)==0);
+        for(int i=0;i<window;i++) controlScan();
+        check("the window reads 1 on the "+window+"th scan after the release, the last scan a press is the second tap",
+            r(0x658a,2)==1);
         controlScan();
-        check("and closes after "+window+" scans",r(0x658a,2)==0);
+        check("and is closed on the next",r(0x658a,2)==0);
         pressPad(3); controlScan();
         check("a tap after it is a first tap again",r(0x658f,1)==4);
         liftPad(3); controlScan();
-        check("and opens the window again, switching nothing",r(0x658a,2)==window&&r(0x6586,1)==0);
+        check("and opens the window again, switching nothing",r(0x658a,2)==window+1&&r(0x6586,1)==0);
         pressPad(2); controlScan(); liftPad(2); controlScan();
         check("another pad selected closes the window",r(0x658a,2)==0&&r(S+0x2ef,1)==2&&r(0x6586,1)==0);
         // The double tap: the second tap within the window switches at its
@@ -754,11 +1016,13 @@ public class ControlRegression extends SequenceEditRegression {
         // nor a press under which the pad's knob moved, and neither keeps
         // a window.
         pressPad(0); controlScan(); liftPad(0); controlScan();
-        check("a tap of pad 1 selects it and opens its window",r(S+0x2ef,1)==0&&r(0x6588,2)==window&&r(0x6586,1)==1);
+        check("a tap of pad 1 selects it and opens its window",r(S+0x2ef,1)==0&&r(0x6588,2)==window+1&&r(0x6586,1)==1);
         pressPad(0); controlScan();
         check("a second press begins the second tap",r(0x658f,1)==0x81);
-        for(int i=0;i<chord;i++) controlScan();
-        check("held to the chord's time it is forgotten, with the window",r(0x658f,1)==0&&r(0x6588,2)==0);
+        for(int i=2;i<chord;i++) controlScan();
+        check("held one scan short of the chord's "+chord+" it is still the second tap",r(0x658f,1)==0x81);
+        controlScan();
+        check("held "+chord+" scans, the chord's time, it is forgotten, with the window",r(0x658f,1)==0&&r(0x6588,2)==0);
         liftPad(0); controlScan();
         check("and its release switches nothing",r(0x6586,1)==1);
         pressPad(0); controlScan(); liftPad(0); controlScan(); pressPad(0); controlScan(); w(0x614a,1,1); controlScan();
@@ -3592,6 +3856,124 @@ public class ControlRegression extends SequenceEditRegression {
         }
         println("PASS pressure_fix off: a floor/ceiling pair the fix left reads as the factory's 12.0, the factory's own gains as they are; pairs"+pairs);
     }
+    // ---- The bare hold through the factory's pad states -------------------
+    // While recording, a bare pad 2 or 3 held for seq_edit_hold_scans (60,
+    // the press scan included) previews or takes the last step back, once a
+    // hold (seq_hold).  The factory holds the pad at 2 and 3 from its press
+    // to its release, so a one-scan dip should neither restart the count
+    // nor, once it has fired, begin a second hold that fires again.  Both
+    // cases are measured before the one assertion that judges them.
+    void seqHoldDip() throws Exception {
+        setup(4,false,0); latchFixture();
+        final int fire=60;
+        check("recording a take of four steps",r(0x6158,1)==1&&r(0x61e0,1)==4);
+        // A dip one scan before it would fire.
+        padReadings(2,"##"+"#".repeat(fire-2));
+        check("pad 3 held "+(fire-1)+" scans at 2: the bare count "+r(0x625d,1)+", nothing taken back",
+            r(0x625c,1)==3&&r(0x625d,1)==fire-1&&r(0x61e0,1)==4);
+        padReadings(2,".");
+        long dipPad=r(0x625c,1), dipCount=r(0x625d,1);
+        padReadings(2,"#");
+        long before=4-r(0x61e0,1);
+        padReadings(2,"..");
+        // A dip after it has fired, the hold going on as long again.
+        long start=r(0x61e0,1);
+        padReadings(2,"##"+"#".repeat(fire-1));
+        long fired=start-r(0x61e0,1);
+        padReadings(2,"."+"#".repeat(fire+5));
+        long after=start-r(0x61e0,1);
+        padReadings(2,"..");
+        check("a one-scan dip neither restarts the bare hold nor fires it twice: after a dip "+(fire-1)+" scans in,"
+            +" pad "+dipPad+" count "+dipCount+", and "+before+" step(s) taken back on the next scan (want 1);"
+            +" a hold that fired, dipped and went on took "+after+" back (want 1, "+fired+" before the dip)",
+            dipPad==3&&dipCount==fire-1&&before==1&&fired==1&&after==1);
+        check("the factory's release ends the hold",r(0x46f2,1)==0&&r(0x625c,1)==0&&r(0x625d,1)==0);
+        println("PASS the bare hold through the factory's pad states: a dip holds the count, and one hold fires once");
+    }
+    // ---- The preset editor through the factory's pad states ---------------
+    // A pad held with its knob moved past eight units sets the pad's preset
+    // voltage, and the store follows the knob until the factory releases the
+    // pad.  The factory holds it at 2 and 3, so the store should follow on a
+    // dip scan as on any other.
+    void presetEditDip() throws Exception {
+        setup(0,false,0); command(2);
+        w(S+0x30a,2,500); controlScan();
+        padReadings(0,"##");
+        check("pad 1 held, its knob unmoved: no edit",r(0x46f0,1)==2&&r(0x614a,1)==0);
+        w(S+0x30a,2,600); padReadings(0,"#");
+        check("its knob moved past eight units: preset 1 follows it",r(0x614a,1)==1&&r(0x613a,2)==600);
+        w(S+0x30a,2,700); padReadings(0,".");
+        check("on a one-scan dip it follows the knob too: stored "+r(0x613a,2)+", knob 700, pad 1 at "+r(0x46f0,1),
+            r(0x46f0,1)==3&&r(0x614a,1)==1&&r(0x613a,2)==700);
+        w(S+0x30a,2,720); padReadings(0,"#");
+        check("and after it",r(0x614a,1)==1&&r(0x613a,2)==720);
+        padReadings(0,"..");
+        check("the factory's release ends the edit with the store where the knob left it",
+            r(0x46f0,1)==0&&r(0x614a,1)==0&&r(0x613a,2)==720);
+        println("PASS the preset editor through the factory's pad states: a dip follows the knob, the release ends the edit");
+    }
+    // ---- The latch state's save through the factory's pad states ---------
+    // The pads 2 & 3 toggle saves once both pads are let go.  The factory
+    // holds a pad at 2 and 3, so a scan on which both dip is not the
+    // release, and nothing should save on it.
+    void latchSaveDip() throws Exception {
+        setup(0,false,1); command(0); latchFixture(); w(0x60fa,2,0); octavePad(1); controlScan();   // stopped, latch position
+        final int hold=bootedHalf(0x6812);
+        long state=r(0x62e2,1); int before=writes;
+        String idle=".".repeat(hold+1), both="##"+"#".repeat(hold-1);
+        padRows(idle,both,both,idle);
+        check("pads 2 and 3 held "+hold+" scans toggle, and nothing saves while they are held",
+            r(0x62e2,1)==(state^1)&&writes==before);
+        padRows(".",".",".",".");
+        check("both dipping on one scan are still held, and nothing saves: "+(writes-before)+" write(s)",
+            r(0x46f1,1)==3&&r(0x46f2,1)==3&&writes==before);
+        padRows("...","#..","#..","...");
+        check("the factory's release of both saves the state",
+            r(0x46f1,1)==0&&r(0x46f2,1)==0&&writes>before&&r(call(NEWEST)+25,1)==(state^1));
+        println("PASS the latch state's save through the factory's pad states: a dip of both saves nothing, the release saves");
+    }
+    // ---- The bare press under pad 4 through the factory's pad states -----
+    // seq_edit declines a bare hold while pad 4 is held and not armed: pad 4
+    // with another pad is the sequencer's chord on its way in.  The factory
+    // holds pad 4 at 2 and 3, so a dip of pad 4 on the scan the bare hold of
+    // pad 3 fires must decline it too.
+    void seqBareUnderPad4() throws Exception {
+        setup(4,false,0); latchFixture();
+        final int fire=60;
+        check("recording a take of four steps",r(0x6158,1)==1&&r(0x61e0,1)==4);
+        String idle=".".repeat(fire+3), pad3=".."+"#".repeat(fire+1), pad4="#".repeat(fire+2)+".";
+        padRows(idle,idle,pad3,pad4);
+        check("pad 3's bare hold reaches "+fire+" on the scan pad 4 dips, pad 4 not armed: count "+r(0x625d,1)
+            +", pad 4 at "+r(0x46f3,1),
+            r(0x625d,1)==fire&&r(0x46f3,1)==3&&r(0x6156,1)==0);
+        check("and under the held pad 4 it takes nothing back: "+r(0x61e0,1)+" steps",r(0x61e0,1)==4);
+        padRows("..","..","..","..");
+        check("the factory's release of both",r(0x46f2,1)==0&&r(0x46f3,1)==0&&r(0x61e0,1)==4);
+        println("PASS the bare press under pad 4 through the factory's pad states: pad 4 dipping is still pad 4 held");
+    }
+    // ---- Knob 4 on trn under a pad-4 edit, through the factory's pad states
+    // With pad 4 held, knob 4's first move past eight units begins preset
+    // 4's edit, and the transpose zone holds where it stood.  The ADC event
+    // decides that before the control scan's editor sees the move, from pad
+    // 4's level; the factory holds pad 4 at 2 and 3, so the same move on a
+    // scan pad 4 dips must hold the zone too.
+    void knob4TrnDip() throws Exception {
+        setup(0,false,0); command(2);
+        w(S+0x310,2,200); controlScan();
+        long zone=setting();
+        padReadings(3,"##");
+        check("pad 4 held, knob 4 unmoved: no edit, zone "+zone,r(0x46f3,1)==2&&r(0x614d,1)==0&&setting()==zone);
+        // The first move, on a scan pad 4 dips: the ADC event, then the
+        // control scan.
+        w(S+0x310,2,800); padReading(3,'.'); call(0x80004d4eL,0x80004d52L); controlScan();
+        check("knob 4 first moved on a scan pad 4 dips holds the transpose zone: zone "+setting()+", want "+zone
+            +", pad 4 at "+r(0x46f3,1),
+            r(0x46f3,1)==3&&setting()==zone);
+        padReadings(3,"#");
+        check("and preset 4's edit follows the knob, the zone held",r(0x614d,1)==1&&r(0x6140,2)==800&&setting()==zone);
+        padReadings(3,"..");
+        println("PASS knob 4 on trn under a pad-4 edit through the factory's pad states: a dip holds the zone");
+    }
     // ---- MIDI channel pressure (2026-10-23) --------------------------------
     // The User's Guide: channel pressure on the keyboard's own MIDI channel
     // comes out of the pressure jack.  The factory's receive (0x8000853a)
@@ -3623,18 +4005,31 @@ public class ControlRegression extends SequenceEditRegression {
         boolean fix=r(0x6d2f,1)!=0;
         String tag="pressure_fix "+(fix?"on":"off");
         int ch=channel();
-        // The keys' own pressure with one key touched and nothing pressed,
-        // and the room between it and the MIDI value the touch must undo.
-        w(S+0x238,1,1); w(S+0x2d9,1,0); call(PRESSURE_ROUTINE);
+        // The keys' own pressure, as playing gives it: the gain knob 1
+        // leaves at 300 (the fix's floor and ceiling, or the factory's
+        // float, the knob times 0x3c703c0f), key 9 held and sounding with a
+        // reading between the two for the whole check, and the filters
+        // settled on it.  The touch below must bring the jack back to
+        // exactly this, which is neither 0 nor the MIDI value it takes over
+        // from.  The fix's error diffusion carries the division's remainder
+        // from scan to scan (0x6094), stepping the value a count on one
+        // scan in five, so each comparison starts from the baseline's carry.
+        if(fix) { w(S+0x34,4,0); w(S+0x30a,2,300); e.writeRegister("R12",0); call(KNOB1_DISPATCH); }
+        else w(S+0x33c,4,Float.floatToRawIntBits(300*Float.intBitsToFloat(0x3c703c0f))&0xffffffffL);
+        pressureFor(9,800); w(S+0x256,1,9);
+        w(S+0x238,1,1); w(S+0x2d9,1,0);
+        for(int i=0;i<32;i++) call(PRESSURE_ROUTINE);
+        long carry=r(0x6094,4);
+        call(PRESSURE_ROUTINE);
         long keys=r(S+0x398,2);
-        check(tag+": the keys' own pressure is not the MIDI value used below: "+keys,keys!=32*100);
+        check(tag+": the keys' own pressure is planted, neither 0 nor the MIDI value used below: "+keys,keys!=0&&keys!=32*100);
         w(S+0x238,1,0);
         for(int v:new int[]{127,64,1,100,0,127}) {
             usb(0xd0|ch,v,0);
             check(tag+": channel pressure "+v+" is received: byte "+r(S+0x2d8,1)+", flag "+r(S+0x2d9,1),
                 r(S+0x2d8,1)==v&&r(S+0x2d9,1)==1);
             call(PRESSURE_ROUTINE);
-            check(tag+": with no key touched it is the keys' pressure times 32: "+r(S+0x398,2)+", want "+32*v,
+            check(tag+": with no key touched the byte times 32 replaces the keys' pressure: "+r(S+0x398,2)+", want "+32*v,
                 r(S+0x398,2)==32*v&&r(S+0x2d9,1)==1);
         }
         // Another channel is not the keyboard's.
@@ -3652,14 +4047,14 @@ public class ControlRegression extends SequenceEditRegression {
         // A touch takes the jack back, drops the flag, and the lift leaves it
         // with the keys.
         usb(0xd0|ch,100,0);
-        w(S+0x238,1,1); call(PRESSURE_ROUTINE);
+        w(0x6094,4,carry); w(S+0x238,1,1); call(PRESSURE_ROUTINE);
         check(tag+": a touched key takes the jack back and drops the flag: "+r(S+0x398,2)+", want "+keys+", flag "+r(S+0x2d9,1),
             r(S+0x398,2)==keys&&r(S+0x2d9,1)==0);
-        w(S+0x238,1,0); call(PRESSURE_ROUTINE);
-        check(tag+": after the lift the jack stays with the keys until the next message: "+r(S+0x398,2),
-            r(S+0x398,2)!=32*100&&r(S+0x2d9,1)==0);
+        w(0x6094,4,carry); w(S+0x238,1,0); call(PRESSURE_ROUTINE);
+        check(tag+": after the lift the jack stays with the keys until the next message: "+r(S+0x398,2)+", want "+keys,
+            r(S+0x398,2)==keys&&r(S+0x2d9,1)==0);
         println("PASS "+tag+": channel pressure plays the pressure jack at 32 counts a step while no key is touched, "
-            +"0 to 4064 in "+up+" scans and back in "+down);
+            +"0 to 4064 in "+up+" scans and back in "+down+"; a touch hands it back to the keys' "+keys);
     }
     // ---- Normal play on the table's entries (3.0.2) ----------------------
     // Calibration mode plays mirror[entry] for an entry.  Normal play has to
@@ -4875,7 +5270,7 @@ public class ControlRegression extends SequenceEditRegression {
         "tunedNotes","midiNoteOffs","blendSign","latchedUnderThePeriod","anchoredBottomKey","glideUnderZero",
         "reloadedRotation","gainPairOff","randomOctaveFloor","blendClampOnce","blendCarriedOffset",
         "rebaseSentinel","midiUnderTheFloor","auditionPin","presetDegreesRounded","glideCeiling","padFlipLands","floorAnchorHandover","transposedFloorAnchor",
-        "padOctaveMode","midiPressure"};
+        "padOctaveMode","midiPressure","seqChordDip","latchStateDip","seqHoldDip","presetEditDip","latchSaveDip","seqBareUnderPad4","knob4TrnDip"};
     String knob2="spacing";
     // The mirror as this run's configuration booted it: the settings record
     // laid for it, or the image's own defaults.  Where a check used to read
@@ -4889,7 +5284,7 @@ public class ControlRegression extends SequenceEditRegression {
     String unusable(String name) {
         switch(name) {
             case "presetSequencer": return quantized&&seq?null:"needs the quantiser and the sequencer";
-            case "transposeOutput": case "knob4Zones": case "recordedBounds":
+            case "transposeOutput": case "knob4Zones": case "recordedBounds": case "knob4TrnDip":
                 return !transpose?"needs knob 4 on trn":name.equals("recordedBounds")&&!seq?"needs the sequencer":null;
             case "noteOrders": case "releasedOrders": case "latchedOrders":
                 // The pattern gate answers a rest with -1 at the note
@@ -4897,9 +5292,10 @@ public class ControlRegression extends SequenceEditRegression {
                 return orders&&!knob2.equals("patterns")?null:"needs knob 1 on orders and knob 2 off patterns";
             case "latchExitHold": case "latchTransposeState": case "latchStackMidi": case "latchHoldMidi":
             case "latchAfterMidi": case "latchPresetMidi": case "staleAnchor": case "latchedUnderThePeriod":
-            case "floorAnchorHandover": case "transposedFloorAnchor":
+            case "floorAnchorHandover": case "transposedFloorAnchor": case "latchSaveDip":
                 return lean?"needs the latching arp":null;
             case "keyOverTakeMidi": case "stripCarry": case "playbackPressure": case "heldPresetEdit":
+            case "seqHoldDip": case "seqBareUnderPad4":
                 return seq?null:"needs the sequencer";
             case "latchRecording": case "recordedOctaves": case "capacityAudition": case "pressureOwnership":
             case "previewBoundaries":

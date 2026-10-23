@@ -100,9 +100,10 @@ public class AbTrace extends PersistenceRegression {
             if(args.length>0&&!args[0].equals("watch")) {
                 String[] words=new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(args[0]))).trim().split("\\s+");
                 int i=0;
-                for(int k=0;k<79;k++) w(0x6840+2*k,2,Integer.parseInt(words[i++],16));
+                for(int k=0;k<80;k++) w(0x6840+2*k,2,Integer.parseInt(words[i++],16));
                 for(int k=0;k<96;k++) w(0x68e0+2*k,2,Integer.parseInt(words[i++],16));
                 for(int k=0;k<3;k++) w(0x69a0+2*k,2,Integer.parseInt(words[i++],16));
+                if(i!=words.length) throw new Exception("TABLES: the driver wrote "+words.length+" halfwords, "+i+" planted");
                 w(0x60e4,2,0);
                 println("TABLES planted: "+i+" halfwords");
             }

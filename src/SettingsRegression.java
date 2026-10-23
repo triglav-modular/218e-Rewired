@@ -58,7 +58,7 @@ public class SettingsRegression extends PersistenceRegression {
     static final long LT=0x8001fd20L, LTON=LT, LTOFF=LT+0x30, LTHOLD=LT+0x50, LTPAD=LT+0x70, LTSHIM=LT+0x90, LTPOOL=LT+0xb0;
     static final long LOWNER=0x8001dde0L, LNOTEOFF=0x8001a280L, FNOTEOFF=0x80005a50L, LHOLD=0x8001e520L, FTIMER=0x800045e8L;
     // Phase D: the sequencer's arm gate, the chord that calls it, its word in the chord's slack and the MCALL that reads it.
-    static final long SQARM=0x8001fe50L, CHORD=0x8001b180L, CHORDWORD=0x8001b29cL, CHORDCALL=0x8001b1baL;
+    static final long SQARM=0x8001fe50L, CHORD=0x8001b180L, CHORDWORD=0x8001b29cL, CHORDCALL=0x8001b1bcL;
     // Phase E: the jack's reading, the degree gate, the glide shim and its word, the chain dispatch, the adder's dispatch and what they choose.
     static final long JK=0x8001fea0L, PG=0x8001fed0L, GA=0x8001fef0L, GAPOOL=GA+0x18, CD=0x8001ff10L;
     static final long PQ=0x8001e140L, PD=0x8001e1c0L, CVENTRY=0x8001e7c0L, CVFILTER=0x8001eb20L, CVPOOL=0x8001e8b0L;

@@ -1074,13 +1074,13 @@ function assembleProgram() {
         var poTapWindow = 0x50;        // 400 ms of 5 ms scans from the first tap's release to the second's press
         var poScanEntry = 0x80024000, poScanLive = poScanEntry + 0x28, poScanWin1Down = poScanEntry + 0x38, poScanWin4 = poScanEntry + 0x3c;
         var poScanWin4Down = poScanEntry + 0x4c, poScanHeld = poScanEntry + 0x50, poScanH1 = poScanHeld + 0xa, poScanH2 = poScanHeld + 0x12;
-        var poScanH3 = poScanHeld + 0x1a, poScanH4 = poScanHeld + 0x22, poScanTap = poScanEntry + 0x8c, poScanForget = poScanEntry + 0xc0;
-        var poScanKeep = poScanEntry + 0xcc, poScanRelease = poScanEntry + 0xd4, poScanOpen4 = poScanEntry + 0xec, poScanSwitch = poScanEntry + 0xf4;
+        var poScanH3 = poScanHeld + 0x1a, poScanH4 = poScanHeld + 0x22, poScanTap = poScanEntry + 0x8c, poScanForget = poScanEntry + 0xc2;
+        var poScanKeep = poScanEntry + 0xce, poScanRelease = poScanEntry + 0xd4, poScanOpen4 = poScanEntry + 0xec, poScanSwitch = poScanEntry + 0xf4;
         var poScanSet = poScanEntry + 0x104, poScanEdges = poScanEntry + 0x10c, poScanStart4 = poScanEntry + 0x138, poScanPad1 = poScanEntry + 0x144;
         var poScanStart1 = poScanEntry + 0x170, poScanAck = poScanEntry + 0x17c;
         var poScanBlink = poScanEntry + 0x198, poScanDark = poScanEntry + 0x1a8, poScanFlush = poScanEntry + 0x1ac;
         var poScanDone = poScanEntry + 0x1b0, poScanPool = poScanEntry + 0x1b8, poSetEntry = poScanEntry + 0x1d8;
-        var poSetDone = poSetEntry + 0x26, poScanEnd = poScanEntry + 0x210;
+        var poSetDone = poSetEntry + 0x2e, poScanEnd = poScanEntry + 0x210;
         var poNamesEntry = poScanEnd, poNamesDone = poNamesEntry + 0x10, poNamesEnd = poNamesEntry + 0x20;
         var pcbEntry = poNamesEnd, pcbSt5 = pcbEntry + 0x1a, pcbBit6 = pcbEntry + 0x1e, pcbSt6 = pcbEntry + 0x38;
         var pcbBit7 = pcbEntry + 0x3c, pcbSt7 = pcbEntry + 0x66, pcbDone = pcbEntry + 0x6a, pcbEnd = pcbEntry + 0x70;
@@ -3836,7 +3836,8 @@ function assembleProgram() {
         // movement is always measured from where the knob stood when the pad
         // went down.
         //
-        // Pads read like keys: RAM 0x46f0, a byte each, 2 meaning held.  Ours
+        // Pads are the factory's pad states: RAM 0x46f0, a byte each, held at
+        // 2 and at 3 through a one-scan dip, 0 released.  Ours
         // are 0x613a store, 0x6142 snapshots, 0x614a flags, one base reaching
         // all three.
         begin(0x8001ae1c);
@@ -3854,7 +3855,7 @@ function assembleProgram() {
         emit("LD.SH R12,R12[0x30a]");
         emit("ADD R10,R1,R0 << 0x0");
         emit("CP.W R8,0x2");
-        emit("BR{ne} 0x8001ae78");
+        emit("BR{lt} 0x8001ae78");      // held: 2, or 3 in a dip
         emit("LD.UB R8,R10[0x10]");
         emit("CP.W R8,0x0");
         emit("BR{ne} 0x8001ae70");
@@ -5438,7 +5439,7 @@ function assembleProgram() {
         emit("MOV R7,SP");
         emit("LDDPC R0,0x8001b300");    // global state base
         emit("MOV R1,0x6154");
-        emit("MOV R2,0x46f0");          // the pad touch array, 2 = held
+        emit("MOV R2,0x46f0");          // the factory's pad states, 2 and 3 held
         emit("LD.UH R8,R1[0xa]");
         emit("SUB R8,-0x1");
         emit("ST.H R1[0xa],R8");
@@ -5446,7 +5447,8 @@ function assembleProgram() {
 
         emit("LD.UB R8,R2[0x3]");
         emit("CP.W R8,0x2");
-        emit("BR{ne} 0x8001b1e0");      // pad 4 up: the release path
+        emit("BR{lt} 0x8001b1e0");      // pad 4 released, 0 or 1: the release path
+        emit("BR{ne} 0x8001b200");      // 3, a dip: still held, the count and the arm as they stand
 
         // Held.  Count towards the arm, saturating rather than wrapping -
         // wrapping would disarm a long hold when the count passed zero.
@@ -5454,10 +5456,10 @@ function assembleProgram() {
         emit("MOV R9,0x6810");          // settings cell 8: a compact load reaches 14 bytes, not 16
         emit("LD.UH R9,R9[0x0]");       // chord_hold_scans
         emit("CP.W R8,R9");
-        emit("BR{ge} 0x8001b1b0");
+        emit("BR{ge} 0x8001b1b2");
         emit("SUB R8,-0x1");
         emit("ST.H R1[0x0],R8");
-        padTo(0x8001b1b0);
+        padTo(0x8001b1b2);
         emit("LD.UB R10,R1[0x2]");      // armed?
         emit("CP.W R10,0x0");
         emit("BR{ne} 0x8001b1ce");
@@ -5544,9 +5546,9 @@ function assembleProgram() {
         emit("RJMP 0x8001b248");
         padTo(0x8001b220);
         emit("CP.W R12,0x2");
-        emit("BR{ne} 0x8001b248");
+        emit("BR{lt} 0x8001b248");      // held now: the factory's press is the step to 2
         emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001b248");
+        emit("BR{ge} 0x8001b248");      // and not last scan, so a dip (3 back to 2) is no press
         padTo(0x8001b228);
         // A press, and as many as you like: using the hold does not spend
         // it.  Pad 4 stays held and stays armed until it is let go, so play
@@ -7466,8 +7468,9 @@ function assembleProgram() {
         emit("LSL R3,0x1");
         emit("RJMP 0x8001d474");
         padTo(0x8001d4c0);
-        // The latch's transpose state is asked for whenever pads 2 and 3
-        // are both up: the capture compares it and answers "unchanged" on
+        // The latch's transpose state is asked for whenever the factory has
+        // released pads 2 and 3 both (0 or 1; at 3 a pad is still held
+        // through a dip): the capture compares it and answers "unchanged" on
         // every scan but the first after a toggle, and the release is the
         // end of that gesture - a preset saves on its pad's release for the
         // same reason.  A save stalls playback for a moment, and the moment
@@ -7475,10 +7478,10 @@ function assembleProgram() {
         emit("MOV R8,0x46f0");
         emit("LD.UB R9,R8[0x1]");
         emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001d4d8");
+        emit("BR{ge} 0x8001d4d8");
         emit("LD.UB R9,R8[0x2]");
         emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001d4d8");
+        emit("BR{ge} 0x8001d4d8");
         emit("MOV R8,0x20");            // bit 5: the latch state
         emit("OR R2,R8");
         padTo(0x8001d4d8);
@@ -7487,9 +7490,11 @@ function assembleProgram() {
         // edit keys step it once per press, so the capture's own compare
         // already bounds a press to a single flash write, and the moment
         // the write lands is the press - which is in edit mode, where
-        // nothing is being played by hand.  The pad octave mode the same:
-        // a double tap sets it once, and the moment is the second tap's
-        // release.
+        // nothing is being played by hand.  The pad octave mode is asked
+        // for on every scan as well, and a double tap sets it once, so it
+        // too is one write; it lands on the scan after the second tap's
+        // release whatever is held, so a key held through the double tap
+        // is sounding when the write stalls the output.
         emit("MOV R8,0xc0");            // bits 6 and 7: the tuning slot and the pad octave mode
         emit("OR R2,R8");
         padTo(0x8001d4e0);
@@ -7553,9 +7558,9 @@ function assembleProgram() {
         emit("ST.H R10[0x4],R8");
         // And the pad octave mode's block at 0x6586..0x6591: the mode
         // itself, which the load puts back from the record's byte 0x1b, the
-        // two hold counts, last scan's pad levels, the acknowledgment and
-        // the tap in progress - a count that starts as SRAM garbage with a
-        // key down at power-up would arm the gesture early.
+        // two tap windows, last scan's pad levels, the acknowledgment and
+        // the tap in progress with its length - a window or a tap that
+        // starts as SRAM garbage would switch the mode on a single tap.
         emit("ST.H R10[0x6],R8");
         emit("ST.W R10[0x8],R8");
         emit("ST.W R10[0xc],R8");
@@ -7708,7 +7713,7 @@ function assembleProgram() {
         emit("MOV R8,0x46f3");
         emit("LD.UB R8,R8[0x0]");
         emit("CP.W R8,0x2");
-        emit("BR{eq} 0x8001d7fc");      // held but not armed is NOT a bare press
+        emit("BR{ge} 0x8001d7fc");      // held, at 2 or 3 in a dip, but not armed is NOT a bare press
         // A pad the preset editor is FOLLOWING is setting a voltage, not
         // running the sequencer: the hold that reached here belongs to the
         // edit, and acting on it previewed or deleted mid-edit.  Following
@@ -7900,7 +7905,7 @@ function assembleProgram() {
         emit("MOV R11,0x46f3");
         emit("LD.UB R11,R11[0x0]");
         emit("CP.W R11,0x2");
-        emit("BR{ne} 0x8001d9a0");
+        emit("BR{lt} 0x8001d9a0");      // pad 4 held: 2, or 3 in a dip
         emit("LD.SH R11,R10[0x58]");   // last unheld snapshot: 0x6148
         emit("SUB R11,R8,R11 << 0x0");
         emit("CP.W R11,0x8");
@@ -8211,7 +8216,9 @@ function assembleProgram() {
         // could not be chosen without deleting a note.  A tap now belongs to
         // whatever else the pad does; only a hold reaches seq_edit.
         //
-        // R11 = pad 0..2, R12 = this scan's touch level.  Called EVERY scan,
+        // R11 = pad 0..2, R12 = this scan's level of it in the factory's pad
+        // states: held at 2, and at 3 through a one-scan dip, which holds the
+        // count where it stands.  Called EVERY scan,
         // held or not, so the count clears on release.  It fires once: the
         // count saturates one past the threshold and waits for the release.
         begin(0x8001dd20);
@@ -8225,7 +8232,8 @@ function assembleProgram() {
         emit("MOV R9,R11");
         emit("SUB R9,-0x1");            // this pad, plus one
         emit("CP.W R12,0x2");
-        emit("BR{ne} 0x8001dd44");      // not held
+        emit("BR{lt} 0x8001dd46");      // released by the factory, 0 or 1
+        emit("BR{ne} 0x8001dd74");      // 3, a dip: still held, the count as it stands
         emit("LD.UB R8,R10[0x0]");
         emit("CP.W R8,R9");
         emit("BR{eq} 0x8001dd54");      // still the same hold: count on
@@ -8233,7 +8241,7 @@ function assembleProgram() {
         emit("MOV R8,0x1");             // and this scan is the first of it
         emit("ST.B R10[0x1],R8");
         emit("RJMP 0x8001dd74");
-        padTo(0x8001dd44);
+        padTo(0x8001dd46);
         // Released.  Only this pad's own hold is cleared, so a finger coming
         // off one pad cannot cancel another's count.
         emit("LD.UB R8,R10[0x0]");
@@ -8479,7 +8487,8 @@ function assembleProgram() {
         //
         // (1) The octave shadow.  Pressing a pad chooses an octave (ADD TO
         // PITCH set to octaves), so a gesture that starts on pads 2, 3 or 4
-        // has changed the octave on its way in.  While all three are up
+        // has changed the octave on its way in.  While all three are
+        // released (under 2: the factory holds a pad at 3 through a dip)
         // the active pad (state+0x2ef) is copied to 0x615d, and the live
         // transpose (0x60a0) beside it to 0x6584; a completed gesture puts
         // the pad back - the pads 2 & 3 toggle below, and the sequencer's
@@ -8499,8 +8508,9 @@ function assembleProgram() {
         // at 0x625c is zeroed behind seq_hold - it never reaches its
         // threshold, on the way in or on a finger that lingers after.
         //
-        // The count runs only while both are down with pad 4 up, saturates
-        // one past the threshold, and clears only once BOTH pads are up: so
+        // The count runs on the scans both read 2 with pad 4 up, holds
+        // where it stands on a scan with a dip at 3, saturates one past the
+        // threshold, and clears only once the factory has released BOTH: so
         // one hold is one toggle, and a finger that lingers after it keeps
         // the bare-hold counter zeroed rather than starting a preview or
         // backspace of its own.  The acknowledgment is a countdown of
@@ -8513,16 +8523,16 @@ function assembleProgram() {
         emit("STM --SP,R0,R7,LR");
         emit("MOV R7,SP");
         emit("LDDPC R0,0x8001e720");    // global state base
-        emit("MOV R8,0x46f0");          // the pad touch array, 2 = held
+        emit("MOV R8,0x46f0");          // the factory's pad states, 2 and 3 held
         emit("LD.UB R9,R8[0x1]");
         emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001e634");
+        emit("BR{ge} 0x8001e634");
         emit("LD.UB R9,R8[0x2]");
         emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001e634");
+        emit("BR{ge} 0x8001e634");
         emit("LD.UB R9,R8[0x3]");
         emit("CP.W R9,0x2");
-        emit("BR{eq} 0x8001e634");
+        emit("BR{ge} 0x8001e634");
         emit("LD.UB R9,R0[0x2ef]");
         emit("MOV R10,0x615d");
         emit("ST.B R10[0x0],R9");       // the octave shadow
@@ -8541,7 +8551,7 @@ function assembleProgram() {
             emit("BR{ne} 0x8001e698");
             emit("LD.UB R9,R8[0x3]");
             emit("CP.W R9,0x2");
-            emit("BR{eq} 0x8001e6b0");  // pad 4 down: the sequencer's chord
+            emit("BR{ge} 0x8001e6b0");  // pad 4 down, at 2 or 3: the sequencer's chord
             // Not in edit mode, where the factory gives this same chord its
             // own meaning and excluded its latch from it; and not while
             // either pad is setting a preset voltage - a hold whose knob has
@@ -8575,14 +8585,14 @@ function assembleProgram() {
             emit("ST.B R10[0x0],R9");
             emit("RJMP 0x8001e6b0");
             padTo(0x8001e698);
-            // Not both down.  One still down keeps the count where it is;
-            // both up clears it.
+            // Not both at 2.  One still held, at 2 or at 3 in a dip, keeps
+            // the count where it is; both released clears it.
             emit("LD.UB R9,R8[0x1]");
             emit("CP.W R9,0x2");
-            emit("BR{eq} 0x8001e6b0");
+            emit("BR{ge} 0x8001e6b0");
             emit("LD.UB R9,R8[0x2]");
             emit("CP.W R9,0x2");
-            emit("BR{eq} 0x8001e6b0");
+            emit("BR{ge} 0x8001e6b0");
             emit("MOV R10,0x6582");
             emit("MOV R9,0x0");
             emit("ST.H R10[0x0],R9");
@@ -13161,10 +13171,10 @@ function assembleProgram() {
         // own target, LR and all.  pitch_clamp_1's lands at 0x800034e0, the
         // end of the 16-tap filter and the head of the factory's channel-
         // pressure test: while no key is touched, a MIDI channel pressure
-        // the receive (0x8000853a) flagged at state+0x2d9 is the keys'
-        // pressure, times 32, as the User's Guide has it.  It used to land
-        // at 0x80003506, past the test, so the jack ignored MIDI.  Each
-        // spends R8, the load's destination.
+        // the receive (0x8000853a) flagged at state+0x2d9, times 32,
+        // replaces the keys' pressure, as the User's Guide has it.  It used
+        // to land at 0x80003506, past the test, so the jack ignored MIDI.
+        // Each spends R8, the load's destination.
         // The second word of each pool is the cave's own entry, for the
         // site's MCALL.  pitch_clamp_2's load is replayed by gain_pair_guard,
         // LR still the site's, since the cell it loads can hold the fix's
@@ -15601,37 +15611,43 @@ function assembleProgram() {
         // switch's position is the pads' too: off octaves the pads add
         // nothing, and nor does this.
         //
-        // The gesture (the owner's design, clarified 2026-10-06): with pad
-        // 4 already the active pad, hold the top key (28) for
-        // latch_state_hold_scans and, still holding it, tap pad 4 for the
-        // mode; with pad 1 active, hold the bottom key (0) and tap pad 1 to
-        // leave it.  The hold counts only while that pad is the active one,
-        // so a tap of pad 4 under the top key with another pad active is
-        // the selection it always was, and the tap that switches re-selects
-        // the pad already standing: nothing moves but the mode.  A tap is a
-        // press the key was armed for, released before chord_hold_scans
-        // with no knob moved under it: so holding pad 4 to arm the
-        // sequencer's chord or to edit preset 4 while the top key sounds
-        // switches nothing (the audit, 2026-10-06), and the switch lands on
-        // the release.  Pad 1 is never a tap while pad 4 is held, where it
-        // is the chord's RECORD.  Only with ADD TO PITCH on octaves, where
-        // the pads are octave pads; not in edit mode, where the keys are
-        // settings and neither hold counts.  The tapped pad flashes for
-        // 0x30 scans, as the pads 2 & 3 toggle and the pad-4 hold
-        // acknowledge.  A switch with a key touched runs the factory's
-        // held-note retune, as a pad change does, so a held key's MIDI note
-        // moves with its CV.  The mode persists in the record's byte 0x1b,
-        // saved once the gesture key has lifted, and is restored beside the
-        // latch state.
+        // The gesture: tap pad 4 twice, the second press within
+        // poTapWindow scans (400 ms at the 5 ms scan) of the first's
+        // release, and the mode is on from the second tap's release; tap
+        // pad 1 twice the same way to leave it.  The first tap is the
+        // selection it always was, so from another pad it selects pad 4 and
+        // the second switches, and the tap that switches re-selects the pad
+        // already standing: nothing moves but the mode.  Press and release
+        // are the factory's pad state machine's (0x8000a4f8), whose levels
+        // this reads: the press is its step from 1 to 2, which runs the
+        // press handler, the release its step from 3 to 0, which runs the
+        // release handler, and the pad is held at 2 and 3 between them, so
+        // a press that dips under the threshold for a reading, or whose
+        // release bounces, is one tap.  A press that reads 2 for
+        // chord_hold_scans scans, the count seq_chord arms the sequencer's
+        // chord on, is a hold, and a press with its knob moved under it is
+        // a preset edit: neither is a tap, so holding pad 4 to arm the
+        // chord or to edit preset 4 switches nothing.  Two pads held at
+        // once is another gesture (pads 2 and 3, the chord's RECORD): no
+        // tap, and both windows close; a window closes too once another
+        // pad is selected.  Only with ADD TO PITCH on octaves, where the
+        // pads are octave pads, at the press and again at the release; not
+        // in edit mode, where the pads are presets.  The tapped pad flashes
+        // for 0x30 scans, as the pads 2 & 3 toggle does.  A switch with a
+        // key touched runs the factory's held-note retune, as a pad change
+        // does, so a held key's MIDI note moves with its CV.  The mode
+        // persists in the record's byte 0x1b, saved the scan after the
+        // switch whatever is held, and is restored beside the latch state.
         //
         // RAM off 0x6586: +0 the mode (persisted, 0..1), +1 the pad the
-        // acknowledgment flashes, +2 pad 1's window and +4 pad 4's (the
-        // scans left for a second tap, halfwords, opened at a first tap's
-        // release, 0 when closed), +6 and +7 last scan's touch levels of
+        // acknowledgment flashes, +2 pad 1's window and +4 pad 4's
+        // (halfwords, opened at a first tap's release and counted down a
+        // scan at a time, closed at 0), +6 and +7 last scan's levels of
         // pads 1 and 4, +8 the acknowledgment countdown, +9 the tap in
         // progress (bits 0-2 the pad's index plus one, 0 for none, bit 7
-        // for the second tap), +0xa its length in scans.  All zeroed by
-        // persist_boot beside 0x6580..0x6585.
+        // for the second tap), +0xa its length (the scans its pad has read
+        // 2, the press the first).  All zeroed by persist_boot beside
+        // 0x6580..0x6585.
         function padOctaveCaves() {        // pad_octave_term: the displaced LD.SH R8,R7[-0xc] at 0x800037aa -
         // the pads' term off the adder's frame - and in the mode one
         // period more, number cell 10.  R9 is the base there, live; R10 is
@@ -15656,27 +15672,28 @@ function assembleProgram() {
         // pad_octave_scan: once per control scan, in latch_state's place in
         // scan_housekeeping, and it calls latch_state first.  In edit mode
         // the pads are presets: nothing counts and nothing is pending.
-        // Else each pad's window - the scans left for a second tap, opened
-        // by a first tap's release - counts down, and closes early once
-        // its pad is no longer the active one (state+0x2ef): another pad
-        // selected is another tap.  Two or more pads down is another
-        // gesture (pads 2 and 3, the chord's RECORD, a sequencer command
-        // under pad 4): the tap and both windows are forgotten.  Then the
-        // tap in progress, if any: its pad still held counts its length,
-        // and a length reaching chord_hold_scans or a knob moved under the
-        // pad forgets it, as a hold or an edit; its pad released ends it,
-        // a second tap switching the mode where a first opens its pad's
-        // window.  Then pads 4 and 1 on their press edge, on octaves, with
-        // no tap in progress, begin a tap - the second when the pad's
-        // window is open - and close the other pad's window; then the
-        // acknowledgment.
+        // Else each pad's window - opened by a first tap's release -
+        // counts down, and closes early once its pad is no longer the
+        // active one (state+0x2ef): another pad selected is another tap.
+        // A pad is held at levels 2 and 3, from the factory's press to its
+        // release.  Two or more pads held is another gesture (pads 2 and 3,
+        // the chord's RECORD, a sequencer command under pad 4): the tap and
+        // both windows are forgotten.  Then the tap in progress, if any:
+        // its pad still held counts its length on a scan at 2, and a length
+        // reaching chord_hold_scans or a knob moved under the pad forgets
+        // it, as a hold or an edit; its pad released ends it, a second tap
+        // switching the mode where a first opens its pad's window.  Then
+        // pads 4 and 1 on their press edge - held now and not last scan -
+        // on octaves, with no tap in progress, begin a tap - the second
+        // when the pad's window is open - and close the other pad's
+        // window; then the acknowledgment.
         begin(poScanEntry);
         emit("STM --SP,R0,R1,R2,R7,LR");
         emit("MOV R7,SP");
         emit(StringFormat("MCALL PC[0x%x]", poScanPool));        // latch_state
         emit(StringFormat("LDDPC R0,0x%x", poScanPool + 4));     // global state base
         emit("MOV R1,0x6586");
-        emit("MOV R2,0x46f0");          // the pad touch array, 2 = held
+        emit("MOV R2,0x46f0");          // the factory's pad states, 2 and 3 held
         emit("LD.UB R10,R0[0x39]");     // edit mode
         emit("CP.W R10,0x0");
         emit(StringFormat("BR{eq} 0x%x", poScanLive));
@@ -15710,26 +15727,26 @@ function assembleProgram() {
         emit("SUB R10,0x1");
         emit("ST.H R1[0x4],R10");
         padTo(poScanHeld);
-        // How many pads are down.
+        // How many pads are held.
         emit("MOV R8,0x0");
         emit("LD.UB R10,R2[0x0]");
         emit("CP.W R10,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanH1));
+        emit(StringFormat("BR{lt} 0x%x", poScanH1));
         emit("SUB R8,-0x1");
         padTo(poScanH1);
         emit("LD.UB R10,R2[0x1]");
         emit("CP.W R10,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanH2));
+        emit(StringFormat("BR{lt} 0x%x", poScanH2));
         emit("SUB R8,-0x1");
         padTo(poScanH2);
         emit("LD.UB R10,R2[0x2]");
         emit("CP.W R10,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanH3));
+        emit(StringFormat("BR{lt} 0x%x", poScanH3));
         emit("SUB R8,-0x1");
         padTo(poScanH3);
         emit("LD.UB R10,R2[0x3]");
         emit("CP.W R10,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanH4));
+        emit(StringFormat("BR{lt} 0x%x", poScanH4));
         emit("SUB R8,-0x1");
         padTo(poScanH4);
         emit("CP.W R8,0x2");
@@ -15756,15 +15773,18 @@ function assembleProgram() {
         emit("SUB R11,0x1");            // the pad
         emit("LD.UB R12,R2[R11 << 0x0]");   // its level now
         emit("CP.W R12,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanRelease));
-        // Still held.  Its knob moved under it, says the preset editor's
-        // following flag (set on the move, cleared only once the finger
-        // leaves, ahead of this cave): an edit, not a tap.  Else its length
-        // counts, and reaching chord_hold_scans it is a hold, not a tap.
+        emit(StringFormat("BR{lt} 0x%x", poScanRelease));   // 0 or 1: the factory has released it
+        // Still held, at 2 or at 3 in a dip.  Its knob moved under it, says
+        // the preset editor's following flag (set on the move, cleared only
+        // once the finger leaves, ahead of this cave): an edit, not a tap.
+        // Else a scan at 2 counts its length, and reaching chord_hold_scans,
+        // the scan seq_chord arms on, it is a hold, not a tap.
         emit("MOV R8,0x614a");
         emit("LD.UB R8,R8[R11 << 0x0]");
         emit("CP.W R8,0x0");
         emit(StringFormat("BR{ne} 0x%x", poScanForget));
+        emit("CP.W R12,0x2");           // a scan at 3 is held but not counted, as seq_chord counts only 2
+        emit(StringFormat("BR{ne} 0x%x", poScanEdges));
         emit("LD.UH R12,R1[0xa]");
         emit("MOV R8,0x6810");          // settings cell 8: chord_hold_scans
         emit("LD.UH R8,R8[0x0]");
@@ -15781,14 +15801,14 @@ function assembleProgram() {
         emit("ST.H R1[0xa],R12");
         emit(StringFormat("RJMP 0x%x", poScanEdges));
         padTo(poScanRelease);
-        // The tap is over: the second switches, the first opens its pad's
-        // window.
+        // The factory has released the pad: the tap is over, the second
+        // switching and the first opening its pad's window.
         emit("MOV R12,0x0");
         emit("ST.B R1[0x9],R12");
         emit("ANDL R10,0x80");
         emit("CP.W R10,0x0");
         emit(StringFormat("BR{ne} 0x%x", poScanSwitch));
-        emit(StringFormat("MOV R12,0x%x", poTapWindow));
+        emit(StringFormat("MOV R12,0x%x", poTapWindow + 1));   // one over: the countdown runs before the press edges
         emit("CP.W R11,0x0");
         emit(StringFormat("BR{ne} 0x%x", poScanOpen4));
         emit("ST.H R1[0x2],R12");       // pad 1's window
@@ -15806,16 +15826,16 @@ function assembleProgram() {
         padTo(poScanSet);
         emit(StringFormat("MCALL PC[0x%x]", poScanPool + 8));    // pad_octave_set(R10 the mode, R11 the pad)
         padTo(poScanEdges);
-        // Pad 4's press edge, on octaves, with no tap in progress: a tap
-        // begins, the second when pad 4's window is open; pad 1's window
-        // closes.
+        // Pad 4's press edge, the factory's press, on octaves, with no tap
+        // in progress: a tap begins, the second when pad 4's window is
+        // open; pad 1's window closes.
         emit("LD.UB R10,R2[0x3]");
         emit("LD.UB R11,R1[0x7]");
         emit("ST.B R1[0x7],R10");
         emit("CP.W R10,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanPad1));
+        emit(StringFormat("BR{lt} 0x%x", poScanPad1));      // held: 2, or 3 in a dip
         emit("CP.W R11,0x2");
-        emit(StringFormat("BR{eq} 0x%x", poScanPad1));
+        emit(StringFormat("BR{ge} 0x%x", poScanPad1));      // and up last scan: 0, or 1 before the press
         emit("LD.UB R11,R0[0x342]");    // ADD TO PITCH on octaves
         emit("CP.W R11,0x0");
         emit(StringFormat("BR{eq} 0x%x", poScanPad1));
@@ -15830,17 +15850,18 @@ function assembleProgram() {
         padTo(poScanStart4);
         emit("ST.B R1[0x9],R11");
         emit("MOV R11,0x0");
-        emit("ST.H R1[0xa],R11");
         emit("ST.H R1[0x2],R11");
+        emit("MOV R11,0x1");            // the press is the tap's first scan at 2
+        emit("ST.H R1[0xa],R11");
         padTo(poScanPad1);
         // Pad 1's, the same way round.
         emit("LD.UB R10,R2[0x0]");
         emit("LD.UB R11,R1[0x6]");
         emit("ST.B R1[0x6],R10");
         emit("CP.W R10,0x2");
-        emit(StringFormat("BR{ne} 0x%x", poScanAck));
+        emit(StringFormat("BR{lt} 0x%x", poScanAck));
         emit("CP.W R11,0x2");
-        emit(StringFormat("BR{eq} 0x%x", poScanAck));
+        emit(StringFormat("BR{ge} 0x%x", poScanAck));
         emit("LD.UB R11,R0[0x342]");
         emit("CP.W R11,0x0");
         emit(StringFormat("BR{eq} 0x%x", poScanAck));
@@ -15855,8 +15876,9 @@ function assembleProgram() {
         padTo(poScanStart1);
         emit("ST.B R1[0x9],R11");
         emit("MOV R11,0x0");
-        emit("ST.H R1[0xa],R11");
         emit("ST.H R1[0x4],R11");
+        emit("MOV R11,0x1");
+        emit("ST.H R1[0xa],R11");
         padTo(poScanAck);
         // The acknowledgment, as latch_state's: bit 3 of the countdown
         // blinks the pad every eight scans, written every scan because
@@ -15896,8 +15918,10 @@ function assembleProgram() {
         word(0x80009838);              // the factory's retune of held notes at a pad change
         padTo(poSetEntry);
         // pad_octave_set: R10 = the mode, R11 = the pad to flash, R0 = the
-        // state base.  Stores the mode and starts the acknowledgment, and
-        // when the mode changed with a key touched (state+0x238, the
+        // state base.  With ADD TO PITCH off octaves it does nothing: a tap
+        // begins only on octaves, and the switch can have left them by the
+        // release.  Else it stores the mode and starts the acknowledgment,
+        // and when the mode changed with a key touched (state+0x238, the
         // touch-scan count) calls the factory's own retune at 0x80009838,
         // which a pad press with keys held calls once the pad is selected:
         // with the arp off it renames the sounding key's MIDI note, which
@@ -15910,6 +15934,9 @@ function assembleProgram() {
         // across the call for the acknowledgment; R8 and R12 are spent.
         emit("STM --SP,R7,R9,LR");
         emit("MOV R7,SP");
+        emit("LD.UB R8,R0[0x342]");     // ADD TO PITCH off octaves by the release: nothing switches
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{eq} 0x%x", poSetDone));
         emit("MOV R8,0x6586");
         emit("LD.UB R12,R8[0x0]");      // the mode as it stood
         emit("ST.B R8[0x0],R10");       // the mode

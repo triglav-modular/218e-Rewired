@@ -24,11 +24,7 @@ Saving is automatic at the end of an edit:
 - A preset saves when its pad is fully released after a new value was
   written. The intermediate touched-but-not-held state is not a release.
 - The latch's transpose state (pads 2 and 3 held together for a second,
-  with `latching_arp`) saves once neither pad is held any longer after a
-  toggle. This is a looser rule than a preset's, not the same one: a preset
-  waits for its pad to read fully up, while the latch asks only that pads 2
-  and 3 are no longer at the held level, so a finger resting on one at the
-  intermediate touched level does not hold the save back.
+  with `latching_arp`) saves once both pads are released after a toggle.
 - The selected tuning slot (edit keys 27 and 28, with `alternate_tunings`)
   saves on the scan that sees it change. There is no release to wait for:
   a key press steps the slot once and the next press steps it again, so
@@ -40,9 +36,9 @@ Saving is automatic at the end of an edit:
   record carries slot 0.
 - The pad octave mode (pad 4 tapped twice, the second within 400 ms of
   the first's release, puts the octave pads a period up; pad 1 tapped
-  twice puts them back) saves on the scan after the switch, once. The
-  second tap's release is the gesture's end, so nothing is held when the
-  flash stall lands.
+  twice puts them back) saves on the scan after the switch, once,
+  whatever keys are held. A key held through the double tap is sounding
+  when the flash stall lands.
 - Only changed musical data causes a commit. An unchanged take, an empty
   clear, a pad tap without editing, or a value returned to its old setting
   does not write flash, including when storage is still empty.

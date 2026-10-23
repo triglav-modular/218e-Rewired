@@ -1,4 +1,4 @@
-3.2 (2026-10-06)
+3.2 (2026-10-23)
 - Tap pad 4 twice, quickly, to play the octave pads one octave higher. Tap pad 1 twice to go back.
 - Fixed MIDI channel pressure being ignored while the pressure response fix is on.
 
