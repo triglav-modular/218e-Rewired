@@ -22,7 +22,7 @@ Saving is automatic at the end of an edit:
   pad-4 + pad-3 CLEAR chord. Releasing a preset meanwhile still saves only
   that preset, not the unfinished sequence.
 - A preset saves when its pad is fully released after a new value was
-  written. The intermediate touched-but-not-held state is not a release.
+  written. A one-reading dip, the pad's own debounce, is not a release.
 - The latch's transpose state (pads 2 and 3 held together for a second,
   with `latching_arp`) saves once both pads are released after a toggle.
 - The selected tuning slot (edit keys 27 and 28, with `alternate_tunings`)

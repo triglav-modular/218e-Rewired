@@ -33,7 +33,7 @@ rather than read are marked as such.
 
 | Setting | Today | Stage 1 |
 |---|---|---|
-| `pitch_correction`, `volts_per_octave`, `pitch_offset` | all three fold into one 79-halfword table, `pitch_remap` at `0x80019bc0` | the table, over MIDI |
+| `pitch_correction`, `volts_per_octave`, `pitch_offset` | all three fold into one 80-halfword table, `pitch_remap` at `0x80019bc0` | the table, over MIDI |
 | `alternate_tunings` (octave-period only) | three 32-halfword tables at `0x80019af8` and the 3-entry `tuning_period_keys` at `0x8001e2d0` | the tables, over MIDI |
 | `arp_patterns` | 32 masks at `0x80019f20`, 32 lengths at `0x80019fa0` | the tables, over MIDI |
 | the unmeasured numbers below | immediates in caves | RAM cells, over MIDI |
@@ -117,8 +117,7 @@ musical record.
 | `0x012` | 2 | `octave_units` the record was generated for; refused unless it matches the image |
 | `0x014` | 12 | Reserved, zero |
 | `0x020` | 64 | 32 numbers, halfwords; the ten above, then the option cells at 16..27 (stage 2), the rest zero |
-| `0x060` | 158 | `pitch_remap`, 79 halfwords |
-| `0x0fe` | 2 | Pad |
+| `0x060` | 160 | `pitch_remap`, 80 halfwords |
 | `0x100` | 192 | Tuning slots 0..2, 32 halfwords each |
 | `0x1c0` | 8 | `tuning_period_keys`, 3 halfwords and a pad |
 | `0x1c8` | 128 | 32 pattern masks, each as two halfwords, low first, as the gate reads them |
@@ -153,7 +152,7 @@ baked tables, and edited live by the NRPN handler:
 | Address | Bytes | Contents |
 |---|---:|---|
 | `0x6800` | 64 | the 32 numbers |
-| `0x6840` | 160 | `pitch_remap` and pad |
+| `0x6840` | 160 | `pitch_remap` |
 | `0x68e0` | 192 | tuning slots |
 | `0x69a0` | 8 | period keys |
 | `0x69a8` | 128 | pattern masks |
@@ -269,7 +268,7 @@ main-loop pass, like the parser it sits in.
 |---|---|---|
 | `0x0000..0x001f` | cell *n* | the bounds of `settings_bounds`' table; out of range is ignored, not clamped. Stage 1 had `0x0000..0x0009`; the option cells are 16..27 (stage 2) |
 | `0x0020..0x002f` | the live option bytes, read-only (stage 2) | a dump sends them; a write is ignored |
-| `0x0080..0x00ce` | `pitch_remap[0..78]` | `0..0xfff` |
+| `0x0080..0x00cf` | `pitch_remap[0..79]` | `0..0xfff` |
 | `0x0100..0x011f`, `0x0120..0x013f`, `0x0140..0x015f` | tuning slot 0, 1, 2 | `0..0xfff`; a write clears the applier's guard |
 | `0x0160..0x0162` | keys per period | `1..32` with the rotation built, else `1..127` |
 | `0x0180 + 3p + 0..2` | pattern *p*'s mask, bits 0..13, 14..27, 28..31 | each third replaces only its own bits |

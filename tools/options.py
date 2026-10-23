@@ -142,7 +142,7 @@ INTERNAL_DEFAULTS = {   'arp': {'latch_match_tolerance': 8, 'switch': 'latch'},
                          # bought an octave, so the jack's range bought far
                          # more of them than the pitch output can show - the
                          # curve at 0x80019bc0 holds 80 semitones, so the DAC
-                         # stops at 3125 counts of the 4095 it can drive.
+                         # stops at 3165 counts of the 4095 it can drive.
                          #
                          # 4.0, not the 2.0 it was first set to that day:
                          # that figure was chosen against cv_counts_per_volt =

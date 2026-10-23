@@ -990,8 +990,8 @@
             '# Offset_Cents is the correction the firmware applies: how far each',
             '# semitone is pushed from an ideal ramp.  Positive raises the pitch.',
             '# This is a TABLE, not a set of readings - keep it beside the image you',
-            '# flash, and load it back here before measuring again so the next round',
-            '# accumulates onto it instead of replacing it.',
+            '# flash.  Load it back here to build that image again or to edit it note',
+            '# by note; a readings file loaded on top of it folds onto it.',
             '#',
             '# Source "interpolated" means the sweep never heard that note and',
             '# carried it across from its neighbours: it is a guess, worth checking',
@@ -1251,8 +1251,9 @@
         if (logRuns.length) {
             out.push('# Each run in this log: its rows, counted from 1 under the column names;',
                      '#       the table it started from, the one the keyboard held or the flat',
-                     '#       one at the volts per octave set on the page; and the 80 DAC',
-                     '#       values of that table, entry 0 first.');
+                     '#       one at the volts per octave set on the page; and the DAC',
+                     '#       values of that table, one for each entry the keyboard holds,',
+                     '#       entry 0 first.');
         }
         logRuns.forEach(function (run, k) {
             out.push('# run ' + (k + 1) + ': rows ' + run.first + ' to ' + run.last +
@@ -2318,7 +2319,8 @@
                                     pitch_offset: was.pitch_offset });
         var bottom = cfg.pitch.bottom_key_semitone;
         var o = sweepOptions(chosen);
-        // Every entry that holds an offset: all 79 with the pitch offset.
+        // Every entry that holds an offset: all 80 with the pitch offset, on a
+        // keyboard that holds 80.
         // Without it the three under the bottom key sit at 0 V and are not
         // offsets (BUILDLIB.pitchTable), so they are left as they are.
         // `low` is the 0 V entry, semitone 0, which the run holds at 0

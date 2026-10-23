@@ -95,7 +95,9 @@ Everything the build produces lands in `build/` and is not tracked:
   plays.  The octave controls then step that period rather than an octave,
   and every slot has to agree about it, since there is one set of them;
 - the pitch calibration covers every semitone the firmware reads (0..79), so
-  a short table cannot leave assembler padding to be read as pitch.
+  a short table cannot leave assembler padding to be read as pitch. A table
+  that ends at semitone 78 (D#6) gets semitone 79 (E6) from the step under
+  it, the way the firmware fills in a 79-entry table.
 
 Any failure stops the build without writing firmware: the image is rendered
 and checked in memory — including `--expect-sha` — and only written once every
@@ -326,9 +328,9 @@ match your 208 first, then measure against that.
 
 The quickest way to calibrate your own is the builder page, which does the
 measuring itself: it plays C0 to E6 into the keyboard over MIDI, listens to the
-208 on an audio input, and folds the readings onto whatever table the
-instrument is already running. Load that table there first, and save the new
-one it produces &mdash; the file it writes is the same format this reads.
+208 on an audio input, and tunes each note of the table the instrument is
+running until it plays in tune. The table it saves is the same format this
+reads.
 Switching the page's volts per octave or its pitch offset drops a loaded
 table. It belongs to the scaling and the layout it was taken at. The page
 says so on the calibration line.

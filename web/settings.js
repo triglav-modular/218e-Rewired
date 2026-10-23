@@ -21,7 +21,8 @@
 // from a live byte, and `awaitLive` waits through the USB re-enumeration
 // for the keyboard to come back running them.
 //
-// docs/PLAN-SETTINGS.md is the protocol; src/SettingsRegression.java is
+// docs/SETTINGS.md is the protocol, docs/PLAN-SETTINGS.md its design;
+// src/SettingsRegression.java is
 // the instrument's side of it under emulation.
 var SETTINGSMIDI = (function () {
     'use strict';
