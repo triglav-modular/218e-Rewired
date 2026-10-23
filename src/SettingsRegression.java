@@ -47,7 +47,7 @@ public class SettingsRegression extends PersistenceRegression {
     static final String[] OPTIONS={"latching_arp","knob1","knob2","knob3","knob4","sequencer",
         "clock_divide","pressure_fix","pressure_portamento","quantize_presets","portamento_in","alternate_tunings"};
     static final int[] OPTION_MAX={1,2,4,1,2,1,1,1,1,1,1,1};
-    static final int PARAMS=354;   // 32 cells, 16 live bytes, 79, 96, 3, 96, 32
+    static final int PARAMS=355;   // 32 cells, 16 live bytes, 80, 96, 3, 96, 32
     // Phase B: the knob dispatchers and latch helpers, and the caves they choose.
     static final long KB=0x8001fb80L, KBSEL=KB, KBK1=KB+0x20, KBRHY=KB+0x60, KBVIB=KB+0xa0;
     static final long KBEARLY=KB+0xc0, KBLATE=KB+0xe0, KBL1=KB+0x100, KBL3=KB+0x130, BLEND=0x6d38;
@@ -58,7 +58,7 @@ public class SettingsRegression extends PersistenceRegression {
     static final long LT=0x8001fd20L, LTON=LT, LTOFF=LT+0x30, LTHOLD=LT+0x50, LTPAD=LT+0x70, LTSHIM=LT+0x90, LTPOOL=LT+0xb0;
     static final long LOWNER=0x8001dde0L, LNOTEOFF=0x8001a280L, FNOTEOFF=0x80005a50L, LHOLD=0x8001e520L, FTIMER=0x800045e8L;
     // Phase D: the sequencer's arm gate, the chord that calls it, its word in the chord's slack and the MCALL that reads it.
-    static final long SQARM=0x8001fe50L, CHORD=0x8001b180L, CHORDWORD=0x8001b29cL, CHORDCALL=0x8001b1baL;
+    static final long SQARM=0x8001fe50L, CHORD=0x8001b180L, CHORDWORD=0x8001b29cL, CHORDCALL=0x8001b1bcL;
     // Phase E: the jack's reading, the degree gate, the glide shim and its word, the chain dispatch, the adder's dispatch and what they choose.
     static final long JK=0x8001fea0L, PG=0x8001fed0L, GA=0x8001fef0L, GAPOOL=GA+0x18, CD=0x8001ff10L;
     static final long PQ=0x8001e140L, PD=0x8001e1c0L, CVENTRY=0x8001e7c0L, CVFILTER=0x8001eb20L, CVPOOL=0x8001e8b0L;
@@ -219,7 +219,7 @@ public class SettingsRegression extends PersistenceRegression {
     long expect(int param) throws Exception {
         if(param<0x20) return r(MIRROR+2*param,2);
         if(param<0x30) return r(LIVE+param-0x20,1);
-        if(param>=0x80&&param<0xcf) return r(0x6840+2*(param-0x80),2);
+        if(param>=0x80&&param<0xd0) return r(0x6840+2*(param-0x80),2);
         if(param>=0x100&&param<0x160) return r(0x68e0+2*(param-0x100),2);
         if(param>=0x160&&param<0x163) return r(0x69a0+2*(param-0x160),2);
         if(param>=0x180&&param<0x1e0) {
@@ -497,7 +497,7 @@ public class SettingsRegression extends PersistenceRegression {
         check(PARAMS+" parameters and the ten of the identity block: "+got.size(),got.size()==PARAMS+10);
         boolean order=true, values=true;
         int[] walk=new int[PARAMS]; int n=0;
-        for(int q=0;q<0x30;q++)walk[n++]=q; for(int q=0x80;q<0xcf;q++)walk[n++]=q; for(int q=0x100;q<0x163;q++)walk[n++]=q;
+        for(int q=0;q<0x30;q++)walk[n++]=q; for(int q=0x80;q<0xd0;q++)walk[n++]=q; for(int q=0x100;q<0x163;q++)walk[n++]=q;
         for(int q=0x180;q<0x200;q++)walk[n++]=q;
         for(int i=0;i<PARAMS;i++) { if(got.get(i)[0]!=walk[i])order=false; if(got.get(i)[1]!=expect(walk[i]))values=false; }
         check("in the instrument's order: cells, live bytes, pitch, tuning, keys, masks, lengths",order);
@@ -869,7 +869,7 @@ public class SettingsRegression extends PersistenceRegression {
         check("fix off: the filter's pair replays - the history in R8 - and returns",p==0x100&&reg("R8")==0x2345);
         w(LIVE+7,1,1);
         check("fix on: the gain is skipped",resolve(C2)==0x800033d6L);
-        check("fix on: the filter is skipped",resolve(C1)==0x80003506L);
+        check("fix on: the filter is skipped, and not the channel-pressure test after it",resolve(C1)==0x800034e0L);
         // The gain branch: mode 4 (Z set) calls whatever the byte; otherwise the byte decides.
         w(LIVE+7,1,0); e.writeRegister("Z",1); p=resolve(GN);
         check("gain, mode 4: the knob-4 call is made through the dispatch with R12 = 5",p==K4&&reg("R12")==5);
@@ -1194,7 +1194,7 @@ public class SettingsRegression extends PersistenceRegression {
         check("nothing loaded: state clean, no slot, generation zero",
             r(STATE,1)==0&&r(STATE+1,1)==0xff&&r(STATE+4,4)==0);
         check("the pitch curve is the emitted one",
-            Arrays.equals(e.readMemory(toAddr(0x6840),158),e.readMemory(toAddr(0x80019bc0L),158)));
+            Arrays.equals(e.readMemory(toAddr(0x6840),160),e.readMemory(toAddr(0x80019bc0L),160)));
         check("the tuning tables are the emitted ones",
             Arrays.equals(e.readMemory(toAddr(0x68e0),192),e.readMemory(toAddr(0x80019af8L),192)));
         check("keys per period are the emitted ones",
@@ -1217,23 +1217,23 @@ public class SettingsRegression extends PersistenceRegression {
         check("and slot 0",r(0x854,2)==777);
         // The pitch remap interpolates between neighbours, so a flat mirror
         // curve remaps every raw pitch to that one value.
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,1000);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,1000);
         w(0x6028,2,0); e.writeRegister("R12",0x300); stubChain=true; call(REMAP); stubChain=false;
         check("the pitch remap reads the mirror",r(0x3212,2)==1000);
         // A falling curve: every segment interpolates between its own two
         // entries, inside the DAC.  (Audit 2026-09-24: an unsigned divide
         // put a falling segment's output near 0x6e16.)
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,3900-40*i);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,3900-40*i);
         stubChain=true;
         boolean inside=true; String worst="";
         for(int p=0;p<0x1000;p+=37) {
             w(0x6028,2,0); e.writeRegister("R12",p); call(REMAP);
             long out=r(0x3212,2);
-            if(out<3900-40*78||out>3900) { inside=false; worst=p+"->"+Long.toHexString(out); }
+            if(out<3900-40*79||out>3900) { inside=false; worst=p+"->"+Long.toHexString(out); }
         }
         stubChain=false;
         check("a falling pitch curve interpolates inside its own entries "+worst,inside);
-        for(int i=0;i<79;i++) w(0x6840+2*i,2,0);
+        for(int i=0;i<80;i++) w(0x6840+2*i,2,0);
         boot();
         check("a warm reset reloads the record",Arrays.equals(mirror(),payloadOf(rec)));
         if(clock) {

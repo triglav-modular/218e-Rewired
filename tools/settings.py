@@ -36,7 +36,7 @@ LIVE = 0x6D28                # RAM; the low byte of cells 16..31, as booted
 IMAGE_MARKER = 0x10          # the image's init_marker, halfword
 OCTAVE_UNITS = 0x12          # the period the image was built for, halfword
 NUMBERS = 0x20               # 32 halfwords: eleven numbers, the options at 16..27
-PITCH = 0x60                 # 79 halfwords and a pad
+PITCH = 0x60                 # 80 halfwords; the 80th was a pad until 3.2
 TUNING = 0x100               # three slots of 32 halfwords
 PERIOD_KEYS = 0x1C0          # 3 halfwords and a pad
 BANK = 0x1C8                 # 32 masks, each two halfwords, low first
@@ -44,7 +44,7 @@ LENGTHS = 0x248              # 32 halfwords
 RESERVED = 0x288             # 32 zero bytes
 MIRROR_END = RESERVED        # what the firmware copies: 0x20..0x288
 
-PITCH_ENTRIES = 79
+PITCH_ENTRIES = 80
 TUNING_ENTRIES = 32
 PATTERNS = 32
 DAC_MAX = 0xFFF

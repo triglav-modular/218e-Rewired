@@ -276,7 +276,7 @@ def audit_call_pools(image_path) -> list[str]:
 # image and in every slot left at the factory temperament.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "61da7423f97e294a66482f63fc045d1e6487e206f53260848e5f41539cbd16b6",
+    "historical_config": "f9a8be61499d58c4f30e0c7947ceaebcaf2a87a68c35e6b30d831237686f400c",
 }
 
 

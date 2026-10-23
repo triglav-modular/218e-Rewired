@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "tools"))
 import build as B                                        # noqa: E402
 
 BASELINE = REPO / "calibration" / "218e-pitch-calibration.csv"
-LOW, HIGH, ENTRIES = 3, 67, 79
+LOW, HIGH, ENTRIES = 3, 67, 80
 
 
 def readings():
@@ -168,7 +168,7 @@ def js_fold(base, sources, meas, history=None):
 
 def js_history(text):
     """What the page's parser reads back as the record: (read, against)."""
-    h = js("B.parseCalibration(a.text, 79).history", text=text)
+    h = js("B.parseCalibration(a.text, 80).history", text=text)
     return keyed(h["read"]), keyed(h["against"])
 
 
@@ -260,8 +260,8 @@ def main():
     # table rather than assumed, so it comes out a rounding away from 1.0 and
     # carries that into the product.  The bound below is twelve orders under a
     # cent - a scaling that was actually wrong would miss by percent.
-    flat = {n: 0.0 for n in range(79)}
-    flat_src = {n: "measured" for n in range(79)}
+    flat = {n: 0.0 for n in range(80)}
+    flat_src = {n: "measured" for n in range(80)}
     even = uniform()
     got = js_fold(flat, flat_src, even)
     off = max(abs(got[s] - -even[s]) for s in even)
@@ -506,17 +506,58 @@ def main():
         m = Path(tmp) / "moved.csv"
         m.write_text(moved)
         cli_moved = B.read_calibration(m)
-    page = js("B.calibrationTwice(a.name, B.parseCalibration(a.text, 79).twice)",
+    page = js("B.calibrationTwice(a.name, B.parseCalibration(a.text, 80).twice)",
               name="twice.csv", text=twice)
     if cli is None or page != cli:
         print(f"FAIL  a semitone named twice: cli {cli!r}, page {page!r}")
         return 1
     print("ok    a semitone named twice is refused by both, in the same words")
-    page_moved = keyed(js("B.parseCalibration(a.text, 79).rows", text=moved))
+    page_moved = keyed(js("B.parseCalibration(a.text, 80).rows", text=moved))
     if page_moved != cli_moved or page_moved != base:
         print("FAIL  a table with its columns in another order reads differently in the two")
         return 1
     print("ok    a table with its columns in another order reads the same in both")
+
+    # A table that stops at D#6, semitone 78, as every table before 3.2 did,
+    # reads the same in both: E6 added as the row under it plus the step to
+    # it, which is the shipped table's own 80th row, and marked extrapolated
+    # on the page.  One that stops short of D#6, or skips E6 to run past
+    # it, is extended by neither, and the CLI refuses both.
+    stopped = "".join(ln + "\n" for ln in text.splitlines() if not ln.startswith("79;"))
+    short = "".join(ln + "\n" for ln in text.splitlines() if not ln.startswith(("78;", "79;")))
+    past = stopped + "80;F;;100.000000;extrapolated\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "stopped.csv"
+        f.write_text(stopped)
+        try:
+            cli_stopped = B.read_calibration(f)
+        except ValueError as e:
+            cli_stopped = {"refused": str(e)}
+        cli_refused = []
+        for name, t in (("short", short), ("past", past)):
+            g = Path(tmp) / f"{name}.csv"
+            g.write_text(t)
+            try:
+                B.read_calibration(g)
+                cli_refused.append(False)
+            except ValueError:
+                cli_refused.append(True)
+    extended = ("(function (t) { var p = B.parseCalibration(t, 80);"
+                " var added = B.extendCalibration ? B.extendCalibration(p, 80) : false;"
+                " return { added: added, rows: p.rows,"
+                " source: p.sources[79] === undefined ? null : p.sources[79] }; })(a.text)")
+    page_stopped = js(extended, text=stopped)
+    if (not page_stopped["added"] or keyed(page_stopped["rows"]) != cli_stopped
+            or page_stopped["source"] != "extrapolated" or abs(cli_stopped.get(79, 1e9) - base[79]) > 1e-9):
+        print(f"FAIL  a table that stops at D#6: page {page_stopped['added']} "
+              f"{page_stopped['rows'].get('79')}, cli {cli_stopped.get(79, cli_stopped.get('refused'))}, "
+              f"shipped {base[79]}")
+        return 1
+    print("ok    a table that stops at D#6 reads the same in both, its E6 the shipped table's")
+    if js(extended, text=short)["added"] or js(extended, text=past)["added"] or not all(cli_refused):
+        print("FAIL  a table that stops short of D#6, or skips E6, was extended")
+        return 1
+    print("ok    one that stops short of D#6, or skips E6 to run past it, is extended by neither")
 
     print("ALL FOLD TESTS PASSED")
     return 0

@@ -129,7 +129,7 @@
       </section>
 
       <section class="shortcut">
-        <h2>Already running Rewired <span id="kbdNeedsLoad"></span>?</h2>
+        <h2>Already running Rewired 3+?</h2>
         <p class="d muted shortcut-note">Load your settings via MIDI to start from them.</p>
         <div class="picker">
           <label class="picker-field">
@@ -312,6 +312,7 @@
           <label class="opt"><input type="checkbox" id="portamento_transpose" checked>
             <span><span class="t">Transpose from the portamento banana jack</span><br>
               <span class="d">The <strong>portamento in</strong> banana jack transposes the keyboard by whole degrees of the current tuning instead of adding portamento. The knob keeps its own job.</span></span></label>
+          <p class="d">Tap <strong>pad 4</strong> twice, quickly: the octave pads play one octave higher. Tap <strong>pad 1</strong> twice to go back. The pad flashes to confirm; the choice is remembered.</p>
         </div>
 
         <div class="group">
@@ -329,11 +330,11 @@
             <span class="t field-label">Pitch offset</span>
             <div class="row field-row">
               <div class="vpo rowpick" id="offset">
-                <button data-v="0" aria-pressed="false">None<span class="why">208c</span></button>
-                <button data-v="1" aria-pressed="true">3 semitones<span class="why">208, 208r, 208p</span></button>
+                <button data-v="0" aria-pressed="true">None<span class="why">If your 208 is tuned to 32.7 Hz</span></button>
+                <button data-v="1" aria-pressed="false">3 semitones<span class="why">If your 208 is tuned to 55 Hz</span></button>
               </div>
             </div>
-            <p class="d muted field-note" id="offsetNote">The lowest key will output 0.3V.</p>
+            <p class="d muted field-note" id="offsetNote">The lowest key will output 0V.</p>
           </div>
 
 
@@ -349,7 +350,6 @@
 
 
           <div id="calBody" class="hidden">
-            <p class="d muted calbase" id="calBase"></p>
             <div class="row calbaserow">
               <button id="calPick">Load table or readings…</button>
               <button id="calBaseClear" type="button" disabled>Forget loaded table</button>
@@ -415,7 +415,7 @@
             <div class="row">
 
               <h4 class="kbd-heading">Offsets for the 65 playable notes</h4>
-              <p class="kbdhint"><strong>What each note played, in cents.</strong><br>Positive for sharp, negative for flat. The sweep fills these in. Scroll for the full range</p>
+              <p class="kbdhint" id="calKeysHint"><strong>What each note played, in cents.</strong><br>Positive for sharp, negative for flat. Scroll for the full range</p>
               <div class="kbdwrap"><div class="kbd" id="calKeys"></div></div>
             </div>
             <div class="row">

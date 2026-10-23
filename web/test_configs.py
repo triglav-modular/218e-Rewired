@@ -36,6 +36,29 @@ def calibration_rows() -> list[dict]:
     return rows
 
 
+def page_calibration_rows(path: str) -> list[dict]:
+    """A table file as the page's loader reads it: BUILDLIB.parseCalibration,
+    then BUILDLIB.extendCalibration, which adds E6 to a table that stops at
+    D#6.  Run under jsc, so the row the page adds is the page's and not this
+    file's idea of it.  The page builds from every row the table has."""
+    TMP.mkdir(exist_ok=True)
+    script = TMP / "_calrows.js"
+    script.write_text(
+        "var p = BUILDLIB.parseCalibration(readFile(arguments[0]), GEN.pitchTableEntries);\n"
+        "if (BUILDLIB.extendCalibration) BUILDLIB.extendCalibration(p, GEN.pitchTableEntries);\n"
+        "var rows = [];\n"
+        "for (var s = 0; s < GEN.pitchTableEntries; s++) {\n"
+        "    if (p.rows.hasOwnProperty(s)) rows.push({ semitone: s, cents: p.rows[s] });\n"
+        "}\n"
+        "print(JSON.stringify(rows));\n")
+    out = subprocess.run([str(JSC), "web/generated.js", "web/buildlib.js", str(script), "--", path],
+                         capture_output=True, text=True, cwd=REPO)
+    script.unlink(missing_ok=True)
+    if out.returncode != 0 or not out.stdout.startswith("["):
+        raise SystemExit(f"the page's reader failed on {path}: {(out.stdout + out.stderr).strip()[:200]}")
+    return json.loads(out.stdout)
+
+
 # Shapes to test against rather than scales anyone would play, so they are
 # generated into build/ instead of committed to tunings/, which is the library
 # the page offers.  Both builders read the same bytes: the CLI off disk, the
@@ -66,6 +89,17 @@ def keyboard_map(order: list[int], formal: int) -> str:
 # degree that says where it repeats, and then fell back to 1200 cents for both
 # the key table and the octave controls.
 NON_OCTAVE = fixture("_nonoctave.scl", equal_steps(12, 1901.9550008653874))
+
+# The shipped calibration as every table before 3.2 ended, at semitone 78,
+# D#6, and one row shorter still.  Its 80th row is the row under it plus the
+# step to it, which is how both builders fill in a table that stops at D#6.
+CAL_LINES = (REPO / CAL).read_text().splitlines()
+STOPPED = fixture("_stopped79.csv", "".join(
+    ln + "\n" for ln in CAL_LINES if not ln.startswith("79;")))
+SHORT78 = fixture("_short78.csv", "".join(
+    ln + "\n" for ln in CAL_LINES if not ln.startswith(("78;", "79;"))))
+# A table of 79 rows the repository tracks, measured 2026-09-13.
+CAL79 = "calibration/218e-pitch-calibration-2026-09-13.csv"
 
 # 72-TET: 16.7-cent steps, which is 6 DAC units - finer than the latch's
 # 8-unit match tolerance, so two distinct notes would toggle each other off.
@@ -201,6 +235,13 @@ CONFIGS = [
                           {"alternate_tunings": scala(["tunings/12TET.scl"])}),
     ("pitch_correction",  [(r"^pitch_correction = false", f'pitch_correction = "{CAL}"')],
                           {"pitch_correction": calibration_rows()}),
+    # A table that stops at D#6: both builders add E6 the same way, so the
+    # shipped table without its 80th row builds the shipped table's image
+    # (SAME_IMAGE below), and a 79-row table of its own builds one image in both.
+    ("pitch_correction_79", [(r"^pitch_correction = false", f'pitch_correction = "{STOPPED}"')],
+                            {"pitch_correction": page_calibration_rows(STOPPED)}),
+    ("pitch_correction_0913", [(r"^pitch_correction = false", f'pitch_correction = "{CAL79}"')],
+                              {"pitch_correction": page_calibration_rows(CAL79)}),
     # The 208c layout: the pitch table alone moves, so both builders have to
     # lay it out three entries later and zero what is under it - with the
     # flat ramp and with a measured table, whose top three rows drop off.
@@ -343,7 +384,7 @@ CONFIGS = [
 # row's image, and the two builders agreeing about it compares nothing new.
 # These rows spell another row's configuration a second way on purpose, and
 # have to build that row's image exactly.
-SAME_IMAGE = {"slot_without_map": "tunings_one"}
+SAME_IMAGE = {"slot_without_map": "tunings_one", "pitch_correction_79": "pitch_correction"}
 
 
 # Configurations BOTH builders must refuse, and the reason each must give.
@@ -356,6 +397,11 @@ REFUSALS = [
     # configuration at all.  Both toolchains have to say so, and say it the
     # same way - the variants above build only because they ask for the
     # unsupported image by name.
+    # A calibration table a row short of D#6 is not one either builder fills in.
+    ("calibration_78_rows", [(r"^pitch_correction = false", f'pitch_correction = "{SHORT78}"')],
+                            {"pitch_correction": page_calibration_rows(SHORT78)},
+                            "the firmware reads 80",
+                            "the firmware reads 80"),
     ("volatile_refused",  [(r"^persist = true", "persist = false")],
                           {"persist": False},
                           "not a supported configuration",

@@ -47,7 +47,7 @@ def main() -> None:
     flash, _ = parse_hex(args.a)
     def halfwords(base: int, count: int) -> list[int]:
         return [(flash.get(base + 2 * i, 0xFF) << 8) | flash.get(base + 2 * i + 1, 0xFF) for i in range(count)]
-    tables = halfwords(0x80019BC0, 79) + halfwords(0x80019AF8, 96) + halfwords(0x8001E2D0, 3)
+    tables = halfwords(0x80019BC0, 80) + halfwords(0x80019AF8, 96) + halfwords(0x8001E2D0, 3)
     table_file = work / "tables.txt"
     table_file.write_text(" ".join(f"{v:04x}" for v in tables) + "\n")
     traces = []

@@ -35,7 +35,7 @@ var BUILDLIB = (function () {
     // --- option expansion (tools/options.py) ----------------------------
     function flatCalibration() {
         var rows = [];
-        for (var i = 0; i < 79; i++) rows.push({ semitone: i, cents: 0.0 });
+        for (var i = 0; i < 80; i++) rows.push({ semitone: i, cents: 0.0 });
         return rows;
     }
 
@@ -881,9 +881,11 @@ var BUILDLIB = (function () {
     // `found` counts semitones, not lines, and `twice` is the first
     // semitone a second row named, or null: tools/build.py refuses such a
     // table, because a stale row from a hand edit would silently win.
+    // `top` is the highest semitone a row names, -1 for none, counting the
+    // rows at `entries` and past it, which are not read.
     function parseCalibration(text, entries) {
         var rows = {}, sources = {}, history = { read: {}, against: {} };
-        var found = 0, twice = null, readCol = -1, againstCol = -1;
+        var found = 0, twice = null, readCol = -1, againstCol = -1, top = -1;
         var centsCol = 3, sourceCol = 4;
         // Split on any line ending: CRLF from Windows, and CR alone, which
         // Excel can still write.
@@ -912,7 +914,9 @@ var BUILDLIB = (function () {
                 return parseFloat(raw);
             }
             var n = parseInt(q[0], 10), c = num(q[centsCol]);
-            if (isNaN(n) || isNaN(c) || n < 0 || n >= entries) return;
+            if (isNaN(n) || isNaN(c) || n < 0) return;
+            if (n > top) top = n;
+            if (n >= entries) return;
             if (rows.hasOwnProperty(n)) { if (twice === null) twice = n; }
             else found++;
             rows[n] = c;
@@ -922,7 +926,36 @@ var BUILDLIB = (function () {
                 if (!isNaN(rd) && !isNaN(ag)) { history.read[n] = rd; history.against[n] = ag; }
             }
         });
-        return { rows: rows, sources: sources, history: history, found: found, twice: twice };
+        return { rows: rows, sources: sources, history: history, found: found, twice: twice,
+                 top: top };
+    }
+
+    // A table of offsets, semitone -> cents, that stops one row short of
+    // `entries`, as every table before 3.2 stopped at D#6: its last row is
+    // the row under it plus the step to it.  That is extendPitchTable's rule
+    // for a 79-entry table, in cents rather than DAC counts, which is the
+    // same line before rounding.  In place; true when it added the row, and
+    // false for a table that already has it or is not whole up to it.
+    function extendOffsets(offsets, entries) {
+        var last = entries - 1, has = Object.prototype.hasOwnProperty;
+        if (has.call(offsets, last)) return false;
+        for (var n = 0; n < last; n++) if (!has.call(offsets, n)) return false;
+        offsets[last] = 2 * offsets[last - 1] - offsets[last - 2];
+        return true;
+    }
+
+    // A table file that runs to semitone 78, D#6, and stops there, as every
+    // table before 3.2 did, given the row E6 needs (extendOffsets), marked
+    // extrapolated.  tools/build.py read_calibration adds the same row, so
+    // the two builders build the same image from such a file.  A table that
+    // stops anywhere else, has a gap or names a row past E6 is left as it
+    // is, to be refused.  In place, on what parseCalibration returned; true
+    // when it added the row.
+    function extendCalibration(parsed, entries) {
+        if (parsed.top !== entries - 2 || !extendOffsets(parsed.rows, entries)) return false;
+        parsed.sources[entries - 1] = 'extrapolated';
+        parsed.found++;
+        return true;
     }
 
     // tools/build.py read_calibration's refusal of a table that names a
@@ -1485,8 +1518,8 @@ var BUILDLIB = (function () {
         });
         checkPair(cells);
         halfwords(L.numbers, values, 'numbers', 0, 0xFFFF);
-        if (tables.pitch_remap.length !== 79) {
-            throw new Error('pitch_remap must have 79 entries, got ' + tables.pitch_remap.length);
+        if (tables.pitch_remap.length !== 80) {
+            throw new Error('pitch_remap must have 80 entries, got ' + tables.pitch_remap.length);
         }
         halfwords(L.pitch, tables.pitch_remap, 'pitch_remap', 0, 0xFFF);
         for (var slot = 0; slot < 3; slot++) {
@@ -1523,7 +1556,7 @@ var BUILDLIB = (function () {
     var NRPN_CHANNEL = 15;          // channel 16, the telemetry's
     var NRPN_SECTIONS = [
         { base: 0x0000, count: 32, offset: 0x20, kind: 'half' },
-        { base: 0x0080, count: 79, offset: 0x60, kind: 'half' },
+        { base: 0x0080, count: 80, offset: 0x60, kind: 'half' },
         { base: 0x0100, count: 96, offset: 0x100, kind: 'half' },
         { base: 0x0160, count: 3, offset: 0x1c0, kind: 'half' },
         { base: 0x0180, count: 96, offset: 0x1c8, kind: 'mask' },
@@ -1676,17 +1709,40 @@ var BUILDLIB = (function () {
     // - a pitch table of zeros, every option at its first choice, and live
     // bytes that cannot be compared, which is how a send used to skip a
     // restart it needed.  So a reply with anything missing is refused whole.
+    // A keyboard on firmware before 3.2 dumps the 79 pitch entries its table
+    // has (nrpnPitchEntries), and only those are due from it.
     function nrpnMissing(pairs, identityOnly) {
         var got = {}, want = [];
         pairs.forEach(function (p) { got[p[0]] = true; });
         if (!identityOnly) {
+            var id = nrpnIdentity(pairs);
+            var pitch = nrpnPitchEntries(id && id.firmwareVersion);
             NRPN_SECTIONS.forEach(function (s) {
-                for (var i = 0; i < s.count; i++) want.push(s.base + i);
+                var count = s.base === PITCH_BASE ? pitch : s.count;
+                for (var i = 0; i < count; i++) want.push(s.base + i);
             });
             for (var v = 0; v < NRPN_LIVE.count; v++) want.push(NRPN_LIVE.base + v);
         }
         Object.keys(NRPN_IDENTITY).forEach(function (k) { want.push(NRPN_IDENTITY[k]); });
         return want.filter(function (q) { return !got[q]; });
+    }
+
+    // How many pitch-table entries a keyboard reporting `version` holds and
+    // dumps: 79 before 3.2.0, whose table stopped at D#6, and 80 since, with
+    // E6.  Every 3.0 and later sends its version; one that sends none is
+    // taken to hold all 80.  The map is layout 2 either way: the 80th entry
+    // went into a halfword the record already had.
+    var PITCH_BASE = 0x0080, PITCH_ENTRIES_SINCE = '3.2.0';
+    function nrpnPitchEntries(version) {
+        return version && compareVersions(version, PITCH_ENTRIES_SINCE) < 0 ? 79 : 80;
+    }
+    // A 79-entry table's 80th entry, as 3.2's settings_copy_top fills it in
+    // when a record saved by an earlier image left it zero: entry 78 plus
+    // the step from 77 to 78, at most 0xfff.  In place; returns the table.
+    function extendPitchTable(table) {
+        if (table.length >= 80 && table[79]) return table;
+        table[79] = Math.max(0, Math.min(0xFFF, 2 * table[78] - table[77]));
+        return table;
     }
 
     // The live option bytes out of a dump's pairs, all sixteen or null.
@@ -1737,7 +1793,7 @@ var BUILDLIB = (function () {
         // cell past its range (which the firmware would never hold) reads
         // as undefined rather than as some other choice.
         out.options = optionsOf(out.cells);
-        for (i = 0; i < 79; i++) out.pitch_remap.push(halfAt(bytes, L.pitch + 2 * i));
+        for (i = 0; i < 80; i++) out.pitch_remap.push(halfAt(bytes, L.pitch + 2 * i));
         for (var slot = 0; slot < 3; slot++) {
             var table = [];
             for (i = 0; i < 32; i++) table.push(halfAt(bytes, L.tuning + 64 * slot + 2 * i));
@@ -1910,6 +1966,7 @@ var BUILDLIB = (function () {
         octaveWidth: octaveWidth, measuredGain: measuredGain, keyDelta: keyDelta,
         foldOffsets: foldOffsets, calibrationRows: calibrationRows,
         historyToSave: historyToSave, parseCalibration: parseCalibration,
+        extendOffsets: extendOffsets, extendCalibration: extendCalibration,
         calibrationTwice: calibrationTwice,
         floorHalf: floorHalf, parseHexText: parseHexText, renderHex: renderHex,
         resolveFlags: resolveFlags, computeNumbers: computeNumbers,
@@ -1927,7 +1984,7 @@ var BUILDLIB = (function () {
         nrpnValueOf: nrpnValueOf, nrpnApply: nrpnApply, nrpnParamsOf: nrpnParamsOf,
         nrpnMessages: nrpnMessages, nrpnDecoder: nrpnDecoder, nrpnIdentity: nrpnIdentity,
         nrpnRecordOf: nrpnRecordOf, nrpnLiveOf: nrpnLiveOf, pendingOptions: pendingOptions,
-        nrpnMissing: nrpnMissing,
+        nrpnMissing: nrpnMissing, nrpnPitchEntries: nrpnPitchEntries, extendPitchTable: extendPitchTable,
         NRPN_LIVE: NRPN_LIVE, SETTINGS_OPTIONS: SETTINGS_OPTIONS, SETTINGS_CELLS: SETTINGS_CELLS,
         SETTINGS_OPTION_CELL: SETTINGS_OPTION_CELL, optionCells: optionCells, optionsOf: optionsOf, settingsFields: settingsFields,
         versionCode: versionCode, versionText: versionText, compareVersions: compareVersions,

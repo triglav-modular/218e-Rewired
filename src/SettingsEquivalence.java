@@ -75,7 +75,7 @@ public class SettingsEquivalence extends SettingsRegression {
     static List<int[]> params(byte[] rec) {
         List<int[]> out=new ArrayList<>();
         for(int i=0;i<32;i++) out.add(new int[]{i,half(rec,0x20+2*i)});
-        for(int i=0;i<79;i++) out.add(new int[]{0x80+i,half(rec,0x60+2*i)});
+        for(int i=0;i<80;i++) out.add(new int[]{0x80+i,half(rec,0x60+2*i)});
         for(int i=0;i<96;i++) out.add(new int[]{0x100+i,half(rec,0x100+2*i)});
         for(int i=0;i<3;i++) out.add(new int[]{0x160+i,half(rec,0x1c0+2*i)});
         for(int i=0;i<96;i++) {
@@ -153,7 +153,7 @@ public class SettingsEquivalence extends SettingsRegression {
                 keepSlots=false;
                 try {
                     check(name+": a boot of its image loads no record",own);
-                    check(name+": "+ps.size()+" parameters sent and committed to slot 0",committed&&ps.size()==338);
+                    check(name+": "+ps.size()+" parameters sent and committed to slot 0",committed&&ps.size()==339);
                     check(name+": the committed record is the build's, byte for byte"
                         +(Arrays.equals(slot,Arrays.copyOf(rec,LEN))?"":": "+differ(slot,Arrays.copyOf(rec,LEN))),
                         Arrays.equals(slot,Arrays.copyOf(rec,LEN)));

@@ -21,6 +21,7 @@
 // pitch, which would transpose the whole run by however that pad is set.  Off
 // adds neither term.
 //   index  = (raw + 120) * 12 / 484     integer divide, clamped at 0x4d
+//                                       (0x4e since 3.2: the table has 80 entries)
 //   output = table[index], interpolated towards table[index+1] by the remainder
 //
 // Which is why notes 24 to 88 are the sweep: they land on table entries 3 to
@@ -111,16 +112,16 @@
     // Firmware with calibration mode plays the table itself.  NRPN 0x3f05
     // with 0x2a2a turns it on (SETTINGSMIDI.calibrationMode), and while it
     // is on the pitch output is exactly mirror[note - 21] for the last
-    // note-on on the instrument's channel, clamped to entries 0..78.  None
+    // note-on on the instrument's channel, clamped to entries 0..79.  None
     // of the arithmetic above applies: no key table, no remap and no lean,
     // and nothing added - no transposition, pads, tuning slot, glide or
     // vibrato - with the arpeggiator and the sequencer silent.  So every one
-    // of the 79 entries is reachable, notes 21 to 99, one apiece, and the
-    // bottom C is still note 24 on entry 3.  A pitch-table write (NRPN
+    // of the 80 entries is reachable, notes 21 to 100, one apiece (entry 79,
+    // E6, since 3.2), and the bottom C is still note 24 on entry 3.  A pitch-table write (NRPN
     // 0x0080 + entry) lands in the live mirror at once, so the next note
     // plays it.  The mode ends after five seconds without a note-on, on a
     // key press, and on boot.
-    var MODE_FIRST_NOTE = 21, MODE_ENTRIES = 79;
+    var MODE_FIRST_NOTE = 21, MODE_ENTRIES = 80;
     function modeEntryFor(note) {
         var index = note - MODE_FIRST_NOTE;
         if (index < 0 || index >= MODE_ENTRIES) return null;
@@ -552,20 +553,23 @@
     //
     // `opts.mode`, { on, off }: the instrument is in calibration mode for
     // the run (above).  Notes map straight to entries, `low` and `high` can
-    // reach all 79, and the anchor is entry 3 whatever the range.  on() goes
-    // out before every note-on, not once: the mode lapses after five seconds
-    // without a note-on on the instrument's channel, and an Auto search
-    // spends longer than that playing on the others - so a single on()
-    // left everything after it played through the pads and the
+    // reach all 80 (an instrument before 3.2 holds 79, and the page's run
+    // on one stops at 78), and the anchor is entry 3 whatever the range.
+    // on() goes out before every note-on, not once: the mode lapses after
+    // five seconds without a note-on on the instrument's channel, and an
+    // Auto search spends longer than that playing on the others - so a
+    // single on() left everything after it played through the pads and the
     // transposition, which is a plausible, wrong table.  off() goes out once
     // the run ends, however it ends - done, failed, stopped, or the page
     // going away - and only if on() ever did.
     //
     // `opts.adjust`, { table, write(entry, value) -> Promise, countsPerCent,
     // reference, playing }: converge each entry instead of only reading it.
-    // `table` is the 79 entries the run starts from, `write` puts one into
-    // the instrument's live mirror, and countsPerCent is the DAC counts that
-    // move the ramp a cent (BUILDLIB.pitchCountsPerCent).  A note more than
+    // `table` is the entries the run starts from, as many as the instrument
+    // holds - 80, or 79 before 3.2 - and its last is the top: nothing past
+    // it bounds the run.  `write` puts one into the instrument's live
+    // mirror, and countsPerCent is the DAC counts that move the ramp a cent
+    // (BUILDLIB.pitchCountsPerCent).  A note more than
     // half a count out is moved by its reading and played again, up to
     // ADJUST_TRIES times and past that while it is still closing in, and
     // the closest value is the one kept.  The result carries `table`, and

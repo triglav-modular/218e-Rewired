@@ -81,12 +81,41 @@ def test_pitch_table(cfg: dict) -> None:
     raises("only the two layouts are accepted",
            lambda: B.pitch_table(c_cfg, offsets), "must be 3 or 0")
 
+    # A table that stops at semitone 78, D#6, as every table before 3.2 did,
+    # gets E6 the way the firmware fills in a 79-entry table: the row under
+    # it plus the step to it.  The shipped table's own 80th row is exactly
+    # that, so the shipped table without it builds the same curve.  A row
+    # fewer, or a gap anywhere, D#6 included, is still refused.
     header = "Semitone;Note;Key;Offset_Cents;Source\n"
-    short = header + "".join(f"{i};;;0.0;t\n" for i in range(61))
-    raises("short table rejected", lambda: B.read_calibration(tmp(short, "_short.csv")),
+    short = header + "".join(f"{i};;;0.0;t\n" for i in range(78))
+    raises("a table of 78 rows is refused", lambda: B.read_calibration(tmp(short, "_short.csv")),
            "firmware reads")
     gap = header + "".join(f"{i};;;0.0;t\n" for i in range(80) if i != 40)
     raises("gapped table rejected", lambda: B.read_calibration(tmp(gap, "_gap.csv")), "no gaps")
+    under = header + "".join(f"{i};;;0.0;t\n" for i in range(80) if i != 78)
+    raises("a gap at D#6 is refused, not filled in",
+           lambda: B.read_calibration(tmp(under, "_gap78.csv")), "no gaps")
+
+    def read_or_refusal(path: Path) -> dict:
+        try:
+            return B.read_calibration(path)
+        except ValueError as exc:
+            return {"refused": str(exc)}
+
+    shipped = REPO / "calibration" / "218e-pitch-calibration.csv"
+    want = B.read_calibration(shipped)
+    got = read_or_refusal(tmp("".join(ln for ln in shipped.read_text().splitlines(keepends=True)
+                                      if not ln.startswith("79;")), "_79.csv"))
+    check("a table that stops at D#6 gets E6 from the step under it: the shipped table's 80th row",
+          sorted(got) == list(range(80)) and got[79] == 2 * got[78] - got[77]
+          and all(abs(got[s] - want[s]) < 1e-9 for s in range(80)),
+          str(got.get("refused", got.get(79))))
+    check("and builds the shipped table's curve",
+          "refused" not in got and B.pitch_table(cfg, got) == B.pitch_table(cfg, want))
+    old = read_or_refusal(REPO / "calibration" / "218e-pitch-calibration-2026-09-13.csv")
+    check("the tracked 79-row table of 2026-09-13 reads whole, E6 added the same way",
+          sorted(old) == list(range(80)) and old[79] == 2 * old[78] - old[77],
+          str(old.get("refused", "")))
 
 
 def test_scala() -> None:
@@ -2170,7 +2199,7 @@ def test_settings_record() -> None:
     numbers = {"chord_hold_scans": 200, "transpose_cv_period": 819,
                "transpose_cv_hysteresis": 12}
     tables = {
-        "pitch_remap": [485 + 40 * i for i in range(79)],
+        "pitch_remap": [485 + 40 * i for i in range(80)],
         "tuning_slot0": [500 + 40 * k for k in range(32)],
         "tuning_slot1": [510 + 40 * k for k in range(32)],
         "tuning_slot2": [520 + 40 * k for k in range(32)],
@@ -2236,7 +2265,7 @@ def test_settings_record() -> None:
           back["pitch_remap"] == tables["pitch_remap"]
           and back["tuning_slot2"] == tables["tuning_slot2"]
           and back["tuning_period_keys"] == [12, 12, 7])
-    check("the pad after the 79 pitch entries is zero", rec[0xfe:0x100] == b"\0\0")
+    check("the 80th pitch entry lands where the pad was", rec[0xfe:0x100] == bytes([(485 + 40 * 79) >> 8, (485 + 40 * 79) & 0xff]))
     check("pattern masks keep the table's low-first halfword pairs",
           rec[0x1c8:0x1d0] == bytes.fromhex("1234abcd00018000") and rec[0x1d0:0x248] == bytes(0x78),
           rec[0x1c8:0x1d0].hex())
@@ -2257,11 +2286,11 @@ def test_settings_record() -> None:
     raises("a number past its range is refused",
            lambda: S.record({"tie_glide_rate": 1025}, tables, True, 0, 484), "1..1024")
     raises("a pitch entry past the DAC is refused",
-           lambda: S.record(numbers, dict(tables, pitch_remap=[0x1000] * 79), True, 0, 484),
+           lambda: S.record(numbers, dict(tables, pitch_remap=[0x1000] * 80), True, 0, 484),
            "pitch_remap[0]")
     raises("a short pitch table is refused",
-           lambda: S.record(numbers, dict(tables, pitch_remap=[1] * 78), True, 0, 484),
-           "79 entries")
+           lambda: S.record(numbers, dict(tables, pitch_remap=[1] * 79), True, 0, 484),
+           "80 entries")
     raises("a period of zero keys is refused",
            lambda: S.record(numbers, dict(tables, tuning_period_keys=[0, 12, 12]), True, 0, 484),
            "1..127")

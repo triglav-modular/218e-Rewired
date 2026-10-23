@@ -111,7 +111,7 @@ vm.runInContext([
     // stubbed, the run the test's (CALIBRATE.Sweep below).  What a run tuned
     // goes into the page as loadPitchTable puts it there: a calibration that
     // builds that table, which the page's options then carry.
-    'var vpo = 1.2, TABLE_ENTRIES = 79, warmed = null, chanFor = {};',
+    'var vpo = 1.2, TABLE_ENTRIES = 80, warmed = null, chanFor = {};',
     'function listMidi() {} function listAudio() {} function listChannels() {}',
     'function applyMidiPick() {} function keepWarm() {} function autoNote() {} function noteProgress() {}',
     'function sweepOptions(chosen) { return { output: chosen, channel: 2 }; }',
@@ -135,7 +135,7 @@ function same(a, b) {
 // A calibration with one entry moved.
 function correction(moves) {
     var rows = [];
-    for (var s = 0; s < 79; s++) rows.push({ semitone: s, cents: moves[s] || 0 });
+    for (var s = 0; s < 80; s++) rows.push({ semitone: s, cents: moves[s] || 0 });
     return rows;
 }
 
@@ -144,7 +144,10 @@ function correction(moves) {
 // flash, a reload puts the flash back, a dump answers with every parameter,
 // the live option bytes and the identity block, and a restart copies the
 // cells to the live bytes.  It starts holding `record`, committed and booted.
-function fakeInstrument(record, id, name) {
+// `version`, the firmware it reports, is the page's unless given; one before
+// 3.2.0 has 79 pitch entries, so it dumps no 0x00cf and takes none.
+function fakeInstrument(record, id, name, version) {
+    var code = B.versionCode(version || page.GEN.version), short = code < 0x320;
     var inst = {
         mirror: record.slice(), flash: record.slice(), live: [], marker: M.markerOf(record),
         state: 2, slot: 0, generation: 1, received: [], restarts: 0, drop: null, mute: false
@@ -157,7 +160,7 @@ function fakeInstrument(record, id, name) {
         });
     }
     function identityBlock() {
-        reply(0x3f76, B.versionCode(page.GEN.version));   // the image this page builds
+        reply(0x3f76, code);   // the image this page builds, unless given
         reply(0x3f77, inst.marker >>> 14); reply(0x3f78, 484); reply(0x3f79, inst.slot); reply(0x3f7a, inst.state);
         reply(0x3f7b, Math.floor(inst.generation / 268435456) & 0xF);
         reply(0x3f7c, Math.floor(inst.generation / 16384) & 0x3FFF);
@@ -175,7 +178,7 @@ function fakeInstrument(record, id, name) {
             if (got.param === 0x3f00) { if (got.value === 0x2a2a) inst.state = 1; return; }
             if (got.param === 0x3f01) { inst.mirror = inst.flash.slice(); return; }
             if (got.param === 0x3f03) {
-                var params = B.nrpnParamsOf(inst.mirror);
+                var params = B.nrpnParamsOf(inst.mirror).filter(function (p) { return !short || p[0] !== 0xcf; });
                 params.slice(0, 32).forEach(function (p) { reply(p[0], p[1]); });
                 inst.live.forEach(function (b, i) { reply(0x20 + i, b); });
                 params.slice(32).forEach(function (p) { reply(p[0], p[1]); });
@@ -190,6 +193,7 @@ function fakeInstrument(record, id, name) {
             }
             if (got.param >= 0x3f00) return;
             if (got.param >= 0x20 && got.param < 0x30) return;   // read-only
+            if (got.param === 0xcf && short) return;
             B.nrpnApply(inst.mirror, got.param, got.value);
         }
     };
@@ -310,7 +314,7 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     check('while the send runs the card stays up', up() && page.unsent.sending);
     await T.run(SENT_WAIT - 1);
     check('Send settings sends the whole record, saves it and restarts the keyboard',
-          pushedSince(kb, at).length === 338 && countSince(kb, at, 0x3f00) === 1 && kb.restarts === restarts + 1
+          pushedSince(kb, at).length === 339 && countSince(kb, at, 0x3f00) === 1 && kb.restarts === restarts + 1
           && same(kb.flash, bytesOf(page.opts)), pushedSince(kb, at).length + ' pushed');
     check('then the card says so, and no longer that anything is unsent',
           up() && !headShown() && kbdMsg().text ===
@@ -484,6 +488,41 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
           && said([v[0] + 1, 0, 0].join('.')) === 'This keyboard runs Rewired ' + (v[0] + 1) + '.0; this page is ' +
           v[0] + '.' + v[1] + '. Reload the page.', said('2.4.0'));
 
+    // --- a keyboard on 3.1 ------------------------------------------------------------------
+    // Every firmware from 3.0 on is read.  3.1 dumps 79 pitch entries, and
+    // the read used to refuse it as incomplete for the 80th.
+    var old31 = bytesOf(held); old31[0x10] ^= 0x02;
+    B.nrpnApply(old31, 0xcf, 0);
+    var kb31 = fakeInstrument(old31, 'kbd31', '218e on 3.1', '3.1.0');
+    page.kbd.outputs.push(kb31.output); page.kbd.inputs.push(kb31.input);
+    run('$("kbdLoadPort").value = "kbd31"; $("calMidi").value = "kbd31";');
+    page.nextLoad = clone(held);
+    run('readFrom(keyboardPorts())');
+    await T.run();
+    check('a 3.1 keyboard is read, and told it needs this page\u2019s firmware for a send',
+          page.nodes.kbdLoadMsg.kind === 'warn' && page.nodes.kbdLoadMsg.text ===
+          'Keyboard settings loaded successfully. This keyboard runs Rewired 3.1; this page builds ' +
+          run('shown(GEN.version)') + '. ' + flashLine, page.nodes.kbdLoadMsg.text);
+    // A run on it stops under the 80th entry, which 3.1 neither plays nor
+    // takes, and the page's 80th comes from the tuned 77 and 78.  The run
+    // is the test's here, so what it sends is not: web/test_sweep.js plays
+    // one on a 79-entry keyboard.
+    var t31 = B.settingsFields(old31).pitch_remap.slice(0, 79);
+    t31[77] += 3; t31[78] += 6; t31.push(4000);
+    measure();
+    await T.run();
+    var o31 = runs[runs.length - 1].o;
+    check('a calibration run on 3.1 tunes entries up to 78 only, from the 79 it holds',
+          o31.high === 78 && o31.adjust.table.length === 79,
+          o31.high + ', ' + o31.adjust.table.length + ' entries');
+    ends(t31.slice());
+    await T.run();
+    var want31 = t31.slice(0, 79).concat([2 * t31[78] - t31[77]]);
+    check('and the page\u2019s 80th entry is filled in from the tuned 77 and 78', sameTable(pageTable(), want31),
+          JSON.stringify(pageTable().slice(76)));
+    run('$("kbdLoadPort").value = "kbd"; $("calMidi").value = "kbd"; unsentOff();');
+    page.opts = clone(held);
+
     // --- a read that fails ------------------------------------------------------------------
     await read();
     change({ pitch_correction: correction({ 20: 5, 30: -4, 40: 7, 50: 3, 62: 9 }) });
@@ -542,7 +581,7 @@ var UNSENT_WAIT = run('UNSENT_CHECK_MS'), SENT_WAIT = run('SENT_LINGER_MS');
     await T.run(60);                               // past the paint wait: the push is under way
     check('while a send has the port, Start measuring is held',
           heldBy() === 'send' && buttons() === 'true,true,true' && pushedSince(kb, at).length > 0 &&
-          pushedSince(kb, at).length < 338, heldBy() + ' ' + buttons() + ', ' + pushedSince(kb, at).length + ' pushed');
+          pushedSince(kb, at).length < 339, heldBy() + ' ' + buttons() + ', ' + pushedSince(kb, at).length + ' pushed');
     measure();                                     // a press that got past the button
     await T.run();
     check('and a press starts no run: the send lands, and gives the port back',

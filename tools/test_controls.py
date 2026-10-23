@@ -147,6 +147,15 @@ CHECKS: dict[str, tuple[str, ...]] = {
     "padFlipLands": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
     "floorAnchorHandover": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
     "transposedFloorAnchor": ('default', 'roles', 'tuned', 'jack', 'kbm', 'offset-off'),
+    "padOctaveMode": ('default', 'roles', 'tuned', 'lean', 'jack', 'kbm', 'offset-off'),
+    "midiPressure": ('default', 'roles', 'tuned', 'lean', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
+    "seqChordDip": ('default', 'roles', 'tuned', 'lean', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
+    "latchStateDip": ('default', 'roles', 'tuned', 'lean', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
+    "seqHoldDip": ('default', 'roles', 'tuned', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
+    "presetEditDip": ('default', 'roles', 'tuned', 'lean', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
+    "latchSaveDip": ('default', 'roles', 'tuned', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
+    "seqBareUnderPad4": ('default', 'roles', 'tuned', 'jack', 'swing', 'patterns', 'kbm', 'offset-off'),
+    "knob4TrnDip": ('roles', 'tuned', 'lean', 'jack', 'swing', 'patterns'),
 }
 
 # Each check's emulation time under one configuration, in seconds, the most
@@ -167,6 +176,7 @@ SECONDS: dict[str, float] = {
     "latchedOrders": 7.0,
     "latchExitHold": 4.0,
     "latchTransposeState": 14.0,
+    "padOctaveMode": 26.0,
     "latchStackMidi": 1.0,
     "latchHoldMidi": 4.0,
     "latchAfterMidi": 2.0,
@@ -217,6 +227,14 @@ SECONDS: dict[str, float] = {
     "padFlipLands": 29.0,
     "floorAnchorHandover": 5.0,
     "transposedFloorAnchor": 38.0,
+    "midiPressure": 2.0,
+    "seqChordDip": 2.0,
+    "latchStateDip": 4.0,
+    "seqHoldDip": 2.0,
+    "presetEditDip": 1.0,
+    "latchSaveDip": 3.0,
+    "seqBareUnderPad4": 1.0,
+    "knob4TrnDip": 1.0,
 }
 JOB_SECONDS = 120.0
 

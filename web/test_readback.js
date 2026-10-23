@@ -116,9 +116,9 @@ vm.runInContext([
     'var state = { patterns: [], slots: [null, null, null], numbers: null, factoryText: null };',
     'var knobRole = { knob1: "order", knob2: "spacing", knob3: "octaves", knob4: "vibrato" };',
     'var vpo = 1.2, pitchOffset = true, nodes = {};',
-    'var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;',
+    'var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 80;',
     'var measured = [], baseline = {}, baselineSources = {}, baselineName = "", baselineHistory = null, interpolated = {};',
-    'for (var i = 0; i < 79; i++) measured.push(0);',
+    'for (var i = 0; i < 80; i++) measured.push(0);',
     'function $(id) { return nodes[id] || (nodes[id] = { checked: false }); }',
     'function tick(id, v) { $(id).checked = !!v; }',
     'function press(id, v) { if (id === "vpo") vpo = Number(v); else if (id === "offset") { var on = v === "1"; if (on !== pitchOffset) { pitchOffset = on; PLAYABLE_LOW = on ? 3 : 0; PLAYABLE_HIGH = PLAYABLE_LOW + 64; if (haveBaseline()) clearBaseline(); } } else knobRole[id] = v; }',
@@ -210,7 +210,7 @@ readThenBuild(plainRec);
 check('an uncorrected keyboard read back is not a correction',
       vm.runInContext('calibrationInBuild()', page) === false);
 var bent = [];
-for (var s = 0; s < 79; s++) bent.push({ semitone: s, cents: s < 3 || s > 66 ? 0 : (s % 7) - 3 });
+for (var s = 0; s < 80; s++) bent.push({ semitone: s, cents: s < 3 || s > 66 ? 0 : (s % 7) - 3 });
 var corrected = bytesOf(WEBBUILD.build({ pitch_correction: bent }, factory).settings);
 got = readThenBuild(corrected);
 check('a corrected one is, and its table comes back as it was',

@@ -94,8 +94,10 @@ Everything the build produces lands in `build/` and is not tracked:
   octave, needs a .kbm keyboard map beside it saying which degree each key
   plays.  The octave controls then step that period rather than an octave,
   and every slot has to agree about it, since there is one set of them;
-- the pitch calibration covers every semitone the firmware reads (0..78), so
-  a short table cannot leave assembler padding to be read as pitch.
+- the pitch calibration covers every semitone the firmware reads (0..79), so
+  a short table cannot leave assembler padding to be read as pitch. A table
+  that ends at semitone 78 (D#6) gets semitone 79 (E6) from the step under
+  it, the way the firmware fills in a 79-entry table.
 
 Any failure stops the build without writing firmware: the image is rendered
 and checked in memory — including `--expect-sha` — and only written once every
@@ -325,10 +327,10 @@ operating point and its error is not the same curve. Set `volts_per_octave` to
 match your 208 first, then measure against that.
 
 The quickest way to calibrate your own is the builder page, which does the
-measuring itself: it plays C0 to E5 into the keyboard over MIDI, listens to the
-208 on an audio input, and folds the readings onto whatever table the
-instrument is already running. Load that table there first, and save the new
-one it produces &mdash; the file it writes is the same format this reads.
+measuring itself: it plays C0 to E6 into the keyboard over MIDI, listens to the
+208 on an audio input, and tunes each note of the table the instrument is
+running until it plays in tune. The table it saves is the same format this
+reads.
 Switching the page's volts per octave or its pitch offset drops a loaded
 table. It belongs to the scaling and the layout it was taken at. The page
 says so on the calibration line.
@@ -478,7 +480,15 @@ that each MIDI note names the note its pitch CV plays: a latched note at
 the octave it was entered at, and in HOLD at the degree of a quantised
 preset it was entered under, a recorded step at the octave it was played
 at, a preview pinned as its CV is, and a key played over a take at its own
-note. Each note is named in one sum and held to 0..127 once. The helpers
+note. The pad octave mode is driven through its gesture: a second tap of
+pad 4 within the window puts a period under the pads on the CV, the
+transpose term and MIDI when the pad is released, the pad flashes, a held
+key's MIDI note is retuned with its CV, the window closes on its own and
+when another pad is selected, a hold of the pad as long as the chord's or
+with its knob moved is not a tap, two pads down are another gesture, a
+double tap of pad 1 takes it away, edit mode and the switch off octaves
+leave it alone, a latched note in HOLD stays put, and the mode saves at
+the next scan and survives a power cycle. Each note is named in one sum and held to 0..127 once. The helpers
 that name one are swept over the key, the periods, the jack's degrees and
 a step's degrees, and the paths are driven where part of a note falls under
 0 or over 127 before the rest goes on. MIDI notes 0..127 are played in, and
@@ -744,7 +754,14 @@ Click that name to open it, then **Edit code**. (The same worker is also under
 **2. Replace the code** with `deploy/worker.js` from this repository, which is
 kept as the source of truth for what is pasted in there.
 
-It differs from the plain proxy in three ways.
+It differs from the plain proxy in four ways.
+
+*Plain http moves to https with a 301.* The route matches both schemes, and
+the zone does not redirect this path before the worker runs, so without it the
+page answers at a second address that search engines keep. Only GET and HEAD
+move: the page posts its beacons relative to itself, so a page loaded over http
+posts over http, and a browser follows a 301 on a POST as a GET, which the
+beacon refuses.
 
 *The page is marked `no-cache`.* Not `no-store`: the browser still keeps it and
 still revalidates, so an unchanged page costs a 304 rather than a download.

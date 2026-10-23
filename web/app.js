@@ -62,7 +62,7 @@
     // from C, so there the bottom key IS semitone 0.  Keys are numbered from
     // 1 — the three different ways the CSV let you name a row, and the
     // reason this shows all of them.
-    var pitchOffset = true;
+    var pitchOffset = false;
     var NAMES_A = ['A','A#','B','C','C#','D','D#','E','F','F#','G','G#'];
     var NAMES_C = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     function noteNames() { return pitchOffset ? NAMES_A : NAMES_C; }
@@ -86,7 +86,7 @@
     // so neither can be played or measured.  They are filled in from the
     // ends of the measured range instead of being offered as boxes nobody
     // can fill.  Without the offset the same 65 notes start at semitone 0.
-    var PLAYABLE_LOW = 3, PLAYABLE_HIGH = 67, TABLE_ENTRIES = 79;
+    var PLAYABLE_LOW = 0, PLAYABLE_HIGH = 64, TABLE_ENTRIES = 80;
     function setPitchOffset(on) {
         if (on === pitchOffset) return;
         var from = PLAYABLE_LOW;
@@ -749,8 +749,24 @@
     clearBaseline();
     function haveBaseline() { return !!baselineName; }
 
+    // What the boxes and the plot show, per semitone.  With a table loaded -
+    // the keyboard's, a tuning run's or a file's - and no readings loaded on
+    // top, they show the offsets that table holds, and a box edits its own
+    // entry: a tuning run tunes in one pass, so readings typed on top of a
+    // table are no longer how a table is made (the owner, 2026-10-07).  Zero
+    // boxes after a run read as a run that found nothing (the owner,
+    // 2026-10-01).  Readings otherwise: what each note played, on a page with
+    // no table loaded, or loaded from a readings file.
+    function showsTable() {
+        return haveBaseline() && !measured.some(function (v) { return v !== 0; });
+    }
+    function shownCents() {
+        if (!showsTable()) return measured;
+        return measured.map(function (v, n) { return baseline[n] || 0; });
+    }
+
     function drawPlot() {
-        var play = measured.slice(PLAYABLE_LOW, PLAYABLE_HIGH + 1);
+        var play = shownCents().slice(PLAYABLE_LOW, PLAYABLE_HIGH + 1);
         var svg = $('calPlot'), lo = Math.min.apply(null, play),
             hi = Math.max.apply(null, play);
         if (hi - lo < 1) { lo -= 1; hi += 1; }
@@ -792,7 +808,14 @@
     function buildTable() {
         var kbd = $('calKeys');
         kbd.innerHTML = '';
-        var whites = 0;
+        var whites = 0, table = showsTable(), cents = shownCents();
+        // Offsets and readings have opposite signs: a note that played five
+        // cents sharp gets an offset of minus five.
+        $('calKeysHint').innerHTML = table
+            ? '<strong>The offset each note gets, in cents.</strong><br>Positive raises ' +
+              'the pitch, negative lowers it. A tuning run fills these in. Scroll for the full range'
+            : '<strong>What each note played, in cents.</strong><br>Positive for sharp, ' +
+              'negative for flat. Scroll for the full range';
         for (var n = PLAYABLE_LOW; n <= PLAYABLE_HIGH; n++) {
             (function (n) {
                 var black = noteNames()[n % 12].indexOf('#') >= 0;
@@ -811,13 +834,27 @@
                 var input = document.createElement('input');
                 input.type = 'number';
                 input.step = '0.01';
-                input.value = measured[n].toFixed(2);
+                input.value = cents[n].toFixed(2);
                 input.title = noteName(n) + ', key ' + keyLabel(n);
-                if (measured[n] !== 0) input.className = 'set';
+                if (cents[n] !== 0) input.className = 'set';
                 input.addEventListener('change', function () {
-                    measured[n] = parseFloat(input.value) || 0;
-                    delete interpolated[n];
-                    input.className = measured[n] !== 0 ? 'set' : '';
+                    var v = parseFloat(input.value) || 0;
+                    if (table) {
+                        // The offset itself, so the note is no longer one
+                        // the run carried across from its neighbours, and a
+                        // loaded file's record of the reading behind it no
+                        // longer describes it.
+                        baseline[n] = v;
+                        delete baselineSources[n];
+                        if (baselineHistory) {
+                            delete baselineHistory.read[n];
+                            delete baselineHistory.against[n];
+                        }
+                    } else {
+                        measured[n] = v;
+                        delete interpolated[n];
+                    }
+                    input.className = v !== 0 ? 'set' : '';
                     drawPlot(); validateCal();
                     saveSoon();
                     if ($('useCal').checked) invalidate();
@@ -902,16 +939,10 @@
             .map(function (v, i) { return { semitone: i, cents: v }; });
     }
 
+    // The keys show a loaded table (showsTable), so nothing else says one is
+    // loaded; Forget loaded table is there only when one is.
     function syncBaseline() {
-        var el = $('calBase');
-        if (!el) return;
-        el.textContent = haveBaseline()
-            ? 'Measuring on top of ' + baselineName +
-              ' \u2014 new readings accumulate onto it.'
-            : 'No table loaded: readings are taken as a first calibration of an ' +
-              'uncorrected instrument.';
-        el.classList.toggle('set', haveBaseline());
-        $('calBaseClear').disabled = !haveBaseline();
+        if ($('calBaseClear')) $('calBaseClear').disabled = !haveBaseline();
     }
 
     function syncCalBody() {
@@ -959,8 +990,8 @@
             '# Offset_Cents is the correction the firmware applies: how far each',
             '# semitone is pushed from an ideal ramp.  Positive raises the pitch.',
             '# This is a TABLE, not a set of readings - keep it beside the image you',
-            '# flash, and load it back here before measuring again so the next round',
-            '# accumulates onto it instead of replacing it.',
+            '# flash.  Load it back here to build that image again or to edit it note',
+            '# by note; a readings file loaded on top of it folds onto it.',
             '#',
             '# Source "interpolated" means the sweep never heard that note and',
             '# carried it across from its neighbours: it is a guess, worth checking',
@@ -992,9 +1023,12 @@
         download(calibrationCsv(), CAL_CSV_NAME, 'text/csv');
     });
 
+    // The keys too.  Left as they were, they showed the forgotten table's
+    // offsets, and a box typed into edited the cleared table: an offset no
+    // box showed and every build applied.
     $('calBaseClear').addEventListener('click', function () {
         clearBaseline();
-        syncBaseline(); drawPlot(); validateCal(); invalidate();
+        syncBaseline(); buildTable(); drawPlot(); validateCal(); invalidate();
         msg($('calMsg'), '', 'Forgotten. Readings now build a first calibration of an ' +
             'uncorrected instrument.');
     });
@@ -1040,6 +1074,10 @@
                     msg($('calMsg'), 'bad', BUILDLIB.calibrationTwice(f.name, parsed.twice));
                     return;
                 }
+                // A table that stops at D#6, as every table before 3.2 did,
+                // gets E6 the way the firmware fills in a 79-entry table's,
+                // and the way tools/build.py reads the same file.
+                BUILDLIB.extendCalibration(parsed, TABLE_ENTRIES);
                 // A table is a baseline only if it is a whole one.  A partial
                 // file would leave the rest of the instrument's correction at
                 // zero, which is not "unknown" - it is "no correction", and
@@ -1074,8 +1112,7 @@
             syncCalBody(); syncBaseline();
             buildTable(); drawPlot(); validateCal(); invalidate();
             msg($('calMsg'), 'ok', isCorrection
-                ? 'Loaded ' + f.name + ' as the table already on the instrument. ' +
-                  'Anything measured now accumulates onto it.' +
+                ? 'Loaded ' + f.name + ' as the table already on the instrument.' +
                   (clearedReadings ? ' The readings that were entered have been ' +
                    'cleared: they were taken against whatever was flashed at the ' +
                    'time, which this file now says. Measure again.' : '')
@@ -1214,8 +1251,9 @@
         if (logRuns.length) {
             out.push('# Each run in this log: its rows, counted from 1 under the column names;',
                      '#       the table it started from, the one the keyboard held or the flat',
-                     '#       one at the volts per octave set on the page; and the 79 DAC',
-                     '#       values of that table, entry 0 first.');
+                     '#       one at the volts per octave set on the page; and the DAC',
+                     '#       values of that table, one for each entry the keyboard holds,',
+                     '#       entry 0 first.');
         }
         logRuns.forEach(function (run, k) {
             out.push('# run ' + (k + 1) + ': rows ' + run.first + ' to ' + run.last +
@@ -2281,30 +2319,46 @@
                                     pitch_offset: was.pitch_offset });
         var bottom = cfg.pitch.bottom_key_semitone;
         var o = sweepOptions(chosen);
-        // Every entry that holds an offset: all 79 with the pitch offset.
+        // Every entry that holds an offset: all 80 with the pitch offset, on a
+        // keyboard that holds 80.
         // Without it the three under the bottom key sit at 0 V and are not
         // offsets (BUILDLIB.pitchTable), so they are left as they are.
         // `low` is the 0 V entry, semitone 0, which the run holds at 0
         // counts and tunes everything else against.
         o.low = CALIBRATE.entryForSemitone(0, bottom);
-        o.high = TABLE_ENTRIES - 1;
+        // Firmware before 3.2 neither plays nor takes the 80th entry, E6.
+        // The run has only the entries the keyboard holds, so it stops
+        // under E6, and the E6 the read filled in, which is not the
+        // keyboard's, bounds nothing in it: not D#6's ceiling, not a lift's
+        // roof, not a gap filled in under it, and no write goes to it.  The
+        // entry is filled in afterwards from the tuned ones below it, the
+        // way 3.2 fills it at boot.
+        var entries = r.pitchEntries || TABLE_ENTRIES;
+        o.high = entries - 1;
         o.mode = {
             on: function () { SETTINGSMIDI.calibrationMode(chosen, true); },
             off: function () { SETTINGSMIDI.endCalibration(chosen); }
         };
         o.adjust = {
-            table: start, countsPerCent: BUILDLIB.pitchCountsPerCent(cfg), reference: o.low,
+            table: start.slice(0, entries), countsPerCent: BUILDLIB.pitchCountsPerCent(cfg),
+            reference: o.low,
             write: function (entry, value) { return SETTINGSMIDI.writePitch(chosen, entry, value); }
         };
-        if (start !== held) o.adjust.playing = held;
+        if (start !== held) o.adjust.playing = held.slice(0, entries);
         o.onNote = noteProgress;
-        // The log's rows, each with this run: the table it starts from,
-        // whether that is the keyboard's, and its scaling, which the saved
-        // file's header says (logRuns).
-        var logRun = { table: start.slice(), held: start === held, vpo: was.volts_per_octave };
+        // The log's rows, each with this run: the table it starts from, the
+        // entries the keyboard holds as the run has them, whether that is
+        // the keyboard's, and its scaling, which the saved file's header
+        // says (logRuns).
+        var logRun = { table: start.slice(0, entries), held: start === held,
+                       vpo: was.volts_per_octave };
         o.onReading = function (row) { pushLog(row, logRun); };
         sweep = new CALIBRATE.Sweep(o);
         return sweep.run().then(function (out) {
+            if (entries < TABLE_ENTRIES) {
+                out.table[TABLE_ENTRIES - 1] = 0;
+                BUILDLIB.extendPitchTable(out.table);
+            }
             loadPitchTable(out.table, was, 'the tuned table', runSources(out.readings, bottom));
             var heard = out.readings.filter(function (x) { return x.cents !== null; });
             autoNote('');
@@ -2596,7 +2650,8 @@
             'Scaling: ' + o.volts_per_octave + ' V/octave',
             // No brackets: echoed by both flashers, see the tunings line.
             'Pitch offset: ' + (o.pitch_offset === false
-                ? 'none - 208c' : '3 semitones - 208, 208r, 208p'),
+                ? 'none - 208 tuned to 32.7 Hz'
+                : '3 semitones - 208 tuned to 55 Hz'),
             'Oscillator correction: ' + (o.pitch_correction ? 'applied' : 'off'),
             'Preset voltages: ' + (o.quantize_presets
                 ? 'quantized to the tuning when added to pitch' : 'not quantized'),
@@ -2920,9 +2975,6 @@
     // with.  The patch number and the build's own fingerprint belong on the
     // build result, not in the masthead.
     $('ver').textContent = GEN.version.split('.').slice(0, 2).join('.');
-    // The version a keyboard has to run for a send to land, shown as the
-    // masthead's is.
-    ['kbdNeedsLoad'].forEach(function (id) { if ($(id)) $(id).textContent = shown(GEN.version); });
 
     // Each preset knob picks its own role, the same control the volts-per-
     // octave choice uses; None hands that knob back to its preset voltage.
@@ -3264,21 +3316,33 @@
     // a loaded table is: a half-applied one leaves the rest at zero, which is
     // "no correction" rather than "unknown", and the fold would quietly undo
     // what is flashed there.
+    //
+    // Whole is 80 entries, or the 79 every page before 3.2 saved, its table
+    // stopping at D#6.  That one comes back as though saved here with E6
+    // not measured: no reading for it, and the table's E6 the step under
+    // it (BUILDLIB.extendOffsets), which is where the read of a 79-entry
+    // keyboard and the load of a 79-row file put it.  Nothing else a save
+    // holds names E6: the sources, the record and the interpolated marks
+    // are kept as they are.
     function goodCalibration(v) {
         if (!v || typeof v !== 'object') return null;
-        if (!Array.isArray(v.measured) || v.measured.length !== TABLE_ENTRIES) return null;
+        if (!Array.isArray(v.measured)) return null;
+        var kept = v.measured.length;
+        if (kept !== TABLE_ENTRIES && kept !== TABLE_ENTRIES - 1) return null;
         var m = [], i;
-        for (i = 0; i < TABLE_ENTRIES; i++) {
+        for (i = 0; i < kept; i++) {
             if (typeof v.measured[i] !== 'number' || !isFinite(v.measured[i])) return null;
             m.push(v.measured[i]);
         }
+        while (m.length < TABLE_ENTRIES) m.push(0);
         var base = {}, src = {}, marks = {};
         if (v.baseline && typeof v.baseline === 'object') {
-            for (i = 0; i < TABLE_ENTRIES; i++) {
+            for (i = 0; i < kept; i++) {
                 var b = v.baseline[i];
                 if (typeof b !== 'number' || !isFinite(b)) return null;
                 base[i] = b;
             }
+            if (kept < TABLE_ENTRIES) BUILDLIB.extendOffsets(base, TABLE_ENTRIES);
         } else {
             for (i = 0; i < TABLE_ENTRIES; i++) base[i] = 0;
         }
@@ -3292,11 +3356,22 @@
                 if (v.interpolated[k]) marks[k] = true;
             });
         }
+        var name = typeof v.baselineName === 'string' ? v.baselineName : '';
+        var history = v.baselineHistory && typeof v.baselineHistory === 'object'
+            ? v.baselineHistory : null;
+        // No name is no table loaded, and that table is the one
+        // clearBaseline() leaves.  A page whose Forget left the keys showing
+        // the table it had forgotten saved an edit typed there into the
+        // cleared table: an offset no box showed and every build applied.
+        // It goes here, as Forget drops a table.
+        if (!name) {
+            for (i = 0; i < TABLE_ENTRIES; i++) base[i] = 0;
+            src = {};
+            history = null;
+        }
         return {
             measured: m, interpolated: marks, baseline: base, baselineSources: src,
-            baselineName: typeof v.baselineName === 'string' ? v.baselineName : '',
-            baselineHistory: v.baselineHistory && typeof v.baselineHistory === 'object'
-                ? v.baselineHistory : null
+            baselineName: name, baselineHistory: history
         };
     }
 
@@ -3383,7 +3458,25 @@
             all.calibration = saved.calibration;
         }
         all.factory = hex;
+        // A save names the pitch offset only where it was moved off its
+        // page's default.  A calibration of 79 entries was saved by a page
+        // before 3.2, whose default was 3 semitones, so with no offset named
+        // it was made at 3 semitones, where this page restores None (the
+        // owner, 2026-10-23).  It goes back at 3 semitones, and the offset
+        // is then switched to the one restored the way its buttons switch
+        // it (setPitchOffset): the readings move with their keys and a
+        // loaded table is dropped.
+        var restored = all.pitch_offset, madeAt = null;
+        if (saved && saved.calibration && Array.isArray(saved.calibration.measured) &&
+                saved.calibration.measured.length === TABLE_ENTRIES - 1 &&
+                !(saved.options && typeof saved.options === 'object' &&
+                  Object.prototype.hasOwnProperty.call(saved.options, 'pitch_offset'))) {
+            madeAt = '1';
+        }
+        if (madeAt !== null && madeAt !== restored) all.pitch_offset = madeAt;
+        else madeAt = null;
         applyAll(all);
+        if (madeAt !== null) applyAll({ pitch_offset: restored });
     }
 
     // Remembering is meant to be invisible: nothing on the page announces it,

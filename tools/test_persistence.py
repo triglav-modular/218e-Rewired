@@ -59,7 +59,8 @@ MODES: dict[str, dict] = {
 # sequencer off and reads nothing of the divider.
 PERSISTENCE_CHECKS: dict[str, tuple[str, ...]] = {
     "basic": ("seq-clock",), "polySettingsMigration": ("seq-clock",), "relativeSteps": ("seq-clock",),
-    "latchState": ("seq-clock",), "tuningSlot": ("seq-clock",), "stepDegrees": ("seq-clock",),
+    "latchState": ("seq-clock",), "tuningSlot": ("seq-clock",), "padOctaveMode": ("seq-clock",),
+    "stepDegrees": ("seq-clock",),
     "takeReference": ("seq-clock",), "retries": ("seq-clock",), "powerCuts": ("seq-clock",),
     "corruption": ("seq-clock",), "gesturePolicy": ("seq-clock",), "presets": ("seq-clock",),
     "gestures": ("seq-clock",), "playbackSave": ("clock", "seq-clock"),

@@ -68,11 +68,12 @@ CODE_END = 0x8003C000
 # only to say in the build log which note a tuning is anchored to.
 NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 
-# The pitch remap clamps its semitone index to 0x4D and interpolates against
-# index+1, so the calibration table must supply 79 entries.  A shorter table
+# The pitch remap clamps its semitone index to 0x4E and interpolates against
+# index+1, so the calibration table must supply 80 entries, the last E6: the
+# top key with pad 4 one octave up (3.2).  A shorter table
 # would leave the rest of the fixed table area as assembler padding, which the
 # firmware would read as pitch values.
-PITCH_TABLE_ENTRIES = 0x4D + 2
+PITCH_TABLE_ENTRIES = 0x4E + 2
 
 # The pitch remap adds 120 units - three semitones at 484 to the octave -
 # before it reads the table, so the bottom key at the lowest octave position
@@ -683,10 +684,18 @@ def read_calibration(path: Path) -> dict[int, float]:
         raise ValueError(
             f"{path.name}: semitones must run 0..N with no gaps; missing {sorted(missing)[:8]}"
         )
+    # A table that stops at semitone 78, D#6, as every table before 3.2 did,
+    # gets E6 the way the firmware fills in a 79-entry table: the row under
+    # it plus the step to it, in cents, which is the same line as in DAC
+    # counts before rounding.  web/buildlib.js extendCalibration adds the
+    # same row, so the page and this build the same image from such a file.
+    if len(offsets) == PITCH_TABLE_ENTRIES - 1:
+        last = PITCH_TABLE_ENTRIES - 1
+        offsets[last] = 2 * offsets[last - 1] - offsets[last - 2]
     if len(offsets) < PITCH_TABLE_ENTRIES:
         raise ValueError(
             f"{path.name}: {len(offsets)} rows, but the firmware reads {PITCH_TABLE_ENTRIES} "
-            "(semitones 0..78); a shorter table leaves assembler padding to be read as pitch"
+            "(semitones 0..79); a shorter table leaves assembler padding to be read as pitch"
         )
     return offsets
 
@@ -1425,7 +1434,7 @@ RAM_REGIONS = [
     # at boot from the image's own tables, then from the newer valid slot at
     # 0x8003d000/0x8003d800.  See docs/PLAN-SETTINGS.md and tools/settings.py.
     (0x6800, 0x6840, "settings mirror: 32 number cells"),
-    (0x6840, 0x68E0, "settings mirror: pitch curve, 79 halfwords and a pad"),
+    (0x6840, 0x68E0, "settings mirror: pitch curve, 80 halfwords (the 80th was the pad until 3.2)"),
     (0x68E0, 0x69A0, "settings mirror: three tuning tables"),
     (0x69A0, 0x69A8, "settings mirror: keys per period"),
     (0x69A8, 0x6A28, "settings mirror: pattern masks, two halfwords each"),
@@ -1458,12 +1467,13 @@ RAM_REGIONS = [
     # Calibration mode's two cells, both written by the 0x3f05 that turns it
     # on before anything reads them, so neither needs clearing at boot.
     (0x6D40, 0x6D44, "calibration mode: the millisecond count at the last note-on"),
-    (0x6D44, 0x6D45, "calibration mode: the pitch-table entry it plays, 0..78"),
+    (0x6D44, 0x6D45, "calibration mode: the pitch-table entry it plays, 0..79"),
     # Above the declared map, in RAM nothing else reaches: measured on
     # 2026-09-13, the deepest stack across a sounding scan, preset and jack
     # movement, a completed take with its flash save and a cold boot came to
     # 140 bytes below 0x7800, and no byte between 0x6586 and 0x77a3 was
-    # written at all.
+    # written at all.  The pad octave mode took 0x6586..0x6591 on
+    # 2026-10-06.
     (0x6600, 0x6640, "per-step preset degrees: the count each step was recorded under"),
     (0x608E, 0x608F, "latch-position mirror"),
     (0x6090, 0x6091, "tuning slot, persisted: 0..2"),
@@ -1504,6 +1514,18 @@ RAM_REGIONS = [
     # for, which is what the toggle's reference is measured from once the
     # gesture's own pad choice is undone.
     (0x6584, 0x6586, "live transpose shadowed while pads 2-4 are up"),
+    # The pad octave mode: the top key held for latch_state_hold_scans and
+    # pad 4 tapped puts one period under the octave pads; the bottom key and
+    # pad 1 take it away.  The mode comes back from the record's byte 0x1b;
+    # persist_boot zeroes the whole block beside the latch's cells above.
+    (0x6586, 0x6587, "pad octave mode, persisted: 0 the pads as the factory has them, 1 a period up"),
+    (0x6587, 0x6588, "pad octave mode: the pad its acknowledgment flashes"),
+    (0x6588, 0x658A, "pad octave mode: pad 1's window, the scans left for a second tap"),
+    (0x658A, 0x658C, "pad octave mode: pad 4's window, the scans left for a second tap"),
+    (0x658C, 0x658E, "pad octave mode: last scan's touch levels of pads 1 and 4"),
+    (0x658E, 0x658F, "pad octave mode: acknowledgment countdown, in scans"),
+    (0x658F, 0x6590, "pad octave mode: the tap in progress, the pad's index plus one, bit 7 the second tap"),
+    (0x6590, 0x6592, "pad octave mode: the tap's length so far, in scans"),
 ]
 
 # Factory-owned RAM the patches address absolutely.  Not ours to initialise —
@@ -1604,6 +1626,10 @@ FACTORY_CELLS = [
     (0x35CA, 0x35CC, "state+0x6a/0x6b: transpose enable and knob zone"),
     (0x3686, 0x36C0, "per-key raw pressure"),
     (0x377B, 0x3798, "state+0x21b: per-slot held flags"),
+    # The touch scan's own per-key flags: true to the fingers in every arp
+    # position, where the pair above is the latch's.  The pad octave mode's
+    # key holds counted off them until the double tap (2026-10-07).
+    (0x3799, 0x37B6, "state+0x239: per-key touch-scan held flags"),
     # state+0x306: the PORTAMENTO knob, 0..1023.  Six knobs are conditioned
     # together at 0x80007ad8 - portamento, arp rate, and the four preset
     # voltage knobs at 0x30a/0x30c/0x30e/0x310.  The strip is not among them:

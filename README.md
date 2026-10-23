@@ -34,10 +34,10 @@ keyboard.
 
 ### **<https://triglav-modular.github.io/218e-Rewired/>**
 
-The page can also measure your 208 for you: it plays C0 to E5 into the keyboard
-over MIDI, listens on an audio input, and fills in the per-note calibration.
-Readings accumulate onto the table already on the instrument, so a second round
-corrects what is left rather than starting over.
+The page can also tune your 208 for you: it plays C0 to E6 into the keyboard
+over MIDI, listens on an audio input, and tunes each note of the table on the
+instrument until it plays in tune. Send or flash the result; another run starts
+from that table and corrects what is left.
 
 Then run the flasher for your platform from this repository:
 
@@ -64,6 +64,7 @@ after an interrupted flash. The second writes nothing.
 | Portamento | How much pressure a second held note needs to pull pitch toward it. Off at zero; no time-based glide at any setting. |
 | Portamento in banana jack | With `portamento_in = "transpose"`: transposes the keyboard, the sequencer and the MIDI notes by whole degrees of the current tuning, one period of it per 4 V — so the jack’s 0–10 V is about two and a half periods. The pitch ramp’s own scaling does not change it. Otherwise adds to the portamento time, as the factory has it. |
 | Arp switch | latch / regular / off. In latch, keys are toggles. |
+| Octave pads | Tap pad 4 twice, quickly: the octave pads play one octave higher. Tap pad 1 twice to go back. The pad flashes to confirm; the choice is remembered. |
 
 
 

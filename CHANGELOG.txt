@@ -1,3 +1,7 @@
+3.2 (2026-10-23)
+- Tap pad 4 twice, quickly, to play the octave pads one octave higher. Tap pad 1 twice to go back.
+- Fixed MIDI channel pressure being ignored while the pressure response fix is on.
+
 3.1 (2026-09-28)
 - Fixed several pitch and MIDI bugs: received MIDI notes now follow the tuning across their whole range, and poly MIDI plays over a running sequence.
 
