@@ -91,6 +91,35 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   and nothing here is ever tested against hardware.  Archaeology pointers
   are in the plan's DFU section if the owner ever wants it chased.
 
+- **USB MIDI stalls until the keyboard next sends something the host takes.**
+  Factory behaviour, read from the image (2026-10-26) and not yet measured;
+  the assembler patches none of the routines involved. LUFA's endpoint wait
+  (`0x8000d9c4`) sets `0x4718` when the host leaves an IN packet untaken for
+  100 ms and clears it on the next wait that succeeds. The main loop runs
+  its USB task (`0x80007428`: the MIDI receive, the flush, and
+  `USB_USBTask`, the only place control requests are answered) only while
+  `0x4718` is clear (`0x80007c5a`), and the extra call it makes every 8 s
+  (`0x80007d40`) is gated the same way. Only a send reaches the wait again
+  (the stream write `0x8000d214`, the flush `0x8000c670`), so after one
+  untaken packet the keyboard reads no MIDI, answers no control request and
+  cannot enumerate after a replug (a bus reset leaves the flag) until it
+  sends something the host takes, or boots (startup zeroes
+  `0x2ed8..0x4748`). It sends unprompted: the arpeggiation-rate reading
+  (`state+0x308`, `(v+5)>>3`) as CC 16 on channel 16 and PORTAMENTO as CC 5
+  on its own channel whenever the 7-bit value changes
+  (`0x80003284..0x8000333a`), so a reading sitting on a step boundary sends
+  now and then (the gate-2 rig heard CC 16 go 60, 61 on 2026-10-26). This
+  fits the gate-2 rig's deaf keyboard of 2026-10-25/26: dumps of 0
+  parameters, notes and pressure ignored, a replug that never enumerated,
+  recovery by itself after minutes or by a power cycle. Not established:
+  what left the packet untaken; the likely cause is no host client holding
+  the port open (between takes, and in the seconds after a restart).
+  Bench test: with no MIDI client open, nudge ARP RATE, then dump (expect
+  no answer); open the port, touch a key, dump again (expect an answer).
+  Fix candidates, factory code and the owner's call: run the USB task every
+  pass whatever the flag (a stalled flush then costs one frame), and clear
+  the flag at bus reset and SET_CONFIGURATION.
+
 - **Preset/sequence persistence** — on since 2026-08-29, required since
   2026-09-01, and validated on the instrument. The post-audit version
   uses a CRC32 musical-data-only record, verified body followed by a no-erase marker
