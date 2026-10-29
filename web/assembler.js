@@ -1088,6 +1088,13 @@ function assembleProgram() {
         // The pitch table's 80th entry (2026-10-06): settings_copy_top, in
         // settings_reload's place for the record over the mirror.
         var sctEntry = plbEnd, sctStore = sctEntry + 0x2a, sctDone = sctEntry + 0x2c, sctPool = sctEntry + 0x30, sctEnd = sctEntry + 0x40;
+        // USB MIDI read while the host leaves a packet untaken (2026-10-29):
+        // usb_flush_gate, the main loop's USB task's flush held back while
+        // the factory's stall byte stands, and usb_receive_keep, the task's
+        // receive with the byte put back as it found it.  See
+        // usb_task_every_pass.
+        var ufgEntry = sctEnd, ufgSkip = ufgEntry + 0x10, ufgPool = ufgEntry + 0x14, ufgEnd = ufgEntry + 0x18;
+        var urkEntry = ufgEnd, urkPool = urkEntry + 0x18, urkEnd = urkEntry + 0x1c;
 
         // Ordinary knob 3 trims the pressure floor around the hardcoded
         // default: floor = (knob >> 2) + 452, i.e. 452..707 with exactly 580
@@ -16275,6 +16282,64 @@ function assembleProgram() {
         // once per scan too, so their timings scale with it.
         fixedPatch("scan_period", 0x80007c0c, 2,
             StringFormat("MOV R10,0x%x", number("scan_period_ms", 5, 1, 20)));
+
+        // The USB task on every pass.  LUFA's endpoint wait (0x8000d9c4)
+        // sets the byte at 0x4718 when the host leaves an IN packet untaken
+        // for 100 ms and clears it when any wait succeeds, IN or OUT; while
+        // it stands, every wait gives up at the next frame.  The factory
+        // main loop skips its whole USB task (0x80007428) while the byte
+        // stands, the gate at 0x80007c5a: the MIDI receive, the flush and
+        // USB_USBTask, the one place a control request is answered.  Only a
+        // send reaches the wait again, so one packet the host did not take
+        // left the keyboard deaf to MIDI and unable to enumerate until it
+        // next sent something the host took (the gate-2 rig lost two
+        // power-ons to it, 2026-10-28/29).  The gate's branch goes, so the
+        // receive and the control requests run on every pass, and two words
+        // of the task keep the byte's factory meaning.  The flush waits on
+        // the host, a frame on every pass while a packet stands untaken, so
+        // the task's word for it goes through usb_flush_gate, which
+        // tail-jumps to the factory's MIDI task (R12 the interface, LR the
+        // task's own return) while the byte is clear and returns while it
+        // stands.  The receive reads through the same wait (0x8000d394), so
+        // a packet from the host would clear a byte the factory never let
+        // the receive touch, and a host that sends without reading would
+        // cost 100 ms waits again; the task's word for it goes through
+        // usb_receive_keep, which calls the factory's receive (R12 and R11
+        // passed on, its answer back in R12) and puts the byte back as it
+        // found it, with no branch, so every instruction of it runs on every
+        // pass.  A send still clears the byte the moment the host takes a
+        // packet.  The extra call the loop makes every 8 s (0x80007d40)
+        // keeps its factory gate.
+        begin(ufgEntry);
+        emit("MOV R8,0x4718");
+        emit("LD.UB R8,R8[0x0]");
+        emit("CP.W R8,0x0");
+        emit(StringFormat("BR{ne} 0x%x", ufgSkip));
+        emit(StringFormat("LDDPC R8,0x%x", ufgPool));
+        emit("MOV PC,R8");
+        padTo(ufgSkip);
+        emit("MOV PC,LR");                  // the byte stands: no flush
+        padTo(ufgPool);
+        word(0x8000c55c);                  // the factory's MIDI task: its flush, when configured
+        finish("usb_flush_gate", ufgEnd);
+        begin(urkEntry);
+        emit("STM --SP,R0,LR");
+        emit("MOV R8,0x4718");
+        emit("LD.UB R0,R8[0x0]");
+        emit(StringFormat("MCALL PC[0x%x]", urkPool));
+        emit("MOV R8,0x4718");
+        emit("ST.B R8[0x0],R0");            // the byte as the receive found it
+        emit("LDM SP++,R0,PC");             // R12: the receive's answer
+        padTo(urkPool);
+        word(0x8000c74c);                  // the factory's MIDI receive
+        finish("usb_receive_keep", urkEnd);
+        if (block("usb_flush_gate") && block("usb_receive_keep")) {
+            wordPatch("usb_flush_pool", 0x80007504, ufgEntry,
+                "the USB task's flush -> usb_flush_gate");
+            wordPatch("usb_receive_pool", 0x800074fc, urkEntry,
+                "the USB task's receive -> usb_receive_keep");
+            fixedPatch("usb_task_every_pass", 0x80007c60, 2, "NOP");
+        }
 
         // Both cold-start defaults must agree. The persistent-settings loader
         // still runs afterward and restores any value explicitly saved from

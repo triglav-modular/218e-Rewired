@@ -1,7 +1,7 @@
 # What this firmware changes
 
 Custom firmware for the **Buchla 218e V3**, built from your own copy of
-Buchla's v36.9 image. Everything below is optional — the builder page turns
+Buchla's v36.9 image. Everything below except USB MIDI is optional — the builder page turns
 each part on or off, and anything left off should (hopefully) behave exactly as the factory
 firmware does.
 
@@ -66,6 +66,14 @@ pitch toward it; at zero it is off.
 
 - **Knob 4** adds global vibrato, depth and rate rising together, up to
   about a third of a semitone.
+
+## USB MIDI
+
+The keyboard keeps reading USB MIDI and answering the computer even when the
+computer leaves something the keyboard sent uncollected, which can happen at
+power-on. The factory firmware stops listening in that case until the
+keyboard next sends something the computer takes, so notes and settings sent
+to it go unheard. Every build carries this; it is not an option.
 
 ---
 

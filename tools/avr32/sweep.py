@@ -274,9 +274,11 @@ def audit_call_pools(image_path) -> list[str]:
 # way calibration mode does: the factory's +-1 target fix-ups skipped, only a
 # negative target floored, and the key table 485 + round(484k/12) in the
 # image and in every slot left at the factory temperament.
+# And again for the USB task on every pass, its flush through usb_flush_gate
+# and its receive through usb_receive_keep.
 # Both assemblers must verify this pin.
 EXPECTED = {
-    "historical_config": "f9a8be61499d58c4f30e0c7947ceaebcaf2a87a68c35e6b30d831237686f400c",
+    "historical_config": "2099599c04377e46c7684cf94e32b9c32484e4d4b5b9c8077a7b32c05b12f146",
 }
 
 

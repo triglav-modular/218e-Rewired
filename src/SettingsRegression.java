@@ -91,7 +91,25 @@ public class SettingsRegression extends PersistenceRegression {
     static final long CAL=0x6a6b, CALSTAMP=0x6d40, CALENTRY=0x6d44;
     static final long CALCMD=0x80020200L, CALNOTE=0x80020240L, CALPITCH=0x80020290L, CALSTORE=0x800202e0L;
     static final long CALBARE=0x80020310L, CALARP=0x80020330L, CALKEY=0x80020350L;
+    // The main loop's USB task (0x80007428), reached from the loop's own
+    // gate at 0x80007c5a up to the dispatcher's MCALL after it; the task's
+    // enable (state+0x348); the factory MIDI receive, the MIDI task that
+    // flushes, USB_USBTask and the received-byte handler the task feeds;
+    // usb_flush_gate and usb_receive_keep on the task's flush and receive
+    // words; the MIDI interface block.
+    static final long USB_GATE=0x80007c5aL, USB_GATE_END=0x80007c66L, USB_TASK_ON=S+0x348;
+    static final long USB_RECEIVE=0x8000c74cL, USB_MIDI_TASK=0x8000c55cL, USB_DEVICE_TASK=0x8000ed48L, USB_BYTE=0x80008db4L;
+    static final long USB_FLUSH_WORD=0x80007504L, UFG=0x80024310L, USB_RECEIVE_WORD=0x800074fcL, URK=0x80024328L, USB_IFACE=0x95c;
     long wdtFirst=-1, wdtSecond=-1, keyAtArm=-1, keyAtSpin=-1; int restarts;
+    // With usbProbe the four USB routines above are recorded rather than
+    // run, in the order the task reaches them; the receive hands over the
+    // packets queued in usbIn, one a call, and then reports none.  A packet
+    // it hands over clears the stall byte, as the factory's does: its read
+    // (0x8000d394) opens with the endpoint wait, which clears the byte when
+    // it finds the OUT bank full (0x8000da54).
+    boolean usbProbe;
+    final List<String> usbCalls=new ArrayList<>();
+    final ArrayDeque<int[]> usbIn=new ArrayDeque<>();
     // What the restart sends and when.  Port one's packets as its queue
     // writer is handed them (the ring fills for real: no interrupt drains it
     // here), port two's notes, and where each list stood when the watchdog's
@@ -133,6 +151,20 @@ public class SettingsRegression extends PersistenceRegression {
     // and copies; a write without erase can only clear bits.
     @Override void step() throws Exception {
         long p=pc();
+        if(usbProbe) {
+            if(p==USB_RECEIVE) {
+                int[] packet=usbIn.poll();
+                usbCalls.add("receive "+Long.toHexString(reg("R12")));
+                if(packet!=null) { for(int i=0;i<4;i++) w(reg("R11")+i,1,packet[i]); w(STALLED,1,0); }
+                e.writeRegister("R12",packet==null?0:1); ret(); return;
+            }
+            if(p==USB_MIDI_TASK) {
+                usbCalls.add("flush "+Long.toHexString(reg("R12"))+" back to "+Long.toHexString(reg("LR")));
+                ret(); return;
+            }
+            if(p==USB_DEVICE_TASK) { usbCalls.add("control"); ret(); return; }
+            if(p==USB_BYTE) { usbCalls.add("byte "+Long.toHexString(reg("R12")&255)); ret(); return; }
+        }
         if(stubChain&&p==CHAIN) { ret(); return; }
         // The pattern gate's hit calls the real selector through knob 1's
         // dispatcher; answering 77 there tells a hit from a rest (-1).
@@ -1461,6 +1493,60 @@ public class SettingsRegression extends PersistenceRegression {
         check("nothing was sent",sent.isEmpty());
         println("PASS calibration mode: the words, every gate's arguments both ways, the expiry and the command");
     }
+    // USB MIDI while the host leaves a packet untaken (2026-10-29).  The
+    // factory's endpoint wait sets the stall byte when an IN packet goes
+    // untaken for 100 ms, and the factory main loop skipped its whole USB
+    // task while it stood: no MIDI read and no control request answered
+    // until a later send got through.  One pass of the loop from its own
+    // gate, with the byte clear and standing: the task reads the host's
+    // note into the factory's parser and answers control requests either
+    // way, and only the flush, the part that waits on the host, waits for
+    // the byte to clear.  The flush is reached through usb_flush_gate with
+    // the interface in R12 and the task's own return in LR.  A packet the
+    // receive takes clears the byte inside the factory's receive, and
+    // usb_receive_keep puts it back, so a host that sends without reading
+    // never opens the flush.
+    void usbStall() throws Exception {
+        fresh();
+        w(USB_TASK_ON,1,1);        // set by the factory just ahead of its loop
+        w(USB+0x8c,4,0x80);        // the receive ring's free bytes, as its init leaves them
+        List<String> note=Arrays.asList("receive 95c","byte 90","byte 3c","byte 64","receive 95c");
+        usbProbe=true;
+        try {
+            for(int stalled=0;stalled<2;stalled++) {
+                String m=stalled==1?"with the stall byte standing":"with the stall byte clear";
+                w(STALLED,1,stalled); usbCalls.clear(); usbIn.clear();
+                usbIn.add(new int[]{0x09,0x90,60,100});
+                call(USB_GATE,USB_GATE_END);
+                List<String> want=new ArrayList<>(note);
+                if(stalled==0) want.add("flush 95c back to 800074e2");
+                want.add("control");
+                check(m+", one pass of the main loop reads the host's note into the parser, "
+                    +(stalled==1?"holds the flush":"flushes")+" and answers control requests: "+usbCalls,
+                    usbCalls.equals(want));
+                check(m+", the pass leaves the byte as it found it",r(STALLED,1)==stalled);
+            }
+            w(STALLED,1,1); usbCalls.clear(); usbIn.clear();
+            List<String> want=new ArrayList<>();
+            for(int pass=0;pass<3;pass++) {
+                usbIn.add(new int[]{0x09,0x90,60,100});
+                call(USB_GATE,USB_GATE_END);
+                want.addAll(note); want.add("control");
+            }
+            check("pass after pass with the byte standing and a note from the host each time, the task reads and answers and never flushes: "+usbCalls,
+                usbCalls.equals(want));
+            check("and the byte still stands",r(STALLED,1)==1);
+            usbCalls.clear();
+            for(int pass=0;pass<2;pass++) call(USB_GATE,USB_GATE_END);
+            check("with nothing from the host, the same without the note: "+usbCalls,
+                usbCalls.equals(Arrays.asList("receive 95c","control","receive 95c","control")));
+        } finally { usbProbe=false; w(STALLED,1,0); }
+        check("the task's flush word names usb_flush_gate, and the gate the factory's MIDI task",
+            r(USB_FLUSH_WORD,4)==UFG&&r(UFG+0x14,4)==USB_MIDI_TASK);
+        check("the task's receive word names usb_receive_keep, and the keeper the factory's receive",
+            r(USB_RECEIVE_WORD,4)==URK&&r(URK+0x18,4)==USB_RECEIVE);
+        println("PASS USB: the main loop reads MIDI and answers control requests whatever the stall byte, holds only the flush while it stands, and a received packet leaves it standing");
+    }
     @Override public void run() throws Exception {
         String[] args=getScriptArgs();
         String mode=args[0]; seq=mode.contains("seq"); clock=mode.contains("clock");
@@ -1471,7 +1557,7 @@ public class SettingsRegression extends PersistenceRegression {
         props.load(Files.newBufferedReader(Paths.get(args[1])));
         record=Files.readAllBytes(Paths.get(args[2]));
         try {
-            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); restartQuiet(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings(); transposeMode(); bootGuard(); calibration();
+            defaults(); loads(); rejections(); slots(); reloads(); stripHalfway(); strayDataEntry(); receive(); commits(); restartQuiet(); dumps(); knobs(); patterns(); latch(); sequencer(); jack(); pressure(); state(); clock(); tunings(); transposeMode(); bootGuard(); calibration(); usbStall();
             println("SETTINGS REGRESSION PASS: "+mode+", "+checks+" assertions; no physical flash testing, no real reset.");
         } finally { if(e!=null)e.dispose(); }
     }

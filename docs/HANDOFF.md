@@ -91,34 +91,111 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   and nothing here is ever tested against hardware.  Archaeology pointers
   are in the plan's DFU section if the owner ever wants it chased.
 
-- **USB MIDI stalls until the keyboard next sends something the host takes.**
-  Factory behaviour, read from the image (2026-10-26) and not yet measured;
-  the assembler patches none of the routines involved. LUFA's endpoint wait
-  (`0x8000d9c4`) sets `0x4718` when the host leaves an IN packet untaken for
-  100 ms and clears it on the next wait that succeeds. The main loop runs
-  its USB task (`0x80007428`: the MIDI receive, the flush, and
-  `USB_USBTask`, the only place control requests are answered) only while
-  `0x4718` is clear (`0x80007c5a`), and the extra call it makes every 8 s
-  (`0x80007d40`) is gated the same way. Only a send reaches the wait again
-  (the stream write `0x8000d214`, the flush `0x8000c670`), so after one
-  untaken packet the keyboard reads no MIDI, answers no control request and
-  cannot enumerate after a replug (a bus reset leaves the flag) until it
-  sends something the host takes, or boots (startup zeroes
-  `0x2ed8..0x4748`). It sends unprompted: the arpeggiation-rate reading
-  (`state+0x308`, `(v+5)>>3`) as CC 16 on channel 16 and PORTAMENTO as CC 5
-  on its own channel whenever the 7-bit value changes
-  (`0x80003284..0x8000333a`), so a reading sitting on a step boundary sends
-  now and then (the gate-2 rig heard CC 16 go 60, 61 on 2026-10-26). This
-  fits the gate-2 rig's deaf keyboard of 2026-10-25/26: dumps of 0
-  parameters, notes and pressure ignored, a replug that never enumerated,
-  recovery by itself after minutes or by a power cycle. Not established:
-  what left the packet untaken; the likely cause is no host client holding
-  the port open (between takes, and in the seconds after a restart).
-  Bench test: with no MIDI client open, nudge ARP RATE, then dump (expect
-  no answer); open the port, touch a key, dump again (expect an answer).
-  Fix candidates, factory code and the owner's call: run the USB task every
-  pass whatever the flag (a stalled flush then costs one frame), and clear
-  the flag at bus reset and SET_CONFIGURATION.
+- **USB MIDI is read while the host leaves a packet untaken** - fixed in
+  the image (2026-10-29: `usb_task_every_pass`, `usb_flush_gate`,
+  `usb_receive_keep`), audited (`docs/audits/USB-STALL-AUDIT-2026-10-29.md`,
+  kept locally like every audit), not yet on the instrument.
+  *The factory fault.* LUFA's endpoint wait (`0x8000d9c4`), which the stream
+  write (`0x8000d214`) and the stream read (`0x8000d394`) open with and the
+  flush (`0x8000c670`) calls once it has committed a bank, sets `0x4718`
+  when the host leaves an IN packet untaken for 100 ms and clears it when
+  any wait succeeds, IN or OUT (`0x8000da34`, `0x8000da54`); while it
+  stands, every wait gives up at the
+  next frame. The factory main loop runs its USB task (`0x80007428`: the
+  MIDI receive, the flush, and `USB_USBTask`, the only place control
+  requests are answered) only while `0x4718` is clear (`0x80007c5a`), and
+  the extra call it makes every 8 s (`0x80007d40`) is gated the same way.
+  So the receive never ran while the byte stood, and only a send reached the
+  wait again: after one untaken packet the keyboard reads no MIDI, answers
+  no control request and cannot enumerate after a replug (a bus reset
+  leaves the byte) until it sends something the host takes, or boots
+  (startup zeroes `0x2ed8..0x4748`). It sends unprompted: the
+  arpeggiation-rate reading (`state+0x308`, `(v+5)>>3`) as CC 16 on channel
+  16 and PORTAMENTO as CC 5 on its own channel whenever the 7-bit value
+  changes (`0x80003284..0x8000333a`). Every send, the receive and the flush
+  return at once unless the device is configured (`0x4739` = 4), so the
+  byte can only be set after SET_CONFIGURATION.
+  *The fix.* The gate's branch (`0x80007c60`) is a NOP, so the task runs on
+  every pass, and two of the task's words keep the byte's factory meaning.
+  Its flush word (`0x80007504`) names `usb_flush_gate` (`0x80024310`),
+  which tail-jumps to the factory MIDI task (`0x8000c55c`, R12 the
+  interface, LR the task's return) while `0x4718` is clear and returns
+  while it stands. The factory MIDI task flushes without asking whether the
+  endpoint is ready, and the flush recommits whatever the bank's byte count
+  shows - a committed packet the host has not taken still counts, by the
+  UC3B manual's account of the USBB byte count (not measured) - so with the
+  byte standing an ungated flush would wait out a frame on every pass,
+  pacing the main loop to 1 kHz for as long as the host leaves the packet.
+  Its receive word (`0x800074fc`) names `usb_receive_keep` (`0x80024328`),
+  which calls the factory receive (`0x8000c74c`; R12 and R11 passed on, its
+  answer back in R12) and puts `0x4718` back as it found it. Without it a
+  received packet's read would clear the byte, and with a host that sends
+  without reading, the next flush and every send after it would wait out
+  100 ms again: a main loop held up 100 ms per incoming packet in place of
+  a deaf one. The keeper has no branch, so every instruction of it runs on
+  every pass from the first, inside the boot guard's window. Neither the
+  receive nor `USB_USBTask` waits on the IN endpoint; the control requests
+  wait on the host's own control stages, as on every factory pass. Holding
+  the flush loses nothing: with the byte standing no send writes (its first
+  wait either clears the byte or gives up), so nothing uncommitted waits in
+  a bank, and the first send the host takes clears it. The 8 s call keeps
+  its factory gate. Clearing the byte at bus reset and SET_CONFIGURATION,
+  the other candidate, was not taken: the byte is only ever set after
+  configuration, so it would not reach the power-on case; with the task on
+  every pass a re-enumeration is answered whatever the byte; and after one
+  the banks are free, so the first send clears it anyway.
+  *Evidence.* `SettingsRegression.usbStall` (run by
+  `tools/test_persistence.py`) drives the loop from its gate with the byte
+  clear and standing. The factory receive, MIDI task, `USB_USBTask` and
+  received-byte handler are recorded at their entries, and the receive
+  clears the byte for each packet it hands over, as the factory's read
+  does. A host's note reaches the parser and the control requests are
+  served either way, the flush runs only with the byte clear, and a
+  received packet leaves a standing byte standing. The pre-fix image
+  (`2db956fd`) fails the check with the byte standing (the pass calls
+  nothing), and the flush gate alone (`9fcf58df`, the code of `e682f3e8`)
+  fails it the same way the audit predicted: the host's note clears the
+  standing byte and the same pass flushes. A Fable 5.1 audit at extra-high
+  effort, in two rounds, found nothing that could stop a reflash; its first
+  round's P2, the receive clearing the byte, is what `usb_receive_keep`
+  answers. The gate-2 rig's keeper (`compute:~/rig208/midikeeper.log`, the
+  port held open and drained throughout) saw both lost cold power-ons open
+  the port 11-12 s after power-on and receive nothing at all for 25 and
+  28 min (2026-10-28 13:14:01.8 to 13:39:15, 2026-10-29 08:25:12.0 to
+  08:53:15), while short power cycles opened within about a second and
+  carried traffic. Consistent with the byte set right after configuration
+  and the host's own requests then going unanswered; not established: what
+  the keyboard sent that went untaken, and why only after a long time off.
+  *Bench, factory USB code (2026-10-29, the instrument's build before the
+  fix, the Intel Mac rig, keeper stopped, dumps by
+  `compute:~/rig208/gate2/alive.sh`, a settings dump round trip run as the
+  gui-domain job `alive.plist`).* macOS's MIDI server keeps two reads
+  pending on the IN endpoint whenever it runs, client or none (kernel:
+  `abortGated ... endpoint 0x82: aborting 2 requests` as it exits), so with
+  Audio MIDI Setup open an ARP RATE nudge left the keyboard answering
+  (12:22). With no server running, one key touch, then a dump: no answer
+  (12:26, 0 parameters), and none at 12:28:32 or at 12:28:53, the last with
+  the server up and the keeper reading. Each server start meanwhile took
+  about a minute while its control requests timed out at the keyboard
+  (kernel: endpoint 0x00 `0xe00002d6` at 12:25:45, 12:26:37, 12:27:30,
+  12:28:21). A key touch at 12:29:29.375 cleared the byte - its note-on
+  reached the keeper - and froze the panel: nothing more was sent and the
+  dump requests waiting on the OUT endpoint were never taken, until a power
+  cycle at 12:29:59, after which the keyboard read MIDI. The freeze is the
+  factory control code answering the last timed-out request 70 s late. Its
+  control write's status wait (`0x8000d71c..0x8000d75e`) waits for the
+  host's status packet and leaves only on detach or suspend - no timeout,
+  no abort on a new SETUP - so a reply the host has given up on holds the
+  main loop until power-off. So on the factory code, recovering a deaf
+  keyboard by making it send can freeze it whenever anything asked it a
+  control request meanwhile (a MIDI server start, Audio MIDI Setup); a power
+  cycle is the safe recovery. The fix runs `USB_USBTask` on every pass, so
+  no control request waits on the byte. The power cycle re-enumerated in
+  2.6 s and the keyboard sent CC 18 = 127 on channel 16 1.7 s after the
+  port opened, a send at boot the list above lacks. After the flash, the
+  same sequence should answer the first dump, start the server in seconds
+  with no endpoint 0x00 timeouts, and not freeze; then cold power-ons
+  should read MIDI every time.
 
 - **Preset/sequence persistence** — on since 2026-08-29, required since
   2026-09-01, and validated on the instrument. The post-audit version
