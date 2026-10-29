@@ -94,7 +94,9 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
 - **USB MIDI is read while the host leaves a packet untaken** - fixed in
   the image (2026-10-29: `usb_task_every_pass`, `usb_flush_gate`,
   `usb_receive_keep`), audited (`docs/audits/USB-STALL-AUDIT-2026-10-29.md`,
-  kept locally like every audit), not yet on the instrument.
+  kept locally like every audit), on the instrument since 2026-10-29 13:33
+  (`cdbe64f`, flashed by the owner from /dev/) and passing the bench below;
+  the cold power-ons are still to come.
   *The factory fault.* LUFA's endpoint wait (`0x8000d9c4`), which the stream
   write (`0x8000d214`) and the stream read (`0x8000d394`) open with and the
   flush (`0x8000c670`) calls once it has committed a bank, sets `0x4718`
@@ -175,10 +177,12 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   Audio MIDI Setup open an ARP RATE nudge left the keyboard answering
   (12:22). With no server running, one key touch, then a dump: no answer
   (12:26, 0 parameters), and none at 12:28:32 or at 12:28:53, the last with
-  the server up and the keeper reading. Each server start meanwhile took
-  about a minute while its control requests timed out at the keyboard
-  (kernel: endpoint 0x00 `0xe00002d6` at 12:25:45, 12:26:37, 12:27:30,
-  12:28:21). A key touch at 12:29:29.375 cleared the byte - its note-on
+  the server up and the keeper reading. Each server start meanwhile sent it
+  control requests that timed out at the keyboard (kernel: endpoint 0x00
+  `0xe00002d6` at 12:25:45, 12:26:37, 12:27:30, 12:28:21). A server start
+  takes about a minute on this Mac whatever the keyboard does (its log
+  repeats a failed plugin start every 3 s, on a device needing an `ibridge`
+  entitlement), so the minute is not a symptom. A key touch at 12:29:29.375 cleared the byte - its note-on
   reached the keeper - and froze the panel: nothing more was sent and the
   dump requests waiting on the OUT endpoint were never taken, until a power
   cycle at 12:29:59, after which the keyboard read MIDI. The freeze is the
@@ -192,10 +196,19 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   cycle is the safe recovery. The fix runs `USB_USBTask` on every pass, so
   no control request waits on the byte. The power cycle re-enumerated in
   2.6 s and the keyboard sent CC 18 = 127 on channel 16 1.7 s after the
-  port opened, a send at boot the list above lacks. After the flash, the
-  same sequence should answer the first dump, start the server in seconds
-  with no endpoint 0x00 timeouts, and not freeze; then cold power-ons
-  should read MIDI every time.
+  port opened, a send at boot the list above lacks.
+  *Bench, the fix (2026-10-29, `cdbe64f` on the instrument, the same rig and
+  steps).* The keyboard read MIDI after the flash (13:35:00). With no server
+  running, one key touch, then a dump: answered (13:43:08), with no endpoint
+  0x00 timeout through the server's start. Then the state the factory code
+  froze in: no server, a key touch, the keeper started (open at 13:45:44, no
+  timeouts), and a held key at 13:56:59.990 - its note-on, pressure rising to
+  127 in 16 steps, the note-off 3.1 s later and pressure back to 0 all
+  reached the keeper, and a dump answered at 13:57:21. Not observable from
+  the host: that the byte stood. It follows from the unchanged factory wait
+  and a bank nothing read, the same steps that left the factory code deaf.
+  Still to come: cold power-ons, each after at least an hour off, should read
+  MIDI every time.
 
 - **Preset/sequence persistence** — on since 2026-08-29, required since
   2026-09-01, and validated on the instrument. The post-audit version
