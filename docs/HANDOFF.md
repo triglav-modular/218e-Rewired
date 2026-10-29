@@ -95,8 +95,8 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   the image (2026-10-29: `usb_task_every_pass`, `usb_flush_gate`,
   `usb_receive_keep`), audited (`docs/audits/USB-STALL-AUDIT-2026-10-29.md`,
   kept locally like every audit), on the instrument since 2026-10-29 13:33
-  (`cdbe64f`, flashed by the owner from /dev/) and passing the bench below;
-  the cold power-ons are still to come.
+  (`cdbe64f`, flashed by the owner from /dev/), passing the bench below and
+  the first of three cold power-ons.
   *The factory fault.* LUFA's endpoint wait (`0x8000d9c4`), which the stream
   write (`0x8000d214`) and the stream read (`0x8000d394`) open with and the
   flush (`0x8000c670`) calls once it has committed a bank, sets `0x4718`
@@ -165,9 +165,13 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   the port 11-12 s after power-on and receive nothing at all for 25 and
   28 min (2026-10-28 13:14:01.8 to 13:39:15, 2026-10-29 08:25:12.0 to
   08:53:15), while short power cycles opened within about a second and
-  carried traffic. Consistent with the byte set right after configuration
-  and the host's own requests then going unanswered; not established: what
-  the keyboard sent that went untaken, and why only after a long time off.
+  carried traffic. The kernel log kept the second: configuration at
+  08:25:00.968, then two endpoint 0x00 timeouts 5.1 s apart (`0xe00002d6`,
+  08:25:06.486 and 08:25:11.594) before the port opened at 08:25:12.020. With
+  the host's 5 s limit, the keyboard was answering no control request about
+  half a second after configuration: the byte set right after it. Not
+  established: what the keyboard sent that went untaken, and why only after
+  a long time off.
   *Bench, factory USB code (2026-10-29, the instrument's build before the
   fix, the Intel Mac rig, keeper stopped, dumps by
   `compute:~/rig208/gate2/alive.sh`, a settings dump round trip run as the
@@ -207,8 +211,13 @@ ordinary arpeggiator to the physical switch. RATE retains its normal role.
   reached the keeper, and a dump answered at 13:57:21. Not observable from
   the host: that the byte stood. It follows from the unchanged factory wait
   and a bank nothing read, the same steps that left the factory code deaf.
-  Still to come: cold power-ons, each after at least an hour off, should read
-  MIDI every time.
+  *Cold power-ons (`cdbe64f`, the rig as used: keeper running, each after
+  at least an hour off; the owner asked for three).* 1: off 5 h 56 min
+  (gone 16:59:56, configured 22:55:41.535). The port opened 1.0 s after
+  configuration with no endpoint 0x00 timeout (the lost factory power-on
+  above: 11.1 s and two), CC 18 = 127 arrived 1.6 s later, a dump answered
+  at 22:55:52, and the gate-2 sitting started at 22:56:12 had its own dump
+  answered; no timeout through 22:57:25. Two still to come.
 
 - **Preset/sequence persistence** — on since 2026-08-29, required since
   2026-09-01, and validated on the instrument. The post-audit version
