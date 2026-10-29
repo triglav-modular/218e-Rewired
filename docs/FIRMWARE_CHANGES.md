@@ -71,9 +71,13 @@ pitch toward it; at zero it is off.
 
 The keyboard keeps reading USB MIDI and answering the computer even when the
 computer leaves something the keyboard sent uncollected, which can happen at
-power-on. The factory firmware stops listening in that case until the
-keyboard next sends something the computer takes, so notes and settings sent
-to it go unheard. Every build carries this; it is not an option.
+power-on. Every build carries this; it is not an option.
+
+The factory firmware stops listening in that case until the keyboard next
+sends something the computer takes, so notes and settings sent to it go
+unheard. If a MIDI program asked the keyboard anything meanwhile, the factory
+firmware can also freeze when it starts listening again, until it is switched
+off and on.
 
 ---
 
